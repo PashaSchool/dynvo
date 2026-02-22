@@ -20,13 +20,14 @@ class FileBlame(BaseModel):
 
 class Feature(BaseModel):
     name: str
-    paths: list[str]          # директорії/файли що належать до фічі
-    authors: list[str]        # хто писав
+    description: str | None = None  # LLM-generated semantic description
+    paths: list[str]          # directories/files belonging to this feature
+    authors: list[str]        # contributors
     total_commits: int
-    bug_fixes: int            # кількість bug fix комітів
+    bug_fixes: int            # number of bug fix commits
     bug_fix_ratio: float      # bug_fixes / total_commits
     last_modified: datetime
-    health_score: float       # 0-100, чим вище тим краще
+    health_score: float       # 0-100, higher is better
 
 
 class FeatureMap(BaseModel):
@@ -37,5 +38,5 @@ class FeatureMap(BaseModel):
     features: list[Feature]
 
     def sorted_by_risk(self) -> list[Feature]:
-        """Повертає фічі відсортовані від найризикованіших"""
+        """Returns features sorted from highest to lowest risk."""
         return sorted(self.features, key=lambda f: f.bug_fix_ratio, reverse=True)

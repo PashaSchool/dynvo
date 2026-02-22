@@ -1,10 +1,50 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-.venv/
-venv/
+*.pyd
+*.so
+*.egg
+*.egg-info/
 dist/
 build/
-*.egg-info/
+.eggs/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# Type checking
+.mypy_cache/
+.pyright/
+
+# featuremap output
 .featuremap/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets
 .env
+.env.local
+.env.*
+*.key
+
+# Hatch
+.hatch/
+
+CLAUDE.md

@@ -15,6 +15,9 @@ dependencies = [
     "anthropic>=0.25.0",
 ]
 
+[project.optional-dependencies]
+ollama = ["ollama>=0.4.0"]
+
 [project.scripts]
 featuremap = "featuremap.cli:app"
 

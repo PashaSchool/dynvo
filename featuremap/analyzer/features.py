@@ -7,10 +7,10 @@ from featuremap.models.types import Commit, Feature, FeatureMap
 
 def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:
     """
-    Визначає фічі на основі структури директорій.
-    Це базова евристика — пізніше замінимо на LLM аналіз.
+    Detects features based on directory structure.
+    This is a heuristic fallback — LLM analysis provides richer results.
 
-    Приклад:
+    Examples:
         src/auth/login.py      → feature: "auth"
         src/payments/stripe.py → feature: "payments"
         src/api/users.py       → feature: "api"
@@ -27,22 +27,28 @@ def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:
 
 def _extract_feature_name(parts: tuple[str, ...]) -> str:
     """
-    Визначає назву фічі з шляху файлу.
+    Extracts a feature name from a file path.
 
-    Логіка:
+    Logic:
     - src/auth/login.py       → "auth"
     - app/api/payments/...    → "payments"
     - lib/utils/helpers.py    → "utils"
     - index.py                → "root"
     """
-    # Пропускаємо типові "обгортки"
-    skip_prefixes = {"src", "app", "lib", "pkg", "internal", "core"}
+    # Skip common top-level wrapper directories (not feature names themselves)
+    skip_prefixes = {
+        # Generic source roots
+        "src", "app", "lib", "pkg", "internal", "core",
+        # Frontend structural directories — not business features
+        "views", "pages", "screens", "routes", "containers",
+        "components", "layouts", "features",
+    }
 
-    for i, part in enumerate(parts[:-1]):  # Без імені файлу
+    for i, part in enumerate(parts[:-1]):  # Exclude the filename
         if part.lower() not in skip_prefixes:
             return part.lower()
 
-    # Якщо файл в корені
+    # File is at the repo root
     return "root"
 
 
@@ -52,9 +58,8 @@ def build_feature_map(
     feature_paths: dict[str, list[str]],
     days: int,
 ) -> FeatureMap:
-    """Будує FeatureMap з'єднуючи коміти з фічами"""
+    """Builds a FeatureMap by joining commits with detected features."""
 
-    # Для кожної фічі рахуємо метрики
     feature_commits: dict[str, list[Commit]] = defaultdict(list)
     feature_authors: dict[str, set[str]] = defaultdict(set)
     feature_last_modified: dict[str, datetime] = {}
@@ -63,7 +68,7 @@ def build_feature_map(
         touched_features = set()
 
         for file_path in commit.files_changed:
-            # Знаходимо до якої фічі належить файл
+            # Find which feature this file belongs to
             for feature_name, paths in feature_paths.items():
                 if file_path in paths:
                     touched_features.add(feature_name)
@@ -73,12 +78,11 @@ def build_feature_map(
             feature_commits[feature_name].append(commit)
             feature_authors[feature_name].add(commit.author)
 
-            # Оновлюємо дату останньої зміни
+            # Track the most recent modification date
             if feature_name not in feature_last_modified or \
                commit.date > feature_last_modified[feature_name]:
                 feature_last_modified[feature_name] = commit.date
 
-    # Будуємо список Feature об'єктів
     features = []
     for feature_name, paths in feature_paths.items():
         commits_for_feature = feature_commits.get(feature_name, [])
@@ -111,16 +115,17 @@ def build_feature_map(
 
 def _calculate_health(bug_fix_ratio: float, total_commits: int) -> float:
     """
-    Health score від 0 до 100.
-    100 = ідеально, 0 = дуже поганий стан.
+    Calculates a health score from 0 to 100.
+    100 = healthy, 0 = high technical debt.
+
+    Formula:
+    - Base score decreases with bug fix ratio (ratio 0.5 → score 0)
+    - Activity factor adds confidence for well-tested features
     """
     if total_commits == 0:
         return 100.0
 
-    # Базовий score від bug fix ratio
     base_score = max(0.0, 100.0 - (bug_fix_ratio * 200))
-
-    # Бонус за активність (більше комітів = більше довіри до score)
     activity_factor = min(1.0, total_commits / 50)
 
     return round(base_score * activity_factor + base_score * (1 - activity_factor) * 0.8, 1)

@@ -6,8 +6,8 @@ from featuremap.models.types import FeatureMap
 
 def write_feature_map(feature_map: FeatureMap, output_path: str | None = None) -> str:
     """
-    Записує feature map у JSON файл.
-    Повертає шлях до файлу.
+    Writes the feature map to a JSON file.
+    Returns the path where the file was saved.
     """
     if output_path is None:
         output_path = ".featuremap/feature-map.json"
