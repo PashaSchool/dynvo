@@ -7,7 +7,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from featuremap.models.types import Commit, FileBlame
 
-# Патерни які вказують що коміт це bug fix
+# Regex patterns that identify bug fix commits
 BUG_FIX_PATTERNS = [
     r"\bfix\b", r"\bbug\b", r"\bhotfix\b", r"\bpatch\b",
     r"\brevert\b", r"\bregression\b", r"\bcrash\b", r"\berror\b",
@@ -15,6 +15,10 @@ BUG_FIX_PATTERNS = [
 ]
 
 BUG_FIX_REGEX = re.compile("|".join(BUG_FIX_PATTERNS), re.IGNORECASE)
+
+# Approximate seconds per commit based on profiling (git stats I/O)
+_SECONDS_PER_COMMIT = 0.008
+DEFAULT_MAX_COMMITS = 5_000
 
 
 def is_bug_fix(message: str) -> bool:
@@ -25,11 +29,39 @@ def load_repo(path: str) -> Repo:
     try:
         return Repo(path, search_parent_directories=True)
     except InvalidGitRepositoryError:
-        raise ValueError(f"'{path}' не є git репозиторієм")
+        raise ValueError(f"'{path}' is not a git repository")
 
 
-def get_commits(repo: Repo, days: int = 365) -> list[Commit]:
-    """Отримує всі коміти за останні N днів"""
+def estimate_commits(repo: Repo, days: int, max_commits: int = DEFAULT_MAX_COMMITS) -> int:
+    """
+    Quickly estimates the number of commits in the date range.
+    Uses git rev-list --count which is near-instant regardless of repo size.
+    """
+    since = f"--since={days} days ago"
+    try:
+        count = repo.git.rev_list("--count", since, "HEAD")
+        return min(int(count), max_commits)
+    except Exception:
+        return 0
+
+
+def estimate_duration(commit_count: int, use_llm: bool = False) -> str:
+    """Returns a human-readable time estimate for the analysis."""
+    seconds = commit_count * _SECONDS_PER_COMMIT
+    if use_llm:
+        seconds += 5  # avg LLM API round-trip
+
+    if seconds < 10:
+        return "< 10 sec"
+    elif seconds < 60:
+        return f"~ {int(seconds)} sec"
+    else:
+        minutes = seconds / 60
+        return f"~ {minutes:.1f} min"
+
+
+def get_commits(repo: Repo, days: int = 365, max_commits: int = DEFAULT_MAX_COMMITS) -> list[Commit]:
+    """Returns all commits from the last N days (up to max_commits)."""
     commits = []
 
     with Progress(
@@ -37,14 +69,14 @@ def get_commits(repo: Repo, days: int = 365) -> list[Commit]:
         TextColumn("[progress.description]{task.description}"),
         transient=True,
     ) as progress:
-        progress.add_task("Читаємо git history...", total=None)
+        progress.add_task("Reading git history...", total=None)
 
-        for commit in repo.iter_commits(max_count=5000):
+        for commit in repo.iter_commits(max_count=max_commits):
             commit_date = datetime.fromtimestamp(
                 commit.committed_date, tz=timezone.utc
             )
 
-            # Фільтруємо по даті
+            # Stop when commits are older than the requested date range
             age_days = (datetime.now(tz=timezone.utc) - commit_date).days
             if age_days > days:
                 break
@@ -64,7 +96,7 @@ def get_commits(repo: Repo, days: int = 365) -> list[Commit]:
 
 
 def get_file_blame(repo: Repo, file_path: str) -> FileBlame | None:
-    """Отримує blame інформацію для файлу"""
+    """Returns blame information for a file."""
     try:
         blame = repo.blame("HEAD", file_path)
         authors = set()
@@ -88,16 +120,39 @@ def get_file_blame(repo: Repo, file_path: str) -> FileBlame | None:
         return None
 
 
-def get_tracked_files(repo: Repo) -> list[str]:
-    """Повертає список всіх файлів у репозиторії"""
+def get_tracked_files(repo: Repo, src: str | None = None) -> list[str]:
+    """
+    Returns all tracked files in the repository.
+
+    Args:
+        repo: GitPython Repo instance.
+        src: Optional subdirectory to restrict analysis to (e.g. 'src/').
+             Files outside this path are excluded.
+    """
     skip_extensions = {
         ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
         ".pdf", ".zip", ".tar", ".gz", ".lock", ".sum",
+        ".woff", ".woff2", ".ttf", ".eot", ".map",
     }
     skip_dirs = {
-        "node_modules", ".git", "dist", "build", "__pycache__",
-        ".next", "vendor", "venv", ".venv",
+        # Package managers / dependencies
+        "node_modules", "vendor", "venv", ".venv",
+        # Build output
+        "dist", "build", ".next", "out", "coverage", "storybook-static",
+        # Git internals
+        ".git",
+        # Python cache
+        "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        # Tooling / CI — not source code
+        ".github", ".husky", ".storybook", ".circleci",
     }
+    skip_filenames = {
+        # Config and lockfiles at any depth
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        ".eslintrc", ".prettierrc", ".editorconfig",
+    }
+
+    src_prefix = Path(src) if src else None
 
     files = []
     for item in repo.tree().traverse():
@@ -106,10 +161,15 @@ def get_tracked_files(repo: Repo) -> list[str]:
 
         path = Path(item.path)
 
-        # Пропускаємо непотрібні файли
+        # Filter to subdirectory if --src is specified
+        if src_prefix and not path.is_relative_to(src_prefix):
+            continue
+
         if any(part in skip_dirs for part in path.parts):
             continue
         if path.suffix.lower() in skip_extensions:
+            continue
+        if path.name in skip_filenames:
             continue
 
         files.append(item.path)

@@ -28,26 +28,26 @@ def _health_icon(score: float) -> str:
 
 
 def print_summary(feature_map: FeatureMap) -> None:
-    """Виводить загальний summary аналізу"""
+    """Prints the analysis summary panel."""
     total_bugs = sum(f.bug_fixes for f in feature_map.features)
     avg_health = sum(f.health_score for f in feature_map.features) / len(feature_map.features) \
         if feature_map.features else 0
 
     console.print()
     console.print(Panel(
-        f"[bold]Репозиторій:[/bold] {feature_map.repo_path}\n"
-        f"[bold]Аналіз за:[/bold] останні {feature_map.date_range_days} днів\n"
-        f"[bold]Всього комітів:[/bold] {feature_map.total_commits}\n"
-        f"[bold]Фіч знайдено:[/bold] {len(feature_map.features)}\n"
-        f"[bold]Bug fix комітів:[/bold] {total_bugs}\n"
-        f"[bold]Середній health score:[/bold] [{_health_color(avg_health)}]{avg_health:.1f}/100[/]",
+        f"[bold]Repository:[/bold] {feature_map.repo_path}\n"
+        f"[bold]Analyzed:[/bold] last {feature_map.date_range_days} days\n"
+        f"[bold]Total commits:[/bold] {feature_map.total_commits}\n"
+        f"[bold]Features found:[/bold] {len(feature_map.features)}\n"
+        f"[bold]Bug fix commits:[/bold] {total_bugs}\n"
+        f"[bold]Average health score:[/bold] [{_health_color(avg_health)}]{avg_health:.1f}/100[/]",
         title="[bold blue]FeatureMap Analysis[/bold blue]",
         border_style="blue",
     ))
 
 
 def print_features_table(feature_map: FeatureMap) -> None:
-    """Виводить таблицю з фічами відсортовану від найризикованіших"""
+    """Prints a risk-sorted table of all features."""
     table = Table(
         box=box.ROUNDED,
         show_header=True,
@@ -86,26 +86,28 @@ def print_features_table(feature_map: FeatureMap) -> None:
 
 
 def print_top_risks(feature_map: FeatureMap, top: int = 3) -> None:
-    """Виводить топ найризикованіших фіч з деталями"""
+    """Prints the top highest-risk features with details."""
     risky = [f for f in feature_map.sorted_by_risk() if f.bug_fixes > 0][:top]
 
     if not risky:
-        console.print("\n[green]Жодних критичних зон не виявлено![/green]")
+        console.print("\n[green]No critical risk zones detected![/green]")
         return
 
-    console.print(f"\n[bold red]Топ {top} зон ризику:[/bold red]")
+    console.print(f"\n[bold red]Top {top} risk zones:[/bold red]")
 
     for i, feature in enumerate(risky, 1):
         color = _health_color(feature.health_score)
         console.print(
             f"  {i}. [bold {color}]{feature.name}[/bold {color}] — "
-            f"{feature.bug_fixes} bug fixes з {feature.total_commits} комітів "
+            f"{feature.bug_fixes} bug fixes out of {feature.total_commits} commits "
             f"({feature.bug_fix_ratio * 100:.1f}%)"
         )
+        if feature.description:
+            console.print(f"     [dim]{feature.description}[/dim]")
 
 
 def print_report(feature_map: FeatureMap) -> None:
-    """Повний звіт в терміналі"""
+    """Prints the full terminal report."""
     print_summary(feature_map)
     print_features_table(feature_map)
     print_top_risks(feature_map)
