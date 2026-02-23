@@ -5,7 +5,7 @@ from pathlib import Path
 from git import Repo, InvalidGitRepositoryError
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from featuremap.models.types import Commit, FileBlame
+from faultline.models.types import Commit, FileBlame
 
 # Regex patterns that identify bug fix commits
 BUG_FIX_PATTERNS = [

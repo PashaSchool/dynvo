@@ -4,14 +4,14 @@ from typing import Optional
 from rich.console import Console
 from rich import print as rprint
 
-from featuremap.analyzer.git import load_repo, get_commits, get_tracked_files, estimate_commits, estimate_duration, DEFAULT_MAX_COMMITS
-from featuremap.analyzer.features import detect_features_from_structure, build_feature_map
-from featuremap.output.reporter import print_report
-from featuremap.output.writer import write_feature_map
-from featuremap.llm.detector import _DEFAULT_OLLAMA_HOST, _DEFAULT_OLLAMA_MODEL
+from faultline.analyzer.git import load_repo, get_commits, get_tracked_files, estimate_commits, estimate_duration, DEFAULT_MAX_COMMITS
+from faultline.analyzer.features import detect_features_from_structure, build_feature_map
+from faultline.output.reporter import print_report
+from faultline.output.writer import write_feature_map
+from faultline.llm.detector import _DEFAULT_OLLAMA_HOST, _DEFAULT_OLLAMA_MODEL
 
 app = typer.Typer(
-    name="featuremap",
+    name="faultline",
     help="Analyze git history to map features and track technical debt",
     add_completion=False,
 )
@@ -85,12 +85,12 @@ def analyze(
     Analyzes a git repository and builds a feature map.
 
     Examples:
-        featuremap analyze
-        featuremap analyze ./my-project --days 90
-        featuremap analyze . --src src/
-        featuremap analyze . --llm --provider anthropic --api-key sk-ant-...
-        featuremap analyze . --llm --provider ollama --src src/
-        featuremap analyze . --llm --provider ollama --model llama3.2
+        faultline analyze
+        faultline analyze ./my-project --days 90
+        faultline analyze . --src src/
+        faultline analyze . --llm --provider anthropic --api-key sk-ant-...
+        faultline analyze . --llm --provider ollama --src src/
+        faultline analyze . --llm --provider ollama --model llama3.2
     """
     repo_path = str(Path(repo_path).resolve())
 
@@ -197,7 +197,7 @@ def _validate_llm_access(
 ) -> None:
     """Validates LLM connectivity before the long git analysis. Exits on failure."""
     if provider == "anthropic":
-        from featuremap.llm.detector import validate_api_key
+        from faultline.llm.detector import validate_api_key
         console.print("[dim]Validating Anthropic API key...[/dim]")
         is_valid, error_msg = validate_api_key(api_key=api_key)
         if not is_valid:
@@ -206,7 +206,7 @@ def _validate_llm_access(
         console.print("[green]✓[/green] API key valid")
 
     elif provider == "ollama":
-        from featuremap.llm.detector import validate_ollama, _DEFAULT_OLLAMA_MODEL
+        from faultline.llm.detector import validate_ollama, _DEFAULT_OLLAMA_MODEL
         resolved_model = model or _DEFAULT_OLLAMA_MODEL
         console.print(f"[dim]Checking Ollama ({resolved_model})...[/dim]")
         is_valid, error_msg = validate_ollama(model=resolved_model, host=ollama_url)
@@ -225,12 +225,12 @@ def _detect_with_llm(
 ) -> dict[str, list[str]]:
     """Runs LLM feature detection with the chosen provider. Falls back to heuristic on failure."""
     if provider == "anthropic":
-        from featuremap.llm.detector import detect_features_llm
+        from faultline.llm.detector import detect_features_llm
         console.print("[blue]Mapping features with Claude...[/blue]")
         feature_paths = detect_features_llm(files, api_key=api_key)
 
     elif provider == "ollama":
-        from featuremap.llm.detector import detect_features_ollama, _DEFAULT_OLLAMA_MODEL
+        from faultline.llm.detector import detect_features_ollama, _DEFAULT_OLLAMA_MODEL
         resolved_model = model or _DEFAULT_OLLAMA_MODEL
         console.print(f"[blue]Mapping features with Ollama ({resolved_model})...[/blue]")
         feature_paths = detect_features_ollama(files, model=resolved_model, host=ollama_url)
@@ -250,9 +250,9 @@ def _detect_with_llm(
 
 @app.command()
 def version():
-    """Shows the featuremap version."""
-    from featuremap import __version__
-    rprint(f"featuremap [bold blue]v{__version__}[/bold blue]")
+    """Shows the faultline version."""
+    from faultline import __version__
+    rprint(f"faultline [bold blue]v{__version__}[/bold blue]")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from featuremap.models.types import FeatureMap
+from faultline.models.types import FeatureMap
 
 
 def write_feature_map(feature_map: FeatureMap, output_path: str | None = None) -> str:
@@ -10,7 +10,7 @@ def write_feature_map(feature_map: FeatureMap, output_path: str | None = None) -
     Returns the path where the file was saved.
     """
     if output_path is None:
-        output_path = ".featuremap/feature-map.json"
+        output_path = ".faultline/feature-map.json"
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
