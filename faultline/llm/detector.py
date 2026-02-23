@@ -119,7 +119,7 @@ def _call_feature_detection(
     try:
         response = client.messages.parse(
             model=_MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             system=_DETECTION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
             output_format=_FeatureDetectionResponse,

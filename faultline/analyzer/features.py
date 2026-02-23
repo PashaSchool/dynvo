@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from faultline.models.types import Commit, Feature, FeatureMap
+from faultline.models.types import Commit, Feature, FeatureMap, Flow
 
 
 def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:
@@ -111,6 +111,62 @@ def build_feature_map(
         date_range_days=days,
         features=features,
     )
+
+
+def build_flows_metrics(
+    commits: list[Commit],
+    flow_file_mappings: dict[str, list[str]],
+) -> list[Flow]:
+    """
+    Builds Flow objects with commit metrics, mirroring build_feature_map logic.
+
+    Args:
+        commits: All commits for the parent feature.
+        flow_file_mappings: Dict of flow_name → list of file paths.
+
+    Returns:
+        List of Flow objects with health scores and bug fix metrics.
+    """
+    flow_commits: dict[str, list[Commit]] = defaultdict(list)
+    flow_authors: dict[str, set[str]] = defaultdict(set)
+    flow_last_modified: dict[str, datetime] = {}
+
+    for commit in commits:
+        touched_flows: set[str] = set()
+        for file_path in commit.files_changed:
+            for flow_name, paths in flow_file_mappings.items():
+                if file_path in paths:
+                    touched_flows.add(flow_name)
+                    break
+        for flow_name in touched_flows:
+            flow_commits[flow_name].append(commit)
+            flow_authors[flow_name].add(commit.author)
+            if flow_name not in flow_last_modified or \
+               commit.date > flow_last_modified[flow_name]:
+                flow_last_modified[flow_name] = commit.date
+
+    flows = []
+    for flow_name, paths in flow_file_mappings.items():
+        commits_for_flow = flow_commits.get(flow_name, [])
+        total = len(commits_for_flow)
+        bug_fixes = sum(1 for c in commits_for_flow if c.is_bug_fix)
+        bug_fix_ratio = bug_fixes / total if total > 0 else 0.0
+
+        flows.append(Flow(
+            name=flow_name,
+            paths=paths,
+            authors=list(flow_authors.get(flow_name, set())),
+            total_commits=total,
+            bug_fixes=bug_fixes,
+            bug_fix_ratio=round(bug_fix_ratio, 3),
+            last_modified=flow_last_modified.get(
+                flow_name,
+                datetime.now(tz=timezone.utc),
+            ),
+            health_score=_calculate_health(bug_fix_ratio, total),
+        ))
+
+    return flows
 
 
 def _calculate_health(bug_fix_ratio: float, total_commits: int) -> float:

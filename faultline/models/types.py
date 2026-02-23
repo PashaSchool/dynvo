@@ -18,6 +18,18 @@ class FileBlame(BaseModel):
     total_commits: int
 
 
+class Flow(BaseModel):
+    name: str                  # "checkout-flow", "login-flow"
+    description: str | None = None
+    paths: list[str]           # files belonging to this flow
+    authors: list[str]
+    total_commits: int
+    bug_fixes: int
+    bug_fix_ratio: float
+    last_modified: datetime
+    health_score: float        # 0-100, higher is better
+
+
 class Feature(BaseModel):
     name: str
     description: str | None = None  # LLM-generated semantic description
@@ -28,6 +40,7 @@ class Feature(BaseModel):
     bug_fix_ratio: float      # bug_fixes / total_commits
     last_modified: datetime
     health_score: float       # 0-100, higher is better
+    flows: list[Flow] = []    # populated when --flows flag is used
 
 
 class FeatureMap(BaseModel):
