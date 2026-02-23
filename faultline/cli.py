@@ -5,7 +5,7 @@ from rich.console import Console
 from rich import print as rprint
 
 from faultline.analyzer.git import load_repo, get_commits, get_tracked_files, estimate_commits, estimate_duration, DEFAULT_MAX_COMMITS
-from faultline.analyzer.features import detect_features_from_structure, build_feature_map
+from faultline.analyzer.features import detect_features_from_structure, build_feature_map, build_flows_metrics
 from faultline.output.reporter import print_report
 from faultline.output.writer import write_feature_map
 from faultline.llm.detector import _DEFAULT_OLLAMA_HOST, _DEFAULT_OLLAMA_MODEL
@@ -80,6 +80,12 @@ def analyze(
         "--max-commits",
         help="Maximum number of commits to analyze",
     ),
+    flows: bool = typer.Option(
+        False,
+        "--flows",
+        help="Detect user-facing flows within features (requires --llm)",
+        is_flag=True,
+    ),
 ):
     """
     Analyzes a git repository and builds a feature map.
@@ -91,8 +97,14 @@ def analyze(
         faultline analyze . --llm --provider anthropic --api-key sk-ant-...
         faultline analyze . --llm --provider ollama --src src/
         faultline analyze . --llm --provider ollama --model llama3.2
+        faultline analyze . --llm --flows
+        faultline analyze . --llm --provider ollama --flows
     """
     repo_path = str(Path(repo_path).resolve())
+
+    # --flows requires --llm
+    if flows and not llm:
+        llm = True
 
     if llm and provider not in ("anthropic", "ollama"):
         console.print(f"[red]Unknown provider '{provider}'. Use: anthropic or ollama[/red]")
@@ -110,7 +122,7 @@ def analyze(
         # 3. Pre-run estimate
         approx_count = estimate_commits(repo, days=days, max_commits=max_commits)
         if approx_count > 0:
-            duration = estimate_duration(approx_count, use_llm=llm)
+            duration = estimate_duration(approx_count, use_llm=llm, use_flows=flows)
             console.print(f"[dim]~ {approx_count:,} commits in range → {duration}[/dim]")
 
         # 4. Fetch commits
@@ -154,6 +166,20 @@ def analyze(
             feature_paths=feature_paths,
             days=days,
         )
+
+        # 6b. Detect flows within each feature (optional)
+        if flows:
+            feature_map = _detect_flows(
+                feature_map=feature_map,
+                repo_path=str(repo.working_tree_dir),
+                analysis_files=analysis_files,
+                path_prefix=path_prefix,
+                commits=commits,
+                provider=provider,
+                api_key=api_key,
+                model=model,
+                ollama_url=ollama_url,
+            )
 
         # 7. Print the report
         print_report(feature_map)
@@ -246,6 +272,99 @@ def _detect_with_llm(
         feature_paths = detect_features_from_structure(files)
 
     return feature_paths
+
+
+def _detect_flows(
+    feature_map,
+    repo_path: str,
+    analysis_files: list[str],
+    path_prefix: str,
+    commits,
+    provider: str,
+    api_key: str | None,
+    model: str | None,
+    ollama_url: str,
+):
+    """
+    Runs flow detection for each feature and attaches Flow objects to the FeatureMap.
+    Returns the updated FeatureMap (features with .flows populated).
+    """
+    from faultline.analyzer.ast_extractor import extract_signatures
+    from faultline.llm.flow_detector import detect_flows_llm, detect_flows_ollama, _DEFAULT_OLLAMA_MODEL as _OLLAMA_MODEL
+    from faultline.llm.flow_detector import _FlowFileMapping
+
+    label = "Claude" if provider == "anthropic" else "Ollama"
+    console.print(f"[blue]Detecting flows with {label}...[/blue]")
+
+    # Extract file signatures (exports, routes, imports) from TS/JS files.
+    # analysis_files are stripped of path_prefix, so reconstruct the correct root:
+    # git_root/src/ when --src src/ is used, or just git_root otherwise.
+    from pathlib import Path as _Path
+    extract_root = str(_Path(repo_path) / path_prefix) if path_prefix else repo_path
+    signatures = extract_signatures(analysis_files, extract_root)
+    console.print(f"[dim]Extracted signatures from {len(signatures)} TS/JS files[/dim]")
+
+    updated_features = []
+    total_flows = 0
+
+    for feature in feature_map.features:
+        # Restore analysis-relative paths (strip prefix was applied earlier)
+        if path_prefix:
+            analysis_feature_files = [
+                f[len(path_prefix):] for f in feature.paths
+                if f.startswith(path_prefix)
+            ]
+        else:
+            analysis_feature_files = list(feature.paths)
+
+        if not analysis_feature_files:
+            updated_features.append(feature)
+            continue
+
+        # Detect flows for this feature
+        if provider == "anthropic":
+            flow_mappings = detect_flows_llm(
+                feature_name=feature.name,
+                feature_files=analysis_feature_files,
+                signatures=signatures,
+                api_key=api_key,
+            )
+        else:
+            resolved_model = model or _OLLAMA_MODEL
+            flow_mappings = detect_flows_ollama(
+                feature_name=feature.name,
+                feature_files=analysis_feature_files,
+                signatures=signatures,
+                model=resolved_model,
+                host=ollama_url,
+            )
+
+        if not flow_mappings:
+            updated_features.append(feature)
+            continue
+
+        # Restore full paths in flow mappings for commit matching
+        if path_prefix:
+            flow_file_mappings = {
+                m.flow_name: [path_prefix + f for f in m.files]
+                for m in flow_mappings
+            }
+        else:
+            flow_file_mappings = {m.flow_name: m.files for m in flow_mappings}
+
+        # Build metrics for each flow using the feature's commits
+        feature_commit_files = set(feature.paths)
+        feature_commits = [
+            c for c in commits
+            if any(f in feature_commit_files for f in c.files_changed)
+        ]
+        flows = build_flows_metrics(feature_commits, flow_file_mappings)
+        total_flows += len(flows)
+
+        updated_features.append(feature.model_copy(update={"flows": flows}))
+
+    console.print(f"[green]✓[/green] Detected {total_flows} flows across {len(updated_features)} features")
+    return feature_map.model_copy(update={"features": updated_features})
 
 
 @app.command()

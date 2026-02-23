@@ -18,6 +18,10 @@ BUG_FIX_REGEX = re.compile("|".join(BUG_FIX_PATTERNS), re.IGNORECASE)
 
 # Approximate seconds per commit based on profiling (git stats I/O)
 _SECONDS_PER_COMMIT = 0.008
+# Approximate seconds per LLM call for flow detection (one call per feature)
+_SECONDS_PER_FLOW_FEATURE = 4
+# Rough estimate of features for flow duration estimate (before actual detection)
+_ESTIMATED_FLOW_FEATURES = 20
 DEFAULT_MAX_COMMITS = 5_000
 
 
@@ -45,11 +49,13 @@ def estimate_commits(repo: Repo, days: int, max_commits: int = DEFAULT_MAX_COMMI
         return 0
 
 
-def estimate_duration(commit_count: int, use_llm: bool = False) -> str:
+def estimate_duration(commit_count: int, use_llm: bool = False, use_flows: bool = False) -> str:
     """Returns a human-readable time estimate for the analysis."""
     seconds = commit_count * _SECONDS_PER_COMMIT
     if use_llm:
-        seconds += 5  # avg LLM API round-trip
+        seconds += 5  # avg LLM API round-trip for feature detection
+    if use_flows:
+        seconds += _ESTIMATED_FLOW_FEATURES * _SECONDS_PER_FLOW_FEATURE  # ~20 features * 4 sec
 
     if seconds < 10:
         return "< 10 sec"

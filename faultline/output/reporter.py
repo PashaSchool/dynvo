@@ -47,7 +47,15 @@ def print_summary(feature_map: FeatureMap) -> None:
 
 
 def print_features_table(feature_map: FeatureMap) -> None:
-    """Prints a risk-sorted table of all features."""
+    """Prints a risk-sorted table of all features, then flows if present."""
+    _print_features_flat(feature_map)
+
+    if any(f.flows for f in feature_map.features):
+        _print_features_with_flows(feature_map)
+
+
+def _print_features_flat(feature_map: FeatureMap) -> None:
+    """Standard flat table without flows."""
     table = Table(
         box=box.ROUNDED,
         show_header=True,
@@ -80,6 +88,58 @@ def print_features_table(feature_map: FeatureMap) -> None:
             str(len(feature.authors)),
             str(len(feature.paths)),
         )
+
+    console.print()
+    console.print(table)
+
+
+def _print_features_with_flows(feature_map: FeatureMap) -> None:
+    """Two-level table: features as section headers, flows as nested rows."""
+    table = Table(
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+        title="Feature & Flow Map by Risk",
+        title_style="bold",
+    )
+
+    table.add_column("", width=3)
+    table.add_column("Feature / Flow", min_width=22)
+    table.add_column("Health", justify="center", width=10)
+    table.add_column("Commits", justify="right", width=10)
+    table.add_column("Bug Fixes", justify="right", width=10)
+    table.add_column("Bug %", justify="right", width=8)
+
+    for feature in feature_map.sorted_by_risk():
+        f_color = _health_color(feature.health_score)
+        f_icon = _health_icon(feature.health_score)
+        f_pct = f"{feature.bug_fix_ratio * 100:.1f}%"
+
+        # Feature header row
+        table.add_row(
+            f"[{f_color}]{f_icon}[/]",
+            f"[bold]{feature.name}[/bold]",
+            f"[{f_color} bold]{feature.health_score:.0f}[/]",
+            f"[bold]{feature.total_commits}[/bold]",
+            f"[{f_color} bold]{feature.bug_fixes}[/]" if feature.bug_fixes > 0 else "[bold]0[/bold]",
+            f"[{f_color} bold]{f_pct}[/]",
+        )
+
+        # Nested flow rows — sorted by bug_fix_ratio descending
+        sorted_flows = sorted(feature.flows, key=lambda fl: fl.bug_fix_ratio, reverse=True)
+        for i, flow in enumerate(sorted_flows):
+            fl_color = _health_color(flow.health_score)
+            fl_pct = f"{flow.bug_fix_ratio * 100:.1f}%"
+            connector = "└─" if i == len(sorted_flows) - 1 else "├─"
+
+            table.add_row(
+                "",
+                f"  [dim]{connector}[/dim] [{fl_color}]{flow.name}[/{fl_color}]",
+                f"[{fl_color}]{flow.health_score:.0f}[/]",
+                str(flow.total_commits),
+                f"[{fl_color}]{flow.bug_fixes}[/]" if flow.bug_fixes > 0 else "0",
+                f"[{fl_color}]{fl_pct}[/]",
+            )
 
     console.print()
     console.print(table)
