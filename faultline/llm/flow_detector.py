@@ -47,13 +47,12 @@ Examples:
 1. Flow names: lowercase, hyphen-separated, end in "-flow". Max 3 words. \
    Examples: "login-flow", "password-reset-flow", "checkout-flow".
 2. Each file must appear in exactly one flow. No omissions.
-3. Files that don't clearly belong to any flow (shared utils, types, constants) \
-   go into a flow named "shared-utilities-flow".
-4. Every flow must contain at least 2 files. If only 1 file fits a flow, \
-   merge it into the closest related flow.
-5. Minimum 2 flows per feature. If everything seems like one flow, \
-   split by user action (e.g. "create-flow" vs "edit-flow").
-6. Do NOT invent files. Only use the exact paths provided.
+3. Only create flows when you see genuinely distinct user journeys. If the \
+   feature naturally has one primary user journey, return one flow — do not \
+   force artificial splits.
+4. Shared utilities, types, and constants that serve multiple flows should \
+   be placed in the most closely related flow.
+5. Do NOT invent files. Only use the exact paths provided.
 """
 
 _FLOW_USER_PROMPT = """\
