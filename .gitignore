@@ -30,6 +30,7 @@ htmlcov/
 
 # featuremap output
 .featuremap/
+.faultline
 
 # IDE
 .vscode/
@@ -48,3 +49,6 @@ htmlcov/
 .hatch/
 
 CLAUDE.md
+IMPROVEMENTS.md
+
+

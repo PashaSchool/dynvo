@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 _TS_JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+_PYTHON_EXTENSIONS = {".py"}
 
 # Named function/class/const exports
 _RE_NAMED_EXPORT = re.compile(
@@ -46,6 +47,14 @@ _RE_EXPRESS_ROUTE = re.compile(
 )
 # ES6 import paths
 _RE_IMPORT = re.compile(r"import\s+.*?from\s+['\"]([^'\"]+)['\"]")
+
+# Python patterns
+_RE_PYTHON_CLASS = re.compile(r"^class\s+(\w+)", re.MULTILINE)
+_RE_PYTHON_FUNC = re.compile(r"^(?:async\s+)?def\s+([a-zA-Z]\w*)", re.MULTILINE)
+_RE_PYTHON_ROUTE = re.compile(
+    r"@\w*(?:router|app|blueprint|bp|api)\s*\.\s*(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -89,7 +98,8 @@ def extract_signatures(
     root = Path(repo_path)
 
     for rel_path in files:
-        if Path(rel_path).suffix.lower() not in _TS_JS_EXTENSIONS:
+        suffix = Path(rel_path).suffix.lower()
+        if suffix not in _TS_JS_EXTENSIONS and suffix not in _PYTHON_EXTENSIONS:
             continue
         abs_path = root / rel_path
         try:
@@ -97,7 +107,11 @@ def extract_signatures(
         except OSError:
             continue
 
-        sig = _parse_file(rel_path, source)
+        if suffix in _PYTHON_EXTENSIONS:
+            sig = _parse_python_file(rel_path, source)
+        else:
+            sig = _parse_file(rel_path, source)
+
         if not sig.is_empty():
             result[rel_path] = sig
 
@@ -151,6 +165,30 @@ def _parse_file(rel_path: str, source: str) -> FileSignature:
         src = match.group(1)
         if src.startswith(".") or src.startswith("@/") or src.startswith("~/"):
             sig.imports.append(src)
+
+    return sig
+
+
+def _parse_python_file(rel_path: str, source: str) -> FileSignature:
+    sig = FileSignature(path=rel_path)
+    seen: set[str] = set()
+
+    for match in _RE_PYTHON_CLASS.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+
+    for match in _RE_PYTHON_FUNC.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+
+    for match in _RE_PYTHON_ROUTE.finditer(source):
+        method = match.group(1).upper()
+        path = match.group(2)
+        sig.routes.append(f"{method} {path}")
 
     return sig
 

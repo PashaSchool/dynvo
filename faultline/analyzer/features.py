@@ -1,8 +1,49 @@
 from collections import defaultdict
 from datetime import datetime, timezone
+from itertools import combinations
 from pathlib import Path
 
 from faultline.models.types import Commit, Feature, FeatureMap, Flow
+
+_MAX_FILES_PER_BULK_COMMIT = 30  # commits touching more files than this are excluded (bulk ops)
+_MIN_COCHANGE_COMMITS = 2        # minimum shared commits for a pair to count
+_MIN_COCHANGE_SCORE = 0.25       # minimum Jaccard coupling score
+_MAX_COCHANGE_PAIRS = 40         # max pairs to return (sorted by score desc)
+
+
+def compute_cochange(commits: list[Commit]) -> list[tuple[str, str, float]]:
+    """
+    Computes file co-change coupling from commit history.
+
+    Returns top file pairs sorted by coupling score (descending).
+    Coupling score (Jaccard) = commits_touching_both / commits_touching_either.
+    Scores >= 0.25 are strong signals that files belong to the same feature.
+
+    Commits touching more than _MAX_FILES_PER_BULK_COMMIT files are excluded
+    to avoid noise from bulk operations (formatting, large refactors).
+    """
+    filtered = [c for c in commits if len(c.files_changed) <= _MAX_FILES_PER_BULK_COMMIT]
+
+    pair_counts: dict[tuple[str, str], int] = defaultdict(int)
+    file_counts: dict[str, int] = defaultdict(int)
+
+    for commit in filtered:
+        files = commit.files_changed
+        for f in files:
+            file_counts[f] += 1
+        for f1, f2 in combinations(sorted(files), 2):
+            pair_counts[(f1, f2)] += 1
+
+    results: list[tuple[str, str, float]] = []
+    for (f1, f2), count in pair_counts.items():
+        if count < _MIN_COCHANGE_COMMITS:
+            continue
+        union = file_counts[f1] + file_counts[f2] - count
+        score = count / union if union > 0 else 0.0
+        if score >= _MIN_COCHANGE_SCORE:
+            results.append((f1, f2, round(score, 2)))
+
+    return sorted(results, key=lambda x: x[2], reverse=True)[:_MAX_COCHANGE_PAIRS]
 
 
 def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:

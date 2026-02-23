@@ -1,22 +1,38 @@
 import json
 import os
+import re
 from pathlib import Path
 
 import anthropic
 from pydantic import BaseModel, ValidationError
 
-from faultline.models.types import Feature
+from faultline.models.types import Commit, Feature
 
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_SAMPLE_PATHS = 5
 _MAX_FEATURES_PER_CALL = 50
-# Large repos: cap the file list sent to the LLM to control token usage and cost.
 _MAX_FILES_FOR_DETECTION = 500
 
 _DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:7b"
 _DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+
 # When file count exceeds this, collapse to unique directories to save tokens
 _DIR_COLLAPSE_THRESHOLD = 300
+# Max sample filenames shown per directory in the enriched dir tree
+_DIR_SAMPLE_FILES = 4
+# Top co-change pairs to include in the prompt
+_MAX_COCHANGE_IN_PROMPT = 20
+
+_COMMIT_STOP_WORDS = {
+    # conventional commit types
+    "feat", "fix", "chore", "docs", "test", "refactor", "style", "perf", "ci",
+    # generic coding verbs
+    "add", "update", "remove", "change", "move", "delete", "create", "handle",
+    "support", "use", "implement", "improve", "cleanup", "clean", "minor", "wip",
+    # English stop words
+    "the", "a", "an", "and", "or", "in", "to", "for", "of", "with", "is",
+    "it", "this", "that", "not", "be", "from", "by", "on", "at", "as", "are",
+}
 
 _DETECTION_SYSTEM_PROMPT = """\
 You are a senior software architect analyzing a codebase's file tree to identify semantic business features.
@@ -33,10 +49,36 @@ Given a list of file paths from a git repository, group them into business featu
 4. Each file must appear in exactly one feature. No duplicates, no omissions.
 5. Every feature must contain at least 2 files. If a file would be the sole member of a feature, merge it into the most closely related feature.
 6. Test files belong to the same feature as the code they test. Match by naming convention (test_auth.py belongs with auth.py, UserService.test.ts belongs with UserService.ts).
-7. Skip infrastructure and tooling files entirely. Do not include them in any feature. Skip: package.json, pyproject.toml, setup.py, setup.cfg, .gitignore, Makefile, *.lock, *.cfg, *.ini, *.env, *.toml, Dockerfile, docker-compose.yml, CI configs (.github/workflows/*, .circleci/*, Jenkinsfile), and similar build/config files.
-8. Shared utility files (helpers, utils, constants, types, common middleware) that serve multiple features go into a feature named "shared-utilities".
-9. For monorepo structures with apps/ or packages/ prefixes, consider each app or package as a potential scope, but still group by business feature within each scope. If the same business feature spans multiple packages, group them together.
-10. For flat repositories where all files are in the root directory, group by filename patterns and domain keywords.\
+7. Skip infrastructure and tooling files entirely: package.json, pyproject.toml, setup.py, .gitignore, Makefile, *.lock, *.toml, Dockerfile, docker-compose.yml, CI configs.
+8. Shared utility files go into the most closely related business feature, or into "shared-utilities" only if they truly cross all feature boundaries.
+9. For monorepo structures, group by business feature across packages when the same domain spans multiple packages.
+
+## Anti-patterns
+
+BAD — grouping by technical layer:
+  "components": [LoginForm.tsx, CheckoutForm.tsx, Dashboard.tsx]
+  "api": [auth.ts, payments.ts, analytics.ts]
+
+GOOD — grouping by business domain:
+  "user-auth": [LoginForm.tsx, auth.ts]
+  "checkout": [CheckoutForm.tsx, payments.ts]
+  "analytics": [Dashboard.tsx, analytics.ts]
+
+## Example
+
+Files:
+  components/LoginForm.tsx
+  components/CheckoutForm.tsx
+  api/auth/login.ts
+  api/payments/charge.ts
+  hooks/useSession.ts
+  utils/currency.ts
+
+Reasoning: LoginForm.tsx, api/auth/login.ts, and hooks/useSession.ts all serve user authentication across different technical layers. CheckoutForm.tsx and api/payments/charge.ts handle payment processing. utils/currency.ts is a shared utility — assign to the feature that uses it most.
+
+Result:
+  "user-auth": [components/LoginForm.tsx, api/auth/login.ts, hooks/useSession.ts]
+  "checkout": [components/CheckoutForm.tsx, api/payments/charge.ts, utils/currency.ts]\
 """
 
 _DETECTION_USER_PROMPT = """\
@@ -44,9 +86,8 @@ Analyze these repository files and group them into semantic business features.
 
 <file_list>
 {file_tree}
-</file_list>
-
-Return the JSON mapping of features to files. Remember: skip infrastructure/config files, minimum 2 files per feature, each file in exactly one feature, use business domain names.\
+</file_list>{extra_context}
+Return the JSON mapping of features to files. Skip infrastructure/config files. Each file in exactly one feature. Use business domain names.\
 """
 
 
@@ -71,10 +112,15 @@ class _EnrichmentResponse(BaseModel):
 def detect_features_llm(
     files: list[str],
     api_key: str | None = None,
+    commits: list[Commit] | None = None,
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to Claude and returns a semantic feature mapping.
     Returns {} on any error (caller falls back to heuristic detection).
+
+    When commits are provided, enriches the prompt with:
+    - Co-change pairs (files that frequently change together)
+    - Commit message keywords per directory
 
     For large repos (>_DIR_COLLAPSE_THRESHOLD files), collapses to unique directories
     before sending to the LLM — saves tokens and improves accuracy. The returned
@@ -83,6 +129,7 @@ def detect_features_llm(
     Args:
         files: List of file paths tracked in the repo (relative paths).
         api_key: Anthropic API key. Falls back to ANTHROPIC_API_KEY env var.
+        commits: Optional commit history for co-change and keyword enrichment.
 
     Returns:
         dict mapping feature names to lists of file paths.
@@ -93,16 +140,22 @@ def detect_features_llm(
         return {}
 
     client = anthropic.Anthropic(api_key=key)
+    cochange_pairs = _compute_cochange(commits) if commits else []
 
     if len(files) > _DIR_COLLAPSE_THRESHOLD:
-        # Send unique directories instead of individual files — 10–50x fewer tokens
         dirs = _unique_dirs(files)
-        response = _call_feature_detection(client, dirs)
+        samples = _dir_to_sample_files(dirs, files)
+        dir_keywords = _extract_dir_keywords(dirs, files, commits) if commits else {}
+        file_tree = _format_dir_tree(dirs, samples)
+        extra_context = _format_extra_context(cochange_pairs, dir_keywords)
+        response = _call_feature_detection(client, file_tree, extra_context)
         if not response:
             return {}
         return _expand_dir_mapping(response, files)
     else:
-        response = _call_feature_detection(client, files[:_MAX_FILES_FOR_DETECTION])
+        file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
+        extra_context = _format_extra_context(cochange_pairs, {})
+        response = _call_feature_detection(client, file_tree, extra_context)
         if not response:
             return {}
         return _build_feature_dict(response, set(files))
@@ -110,11 +163,11 @@ def detect_features_llm(
 
 def _call_feature_detection(
     client: anthropic.Anthropic,
-    files: list[str],
+    file_tree: str,
+    extra_context: str = "",
 ) -> _FeatureDetectionResponse | None:
     """Calls Claude API for feature detection. Returns None on any failure."""
-    file_tree = "\n".join(files)
-    prompt = _DETECTION_USER_PROMPT.format(file_tree=file_tree)
+    prompt = _DETECTION_USER_PROMPT.format(file_tree=file_tree, extra_context=extra_context)
 
     try:
         response = client.messages.parse(
@@ -144,7 +197,6 @@ def _build_feature_dict(
     """Converts the LLM response into a dict, filtering out unknown file paths."""
     result: dict[str, list[str]] = {}
     for mapping in response.features:
-        # Safety check: only keep files that actually exist in the repo
         valid_files = [f for f in mapping.files if f in allowed_files]
         if valid_files:
             result[mapping.feature_name] = valid_files
@@ -155,10 +207,6 @@ def _unique_dirs(files: list[str]) -> list[str]:
     """
     Extracts unique directory paths from a file list, sorted.
     Skips the root (files with no parent directory).
-
-    Example:
-        ["EDR/Page.tsx", "EDR/hooks/useData.ts", "Firewall/Form.tsx"]
-        → ["EDR", "EDR/hooks", "Firewall"]
     """
     dirs: set[str] = set()
     for f in files:
@@ -166,6 +214,104 @@ def _unique_dirs(files: list[str]) -> list[str]:
         if parent != ".":
             dirs.add(parent)
     return sorted(dirs)
+
+
+def _dir_to_sample_files(dirs: list[str], all_files: list[str]) -> dict[str, list[str]]:
+    """For each directory, returns up to _DIR_SAMPLE_FILES representative file names."""
+    samples: dict[str, list[str]] = {d: [] for d in dirs}
+    for f in all_files:
+        parent = str(Path(f).parent)
+        if parent in samples and len(samples[parent]) < _DIR_SAMPLE_FILES:
+            samples[parent].append(Path(f).name)
+    return samples
+
+
+def _format_dir_tree(dirs: list[str], samples: dict[str, list[str]]) -> str:
+    """Formats directories with sample file names for the LLM prompt."""
+    lines = []
+    for d in dirs:
+        s = samples.get(d, [])
+        suffix = f" → {', '.join(s)}" if s else ""
+        lines.append(f"  {d}{suffix}")
+    return "\n".join(lines)
+
+
+def _extract_dir_keywords(
+    dirs: list[str],
+    all_files: list[str],
+    commits: list[Commit],
+) -> dict[str, list[str]]:
+    """Extracts top commit message keywords per directory from git history."""
+    from collections import Counter
+
+    dir_set = set(dirs)
+    dir_counters: dict[str, Counter] = {d: Counter() for d in dirs}
+
+    file_to_dir: dict[str, str] = {}
+    for f in all_files:
+        parent = str(Path(f).parent)
+        if parent in dir_set:
+            file_to_dir[f] = parent
+
+    word_pattern = re.compile(r"[a-z]{3,}")
+    for commit in commits:
+        words = {
+            w for w in word_pattern.findall(commit.message.lower())
+            if w not in _COMMIT_STOP_WORDS
+        }
+        dirs_touched: set[str] = set()
+        for f in commit.files_changed:
+            if f in file_to_dir:
+                dirs_touched.add(file_to_dir[f])
+        for d in dirs_touched:
+            dir_counters[d].update(words)
+
+    return {
+        d: [w for w, _ in counter.most_common(4)]
+        for d, counter in dir_counters.items()
+        if counter
+    }
+
+
+def _compute_cochange(commits: list[Commit]) -> list[tuple[str, str, float]]:
+    """Delegates co-change computation to the features module."""
+    from faultline.analyzer.features import compute_cochange
+    return compute_cochange(commits)
+
+
+def _format_extra_context(
+    cochange_pairs: list[tuple[str, str, float]],
+    dir_keywords: dict[str, list[str]],
+) -> str:
+    """Builds an extra context block to append to the LLM feature detection prompt."""
+    parts: list[str] = []
+
+    if cochange_pairs:
+        lines = [
+            f"  {f1} ↔ {f2} ({int(s * 100)}%)"
+            for f1, f2, s in cochange_pairs[:_MAX_COCHANGE_IN_PROMPT]
+        ]
+        parts.append(
+            "<co-changes>\n"
+            "Files changed together frequently — strong signal they belong to the same feature:\n"
+            + "\n".join(lines)
+            + "\n</co-changes>"
+        )
+
+    kw_lines = [
+        f"  {d} → {', '.join(kws)}"
+        for d, kws in dir_keywords.items()
+        if kws
+    ]
+    if kw_lines:
+        parts.append(
+            "<commit-topics>\n"
+            "Top commit message topics per directory:\n"
+            + "\n".join(kw_lines)
+            + "\n</commit-topics>"
+        )
+
+    return ("\n\n" + "\n\n".join(parts) + "\n") if parts else ""
 
 
 def _expand_dir_mapping(
@@ -176,11 +322,9 @@ def _expand_dir_mapping(
     Expands a directory-level feature mapping to file-level.
     LLM returned directories → we assign all files under those dirs to the feature.
     """
-    # Build dir → files index
     dir_to_files: dict[str, list[str]] = {}
     for f in all_files:
         parts = Path(f).parts
-        # Index every ancestor directory of this file
         for i in range(1, len(parts)):
             d = str(Path(*parts[:i]))
             dir_to_files.setdefault(d, []).append(f)
@@ -191,7 +335,8 @@ def _expand_dir_mapping(
     for mapping in response.features:
         feature_files: list[str] = []
         for d in mapping.files:
-            for f in dir_to_files.get(d, []):
+            d_clean = d.rstrip("/").strip()  # normalize trailing slashes from LLM
+            for f in dir_to_files.get(d_clean, []):
                 if f not in assigned:
                     feature_files.append(f)
                     assigned.add(f)
@@ -240,6 +385,7 @@ def detect_features_ollama(
     files: list[str],
     model: str = _DEFAULT_OLLAMA_MODEL,
     host: str = _DEFAULT_OLLAMA_HOST,
+    commits: list[Commit] | None = None,
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to a local Ollama model and returns a semantic feature mapping.
@@ -249,6 +395,7 @@ def detect_features_ollama(
         files: List of file paths tracked in the repo (relative paths).
         model: Ollama model name (e.g. 'qwen2.5-coder:7b', 'llama3.2').
         host: Ollama server URL.
+        commits: Optional commit history for co-change enrichment.
 
     Returns:
         dict mapping feature names to lists of file paths.
@@ -257,8 +404,11 @@ def detect_features_ollama(
     if not files:
         return {}
 
-    capped_files = files[:_MAX_FILES_FOR_DETECTION]
-    response = _call_feature_detection_ollama(capped_files, model, host)
+    cochange_pairs = _compute_cochange(commits) if commits else []
+    file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
+    extra_context = _format_extra_context(cochange_pairs, {})
+
+    response = _call_feature_detection_ollama(file_tree, model, host, extra_context)
     if not response:
         return {}
 
@@ -267,9 +417,10 @@ def detect_features_ollama(
 
 
 def _call_feature_detection_ollama(
-    files: list[str],
+    file_tree: str,
     model: str,
     host: str,
+    extra_context: str = "",
 ) -> _FeatureDetectionResponse | None:
     """Calls Ollama API for feature detection. Returns None on any failure."""
     try:
@@ -277,8 +428,7 @@ def _call_feature_detection_ollama(
     except ImportError:
         return None
 
-    file_tree = "\n".join(files)
-    prompt = _DETECTION_USER_PROMPT.format(file_tree=file_tree)
+    prompt = _DETECTION_USER_PROMPT.format(file_tree=file_tree, extra_context=extra_context)
 
     try:
         client = _ollama.Client(host=host)
@@ -304,7 +454,6 @@ def validate_api_key(api_key: str | None = None) -> tuple[bool, str]:
     if not key:
         return False, "No API key provided. Use --api-key or set ANTHROPIC_API_KEY env var."
 
-    # Basic format check — Anthropic keys start with "sk-ant-"
     if not key.startswith("sk-ant-"):
         return False, (
             f"Key format looks wrong (got: {key[:10]}...). "
