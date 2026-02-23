@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from featuremap.models.types import Commit, Feature, FeatureMap
+from faultline.models.types import Commit, Feature, FeatureMap
 
 
 def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:

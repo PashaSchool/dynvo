@@ -4,7 +4,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-from featuremap.models.types import FeatureMap, Feature
+from faultline.models.types import FeatureMap, Feature
 
 console = Console()
 

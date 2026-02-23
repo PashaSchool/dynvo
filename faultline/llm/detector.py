@@ -5,7 +5,7 @@ from pathlib import Path
 import anthropic
 from pydantic import BaseModel, ValidationError
 
-from featuremap.models.types import Feature
+from faultline.models.types import Feature
 
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_SAMPLE_PATHS = 5
@@ -213,7 +213,7 @@ def validate_ollama(
         import ollama as _ollama
     except ImportError:
         return False, (
-            "ollama package not installed. Run: pip install 'featuremap[ollama]' "
+            "ollama package not installed. Run: pip install 'faultline[ollama]' "
             "or: pip install ollama"
         )
 

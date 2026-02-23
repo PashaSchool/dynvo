@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import anthropic
 import pytest
 
-from featuremap.llm.detector import (
+from faultline.llm.detector import (
     _FeatureDetectionResponse,
     _FeatureFileMapping,
     _MAX_FILES_FOR_DETECTION,
@@ -24,7 +24,7 @@ def make_mock_response(features_data: list[dict]) -> MagicMock:
     return mock_response
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_returns_empty_when_no_api_key(mock_cls, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
@@ -34,7 +34,7 @@ def test_returns_empty_when_no_api_key(mock_cls, monkeypatch):
     mock_cls.assert_not_called()
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_returns_empty_when_files_empty(mock_cls):
     result = detect_features_llm([], api_key="sk-ant-test")
 
@@ -42,7 +42,7 @@ def test_returns_empty_when_files_empty(mock_cls):
     mock_cls.assert_not_called()
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_returns_feature_mapping_on_success(mock_cls):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
@@ -62,7 +62,7 @@ def test_returns_feature_mapping_on_success(mock_cls):
     }
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_fallback_on_authentication_error(mock_cls):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
@@ -77,7 +77,7 @@ def test_fallback_on_authentication_error(mock_cls):
     assert result == {}
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_fallback_on_rate_limit_error(mock_cls):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
@@ -92,7 +92,7 @@ def test_fallback_on_rate_limit_error(mock_cls):
     assert result == {}
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_fallback_on_api_connection_error(mock_cls):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
@@ -105,7 +105,7 @@ def test_fallback_on_api_connection_error(mock_cls):
     assert result == {}
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_filters_unknown_files_from_response(mock_cls):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
@@ -125,7 +125,7 @@ def test_filters_unknown_files_from_response(mock_cls):
     assert "src/auth/unknown.py" not in result.get("user-auth", [])
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_collapses_to_dirs_for_large_repos(mock_cls):
     """For repos > _DIR_COLLAPSE_THRESHOLD files, sends unique dirs instead of individual files."""
     mock_client = MagicMock()
@@ -149,7 +149,7 @@ def test_collapses_to_dirs_for_large_repos(mock_cls):
     assert any(line.startswith("feature_") and "component_" not in line for line in sent_lines)
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_reads_api_key_from_env_var(mock_cls, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env-key")
     mock_client = MagicMock()
@@ -164,7 +164,7 @@ def test_reads_api_key_from_env_var(mock_cls, monkeypatch):
     assert result == {"core": ["src/main.py"]}
 
 
-@patch("featuremap.llm.detector.anthropic.Anthropic")
+@patch("faultline.llm.detector.anthropic.Anthropic")
 def test_features_with_no_valid_files_are_excluded(mock_cls):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "featuremap"
+name = "faultline"
 version = "0.1.0"
 description = "Analyze git history to map features and track technical debt"
 requires-python = ">=3.11"
@@ -19,7 +19,7 @@ dependencies = [
 ollama = ["ollama>=0.4.0"]
 
 [project.scripts]
-featuremap = "featuremap.cli:app"
+faultline = "faultline.cli:app"
 
 [tool.hatch.envs.default]
 dependencies = [
