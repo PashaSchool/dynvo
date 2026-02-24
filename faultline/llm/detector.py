@@ -13,6 +13,10 @@ _MAX_SAMPLE_PATHS = 5
 _MAX_FEATURES_PER_CALL = 50
 _MAX_FILES_FOR_DETECTION = 500
 
+# Token budgets — dir-collapse responses list hundreds of directory paths
+_MAX_TOKENS_FILE = 16_384
+_MAX_TOKENS_DIR  = 32_768
+
 _DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:7b"
 _DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
@@ -90,6 +94,78 @@ Analyze these repository files and group them into semantic business features.
 Return the JSON mapping of features to files. Skip infrastructure/config files. Each file in exactly one feature. Use business domain names.\
 """
 
+# ── Dir-collapse variants (used when file count > _DIR_COLLAPSE_THRESHOLD) ──
+# The input is DIRECTORIES (with sample filenames for context), not individual
+# files. The LLM must return directory paths in the `files` field, not filenames.
+
+_DIR_DETECTION_SYSTEM_PROMPT = """\
+You are a senior software architect grouping a large codebase's directories into semantic business features.
+
+## Task
+
+You will receive a list of DIRECTORIES. Each line shows a directory path, optionally followed \
+by → and a few sample filenames to illustrate what that directory contains. \
+Indented lines are subdirectories of the line above them — use this nesting to understand \
+how the codebase is structured.
+
+Group these directories into business features. A feature is a user-facing capability or \
+business domain area, not a technical layer.
+
+## Rules
+
+1. Group directories by the business domain they serve, not by technical role.
+2. Feature names: lowercase, hyphen-separated, 1-3 words. \
+   Examples: "user-auth", "app-router", "build-pipeline", "image-optimization".
+3. Every directory must appear in exactly one feature. No omissions.
+4. The `files` field in your response must contain DIRECTORY PATHS exactly as shown in the \
+   input — not the sample filenames after →, not expanded sub-paths, not invented paths.
+5. Be granular — prefer many focused features over a few broad ones. \
+   Deeply nested subdirectories with distinct responsibilities often warrant their own feature.
+6. Sibling subdirectories that serve different concerns should be separate features even if \
+   they share a parent directory.
+7. Merge only truly tiny or ambiguous leaf directories into the closest related feature.
+8. Skip pure infrastructure directories: .storybook, __mocks__, .github, ci/, scripts/, etc.
+
+## Anti-patterns
+
+BAD — grouping too broadly (one feature swallows 30 dirs):
+  "server": ["server/app-render", "server/app-render/utils", "server/edge-runtime", ...]  ← TOO BROAD
+
+GOOD — granular, each feature is a distinct concern:
+  "app-router":    ["server/app-render", "server/app-render/utils"]
+  "edge-runtime":  ["server/edge-runtime", "server/edge-runtime/utils"]
+
+BAD — putting individual filenames in `files`:
+  "auth": ["LoginForm.tsx", "useAuth.ts"]  ← WRONG, these are filenames not directories
+
+GOOD — putting directory paths exactly as listed:
+  "auth": ["src/auth", "src/hooks/auth", "src/api/auth"]  ← correct
+
+## Example
+
+Input:
+  src/auth → LoginForm.tsx, useSession.ts
+    src/auth/utils → token.ts
+  src/api/auth → login.ts, logout.ts
+  src/payments → CheckoutForm.tsx, stripe.ts
+    src/payments/hooks → useCheckout.ts
+  src/api/payments → charge.ts, refund.ts
+
+Result:
+  "user-auth": ["src/auth", "src/auth/utils", "src/api/auth"]
+  "checkout":  ["src/payments", "src/payments/hooks", "src/api/payments"]\
+"""
+
+_DIR_DETECTION_USER_PROMPT = """\
+Group these directories into semantic business features.
+{feature_hint}
+<directories>
+{file_tree}
+</directories>{extra_context}
+Return directory paths exactly as listed above in the `files` field (not individual filenames). \
+Every directory in exactly one feature. Use business domain names.\
+"""
+
 
 class _FeatureFileMapping(BaseModel):
     feature_name: str
@@ -113,6 +189,7 @@ def detect_features_llm(
     files: list[str],
     api_key: str | None = None,
     commits: list[Commit] | None = None,
+    path_prefix: str = "",
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to Claude and returns a semantic feature mapping.
@@ -127,9 +204,11 @@ def detect_features_llm(
     feature→files mapping is then expanded back to full file paths.
 
     Args:
-        files: List of file paths tracked in the repo (relative paths).
+        files: List of file paths (relative, with path_prefix already stripped).
         api_key: Anthropic API key. Falls back to ANTHROPIC_API_KEY env var.
         commits: Optional commit history for co-change and keyword enrichment.
+        path_prefix: Prefix stripped from files (e.g. "src/"). Used to normalize
+            commit paths so they match the stripped file paths.
 
     Returns:
         dict mapping feature names to lists of file paths.
@@ -140,15 +219,18 @@ def detect_features_llm(
         return {}
 
     client = anthropic.Anthropic(api_key=key)
-    cochange_pairs = _compute_cochange(commits) if commits else []
+
+    # Normalize commit file paths to match analysis_files (which have path_prefix stripped)
+    norm_commits = _normalize_commit_files(commits, path_prefix) if commits and path_prefix else commits
+    cochange_pairs = _compute_cochange(norm_commits) if norm_commits else []
 
     if len(files) > _DIR_COLLAPSE_THRESHOLD:
         dirs = _unique_dirs(files)
         samples = _dir_to_sample_files(dirs, files)
-        dir_keywords = _extract_dir_keywords(dirs, files, commits) if commits else {}
+        dir_keywords = _extract_dir_keywords(dirs, files, norm_commits) if norm_commits else {}
         file_tree = _format_dir_tree(dirs, samples)
         extra_context = _format_extra_context(cochange_pairs, dir_keywords)
-        response = _call_feature_detection(client, file_tree, extra_context)
+        response = _call_dir_detection(client, file_tree, n_dirs=len(dirs), extra_context=extra_context)
         if not response:
             return {}
         return _expand_dir_mapping(response, files)
@@ -166,14 +248,53 @@ def _call_feature_detection(
     file_tree: str,
     extra_context: str = "",
 ) -> _FeatureDetectionResponse | None:
-    """Calls Claude API for feature detection. Returns None on any failure."""
+    """Calls Claude API for feature detection (file-path mode). Returns None on any failure."""
     prompt = _DETECTION_USER_PROMPT.format(file_tree=file_tree, extra_context=extra_context)
 
     try:
         response = client.messages.parse(
             model=_MODEL,
-            max_tokens=8192,
+            max_tokens=_MAX_TOKENS_FILE,
             system=_DETECTION_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+            output_format=_FeatureDetectionResponse,
+        )
+        return response.parsed_output
+    except (
+        anthropic.AuthenticationError,
+        anthropic.PermissionDeniedError,
+        anthropic.NotFoundError,
+        anthropic.RateLimitError,
+        anthropic.APIStatusError,
+        anthropic.APIConnectionError,
+        ValidationError,
+    ):
+        return None
+
+
+def _call_dir_detection(
+    client: anthropic.Anthropic,
+    file_tree: str,
+    n_dirs: int,
+    extra_context: str = "",
+) -> _FeatureDetectionResponse | None:
+    """
+    Calls Claude API for dir-collapse feature detection.
+    Uses dir-specific prompts and a larger token budget to accommodate
+    responses that list hundreds of directory paths.
+    Returns None on any failure.
+    """
+    prompt = _DIR_DETECTION_USER_PROMPT.format(
+        file_tree=file_tree,
+        feature_hint=_feature_count_hint(n_dirs),
+        extra_context=extra_context,
+    )
+
+    try:
+        response = client.messages.parse(
+            model=_MODEL,
+            max_tokens=_MAX_TOKENS_DIR,
+            system=_DIR_DETECTION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
             output_format=_FeatureDetectionResponse,
         )
@@ -227,13 +348,49 @@ def _dir_to_sample_files(dirs: list[str], all_files: list[str]) -> dict[str, lis
 
 
 def _format_dir_tree(dirs: list[str], samples: dict[str, list[str]]) -> str:
-    """Formats directories with sample file names for the LLM prompt."""
+    """
+    Formats directories with sample file names and hierarchical indentation.
+    Child directories (whose parent also appears in the list) are indented to
+    visually communicate nesting depth to the LLM.
+    """
+    dir_set = set(dirs)
     lines = []
     for d in dirs:
+        depth = _dir_nesting_depth(d, dir_set)
+        indent = "  " * (depth + 1)
         s = samples.get(d, [])
         suffix = f" → {', '.join(s)}" if s else ""
-        lines.append(f"  {d}{suffix}")
+        lines.append(f"{indent}{d}{suffix}")
     return "\n".join(lines)
+
+
+def _dir_nesting_depth(d: str, dir_set: set[str]) -> int:
+    """
+    Returns how many ancestor directories of `d` also appear in `dir_set`.
+    Used to compute indentation depth for the dir tree.
+    """
+    depth = 0
+    current = d
+    while True:
+        parent = str(Path(current).parent)
+        if parent == "." or parent == current:
+            break
+        if parent in dir_set:
+            depth += 1
+        current = parent
+    return depth
+
+
+def _feature_count_hint(n_dirs: int) -> str:
+    """Generates a feature-count guidance line for the dir-collapse prompt."""
+    min_f = max(8, n_dirs // 15)
+    max_f = max(15, n_dirs // 7)
+    return (
+        f"\nYou have {n_dirs} directories. "
+        f"Aim for {min_f}–{max_f} focused features. "
+        "Be granular — deeply nested subdirectories with distinct responsibilities "
+        "should be separate features, not merged into one broad group.\n"
+    )
 
 
 def _extract_dir_keywords(
@@ -271,6 +428,22 @@ def _extract_dir_keywords(
         for d, counter in dir_counters.items()
         if counter
     }
+
+
+def _normalize_commit_files(commits: list[Commit], path_prefix: str) -> list[Commit]:
+    """
+    Returns commits with path_prefix stripped from each file path.
+    Needed when --src is used: commits retain full paths (src/auth/...)
+    but analysis_files have the prefix stripped (auth/...).
+    """
+    result = []
+    for c in commits:
+        stripped = [
+            f[len(path_prefix):] if f.startswith(path_prefix) else f
+            for f in c.files_changed
+        ]
+        result.append(c.model_copy(update={"files_changed": stripped}))
+    return result
 
 
 def _compute_cochange(commits: list[Commit]) -> list[tuple[str, str, float]]:
@@ -386,16 +559,19 @@ def detect_features_ollama(
     model: str = _DEFAULT_OLLAMA_MODEL,
     host: str = _DEFAULT_OLLAMA_HOST,
     commits: list[Commit] | None = None,
+    path_prefix: str = "",
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to a local Ollama model and returns a semantic feature mapping.
     Returns {} on any error (caller falls back to heuristic detection).
 
     Args:
-        files: List of file paths tracked in the repo (relative paths).
+        files: List of file paths (relative, with path_prefix already stripped).
         model: Ollama model name (e.g. 'qwen2.5-coder:7b', 'llama3.2').
         host: Ollama server URL.
         commits: Optional commit history for co-change enrichment.
+        path_prefix: Prefix stripped from files (e.g. "src/"). Used to normalize
+            commit paths so they match the stripped file paths.
 
     Returns:
         dict mapping feature names to lists of file paths.
@@ -404,16 +580,26 @@ def detect_features_ollama(
     if not files:
         return {}
 
-    cochange_pairs = _compute_cochange(commits) if commits else []
-    file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
-    extra_context = _format_extra_context(cochange_pairs, {})
+    norm_commits = _normalize_commit_files(commits, path_prefix) if commits and path_prefix else commits
+    cochange_pairs = _compute_cochange(norm_commits) if norm_commits else []
 
-    response = _call_feature_detection_ollama(file_tree, model, host, extra_context)
-    if not response:
-        return {}
-
-    allowed_files = set(files)
-    return _build_feature_dict(response, allowed_files)
+    if len(files) > _DIR_COLLAPSE_THRESHOLD:
+        dirs = _unique_dirs(files)
+        samples = _dir_to_sample_files(dirs, files)
+        dir_keywords = _extract_dir_keywords(dirs, files, norm_commits) if norm_commits else {}
+        file_tree = _format_dir_tree(dirs, samples)
+        extra_context = _format_extra_context(cochange_pairs, dir_keywords)
+        response = _call_dir_detection_ollama(file_tree, model, host, n_dirs=len(dirs), extra_context=extra_context)
+        if not response:
+            return {}
+        return _expand_dir_mapping(response, files)
+    else:
+        file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
+        extra_context = _format_extra_context(cochange_pairs, {})
+        response = _call_feature_detection_ollama(file_tree, model, host, extra_context)
+        if not response:
+            return {}
+        return _build_feature_dict(response, set(files))
 
 
 def _call_feature_detection_ollama(
@@ -422,7 +608,7 @@ def _call_feature_detection_ollama(
     host: str,
     extra_context: str = "",
 ) -> _FeatureDetectionResponse | None:
-    """Calls Ollama API for feature detection. Returns None on any failure."""
+    """Calls Ollama API for feature detection (file-path mode). Returns None on any failure."""
     try:
         import ollama as _ollama
     except ImportError:
@@ -436,6 +622,44 @@ def _call_feature_detection_ollama(
             model=model,
             messages=[
                 {"role": "system", "content": _DETECTION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            format=_FeatureDetectionResponse.model_json_schema(),
+        )
+        return _FeatureDetectionResponse.model_validate_json(response.message.content)
+    except (ValidationError, Exception):
+        return None
+
+
+def _call_dir_detection_ollama(
+    file_tree: str,
+    model: str,
+    host: str,
+    n_dirs: int,
+    extra_context: str = "",
+) -> _FeatureDetectionResponse | None:
+    """
+    Calls Ollama API for dir-collapse feature detection.
+    Uses dir-specific prompts so the model returns directory paths, not filenames.
+    Returns None on any failure.
+    """
+    try:
+        import ollama as _ollama
+    except ImportError:
+        return None
+
+    prompt = _DIR_DETECTION_USER_PROMPT.format(
+        file_tree=file_tree,
+        feature_hint=_feature_count_hint(n_dirs),
+        extra_context=extra_context,
+    )
+
+    try:
+        client = _ollama.Client(host=host)
+        response = client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": _DIR_DETECTION_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             format=_FeatureDetectionResponse.model_json_schema(),

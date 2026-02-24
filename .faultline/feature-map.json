@@ -1,8 +1,8 @@
 {
   "repo_path": "/Users/pkuzina/workspace/platform",
-  "analyzed_at": "2026-02-23T16:37:55.167367Z",
-  "total_commits": 5000,
-  "date_range_days": 365,
+  "analyzed_at": "2026-02-23T16:53:40.018224Z",
+  "total_commits": 393,
+  "date_range_days": 30,
   "features": [
     {
       "name": "root",
@@ -28,161 +28,83 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
         "omer-nachshon",
-        "Pavlo Kuzina"
+        "avi-port0io",
+        "Pavlo Kuzina",
+        "Omer Nachshon",
+        "Yossi-Friedman",
+        "avisassonport0"
       ],
-      "total_commits": 275,
-      "bug_fixes": 39,
-      "bug_fix_ratio": 0.142,
+      "total_commits": 35,
+      "bug_fixes": 10,
+      "bug_fix_ratio": 0.286,
       "last_modified": "2026-02-16T19:13:47Z",
-      "health_score": 71.6,
+      "health_score": 40.3,
       "flows": [
         {
           "name": "app-initialization-flow",
           "description": null,
           "paths": [
             "src/App.tsx",
+            "src/ServiceWorkerHandler.tsx",
             "src/main.tsx",
             "src/vite-env.d.ts",
-            "src/ServiceWorkerHandler.tsx",
             "src/customCss.css",
-            "src/index.css"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 205,
-          "bug_fixes": 27,
-          "bug_fix_ratio": 0.132,
-          "last_modified": "2026-02-11T11:08:53Z",
-          "health_score": 73.7
-        },
-        {
-          "name": "onboarding-flow",
-          "description": null,
-          "paths": [
-            "src/components/NoIntegrationsEmptyState.tsx",
-            "src/components/OnboardingConnectionForm.tsx",
-            "src/components/OnboardingWalkthrough.tsx",
-            "src/components/Composition.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 33,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.152,
-          "last_modified": "2026-02-11T11:08:53Z",
-          "health_score": 65.0
-        },
-        {
-          "name": "session-management-flow",
-          "description": null,
-          "paths": [
-            "src/components/SessionCacheManager.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 29,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.138,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 66.3
-        },
-        {
-          "name": "layout-navigation-flow",
-          "description": null,
-          "paths": [
-            "src/components/layouts/ChooseOrgPage.tsx",
+            "src/index.css",
+            "src/components/SessionCacheManager.tsx",
+            "src/views/Views.tsx",
+            "src/views/index.ts",
             "src/components/layouts/Layouts.tsx",
+            "src/components/layouts/ChooseOrgPage.tsx",
             "src/components/layouts/ModernLayout.tsx",
             "src/components/layouts/index.ts"
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
             "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "Omer Nachshon",
+            "Yossi-Friedman",
+            "avisassonport0"
           ],
-          "total_commits": 105,
-          "bug_fixes": 15,
-          "bug_fix_ratio": 0.143,
+          "total_commits": 31,
+          "bug_fixes": 10,
+          "bug_fix_ratio": 0.323,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 71.4
+          "health_score": 32.8
         },
         {
-          "name": "routing-flow",
+          "name": "onboarding-setup-flow",
           "description": null,
           "paths": [
-            "src/views/Views.tsx",
-            "src/views/index.ts"
+            "src/components/OnboardingConnectionForm.tsx",
+            "src/components/OnboardingWalkthrough.tsx",
+            "src/components/NoIntegrationsEmptyState.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "avisassonport0"
           ],
-          "total_commits": 59,
-          "bug_fixes": 8,
-          "bug_fix_ratio": 0.136,
-          "last_modified": "2026-01-26T14:14:36Z",
-          "health_score": 72.9
+          "total_commits": 12,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.083,
+          "last_modified": "2026-02-11T11:08:53Z",
+          "health_score": 70.7
+        },
+        {
+          "name": "component-composition-flow",
+          "description": null,
+          "paths": [
+            "src/components/Composition.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:42.959185Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -195,54 +117,28 @@
         "src/@types/routes.tsx",
         "src/@types/theme.ts"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 32,
-      "bug_fixes": 5,
-      "bug_fix_ratio": 0.156,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 63.8,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.017791Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "type-definition-flow",
+          "name": "theme-configuration-flow",
           "description": null,
           "paths": [
-            "src/@types/common.ts",
-            "src/@types/navigation.ts",
+            "src/@types/theme.ts",
             "src/@types/routes.tsx",
-            "src/@types/theme.ts"
+            "src/@types/common.ts",
+            "src/@types/navigation.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 32,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.156,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 63.8
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:44.439411Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -252,35 +148,25 @@
       "paths": [
         "src/GLOBALS/GLOBALS.ts"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 4,
-      "bug_fixes": 2,
-      "bug_fix_ratio": 0.5,
-      "last_modified": "2025-07-27T16:55:03Z",
-      "health_score": 0.0,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.017815Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "globals-configuration-flow",
+          "name": "globals-config-flow",
           "description": null,
           "paths": [
             "src/GLOBALS/GLOBALS.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 4,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.5,
-          "last_modified": "2025-07-27T16:55:03Z",
-          "health_score": 0.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:45.775345Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -290,35 +176,25 @@
       "paths": [
         "src/Providers/ReactQueryProvider.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 4,
-      "bug_fixes": 2,
-      "bug_fix_ratio": 0.5,
-      "last_modified": "2025-07-27T16:55:03Z",
-      "health_score": 0.0,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.017821Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "query-setup-flow",
+          "name": "query-initialization-flow",
           "description": null,
           "paths": [
             "src/Providers/ReactQueryProvider.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 4,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.5,
-          "last_modified": "2025-07-27T16:55:03Z",
-          "health_score": 0.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:47.472450Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -336,28 +212,22 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Moti Shakuri",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
         "Guy Landoy",
+        "landoyport0",
+        "avi-port0io",
+        "Pavlo Kuzina",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 261,
-      "bug_fixes": 38,
-      "bug_fix_ratio": 0.146,
+      "total_commits": 40,
+      "bug_fixes": 7,
+      "bug_fix_ratio": 0.175,
       "last_modified": "2026-02-18T05:23:40Z",
-      "health_score": 70.9,
+      "health_score": 62.4,
       "flows": [
         {
-          "name": "cloudroute-access-flow",
+          "name": "cloudroute-navigation-flow",
           "description": null,
           "paths": [
             "src/configs/cloudroute.config.ts",
@@ -365,52 +235,17 @@
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
+            "Pavlo Kuzina",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Dor Elidan",
+            "avisassonport0"
           ],
-          "total_commits": 139,
-          "bug_fixes": 22,
-          "bug_fix_ratio": 0.158,
+          "total_commits": 19,
+          "bug_fixes": 4,
+          "bug_fix_ratio": 0.211,
           "last_modified": "2026-02-18T05:23:40Z",
-          "health_score": 68.3
-        },
-        {
-          "name": "data-query-flow",
-          "description": null,
-          "paths": [
-            "src/configs/reactQueryKeyStore.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Moti Shakuri",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 146,
-          "bug_fixes": 20,
-          "bug_fix_ratio": 0.137,
-          "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 72.6
+          "health_score": 50.7
         },
         {
           "name": "firebase-setup-flow",
@@ -420,47 +255,48 @@
             "src/configs/regionManager.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 44,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.159,
+          "total_commits": 11,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.091,
           "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 66.5
+          "health_score": 69.1
         },
         {
-          "name": "ui-config-flow",
+          "name": "query-caching-flow",
+          "description": null,
+          "paths": [
+            "src/configs/reactQueryKeyStore.ts"
+          ],
+          "authors": [
+            "PashaSchool",
+            "Guy Landoy",
+            "landoyport0",
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "Yossi-Friedman"
+          ],
+          "total_commits": 16,
+          "bug_fixes": 3,
+          "bug_fix_ratio": 0.188,
+          "last_modified": "2026-02-16T19:13:47Z",
+          "health_score": 54.0
+        },
+        {
+          "name": "theme-configuration-flow",
           "description": null,
           "paths": [
             "src/configs/theme.config.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 26,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.192,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 55.6
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:49.480437Z",
+          "health_score": 100.0
         },
         {
           "name": "app-initialization-flow",
@@ -468,17 +304,12 @@
           "paths": [
             "src/configs/app.config.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 4,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.5,
-          "last_modified": "2025-07-27T16:55:03Z",
-          "health_score": 0.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:49.480447Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -496,76 +327,75 @@
         "src/constants/ui-url_search_params.constant.ts"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
         "avi-port0io",
-        "Guy Landoy",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Pavlo Kuzina",
+        "PashaSchool"
       ],
-      "total_commits": 35,
-      "bug_fixes": 5,
-      "bug_fix_ratio": 0.143,
+      "total_commits": 6,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.167,
       "last_modified": "2026-02-10T13:19:37Z",
-      "health_score": 67.1,
+      "health_score": 54.9,
       "flows": [
         {
-          "name": "app-configuration-flow",
+          "name": "authentication-flow",
           "description": null,
           "paths": [
-            "src/constants/app.constant.ts",
-            "src/constants/theme.constant.ts",
             "src/constants/api.constant.ts",
-            "src/constants/ui-url_search_params.constant.ts",
+            "src/constants/app.constant.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:51.444786Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "detection-flow",
+          "description": null,
+          "paths": [
+            "src/constants/detections.constant.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:51.444856Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "system-config-flow",
+          "description": null,
+          "paths": [
+            "src/constants/os.constant.ts",
+            "src/constants/port.constant.ts",
             "src/constants/regions.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
             "avi-port0io",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 29,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.172,
+          "total_commits": 6,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.167,
           "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 60.0
+          "health_score": 54.9
         },
         {
-          "name": "detection-analysis-flow",
+          "name": "ui-customization-flow",
           "description": null,
           "paths": [
-            "src/constants/detections.constant.ts",
-            "src/constants/os.constant.ts",
-            "src/constants/port.constant.ts"
+            "src/constants/theme.constant.ts",
+            "src/constants/ui-url_search_params.constant.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 18,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.167,
-          "last_modified": "2025-10-01T07:49:40Z",
-          "health_score": 58.1
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:51.444904Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -590,62 +420,102 @@
         "src/customComponents/severityBarsStyles.css"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Yossi-Friedman"
       ],
-      "total_commits": 56,
-      "bug_fixes": 9,
-      "bug_fix_ratio": 0.161,
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
       "last_modified": "2026-01-26T14:14:36Z",
-      "health_score": 67.9,
+      "health_score": 80.4,
       "flows": [
         {
-          "name": "ui-component-display-flow",
+          "name": "table-display-flow",
+          "description": null,
+          "paths": [
+            "src/customComponents/CustomTableComponents.tsx",
+            "src/customComponents/CustomTableGridToggle.tsx",
+            "src/customComponents/DropdownTable.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:53.899628Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "modal-wizard-flow",
+          "description": null,
+          "paths": [
+            "src/customComponents/CustomModal.tsx",
+            "src/customComponents/CustomStepWizardCoundown.tsx"
+          ],
+          "authors": [
+            "Yossi-Friedman"
+          ],
+          "total_commits": 1,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-01-26T14:14:36Z",
+          "health_score": 80.4
+        },
+        {
+          "name": "activity-timeline-flow",
+          "description": null,
+          "paths": [
+            "src/customComponents/TimeLineActivity.tsx",
+            "src/customComponents/SeverityBars.tsx",
+            "src/customComponents/severityBarsStyles.css"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:53.899802Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "ui-component-flow",
           "description": null,
           "paths": [
             "src/customComponents/CustomCard.tsx",
-            "src/customComponents/CustomModal.tsx",
-            "src/customComponents/CustomStepWizardCoundown.tsx",
-            "src/customComponents/CustomTableComponents.tsx",
-            "src/customComponents/CustomTableGridToggle.tsx",
-            "src/customComponents/DropdownTable.tsx",
             "src/customComponents/EmojiSelector.tsx",
             "src/customComponents/ErrorAlertPage.tsx",
-            "src/customComponents/ErrorBoundary.tsx",
-            "src/customComponents/ProfileHeader.tsx",
-            "src/customComponents/SeverityBars.tsx",
-            "src/customComponents/SpecialButton.tsx",
-            "src/customComponents/TimeLineActivity.tsx",
             "src/customComponents/TooltipContainer.tsx",
-            "src/customComponents/severityBarsStyles.css"
+            "src/customComponents/SpecialButton.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:53.899822Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "error-handling-flow",
+          "description": null,
+          "paths": [
+            "src/customComponents/ErrorBoundary.tsx"
           ],
-          "total_commits": 56,
-          "bug_fixes": 9,
-          "bug_fix_ratio": 0.161,
-          "last_modified": "2026-01-26T14:14:36Z",
-          "health_score": 67.9
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:53.899836Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "profile-display-flow",
+          "description": null,
+          "paths": [
+            "src/customComponents/ProfileHeader.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:53.899849Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -666,128 +536,120 @@
         "src/customHooks/useTypedFlags.ts",
         "src/customHooks/useUserAccessCount.ts"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 47,
-      "bug_fixes": 5,
-      "bug_fix_ratio": 0.106,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 77.8,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.017858Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "time-range-flow",
+          "name": "time-range-selection-flow",
           "description": null,
           "paths": [
             "src/customHooks/useElasticSearchTimeRange.ts",
             "src/customHooks/useFirestoreTimeRange.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483341Z",
+          "health_score": 100.0
         },
         {
-          "name": "traffic-issues-flow",
+          "name": "traffic-issues-visualization-flow",
           "description": null,
           "paths": [
             "src/customHooks/useGetTrafficIssuesGraphData.ts",
             "src/customHooks/useGetUnresolvedTrafficIssuesPieChartData.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483526Z",
+          "health_score": 100.0
         },
         {
-          "name": "resource-access-flow",
+          "name": "security-groups-access-flow",
           "description": null,
           "paths": [
-            "src/customHooks/useGetResourceSecurityGroups.ts",
-            "src/customHooks/useNewPortalStates.ts",
-            "src/customHooks/useNewResourceStates.ts"
+            "src/customHooks/useGetResourceSecurityGroups.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483546Z",
+          "health_score": 100.0
         },
         {
-          "name": "ui-utility-flow",
+          "name": "resource-management-flow",
           "description": null,
           "paths": [
             "src/customHooks/useGetDrawerWidth.ts",
-            "src/customHooks/useKeyboardShortcuts.tsx",
-            "src/customHooks/useNetworkStatus.ts",
-            "src/customHooks/useTypedFlags.ts",
+            "src/customHooks/useNewPortalStates.ts",
+            "src/customHooks/useNewResourceStates.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483560Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "keyboard-navigation-flow",
+          "description": null,
+          "paths": [
+            "src/customHooks/useKeyboardShortcuts.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483578Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "network-status-flow",
+          "description": null,
+          "paths": [
+            "src/customHooks/useNetworkStatus.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483591Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "feature-flags-flow",
+          "description": null,
+          "paths": [
+            "src/customHooks/useTypedFlags.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483603Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "activity-tracking-flow",
+          "description": null,
+          "paths": [
             "src/customHooks/useUserAccessCount.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 47,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.106,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 77.8
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:56.483614Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -814,29 +676,20 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "cooperport1661",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
         "avi-port0io",
-        "Guy Landoy",
+        "Pavlo Kuzina",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 213,
-      "bug_fixes": 29,
-      "bug_fix_ratio": 0.136,
+      "total_commits": 26,
+      "bug_fixes": 5,
+      "bug_fix_ratio": 0.192,
       "last_modified": "2026-02-18T10:38:37Z",
-      "health_score": 72.8,
+      "health_score": 55.6,
       "flows": [
         {
-          "name": "export-flow",
+          "name": "data-export-flow",
           "description": null,
           "paths": [
             "src/customUtils/exportCSVUtils.ts",
@@ -844,45 +697,15 @@
             "src/customUtils/insightsExportUtils.ts",
             "src/customUtils/labelsExportUtils.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 48,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.146,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 70.3
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:59.161949Z",
+          "health_score": 100.0
         },
         {
-          "name": "permissions-flow",
-          "description": null,
-          "paths": [
-            "src/customUtils/documentPermissions.ts",
-            "src/customUtils/permissionsUtils.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 4,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.5,
-          "last_modified": "2025-07-27T16:55:03Z",
-          "health_score": 0.0
-        },
-        {
-          "name": "entity-display-flow",
+          "name": "entity-management-flow",
           "description": null,
           "paths": [
             "src/customUtils/entityMaps.tsx",
@@ -890,50 +713,44 @@
             "src/customUtils/textUtils.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 47,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.149,
+          "total_commits": 5,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.2,
           "last_modified": "2026-02-01T13:43:03Z",
-          "health_score": 69.4
+          "health_score": 49.2
         },
         {
           "name": "risk-assessment-flow",
           "description": null,
           "paths": [
             "src/customUtils/getRiskScore.ts",
-            "src/customUtils/severityToScoreMap.ts",
-            "src/customUtils/getNetworkRiskScore.ts"
+            "src/customUtils/getNetworkRiskScore.ts",
+            "src/customUtils/severityToScoreMap.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "cooperport1661",
-            "avisassonport0",
-            "IgorSelin",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:59.162142Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "access-control-flow",
+          "description": null,
+          "paths": [
+            "src/customUtils/documentPermissions.ts",
+            "src/customUtils/permissionsUtils.ts"
           ],
-          "total_commits": 29,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.172,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 60.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:59.162201Z",
+          "health_score": 100.0
         },
         {
           "name": "query-filtering-flow",
@@ -942,74 +759,32 @@
             "src/customUtils/getGroupsQueryConstraints.ts",
             "src/customUtils/integrationFieldUtils.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 25,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.2,
-          "last_modified": "2025-10-15T13:47:53Z",
-          "health_score": 54.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:53:59.162211Z",
+          "health_score": 100.0
         },
         {
-          "name": "navigation-flow",
+          "name": "ui-configuration-flow",
           "description": null,
           "paths": [
-            "src/customUtils/getNavbarGroups.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 142,
-          "bug_fixes": 20,
-          "bug_fix_ratio": 0.141,
-          "last_modified": "2026-02-18T10:38:37Z",
-          "health_score": 71.8
-        },
-        {
-          "name": "table-styling-flow",
-          "description": null,
-          "paths": [
+            "src/customUtils/getNavbarGroups.ts",
             "src/customUtils/infTableStyles.ts"
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
+            "avi-port0io",
+            "Yossi-Friedman",
             "Dor Elidan",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avisassonport0"
           ],
-          "total_commits": 21,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.143,
-          "last_modified": "2025-10-15T13:47:53Z",
-          "health_score": 63.1
+          "total_commits": 22,
+          "bug_fixes": 4,
+          "bug_fix_ratio": 0.182,
+          "last_modified": "2026-02-18T10:38:37Z",
+          "health_score": 56.5
         }
       ]
     },
@@ -1023,75 +798,64 @@
         "src/generalComponents/StepWizrad.tsx",
         "src/generalComponents/ToastComponent.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 52,
-      "bug_fixes": 7,
-      "bug_fix_ratio": 0.135,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 73.1,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.017885Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "form-input-flow",
+          "name": "date-selection-flow",
           "description": null,
           "paths": [
-            "src/generalComponents/DateComponent.tsx",
-            "src/generalComponents/FormRow.tsx",
-            "src/generalComponents/SearchComponent.tsx"
+            "src/generalComponents/DateComponent.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 41,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.146,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 68.2
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:01.574177Z",
+          "health_score": 100.0
         },
         {
-          "name": "wizard-flow",
+          "name": "form-entry-flow",
+          "description": null,
+          "paths": [
+            "src/generalComponents/FormRow.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:01.574260Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "search-flow",
+          "description": null,
+          "paths": [
+            "src/generalComponents/SearchComponent.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:01.574275Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "step-wizard-flow",
           "description": null,
           "paths": [
             "src/generalComponents/StepWizrad.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:01.574286Z",
+          "health_score": 100.0
         },
         {
           "name": "notification-flow",
@@ -1099,21 +863,12 @@
           "paths": [
             "src/generalComponents/ToastComponent.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "avi-port0io",
-            "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 16,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.25,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 43.2
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:01.574296Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -1153,190 +908,266 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
         "avi-port0io",
-        "Guy Landoy",
+        "Pavlo Kuzina",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 133,
-      "bug_fixes": 16,
-      "bug_fix_ratio": 0.12,
+      "total_commits": 28,
+      "bug_fixes": 3,
+      "bug_fix_ratio": 0.107,
       "last_modified": "2026-02-12T14:58:05Z",
-      "health_score": 75.9,
+      "health_score": 71.7,
       "flows": [
         {
-          "name": "search-flow",
+          "name": "global-search-flow",
           "description": null,
           "paths": [
-            "src/hooks/index.ts",
-            "src/hooks/useGlobalSearch.ts",
-            "src/hooks/useEntitySearch.tsx",
-            "src/hooks/useCommandPalette.tsx"
+            "src/hooks/useGlobalSearch.ts"
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Dor Elidan",
+            "avisassonport0"
           ],
-          "total_commits": 71,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.085,
+          "total_commits": 11,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
           "last_modified": "2026-02-11T11:08:53Z",
-          "health_score": 83.1
+          "health_score": 84.4
         },
         {
-          "name": "data-loading-flow",
+          "name": "entity-search-flow",
           "description": null,
           "paths": [
-            "src/hooks/useAutoLoadMore.ts",
-            "src/hooks/useAnomaliesWithProcessData.ts",
-            "src/hooks/useDetectionTrafficPatternsPagination.ts",
+            "src/hooks/useEntitySearch.tsx"
+          ],
+          "authors": [
+            "Yossi-Friedman",
+            "Pavlo Kuzina",
+            "PashaSchool"
+          ],
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
+          "last_modified": "2026-02-01T13:43:03Z",
+          "health_score": 40.8
+        },
+        {
+          "name": "ip-enrichment-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useIPEnrichment.ts"
+          ],
+          "authors": [
+            "Yossi-Friedman"
+          ],
+          "total_commits": 1,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-01-26T14:14:36Z",
+          "health_score": 80.4
+        },
+        {
+          "name": "anomaly-detection-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useAnomaliesWithProcessData.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609106Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "integration-management-flow",
+          "description": null,
+          "paths": [
             "src/hooks/useHasActiveIntegrations.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "avisassonport0"
           ],
-          "total_commits": 62,
-          "bug_fixes": 9,
-          "bug_fix_ratio": 0.145,
+          "total_commits": 7,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.143,
           "last_modified": "2026-02-12T14:58:05Z",
-          "health_score": 71.0
+          "health_score": 59.1
         },
         {
-          "name": "ui-interaction-flow",
+          "name": "region-configuration-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useClerckRegionChangeObserver.ts",
+            "src/hooks/useRegion.ts"
+          ],
+          "authors": [
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "PashaSchool"
+          ],
+          "total_commits": 9,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.111,
+          "last_modified": "2026-02-10T13:19:37Z",
+          "health_score": 65.0
+        },
+        {
+          "name": "pagination-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useDetectionTrafficPatternsPagination.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609158Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "organization-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useOrganizationMembers.tsx",
+            "src/hooks/useQueryCreatorNames.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609170Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "command-palette-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useCommandPalette.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609181Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "confirmation-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useConfirm.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609192Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "auto-load-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useAutoLoadMore.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609251Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "react-flow-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useReactFlowEventListener.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609292Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "ui-interactions-flow",
           "description": null,
           "paths": [
             "src/hooks/useClickOutsideMultiple.ts",
             "src/hooks/useHover.ts",
-            "src/hooks/useConfirm.tsx",
             "src/hooks/useCountAnimation.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 24,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.25,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 44.8
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609306Z",
+          "health_score": 100.0
         },
         {
-          "name": "state-management-flow",
+          "name": "query-params-flow",
           "description": null,
           "paths": [
             "src/hooks/useBatchUpdateQueryParams.ts",
             "src/hooks/useUpdateQueryParam.ts",
-            "src/hooks/usePrevProps.ts",
-            "src/hooks/useDeepCompareEffect.ts",
-            "src/hooks/useUpdateEffect.ts",
-            "src/hooks/useStableCallback.ts",
-            "src/hooks/usePeriodicInterval.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
-        },
-        {
-          "name": "integration-flow",
-          "description": null,
-          "paths": [
-            "src/hooks/useClerckRegionChangeObserver.ts",
-            "src/hooks/useRegion.ts",
-            "src/hooks/useIPEnrichment.ts",
-            "src/hooks/useOrganizationMembers.tsx",
-            "src/hooks/useQueryCreatorNames.ts",
-            "src/hooks/useFieldValues.ts",
-            "src/hooks/usePublicMetadata.ts",
-            "src/hooks/useReactFlowEventListener.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "avisassonport0",
-            "avi-port0io",
-            "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 41,
-          "bug_fixes": 8,
-          "bug_fix_ratio": 0.195,
-          "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 58.8
-        },
-        {
-          "name": "test-flow",
-          "description": null,
-          "paths": [
             "src/hooks/__tests__/useBatchUpdateQueryParams.test.ts",
             "src/hooks/__tests__/useUpdateQueryParam.test.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:05.609320Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "form-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/useFieldValues.ts"
           ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "PashaSchool"
+          ],
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
+          "last_modified": "2026-02-10T13:19:37Z",
+          "health_score": 40.8
+        },
+        {
+          "name": "utilities-flow",
+          "description": null,
+          "paths": [
+            "src/hooks/index.ts",
+            "src/hooks/useDeepCompareEffect.ts",
+            "src/hooks/usePrevProps.ts",
+            "src/hooks/usePeriodicInterval.ts",
+            "src/hooks/useStableCallback.ts",
+            "src/hooks/useUpdateEffect.ts",
+            "src/hooks/usePublicMetadata.ts"
+          ],
+          "authors": [
+            "Yossi-Friedman",
+            "avi-port0io",
+            "avisassonport0"
+          ],
+          "total_commits": 6,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-11T11:08:53Z",
+          "health_score": 82.4
         }
       ]
     },
@@ -1404,171 +1235,52 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
-        "Cursor Agent",
-        "ddemydenko",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "cooperport1661",
-        "Moti Shakuri",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
         "Guy Landoy",
+        "landoyport0",
+        "Cursor Agent",
+        "avi-port0io",
+        "Pavlo Kuzina",
+        "Dor Elidan",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "ddemydenko",
+        "avisassonport0"
       ],
-      "total_commits": 851,
-      "bug_fixes": 197,
-      "bug_fix_ratio": 0.231,
+      "total_commits": 74,
+      "bug_fixes": 23,
+      "bug_fix_ratio": 0.311,
       "last_modified": "2026-02-23T05:17:19Z",
-      "health_score": 53.7,
+      "health_score": 37.8,
       "flows": [
         {
-          "name": "detection-overview-flow",
+          "name": "detections-flow",
           "description": null,
           "paths": [
-            "src/services/HomeDashboardService.ts",
             "src/services/bigQueryDetectionService.ts",
             "src/services/getDetectionsFilterMetadata.ts",
-            "src/services/schemas/detections.ts",
+            "src/services/HomeDashboardService.ts",
             "src/services/query0/handlers/getAiDetections.ts",
             "src/services/query0/handlers/getAiDetectionsCounts.ts",
             "src/services/query0/hooks/useGetAiDetections.ts",
-            "src/services/query0/hooks/useGetAiDetectionsCounts.ts"
+            "src/services/query0/hooks/useGetAiDetectionsCounts.ts",
+            "src/services/schemas/detections.ts",
+            "src/services/schemas/edrDetectionsComplete.tsx"
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Moti Shakuri",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
+            "Pavlo Kuzina",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Dor Elidan",
+            "avisassonport0"
           ],
-          "total_commits": 252,
-          "bug_fixes": 63,
-          "bug_fix_ratio": 0.25,
+          "total_commits": 23,
+          "bug_fixes": 2,
+          "bug_fix_ratio": 0.087,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 50.0
+          "health_score": 73.7
         },
         {
-          "name": "traffic-analysis-flow",
-          "description": null,
-          "paths": [
-            "src/services/BigQueryService.ts",
-            "src/services/schemas/traffic.ts",
-            "src/services/schemas/securityGroupTraffic.ts",
-            "src/services/query0/handlers/getAiServiceDrawerTraffic.ts",
-            "src/services/query0/handlers/getSecurityTableData.ts",
-            "src/services/query0/handlers/getSecurityGroupRules.ts",
-            "src/services/query0/handlers/getSuggestionSg.ts",
-            "src/services/query0/handlers/getEdgesForNodes.ts",
-            "src/services/query0/handlers/enriched_security_group_table.sql",
-            "src/services/query0/handlers/security_traffic_patterns.sql",
-            "src/services/query0/handlers/security_group_filter_metrics.sql",
-            "src/services/query0/handlers/sg_fields_suggestions.sql",
-            "src/services/query0/hooks/useAiServiceDrawerTraffic.ts",
-            "src/services/query0/hooks/useGetSecurityGroupRules.ts",
-            "src/services/query0/handlers/sqlScopeSecurityGroupRules/getSQLStrategy.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Cursor Agent",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "cooperport1661",
-            "Moti Shakuri",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 613,
-          "bug_fixes": 132,
-          "bug_fix_ratio": 0.215,
-          "last_modified": "2026-02-19T13:30:31Z",
-          "health_score": 56.9
-        },
-        {
-          "name": "entity-search-flow",
-          "description": null,
-          "paths": [
-            "src/services/GlobalSearchService.ts",
-            "src/services/schemas/entities.ts",
-            "src/services/schemas/labelsSearch.ts",
-            "src/services/query0/handlers/getAiServiceDrawerUsers.ts",
-            "src/services/query0/handlers/getGroupedEntitiesByLabels.ts",
-            "src/services/query0/hooks/useAiServiceDrawerUsers.ts",
-            "src/services/query0/hooks/useGroupedEntitiesByLabels.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 53,
-          "bug_fixes": 13,
-          "bug_fix_ratio": 0.245,
-          "last_modified": "2026-02-22T15:23:45Z",
-          "health_score": 50.9
-        },
-        {
-          "name": "label-management-flow",
-          "description": null,
-          "paths": [
-            "src/services/BigQueryLabelsService.ts",
-            "src/services/schemas/labels.ts",
-            "src/services/query0/hooks/useQuerySecurityGroupFilterMetric.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 75,
-          "bug_fixes": 17,
-          "bug_fix_ratio": 0.227,
-          "last_modified": "2026-02-23T05:17:19Z",
-          "health_score": 54.7
-        },
-        {
-          "name": "policy-enforcement-flow",
+          "name": "policy-flow",
           "description": null,
           "paths": [
             "src/services/AutoPolicyService.ts",
@@ -1576,96 +1288,84 @@
             "src/services/hooks/useHandlePolicy.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 34,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.206,
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
           "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 55.1
+          "health_score": 40.8
         },
         {
-          "name": "anomaly-detection-flow",
+          "name": "label-management-flow",
           "description": null,
           "paths": [
-            "src/services/schemas/anomalies.ts",
-            "src/services/query0/handlers/getChartInfo.ts",
-            "src/services/query0/hooks/useGetCommonCategories.ts",
-            "src/services/query0/hooks/useGetProcessNames.ts",
-            "src/services/query0/hooks/useGetAiDetectionsCounts.ts"
+            "src/services/BigQueryLabelsService.ts",
+            "src/services/schemas/labels.ts",
+            "src/services/schemas/labelsSearch.ts"
           ],
           "authors": [
+            "landoyport0",
             "PashaSchool",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "IgorSelin",
-            "Dor Elidan",
+            "Guy Landoy",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 44,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.136,
-          "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 71.0
-        },
-        {
-          "name": "threat-assessment-flow",
-          "description": null,
-          "paths": [
-            "src/services/IPEnrichmentService.ts",
-            "src/services/schemas/edrDetectionsComplete.tsx",
-            "src/services/query0/handlers/getCommonCategories.ts",
-            "src/services/query0/handlers/getProcessNames.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 42,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.095,
-          "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 78.4
-        },
-        {
-          "name": "crm-integration-flow",
-          "description": null,
-          "paths": [
-            "src/services/CrmService.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "Yossi-Friedman"
           ],
           "total_commits": 20,
+          "bug_fixes": 7,
+          "bug_fix_ratio": 0.35,
+          "last_modified": "2026-02-23T05:17:19Z",
+          "health_score": 26.4
+        },
+        {
+          "name": "traffic-analysis-flow",
+          "description": null,
+          "paths": [
+            "src/services/BigQueryService.ts",
+            "src/services/query0/handlers/getAiServiceDrawerTraffic.ts",
+            "src/services/query0/handlers/getAiServiceDrawerUsers.ts",
+            "src/services/query0/hooks/useAiServiceDrawerTraffic.ts",
+            "src/services/query0/hooks/useAiServiceDrawerUsers.ts",
+            "src/services/schemas/traffic.ts",
+            "src/services/schemas/securityGroupTraffic.ts"
+          ],
+          "authors": [
+            "PashaSchool",
+            "Guy Landoy",
+            "Cursor Agent",
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "Yossi-Friedman",
+            "Dor Elidan",
+            "avisassonport0"
+          ],
+          "total_commits": 36,
+          "bug_fixes": 8,
+          "bug_fix_ratio": 0.222,
+          "last_modified": "2026-02-19T13:30:31Z",
+          "health_score": 52.4
+        },
+        {
+          "name": "search-flow",
+          "description": null,
+          "paths": [
+            "src/services/GlobalSearchService.ts"
+          ],
+          "authors": [
+            "PashaSchool",
+            "avi-port0io",
+            "Yossi-Friedman",
+            "Dor Elidan",
+            "avisassonport0"
+          ],
+          "total_commits": 12,
           "bug_fixes": 3,
-          "bug_fix_ratio": 0.15,
-          "last_modified": "2025-10-15T13:47:53Z",
-          "health_score": 61.6
+          "bug_fix_ratio": 0.25,
+          "last_modified": "2026-02-18T10:38:37Z",
+          "health_score": 42.4
         },
         {
           "name": "custom-network-flow",
@@ -1674,58 +1374,128 @@
             "src/services/customNetworksCloudFunction.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 9,
+          "total_commits": 4,
           "bug_fixes": 1,
-          "bug_fix_ratio": 0.111,
+          "bug_fix_ratio": 0.25,
           "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 65.0
+          "health_score": 40.8
         },
         {
-          "name": "base-utilities-flow",
+          "name": "security-group-flow",
           "description": null,
           "paths": [
-            "src/services/ApiService.ts",
+            "src/services/query0/handlers/getSecurityGroupRules.ts",
+            "src/services/query0/handlers/getSecurityTableData.ts",
+            "src/services/query0/handlers/getSuggestionSg.ts",
+            "src/services/query0/handlers/getEdgesForNodes.ts",
+            "src/services/query0/hooks/useGetSecurityGroupRules.ts",
+            "src/services/query0/hooks/useQuerySecurityGroupFilterMetric.ts",
+            "src/services/query0/handlers/sqlScopeSecurityGroupRules/getSQLStrategy.ts",
+            "src/services/query0/handlers/security_group_filter_metrics.sql",
+            "src/services/query0/handlers/security_traffic_patterns.sql",
+            "src/services/query0/handlers/sg_fields_suggestions.sql",
+            "src/services/query0/handlers/enriched_security_group_table.sql"
+          ],
+          "authors": [
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "PashaSchool"
+          ],
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
+          "last_modified": "2026-02-10T13:19:37Z",
+          "health_score": 40.8
+        },
+        {
+          "name": "entity-analysis-flow",
+          "description": null,
+          "paths": [
+            "src/services/query0/hooks/useGroupedEntitiesByLabels.ts",
+            "src/services/query0/handlers/getGroupedEntitiesByLabels.ts",
+            "src/services/query0/handlers/getCommonCategories.ts",
+            "src/services/query0/hooks/useGetCommonCategories.ts",
+            "src/services/query0/handlers/getProcessNames.ts",
+            "src/services/query0/hooks/useGetProcessNames.ts",
+            "src/services/schemas/entities.ts",
+            "src/services/schemas/anomalies.ts"
+          ],
+          "authors": [
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "PashaSchool"
+          ],
+          "total_commits": 9,
+          "bug_fixes": 3,
+          "bug_fix_ratio": 0.333,
+          "last_modified": "2026-02-22T15:23:45Z",
+          "health_score": 27.9
+        },
+        {
+          "name": "ip-enrichment-flow",
+          "description": null,
+          "paths": [
+            "src/services/IPEnrichmentService.ts"
+          ],
+          "authors": [
+            "Yossi-Friedman",
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "PashaSchool"
+          ],
+          "total_commits": 5,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.2,
+          "last_modified": "2026-02-10T13:19:37Z",
+          "health_score": 49.2
+        },
+        {
+          "name": "crm-integration-flow",
+          "description": null,
+          "paths": [
+            "src/services/CrmService.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:12.306825Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "core-utilities",
+          "description": null,
+          "paths": [
             "src/services/BaseService.ts",
+            "src/services/ApiService.ts",
             "src/services/RtkQueryService.ts",
             "src/services/SQLQueryBuilder.ts",
             "src/services/generateQueryCloudFn.ts",
+            "src/services/query0/handlers/utils.ts",
+            "src/services/query0/handlers/getChartInfo.ts",
+            "src/services/query0/handlers/getQueryMetrics.ts",
             "src/services/types.ts",
             "src/services/__test__/SQLQueryBuilder.where.test.ts",
             "src/services/__test__/fieldNameConverter.test.ts",
-            "src/services/__test__/schemaFieldTypeResolver.test.ts",
-            "src/services/query0/handlers/getQueryMetrics.ts",
-            "src/services/query0/handlers/utils.ts",
-            "src/services/query0/handlers/getCommonCategories.ts"
+            "src/services/__test__/schemaFieldTypeResolver.test.ts"
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
             "Cursor Agent",
-            "ddemydenko",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
+            "Pavlo Kuzina",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "ddemydenko"
           ],
-          "total_commits": 218,
-          "bug_fixes": 36,
-          "bug_fix_ratio": 0.165,
+          "total_commits": 23,
+          "bug_fixes": 8,
+          "bug_fix_ratio": 0.348,
           "last_modified": "2026-02-22T08:06:52Z",
-          "health_score": 67.0
+          "health_score": 27.1
         }
       ]
     },
@@ -1750,27 +1520,16 @@
         "src/store/slices/theme/themeSlice.ts"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Yossi-Friedman"
       ],
-      "total_commits": 40,
-      "bug_fixes": 6,
-      "bug_fix_ratio": 0.15,
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
       "last_modified": "2026-01-26T14:14:36Z",
-      "health_score": 67.2,
+      "health_score": 80.4,
       "flows": [
         {
-          "name": "app-state-flow",
+          "name": "authentication-flow",
           "description": null,
           "paths": [
             "src/store/hook.ts",
@@ -1780,7 +1539,19 @@
             "src/store/slices/auth/constants.ts",
             "src/store/slices/auth/index.ts",
             "src/store/slices/auth/sessionSlice.ts",
-            "src/store/slices/auth/userSlice.ts",
+            "src/store/slices/auth/userSlice.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:15.002366Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "app-state-flow",
+          "description": null,
+          "paths": [
             "src/store/slices/base/commonSlice.ts",
             "src/store/slices/base/constants.ts",
             "src/store/slices/base/index.ts",
@@ -1788,48 +1559,27 @@
             "src/store/slices/locale/localeSlice.ts",
             "src/store/slices/theme/themeSlice.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 26,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.192,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 55.6
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:15.002408Z",
+          "health_score": 100.0
         },
         {
-          "name": "integration-profile-flow",
+          "name": "integration-modal-flow",
           "description": null,
           "paths": [
             "src/store/integrationProfileModalStore.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Yossi-Friedman"
           ],
-          "total_commits": 33,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.182,
+          "total_commits": 1,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
           "last_modified": "2026-01-26T14:14:36Z",
-          "health_score": 59.3
+          "health_score": 80.4
         }
       ]
     },
@@ -1917,29 +1667,27 @@
         "src/stories/ComplexQuery/widgets/VisualQueryBuilder/tableAdapters/types.ts"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "ddemydenko",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
         "Yossi-Friedman",
-        "Yosi Friedman",
+        "PashaSchool",
         "omer-nachshon",
-        "Pavlo Kuzina"
+        "avi-port0io",
+        "Pavlo Kuzina",
+        "Omer Nachshon",
+        "ddemydenko"
       ],
-      "total_commits": 257,
-      "bug_fixes": 89,
-      "bug_fix_ratio": 0.346,
+      "total_commits": 66,
+      "bug_fixes": 33,
+      "bug_fix_ratio": 0.5,
       "last_modified": "2026-02-22T17:26:12Z",
-      "health_score": 30.7,
+      "health_score": 0.0,
       "flows": [
         {
-          "name": "complex-query-flow",
+          "name": "query-builder-flow",
           "description": null,
           "paths": [
+            "src/stories/QueryBuilderInput.stories.ts",
+            "src/stories/QueryBuilderInput.tsx",
+            "src/stories/helpers.ts",
             "src/stories/ComplexQuery/index.ts",
             "src/stories/ComplexQuery/__tests__/tokenizer.unit.spec.ts",
             "src/stories/ComplexQuery/constant/index.ts",
@@ -2007,95 +1755,48 @@
             "src/stories/ComplexQuery/widgets/VisualQueryBuilder/tableAdapters/types.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "ddemydenko",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
             "Yossi-Friedman",
+            "PashaSchool",
             "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "Omer Nachshon",
+            "ddemydenko"
           ],
-          "total_commits": 229,
-          "bug_fixes": 86,
-          "bug_fix_ratio": 0.376,
+          "total_commits": 66,
+          "bug_fixes": 33,
+          "bug_fix_ratio": 0.5,
           "last_modified": "2026-02-22T17:26:12Z",
-          "health_score": 24.9
+          "health_score": 0.0
         },
         {
           "name": "date-filter-flow",
           "description": null,
           "paths": [
             "src/stories/DateFilter.tsx",
-            "src/stories/DatePicker.tsx",
             "src/stories/DatePicker.stories.tsx",
+            "src/stories/DatePicker.tsx",
             "src/stories/Datefilter.stories.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:24.012948Z",
+          "health_score": 100.0
         },
         {
-          "name": "query-builder-flow",
-          "description": null,
-          "paths": [
-            "src/stories/QueryBuilderInput.tsx",
-            "src/stories/QueryBuilderInput.stories.ts",
-            "src/stories/helpers.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 34,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.147,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 66.1
-        },
-        {
-          "name": "webhook-management-flow",
+          "name": "webhook-config-flow",
           "description": null,
           "paths": [
             "src/stories/Webhooks.stories.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 13,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.231,
-          "last_modified": "2025-10-01T07:49:40Z",
-          "health_score": 45.9
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:24.012967Z",
+          "health_score": 100.0
         },
         {
           "name": "traffic-pattern-flow",
@@ -2104,45 +1805,27 @@
             "src/stories/TrafficPatternFirewallMenuLayout.tsx",
             "src/stories/traffic_patterns-select_menu_fixtures.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 13,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.231,
-          "last_modified": "2025-10-01T07:49:40Z",
-          "health_score": 45.9
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:24.012976Z",
+          "health_score": 100.0
         },
         {
-          "name": "fixture-data-flow",
+          "name": "stories-fixtures-flow",
           "description": null,
           "paths": [
             "src/stories/entity_fixture.ts",
             "src/stories/fixtures.ts",
             "src/stories/fixtures_new.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 13,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.231,
-          "last_modified": "2025-10-01T07:49:40Z",
-          "health_score": 45.9
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:24.012985Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -2154,55 +1837,33 @@
         "src/trafficPatternsQuery/evaluateQueryRules.ts"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
         "ddemydenko",
-        "Idan Cooperman",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "Guy Landoy",
-        "Yosi Friedman",
-        "omer-nachshon",
         "Pavlo Kuzina",
-        "motishaku-p0"
+        "PashaSchool"
       ],
-      "total_commits": 51,
-      "bug_fixes": 7,
-      "bug_fix_ratio": 0.137,
+      "total_commits": 3,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 0.667,
       "last_modified": "2026-02-18T10:38:37Z",
-      "health_score": 72.5,
+      "health_score": 0.0,
       "flows": [
         {
-          "name": "query-traffic-patterns-flow",
+          "name": "traffic-patterns-query-flow",
           "description": null,
           "paths": [
             "src/trafficPatternsQuery/QueryTrafficPatterns.ts",
             "src/trafficPatternsQuery/evaluateQueryRules.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
             "ddemydenko",
-            "Idan Cooperman",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
             "Pavlo Kuzina",
-            "motishaku-p0"
+            "PashaSchool"
           ],
-          "total_commits": 51,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.137,
+          "total_commits": 3,
+          "bug_fixes": 2,
+          "bug_fix_ratio": 0.667,
           "last_modified": "2026-02-18T10:38:37Z",
-          "health_score": 72.5
+          "health_score": 0.0
         }
       ]
     },
@@ -2215,38 +1876,38 @@
       ],
       "authors": [
         "PashaSchool",
-        "avisassonport0",
-        "Dor Elidan",
         "avi-port0io",
+        "Pavlo Kuzina",
         "Yossi-Friedman",
-        "Pavlo Kuzina"
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 14,
-      "bug_fixes": 2,
+      "total_commits": 7,
+      "bug_fixes": 1,
       "bug_fix_ratio": 0.143,
       "last_modified": "2026-02-10T13:19:37Z",
-      "health_score": 61.1,
+      "health_score": 59.1,
       "flows": [
         {
-          "name": "global-search-flow",
+          "name": "type-definitions-flow",
           "description": null,
           "paths": [
-            "src/types/globalSearch.ts",
-            "src/types/env.d.ts"
+            "src/types/env.d.ts",
+            "src/types/globalSearch.ts"
           ],
           "authors": [
             "PashaSchool",
-            "avisassonport0",
-            "Dor Elidan",
             "avi-port0io",
+            "Pavlo Kuzina",
             "Yossi-Friedman",
-            "Pavlo Kuzina"
+            "Dor Elidan",
+            "avisassonport0"
           ],
-          "total_commits": 14,
-          "bug_fixes": 2,
+          "total_commits": 7,
+          "bug_fixes": 1,
           "bug_fix_ratio": 0.143,
           "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 61.1
+          "health_score": 59.1
         }
       ]
     },
@@ -2300,120 +1961,58 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
         "avi-port0io",
-        "Guy Landoy",
+        "Pavlo Kuzina",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 190,
-      "bug_fixes": 30,
-      "bug_fix_ratio": 0.158,
+      "total_commits": 20,
+      "bug_fixes": 4,
+      "bug_fix_ratio": 0.2,
       "last_modified": "2026-02-18T10:38:37Z",
-      "health_score": 68.4,
+      "health_score": 52.8,
       "flows": [
         {
-          "name": "data-transformation-flow",
-          "description": null,
-          "paths": [
-            "src/utils/bigQueryAnomalyUtils.ts",
-            "src/utils/bigQueryDetectionUtils.ts",
-            "src/utils/processDataFieldUtils.ts",
-            "src/utils/elasticSearchTimeUtils/esTimeRangeFns.ts",
-            "src/utils/elasticSearchTimeUtils/volumeConvertors.ts",
-            "src/utils/deepParseJson.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 55,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.127,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 74.5
-        },
-        {
-          "name": "query-filter-flow",
+          "name": "query-flow",
           "description": null,
           "paths": [
             "src/utils/addToQueryUtils.ts",
             "src/utils/comparePortflowQueries.ts",
             "src/utils/getParamsObject.ts",
-            "src/utils/graphNavigationUtils.ts",
             "src/utils/sqlUtils.ts",
-            "src/utils/wildCardSearch.ts"
+            "src/utils/graphNavigationUtils.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "PashaSchool",
+            "avisassonport0"
           ],
-          "total_commits": 63,
-          "bug_fixes": 12,
-          "bug_fix_ratio": 0.19,
+          "total_commits": 8,
+          "bug_fixes": 2,
+          "bug_fix_ratio": 0.25,
           "last_modified": "2026-02-18T10:38:37Z",
-          "health_score": 61.9
+          "health_score": 41.6
         },
         {
-          "name": "time-display-flow",
+          "name": "detection-flow",
           "description": null,
           "paths": [
-            "src/utils/baseDates.ts",
-            "src/utils/createDateTime.ts",
-            "src/utils/timeConvertors.ts",
-            "src/utils/pipelineStatusUtils.ts",
-            "src/utils/__tests__/normalizeToDate.test.ts"
+            "src/utils/bigQueryDetectionUtils.ts",
+            "src/utils/bigQueryAnomalyUtils.ts",
+            "src/utils/displayUtils.ts",
+            "src/utils/processDataFieldUtils.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 61,
-          "bug_fixes": 11,
-          "bug_fix_ratio": 0.18,
-          "last_modified": "2026-01-26T14:14:36Z",
-          "health_score": 63.9
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169424Z",
+          "health_score": 100.0
         },
         {
-          "name": "integration-management-flow",
+          "name": "integration-flow",
           "description": null,
           "paths": [
             "src/utils/cloudFunctions.ts",
@@ -2427,152 +2026,153 @@
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
+            "Pavlo Kuzina",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Dor Elidan",
+            "avisassonport0"
           ],
-          "total_commits": 78,
-          "bug_fixes": 13,
-          "bug_fix_ratio": 0.167,
+          "total_commits": 13,
+          "bug_fixes": 2,
+          "bug_fix_ratio": 0.154,
           "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 66.7
+          "health_score": 59.0
         },
         {
-          "name": "display-format-flow",
-          "description": null,
-          "paths": [
-            "src/utils/displayUtils.ts",
-            "src/utils/formatNumber.ts",
-            "src/utils/getUniqueNameColor.ts",
-            "src/utils/growShrinkColor.ts",
-            "src/utils/generalProps.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 24,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.125,
-          "last_modified": "2025-10-27T10:11:26Z",
-          "health_score": 67.2
-        },
-        {
-          "name": "cache-session-flow",
+          "name": "cache-flow",
           "description": null,
           "paths": [
             "src/utils/hybridCache.ts",
             "src/utils/indexedDBCache.ts",
-            "src/utils/sessionCache.ts",
-            "src/utils/webRTCClient.ts"
+            "src/utils/sessionCache.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 42,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.143,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 69.1
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169447Z",
+          "health_score": 100.0
         },
         {
-          "name": "environment-config-flow",
+          "name": "time-conversion-flow",
           "description": null,
           "paths": [
-            "src/utils/envConfig.ts",
-            "src/utils/posthogIdentifyUser.ts",
+            "src/utils/baseDates.ts",
+            "src/utils/createDateTime.ts",
+            "src/utils/timeConvertors.ts",
+            "src/utils/elasticSearchTimeUtils/esTimeRangeFns.ts",
+            "src/utils/elasticSearchTimeUtils/volumeConvertors.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169453Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "pipeline-monitoring-flow",
+          "description": null,
+          "paths": [
+            "src/utils/pipelineStatusUtils.ts",
             "src/utils/fetchAllOrganizationMembers.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Yossi-Friedman"
           ],
-          "total_commits": 27,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.185,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 57.2
+          "total_commits": 1,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-01-26T14:14:36Z",
+          "health_score": 80.4
         },
         {
-          "name": "user-context-flow",
+          "name": "utility-flow",
+          "description": null,
+          "paths": [
+            "src/utils/deepParseJson.ts",
+            "src/utils/formatNumber.ts",
+            "src/utils/generalProps.ts",
+            "src/utils/getUniqueNameColor.ts",
+            "src/utils/growShrinkColor.ts",
+            "src/utils/wildCardSearch.ts",
+            "src/utils/customErrors/UndefiendValueError.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169464Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "environment-flow",
+          "description": null,
+          "paths": [
+            "src/utils/envConfig.ts",
+            "src/utils/posthogIdentifyUser.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169470Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "ui-rendering-flow",
           "description": null,
           "paths": [
             "src/utils/hooks/useAuthority.ts",
             "src/utils/hooks/useDarkmode.ts",
             "src/utils/hooks/useDirection.ts",
-            "src/utils/hooks/useOrganizationSync.ts",
             "src/utils/hooks/useThemeClass.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 26,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.269,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.7
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169474Z",
+          "health_score": 100.0
         },
         {
-          "name": "error-handling-flow",
+          "name": "organization-sync-flow",
           "description": null,
           "paths": [
-            "src/utils/customErrors/UndefiendValueError.ts"
+            "src/utils/hooks/useOrganizationSync.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169479Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "communication-flow",
+          "description": null,
+          "paths": [
+            "src/utils/webRTCClient.ts"
           ],
-          "total_commits": 13,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.231,
-          "last_modified": "2025-10-01T07:49:40Z",
-          "health_score": 45.9
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169483Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "test-flow",
+          "description": null,
+          "paths": [
+            "src/utils/__tests__/normalizeToDate.test.ts"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:32.169488Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -2584,21 +2184,12 @@
         "src/workers/processVisibilityWorker.ts",
         "src/workers/hooks/useCSVWorker.ts"
       ],
-      "authors": [
-        "PashaSchool",
-        "Ihor Selin",
-        "cooperport1661",
-        "IgorSelin",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 41,
-      "bug_fixes": 9,
-      "bug_fix_ratio": 0.22,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 54.1,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.017972Z",
+      "health_score": 100.0,
       "flows": [
         {
           "name": "csv-export-flow",
@@ -2607,21 +2198,12 @@
             "src/workers/csvWebWorker.js",
             "src/workers/hooks/useCSVWorker.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "cooperport1661",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 39,
-          "bug_fixes": 8,
-          "bug_fix_ratio": 0.205,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 56.4
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:34.701814Z",
+          "health_score": 100.0
         },
         {
           "name": "visibility-processing-flow",
@@ -2629,20 +2211,12 @@
           "paths": [
             "src/workers/processVisibilityWorker.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 25,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.2,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 54.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:34.701894Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -2662,23 +2236,14 @@
         "src/zustandStores/slices/sideMenuCollapse.ts"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "avi-port0io"
       ],
-      "total_commits": 48,
-      "bug_fixes": 6,
-      "bug_fix_ratio": 0.125,
+      "total_commits": 3,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
       "last_modified": "2026-02-16T19:13:47Z",
-      "health_score": 74.4,
+      "health_score": 81.2,
       "flows": [
         {
           "name": "app-config-flow",
@@ -2692,63 +2257,40 @@
             "src/zustandStores/ProgressBarToastControler/ProgressbarToastControler.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io"
           ],
-          "total_commits": 48,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.125,
+          "total_commits": 3,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 74.4
+          "health_score": 81.2
         },
         {
-          "name": "dashboards-management-flow",
+          "name": "dashboards-flow",
           "description": null,
           "paths": [
             "src/zustandStores/useDashboardsStore.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 4,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.5,
-          "last_modified": "2025-07-27T16:55:03Z",
-          "health_score": 0.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:38.307729Z",
+          "health_score": 100.0
         },
         {
-          "name": "memberships-management-flow",
+          "name": "memberships-flow",
           "description": null,
           "paths": [
             "src/zustandStores/useMemberships.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 13,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.231,
-          "last_modified": "2025-10-01T07:49:40Z",
-          "health_score": 45.9
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:38.307745Z",
+          "health_score": 100.0
         },
         {
           "name": "user-groups-flow",
@@ -2756,41 +2298,25 @@
           "paths": [
             "src/zustandStores/useUserGroups.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 10,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.4,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 16.8
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:38.307758Z",
+          "health_score": 100.0
         },
         {
-          "name": "webrtc-communication-flow",
+          "name": "webrtc-flow",
           "description": null,
           "paths": [
             "src/zustandStores/useWRTCStore.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:38.307771Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -2870,27 +2396,18 @@
         "src/assets/styles/vendors/index.css"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "IgorSelin",
-        "Dor Elidan",
         "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "PashaSchool",
+        "avisassonport0"
       ],
-      "total_commits": 67,
-      "bug_fixes": 12,
-      "bug_fix_ratio": 0.179,
+      "total_commits": 4,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.25,
       "last_modified": "2026-02-17T04:55:20Z",
-      "health_score": 64.2,
+      "health_score": 40.8,
       "flows": [
         {
-          "name": "visual-design-flow",
+          "name": "ui-rendering-flow",
           "description": null,
           "paths": [
             "src/assets/ai logos/chatgpt icon.webp",
@@ -2965,24 +2482,15 @@
             "src/assets/styles/vendors/index.css"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "PashaSchool",
+            "avisassonport0"
           ],
-          "total_commits": 67,
-          "bug_fixes": 12,
-          "bug_fix_ratio": 0.179,
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
           "last_modified": "2026-02-17T04:55:20Z",
-          "health_score": 64.2
+          "health_score": 40.8
         }
       ]
     },
@@ -2998,27 +2506,18 @@
         "src/components/ActivityLogs/hooks/useActivityExport.tsx"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "Guy Landoy",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Pavlo Kuzina",
+        "PashaSchool"
       ],
-      "total_commits": 56,
-      "bug_fixes": 7,
-      "bug_fix_ratio": 0.125,
+      "total_commits": 4,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.25,
       "last_modified": "2026-02-01T13:43:03Z",
-      "health_score": 75.0,
+      "health_score": 40.8,
       "flows": [
         {
-          "name": "activity-view-flow",
+          "name": "view-activities-flow",
           "description": null,
           "paths": [
             "src/components/ActivityLogs/ActivityLogs.tsx",
@@ -3028,48 +2527,28 @@
             "src/components/ActivityLogs/utils.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 51,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.118,
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
           "last_modified": "2026-02-01T13:43:03Z",
-          "health_score": 76.5
+          "health_score": 40.8
         },
         {
-          "name": "activity-export-flow",
+          "name": "export-activities-flow",
           "description": null,
           "paths": [
             "src/components/ActivityLogs/hooks/useActivityExport.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 31,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.194,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 56.6
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:45.934424Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3092,117 +2571,37 @@
         "src/components/Comments/hooks/useCommentFilters.ts",
         "src/components/Comments/hooks/useHighlightComment.ts"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 37,
-      "bug_fixes": 5,
-      "bug_fix_ratio": 0.135,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 69.2,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018001Z",
+      "health_score": 100.0,
       "flows": [
-        {
-          "name": "comment-thread-flow",
-          "description": null,
-          "paths": [
-            "src/components/Comments/Comments.tsx",
-            "src/components/Comments/components/CommentsList.tsx",
-            "src/components/Comments/components/AuthorCommentBlock.tsx",
-            "src/components/Comments/components/MentionSuggestion.tsx",
-            "src/components/Comments/components/CommentSkeleton.tsx",
-            "src/components/Comments/hooks/useHighlightComment.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 31,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.161,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 62.6
-        },
-        {
-          "name": "comment-creation-flow",
-          "description": null,
-          "paths": [
-            "src/components/Comments/utils.tsx",
-            "src/components/Comments/constants.ts",
-            "src/components/Comments/components/EditCommentModal.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
-        },
-        {
-          "name": "comment-filtering-flow",
-          "description": null,
-          "paths": [
-            "src/components/Comments/components/CommentFilters.tsx",
-            "src/components/Comments/components/FilterSummary.tsx",
-            "src/components/Comments/components/SortOrderToggle.tsx",
-            "src/components/Comments/hooks/useCommentFilters.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 28,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.179,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 58.6
-        },
         {
           "name": "comment-management-flow",
           "description": null,
           "paths": [
-            "src/components/Comments/styles.module.css"
+            "src/components/Comments/Comments.tsx",
+            "src/components/Comments/constants.ts",
+            "src/components/Comments/styles.module.css",
+            "src/components/Comments/utils.tsx",
+            "src/components/Comments/components/AuthorCommentBlock.tsx",
+            "src/components/Comments/components/CommentFilters.tsx",
+            "src/components/Comments/components/CommentSkeleton.tsx",
+            "src/components/Comments/components/CommentsList.tsx",
+            "src/components/Comments/components/EditCommentModal.tsx",
+            "src/components/Comments/components/FilterSummary.tsx",
+            "src/components/Comments/components/MentionSuggestion.tsx",
+            "src/components/Comments/components/SortOrderToggle.tsx",
+            "src/components/Comments/hooks/useCommentFilters.ts",
+            "src/components/Comments/hooks/useHighlightComment.ts"
           ],
           "authors": [],
           "total_commits": 0,
           "bug_fixes": 0,
           "bug_fix_ratio": 0.0,
-          "last_modified": "2026-02-23T16:39:02.074817Z",
+          "last_modified": "2026-02-23T16:54:48.762889Z",
           "health_score": 100.0
         }
       ]
@@ -3213,19 +2612,12 @@
       "paths": [
         "src/components/EmptyTableView/EmptyTableView.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avi-port0io",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 12,
-      "bug_fixes": 2,
-      "bug_fix_ratio": 0.167,
-      "last_modified": "2025-07-27T16:55:03Z",
-      "health_score": 56.5,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018008Z",
+      "health_score": 100.0,
       "flows": [
         {
           "name": "empty-table-view-flow",
@@ -3233,19 +2625,12 @@
           "paths": [
             "src/components/EmptyTableView/EmptyTableView.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avi-port0io",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 12,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.167,
-          "last_modified": "2025-07-27T16:55:03Z",
-          "health_score": 56.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:50.112773Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3255,41 +2640,25 @@
       "paths": [
         "src/components/EntityProfileTab/GoToGraphButton.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Dor Elidan",
-        "Yossi-Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 23,
-      "bug_fixes": 4,
-      "bug_fix_ratio": 0.174,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 58.2,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018012Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "entity-navigation-flow",
+          "name": "view-entity-graph-flow",
           "description": null,
           "paths": [
             "src/components/EntityProfileTab/GoToGraphButton.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Dor Elidan",
-            "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 23,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.174,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 58.2
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:52.201748Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3299,37 +2668,25 @@
       "paths": [
         "src/components/ExpandIcon/ExpandIcon.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Yossi-Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 10,
-      "bug_fixes": 4,
-      "bug_fix_ratio": 0.4,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 16.8,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018018Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "expand-icon-flow",
+          "name": "expand-toggle-flow",
           "description": null,
           "paths": [
             "src/components/ExpandIcon/ExpandIcon.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 10,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.4,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 16.8
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:54.139858Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3340,23 +2697,15 @@
         "src/components/ExplanationTooltip/ExplanationTooltip.tsx"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "avi-port0io",
+        "avisassonport0"
       ],
-      "total_commits": 21,
-      "bug_fixes": 3,
-      "bug_fix_ratio": 0.143,
+      "total_commits": 5,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.2,
       "last_modified": "2026-02-11T11:08:53Z",
-      "health_score": 63.1,
+      "health_score": 49.2,
       "flows": [
         {
           "name": "tooltip-display-flow",
@@ -3365,23 +2714,15 @@
             "src/components/ExplanationTooltip/ExplanationTooltip.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "avisassonport0"
           ],
-          "total_commits": 21,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.143,
+          "total_commits": 5,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.2,
           "last_modified": "2026-02-11T11:08:53Z",
-          "health_score": 63.1
+          "health_score": 49.2
         }
       ]
     },
@@ -3392,42 +2733,26 @@
         "src/components/ExportCSVButtonForTrafficPatterns/ExportCSVButton.tsx",
         "src/components/ExportCSVButtonForTrafficPatterns/InsightsExportCSVButton.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Ihor Selin",
-        "IgorSelin",
-        "Dor Elidan",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 22,
-      "bug_fixes": 3,
-      "bug_fix_ratio": 0.136,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 64.6,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018028Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "export-traffic-patterns-csv-flow",
+          "name": "export-traffic-patterns-flow",
           "description": null,
           "paths": [
             "src/components/ExportCSVButtonForTrafficPatterns/ExportCSVButton.tsx",
             "src/components/ExportCSVButtonForTrafficPatterns/InsightsExportCSVButton.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 22,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.136,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 64.6
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:57.481581Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3438,25 +2763,12 @@
         "src/components/ExportProgress/ExportProgress.tsx",
         "src/components/ExportProgress/ProgressBarToast.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 45,
-      "bug_fixes": 7,
-      "bug_fix_ratio": 0.156,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 67.5,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018032Z",
+      "health_score": 100.0,
       "flows": [
         {
           "name": "export-progress-flow",
@@ -3465,25 +2777,12 @@
             "src/components/ExportProgress/ExportProgress.tsx",
             "src/components/ExportProgress/ProgressBarToast.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 45,
-          "bug_fixes": 7,
-          "bug_fix_ratio": 0.156,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 67.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:54:58.971299Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3493,21 +2792,12 @@
       "paths": [
         "src/components/ExportToCSVButton/ExportToCSVButton.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Ihor Selin",
-        "IgorSelin",
-        "Dor Elidan",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 35,
-      "bug_fixes": 4,
-      "bug_fix_ratio": 0.114,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 72.5,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018035Z",
+      "health_score": 100.0,
       "flows": [
         {
           "name": "export-csv-flow",
@@ -3515,21 +2805,12 @@
           "paths": [
             "src/components/ExportToCSVButton/ExportToCSVButton.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 35,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.114,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 72.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:55:00.432067Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3546,10 +2827,10 @@
       ],
       "authors": [
         "PashaSchool",
-        "avisassonport0",
-        "Dor Elidan",
         "avi-port0io",
-        "Yossi-Friedman"
+        "Yossi-Friedman",
+        "Dor Elidan",
+        "avisassonport0"
       ],
       "total_commits": 13,
       "bug_fixes": 3,
@@ -3570,10 +2851,10 @@
           ],
           "authors": [
             "PashaSchool",
-            "avisassonport0",
-            "Dor Elidan",
             "avi-port0io",
-            "Yossi-Friedman"
+            "Yossi-Friedman",
+            "Dor Elidan",
+            "avisassonport0"
           ],
           "total_commits": 13,
           "bug_fixes": 3,
@@ -3591,22 +2872,12 @@
         "src/components/NotificationSettings/ProgressBar.tsx",
         "src/components/NotificationSettings/styles.ts"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "IgorSelin",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 19,
-      "bug_fixes": 5,
-      "bug_fix_ratio": 0.263,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 41.5,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018045Z",
+      "health_score": 100.0,
       "flows": [
         {
           "name": "notification-settings-flow",
@@ -3616,22 +2887,12 @@
             "src/components/NotificationSettings/ProgressBar.tsx",
             "src/components/NotificationSettings/styles.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:55:13.756415Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3641,49 +2902,25 @@
       "paths": [
         "src/components/QueryField/QueryField.tsx"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 47,
-      "bug_fixes": 11,
-      "bug_fix_ratio": 0.234,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 52.6,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018050Z",
+      "health_score": 100.0,
       "flows": [
         {
-          "name": "query-filter-flow",
+          "name": "query-field-flow",
           "description": null,
           "paths": [
             "src/components/QueryField/QueryField.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 47,
-          "bug_fixes": 11,
-          "bug_fix_ratio": 0.234,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 52.6
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:55:15.443123Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -3698,8 +2935,8 @@
         "src/components/onboarding/walkthroughSteps.ts"
       ],
       "authors": [
-        "avi-port0io",
-        "Yossi-Friedman"
+        "Yossi-Friedman",
+        "avi-port0io"
       ],
       "total_commits": 13,
       "bug_fixes": 2,
@@ -3718,8 +2955,8 @@
             "src/components/onboarding/walkthroughSteps.ts"
           ],
           "authors": [
-            "avi-port0io",
-            "Yossi-Friedman"
+            "Yossi-Friedman",
+            "avi-port0io"
           ],
           "total_commits": 13,
           "bug_fixes": 2,
@@ -3742,23 +2979,14 @@
         "src/components/route/RedirectTriggeredControlsToControls.tsx"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "avi-port0io"
       ],
-      "total_commits": 34,
-      "bug_fixes": 6,
-      "bug_fix_ratio": 0.176,
+      "total_commits": 5,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.2,
       "last_modified": "2026-02-16T19:13:47Z",
-      "health_score": 60.6,
+      "health_score": 49.2,
       "flows": [
         {
           "name": "admin-access-flow",
@@ -3767,70 +2995,32 @@
             "src/components/route/AdminRoute.tsx",
             "src/components/route/AuthorityGuard.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 26,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.192,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 55.6
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:55:19.126476Z",
+          "health_score": 100.0
         },
         {
-          "name": "protected-route-flow",
+          "name": "app-navigation-flow",
           "description": null,
           "paths": [
+            "src/components/route/AppRoute.tsx",
             "src/components/route/ProtectedRoute.tsx",
-            "src/components/route/AppRoute.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.263,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 41.5
-        },
-        {
-          "name": "public-navigation-flow",
-          "description": null,
-          "paths": [
             "src/components/route/PublicRoute.tsx",
             "src/components/route/RedirectToHome.tsx",
             "src/components/route/RedirectTriggeredControlsToControls.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Dor Elidan",
-            "avi-port0io",
             "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io"
           ],
-          "total_commits": 18,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.278,
+          "total_commits": 5,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.2,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 38.8
+          "health_score": 49.2
         }
       ]
     },
@@ -3872,35 +3062,25 @@
         "src/components/shared/loaders/TableRowSkeleton.tsx"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "Moti Shakuri",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
+        "avi-port0io",
         "Pavlo Kuzina",
-        "motishaku-p0"
+        "PashaSchool"
       ],
-      "total_commits": 426,
-      "bug_fixes": 74,
-      "bug_fix_ratio": 0.174,
+      "total_commits": 30,
+      "bug_fixes": 11,
+      "bug_fix_ratio": 0.367,
       "last_modified": "2026-02-18T10:38:37Z",
-      "health_score": 65.3,
+      "health_score": 24.5,
       "flows": [
         {
-          "name": "ui-component-library-flow",
+          "name": "shared-ui-components-flow",
           "description": null,
           "paths": [
             "src/components/shared/AuthorityCheck.tsx",
             "src/components/shared/ConfirmDialog.tsx",
+            "src/components/shared/ConnectionDetailsModal.tsx",
+            "src/components/shared/ConnectionSection.tsx",
             "src/components/shared/Container.tsx",
             "src/components/shared/DevEnvToggle.tsx",
             "src/components/shared/DoubleSidedImage.tsx",
@@ -3910,100 +3090,37 @@
             "src/components/shared/FilterIndicator.tsx",
             "src/components/shared/GroupNameWithTooltip.tsx",
             "src/components/shared/GrowShrinkTag.tsx",
+            "src/components/shared/IPEnrichmentModal.tsx",
             "src/components/shared/Loading.tsx",
+            "src/components/shared/SaveQueryModal.tsx",
             "src/components/shared/SegmentItemOption.tsx",
+            "src/components/shared/SharedTrafficView.tsx",
             "src/components/shared/SvgIcon.tsx",
             "src/components/shared/SyntaxHighlighter.tsx",
             "src/components/shared/Table.tsx",
             "src/components/shared/TableComponents.tsx",
             "src/components/shared/Timeline.tsx",
             "src/components/shared/TooltipContainer.tsx",
+            "src/components/shared/TrafficPatternsTable.tsx",
+            "src/components/shared/TrafficSection.tsx",
             "src/components/shared/VirtualizedList.tsx",
             "src/components/shared/index.ts",
+            "src/components/shared/ProcessDetailsModal/ExtraDataDisplay.tsx",
+            "src/components/shared/ProcessDetailsModal/ProcessDetailsModal.tsx",
+            "src/components/shared/ProcessDetailsModal/utils.ts",
             "src/components/shared/loaders/TableRowSkeleton.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Moti Shakuri",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 247,
-          "bug_fixes": 44,
-          "bug_fix_ratio": 0.178,
-          "last_modified": "2026-02-18T10:38:37Z",
-          "health_score": 64.4
-        },
-        {
-          "name": "modal-interaction-flow",
-          "description": null,
-          "paths": [
-            "src/components/shared/ConnectionDetailsModal.tsx",
-            "src/components/shared/IPEnrichmentModal.tsx",
-            "src/components/shared/SaveQueryModal.tsx",
-            "src/components/shared/ProcessDetailsModal/ExtraDataDisplay.tsx",
-            "src/components/shared/ProcessDetailsModal/ProcessDetailsModal.tsx",
-            "src/components/shared/ProcessDetailsModal/utils.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 94,
-          "bug_fixes": 10,
-          "bug_fix_ratio": 0.106,
-          "last_modified": "2026-01-26T14:14:36Z",
-          "health_score": 78.7
-        },
-        {
-          "name": "traffic-analysis-flow",
-          "description": null,
-          "paths": [
-            "src/components/shared/ConnectionSection.tsx",
-            "src/components/shared/SharedTrafficView.tsx",
-            "src/components/shared/TrafficPatternsTable.tsx",
-            "src/components/shared/TrafficSection.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
             "Pavlo Kuzina",
-            "motishaku-p0"
+            "PashaSchool"
           ],
-          "total_commits": 281,
-          "bug_fixes": 47,
-          "bug_fix_ratio": 0.167,
+          "total_commits": 30,
+          "bug_fixes": 11,
+          "bug_fix_ratio": 0.367,
           "last_modified": "2026-02-18T10:38:37Z",
-          "health_score": 66.5
+          "health_score": 24.5
         }
       ]
     },
@@ -4060,33 +3177,26 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
         "Cursor Agent",
-        "Ihor Selin",
-        "Moti Shakuri",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
         "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
         "Pavlo Kuzina",
-        "motishaku-p0"
+        "Omer Nachshon",
+        "Yossi-Friedman",
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 387,
-      "bug_fixes": 64,
-      "bug_fix_ratio": 0.165,
+      "total_commits": 46,
+      "bug_fixes": 14,
+      "bug_fix_ratio": 0.304,
       "last_modified": "2026-02-19T06:55:41Z",
-      "health_score": 66.9,
+      "health_score": 38.5,
       "flows": [
         {
           "name": "layout-flow",
           "description": null,
           "paths": [
             "src/components/template/AllModals.tsx",
+            "src/components/template/DeleteIntegrationModal.tsx",
             "src/components/template/Footer.tsx",
             "src/components/template/Logo.tsx",
             "src/components/template/PageContainer.tsx",
@@ -4096,74 +3206,19 @@
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
             "Cursor Agent",
-            "Ihor Selin",
-            "Moti Shakuri",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
             "Pavlo Kuzina",
-            "motishaku-p0"
-          ],
-          "total_commits": 334,
-          "bug_fixes": 56,
-          "bug_fix_ratio": 0.168,
-          "last_modified": "2026-02-19T06:55:41Z",
-          "health_score": 66.5
-        },
-        {
-          "name": "integration-deletion-flow",
-          "description": null,
-          "paths": [
-            "src/components/template/DeleteIntegrationModal.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
+            "Dor Elidan",
             "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avisassonport0"
           ],
-          "total_commits": 29,
-          "bug_fixes": 8,
-          "bug_fix_ratio": 0.276,
-          "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 41.1
-        },
-        {
-          "name": "custom-networks-flow",
-          "description": null,
-          "paths": [
-            "src/components/template/CustomNetworks/CustomNetworks.tsx",
-            "src/components/template/CustomNetworks/utils.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Yossi-Friedman",
-            "Yosi Friedman"
-          ],
-          "total_commits": 24,
-          "bug_fixes": 0,
-          "bug_fix_ratio": 0.0,
-          "last_modified": "2025-10-17T01:38:33Z",
-          "health_score": 89.6
+          "total_commits": 43,
+          "bug_fixes": 12,
+          "bug_fix_ratio": 0.279,
+          "last_modified": "2026-02-19T06:55:41Z",
+          "health_score": 42.9
         },
         {
           "name": "email-settings-flow",
@@ -4181,75 +3236,18 @@
             "src/components/template/EmailSettings/utils/index.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 30,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.2,
-          "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 55.2
-        },
-        {
-          "name": "permitted-softwares-flow",
-          "description": null,
-          "paths": [
-            "src/components/template/PermittedSoftwares/PermittedSoftwares.tsx",
-            "src/components/template/PermittedSoftwares/components/ExpirationDisplay.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Ihor Selin",
-            "Moti Shakuri",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
             "Pavlo Kuzina",
-            "motishaku-p0"
+            "PashaSchool"
           ],
-          "total_commits": 43,
-          "bug_fixes": 3,
-          "bug_fix_ratio": 0.07,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 83.6
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
+          "last_modified": "2026-02-10T13:19:37Z",
+          "health_score": 40.8
         },
         {
-          "name": "sync-status-flow",
-          "description": null,
-          "paths": [
-            "src/components/template/SyncStatusPopup/SyncStatusPopup.tsx",
-            "src/components/template/SyncStatusPopup/index.ts"
-          ],
-          "authors": [
-            "PashaSchool",
-            "Cursor Agent",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 65,
-          "bug_fixes": 15,
-          "bug_fix_ratio": 0.231,
-          "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 53.8
-        },
-        {
-          "name": "webhooks-flow",
+          "name": "webhook-management-flow",
           "description": null,
           "paths": [
             "src/components/template/Webhooks/Weebhoks.tsx",
@@ -4275,24 +3273,58 @@
             "src/components/template/Webhooks/components/inputs/TestConnectionButton.tsx",
             "src/components/template/Webhooks/components/inputs/TypePicker.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:55:27.784696Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "custom-networks-flow",
+          "description": null,
+          "paths": [
+            "src/components/template/CustomNetworks/CustomNetworks.tsx",
+            "src/components/template/CustomNetworks/utils.ts"
           ],
-          "total_commits": 34,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.147,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 66.1
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:55:27.784713Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "permitted-softwares-flow",
+          "description": null,
+          "paths": [
+            "src/components/template/PermittedSoftwares/PermittedSoftwares.tsx",
+            "src/components/template/PermittedSoftwares/components/ExpirationDisplay.tsx"
+          ],
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:55:27.784727Z",
+          "health_score": 100.0
+        },
+        {
+          "name": "sync-status-flow",
+          "description": null,
+          "paths": [
+            "src/components/template/SyncStatusPopup/SyncStatusPopup.tsx",
+            "src/components/template/SyncStatusPopup/index.ts"
+          ],
+          "authors": [
+            "Yossi-Friedman",
+            "avi-port0io",
+            "Cursor Agent"
+          ],
+          "total_commits": 4,
+          "bug_fixes": 2,
+          "bug_fix_ratio": 0.5,
+          "last_modified": "2026-02-16T19:13:47Z",
+          "health_score": 0.0
         }
       ]
     },
@@ -4445,26 +3477,18 @@
         "src/components/ui/DatePicker/tables/components/props/isWeekend.ts"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "avisassonport0",
         "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
+        "PashaSchool",
         "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "avi-port0io",
+        "Pavlo Kuzina",
+        "Yossi-Friedman"
       ],
-      "total_commits": 161,
-      "bug_fixes": 27,
-      "bug_fix_ratio": 0.168,
+      "total_commits": 14,
+      "bug_fixes": 3,
+      "bug_fix_ratio": 0.214,
       "last_modified": "2026-02-16T19:13:47Z",
-      "health_score": 66.5,
+      "health_score": 48.9,
       "flows": [
         {
           "name": "ui-component-library-flow",
@@ -4615,26 +3639,18 @@
             "src/components/ui/DatePicker/tables/components/props/isWeekend.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "avisassonport0",
             "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
+            "PashaSchool",
             "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "Pavlo Kuzina",
+            "Yossi-Friedman"
           ],
-          "total_commits": 161,
-          "bug_fixes": 27,
-          "bug_fix_ratio": 0.168,
+          "total_commits": 14,
+          "bug_fixes": 3,
+          "bug_fix_ratio": 0.214,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 66.5
+          "health_score": 48.9
         }
       ]
     },
@@ -4954,31 +3970,24 @@
         "src/firestoreQueries/ndr/entities/nodeTreeUtils/processors/sentinelOne/sentinelOneStandaloneProcessor.ts"
       ],
       "authors": [
-        "Cursor Agent",
-        "Dor Elidan",
+        "Yossi-Friedman",
+        "PashaSchool",
         "Guy Landoy",
+        "landoyport0",
         "omer-nachshon",
+        "Cursor Agent",
+        "avi-port0io",
         "Pavlo Kuzina",
+        "Dor Elidan",
         "Omer Nachshon",
         "ddemydenko",
-        "cooperport1661",
-        "Moti Shakuri",
-        "IgorSelin",
-        "Yossi-Friedman",
-        "motishaku-p0",
-        "PashaSchool",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "avisassonport0",
-        "landoyport0",
-        "avi-port0io",
-        "Yosi Friedman"
+        "avisassonport0"
       ],
-      "total_commits": 769,
-      "bug_fixes": 160,
-      "bug_fix_ratio": 0.208,
+      "total_commits": 63,
+      "bug_fixes": 23,
+      "bug_fix_ratio": 0.365,
       "last_modified": "2026-02-23T05:17:19Z",
-      "health_score": 58.4,
+      "health_score": 27.0,
       "flows": []
     },
     {
@@ -5022,23 +4031,19 @@
         "src/views/EDR/EdrDetections/components/sections/VerificationStatusSection.tsx"
       ],
       "authors": [
-        "PashaSchool",
-        "avisassonport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
         "Yossi-Friedman",
-        "Pavlo Kuzina"
+        "avi-port0io",
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 100,
-      "bug_fixes": 9,
-      "bug_fix_ratio": 0.09,
+      "total_commits": 15,
+      "bug_fixes": 3,
+      "bug_fix_ratio": 0.2,
       "last_modified": "2026-02-16T19:13:47Z",
-      "health_score": 82.0,
+      "health_score": 51.6,
       "flows": [
         {
-          "name": "detection-browsing-flow",
+          "name": "detection-list-flow",
           "description": null,
           "paths": [
             "src/views/EDR/index.tsx",
@@ -5048,35 +4053,32 @@
             "src/views/EDR/EdrDetections/components/DetectionFilters.tsx",
             "src/views/EDR/EdrDetections/components/DetectionTable.tsx",
             "src/views/EDR/EdrDetections/components/SearchWithSuggestions.tsx",
-            "src/views/EDR/EdrDetections/components/ProviderStatsCard.tsx",
-            "src/views/EDR/EdrDetections/components/Skeletons.tsx",
             "src/views/EDR/EdrDetections/components/StatusBadge.tsx",
+            "src/views/EDR/EdrDetections/components/ProviderStatsCard.tsx",
+            "src/views/EDR/EdrDetections/components/ExportEdrDetectionsButton.tsx",
+            "src/views/EDR/EdrDetections/components/Skeletons.tsx",
+            "src/views/EDR/EdrDetections/components/ErrorFallbackView.tsx",
             "src/views/EDR/EdrDetections/hooks/useEdrDetections.ts",
-            "src/views/EDR/EdrDetections/hooks/useEdrFilterOptions.ts",
             "src/views/EDR/EdrDetections/hooks/useEdrDetectionSuggestions.ts",
+            "src/views/EDR/EdrDetections/hooks/useEdrFilterOptions.ts",
             "src/views/EDR/EdrDetections/hooks/useProviderStats.ts",
             "src/views/EDR/EdrDetections/utils/commonUtils.tsx",
-            "src/views/EDR/EdrDetections/utils/dataUtils.ts",
-            "src/views/EDR/EdrDetections/components/ErrorFallbackView.tsx"
+            "src/views/EDR/EdrDetections/utils/dataUtils.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Pavlo Kuzina"
+            "avi-port0io",
+            "Dor Elidan",
+            "avisassonport0"
           ],
-          "total_commits": 79,
-          "bug_fixes": 9,
-          "bug_fix_ratio": 0.114,
+          "total_commits": 15,
+          "bug_fixes": 3,
+          "bug_fix_ratio": 0.2,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 77.2
+          "health_score": 51.6
         },
         {
-          "name": "detection-details-flow",
+          "name": "detection-detail-flow",
           "description": null,
           "paths": [
             "src/views/EDR/EdrDetections/components/DetectionDetailDrawer.tsx",
@@ -5097,37 +4099,12 @@
             "src/views/EDR/EdrDetections/components/sections/TagsSection.tsx",
             "src/views/EDR/EdrDetections/components/sections/VerificationStatusSection.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "IgorSelin",
-            "avi-port0io",
-            "Yossi-Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 45,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.044,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 89.3
-        },
-        {
-          "name": "detection-export-flow",
-          "description": null,
-          "paths": [
-            "src/views/EDR/EdrDetections/components/ExportEdrDetectionsButton.tsx"
-          ],
-          "authors": [
-            "PashaSchool",
-            "IgorSelin",
-            "avi-port0io",
-            "Yossi-Friedman",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 19,
-          "bug_fixes": 2,
-          "bug_fix_ratio": 0.105,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 69.2
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:56:01.059262Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -5172,28 +4149,18 @@
         "src/views/Firewall/components/inputs/SelectSingleField/index.ts"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Pavlo Kuzina",
+        "PashaSchool"
       ],
-      "total_commits": 182,
-      "bug_fixes": 33,
-      "bug_fix_ratio": 0.181,
+      "total_commits": 4,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.25,
       "last_modified": "2026-02-01T13:43:03Z",
-      "health_score": 63.7,
+      "health_score": 40.8,
       "flows": [
         {
-          "name": "firewall-rules-flow",
+          "name": "firewall-rules-management-flow",
           "description": null,
           "paths": [
             "src/views/Firewall/Directions.tsx",
@@ -5233,25 +4200,15 @@
             "src/views/Firewall/components/inputs/SelectSingleField/index.ts"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
-            "avi-port0io",
-            "Guy Landoy",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 182,
-          "bug_fixes": 33,
-          "bug_fix_ratio": 0.181,
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
           "last_modified": "2026-02-01T13:43:03Z",
-          "health_score": 63.7
+          "health_score": 40.8
         }
       ]
     },
@@ -5299,29 +4256,20 @@
       ],
       "authors": [
         "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "cooperport1661",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
         "avi-port0io",
-        "Guy Landoy",
+        "Pavlo Kuzina",
+        "Omer Nachshon",
         "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "avisassonport0"
       ],
-      "total_commits": 152,
-      "bug_fixes": 31,
-      "bug_fix_ratio": 0.204,
+      "total_commits": 32,
+      "bug_fixes": 13,
+      "bug_fix_ratio": 0.406,
       "last_modified": "2026-02-16T19:13:47Z",
-      "health_score": 59.2,
+      "health_score": 17.4,
       "flows": [
         {
-          "name": "browse-integrations-flow",
+          "name": "integration-discovery-flow",
           "description": null,
           "paths": [
             "src/views/Integrations/StaticAvailableIntegrations.tsx",
@@ -5331,34 +4279,29 @@
             "src/views/Integrations/components/IntegrationCarousel.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
+            "Pavlo Kuzina",
+            "Omer Nachshon",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avisassonport0"
           ],
-          "total_commits": 117,
-          "bug_fixes": 20,
-          "bug_fix_ratio": 0.171,
+          "total_commits": 22,
+          "bug_fixes": 8,
+          "bug_fix_ratio": 0.364,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 65.8
+          "health_score": 24.2
         },
         {
-          "name": "setup-integration-flow",
+          "name": "integration-setup-flow",
           "description": null,
           "paths": [
             "src/views/Integrations/components/IntegrationSetupWizard.tsx",
             "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/AwsInstallationDialog.tsx",
             "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/AwsInstallationDialogContainer.tsx",
             "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/index.ts",
+            "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/installationGuides/CloudFormationGuide.tsx",
+            "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/installationGuides/TerraFormGuide.tsx",
+            "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/installationGuides/index.ts",
             "src/views/Integrations/components/installationDialogs/CloudflareInstallationDialog/CloudflareInstallationDialog.tsx",
             "src/views/Integrations/components/installationDialogs/CloudflareInstallationDialog/CloudflareInstallationDialogContainer.tsx",
             "src/views/Integrations/components/installationDialogs/CloudflareInstallationDialog/index.ts",
@@ -5378,36 +4321,24 @@
             "src/views/Integrations/components/installationDialogs/MSDefenderOAuthInstallationDialog/index.ts",
             "src/views/Integrations/components/installationDialogs/SentinelOneInstallationDialog/SentinelOneInstallationDialog.tsx",
             "src/views/Integrations/components/installationDialogs/SentinelOneInstallationDialog/SentinelOneInstallationDialogContainer.tsx",
-            "src/views/Integrations/components/installationDialogs/SentinelOneInstallationDialog/index.ts",
-            "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/installationGuides/CloudFormationGuide.tsx",
-            "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/installationGuides/TerraFormGuide.tsx",
-            "src/views/Integrations/components/installationDialogs/AwsInstallationDialog/installationGuides/index.ts"
+            "src/views/Integrations/components/installationDialogs/SentinelOneInstallationDialog/index.ts"
           ],
           "authors": [
             "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "Idan Cooperman",
-            "cooperport1661",
-            "avisassonport0",
-            "landoyport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
+            "Pavlo Kuzina",
+            "Omer Nachshon",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avisassonport0"
           ],
-          "total_commits": 97,
-          "bug_fixes": 25,
-          "bug_fix_ratio": 0.258,
+          "total_commits": 30,
+          "bug_fixes": 13,
+          "bug_fix_ratio": 0.433,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 48.5
+          "health_score": 12.3
         },
         {
-          "name": "view-integration-profile-flow",
+          "name": "integration-profile-flow",
           "description": null,
           "paths": [
             "src/views/Integrations/IntegrationProfile/IntegrationProfile.tsx",
@@ -5417,24 +4348,17 @@
             "src/views/Integrations/IntegrationProfile/components/VPCCard.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "avisassonport0",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
+            "Pavlo Kuzina",
+            "Omer Nachshon",
             "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "avisassonport0"
           ],
-          "total_commits": 55,
-          "bug_fixes": 13,
-          "bug_fix_ratio": 0.236,
+          "total_commits": 7,
+          "bug_fixes": 4,
+          "bug_fix_ratio": 0.571,
           "last_modified": "2026-02-16T19:13:47Z",
-          "health_score": 52.7
+          "health_score": 0.0
         }
       ]
     },
@@ -5445,22 +4369,12 @@
         "src/views/NoNetwork/NoNetwork.tsx",
         "src/views/NoNetwork/networks.css"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "IgorSelin",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 20,
-      "bug_fixes": 4,
-      "bug_fix_ratio": 0.2,
-      "last_modified": "2026-01-04T09:32:52Z",
-      "health_score": 52.8,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018158Z",
+      "health_score": 100.0,
       "flows": [
         {
           "name": "no-network-flow",
@@ -5469,22 +4383,12 @@
             "src/views/NoNetwork/NoNetwork.tsx",
             "src/views/NoNetwork/networks.css"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 20,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.2,
-          "last_modified": "2026-01-04T09:32:52Z",
-          "health_score": 52.8
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:56:13.838766Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -5496,22 +4400,12 @@
         "src/components/layouts/AuthLayout/Blank.tsx",
         "src/components/layouts/AuthLayout/index.ts"
       ],
-      "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "IgorSelin",
-        "Dor Elidan",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
-      ],
-      "total_commits": 17,
-      "bug_fixes": 4,
-      "bug_fix_ratio": 0.235,
-      "last_modified": "2026-01-21T07:45:07Z",
-      "health_score": 46.0,
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-23T16:53:40.018162Z",
+      "health_score": 100.0,
       "flows": [
         {
           "name": "auth-layout-flow",
@@ -5521,22 +4415,12 @@
             "src/components/layouts/AuthLayout/Blank.tsx",
             "src/components/layouts/AuthLayout/index.ts"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 17,
-          "bug_fixes": 4,
-          "bug_fix_ratio": 0.235,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 46.0
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:56:15.571726Z",
+          "health_score": 100.0
         }
       ]
     },
@@ -5860,27 +4744,22 @@
         "src/views/HunterX/Detections/components/NotificationSettings/utils/severityHelpers.ts"
       ],
       "authors": [
+        "motishaku-p0",
         "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "Moti Shakuri",
-        "avisassonport0",
-        "landoyport0",
-        "IgorSelin",
-        "Dor Elidan",
-        "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
         "omer-nachshon",
+        "avi-port0io",
         "Pavlo Kuzina",
-        "motishaku-p0"
+        "Omer Nachshon",
+        "Yossi-Friedman",
+        "Moti Shakuri",
+        "Dor Elidan",
+        "avisassonport0"
       ],
-      "total_commits": 736,
-      "bug_fixes": 151,
-      "bug_fix_ratio": 0.205,
+      "total_commits": 118,
+      "bug_fixes": 21,
+      "bug_fix_ratio": 0.178,
       "last_modified": "2026-02-18T10:38:37Z",
-      "health_score": 59.0,
+      "health_score": 64.4,
       "flows": []
     },
     {
@@ -6547,32 +5426,23 @@
         "src/views/NDR/PortflowPage/components/PortflowShortcuts/components/PortflowShortcutsCard/components/PortflowShortcutItem/component/PortflowQueryItemLabel.tsx"
       ],
       "authors": [
-        "Cursor Agent",
-        "Dor Elidan",
+        "PashaSchool",
+        "landoyport0",
         "Guy Landoy",
-        "omer-nachshon",
+        "Cursor Agent",
+        "avi-port0io",
         "Pavlo Kuzina",
         "Omer Nachshon",
-        "ddemydenko",
-        "cooperport1661",
-        "Moti Shakuri",
-        "IgorSelin",
+        "Dor Elidan",
         "Yossi-Friedman",
-        "motishaku-p0",
-        "PashaSchool",
-        "Ihor Selin",
-        "Idan Cooperman",
-        "avisassonport0",
-        "landoyport0",
-        "avi-port0io",
-        "ido-bh0",
-        "Yosi Friedman"
+        "ddemydenko",
+        "avisassonport0"
       ],
-      "total_commits": 2566,
-      "bug_fixes": 587,
-      "bug_fix_ratio": 0.229,
+      "total_commits": 162,
+      "bug_fixes": 55,
+      "bug_fix_ratio": 0.34,
       "last_modified": "2026-02-23T08:22:19Z",
-      "health_score": 54.2,
+      "health_score": 32.1,
       "flows": []
     },
     {
@@ -6594,23 +5464,15 @@
         "src/views/Access/Resources/resourceProfile/components/portRulesTable/PortsTable.tsx"
       ],
       "authors": [
-        "PashaSchool",
-        "Omer Nachshon",
-        "Ihor Selin",
-        "IgorSelin",
-        "Dor Elidan",
         "avi-port0io",
-        "Guy Landoy",
-        "Yossi-Friedman",
-        "Yosi Friedman",
-        "omer-nachshon",
-        "Pavlo Kuzina"
+        "Pavlo Kuzina",
+        "PashaSchool"
       ],
-      "total_commits": 34,
-      "bug_fixes": 6,
-      "bug_fix_ratio": 0.176,
+      "total_commits": 4,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.25,
       "last_modified": "2026-02-10T13:19:37Z",
-      "health_score": 60.6,
+      "health_score": 40.8,
       "flows": [
         {
           "name": "create-resource-flow",
@@ -6627,26 +5489,18 @@
             "src/views/Access/Resources/new/newStandaloneResource/NewResourceStepIndicator.tsx"
           ],
           "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
             "avi-port0io",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
+            "Pavlo Kuzina",
+            "PashaSchool"
           ],
-          "total_commits": 34,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.176,
+          "total_commits": 4,
+          "bug_fixes": 1,
+          "bug_fix_ratio": 0.25,
           "last_modified": "2026-02-10T13:19:37Z",
-          "health_score": 60.6
+          "health_score": 40.8
         },
         {
-          "name": "manage-port-rules-flow",
+          "name": "port-rules-flow",
           "description": null,
           "paths": [
             "src/views/Access/Resources/resourceProfile/components/portRulesTable/PortItem.tsx",
@@ -6654,23 +5508,12 @@
             "src/views/Access/Resources/resourceProfile/components/portRulesTable/PortTypeSelector.tsx",
             "src/views/Access/Resources/resourceProfile/components/portRulesTable/PortsTable.tsx"
           ],
-          "authors": [
-            "PashaSchool",
-            "Omer Nachshon",
-            "Ihor Selin",
-            "IgorSelin",
-            "Dor Elidan",
-            "Guy Landoy",
-            "Yossi-Friedman",
-            "Yosi Friedman",
-            "omer-nachshon",
-            "Pavlo Kuzina"
-          ],
-          "total_commits": 26,
-          "bug_fixes": 5,
-          "bug_fix_ratio": 0.192,
-          "last_modified": "2026-01-21T07:45:07Z",
-          "health_score": 55.6
+          "authors": [],
+          "total_commits": 0,
+          "bug_fixes": 0,
+          "bug_fix_ratio": 0.0,
+          "last_modified": "2026-02-23T16:56:55.921184Z",
+          "health_score": 100.0
         }
       ]
     }
