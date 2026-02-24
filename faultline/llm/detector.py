@@ -13,9 +13,13 @@ _MAX_SAMPLE_PATHS = 5
 _MAX_FEATURES_PER_CALL = 50
 _MAX_FILES_FOR_DETECTION = 500
 
-# Token budgets — dir-collapse responses list hundreds of directory paths
+# Token budgets for LLM responses.
+# The Anthropic SDK requires streaming for max_tokens > ~21,333 when using
+# messages.parse() (non-streaming). Stay well below that limit.
+# Dir-collapse responses list directory paths (~4–6K tokens in practice),
+# so 16,384 is more than sufficient even for repos with 500+ unique dirs.
 _MAX_TOKENS_FILE = 16_384
-_MAX_TOKENS_DIR  = 32_768
+_MAX_TOKENS_DIR  = 16_384
 
 _DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:7b"
 _DEFAULT_OLLAMA_HOST = "http://localhost:11434"
