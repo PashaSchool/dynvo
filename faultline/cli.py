@@ -144,7 +144,7 @@ def analyze(
         analysis_files, path_prefix = _strip_src_prefix(files, src)
 
         if llm:
-            raw_mapping = _detect_with_llm(analysis_files, provider, api_key, model, ollama_url, commits=commits)
+            raw_mapping = _detect_with_llm(analysis_files, provider, api_key, model, ollama_url, commits=commits, path_prefix=path_prefix)
         else:
             raw_mapping = detect_features_from_structure(analysis_files)
 
@@ -249,18 +249,19 @@ def _detect_with_llm(
     model: str | None,
     ollama_url: str,
     commits: list | None = None,
+    path_prefix: str = "",
 ) -> dict[str, list[str]]:
     """Runs LLM feature detection with the chosen provider. Falls back to heuristic on failure."""
     if provider == "anthropic":
         from faultline.llm.detector import detect_features_llm
         console.print("[blue]Mapping features with Claude...[/blue]")
-        feature_paths = detect_features_llm(files, api_key=api_key, commits=commits)
+        feature_paths = detect_features_llm(files, api_key=api_key, commits=commits, path_prefix=path_prefix)
 
     elif provider == "ollama":
         from faultline.llm.detector import detect_features_ollama, _DEFAULT_OLLAMA_MODEL
         resolved_model = model or _DEFAULT_OLLAMA_MODEL
         console.print(f"[blue]Mapping features with Ollama ({resolved_model})...[/blue]")
-        feature_paths = detect_features_ollama(files, model=resolved_model, host=ollama_url, commits=commits)
+        feature_paths = detect_features_ollama(files, model=resolved_model, host=ollama_url, commits=commits, path_prefix=path_prefix)
 
     else:
         feature_paths = {}
