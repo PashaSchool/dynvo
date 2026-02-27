@@ -7,6 +7,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from faultline.models.types import Commit, FileBlame
 
+# Regex to extract PR numbers from commit messages.
+# Handles two common GitHub merge strategies:
+#   "Merge pull request #123 from branch"  (merge commit)
+#   "fix: something (#123)"                (squash merge)
+_PR_MERGE_RE  = re.compile(r"Merge pull request #(\d+)", re.IGNORECASE)
+_PR_SQUASH_RE = re.compile(r"\(#(\d+)\)\s*(?:\n|$)")
+
 # Regex patterns that identify bug fix commits
 BUG_FIX_PATTERNS = [
     r"\bfix\b", r"\bbug\b", r"\bhotfix\b", r"\bpatch\b",
@@ -27,6 +34,34 @@ DEFAULT_MAX_COMMITS = 5_000
 
 def is_bug_fix(message: str) -> bool:
     return bool(BUG_FIX_REGEX.search(message))
+
+
+def extract_pr_number(message: str) -> int | None:
+    """Extracts a GitHub PR number from a commit message, or None if not found."""
+    m = _PR_MERGE_RE.search(message)
+    if m:
+        return int(m.group(1))
+    m = _PR_SQUASH_RE.search(message)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def get_remote_url(repo: Repo) -> str:
+    """
+    Returns the GitHub base URL for the repo (without .git suffix), or empty string.
+    Normalizes SSH remotes to HTTPS: git@github.com:org/repo.git → https://github.com/org/repo
+    """
+    try:
+        url = repo.remotes.origin.url
+        if url.startswith("git@"):
+            url = re.sub(r"^git@([^:]+):", r"https://\1/", url)
+        url = url.rstrip("/")
+        if url.endswith(".git"):
+            url = url[:-4]
+        return url
+    except Exception:
+        return ""
 
 
 def load_repo(path: str) -> Repo:
@@ -89,13 +124,15 @@ def get_commits(repo: Repo, days: int = 365, max_commits: int = DEFAULT_MAX_COMM
 
             files_changed = list(commit.stats.files.keys())
 
+            msg = commit.message.strip()
             commits.append(Commit(
                 sha=commit.hexsha[:8],
-                message=commit.message.strip(),
+                message=msg,
                 author=str(commit.author.name),
                 date=commit_date,
                 files_changed=files_changed,
-                is_bug_fix=is_bug_fix(commit.message),
+                is_bug_fix=is_bug_fix(msg),
+                pr_number=extract_pr_number(msg),
             ))
 
     return commits

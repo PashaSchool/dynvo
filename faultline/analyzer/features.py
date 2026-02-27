@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 
-from faultline.models.types import Commit, Feature, FeatureMap, Flow
+from faultline.models.types import Commit, Feature, FeatureMap, Flow, PullRequest
 
 _MAX_FILES_PER_BULK_COMMIT = 30  # commits touching more files than this are excluded (bulk ops)
 _MIN_COCHANGE_COMMITS = 2        # minimum shared commits for a pair to count
@@ -93,11 +93,31 @@ def _extract_feature_name(parts: tuple[str, ...]) -> str:
     return "root"
 
 
+def _collect_prs(commits: list[Commit], remote_url: str) -> list[PullRequest]:
+    """Returns deduplicated PullRequest objects from bug-fix commits that have a PR number."""
+    seen: set[int] = set()
+    prs: list[PullRequest] = []
+    for c in commits:
+        if not c.is_bug_fix or c.pr_number is None or c.pr_number in seen:
+            continue
+        seen.add(c.pr_number)
+        url = f"{remote_url}/pull/{c.pr_number}" if remote_url else ""
+        prs.append(PullRequest(
+            number=c.pr_number,
+            url=url,
+            title=c.message.split("\n")[0][:120],
+            author=c.author,
+            date=c.date,
+        ))
+    return sorted(prs, key=lambda p: p.date, reverse=True)
+
+
 def build_feature_map(
     repo_path: str,
     commits: list[Commit],
     feature_paths: dict[str, list[str]],
     days: int,
+    remote_url: str = "",
 ) -> FeatureMap:
     """Builds a FeatureMap by joining commits with detected features."""
 
@@ -143,10 +163,12 @@ def build_feature_map(
                 datetime.now(tz=timezone.utc)
             ),
             health_score=_calculate_health(bug_fix_ratio, total),
+            bug_fix_prs=_collect_prs(commits_for_feature, remote_url),
         ))
 
     return FeatureMap(
         repo_path=repo_path,
+        remote_url=remote_url,
         analyzed_at=datetime.now(tz=timezone.utc),
         total_commits=len(commits),
         date_range_days=days,
@@ -157,6 +179,7 @@ def build_feature_map(
 def build_flows_metrics(
     commits: list[Commit],
     flow_file_mappings: dict[str, list[str]],
+    remote_url: str = "",
 ) -> list[Flow]:
     """
     Builds Flow objects with commit metrics, mirroring build_feature_map logic.
@@ -205,6 +228,7 @@ def build_flows_metrics(
                 datetime.now(tz=timezone.utc),
             ),
             health_score=_calculate_health(bug_fix_ratio, total),
+            bug_fix_prs=_collect_prs(commits_for_flow, remote_url),
         ))
 
     return flows

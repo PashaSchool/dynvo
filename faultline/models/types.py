@@ -9,6 +9,15 @@ class Commit(BaseModel):
     date: datetime
     files_changed: list[str]
     is_bug_fix: bool = False
+    pr_number: int | None = None
+
+
+class PullRequest(BaseModel):
+    number: int
+    url: str          # full GitHub PR URL, empty string if remote unknown
+    title: str        # first line of the commit message
+    author: str
+    date: datetime
 
 
 class FileBlame(BaseModel):
@@ -28,6 +37,7 @@ class Flow(BaseModel):
     bug_fix_ratio: float
     last_modified: datetime
     health_score: float        # 0-100, higher is better
+    bug_fix_prs: list[PullRequest] = []
 
 
 class Feature(BaseModel):
@@ -41,10 +51,12 @@ class Feature(BaseModel):
     last_modified: datetime
     health_score: float       # 0-100, higher is better
     flows: list[Flow] = []    # populated when --flows flag is used
+    bug_fix_prs: list[PullRequest] = []
 
 
 class FeatureMap(BaseModel):
     repo_path: str
+    remote_url: str = ""      # GitHub base URL, e.g. https://github.com/org/repo
     analyzed_at: datetime
     total_commits: int
     date_range_days: int
