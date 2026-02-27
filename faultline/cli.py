@@ -4,7 +4,7 @@ from typing import Optional
 from rich.console import Console
 from rich import print as rprint
 
-from faultline.analyzer.git import load_repo, get_commits, get_tracked_files, estimate_commits, estimate_duration, DEFAULT_MAX_COMMITS
+from faultline.analyzer.git import load_repo, get_commits, get_tracked_files, estimate_commits, estimate_duration, get_remote_url, DEFAULT_MAX_COMMITS
 from faultline.analyzer.features import detect_features_from_structure, build_feature_map, build_flows_metrics
 from faultline.output.reporter import print_report
 from faultline.output.writer import write_feature_map
@@ -114,6 +114,7 @@ def analyze(
         # 1. Load the repository
         console.print(f"[blue]Analyzing:[/blue] {repo_path}")
         repo = load_repo(repo_path)
+        remote_url = get_remote_url(repo)
 
         # 2. Validate LLM access early — before the long git analysis
         if llm:
@@ -143,8 +144,17 @@ def analyze(
         # Strip --src prefix so LLM/heuristic sees clean relative paths (e.g. EDR/... not src/views/EDR/...)
         analysis_files, path_prefix = _strip_src_prefix(files, src)
 
+        # Extract AST signatures when --llm is set (reused for feature anchors + flows)
+        signatures: dict = {}
         if llm:
-            raw_mapping = _detect_with_llm(analysis_files, provider, api_key, model, ollama_url, commits=commits, path_prefix=path_prefix)
+            from faultline.analyzer.ast_extractor import extract_signatures
+            extract_root = str(Path(str(repo.working_tree_dir)) / path_prefix) if path_prefix else str(repo.working_tree_dir)
+            signatures = extract_signatures(analysis_files, extract_root)
+            if signatures:
+                console.print(f"[dim]Extracted signatures from {len(signatures)} TS/JS files[/dim]")
+
+        if llm:
+            raw_mapping = _detect_with_llm(analysis_files, provider, api_key, model, ollama_url, commits=commits, path_prefix=path_prefix, signatures=signatures)
         else:
             raw_mapping = detect_features_from_structure(analysis_files)
 
@@ -165,6 +175,7 @@ def analyze(
             commits=commits,
             feature_paths=feature_paths,
             days=days,
+            remote_url=remote_url,
         )
 
         # 6b. Detect flows within each feature (optional)
@@ -179,6 +190,8 @@ def analyze(
                 api_key=api_key,
                 model=model,
                 ollama_url=ollama_url,
+                signatures=signatures,
+                remote_url=remote_url,
             )
 
         # 7. Print the report
@@ -250,18 +263,19 @@ def _detect_with_llm(
     ollama_url: str,
     commits: list | None = None,
     path_prefix: str = "",
+    signatures: dict | None = None,
 ) -> dict[str, list[str]]:
     """Runs LLM feature detection with the chosen provider. Falls back to heuristic on failure."""
     if provider == "anthropic":
         from faultline.llm.detector import detect_features_llm
         console.print("[blue]Mapping features with Claude...[/blue]")
-        feature_paths = detect_features_llm(files, api_key=api_key, commits=commits, path_prefix=path_prefix)
+        feature_paths = detect_features_llm(files, api_key=api_key, commits=commits, path_prefix=path_prefix, signatures=signatures)
 
     elif provider == "ollama":
         from faultline.llm.detector import detect_features_ollama, _DEFAULT_OLLAMA_MODEL
         resolved_model = model or _DEFAULT_OLLAMA_MODEL
         console.print(f"[blue]Mapping features with Ollama ({resolved_model})...[/blue]")
-        feature_paths = detect_features_ollama(files, model=resolved_model, host=ollama_url, commits=commits, path_prefix=path_prefix)
+        feature_paths = detect_features_ollama(files, model=resolved_model, host=ollama_url, commits=commits, path_prefix=path_prefix, signatures=signatures)
 
     else:
         feature_paths = {}
@@ -286,25 +300,28 @@ def _detect_flows(
     api_key: str | None,
     model: str | None,
     ollama_url: str,
+    signatures: dict | None = None,
+    remote_url: str = "",
 ):
     """
     Runs flow detection for each feature and attaches Flow objects to the FeatureMap.
     Returns the updated FeatureMap (features with .flows populated).
     """
-    from faultline.analyzer.ast_extractor import extract_signatures
     from faultline.llm.flow_detector import detect_flows_llm, detect_flows_ollama, _DEFAULT_OLLAMA_MODEL as _OLLAMA_MODEL
     from faultline.llm.flow_detector import _FlowFileMapping
 
     label = "Claude" if provider == "anthropic" else "Ollama"
     console.print(f"[blue]Detecting flows with {label}...[/blue]")
 
-    # Extract file signatures (exports, routes, imports) from TS/JS files.
+    # Reuse signatures from feature detection if provided; otherwise extract now.
     # analysis_files are stripped of path_prefix, so reconstruct the correct root:
     # git_root/src/ when --src src/ is used, or just git_root otherwise.
-    from pathlib import Path as _Path
-    extract_root = str(_Path(repo_path) / path_prefix) if path_prefix else repo_path
-    signatures = extract_signatures(analysis_files, extract_root)
-    console.print(f"[dim]Extracted signatures from {len(signatures)} TS/JS files[/dim]")
+    if not signatures:
+        from faultline.analyzer.ast_extractor import extract_signatures
+        from pathlib import Path as _Path
+        extract_root = str(_Path(repo_path) / path_prefix) if path_prefix else repo_path
+        signatures = extract_signatures(analysis_files, extract_root)
+        console.print(f"[dim]Extracted signatures from {len(signatures)} TS/JS files[/dim]")
 
     updated_features = []
     total_flows = 0
@@ -360,7 +377,7 @@ def _detect_flows(
             c for c in commits
             if any(f in feature_commit_files for f in c.files_changed)
         ]
-        flows = build_flows_metrics(feature_commits, flow_file_mappings)
+        flows = build_flows_metrics(feature_commits, flow_file_mappings, remote_url=remote_url)
         total_flows += len(flows)
 
         updated_features.append(feature.model_copy(update={"flows": flows}))

@@ -22,7 +22,7 @@ def write_feature_map(feature_map: FeatureMap, output_path: str | None = None) -
     else:
         slug = _repo_slug(feature_map.repo_path)
         ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
-        path = Path(".faultline") / f"feature-map-{slug}-{ts}.json"
+        path = Path.home() / ".faultline" / f"feature-map-{slug}-{ts}.json"
 
     path.parent.mkdir(parents=True, exist_ok=True)
     data = feature_map.model_dump(mode="json")

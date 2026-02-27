@@ -6,6 +6,7 @@ from pathlib import Path
 import anthropic
 from pydantic import BaseModel, ValidationError
 
+from faultline.analyzer.ast_extractor import FileSignature
 from faultline.models.types import Commit, Feature
 
 _MODEL = "claude-haiku-4-5-20251001"
@@ -26,6 +27,9 @@ _DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
 # When file count exceeds this, collapse to unique directories to save tokens
 _DIR_COLLAPSE_THRESHOLD = 300
+# Max route-anchor entries injected into the LLM prompt
+_MAX_ROUTE_ANCHOR_FILES = 25
+_MAX_ROUTES_PER_ENTRY   = 3
 # Max sample filenames shown per directory in the enriched dir tree
 _DIR_SAMPLE_FILES = 4
 # Top co-change pairs to include in the prompt
@@ -60,6 +64,9 @@ Given a list of file paths from a git repository, group them into business featu
 7. Skip infrastructure and tooling files entirely: package.json, pyproject.toml, setup.py, .gitignore, Makefile, *.lock, *.toml, Dockerfile, docker-compose.yml, CI configs.
 8. Shared utility files go into the most closely related business feature, or into "shared-utilities" only if they truly cross all feature boundaries.
 9. For monorepo structures, group by business feature across packages when the same domain spans multiple packages.
+10. If a <route-anchors> section is provided, treat those files as strong feature anchors.
+    Files that define API routes (GET/POST/PUT/DELETE) are entry points to a feature — group
+    other files in the same directory tree with the file that shares their route prefix.
 
 ## Anti-patterns
 
@@ -129,6 +136,9 @@ business domain area, not a technical layer.
    they share a parent directory.
 7. Merge only truly tiny or ambiguous leaf directories into the closest related feature.
 8. Skip pure infrastructure directories: .storybook, __mocks__, .github, ci/, scripts/, etc.
+9. If a <route-anchors> section is provided, directories with routes are strong anchors.
+   Assign nearby sibling directories to the same feature as the directory that shares
+   the same route prefix (e.g. /api/payments/* dirs belong to the payments feature).
 
 ## Anti-patterns
 
@@ -194,6 +204,7 @@ def detect_features_llm(
     api_key: str | None = None,
     commits: list[Commit] | None = None,
     path_prefix: str = "",
+    signatures: dict[str, FileSignature] | None = None,
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to Claude and returns a semantic feature mapping.
@@ -233,14 +244,16 @@ def detect_features_llm(
         samples = _dir_to_sample_files(dirs, files)
         dir_keywords = _extract_dir_keywords(dirs, files, norm_commits) if norm_commits else {}
         file_tree = _format_dir_tree(dirs, samples)
-        extra_context = _format_extra_context(cochange_pairs, dir_keywords)
+        route_anchors = _format_route_anchors(signatures, dirs=dirs) if signatures else ""
+        extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors
         response = _call_dir_detection(client, file_tree, n_dirs=len(dirs), extra_context=extra_context)
         if not response:
             return {}
         return _expand_dir_mapping(response, files)
     else:
         file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
-        extra_context = _format_extra_context(cochange_pairs, {})
+        route_anchors = _format_route_anchors(signatures) if signatures else ""
+        extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors
         response = _call_feature_detection(client, file_tree, extra_context)
         if not response:
             return {}
@@ -491,6 +504,73 @@ def _format_extra_context(
     return ("\n\n" + "\n\n".join(parts) + "\n") if parts else ""
 
 
+def _format_route_anchors(
+    signatures: dict[str, FileSignature],
+    dirs: list[str] | None = None,
+) -> str:
+    """
+    Builds a <route-anchors> section for the LLM prompt.
+
+    File mode (dirs=None): one line per file that has routes.
+    Dir mode (dirs provided): one line per directory, routes aggregated from direct children.
+
+    Returns empty string if no routes found in signatures.
+    """
+    if not signatures:
+        return ""
+
+    if dirs is None:
+        lines = []
+        for path, sig in signatures.items():
+            if not sig.routes:
+                continue
+            routes_str = ", ".join(sig.routes[:_MAX_ROUTES_PER_ENTRY])
+            lines.append(f"  {path} → {routes_str}")
+            if len(lines) >= _MAX_ROUTE_ANCHOR_FILES:
+                break
+
+        if not lines:
+            return ""
+
+        return (
+            "\n\n<route-anchors>\n"
+            "Files with API routes — use as starting anchors for feature grouping:\n"
+            + "\n".join(lines)
+            + "\n</route-anchors>"
+        )
+    else:
+        dirs_set = set(dirs)
+        dir_routes: dict[str, list[str]] = {}
+        for path, sig in signatures.items():
+            if not sig.routes:
+                continue
+            parent = str(Path(path).parent)
+            if parent in dirs_set:
+                dir_routes.setdefault(parent, []).extend(sig.routes)
+
+        if not dir_routes:
+            return ""
+
+        lines = []
+        for d in dirs:
+            if d not in dir_routes:
+                continue
+            routes_str = ", ".join(dir_routes[d][:_MAX_ROUTES_PER_ENTRY])
+            lines.append(f"  {d} → {routes_str}")
+            if len(lines) >= _MAX_ROUTE_ANCHOR_FILES:
+                break
+
+        if not lines:
+            return ""
+
+        return (
+            "\n\n<route-anchors>\n"
+            "Directories with API routes — strong feature boundary anchors:\n"
+            + "\n".join(lines)
+            + "\n</route-anchors>"
+        )
+
+
 def _expand_dir_mapping(
     response: _FeatureDetectionResponse,
     all_files: list[str],
@@ -564,6 +644,7 @@ def detect_features_ollama(
     host: str = _DEFAULT_OLLAMA_HOST,
     commits: list[Commit] | None = None,
     path_prefix: str = "",
+    signatures: dict[str, FileSignature] | None = None,
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to a local Ollama model and returns a semantic feature mapping.
@@ -592,14 +673,16 @@ def detect_features_ollama(
         samples = _dir_to_sample_files(dirs, files)
         dir_keywords = _extract_dir_keywords(dirs, files, norm_commits) if norm_commits else {}
         file_tree = _format_dir_tree(dirs, samples)
-        extra_context = _format_extra_context(cochange_pairs, dir_keywords)
+        route_anchors = _format_route_anchors(signatures, dirs=dirs) if signatures else ""
+        extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors
         response = _call_dir_detection_ollama(file_tree, model, host, n_dirs=len(dirs), extra_context=extra_context)
         if not response:
             return {}
         return _expand_dir_mapping(response, files)
     else:
         file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
-        extra_context = _format_extra_context(cochange_pairs, {})
+        route_anchors = _format_route_anchors(signatures) if signatures else ""
+        extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors
         response = _call_feature_detection_ollama(file_tree, model, host, extra_context)
         if not response:
             return {}
