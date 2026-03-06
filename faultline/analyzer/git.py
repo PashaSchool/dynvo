@@ -66,9 +66,22 @@ def get_remote_url(repo: Repo) -> str:
 
 def load_repo(path: str) -> Repo:
     try:
-        return Repo(path, search_parent_directories=True)
+        repo = Repo(path, search_parent_directories=True)
     except InvalidGitRepositoryError:
         raise ValueError(f"'{path}' is not a git repository")
+
+    if repo.head.is_detached:
+        return repo
+
+    try:
+        repo.head.commit
+    except ValueError:
+        raise ValueError(
+            f"Repository at '{path}' has no commits yet. "
+            "Make at least one commit before running analysis."
+        )
+
+    return repo
 
 
 def estimate_commits(repo: Repo, days: int, max_commits: int = DEFAULT_MAX_COMMITS) -> int:
