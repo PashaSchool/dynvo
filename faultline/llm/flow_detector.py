@@ -9,12 +9,19 @@ A "flow" is richer than a feature:
   - Feature: "payments"  (business domain)
   - Flows:   "checkout-flow", "refund-flow", "subscription-flow"
 """
+import logging
 import os
 import re
+import time
 from pathlib import Path
 
 import anthropic
 from pydantic import BaseModel, ValidationError
+
+logger = logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 1.0
 
 from faultline.analyzer.ast_extractor import FileSignature
 
@@ -255,26 +262,32 @@ def _call_flow_detection(
         signatures_text=signatures_text,
     )
 
-    try:
-        response = client.messages.parse(
-            model=_MODEL,
-            max_tokens=2048,
-            temperature=0,
-            system=_FLOW_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-            output_format=_FlowDetectionResponse,
-        )
-        return _filter_valid_files(response.parsed_output.flows, set(feature_files))
-    except (
-        anthropic.AuthenticationError,
-        anthropic.PermissionDeniedError,
-        anthropic.NotFoundError,
-        anthropic.RateLimitError,
-        anthropic.APIStatusError,
-        anthropic.APIConnectionError,
-        ValidationError,
-    ):
-        return []
+    for attempt in range(_MAX_RETRIES):
+        try:
+            response = client.messages.parse(
+                model=_MODEL,
+                max_tokens=2048,
+                temperature=0,
+                system=_FLOW_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+                output_format=_FlowDetectionResponse,
+            )
+            return _filter_valid_files(response.parsed_output.flows, set(feature_files))
+        except (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError) as e:
+            delay = _RETRY_BASE_DELAY * (2 ** attempt)
+            logger.warning("Flow detection failed (attempt %d/%d): %s. Retrying in %.1fs...", attempt + 1, _MAX_RETRIES, e, delay)
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(delay)
+        except (
+            anthropic.AuthenticationError,
+            anthropic.PermissionDeniedError,
+            anthropic.NotFoundError,
+            ValidationError,
+        ):
+            return []
+        except anthropic.APIStatusError:
+            return []
+    return []
 
 
 def _build_signatures_text(

@@ -115,6 +115,17 @@ def analyze(
         console.print(f"[red]Unknown provider '{provider}'. Use: anthropic or ollama[/red]")
         raise typer.Exit(1)
 
+    if llm and provider == "ollama":
+        try:
+            import ollama as _ollama  # noqa: F401
+        except ImportError:
+            console.print(
+                "[red]Ollama package not installed.[/red]\n"
+                "Install with: [bold]pip install 'faultline[ollama]'[/bold]\n"
+                "Or: [bold]pip install ollama[/bold]"
+            )
+            raise typer.Exit(1)
+
     try:
         # 1. Load the repository
         console.print(f"[blue]Analyzing:[/blue] {repo_path}")
