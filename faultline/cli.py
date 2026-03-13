@@ -5,7 +5,7 @@ from rich.console import Console
 from rich import print as rprint
 
 from faultline.analyzer.git import load_repo, get_commits, get_tracked_files, estimate_commits, estimate_duration, get_remote_url, DEFAULT_MAX_COMMITS
-from faultline.analyzer.features import detect_features_from_structure, build_feature_map, build_flows_metrics
+from faultline.analyzer.features import detect_features_from_structure, build_feature_map, build_flows_metrics, split_large_features
 from faultline.output.reporter import print_report
 from faultline.output.writer import write_feature_map
 from faultline.llm.detector import _DEFAULT_OLLAMA_HOST, _DEFAULT_OLLAMA_MODEL
@@ -166,25 +166,43 @@ def analyze(
         extract_root = str(Path(str(repo.working_tree_dir)) / path_prefix) if path_prefix else str(repo.working_tree_dir)
         signatures = extract_signatures(analysis_files, extract_root)
         if signatures:
-            console.print(f"[dim]Extracted signatures from {len(signatures)} TS/JS files[/dim]")
+            console.print(f"[dim]Extracted signatures from {len(signatures)} files[/dim]")
 
         # Step 1 — Import graph clustering (primary, always deterministic)
         # Files connected through import chains form the same cluster.
-        if signatures:
+        # Need meaningful number of TS/JS files — Python sigs are useful for flow detection
+        # but not for import graph clustering which relies on JS/TS import statements.
+        _TS_JS_EXTS = {".ts", ".tsx", ".js", ".jsx"}
+        _MIN_SIGNATURES_FOR_IMPORT_GRAPH = 10
+        ts_js_sig_count = sum(1 for f in signatures if Path(f).suffix.lower() in _TS_JS_EXTS) if signatures else 0
+        if signatures and ts_js_sig_count >= _MIN_SIGNATURES_FOR_IMPORT_GRAPH:
             from faultline.analyzer.import_graph import build_import_clusters
             raw_mapping = build_import_clusters(analysis_files, signatures)
             console.print(
-                f"[dim]Import graph: {len(signatures)} files → {len(raw_mapping)} clusters[/dim]"
+                f"[dim]Import graph: {ts_js_sig_count} TS/JS files → {len(raw_mapping)} clusters[/dim]"
+            )
+
+            # Step 2a — LLM: merge related clusters into business features + name them
+            if llm:
+                raw_mapping = _merge_and_name_with_llm(
+                    raw_mapping, provider, api_key, model, ollama_url, commits=commits
+                )
+        elif llm:
+            # No import graph (Python, Ruby, Go, etc.) — LLM does file-level detection
+            # directly, which is much better than heuristic for monolith repos.
+            console.print("[blue]No TS/JS files — using LLM file-level detection[/blue]")
+            raw_mapping = _detect_with_llm(
+                analysis_files, provider, api_key, model, ollama_url,
+                commits=commits, path_prefix=path_prefix, signatures=signatures,
             )
         else:
             console.print("[dim]No TS/JS files — using directory heuristic[/dim]")
             raw_mapping = detect_features_from_structure(analysis_files)
 
-        # Step 2 — LLM: merge related clusters into business features + name them (optional, cached)
-        if llm:
-            raw_mapping = _merge_and_name_with_llm(
-                raw_mapping, provider, api_key, model, ollama_url, commits=commits
-            )
+        # Split oversized features — only for non-TS/JS repos (Django/Rails monoliths)
+        # TS/JS repos already have fine-grained features from import graph + LLM merge
+        if ts_js_sig_count < _MIN_SIGNATURES_FOR_IMPORT_GRAPH:
+            raw_mapping = split_large_features(raw_mapping)
 
         # Restore full paths so commit matching works against git history
         if path_prefix:
@@ -332,6 +350,47 @@ def _merge_and_name_with_llm(
     label = "Claude" if provider == "anthropic" else "Ollama"
     console.print(f"[green]✓[/green] {label} merged → {len(named)} features")
     return named
+
+
+def _detect_with_llm(
+    files: list[str],
+    provider: str,
+    api_key: str | None,
+    model: str | None,
+    ollama_url: str,
+    commits=None,
+    path_prefix: str = "",
+    signatures=None,
+) -> dict[str, list[str]]:
+    """Sends files directly to LLM for feature detection (no import graph).
+
+    Used for Python, Ruby, Go repos where import graph is unavailable.
+    Falls back to directory heuristic on any LLM error.
+    """
+    if provider == "anthropic":
+        from faultline.llm.detector import detect_features_llm
+        result = detect_features_llm(
+            files, api_key=api_key, commits=commits,
+            path_prefix=path_prefix, signatures=signatures,
+        )
+    elif provider == "ollama":
+        from faultline.llm.detector import detect_features_ollama, _DEFAULT_OLLAMA_MODEL
+        resolved_model = model or _DEFAULT_OLLAMA_MODEL
+        result = detect_features_ollama(
+            files, model=resolved_model, host=ollama_url, commits=commits,
+            path_prefix=path_prefix, signatures=signatures,
+        )
+    else:
+        result = {}
+
+    if result:
+        label = "Claude" if provider == "anthropic" else "Ollama"
+        console.print(f"[green]✓[/green] {label} detected {len(result)} features")
+        return result
+
+    # Fallback to heuristic
+    console.print("[yellow]LLM detection failed — falling back to directory heuristic[/yellow]")
+    return detect_features_from_structure(files)
 
 
 def _detect_flows(

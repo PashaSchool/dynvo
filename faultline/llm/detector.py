@@ -68,12 +68,13 @@ Given a list of file paths from a git repository, group them into business featu
 2. Use business domain terminology for feature names. Prefer "user-auth" over "authentication-module", "order-checkout" over "stripe-integration", "content-search" over "elasticsearch-wrapper".
 3. Feature names must be lowercase, hyphen-separated, 1-3 words. Examples: "user-auth", "payment-processing", "dashboard", "notifications", "team-management".
 4. Each file must appear in exactly one feature. No duplicates, no omissions.
-5. Every feature must contain at least 2 files. If a file would be the sole member of a feature, merge it into the most closely related feature.
-6. Test files belong to the same feature as the code they test. Match by naming convention (test_auth.py belongs with auth.py, UserService.test.ts belongs with UserService.ts).
-7. Skip infrastructure and tooling files entirely: package.json, pyproject.toml, setup.py, .gitignore, Makefile, *.lock, *.toml, Dockerfile, docker-compose.yml, CI configs.
-8. Shared utility files go into the most closely related business feature, or into "shared-utilities" only if they truly cross all feature boundaries.
-9. For monorepo structures, group by business feature across packages when the same domain spans multiple packages.
-10. If a <route-anchors> section is provided, treat those files as strong feature anchors.
+5. Group by business domain, not by directory. Each distinct business domain should be its own feature. Merge only when two groups serve the exact same domain.
+6. Every feature must contain at least 3 files. Single or pair files must be merged into the closest related feature.
+7. Test files belong to the same feature as the code they test. Match by naming convention (test_auth.py belongs with auth.py, UserService.test.ts belongs with UserService.ts).
+8. Skip infrastructure and tooling files entirely: package.json, pyproject.toml, setup.py, .gitignore, Makefile, *.lock, *.toml, Dockerfile, docker-compose.yml, CI configs.
+9. Shared utility files go into the most closely related business feature, or into "shared-utilities" only if they truly cross all feature boundaries.
+10. For monorepo structures, group by business feature across packages when the same domain spans multiple packages.
+11. If a <route-anchors> section is provided, treat those files as strong feature anchors.
     Files that define API routes (GET/POST/PUT/DELETE) are entry points to a feature — group
     other files in the same directory tree with the file that shares their route prefix.
 
@@ -107,7 +108,7 @@ Result:
 
 _DETECTION_USER_PROMPT = """\
 Analyze these repository files and group them into semantic business features.
-
+{feature_hint}
 <file_list>
 {file_tree}
 </file_list>{extra_context}
@@ -139,11 +140,19 @@ business domain area, not a technical layer.
 3. Every directory must appear in exactly one feature. No omissions.
 4. The `files` field in your response must contain DIRECTORY PATHS exactly as shown in the \
    input — not the sample filenames after →, not expanded sub-paths, not invented paths.
-5. Be granular — prefer many focused features over a few broad ones. \
-   Deeply nested subdirectories with distinct responsibilities often warrant their own feature.
-6. Sibling subdirectories that serve different concerns should be separate features even if \
-   they share a parent directory.
-7. Merge only truly tiny or ambiguous leaf directories into the closest related feature.
+5. Prefer fewer, broader features over many small ones. Group related subdirectories into a \
+   single business feature. Merge directories that serve the same domain.
+6. Deeply nested subdirectories almost always belong to the same feature as their parent. \
+   Only split siblings when they serve clearly different business domains (e.g. "payments" vs "auth").
+10. IMPORTANT: Look at the sample filenames after → to detect MULTIPLE business domains within \
+   a single directory. In Django/Rails/Flask apps, one directory often contains many business \
+   modules: e.g. if sample files show barcodes.py, classifier.py, bulk_edit.py, mail.py, \
+   signals.py → this directory spans barcode-detection, classification, bulk-operations, etc. \
+   When a directory has many sample files suggesting different business domains, assign that \
+   directory to the MOST DOMINANT domain. The other domains will be in sibling directories or \
+   identified elsewhere.
+7. Technical directories (utils, helpers, hooks, providers, components, types, models, schemas, \
+   middleware, config, constants) are NOT features — absorb them into the business feature they support.
 8. Skip pure infrastructure directories: .storybook, __mocks__, .github, ci/, scripts/, etc.
 9. If a <route-anchors> section is provided, directories with routes are strong anchors.
    Assign nearby sibling directories to the same feature as the directory that shares
@@ -151,12 +160,13 @@ business domain area, not a technical layer.
 
 ## Anti-patterns
 
-BAD — grouping too broadly (one feature swallows 30 dirs):
-  "server": ["server/app-render", "server/app-render/utils", "server/edge-runtime", ...]  ← TOO BROAD
+BAD — too many tiny features (one dir = one feature):
+  "login-form":  ["src/auth/login"]
+  "signup-form": ["src/auth/signup"]
+  "auth-utils":  ["src/auth/utils"]   ← these are all one feature
 
-GOOD — granular, each feature is a distinct concern:
-  "app-router":    ["server/app-render", "server/app-render/utils"]
-  "edge-runtime":  ["server/edge-runtime", "server/edge-runtime/utils"]
+GOOD — grouped by business domain:
+  "user-auth":   ["src/auth/login", "src/auth/signup", "src/auth/utils"]
 
 BAD — putting individual filenames in `files`:
   "auth": ["LoginForm.tsx", "useAuth.ts"]  ← WRONG, these are filenames not directories
@@ -258,24 +268,145 @@ def detect_features_llm(
         response = _call_dir_detection(client, file_tree, n_dirs=len(dirs), extra_context=extra_context)
         if not response:
             return {}
-        return _expand_dir_mapping(response, files)
+        result = _expand_dir_mapping(response, files)
     else:
         file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
         route_anchors = _format_route_anchors(signatures) if signatures else ""
         extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors
-        response = _call_feature_detection(client, file_tree, extra_context)
+        response = _call_feature_detection(client, file_tree, extra_context, n_files=len(files))
         if not response:
             return {}
-        return _build_feature_dict(response, set(files))
+        result = _build_feature_dict(response, set(files))
+
+    # Post-process: re-split oversized features, then redistribute infrastructure noise
+    result = _resplit_oversized_features(client, result)
+    return _redistribute_infra_features(result)
+
+
+_RESPLIT_FILE_THRESHOLD = 80
+_RESPLIT_CONCENTRATION_PCT = 0.70  # re-split if >70% of files in one dir
+
+# Patterns that indicate infrastructure-only features (not business domains)
+_INFRA_FEATURE_PATTERNS = {
+    "database-migrations", "migrations", "test-fixtures", "fixtures",
+    "management-commands", "commands", "config-files", "infrastructure",
+}
+
+
+def _redistribute_infra_features(
+    result: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Redistribute files from infrastructure-only features to their nearest business feature."""
+    infra_names = [
+        name for name in result
+        if name in _INFRA_FEATURE_PATTERNS
+        or any(name.endswith(f"-{p}") or name.startswith(f"{p}-") for p in ("migrations", "fixtures", "commands"))
+    ]
+    if not infra_names:
+        return result
+
+    business = {n: fs for n, fs in result.items() if n not in infra_names}
+    if not business:
+        return result
+
+    for infra_name in infra_names:
+        infra_files = result[infra_name]
+        for f in infra_files:
+            target = _find_best_merge_target([f], business)
+            if target:
+                business[target].append(f)
+            else:
+                business.setdefault("shared-utilities", []).append(f)
+        logger.info("Redistributed %d files from '%s' to business features", len(infra_files), infra_name)
+
+    return business
+
+
+def _resplit_oversized_features(
+    client: anthropic.Anthropic,
+    result: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Re-splits oversized or directory-concentrated features.
+
+    Triggers when:
+    - A feature has >_RESPLIT_FILE_THRESHOLD files (too many files), OR
+    - >70% of a feature's files are in a single directory AND the feature
+      has >= 20 files (indicates dir-collapse couldn't split properly).
+    """
+    resplit_needed = {}
+    for name, feat_files in result.items():
+        if len(feat_files) > _RESPLIT_FILE_THRESHOLD:
+            resplit_needed[name] = feat_files
+        elif len(feat_files) >= 20:
+            dir_counts: dict[str, int] = {}
+            for f in feat_files:
+                d = str(Path(f).parent)
+                dir_counts[d] = dir_counts.get(d, 0) + 1
+            max_dir_pct = max(dir_counts.values()) / len(feat_files) if dir_counts else 0
+            if max_dir_pct >= _RESPLIT_CONCENTRATION_PCT:
+                resplit_needed[name] = feat_files
+    if not resplit_needed:
+        return result
+
+    for feat_name, feat_files in resplit_needed.items():
+        logger.info("Re-splitting oversized feature '%s' (%d files) with Sonnet", feat_name, len(feat_files))
+        sub_tree = "\n".join(feat_files)
+        min_sub = max(3, len(feat_files) // 30)
+        max_sub = max(5, len(feat_files) // 15)
+        resplit_prompt = (
+            f"These {len(feat_files)} files were all grouped into one feature '{feat_name}'. "
+            f"This is too coarse. Split them into {min_sub}–{max_sub} distinct sub-features "
+            "based on what each file DOES, not which directory it's in.\n\n"
+            "KEY PATTERNS to look for:\n"
+            "- In Django/Rails/Flask apps, filenames reveal business domains: "
+            "tags.py, permissions.py, bulk_edit.py, workflows.py, custom_fields.py each "
+            "represent a SEPARATE business capability, even if they're in the same directory.\n"
+            "- Files named models.py, views.py, serializers.py, admin.py are shared across "
+            "ALL features in that app — assign them to the LARGEST or most core sub-feature.\n"
+            "- Match test files (test_tags.py) with their source (tags.py).\n"
+            "- Look for business entity names in filenames: 'correspondent', 'document_type', "
+            "'saved_view', 'storage_path', 'custom_field', 'note', 'share' etc.\n"
+            "- Do NOT split a feature that is already cohesive (e.g. 'email-ingestion' with "
+            "mail fetching, parsing, rules all serving the same business domain). Only split "
+            "when filenames clearly indicate DIFFERENT user-facing capabilities.\n\n"
+            f"<file_list>\n{sub_tree}\n</file_list>\n"
+            "Return a JSON mapping of sub-feature names to file lists. "
+            "Each file in exactly one feature. Use business domain names."
+        )
+        try:
+            # Use Haiku with messages.parse (Sonnet 4 doesn't support output_format)
+            resp = client.messages.parse(
+                model=_MODEL,
+                max_tokens=_MAX_TOKENS_FILE,
+                temperature=0,
+                system=_DETECTION_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": resplit_prompt}],
+                output_format=_FeatureDetectionResponse,
+            )
+            if resp.parsed_output:
+                sub_features = _build_feature_dict(resp.parsed_output, set(feat_files))
+                if len(sub_features) > 1:
+                    del result[feat_name]
+                    result.update(sub_features)
+                    logger.info("Re-split '%s' → %d sub-features", feat_name, len(sub_features))
+        except Exception as e:
+            logger.warning("Re-split failed for '%s': %s", feat_name, e)
+
+    return result
+
 
 
 def _call_feature_detection(
     client: anthropic.Anthropic,
     file_tree: str,
     extra_context: str = "",
+    n_files: int = 0,
 ) -> _FeatureDetectionResponse | None:
     """Calls Claude API for feature detection (file-path mode). Returns None on any failure."""
-    prompt = _DETECTION_USER_PROMPT.format(file_tree=file_tree, extra_context=extra_context)
+    hint = _file_feature_count_hint(n_files) if n_files else ""
+    prompt = _DETECTION_USER_PROMPT.format(
+        file_tree=file_tree, extra_context=extra_context, feature_hint=hint,
+    )
 
     for attempt in range(_MAX_RETRIES):
         try:
@@ -378,11 +509,26 @@ def _unique_dirs(files: list[str]) -> list[str]:
 
 
 def _dir_to_sample_files(dirs: list[str], all_files: list[str]) -> dict[str, list[str]]:
-    """For each directory, returns up to _DIR_SAMPLE_FILES representative file names."""
+    """For each directory, returns sample file names.
+
+    Large directories (>20 files) get up to 20 samples to give the LLM enough
+    context to detect multiple business domains within a single directory
+    (common in Django/Rails monoliths).
+    """
+    # Count files per directory first
+    dir_file_count: dict[str, int] = {d: 0 for d in dirs}
+    for f in all_files:
+        parent = str(Path(f).parent)
+        if parent in dir_file_count:
+            dir_file_count[parent] += 1
+
     samples: dict[str, list[str]] = {d: [] for d in dirs}
     for f in all_files:
         parent = str(Path(f).parent)
-        if parent in samples and len(samples[parent]) < _DIR_SAMPLE_FILES:
+        if parent not in samples:
+            continue
+        limit = 20 if dir_file_count[parent] > 20 else _DIR_SAMPLE_FILES
+        if len(samples[parent]) < limit:
             samples[parent].append(Path(f).name)
     return samples
 
@@ -430,6 +576,25 @@ def _feature_count_hint(n_dirs: int) -> str:
         f"Aim for {min_f}–{max_f} focused features. "
         "Be granular — deeply nested subdirectories with distinct responsibilities "
         "should be separate features, not merged into one broad group.\n"
+    )
+
+
+def _file_feature_count_hint(n_files: int) -> str:
+    """Generates a feature-count guidance line for the file-path mode prompt."""
+    if n_files < 30:
+        return ""
+    min_f = max(5, n_files // 30)
+    max_f = min(max(10, n_files // 12), 30)
+    return (
+        f"\nYou have {n_files} files. "
+        f"Aim for {min_f}–{max_f} business features.\n"
+        "IMPORTANT: Do NOT create one giant feature for an entire directory. "
+        "In monolith apps (Django, Rails, Flask), individual Python/Ruby modules within "
+        "the same directory often represent distinct business domains. For example, in a "
+        "Django app with files like barcodes.py, classifier.py, bulk_edit.py, mail.py, "
+        "workflows/ — these are separate features (barcode-detection, classification, "
+        "bulk-operations, email-ingestion, workflows), NOT one 'document-management' feature. "
+        "Split by the business capability each module provides.\n"
     )
 
 
@@ -706,7 +871,7 @@ def detect_features_ollama(
         file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
         route_anchors = _format_route_anchors(signatures) if signatures else ""
         extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors
-        response = _call_feature_detection_ollama(file_tree, model, host, extra_context)
+        response = _call_feature_detection_ollama(file_tree, model, host, extra_context, n_files=len(files))
         if not response:
             return {}
         return _build_feature_dict(response, set(files))
@@ -717,6 +882,7 @@ def _call_feature_detection_ollama(
     model: str,
     host: str,
     extra_context: str = "",
+    n_files: int = 0,
 ) -> _FeatureDetectionResponse | None:
     """Calls Ollama API for feature detection (file-path mode). Returns None on any failure."""
     try:
@@ -724,7 +890,10 @@ def _call_feature_detection_ollama(
     except ImportError:
         return None
 
-    prompt = _DETECTION_USER_PROMPT.format(file_tree=file_tree, extra_context=extra_context)
+    hint = _file_feature_count_hint(n_files) if n_files else ""
+    prompt = _DETECTION_USER_PROMPT.format(
+        file_tree=file_tree, extra_context=extra_context, feature_hint=hint,
+    )
 
     try:
         client = _ollama.Client(host=host)
@@ -803,10 +972,16 @@ that uses it via a hook; an API service and the page that renders its data).
 - Feature names: lowercase, hyphen-separated, 1–3 words.
 - Use business domain terminology, not technical layers.
   Examples: "user-auth", "checkout", "analytics-dashboard", "notifications", "team-management".
-- Merge clusters by business purpose, not by technical role.
+- Merge aggressively by business purpose — clusters that serve the same domain are one feature.
   BAD: merge all hooks clusters into "hooks-feature".
   GOOD: merge auth-hooks + auth-components + auth-api into "user-auth".
-- Keep genuinely distinct capabilities as separate features.
+  BAD: creating one feature per cluster without merging.
+  GOOD: fewer features, each covering a complete business domain.
+- A single feature can (and often should) contain 10–30+ clusters.
+  Example: "payments" might include clusters for stripe-hooks, payment-forms, \
+  billing-api, invoice-components, subscription-utils, pricing-page, etc.
+- Only keep features separate when they represent truly distinct business domains \
+  (e.g. "payments" vs "auth" — different user capabilities).
 - Every cluster must appear in exactly one feature — no omissions.
 - cluster_indices contains 1-based indices from the list provided.\
 """
@@ -825,16 +1000,18 @@ Every cluster index must appear in exactly one feature.\
 def _merge_feature_count_hint(n_clusters: int) -> str:
     """Generates a scoped feature-count guidance line for the merge prompt.
 
-    Prevents local models from merging everything into one giant feature.
+    Scale: ~1 feature per 10 clusters, clamped to 5–30.
+    Small repo (20 clusters) → 5–8 features.
+    Large repo (200 clusters) → 15–25 features.
     """
-    min_f = max(5, n_clusters // 6)
-    max_f = max(10, n_clusters // 3)
-    max_per = max(5, n_clusters // 8)
+    min_f = max(5, n_clusters // 15)
+    max_f = max(10, n_clusters // 8)
+    max_f = min(max_f, 30)
     return (
         f"\nYou have {n_clusters} clusters. "
-        f"Aim for {min_f}–{max_f} focused features. "
-        f"Do NOT put more than {max_per} clusters into a single feature "
-        "unless they are truly tightly related.\n"
+        f"Aim for {min_f}–{max_f} business features. "
+        f"Merge aggressively — clusters that serve the same business domain "
+        f"(e.g. auth-hooks + auth-api + auth-ui) must be one feature.\n"
     )
 
 
@@ -956,19 +1133,57 @@ def _apply_cluster_merge(
         used_names.add(name)
         result[name] = sorted(merged_files)
 
-    # Fallback: any cluster not referenced by LLM keeps its original name
+    # Fallback: merge unassigned clusters into the closest existing feature
+    # by directory overlap, instead of leaving them as standalone features.
     for i, cluster_id in enumerate(cluster_ids, start=1):
         if i not in assigned:
-            name = cluster_id
-            if name in used_names:
-                suffix = 2
-                while f"{name}-{suffix}" in used_names:
-                    suffix += 1
-                name = f"{name}-{suffix}"
-            used_names.add(name)
-            result[name] = cluster_mapping[cluster_id]
+            orphan_files = cluster_mapping[cluster_id]
+            target = _find_best_merge_target(orphan_files, result)
+            if target:
+                result[target].extend(orphan_files)
+            else:
+                # No match — keep as standalone with original name
+                name = cluster_id
+                if name in used_names:
+                    suffix = 2
+                    while f"{name}-{suffix}" in used_names:
+                        suffix += 1
+                    name = f"{name}-{suffix}"
+                used_names.add(name)
+                result[name] = cluster_mapping[cluster_id]
 
     return result
+
+
+def _find_best_merge_target(
+    orphan_files: list[str],
+    existing_features: dict[str, list[str]],
+) -> str | None:
+    """Finds the existing feature with the most directory overlap to absorb orphan files."""
+    if not existing_features:
+        return None
+
+    orphan_dirs = {str(Path(f).parent) for f in orphan_files}
+
+    best_name, best_overlap = None, 0
+    for feat_name, feat_files in existing_features.items():
+        feat_dirs = {str(Path(f).parent) for f in feat_files}
+        overlap = len(orphan_dirs & feat_dirs)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_name = feat_name
+
+    # Fallback: match by top-level directory
+    if not best_name:
+        orphan_tops = {Path(f).parts[0] if len(Path(f).parts) > 1 else "" for f in orphan_files}
+        for feat_name, feat_files in existing_features.items():
+            feat_tops = {Path(f).parts[0] if len(Path(f).parts) > 1 else "" for f in feat_files}
+            if orphan_tops & feat_tops:
+                if len(feat_files) > best_overlap:
+                    best_overlap = len(feat_files)
+                    best_name = feat_name
+
+    return best_name
 
 
 def _call_cluster_merge(
@@ -981,32 +1196,81 @@ def _call_cluster_merge(
         clusters=_format_clusters_for_merge_prompt(cluster_mapping, keywords_per_cluster),
         feature_hint=_merge_feature_count_hint(len(cluster_mapping)),
     )
+    n_clusters = len(cluster_mapping)
+    logger.info("Cluster merge: %d clusters, prompt length ~%d chars", n_clusters, len(prompt))
     for attempt in range(_MAX_RETRIES):
         try:
+            max_tokens = 2048 if n_clusters < 50 else 4096 if n_clusters < 150 else 8192
             response = client.messages.parse(
                 model=_MODEL,
-                max_tokens=2048,
+                max_tokens=max_tokens,
                 temperature=0,
                 system=_MERGE_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
                 output_format=_ClusterMergeResponse,
             )
+            logger.info("Cluster merge success: %d features", len(response.parsed_output.features))
             return response.parsed_output
         except (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError) as e:
             delay = _RETRY_BASE_DELAY * (2 ** attempt)
             logger.warning("LLM cluster merge failed (attempt %d/%d): %s. Retrying in %.1fs...", attempt + 1, _MAX_RETRIES, e, delay)
             if attempt < _MAX_RETRIES - 1:
                 time.sleep(delay)
+        except ValidationError as e:
+            logger.warning("LLM cluster merge ValidationError (clusters=%d): %s", n_clusters, e)
+            return None
         except (
             anthropic.AuthenticationError,
             anthropic.PermissionDeniedError,
             anthropic.NotFoundError,
-            ValidationError,
-        ):
+        ) as e:
+            logger.warning("LLM cluster merge auth error: %s", e)
             return None
-        except anthropic.APIStatusError:
+        except anthropic.APIStatusError as e:
+            logger.warning("LLM cluster merge APIStatusError: %s", e)
             return None
     return None
+
+
+_PRE_MERGE_MAX_FILES = 3  # clusters with this many files or fewer get pre-merged
+_PRE_MERGE_THRESHOLD = 150  # only pre-merge when total clusters exceed this
+
+
+def _pre_merge_tiny_clusters(
+    cluster_mapping: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Merges tiny clusters (≤_PRE_MERGE_MAX_FILES files) into the nearest large cluster.
+
+    This reduces the number of clusters sent to the LLM merge step, making the
+    prompt manageable for repos with 300+ import graph clusters.
+    """
+    if len(cluster_mapping) <= _PRE_MERGE_THRESHOLD:
+        return cluster_mapping
+
+    large: dict[str, list[str]] = {}
+    tiny: dict[str, list[str]] = {}
+    for name, files in cluster_mapping.items():
+        if len(files) <= _PRE_MERGE_MAX_FILES:
+            tiny[name] = files
+        else:
+            large[name] = files
+
+    if not large:
+        return cluster_mapping
+
+    result = {name: list(files) for name, files in large.items()}
+
+    for _name, files in tiny.items():
+        target = _find_best_merge_target(files, result)
+        if target:
+            result[target].extend(files)
+        else:
+            # No overlap found — keep as separate cluster
+            result[_name] = files
+
+    logger.info("Pre-merge: %d → %d clusters (absorbed %d tiny clusters)",
+                len(cluster_mapping), len(result), len(cluster_mapping) - len(result))
+    return result
 
 
 def merge_and_name_clusters_llm(
@@ -1035,23 +1299,25 @@ def merge_and_name_clusters_llm(
     if not key or not cluster_mapping:
         return cluster_mapping
 
-    cache_key = _merge_cache_key(cluster_mapping, _MODEL)
+    # Pre-merge tiny clusters to keep prompt size manageable for large repos
+    working_clusters = _pre_merge_tiny_clusters(cluster_mapping)
+
+    cache_key = _merge_cache_key(working_clusters, _MODEL)
     cached = _read_name_cache(cache_key)
     if cached is not None:
-        # cached format for merge is the full feature→files mapping
         if isinstance(next(iter(cached.values()), None), list):
             return cached  # type: ignore[return-value]
 
-    keywords_per_cluster = _extract_cluster_keywords(cluster_mapping, commits) if commits else None
+    keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
 
     client = anthropic.Anthropic(api_key=key)
-    merge_response = _call_cluster_merge(client, cluster_mapping, keywords_per_cluster)
+    merge_response = _call_cluster_merge(client, working_clusters, keywords_per_cluster)
     if merge_response:
-        merged = _apply_cluster_merge(cluster_mapping, merge_response)
+        merged = _apply_cluster_merge(working_clusters, merge_response)
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
         return merged
 
-    return cluster_mapping
+    return working_clusters
 
 
 def _call_cluster_merge_ollama(
@@ -1095,21 +1361,23 @@ def merge_and_name_clusters_ollama(
     if not cluster_mapping:
         return cluster_mapping
 
-    cache_key = _merge_cache_key(cluster_mapping, model)
+    working_clusters = _pre_merge_tiny_clusters(cluster_mapping)
+
+    cache_key = _merge_cache_key(working_clusters, model)
     cached = _read_name_cache(cache_key)
     if cached is not None:
         if isinstance(next(iter(cached.values()), None), list):
             return cached  # type: ignore[return-value]
 
-    keywords_per_cluster = _extract_cluster_keywords(cluster_mapping, commits) if commits else None
+    keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
 
-    merge_response = _call_cluster_merge_ollama(cluster_mapping, model, host, keywords_per_cluster)
+    merge_response = _call_cluster_merge_ollama(working_clusters, model, host, keywords_per_cluster)
     if merge_response:
-        merged = _apply_cluster_merge(cluster_mapping, merge_response)
+        merged = _apply_cluster_merge(working_clusters, merge_response)
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
         return merged
 
-    return cluster_mapping
+    return working_clusters
 
 
 # ── Cluster naming (co-change grouping → semantic names) ─────────────────────

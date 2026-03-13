@@ -1,0 +1,168 @@
+name: "FeatureMap"
+description: "Analyze git history to map features and detect technical debt hotspots in pull requests"
+author: "FeatureMap Team"
+
+branding:
+  icon: "activity"
+  color: "blue"
+
+inputs:
+  anthropic-api-key:
+    description: "Anthropic API key for LLM feature detection (optional — runs heuristic mode if absent)"
+    required: false
+    default: ""
+  src:
+    description: "Subdirectory to focus analysis on (e.g. src/ or app/)"
+    required: false
+    default: ""
+  days:
+    description: "Days of git history to analyze"
+    required: false
+    default: "365"
+  max-commits:
+    description: "Maximum commits to analyze"
+    required: false
+    default: "2000"
+  fail-on-health-below:
+    description: "Fail the action if any PR-touched feature has health score below this value (0-100)"
+    required: false
+    default: ""
+  github-token:
+    description: "GitHub token for posting PR comments"
+    required: false
+    default: ${{ github.token }}
+  faultline-version:
+    description: "Faultline version to install ('latest', '0.1.0', or 'local' for self-test)"
+    required: false
+    default: "latest"
+
+outputs:
+  feature-map-path:
+    description: "Path to the generated feature-map.json"
+    value: ${{ steps.analyze.outputs.feature_map_path }}
+  features-count:
+    description: "Number of features detected"
+    value: ${{ steps.analyze.outputs.features_count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate git history depth
+      shell: bash
+      run: |
+        COMMIT_COUNT=$(git -C "${{ github.workspace }}" rev-list --count HEAD 2>/dev/null || echo "0")
+        if [ "$COMMIT_COUNT" -le "1" ]; then
+          echo "::error::Shallow clone detected. Add 'fetch-depth: 0' to your checkout step."
+          echo ""
+          echo "Example:"
+          echo "  - uses: actions/checkout@v4"
+          echo "    with:"
+          echo "      fetch-depth: 0"
+          exit 1
+        fi
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Restore LLM cache
+      if: inputs.anthropic-api-key != ''
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: featuremap-llm-cache
+        path: ${{ runner.temp }}/featuremap-llm-cache
+
+    - name: Install cache files
+      if: inputs.anthropic-api-key != ''
+      shell: bash
+      run: |
+        CACHE_SRC="${{ runner.temp }}/featuremap-llm-cache"
+        CACHE_DST="$HOME/.faultline/llm-cache"
+        if [ -d "$CACHE_SRC" ] && [ "$(ls -A "$CACHE_SRC" 2>/dev/null)" ]; then
+          mkdir -p "$CACHE_DST"
+          cp -r "$CACHE_SRC"/. "$CACHE_DST/"
+          echo "Restored $(ls "$CACHE_DST" | wc -l | tr -d ' ') cache entries"
+        else
+          echo "No LLM cache to restore"
+        fi
+
+    - name: Install faultline
+      shell: bash
+      run: |
+        if [ "${{ inputs.faultline-version }}" = "local" ]; then
+          pip install -e "${{ github.action_path }}" --quiet
+        elif [ "${{ inputs.faultline-version }}" = "latest" ]; then
+          pip install faultline --quiet
+        else
+          pip install "faultline==${{ inputs.faultline-version }}" --quiet
+        fi
+
+    - name: Run faultline analyze
+      id: analyze
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_SRC: ${{ inputs.src }}
+        INPUT_DAYS: ${{ inputs.days }}
+        INPUT_MAX_COMMITS: ${{ inputs.max-commits }}
+        INPUT_WORKSPACE: ${{ github.workspace }}
+      run: |
+        REPORT_PATH="${INPUT_WORKSPACE}/.faultline/feature-map-report.json"
+
+        ARGS="--days ${INPUT_DAYS} --max-commits ${INPUT_MAX_COMMITS} --output ${REPORT_PATH}"
+
+        if [ -n "${INPUT_SRC}" ]; then
+          ARGS="$ARGS --src ${INPUT_SRC}"
+        fi
+
+        if [ -n "${ANTHROPIC_API_KEY}" ]; then
+          ARGS="$ARGS --llm"
+        fi
+
+        faultline analyze "${INPUT_WORKSPACE}" $ARGS
+
+        echo "feature_map_path=$REPORT_PATH" >> "$GITHUB_OUTPUT"
+
+        FEATURES=$(python3 -c "
+        import json, sys
+        data = json.load(open(sys.argv[1]))
+        print(len(data['features']))
+        " "$REPORT_PATH")
+        echo "features_count=$FEATURES" >> "$GITHUB_OUTPUT"
+
+    - name: Get PR changed files
+      id: changed-files
+      if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        FILES=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+          --paginate \
+          --jq '.[].filename' | tr '\n' ':')
+        echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+    - name: Post PR comment
+      if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        FEATURE_MAP_PATH: ${{ steps.analyze.outputs.feature_map_path }}
+        CHANGED_FILES: ${{ steps.changed-files.outputs.files }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        FAIL_BELOW: ${{ inputs.fail-on-health-below }}
+        REMOTE_URL: ${{ github.event.repository.html_url }}
+      run: python3 "${{ github.action_path }}/action/pr_comment.py"
+
+    - name: Save LLM cache
+      if: always() && inputs.anthropic-api-key != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: featuremap-llm-cache
+        path: ~/.faultline/llm-cache/
+        retention-days: 30
+        if-no-files-found: ignore
+        overwrite: true

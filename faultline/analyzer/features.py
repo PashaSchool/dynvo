@@ -47,6 +47,9 @@ def compute_cochange(commits: list[Commit]) -> list[tuple[str, str, float]]:
     return sorted(results, key=lambda x: x[2], reverse=True)[:_MAX_COCHANGE_PAIRS]
 
 
+_MAX_FEATURE_FILES = 40  # features larger than this get split
+
+
 def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:
     """
     Detects features based on directory structure.
@@ -64,7 +67,97 @@ def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:
         feature_name = _extract_feature_name(parts)
         features[feature_name].append(file_path)
 
-    return dict(features)
+    # Split oversized features — e.g. Django apps where all code lives in one dir
+    return split_large_features(dict(features))
+
+
+_SKIP_STEMS = {"__init__", "apps", "urls", "admin", "conftest", "setup", "config"}
+_TEST_PREFIXES = ("test_", "tests_")
+
+
+def split_large_features(
+    features: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """
+    Splits features with too many files into sub-features.
+
+    Strategy 1: find common directory prefix, split by next-level subdirectory.
+    Strategy 2: if most files are flat (no subdir), split by filename stem
+    to extract sub-domains (e.g. barcodes.py, classifier.py → separate features).
+    """
+    result: dict[str, list[str]] = {}
+
+    for name, paths in features.items():
+        if len(paths) <= _MAX_FEATURE_FILES:
+            result[name] = paths
+            continue
+
+        # Find common directory prefix among all paths
+        all_parts = [Path(p).parts for p in paths]
+        prefix_len = 0
+        if all_parts:
+            for i in range(min(len(p) for p in all_parts)):
+                if len({p[i] for p in all_parts}) == 1:
+                    prefix_len = i + 1
+                else:
+                    break
+
+        # Strategy 1: split by next directory level after common prefix
+        # Skip technical dirs (tests, migrations) — they'll be handled by Strategy 2
+        _SKIP_SUBDIRS = {"tests", "test", "__tests__", "migrations", "templates", "static"}
+        sub_groups: dict[str, list[str]] = defaultdict(list)
+        flat_count = 0
+        for p in paths:
+            parts = Path(p).parts
+            if prefix_len < len(parts) - 1:
+                sub_name = parts[prefix_len].lower()
+                if sub_name in _SKIP_SUBDIRS:
+                    flat_count += 1
+                    sub_groups[name].append(p)
+                else:
+                    sub_groups[f"{name}-{sub_name}"].append(p)
+            else:
+                flat_count += 1
+                sub_groups[name].append(p)
+
+        max_sub = max(len(v) for v in sub_groups.values()) if sub_groups else 0
+        if len(sub_groups) > 2 and max_sub < len(paths) * 0.7:
+            result.update(sub_groups)
+            continue
+
+        # Strategy 2: split source files by stem, group tests/infra into parent
+        # Handles Django apps where features are individual .py modules
+        _INFRA_DIRS = {"tests", "test", "__tests__", "migrations", "templates", "static",
+                       "management", "templatetags", "locale"}
+        source_stems: dict[str, list[str]] = defaultdict(list)
+        infra_files: list[str] = []
+
+        for p in paths:
+            parent_dir = Path(p).parent.name.lower()
+            stem = Path(p).stem.lower()
+
+            if parent_dir in _INFRA_DIRS or stem in _SKIP_STEMS:
+                infra_files.append(p)
+            elif any(stem.startswith(tp) for tp in _TEST_PREFIXES):
+                infra_files.append(p)
+            else:
+                source_stems[f"{name}-{stem}"].append(p)
+
+        # Merge single-file groups into parent
+        merged: dict[str, list[str]] = {name: list(infra_files)}
+        for k, v in source_stems.items():
+            if len(v) <= 1:
+                merged[name].extend(v)
+            else:
+                merged[k] = v
+
+        max_merged = max(len(v) for v in merged.values()) if merged else 0
+        if len(merged) > 3 and max_merged < len(paths) * 0.7:
+            result.update(merged)
+        else:
+            result[name] = paths
+
+    return result
 
 
 def _extract_feature_name(parts: tuple[str, ...]) -> str:
@@ -75,6 +168,7 @@ def _extract_feature_name(parts: tuple[str, ...]) -> str:
     - src/auth/login.py       → "auth"
     - app/api/payments/...    → "payments"
     - lib/utils/helpers.py    → "utils"
+    - app/(dashboard)/settings/page.tsx → "settings"
     - index.py                → "root"
     """
     # Skip common top-level wrapper directories (not feature names themselves)
@@ -84,13 +178,23 @@ def _extract_feature_name(parts: tuple[str, ...]) -> str:
         # Frontend structural directories — not business features
         "views", "pages", "screens", "routes", "containers",
         "components", "layouts", "features",
+        # Next.js/Remix structural dirs
+        "api", "actions", "hooks", "providers", "contexts", "stores",
+        "services", "helpers", "utils", "types", "models", "schemas",
+        "middleware", "config", "constants", "assets", "styles",
+        "public", "static",
     }
 
-    for i, part in enumerate(parts[:-1]):  # Exclude the filename
-        if part.lower() not in skip_prefixes:
-            return part.lower()
+    # Also skip Next.js route groups like (dashboard), (auth), etc.
+    def _is_route_group(part: str) -> bool:
+        return part.startswith("(") and part.endswith(")")
 
-    # File is at the repo root
+    for part in parts[:-1]:  # Exclude the filename
+        normalized = part.lower()
+        if normalized not in skip_prefixes and not _is_route_group(part):
+            return normalized
+
+    # File is at the repo root or only in structural dirs
     return "root"
 
 
@@ -179,6 +283,83 @@ def _collect_prs(commits: list[Commit], remote_url: str) -> list[PullRequest]:
     return sorted(prs, key=lambda p: p.date, reverse=True)
 
 
+_MIN_FEATURE_FILES = 3     # features with fewer files get merged into a parent
+_MIN_FEATURE_COMMITS = 2   # features with fewer commits get merged into a parent
+
+
+def _merge_small_features(
+    feature_paths: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """
+    Merges small/granular features into larger related ones.
+
+    Strategy: features with < _MIN_FEATURE_FILES files get absorbed into the
+    closest parent-directory feature. If no parent exists, they merge into
+    the largest feature sharing the same top-level directory.
+    """
+    if len(feature_paths) <= 15:
+        return feature_paths
+
+    # Sort: large features first (they are merge targets)
+    sorted_features = sorted(feature_paths.items(), key=lambda x: len(x[1]), reverse=True)
+
+    # Build a dir→feature index for parent-matching
+    dir_to_feature: dict[str, str] = {}
+    for name, paths in sorted_features:
+        for p in paths:
+            parts = Path(p).parts
+            for depth in range(1, len(parts)):
+                d = str(Path(*parts[:depth]))
+                dir_to_feature.setdefault(d, name)
+
+    merged: dict[str, list[str]] = {}
+    merge_target: dict[str, str] = {}  # small_feature → target_feature
+
+    for name, paths in sorted_features:
+        if len(paths) >= _MIN_FEATURE_FILES:
+            merged[name] = list(paths)
+        else:
+            # Find closest parent feature
+            target = _find_merge_target(name, paths, merged, dir_to_feature)
+            if target and target != name:
+                merge_target[name] = target
+                merged.setdefault(target, []).extend(paths)
+            else:
+                merged[name] = list(paths)
+
+    return merged
+
+
+def _find_merge_target(
+    name: str,
+    paths: list[str],
+    existing: dict[str, list[str]],
+    dir_to_feature: dict[str, str],
+) -> str | None:
+    """Finds the best feature to absorb a small feature into."""
+    # Strategy 1: parent directory match
+    for p in paths:
+        parent = str(Path(p).parent)
+        while parent and parent != ".":
+            candidate = dir_to_feature.get(parent)
+            if candidate and candidate != name and candidate in existing:
+                return candidate
+            parent = str(Path(parent).parent)
+
+    # Strategy 2: same top-level directory → merge into largest
+    top_dirs = {Path(p).parts[0] if len(Path(p).parts) > 1 else "root" for p in paths}
+    best, best_size = None, 0
+    for feat_name, feat_paths in existing.items():
+        if feat_name == name:
+            continue
+        feat_tops = {Path(p).parts[0] if len(Path(p).parts) > 1 else "root" for p in feat_paths}
+        if top_dirs & feat_tops and len(feat_paths) > best_size:
+            best = feat_name
+            best_size = len(feat_paths)
+
+    return best
+
+
 def build_feature_map(
     repo_path: str,
     commits: list[Commit],
@@ -187,6 +368,9 @@ def build_feature_map(
     remote_url: str = "",
 ) -> FeatureMap:
     """Builds a FeatureMap by joining commits with detected features."""
+
+    # Merge small/granular features before computing metrics
+    feature_paths = _merge_small_features(feature_paths)
 
     # Build file→feature index for O(1) lookup + dir-based fallback for deleted/renamed files
     file_to_feature: dict[str, str] = {}
@@ -227,6 +411,11 @@ def build_feature_map(
     for feature_name, paths in feature_paths.items():
         commits_for_feature = feature_commits.get(feature_name, [])
         total = len(commits_for_feature)
+
+        # Skip features with 0 commits — likely mapping bugs (deleted dirs, config artifacts)
+        if total == 0:
+            continue
+
         bug_fixes = sum(1 for c in commits_for_feature if c.is_bug_fix)
         bug_fix_ratio = bug_fixes / total if total > 0 else 0.0
 
