@@ -12,6 +12,7 @@ from faultline.analyzer.features import (
     _extract_feature_name,
     _is_test_commit,
     _is_test_file,
+    _merge_small_features,
     build_feature_map,
     build_flows_metrics,
     compute_cochange,
@@ -168,11 +169,13 @@ class TestExtractFeatureName:
         [
             (("auth", "login.py"), "auth"),
             (("src", "auth", "login.py"), "auth"),
-            (("src", "app", "lib", "utils", "helper.py"), "utils"),
+            (("src", "app", "lib", "utils", "helper.py"), "root"),  # all structural → root
             (("index.py",), "root"),
             (("src", "app", "main.py"), "root"),
-            (("pages", "api", "users.ts"), "api"),  # "pages" skipped
+            (("pages", "api", "users", "route.ts"), "users"),  # pages + api skipped
             (("features", "dashboard", "chart.tsx"), "dashboard"),
+            (("src", "payments", "stripe.py"), "payments"),
+            (("app", "(dashboard)", "settings", "page.tsx"), "settings"),  # route group skipped
         ],
     )
     def test_extracts_correct_name(
@@ -185,6 +188,48 @@ class TestExtractFeatureName:
 
     def test_single_dir_not_skipped(self) -> None:
         assert _extract_feature_name(("billing", "invoice.py")) == "billing"
+
+
+# ===================================================================
+# _merge_small_features
+# ===================================================================
+
+
+class TestMergeSmallFeatures:
+    def test_no_merge_when_few_features(self) -> None:
+        """Features <= 15 are returned unchanged."""
+        paths = {f"feat-{i}": [f"dir{i}/a.py"] for i in range(10)}
+        result = _merge_small_features(paths)
+        assert len(result) == 10
+
+    def test_small_features_merged_into_parent(self) -> None:
+        """Features with < 3 files get absorbed into a larger related feature."""
+        paths = {
+            "auth": ["src/auth/login.py", "src/auth/signup.py", "src/auth/utils.py",
+                      "src/auth/session.py"],
+            "auth-tokens": ["src/auth/tokens/refresh.py", "src/auth/tokens/jwt.py"],
+            "payments": ["src/payments/stripe.py", "src/payments/checkout.py",
+                          "src/payments/refund.py"],
+            # 13 more dummy features to exceed the 15 threshold
+            **{f"filler-{i}": [f"src/filler{i}/a.py", f"src/filler{i}/b.py",
+                                f"src/filler{i}/c.py"] for i in range(13)},
+        }
+        result = _merge_small_features(paths)
+        # auth-tokens (2 files) should be merged into auth
+        assert "auth-tokens" not in result
+        assert len([p for p in result.get("auth", []) if "tokens" in p]) == 2
+
+    def test_large_features_preserved(self) -> None:
+        """Features with >= 3 files are never merged."""
+        paths = {
+            "auth": ["src/auth/a.py", "src/auth/b.py", "src/auth/c.py"],
+            "payments": ["src/pay/a.py", "src/pay/b.py", "src/pay/c.py"],
+            **{f"f-{i}": [f"src/f{i}/a.py", f"src/f{i}/b.py",
+                           f"src/f{i}/c.py"] for i in range(14)},
+        }
+        result = _merge_small_features(paths)
+        assert "auth" in result
+        assert "payments" in result
 
 
 # ===================================================================
@@ -407,12 +452,12 @@ class TestBuildFeatureMap:
         fm = build_feature_map("/repo", commits, feature_paths, days=30)
         assert fm.features[0].total_commits == 1
 
-    def test_feature_with_no_commits(self) -> None:
+    def test_feature_with_no_commits_is_filtered(self) -> None:
+        """Features with 0 commits are excluded (likely mapping bugs)."""
         commits: list[Commit] = []
         feature_paths = {"auth": ["auth/login.py"]}
         fm = build_feature_map("/repo", commits, feature_paths, days=30)
-        assert fm.features[0].total_commits == 0
-        assert fm.features[0].health_score == 100.0
+        assert len(fm.features) == 0
 
     def test_remote_url_passed_to_prs(self) -> None:
         commits = [
