@@ -91,6 +91,11 @@ def analyze(
         help="Detect user-facing flows within features (requires --llm)",
         is_flag=True,
     ),
+    coverage: Optional[str] = typer.Option(
+        None,
+        "--coverage",
+        help="Path to coverage report (lcov.info or coverage-summary.json). Auto-detected if omitted.",
+    ),
 ):
     """
     Analyzes a git repository and builds a feature map.
@@ -224,11 +229,16 @@ def analyze(
             remote_url=remote_url,
         )
 
-        # 6b. Detect flows within each feature (optional)
+        # 6b. Read coverage data (if available)
+        from faultline.analyzer.coverage import read_coverage
+        coverage_data = read_coverage(str(repo.working_tree_dir), coverage_path=coverage)
+        if coverage_data:
+            console.print(f"[dim]Coverage data: {len(coverage_data)} files[/dim]")
+            _apply_feature_coverage(feature_map, coverage_data, path_prefix)
+
+        # 6c. Detect flows within each feature (optional)
         if flows:
-            from faultline.analyzer.coverage import read_coverage
             from faultline.llm.flow_detector import detect_e2e_anchors
-            coverage_data = read_coverage(str(repo.working_tree_dir))
             e2e_anchors = detect_e2e_anchors(analysis_files)
             if e2e_anchors:
                 console.print(
@@ -391,6 +401,32 @@ def _detect_with_llm(
     # Fallback to heuristic
     console.print("[yellow]LLM detection failed — falling back to directory heuristic[/yellow]")
     return detect_features_from_structure(files)
+
+
+def _apply_feature_coverage(
+    feature_map: "FeatureMap",
+    coverage_data: dict[str, float],
+    path_prefix: str,
+) -> None:
+    """Computes average line coverage per feature from coverage report data.
+
+    Mutates feature_map.features in place, setting coverage_pct on each feature
+    that has matching files in the coverage report.
+    """
+    from faultline.analyzer.features import _is_test_file
+
+    for feature in feature_map.features:
+        coverages = []
+        for file_path in feature.paths:
+            if _is_test_file(file_path):
+                continue
+            # Try matching with and without path_prefix
+            full_path = f"{path_prefix}{file_path}" if path_prefix else file_path
+            pct = coverage_data.get(full_path) or coverage_data.get(file_path)
+            if pct is not None:
+                coverages.append(pct)
+        if coverages:
+            feature.coverage_pct = round(sum(coverages) / len(coverages), 1)
 
 
 def _detect_flows(

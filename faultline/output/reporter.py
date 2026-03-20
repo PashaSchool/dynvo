@@ -54,8 +54,19 @@ def print_features_table(feature_map: FeatureMap) -> None:
         _print_features_with_flows(feature_map)
 
 
+def _coverage_color(pct: float) -> str:
+    if pct >= 70:
+        return "green"
+    elif pct >= 40:
+        return "yellow"
+    else:
+        return "red"
+
+
 def _print_features_flat(feature_map: FeatureMap) -> None:
     """Standard flat table without flows."""
+    has_coverage = any(f.coverage_pct is not None for f in feature_map.features)
+
     table = Table(
         box=box.ROUNDED,
         show_header=True,
@@ -72,13 +83,15 @@ def _print_features_flat(feature_map: FeatureMap) -> None:
     table.add_column("Bug %", justify="right", width=8)
     table.add_column("Authors", justify="right", width=10)
     table.add_column("Files", justify="right", width=8)
+    if has_coverage:
+        table.add_column("Cov %", justify="right", width=8)
 
     for feature in feature_map.sorted_by_risk():
         color = _health_color(feature.health_score)
         icon = _health_icon(feature.health_score)
         bug_pct = f"{feature.bug_fix_ratio * 100:.1f}%"
 
-        table.add_row(
+        row = [
             f"[{color}]{icon}[/]",
             feature.name,
             f"[{color}]{feature.health_score:.0f}[/]",
@@ -87,7 +100,14 @@ def _print_features_flat(feature_map: FeatureMap) -> None:
             f"[{color}]{bug_pct}[/]",
             str(len(feature.authors)),
             str(len(feature.paths)),
-        )
+        ]
+        if has_coverage:
+            if feature.coverage_pct is not None:
+                cov_color = _coverage_color(feature.coverage_pct)
+                row.append(f"[{cov_color}]{feature.coverage_pct:.0f}%[/]")
+            else:
+                row.append("[dim]—[/dim]")
+        table.add_row(*row)
 
     console.print()
     console.print(table)

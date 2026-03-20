@@ -35,7 +35,7 @@ _DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 _DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
 # When file count exceeds this, collapse to unique directories to save tokens
-_DIR_COLLAPSE_THRESHOLD = 300
+_DIR_COLLAPSE_THRESHOLD = 500
 # Max route-anchor entries injected into the LLM prompt
 _MAX_ROUTE_ANCHOR_FILES = 25
 _MAX_ROUTES_PER_ENTRY   = 3
@@ -43,6 +43,8 @@ _MAX_ROUTES_PER_ENTRY   = 3
 _DIR_SAMPLE_FILES = 4
 # Top co-change pairs to include in the prompt
 _MAX_COCHANGE_IN_PROMPT = 20
+# Max clusters per single merge LLM call (avoids prompt/response truncation)
+_MERGE_CHUNK_SIZE = 40
 
 _COMMIT_STOP_WORDS = {
     # conventional commit types
@@ -140,8 +142,9 @@ business domain area, not a technical layer.
 3. Every directory must appear in exactly one feature. No omissions.
 4. The `files` field in your response must contain DIRECTORY PATHS exactly as shown in the \
    input — not the sample filenames after →, not expanded sub-paths, not invented paths.
-5. Prefer fewer, broader features over many small ones. Group related subdirectories into a \
-   single business feature. Merge directories that serve the same domain.
+5. Balance granularity: each distinct business capability gets its own feature. \
+   Do NOT lump unrelated capabilities into a single feature just because they share a parent directory. \
+   For example, "billing", "webhooks", "templates", "auth" are SEPARATE features, not one "core-platform".
 6. Deeply nested subdirectories almost always belong to the same feature as their parent. \
    Only split siblings when they serve clearly different business domains (e.g. "payments" vs "auth").
 10. IMPORTANT: Look at the sample filenames after → to detect MULTIPLE business domains within \
@@ -167,6 +170,17 @@ BAD — too many tiny features (one dir = one feature):
 
 GOOD — grouped by business domain:
   "user-auth":   ["src/auth/login", "src/auth/signup", "src/auth/utils"]
+
+BAD — too few features (everything lumped into one):
+  "core-platform": ["src/auth", "src/billing", "src/webhooks", "src/templates", "src/api"]
+  ← these are 5 distinct business capabilities, not one feature
+
+GOOD — each capability is its own feature:
+  "user-auth":  ["src/auth"]
+  "billing":    ["src/billing"]
+  "webhooks":   ["src/webhooks"]
+  "templates":  ["src/templates"]
+  "api":        ["src/api"]
 
 BAD — putting individual filenames in `files`:
   "auth": ["LoginForm.tsx", "useAuth.ts"]  ← WRONG, these are filenames not directories
@@ -408,13 +422,25 @@ def _call_feature_detection(
         file_tree=file_tree, extra_context=extra_context, feature_hint=hint,
     )
 
+    # Inject minimum feature count into system prompt for large repos
+    system = _DETECTION_SYSTEM_PROMPT
+    if n_files >= 100:
+        min_f = min(max(8, n_files // 30), 15)
+        system += (
+            f"\n\n## CRITICAL REQUIREMENT\n"
+            f"This codebase has {n_files} files. You MUST return at least {min_f} features. "
+            f"Producing fewer than {min_f} means you are over-merging distinct business capabilities. "
+            f"Each of these should be separate: auth, billing, webhooks, templates, integrations, "
+            f"api, settings, notifications, admin, teams, etc."
+        )
+
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.parse(
                 model=_MODEL,
                 max_tokens=_MAX_TOKENS_FILE,
                 temperature=0,
-                system=_DETECTION_SYSTEM_PROMPT,
+                system=system,
                 messages=[{"role": "user", "content": prompt}],
                 output_format=_FeatureDetectionResponse,
             )
@@ -454,13 +480,24 @@ def _call_dir_detection(
         extra_context=extra_context,
     )
 
+    # Inject minimum feature count into system prompt
+    system = _DIR_DETECTION_SYSTEM_PROMPT
+    min_f = min(max(8, n_dirs // 15), 15)
+    system += (
+        f"\n\n## CRITICAL REQUIREMENT\n"
+        f"This codebase has {n_dirs} directories. You MUST return at least {min_f} features. "
+        f"Producing fewer than {min_f} means you are over-merging distinct business capabilities. "
+        f"Each of these should be separate: auth, billing, webhooks, templates, integrations, "
+        f"api, settings, notifications, admin, teams, etc."
+    )
+
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.parse(
                 model=_MODEL,
                 max_tokens=_MAX_TOKENS_DIR,
                 temperature=0,
-                system=_DIR_DETECTION_SYSTEM_PROMPT,
+                system=system,
                 messages=[{"role": "user", "content": prompt}],
                 output_format=_FeatureDetectionResponse,
             )
@@ -569,13 +606,14 @@ def _dir_nesting_depth(d: str, dir_set: set[str]) -> int:
 
 def _feature_count_hint(n_dirs: int) -> str:
     """Generates a feature-count guidance line for the dir-collapse prompt."""
-    min_f = max(8, n_dirs // 15)
-    max_f = max(15, n_dirs // 7)
+    min_f = min(max(8, n_dirs // 15), 15)
+    max_f = min(max(15, n_dirs // 7), 30)
     return (
         f"\nYou have {n_dirs} directories. "
-        f"Aim for {min_f}–{max_f} focused features. "
-        "Be granular — deeply nested subdirectories with distinct responsibilities "
-        "should be separate features, not merged into one broad group.\n"
+        f"You MUST produce at least {min_f} features (aim for {min_f}–{max_f}). "
+        "Each distinct business capability (auth, billing, webhooks, templates, "
+        "integrations, etc.) MUST be its own feature. "
+        "Do NOT merge unrelated capabilities into 'core-platform' or 'app-features'.\n"
     )
 
 
@@ -583,18 +621,15 @@ def _file_feature_count_hint(n_files: int) -> str:
     """Generates a feature-count guidance line for the file-path mode prompt."""
     if n_files < 30:
         return ""
-    min_f = max(5, n_files // 30)
+    min_f = min(max(5, n_files // 30), 15)
     max_f = min(max(10, n_files // 12), 30)
     return (
         f"\nYou have {n_files} files. "
-        f"Aim for {min_f}–{max_f} business features.\n"
+        f"You MUST produce at least {min_f} features (aim for {min_f}–{max_f}).\n"
         "IMPORTANT: Do NOT create one giant feature for an entire directory. "
-        "In monolith apps (Django, Rails, Flask), individual Python/Ruby modules within "
-        "the same directory often represent distinct business domains. For example, in a "
-        "Django app with files like barcodes.py, classifier.py, bulk_edit.py, mail.py, "
-        "workflows/ — these are separate features (barcode-detection, classification, "
-        "bulk-operations, email-ingestion, workflows), NOT one 'document-management' feature. "
-        "Split by the business capability each module provides.\n"
+        "Each distinct business capability (auth, billing, webhooks, templates, "
+        "integrations, search, etc.) MUST be its own feature. "
+        "Do NOT merge unrelated capabilities into 'core-platform' or 'app-features'.\n"
     )
 
 
@@ -757,6 +792,116 @@ def _format_route_anchors(
             + "\n".join(lines)
             + "\n</route-anchors>"
         )
+
+
+# ── Entity anchors ──────────────────────────────────────────────────────────
+
+_MAX_ENTITY_ANCHOR_FILES = 30
+_MAX_ENTITIES_PER_FILE = 12
+
+# File patterns that typically define business entities/models
+_ENTITY_FILE_PATTERNS = {
+    "models.py", "model.py", "schemas.py", "schema.py", "types.py",
+    "entities.py", "entity.py", "forms.py", "serializers.py",
+    "admin.py", "views.py", "urls.py", "routes.py", "handlers.py",
+}
+# Directory name patterns that suggest entity-defining files
+_ENTITY_DIR_PATTERNS = {"models", "schemas", "entities", "types"}
+
+
+def _format_entity_anchors(
+    signatures: dict[str, FileSignature],
+    dirs: list[str] | None = None,
+) -> str:
+    """Build an <entity-anchors> section listing class/export names from key files.
+
+    This helps the LLM detect features that exist as classes inside shared files
+    (e.g. Django models.py with Tag, Correspondent, SavedView classes).
+
+    File mode (dirs=None): shows exports from model/schema/entity files.
+    Dir mode (dirs provided): aggregates exports by directory.
+    """
+    if not signatures:
+        return ""
+
+    # Filter to Python entity-defining files only.
+    # TS/JS models/types/schemas are technical layers, not business entities —
+    # including them causes over-merging in non-Python repos.
+    entity_sigs: list[FileSignature] = []
+    for path, sig in signatures.items():
+        if not sig.exports:
+            continue
+        if not path.endswith(".py"):
+            continue
+        filename = Path(path).name.lower()
+        parent_name = Path(path).parent.name.lower()
+        if filename in _ENTITY_FILE_PATTERNS or parent_name in _ENTITY_DIR_PATTERNS:
+            entity_sigs.append(sig)
+
+    if not entity_sigs:
+        return ""
+
+    if dirs is None:
+        # File mode: one line per entity-defining file
+        lines: list[str] = []
+        for sig in sorted(entity_sigs, key=lambda s: s.path)[
+            :_MAX_ENTITY_ANCHOR_FILES
+        ]:
+            exports_str = ", ".join(sig.exports[:_MAX_ENTITIES_PER_FILE])
+            more = (
+                f" (+{len(sig.exports) - _MAX_ENTITIES_PER_FILE} more)"
+                if len(sig.exports) > _MAX_ENTITIES_PER_FILE
+                else ""
+            )
+            lines.append(f"  {sig.path} → {exports_str}{more}")
+
+        if not lines:
+            return ""
+
+        return (
+            "\n\n<entity-anchors>\n"
+            "Business entity definitions found in model/schema files — "
+            "each entity name often maps to a distinct feature or sub-feature:\n"
+            + "\n".join(lines)
+            + "\n</entity-anchors>"
+        )
+
+    # Dir mode: aggregate exports by directory
+    dir_set = set(dirs)
+    dir_entities: dict[str, list[str]] = {}
+    for sig in entity_sigs:
+        parent = str(Path(sig.path).parent)
+        if parent in dir_set:
+            dir_entities.setdefault(parent, []).extend(
+                sig.exports[:_MAX_ENTITIES_PER_FILE]
+            )
+
+    if not dir_entities:
+        return ""
+
+    lines = []
+    for d in dirs:
+        if d not in dir_entities:
+            continue
+        # Deduplicate and limit
+        entities = list(dict.fromkeys(dir_entities[d]))[
+            :_MAX_ENTITIES_PER_FILE
+        ]
+        entities_str = ", ".join(entities)
+        lines.append(f"  {d} → {entities_str}")
+        if len(lines) >= _MAX_ENTITY_ANCHOR_FILES:
+            break
+
+    if not lines:
+        return ""
+
+    return (
+        "\n\n<entity-anchors>\n"
+        "Business entity definitions (models/schemas) found in these directories — "
+        "entity names reveal distinct business domains within a single directory:\n"
+        + "\n".join(lines)
+        + "\n</entity-anchors>"
+    )
 
 
 def _expand_dir_mapping(
@@ -972,16 +1117,22 @@ that uses it via a hook; an API service and the page that renders its data).
 - Feature names: lowercase, hyphen-separated, 1–3 words.
 - Use business domain terminology, not technical layers.
   Examples: "user-auth", "checkout", "analytics-dashboard", "notifications", "team-management".
-- Merge aggressively by business purpose — clusters that serve the same domain are one feature.
+- Merge clusters that serve the same business domain into one feature.
   BAD: merge all hooks clusters into "hooks-feature".
   GOOD: merge auth-hooks + auth-components + auth-api into "user-auth".
-  BAD: creating one feature per cluster without merging.
-  GOOD: fewer features, each covering a complete business domain.
-- A single feature can (and often should) contain 10–30+ clusters.
-  Example: "payments" might include clusters for stripe-hooks, payment-forms, \
-  billing-api, invoice-components, subscription-utils, pricing-page, etc.
-- Only keep features separate when they represent truly distinct business domains \
-  (e.g. "payments" vs "auth" — different user capabilities).
+- Keep features separate when they represent distinct business capabilities \
+  (e.g. "payments" vs "auth" vs "labels" vs "notifications").
+- IMPORTANT: small clusters (2-5 files) that represent a clear business domain \
+  must stay as their own feature. Do NOT absorb them into larger features. \
+  Example: a "system-status" page with 3 files is a real feature, not part of "dashboard".
+- When in doubt, keep features separate rather than merging them.
+- NEVER create features for technical layers or utilities. Clusters containing only \
+  shared utilities, hooks, helpers, icons, assets, UI components, stories (Storybook), \
+  theme/locale files, or general-purpose code must be merged into the business feature \
+  that uses them. If no clear business owner exists, merge them into the largest \
+  feature that imports them.
+  BAD: "hooks-utils", "shared-components", "icons-assets", "stories", "general-utils".
+  GOOD: merge these into the business features they support.
 - Every cluster must appear in exactly one feature — no omissions.
 - cluster_indices contains 1-based indices from the list provided.\
 """
@@ -1000,18 +1151,19 @@ Every cluster index must appear in exactly one feature.\
 def _merge_feature_count_hint(n_clusters: int) -> str:
     """Generates a scoped feature-count guidance line for the merge prompt.
 
-    Scale: ~1 feature per 10 clusters, clamped to 5–30.
-    Small repo (20 clusters) → 5–8 features.
-    Large repo (200 clusters) → 15–25 features.
+    Scale: ~1 feature per 8 clusters, clamped to 8–60.
+    Small repo (20 clusters) → 8–12 features.
+    Medium repo (100 clusters) → 12–20 features.
+    Large repo (300 clusters) → 25–50 features.
     """
-    min_f = max(5, n_clusters // 15)
-    max_f = max(10, n_clusters // 8)
-    max_f = min(max_f, 30)
+    min_f = max(8, n_clusters // 12)
+    max_f = max(12, n_clusters // 6)
+    max_f = min(max_f, 60)
     return (
         f"\nYou have {n_clusters} clusters. "
         f"Aim for {min_f}–{max_f} business features. "
-        f"Merge aggressively — clusters that serve the same business domain "
-        f"(e.g. auth-hooks + auth-api + auth-ui) must be one feature.\n"
+        f"Merge clusters that clearly serve the same domain, "
+        f"but keep distinct business capabilities as separate features.\n"
     )
 
 
@@ -1133,16 +1285,17 @@ def _apply_cluster_merge(
         used_names.add(name)
         result[name] = sorted(merged_files)
 
-    # Fallback: merge unassigned clusters into the closest existing feature
-    # by directory overlap, instead of leaving them as standalone features.
+    # Unassigned clusters: merge into nearest feature by directory overlap.
+    # Clusters with a distinct business directory stay standalone.
     for i, cluster_id in enumerate(cluster_ids, start=1):
         if i not in assigned:
             orphan_files = cluster_mapping[cluster_id]
+            # Try to merge into an existing feature with directory overlap
             target = _find_best_merge_target(orphan_files, result)
             if target:
                 result[target].extend(orphan_files)
-            else:
-                # No match — keep as standalone with original name
+            elif _cluster_has_distinct_dir(orphan_files):
+                # Distinct business dir — keep as standalone
                 name = cluster_id
                 if name in used_names:
                     suffix = 2
@@ -1150,7 +1303,14 @@ def _apply_cluster_merge(
                         suffix += 1
                     name = f"{name}-{suffix}"
                 used_names.add(name)
-                result[name] = cluster_mapping[cluster_id]
+                result[name] = orphan_files
+            else:
+                # No overlap, no distinct dir — merge into largest feature
+                largest = max(result, key=lambda k: len(result[k])) if result else None
+                if largest:
+                    result[largest].extend(orphan_files)
+                else:
+                    result[cluster_id] = orphan_files
 
     return result
 
@@ -1232,8 +1392,196 @@ def _call_cluster_merge(
     return None
 
 
+# ── Domain-keyword consolidation ─────────────────────────────────────────────
+# Clusters whose files share a distinctive business keyword (e.g. "labels",
+# "payments") are merged before LLM sees them.  This fixes the common case
+# where one feature's files are split across many import-graph clusters because
+# they don't import each other directly (hooks, views, services, schemas).
+
+_DOMAIN_TECH_WORDS = {
+    "components", "component", "hooks", "hook", "utils", "util", "helpers",
+    "helper", "views", "view", "pages", "page", "features", "feature",
+    "shared", "common", "lib", "libs", "src", "app", "modules", "module",
+    "services", "service", "schemas", "schema", "types", "models", "model",
+    "queries", "query", "mutations", "actions", "reducers", "slices",
+    "middleware", "guards", "interceptors", "pipes", "decorators",
+    "providers", "context", "contexts", "stores", "store", "state",
+    "api", "rest", "graphql", "grpc",
+    "ui", "assets", "icons", "images", "fonts", "styles", "theme", "themes",
+    "stories", "storybook", "tests", "test", "spec", "specs", "mocks",
+    "fixtures", "config", "configs", "constants", "enums",
+    "index", "main", "root", "base", "core", "internal",
+    "ndr", "hunterx", "easm", "edr",  # product-specific prefixes (too broad)
+}
+
+# Minimum fraction of a cluster's files that must contain a keyword
+# for it to count as a "signature keyword" for that cluster.
+_DOMAIN_KEYWORD_MIN_RATIO = 0.3
+# Minimum number of clusters sharing a keyword to trigger consolidation.
+_DOMAIN_KEYWORD_MIN_CLUSTERS = 2
+
+
+def _extract_domain_keywords(files: list[str]) -> set[str]:
+    """Extracts distinctive business-domain keywords from file paths.
+
+    Looks at directory names and file stems, filtering out technical terms.
+    Returns lowercase keywords that appear in at least 30% of the files.
+    """
+    from collections import Counter
+
+    keyword_counts: Counter[str] = Counter()
+    for f in files:
+        seen: set[str] = set()
+        parts = list(Path(f).parts)
+        # Include directory names + file stem (without extension)
+        stem = Path(f).stem.lower()
+        for part in parts[:-1]:
+            token = part.lower()
+            if token not in seen and len(token) > 2:
+                seen.add(token)
+        # Also check camelCase/PascalCase splitting of stem
+        import re
+        tokens = re.findall(r"[a-z]+", re.sub(r"([A-Z])", r" \1", stem).lower())
+        for t in tokens:
+            if len(t) > 2 and t not in seen:
+                seen.add(t)
+        for s in seen:
+            keyword_counts[s] += 1
+
+    threshold = max(1, int(len(files) * _DOMAIN_KEYWORD_MIN_RATIO))
+    return {
+        kw for kw, count in keyword_counts.items()
+        if count >= threshold and kw not in _DOMAIN_TECH_WORDS
+    }
+
+
+def _consolidate_domain_clusters(
+    cluster_mapping: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Merges clusters that share distinctive business-domain keywords.
+
+    Example: clusters containing files in `*/labels/*`, `*/Labels/*`,
+    `*LabelManager*` all share the keyword "label" and get merged into one
+    cluster before LLM merge sees them.
+    """
+    from collections import Counter, defaultdict as _defaultdict
+
+    if len(cluster_mapping) <= 20:
+        return cluster_mapping
+
+    # Step 1: Extract signature keywords per cluster
+    cluster_keywords: dict[str, set[str]] = {}
+    keyword_to_clusters: dict[str, list[str]] = _defaultdict(list)
+
+    for cname, files in cluster_mapping.items():
+        kws = _extract_domain_keywords(files)
+        cluster_keywords[cname] = kws
+        for kw in kws:
+            keyword_to_clusters[kw].append(cname)
+
+    # Step 2: Find keywords shared by multiple clusters (domain signals)
+    # Only use keywords that aren't too common (shared by <15% of clusters)
+    # to avoid creating mega-clusters through transitive chains.
+    max_cluster_share = max(3, len(cluster_mapping) // 7)
+    merge_groups: dict[str, list[str]] = {}  # keyword → list of cluster names
+    for kw, cnames in keyword_to_clusters.items():
+        if _DOMAIN_KEYWORD_MIN_CLUSTERS <= len(cnames) <= max_cluster_share:
+            merge_groups[kw] = cnames
+
+    if not merge_groups:
+        return cluster_mapping
+
+    # Step 3: Direct merge — for each keyword, merge its clusters into one.
+    # Unlike Union-Find, this doesn't create transitive chains across keywords.
+    # Each keyword group is merged independently.
+    already_merged: set[str] = set()
+    merged_clusters: dict[str, list[str]] = {}
+
+    # Sort keywords by specificity (fewer clusters = more specific = merge first)
+    for kw in sorted(merge_groups, key=lambda k: len(merge_groups[k])):
+        cnames = [c for c in merge_groups[kw] if c not in already_merged]
+        if len(cnames) < 2:
+            continue
+
+        # Calculate total files — don't create mega-clusters
+        total_files = sum(len(cluster_mapping[c]) for c in cnames)
+        total_all_files = sum(len(v) for v in cluster_mapping.values())
+        max_merged_size = max(80, total_all_files // 5)
+        if total_files > max_merged_size:
+            continue
+
+        # Merge all into one cluster
+        combined: list[str] = []
+        for c in cnames:
+            combined.extend(cluster_mapping[c])
+            already_merged.add(c)
+        merged_clusters[kw] = sorted(set(combined))
+
+    # Step 4: Build result — merged clusters + untouched originals
+    result: dict[str, list[str]] = {}
+    used_names: set[str] = set()
+    # Add merged clusters first (named by keyword)
+    for kw_name, files in merged_clusters.items():
+        name = kw_name
+        if name in used_names:
+            suffix = 2
+            while f"{name}-{suffix}" in used_names:
+                suffix += 1
+            name = f"{name}-{suffix}"
+        used_names.add(name)
+        result[name] = files
+    # Add untouched originals
+    for cname, cfiles in cluster_mapping.items():
+        if cname not in already_merged:
+            name = cname
+            if name in used_names:
+                suffix = 2
+                while f"{name}-{suffix}" in used_names:
+                    suffix += 1
+                name = f"{name}-{suffix}"
+            used_names.add(name)
+            result[name] = cfiles
+
+    consolidated = len(cluster_mapping) - len(result)
+    if consolidated > 0:
+        logger.info(
+            "Domain consolidation: %d → %d clusters (merged %d by shared keywords)",
+            len(cluster_mapping), len(result), consolidated,
+        )
+    return result
+
+
 _PRE_MERGE_MAX_FILES = 3  # clusters with this many files or fewer get pre-merged
 _PRE_MERGE_THRESHOLD = 150  # only pre-merge when total clusters exceed this
+
+# Directories that are technical layers, not business domains.
+# Clusters rooted in these are safe to absorb.
+_TECHNICAL_DIR_NAMES = {
+    "utils", "util", "helpers", "helper", "lib", "libs", "common", "shared",
+    "core", "base", "config", "configs", "constants", "types", "interfaces",
+    "hooks", "hoc", "providers", "context", "contexts", "middleware",
+    "middlewares", "decorators", "guards", "interceptors", "pipes",
+    "styles", "assets", "icons", "images", "fonts", "theme", "themes",
+    "__tests__", "__mocks__", "test", "tests", "spec", "specs",
+    "fixtures", "storybook", "stories",
+}
+
+
+def _cluster_has_distinct_dir(files: list[str]) -> bool:
+    """Returns True if the cluster's files live in a unique, non-technical directory.
+
+    Such clusters likely represent a distinct business domain and should not
+    be absorbed into larger clusters during pre-merge.
+    """
+    dirs = set()
+    for f in files:
+        parts = Path(f).parts
+        if len(parts) >= 2:
+            dirs.add(parts[0])
+    if len(dirs) != 1:
+        return False
+    dir_name = next(iter(dirs)).lower().rstrip("s")
+    return dir_name not in {d.lower().rstrip("s") for d in _TECHNICAL_DIR_NAMES}
 
 
 def _pre_merge_tiny_clusters(
@@ -1243,15 +1591,21 @@ def _pre_merge_tiny_clusters(
 
     This reduces the number of clusters sent to the LLM merge step, making the
     prompt manageable for repos with 300+ import graph clusters.
+
+    Clusters in a unique business-domain directory are protected from absorption.
     """
     if len(cluster_mapping) <= _PRE_MERGE_THRESHOLD:
         return cluster_mapping
 
     large: dict[str, list[str]] = {}
     tiny: dict[str, list[str]] = {}
+    protected: dict[str, list[str]] = {}
     for name, files in cluster_mapping.items():
         if len(files) <= _PRE_MERGE_MAX_FILES:
-            tiny[name] = files
+            if _cluster_has_distinct_dir(files):
+                protected[name] = files
+            else:
+                tiny[name] = files
         else:
             large[name] = files
 
@@ -1265,12 +1619,186 @@ def _pre_merge_tiny_clusters(
         if target:
             result[target].extend(files)
         else:
-            # No overlap found — keep as separate cluster
             result[_name] = files
 
-    logger.info("Pre-merge: %d → %d clusters (absorbed %d tiny clusters)",
-                len(cluster_mapping), len(result), len(cluster_mapping) - len(result))
+    # Add protected clusters back — they stay as-is for LLM to see
+    for name, files in protected.items():
+        result[name] = files
+
+    absorbed = len(cluster_mapping) - len(result)
+    logger.info("Pre-merge: %d → %d clusters (absorbed %d tiny, protected %d)",
+                len(cluster_mapping), len(result), absorbed, len(protected))
     return result
+
+
+def _dedup_chunk_names(merged: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Merge features that only differ by a chunk-collision suffix (e.g. auth-2 → auth).
+
+    When chunked merging names the same feature in two chunks, the second gets a
+    '-2' suffix.  This merges them back together.
+    """
+    import re as _re
+
+    suffix_re = _re.compile(r"^(.+)-(\d+)$")
+    result: dict[str, list[str]] = {}
+    for name, files in merged.items():
+        m = suffix_re.match(name)
+        base = m.group(1) if m and m.group(1) in merged else name
+        if base in result:
+            result[base].extend(files)
+        else:
+            result[base] = list(files)
+    return result
+
+
+def _chunked_cluster_merge(
+    client: anthropic.Anthropic,
+    cluster_mapping: dict[str, list[str]],
+    keywords_per_cluster: dict[str, list[str]] | None = None,
+) -> dict[str, list[str]] | None:
+    """Merges clusters in chunks to avoid prompt/response truncation.
+
+    For small cluster sets (<=_MERGE_CHUNK_SIZE), does a single merge call.
+    For larger sets, splits into chunks, merges each separately, then
+    does a final merge pass to consolidate cross-chunk duplicates.
+
+    Returns the final feature->files mapping, or None if merge failed.
+    """
+    if len(cluster_mapping) <= _MERGE_CHUNK_SIZE:
+        response = _call_cluster_merge(
+            client, cluster_mapping, keywords_per_cluster,
+        )
+        if response:
+            return _apply_cluster_merge(cluster_mapping, response)
+        return None
+
+    cluster_items = list(cluster_mapping.items())
+    chunks = [
+        dict(cluster_items[i : i + _MERGE_CHUNK_SIZE])
+        for i in range(0, len(cluster_items), _MERGE_CHUNK_SIZE)
+    ]
+    logger.info(
+        "Chunked merge: %d clusters -> %d chunks of <=%d",
+        len(cluster_mapping),
+        len(chunks),
+        _MERGE_CHUNK_SIZE,
+    )
+
+    all_merged: dict[str, list[str]] = {}
+    for idx, chunk in enumerate(chunks):
+        chunk_kw = (
+            {k: v for k, v in keywords_per_cluster.items() if k in chunk}
+            if keywords_per_cluster
+            else None
+        )
+        response = _call_cluster_merge(client, chunk, chunk_kw or None)
+        if response:
+            chunk_result = _apply_cluster_merge(chunk, response)
+            for name, files in chunk_result.items():
+                unique_name = name
+                suffix = 2
+                while unique_name in all_merged:
+                    unique_name = f"{name}-{suffix}"
+                    suffix += 1
+                all_merged[unique_name] = files
+            logger.info(
+                "Chunk %d/%d: %d clusters -> %d features",
+                idx + 1,
+                len(chunks),
+                len(chunk),
+                len(chunk_result),
+            )
+        else:
+            for cid, files in chunk.items():
+                all_merged[cid] = files
+            logger.warning(
+                "Chunk %d/%d failed, keeping %d raw clusters",
+                idx + 1,
+                len(chunks),
+                len(chunk),
+            )
+
+    if not all_merged:
+        return None
+
+    # Final merge pass if intermediate result is still too fragmented
+    if len(all_merged) > _MERGE_CHUNK_SIZE:
+        logger.info(
+            "Final merge pass: %d intermediate features",
+            len(all_merged),
+        )
+        final_response = _call_cluster_merge(client, all_merged, None)
+        if final_response:
+            return _apply_cluster_merge(all_merged, final_response)
+        logger.warning(
+            "Final merge pass failed, returning %d intermediate features",
+            len(all_merged),
+        )
+
+    # Deduplicate features with collision suffixes (e.g. "auth-2" → merge into "auth")
+    return _dedup_chunk_names(all_merged)
+
+
+# Single words: feature is technical if ALL its words are in this set.
+_TECHNICAL_FEATURE_WORDS = {
+    "utils", "util", "utilities", "helpers", "helper", "hooks", "hoc",
+    "shared", "common", "general", "misc", "core", "base", "lib",
+    "icons", "assets", "images", "fonts", "theme", "themes", "locale",
+    "stories", "storybook", "mocks", "fixtures", "test", "tests",
+    "styles", "css", "scss", "components", "ui",
+    "workers", "worker",
+}
+
+# Multi-word patterns: feature names matching these exactly are technical.
+_TECHNICAL_FEATURE_NAMES = {
+    "ui-library", "ui-components", "shared-components", "custom-hooks",
+    "hooks-utils", "general-utils", "data-schemas", "state-management",
+    "api-services", "export-utilities", "app-shell", "routing",
+    "icons-assets", "locale-theme", "custom-components", "custom-utils",
+    "dashboard-utils", "chart-components", "input-component", "table-cells",
+    "common-store", "template-components", "data-prefetch",
+    "filter-processor", "entity-processors",
+}
+
+
+def _filter_technical_features(
+    merged: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Absorbs technical/utility features into the business feature with the most overlap.
+
+    Features named after technical layers (hooks-utils, shared-components, stories)
+    are not useful to engineering managers. This redistributes their files.
+    """
+    technical: dict[str, list[str]] = {}
+    business: dict[str, list[str]] = {}
+
+    for name, files in merged.items():
+        normalized = name.lower().replace("_", "-")
+        parts = set(normalized.split("-"))
+        is_technical = (
+            normalized in _TECHNICAL_FEATURE_NAMES
+            or (parts & _TECHNICAL_FEATURE_WORDS and not (parts - _TECHNICAL_FEATURE_WORDS - {""}))
+        )
+        if is_technical:
+            technical[name] = files
+        else:
+            business[name] = files
+
+    if not technical or not business:
+        return merged
+
+    for tech_name, tech_files in technical.items():
+        target = _find_best_merge_target(tech_files, business)
+        if target:
+            business[target].extend(tech_files)
+        else:
+            # No overlap — pick the largest feature
+            largest = max(business, key=lambda k: len(business[k]))
+            business[largest].extend(tech_files)
+
+    logger.info("Filtered %d technical features, redistributed files into business features",
+                len(technical))
+    return business
 
 
 def merge_and_name_clusters_llm(
@@ -1299,8 +1827,10 @@ def merge_and_name_clusters_llm(
     if not key or not cluster_mapping:
         return cluster_mapping
 
+    # Consolidate clusters sharing business-domain keywords (e.g. "labels")
+    working_clusters = _consolidate_domain_clusters(cluster_mapping)
     # Pre-merge tiny clusters to keep prompt size manageable for large repos
-    working_clusters = _pre_merge_tiny_clusters(cluster_mapping)
+    working_clusters = _pre_merge_tiny_clusters(working_clusters)
 
     cache_key = _merge_cache_key(working_clusters, _MODEL)
     cached = _read_name_cache(cache_key)
@@ -1311,11 +1841,29 @@ def merge_and_name_clusters_llm(
     keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
 
     client = anthropic.Anthropic(api_key=key)
-    merge_response = _call_cluster_merge(client, working_clusters, keywords_per_cluster)
+
+    # Try single-shot merge first (preserves previous behavior).
+    # Fall back to chunked merge only when single-shot fails (large repos).
+    merge_response = _call_cluster_merge(
+        client, working_clusters, keywords_per_cluster,
+    )
     if merge_response:
-        merged = _apply_cluster_merge(working_clusters, merge_response)
+        merged = _filter_technical_features(
+            _apply_cluster_merge(working_clusters, merge_response),
+        )
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
         return merged
+
+    # Single-shot failed (likely truncation) — try chunked merge
+    if len(working_clusters) > _MERGE_CHUNK_SIZE:
+        logger.info("Single-shot merge failed, trying chunked merge")
+        merged = _chunked_cluster_merge(
+            client, working_clusters, keywords_per_cluster,
+        )
+        if merged:
+            merged = _filter_technical_features(merged)
+            _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+            return merged
 
     return working_clusters
 
@@ -1361,7 +1909,8 @@ def merge_and_name_clusters_ollama(
     if not cluster_mapping:
         return cluster_mapping
 
-    working_clusters = _pre_merge_tiny_clusters(cluster_mapping)
+    working_clusters = _consolidate_domain_clusters(cluster_mapping)
+    working_clusters = _pre_merge_tiny_clusters(working_clusters)
 
     cache_key = _merge_cache_key(working_clusters, model)
     cached = _read_name_cache(cache_key)
@@ -1373,7 +1922,9 @@ def merge_and_name_clusters_ollama(
 
     merge_response = _call_cluster_merge_ollama(working_clusters, model, host, keywords_per_cluster)
     if merge_response:
-        merged = _apply_cluster_merge(working_clusters, merge_response)
+        merged = _filter_technical_features(
+            _apply_cluster_merge(working_clusters, merge_response),
+        )
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
         return merged
 
