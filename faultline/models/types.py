@@ -65,6 +65,7 @@ class Feature(BaseModel):
     health_score: float       # 0-100, higher is better
     flows: list[Flow] = []    # populated when --flows flag is used
     bug_fix_prs: list[PullRequest] = []
+    coverage_pct: float | None = None  # avg line coverage % across source files; None if unavailable
 
 
 class FeatureMap(BaseModel):

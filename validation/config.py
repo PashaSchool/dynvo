@@ -9,7 +9,7 @@ PROGRESS_FILE = VALIDATION_DIR / "progress.json"
 
 CLONE_DEPTH = 0  # 0 = full clone (shallow breaks git diff)
 MAX_COMMITS = 500  # limit analysis to keep it fast
-ANALYSIS_TIMEOUT_SEC = 600
+ANALYSIS_TIMEOUT_SEC = 900
 VALIDATION_MODEL = "claude-sonnet-4-5-20250514"
 RESEARCH_MODEL = "claude-sonnet-4-5-20250514"
 
@@ -58,13 +58,17 @@ FALLBACK_REPOS = [
         "src_filter": "app/",
         "reason": "Personal finance app with distinct financial domains",
     },
-    # ── Unverified expected_features (guessed) ──
+    # ── Verified expected_features (researched from actual code) ──
     {
         "name": "documenso/documenso",
         "url": "https://github.com/documenso/documenso.git",
         "expected_features": [
-            "documents", "signing", "templates",
-            "auth", "teams", "api",
+            "documents", "signing", "templates", "recipients",
+            "auth", "teams", "organizations", "billing",
+            "webhooks", "api", "api-tokens", "branding",
+            "sso", "audit-logs", "embed", "admin",
+            "folders", "document-fields", "direct-links",
+            "mfa", "dashboard", "inbox", "email-templates",
         ],
         "src_filter": "apps/remix/app/",
         "reason": "E-signature app with clear document workflow features",
@@ -73,8 +77,12 @@ FALLBACK_REPOS = [
         "name": "formbricks/formbricks",
         "url": "https://github.com/formbricks/formbricks.git",
         "expected_features": [
-            "surveys", "responses", "integrations",
-            "auth", "teams", "api",
+            "surveys", "survey-editor", "survey-templates",
+            "responses", "analysis", "contacts", "segments",
+            "integrations", "webhooks", "auth", "organizations",
+            "billing", "api-keys", "branding", "tags",
+            "languages", "notifications", "sso", "onboarding",
+            "workflows", "actions",
         ],
         "src_filter": "apps/web/app/",
         "reason": "Survey platform with well-separated feature modules",
@@ -83,8 +91,12 @@ FALLBACK_REPOS = [
         "name": "triggerdotdev/trigger.dev",
         "url": "https://github.com/triggerdotdev/trigger.dev.git",
         "expected_features": [
-            "jobs", "triggers", "integrations",
-            "auth", "organizations", "api",
+            "runs", "schedules", "deployments", "queues",
+            "batches", "alerts", "api-keys",
+            "environment-variables", "logs", "errors",
+            "integrations", "billing", "organizations",
+            "projects", "teams", "settings", "concurrency",
+            "waitpoints", "dashboards", "mfa", "regions",
         ],
         "src_filter": "apps/webapp/app/",
         "reason": "Background jobs platform with distinct workflow features",
@@ -94,7 +106,11 @@ FALLBACK_REPOS = [
         "url": "https://github.com/hoppscotch/hoppscotch.git",
         "expected_features": [
             "requests", "collections", "environments",
-            "auth", "teams", "history",
+            "auth", "teams", "history", "graphql",
+            "websocket", "mqtt", "socket-io", "sse",
+            "share", "import-export", "settings",
+            "workspace", "access-tokens", "organizations",
+            "pre-request-scripts", "mock-server", "realtime",
         ],
         "src_filter": "packages/hoppscotch-common/src/",
         "reason": "API testing tool with clear request/collection domains",
@@ -103,9 +119,14 @@ FALLBACK_REPOS = [
         "name": "medusajs/medusa",
         "url": "https://github.com/medusajs/medusa.git",
         "expected_features": [
-            "products", "orders", "cart",
-            "customers", "payments", "shipping",
-            "auth", "inventory",
+            "products", "orders", "cart", "customers",
+            "payments", "shipping", "auth", "inventory",
+            "promotions", "regions", "tax", "fulfillment",
+            "returns", "exchanges", "gift-cards", "collections",
+            "sales-channels", "notifications", "pricing",
+            "customer-groups", "reservations", "draft-orders",
+            "claims", "campaigns", "users", "api-keys",
+            "invites", "currencies", "stores", "uploads",
         ],
         "src_filter": "packages/medusa/src/",
         "reason": "E-commerce platform with well-defined commerce domains",
@@ -117,6 +138,10 @@ FALLBACK_REPOS = [
         "expected_features": [
             "booking", "availability", "calendar-sync",
             "teams", "webhooks", "payments", "auth",
+            "event-types", "routing-forms", "workflows",
+            "organizations", "apps-integrations", "analytics",
+            "embed", "api", "sso", "round-robin",
+            "rescheduling", "billing",
         ],
         "src_filter": "apps/web/app/",
         "reason": "Scheduling platform with clear business domains",
@@ -125,111 +150,76 @@ FALLBACK_REPOS = [
         "name": "twentyhq/twenty",
         "url": "https://github.com/twentyhq/twenty.git",
         "expected_features": [
-            "contacts", "companies", "pipeline",
-            "tasks", "settings", "auth",
+            "accounts", "activities", "ai", "billing",
+            "calendar", "companies", "dashboards", "emails",
+            "favorites", "messaging", "notes", "opportunities",
+            "people", "tasks", "views", "workflow",
         ],
         "src_filter": "packages/twenty-front/src/",
         "reason": "Open-source CRM with modular frontend architecture",
     },
+    # ── New repos (FastAPI, NestJS, Django, Rails, Python) ──
     {
-        "name": "plausible/analytics",
-        "url": "https://github.com/plausible/analytics.git",
+        "name": "polarsource/polar",
+        "url": "https://github.com/polarsource/polar.git",
         "expected_features": [
-            "stats", "sites", "goals",
-            "funnels", "auth", "billing",
+            "products", "subscriptions", "checkout", "customers",
+            "payments", "invoices", "transactions", "payouts",
+            "discounts", "refunds", "benefits", "license-keys",
+            "webhooks", "organizations", "auth", "metrics",
+            "files", "campaigns", "custom-fields", "email",
         ],
-        "src_filter": "lib/",
-        "reason": "Privacy-focused analytics (Elixir) with clear metric domains",
+        "src_filter": "server/polar/",
+        "reason": "Developer monetization platform (FastAPI) with clear SaaS domains",
     },
     {
-        "name": "outline/outline",
-        "url": "https://github.com/outline/outline.git",
+        "name": "ever-co/ever-gauzy",
+        "url": "https://github.com/ever-co/ever-gauzy.git",
         "expected_features": [
-            "documents", "collections", "search",
-            "auth", "teams", "comments", "api",
+            "employees", "time-tracking", "invoices", "expenses",
+            "payments", "candidates", "organizations", "tasks",
+            "projects", "pipelines", "contacts", "auth",
+            "integrations", "roles", "email", "import-export",
+            "approval", "notifications", "equipment", "goals",
+        ],
+        "src_filter": "packages/core/src/lib/",
+        "reason": "ERP/HRM platform (NestJS) with enterprise HR domains",
+    },
+    {
+        "name": "makeplane/plane",
+        "url": "https://github.com/makeplane/plane.git",
+        "expected_features": [
+            "issues", "projects", "cycles", "modules",
+            "pages", "inbox", "workspaces", "analytics",
+            "notifications", "integrations", "auth", "labels",
+            "views", "estimates", "webhooks", "api",
+        ],
+        "src_filter": "apps/api/plane/",
+        "reason": "Project management (Django+Next.js) with clear PM domains",
+    },
+    {
+        "name": "chatwoot/chatwoot",
+        "url": "https://github.com/chatwoot/chatwoot.git",
+        "expected_features": [
+            "conversations", "contacts", "inboxes", "messages",
+            "agents", "teams", "campaigns", "labels",
+            "automation", "bots", "webhooks", "auth",
+            "notifications", "attachments", "accounts", "reports",
         ],
         "src_filter": "app/",
-        "reason": "Wiki/knowledge base with document-centric domains",
+        "reason": "Customer support platform (Rails) with clear CRM domains",
     },
     {
-        "name": "ghostfolio/ghostfolio",
-        "url": "https://github.com/ghostfolio/ghostfolio.git",
+        "name": "zulip/zulip",
+        "url": "https://github.com/zulip/zulip.git",
         "expected_features": [
-            "portfolio", "holdings", "transactions",
-            "benchmarks", "auth", "api",
+            "messages", "streams", "topics", "users",
+            "auth", "notifications", "bots", "integrations",
+            "webhooks", "search", "presence", "reactions",
+            "subscriptions", "realms", "settings", "uploads",
+            "scheduled-messages", "user-groups",
         ],
-        "src_filter": "apps/api/src/app/",
-        "reason": "Investment tracker with financial portfolio domains",
-    },
-    {
-        "name": "immich-app/immich",
-        "url": "https://github.com/immich-app/immich.git",
-        "expected_features": [
-            "photos", "albums", "search",
-            "sharing", "auth", "jobs",
-        ],
-        "src_filter": "server/src/",
-        "reason": "Photo management app with media-centric domains",
-    },
-    {
-        "name": "logto-io/logto",
-        "url": "https://github.com/logto-io/logto.git",
-        "expected_features": [
-            "sign-in", "connectors", "applications",
-            "users", "roles", "organizations",
-        ],
-        "src_filter": "packages/core/src/",
-        "reason": "Auth platform — every feature IS an auth concept",
-    },
-    # ── Larger repos (stress test for dir-collapse) ──
-    {
-        "name": "appwrite/appwrite",
-        "url": "https://github.com/appwrite/appwrite.git",
-        "expected_features": [
-            "databases", "storage", "functions",
-            "auth", "messaging", "teams",
-        ],
-        "src_filter": "src/Appwrite/",
-        "reason": "BaaS platform (PHP) with clear backend service domains",
-    },
-    {
-        "name": "nocodb/nocodb",
-        "url": "https://github.com/nocodb/nocodb.git",
-        "expected_features": [
-            "tables", "views", "fields",
-            "formulas", "auth", "api",
-        ],
-        "src_filter": "packages/nocodb/src/",
-        "reason": "Airtable alternative with database/spreadsheet domains",
-    },
-    {
-        "name": "langgenius/dify",
-        "url": "https://github.com/langgenius/dify.git",
-        "expected_features": [
-            "apps", "workflows", "datasets",
-            "models", "tools", "auth",
-        ],
-        "src_filter": "api/",
-        "reason": "LLM app platform (Python) with AI workflow domains",
-    },
-    {
-        "name": "supabase/supabase",
-        "url": "https://github.com/supabase/supabase.git",
-        "expected_features": [
-            "database", "auth", "storage",
-            "functions", "realtime", "api",
-        ],
-        "src_filter": "apps/studio/",
-        "reason": "Firebase alternative — studio dashboard with clear service domains",
-    },
-    {
-        "name": "mattermost/mattermost",
-        "url": "https://github.com/mattermost/mattermost.git",
-        "expected_features": [
-            "channels", "messaging", "teams",
-            "auth", "notifications", "integrations",
-        ],
-        "src_filter": "webapp/channels/src/",
-        "reason": "Team messaging (Go+React) with collaboration domains",
+        "src_filter": "zerver/",
+        "reason": "Team chat (Python/Django) with well-structured messaging domains",
     },
 ]

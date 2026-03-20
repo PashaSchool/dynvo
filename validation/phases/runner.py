@@ -23,8 +23,10 @@ def run_analysis(
     result_dir.mkdir(parents=True, exist_ok=True)
     output_path = result_dir / "feature-map.json"
 
-    # Clone
-    if not skip_clone or not repo_dir.exists():
+    # Clone — skip if directory already exists (regardless of --skip-clone flag)
+    if repo_dir.exists() and (repo_dir / ".git").exists():
+        progress.update_repo(repo.name, clone_status=PhaseStatus.skipped)
+    else:
         progress.update_repo(repo.name, clone_status=PhaseStatus.running)
         try:
             if repo_dir.exists():
@@ -38,7 +40,7 @@ def run_analysis(
             clone_cmd.extend([repo.url, str(repo_dir)])
             subprocess.run(
                 clone_cmd,
-                check=True, timeout=300,
+                check=True, timeout=600,
                 capture_output=True, text=True,
             )
             progress.update_repo(repo.name, clone_status=PhaseStatus.completed)
@@ -49,8 +51,6 @@ def run_analysis(
                 error=f"Clone failed: {e}",
             )
             return None
-    else:
-        progress.update_repo(repo.name, clone_status=PhaseStatus.skipped)
 
     # Analyze
     progress.update_repo(repo.name, analyze_status=PhaseStatus.running)
