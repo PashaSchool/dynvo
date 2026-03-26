@@ -186,9 +186,58 @@ def print_top_risks(feature_map: FeatureMap, top: int = 3) -> None:
             console.print(f"     [dim]{feature.description}[/dim]")
 
 
-def print_report(feature_map: FeatureMap) -> None:
+def _impact_color(level: str) -> str:
+    if level == "critical":
+        return "red bold"
+    elif level == "high":
+        return "red"
+    elif level == "medium":
+        return "yellow"
+    elif level == "low":
+        return "blue"
+    return "green"
+
+
+def print_impact_scores(scores: list) -> None:
+    """Prints the impact scores table from analytics data."""
+    table = Table(
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+        title="Impact Scores (Analytics)",
+        title_style="bold",
+    )
+
+    table.add_column("Flow", min_width=20)
+    table.add_column("Health", justify="center", width=10)
+    table.add_column("Pageviews", justify="right", width=12)
+    table.add_column("Errors", justify="right", width=10)
+    table.add_column("Score", justify="right", width=8)
+    table.add_column("Impact", justify="center", width=12)
+
+    for s in scores:
+        h_color = _health_color(s.health_score)
+        i_color = _impact_color(s.impact_level)
+        err_color = "red" if s.error_count > 100 else "dim"
+
+        table.add_row(
+            s.flow_name,
+            f"[{h_color}]{s.health_score:.0f}[/]",
+            f"{s.pageviews:,}" if s.pageviews > 0 else "[dim]—[/]",
+            f"[{err_color}]{s.error_count:,}[/]" if s.error_count > 0 else "[dim]—[/]",
+            f"{s.score:.0f}",
+            f"[{i_color}]{s.impact_level.upper()}[/]",
+        )
+
+    console.print()
+    console.print(table)
+
+
+def print_report(feature_map: FeatureMap, impact_scores: list | None = None) -> None:
     """Prints the full terminal report."""
     print_summary(feature_map)
     print_features_table(feature_map)
+    if impact_scores:
+        print_impact_scores(impact_scores)
     print_top_risks(feature_map)
     console.print()

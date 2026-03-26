@@ -67,20 +67,28 @@ Examples:
 
 1. Flow names: lowercase, hyphen-separated, end in "-flow". Max 3 words. \
    Examples: "login-flow", "password-reset-flow", "checkout-flow".
-2. Each file must appear in exactly one flow. No omissions.
+2. Flow names must describe a USER ACTION or BUSINESS CAPABILITY — never a filename. \
+   BAD: "default-config.ts-flow", "index.ts-flow", "readme.md-flow" \
+   GOOD: "configuration-flow", "server-startup-flow", "documentation-flow"
 3. Only create flows when you see genuinely distinct user journeys. If the \
    feature naturally has one primary user journey, return one flow — do not \
-   force artificial splits.
-4. Shared utilities, types, and constants that serve multiple flows should \
-   be placed in the most closely related flow.
-5. Do NOT invent files. Only use the exact paths provided.
-6. If an <e2e-anchors> section is provided, treat those flow names as the \
+   force artificial splits. Aim for 2–6 flows per feature. More than 7 means \
+   you are splitting too finely — merge related sub-actions into one flow.
+4. It is OK to skip files that have no user-facing behavior: README files, \
+   type definitions (.d.ts), config files, mock stubs, pure constants. \
+   Do NOT force every file into a flow — only assign files that participate \
+   in a real user journey.
+5. Shared utilities, types, and constants that serve multiple flows should \
+   be placed in the most closely related flow OR omitted if they don't \
+   participate in any user journey.
+6. Do NOT invent files. Only use the exact paths provided.
+7. If an <e2e-anchors> section is provided, treat those flow names as the \
    authoritative names for this feature's flows — they were written by humans \
    describing real user journeys. Prefer these names over invented ones and \
    assign files accordingly.
-7. If a <co-changes> section is provided, files that change together frequently \
+8. If a <co-changes> section is provided, files that change together frequently \
    are a strong signal they belong to the same flow.
-8. If a file has API routes (GET/POST/PUT/DELETE), it is an entry point to a flow. \
+9. If a file has API routes (GET/POST/PUT/DELETE), it is an entry point to a flow. \
    Group other files that serve the same route prefix into the same flow.
 """
 
@@ -91,7 +99,7 @@ Files and their signatures:
 {signatures_text}
 {extra_context}
 Identify the distinct user-facing flows within the "{feature_name}" feature.
-Assign every file to exactly one flow.
+Assign files to flows based on which user journey they serve. Skip files with no user-facing behavior (READMEs, .d.ts, configs, mocks).
 """
 
 
@@ -400,16 +408,50 @@ def _build_signatures_text(
     return "\n".join(lines)
 
 
+# File extensions that indicate a flow name was derived from a filename
+_FILE_EXTENSIONS = frozenset({
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".py", ".rb", ".go", ".rs", ".java", ".kt",
+    ".css", ".scss", ".less", ".html", ".vue", ".svelte",
+    ".json", ".yaml", ".yml", ".toml", ".md", ".txt",
+    ".d.ts", ".d.mts",
+})
+
+
+def _is_filename_flow(flow_name: str) -> bool:
+    """Detects if a flow name was derived from a filename rather than a user journey.
+
+    Examples of bad names: "default-config.ts-flow", "index.ts-flow", "readme.md-flow"
+    Examples of good names: "login-flow", "checkout-flow", "password-reset-flow"
+    """
+    # Strip "-flow" suffix for analysis
+    name = flow_name
+    if name.endswith("-flow"):
+        name = name[:-5]
+
+    # Check if name contains a file extension
+    for ext in _FILE_EXTENSIONS:
+        if ext in name:
+            return True
+
+    # Check if name matches common non-semantic patterns
+    # e.g. "index-flow", "main-flow" when derived from index.ts
+    return False
+
+
 def _filter_valid_files(
     flows: list[_FlowFileMapping],
     allowed_files: set[str],
 ) -> list[_FlowFileMapping]:
-    """Removes hallucinated files, deduplicates, and assigns unassigned files."""
+    """Removes hallucinated files, filename-based flows, deduplicates, and assigns unassigned files."""
     assigned: set[str] = set()
     result: list[_FlowFileMapping] = []
 
-    # Pass 1: validate and deduplicate
+    # Pass 1: validate files and reject filename-based flow names
     for flow in flows:
+        if _is_filename_flow(flow.flow_name):
+            logger.info("Rejected filename-based flow: '%s'", flow.flow_name)
+            continue
         valid = [f for f in flow.files if f in allowed_files and f not in assigned]
         if valid:
             assigned.update(valid)
@@ -441,4 +483,55 @@ def _filter_valid_files(
                 files=result[i].files + files,
             )
 
-    return result
+    return _cap_flows(result)
+
+
+# Maximum flows per feature — merge the smallest flows into their nearest neighbor
+_MAX_FLOWS_PER_FEATURE = 7
+
+
+def _cap_flows(flows: list[_FlowFileMapping]) -> list[_FlowFileMapping]:
+    """Merges excess flows into the most related flow by directory overlap."""
+    if len(flows) <= _MAX_FLOWS_PER_FEATURE:
+        return flows
+
+    # Sort by file count descending — keep the largest, merge the smallest
+    flows_sorted = sorted(flows, key=lambda f: len(f.files), reverse=True)
+    keep = list(flows_sorted[:_MAX_FLOWS_PER_FEATURE])
+    merge = flows_sorted[_MAX_FLOWS_PER_FEATURE:]
+
+    # Build dir→flow index from kept flows
+    flow_dirs: dict[str, int] = {}
+    for i, flow in enumerate(keep):
+        for f in flow.files:
+            parent = str(Path(f).parent)
+            flow_dirs.setdefault(parent, i)
+
+    for orphan in merge:
+        target_idx = _find_merge_target(orphan, keep, flow_dirs)
+        keep[target_idx] = _FlowFileMapping(
+            flow_name=keep[target_idx].flow_name,
+            files=keep[target_idx].files + orphan.files,
+        )
+        logger.info("Merged flow '%s' into '%s' (cap exceeded)", orphan.flow_name, keep[target_idx].flow_name)
+
+    return keep
+
+
+def _find_merge_target(
+    orphan: _FlowFileMapping,
+    targets: list[_FlowFileMapping],
+    flow_dirs: dict[str, int],
+) -> int:
+    """Finds the best merge target for an orphan flow by directory overlap."""
+    scores: dict[int, int] = defaultdict(int)
+    for f in orphan.files:
+        parent = str(Path(f).parent)
+        if parent in flow_dirs:
+            scores[flow_dirs[parent]] += 1
+
+    if scores:
+        return max(scores, key=scores.get)
+
+    # No directory match — merge into the largest flow
+    return max(range(len(targets)), key=lambda i: len(targets[i].files))

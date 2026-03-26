@@ -6,6 +6,7 @@ from rich import print as rprint
 
 from faultline.analyzer.git import load_repo, get_commits, get_tracked_files, estimate_commits, estimate_duration, get_remote_url, DEFAULT_MAX_COMMITS
 from faultline.analyzer.features import detect_features_from_structure, build_feature_map, build_flows_metrics, split_large_features
+from faultline.analyzer.repo_classifier import classify_repo, build_layer_context
 from faultline.output.reporter import print_report
 from faultline.output.writer import write_feature_map
 from faultline.llm.detector import _DEFAULT_OLLAMA_HOST, _DEFAULT_OLLAMA_MODEL
@@ -96,6 +97,42 @@ def analyze(
         "--coverage",
         help="Path to coverage report (lcov.info or coverage-summary.json). Auto-detected if omitted.",
     ),
+    # ── Analytics integration ──
+    posthog_key: Optional[str] = typer.Option(
+        None,
+        "--posthog-key",
+        help="PostHog API key (or set POSTHOG_API_KEY env var)",
+    ),
+    posthog_project: Optional[str] = typer.Option(
+        None,
+        "--posthog-project",
+        help="PostHog project ID",
+    ),
+    posthog_host: str = typer.Option(
+        "https://app.posthog.com",
+        "--posthog-host",
+        help="PostHog host URL (for self-hosted or local mock)",
+    ),
+    sentry_token: Optional[str] = typer.Option(
+        None,
+        "--sentry-token",
+        help="Sentry auth token (or set SENTRY_AUTH_TOKEN env var)",
+    ),
+    sentry_org: Optional[str] = typer.Option(
+        None,
+        "--sentry-org",
+        help="Sentry organization slug",
+    ),
+    sentry_project: Optional[str] = typer.Option(
+        None,
+        "--sentry-project",
+        help="Sentry project slug",
+    ),
+    sentry_host: str = typer.Option(
+        "https://sentry.io",
+        "--sentry-host",
+        help="Sentry host URL (for self-hosted or local mock)",
+    ),
 ):
     """
     Analyzes a git repository and builds a feature map.
@@ -109,6 +146,8 @@ def analyze(
         faultline analyze . --llm --provider ollama --model llama3.2
         faultline analyze . --llm --flows
         faultline analyze . --llm --provider ollama --flows
+        faultline analyze . --llm --flows --posthog-key phx_... --posthog-project 12345
+        faultline analyze . --llm --flows --sentry-token sntrys_... --sentry-org my-org --sentry-project my-proj
     """
     repo_path = str(Path(repo_path).resolve())
 
@@ -165,6 +204,12 @@ def analyze(
         # Strip --src prefix so LLM/heuristic sees clean relative paths (e.g. EDR/... not src/views/EDR/...)
         analysis_files, path_prefix = _strip_src_prefix(files, src)
 
+        # Classify repo structure to adapt LLM strategy
+        repo_structure = classify_repo(analysis_files)
+        layer_context = build_layer_context(repo_structure)
+        if repo_structure.layout != "feature":
+            console.print(f"[dim]Repo layout: {repo_structure.layout} (layer ratio: {repo_structure.layer_ratio:.0%})[/dim]")
+
         # Always extract AST signatures — needed for import graph clustering
         # and reused for flow detection when --flows is set.
         from faultline.analyzer.ast_extractor import extract_signatures
@@ -181,8 +226,30 @@ def analyze(
         _MIN_SIGNATURES_FOR_IMPORT_GRAPH = 10
         ts_js_sig_count = sum(1 for f in signatures if Path(f).suffix.lower() in _TS_JS_EXTS) if signatures else 0
         if signatures and ts_js_sig_count >= _MIN_SIGNATURES_FOR_IMPORT_GRAPH:
-            from faultline.analyzer.import_graph import build_import_clusters
-            raw_mapping = build_import_clusters(analysis_files, signatures)
+            from faultline.analyzer.import_graph import build_import_clusters, scan_domains, load_tsconfig_paths, detect_monorepo_packages
+            domains = scan_domains(analysis_files)
+            domain_counts = {}
+            for d in domains.values():
+                if d != "__open__":
+                    domain_counts[d] = domain_counts.get(d, 0) + 1
+            if domain_counts:
+                console.print(f"[dim]Domain boundaries: {len(domain_counts)} domains detected[/dim]")
+
+            # Load tsconfig path aliases for better import resolution
+            tsconfig_paths = load_tsconfig_paths(str(repo.working_tree_dir))
+            if tsconfig_paths:
+                console.print(f"[dim]tsconfig paths: {', '.join(tsconfig_paths.keys())}[/dim]")
+
+            # Detect monorepo packages for bare import resolution
+            monorepo_pkgs = detect_monorepo_packages(str(repo.working_tree_dir))
+            if monorepo_pkgs:
+                console.print(f"[dim]Monorepo packages: {len(monorepo_pkgs)} detected[/dim]")
+
+            raw_mapping = build_import_clusters(
+                analysis_files, signatures,
+                tsconfig_paths=tsconfig_paths,
+                monorepo_packages=monorepo_pkgs or None,
+            )
             console.print(
                 f"[dim]Import graph: {ts_js_sig_count} TS/JS files → {len(raw_mapping)} clusters[/dim]"
             )
@@ -190,7 +257,8 @@ def analyze(
             # Step 2a — LLM: merge related clusters into business features + name them
             if llm:
                 raw_mapping = _merge_and_name_with_llm(
-                    raw_mapping, provider, api_key, model, ollama_url, commits=commits
+                    raw_mapping, provider, api_key, model, ollama_url,
+                    commits=commits, layer_context=layer_context,
                 )
         elif llm:
             # No import graph (Python, Ruby, Go, etc.) — LLM does file-level detection
@@ -199,6 +267,7 @@ def analyze(
             raw_mapping = _detect_with_llm(
                 analysis_files, provider, api_key, model, ollama_url,
                 commits=commits, path_prefix=path_prefix, signatures=signatures,
+                layer_context=layer_context,
             )
         else:
             console.print("[dim]No TS/JS files — using directory heuristic[/dim]")
@@ -260,8 +329,26 @@ def analyze(
                 e2e_anchors=e2e_anchors,
             )
 
+        # 6d. Analytics integration (optional)
+        import os
+        _posthog_key = posthog_key or os.environ.get("POSTHOG_API_KEY")
+        _sentry_token = sentry_token or os.environ.get("SENTRY_AUTH_TOKEN")
+        impact_scores = None
+
+        if _posthog_key or _sentry_token:
+            impact_scores = _run_analytics(
+                feature_map=feature_map,
+                posthog_key=_posthog_key,
+                posthog_project=posthog_project,
+                posthog_host=posthog_host,
+                sentry_token=_sentry_token,
+                sentry_org=sentry_org,
+                sentry_project=sentry_project,
+                sentry_host=sentry_host,
+            )
+
         # 7. Print the report
-        print_report(feature_map)
+        print_report(feature_map, impact_scores=impact_scores)
 
         # 8. Save to disk
         if save:
@@ -328,6 +415,7 @@ def _merge_and_name_with_llm(
     model: str | None,
     ollama_url: str,
     commits=None,
+    layer_context: str = "",
 ) -> dict[str, list[str]]:
     """Merges import-graph clusters into business features and names them.
 
@@ -344,14 +432,14 @@ def _merge_and_name_with_llm(
     if provider == "anthropic":
         from faultline.llm.detector import merge_and_name_clusters_llm
         console.print("[blue]Merging & naming features with Claude...[/blue]")
-        named = merge_and_name_clusters_llm(cluster_mapping, api_key=api_key, commits=commits)
+        named = merge_and_name_clusters_llm(cluster_mapping, api_key=api_key, commits=commits, layer_context=layer_context)
 
     elif provider == "ollama":
         from faultline.llm.detector import merge_and_name_clusters_ollama, _DEFAULT_OLLAMA_MODEL
         resolved_model = model or _DEFAULT_OLLAMA_MODEL
         console.print(f"[blue]Merging & naming features with Ollama ({resolved_model})...[/blue]")
         named = merge_and_name_clusters_ollama(
-            cluster_mapping, model=resolved_model, host=ollama_url, commits=commits
+            cluster_mapping, model=resolved_model, host=ollama_url, commits=commits, layer_context=layer_context
         )
 
     else:
@@ -371,6 +459,7 @@ def _detect_with_llm(
     commits=None,
     path_prefix: str = "",
     signatures=None,
+    layer_context: str = "",
 ) -> dict[str, list[str]]:
     """Sends files directly to LLM for feature detection (no import graph).
 
@@ -382,6 +471,7 @@ def _detect_with_llm(
         result = detect_features_llm(
             files, api_key=api_key, commits=commits,
             path_prefix=path_prefix, signatures=signatures,
+            layer_context=layer_context,
         )
     elif provider == "ollama":
         from faultline.llm.detector import detect_features_ollama, _DEFAULT_OLLAMA_MODEL
@@ -389,6 +479,7 @@ def _detect_with_llm(
         result = detect_features_ollama(
             files, model=resolved_model, host=ollama_url, commits=commits,
             path_prefix=path_prefix, signatures=signatures,
+            layer_context=layer_context,
         )
     else:
         result = {}
@@ -481,6 +572,13 @@ def _detect_flows(
             updated_features.append(feature)
             continue
 
+        # Skip flow detection for features with very few commits — not enough
+        # signal to split into meaningful flows
+        _MIN_COMMITS_FOR_FLOWS = 5
+        if feature.total_commits < _MIN_COMMITS_FOR_FLOWS:
+            updated_features.append(feature)
+            continue
+
         # Filter e2e anchors to only those relevant to this feature's files
         feature_file_set = set(analysis_feature_files)
         feature_e2e = {
@@ -533,12 +631,106 @@ def _detect_flows(
 
         # Build metrics for each flow using the feature's commits
         flows = build_flows_metrics(feature_commits, flow_file_mappings, remote_url=remote_url, coverage_data=coverage_data)
+
+        # Filter out ghost flows (0 commits in the analyzed period)
+        flows = [f for f in flows if f.total_commits > 0]
+
         total_flows += len(flows)
 
         updated_features.append(feature.model_copy(update={"flows": flows}))
 
     console.print(f"[green]✓[/green] Detected {total_flows} flows across {len(updated_features)} features")
     return feature_map.model_copy(update={"features": updated_features})
+
+
+def _run_analytics(
+    feature_map,
+    posthog_key: str | None,
+    posthog_project: str | None,
+    posthog_host: str,
+    sentry_token: str | None,
+    sentry_org: str | None,
+    sentry_project: str | None,
+    sentry_host: str,
+) -> list | None:
+    """Fetches analytics data and computes impact scores."""
+    import asyncio
+    from faultline.integrations.base import PageMetrics, ErrorMetrics, compute_impact_scores
+
+    traffic: list[PageMetrics] = []
+    errors: list[ErrorMetrics] = []
+
+    async def _fetch():
+        nonlocal traffic, errors
+
+        # PostHog
+        if posthog_key and posthog_project:
+            from faultline.integrations.posthog_provider import PostHogProvider
+            ph = PostHogProvider(
+                api_key=posthog_key,
+                project_id=posthog_project,
+                host=posthog_host,
+            )
+            console.print("[blue]Connecting to PostHog...[/blue]")
+            if await ph.validate_connection():
+                console.print("[green]✓[/green] PostHog connected")
+                traffic = await ph.get_page_traffic(days=30)
+                console.print(f"[dim]  {len(traffic)} routes with traffic data[/dim]")
+                ph_errors = await ph.get_error_counts(days=30)
+                if ph_errors:
+                    errors.extend(ph_errors)
+                    console.print(f"[dim]  {len(ph_errors)} routes with error data[/dim]")
+            else:
+                console.print("[yellow]✗ PostHog connection failed[/yellow]")
+            await ph.close()
+
+        # Sentry
+        if sentry_token and sentry_org and sentry_project:
+            from faultline.integrations.sentry_provider import SentryProvider
+            sn = SentryProvider(
+                auth_token=sentry_token,
+                organization=sentry_org,
+                project=sentry_project,
+                host=sentry_host,
+            )
+            console.print("[blue]Connecting to Sentry...[/blue]")
+            if await sn.validate_connection():
+                console.print("[green]✓[/green] Sentry connected")
+                sn_errors = await sn.get_error_counts(days=30)
+                if sn_errors:
+                    errors.extend(sn_errors)
+                    console.print(f"[dim]  {len(sn_errors)} routes with error data[/dim]")
+            else:
+                console.print("[yellow]✗ Sentry connection failed[/yellow]")
+            await sn.close()
+
+    asyncio.run(_fetch())
+
+    if not traffic and not errors:
+        console.print("[yellow]No analytics data retrieved[/yellow]")
+        return None
+
+    # Build flow dicts for impact computation
+    flows_data = []
+    for feature in feature_map.features:
+        if feature.flows:
+            for flow in feature.flows:
+                flows_data.append({
+                    "name": flow.name,
+                    "health_score": flow.health_score,
+                    "paths": flow.paths,
+                })
+        else:
+            flows_data.append({
+                "name": feature.name,
+                "health_score": feature.health_score,
+                "paths": feature.paths,
+            })
+
+    scores = compute_impact_scores(flows_data, traffic, errors)
+    console.print(f"[green]✓[/green] Computed {len(scores)} impact scores")
+
+    return scores
 
 
 @app.command()
