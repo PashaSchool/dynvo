@@ -452,12 +452,15 @@ class TestBuildFeatureMap:
         fm = build_feature_map("/repo", commits, feature_paths, days=30)
         assert fm.features[0].total_commits == 1
 
-    def test_feature_with_no_commits_is_filtered(self) -> None:
-        """Features with 0 commits are excluded (likely mapping bugs)."""
+    def test_feature_with_no_commits_is_included(self) -> None:
+        """Features with 0 commits are included with health_score=100."""
         commits: list[Commit] = []
         feature_paths = {"auth": ["auth/login.py"]}
         fm = build_feature_map("/repo", commits, feature_paths, days=30)
-        assert len(fm.features) == 0
+        assert len(fm.features) == 1
+        assert fm.features[0].name == "auth"
+        assert fm.features[0].total_commits == 0
+        assert fm.features[0].health_score == 100.0
 
     def test_remote_url_passed_to_prs(self) -> None:
         commits = [

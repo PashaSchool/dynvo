@@ -71,7 +71,7 @@ Given a list of file paths from a git repository, group them into business featu
 3. Feature names must be lowercase, hyphen-separated, 1-3 words. Examples: "user-auth", "payment-processing", "dashboard", "notifications", "team-management".
 4. Each file must appear in exactly one feature. No duplicates, no omissions.
 5. Group by business domain, not by directory. Each distinct business domain should be its own feature. Merge only when two groups serve the exact same domain.
-6. Every feature must contain at least 3 files. Single or pair files must be merged into the closest related feature.
+6. Every feature must contain at least 2 files. Single files must be merged into the closest related feature.
 7. Test files belong to the same feature as the code they test. Match by naming convention (test_auth.py belongs with auth.py, UserService.test.ts belongs with UserService.ts).
 8. Skip infrastructure and tooling files entirely: package.json, pyproject.toml, setup.py, .gitignore, Makefile, *.lock, *.toml, Dockerfile, docker-compose.yml, CI configs.
 9. Shared utility files go into the most closely related business feature, or into "shared-utilities" only if they truly cross all feature boundaries.
@@ -80,32 +80,85 @@ Given a list of file paths from a git repository, group them into business featu
     Files that define API routes (GET/POST/PUT/DELETE) are entry points to a feature — group
     other files in the same directory tree with the file that shares their route prefix.
 
+## Size limits — CRITICAL
+
+- No feature may contain more than 15 files. If a group grows larger, split it into \
+  distinct sub-features by business capability.
+- API routes that serve different domains (e.g. /api/organizations/*, /api/cost/*, \
+  /api/health/*) MUST be separate features, not one "backend-api" bucket.
+- NEVER create a catch-all feature like "backend-api", "api-routes", "core", or "shared-backend". \
+  Every API route file belongs to the business feature it serves.
+
+## Page ↔ API route matching — CRITICAL
+
+In Next.js / app-router projects, match page directories to their API routes by shared path segment:
+- `app/organizations/` (page) + `app/api/organizations/` (API) → same feature
+- `app/dashboard/` (page) + `app/api/dashboard/` (API) → same feature
+- `app/cost/` (page) + `app/api/cost/` (API) → same feature
+- `app/health/` (page) + `app/api/health/` (API) → same feature
+
+Also include related hooks, libs, components, and types in the same feature:
+- `hooks/use-organizations.ts` → belongs to the organizations feature
+- `lib/integrations/firestore.ts` → belongs to the feature that uses Firestore most
+- `components/org-sync-status.tsx` → belongs to the organizations feature (org- prefix)
+
 ## Anti-patterns
+
+BAD — splitting page from its API routes into separate features:
+  "organizations": [app/organizations/page.tsx, app/organizations/list-page.tsx]
+  "backend-api": [app/api/organizations/route.ts, app/api/organizations/[id]/route.ts, ...]
+  ← the API routes serve organizations, they belong together
+
+GOOD — page + API routes + hooks unified by business domain:
+  "organizations": [app/organizations/page.tsx, app/organizations/list-page.tsx,
+    app/api/organizations/route.ts, app/api/organizations/[id]/route.ts,
+    hooks/use-organizations.ts, components/org-sync-status.tsx]
+
+BAD — catch-all "backend" or "api" feature:
+  "backend-api": [api/auth/route.ts, api/payments/route.ts, api/health/route.ts, ...]
+  ← these are distinct business domains forced into one bucket
 
 BAD — grouping by technical layer:
   "components": [LoginForm.tsx, CheckoutForm.tsx, Dashboard.tsx]
   "api": [auth.ts, payments.ts, analytics.ts]
 
 GOOD — grouping by business domain:
-  "user-auth": [LoginForm.tsx, auth.ts]
+  "user-auth": [LoginForm.tsx, auth.ts, middleware.ts]
   "checkout": [CheckoutForm.tsx, payments.ts]
   "analytics": [Dashboard.tsx, analytics.ts]
 
-## Example
+## Example (Next.js app router)
 
 Files:
-  components/LoginForm.tsx
-  components/CheckoutForm.tsx
-  api/auth/login.ts
-  api/payments/charge.ts
-  hooks/useSession.ts
-  utils/currency.ts
-
-Reasoning: LoginForm.tsx, api/auth/login.ts, and hooks/useSession.ts all serve user authentication across different technical layers. CheckoutForm.tsx and api/payments/charge.ts handle payment processing. utils/currency.ts is a shared utility — assign to the feature that uses it most.
+  app/organizations/page.tsx
+  app/organizations/org-list-page.tsx
+  app/organizations/[id]/page.tsx
+  app/organizations/[id]/org-detail-page.tsx
+  app/api/organizations/route.ts
+  app/api/organizations/[id]/route.ts
+  app/api/organizations/[id]/sync-status/route.ts
+  app/dashboard/page.tsx
+  app/dashboard/dashboard-page.tsx
+  app/api/dashboard/stats/route.ts
+  app/sign-in/page.tsx
+  hooks/use-organizations.ts
+  hooks/use-dashboard-data.ts
+  lib/auth.ts
+  middleware.ts
+  components/ui/button.tsx
+  components/ui/modal.tsx
+  components/org-sync-status.tsx
 
 Result:
-  "user-auth": [components/LoginForm.tsx, api/auth/login.ts, hooks/useSession.ts]
-  "checkout": [components/CheckoutForm.tsx, api/payments/charge.ts, utils/currency.ts]\
+  "organizations": [app/organizations/page.tsx, app/organizations/org-list-page.tsx,
+    app/organizations/[id]/page.tsx, app/organizations/[id]/org-detail-page.tsx,
+    app/api/organizations/route.ts, app/api/organizations/[id]/route.ts,
+    app/api/organizations/[id]/sync-status/route.ts,
+    hooks/use-organizations.ts, components/org-sync-status.tsx]
+  "dashboard": [app/dashboard/page.tsx, app/dashboard/dashboard-page.tsx,
+    app/api/dashboard/stats/route.ts, hooks/use-dashboard-data.ts]
+  "user-auth": [app/sign-in/page.tsx, lib/auth.ts, middleware.ts]
+  "shared-ui": [components/ui/button.tsx, components/ui/modal.tsx]\
 """
 
 _DETECTION_USER_PROMPT = """\
@@ -147,6 +200,11 @@ business domain area, not a technical layer.
    For example, "billing", "webhooks", "templates", "auth" are SEPARATE features, not one "core-platform".
 6. Deeply nested subdirectories almost always belong to the same feature as their parent. \
    Only split siblings when they serve clearly different business domains (e.g. "payments" vs "auth").
+11. SIZE LIMIT: No feature may contain more than 15 directories. If a group grows larger, \
+    split it into sub-features by business capability.
+12. In Next.js / app-router projects, each `app/<page>/` directory is usually its own feature. \
+    The corresponding `app/api/<page>/` routes belong to the SAME feature as the page, not to \
+    a separate "api" feature. Never create a catch-all "backend-api" or "api-routes" feature.
 10. IMPORTANT: Look at the sample filenames after → to detect MULTIPLE business domains within \
    a single directory. In Django/Rails/Flask apps, one directory often contains many business \
    modules: e.g. if sample files show barcodes.py, classifier.py, bulk_edit.py, mail.py, \
@@ -182,6 +240,15 @@ GOOD — each capability is its own feature:
   "templates":  ["src/templates"]
   "api":        ["src/api"]
 
+BAD — splitting page dirs from their API route dirs:
+  "organizations": ["app/organizations", "app/organizations/[id]"]
+  "backend-api": ["app/api/organizations", "app/api/organizations/[id]", "app/api/cost", ...]
+  ← API routes belong to the same feature as the page they serve
+
+GOOD — page + API route dirs unified:
+  "organizations": ["app/organizations", "app/organizations/[id]",
+    "app/api/organizations", "app/api/organizations/[id]"]
+
 BAD — putting individual filenames in `files`:
   "auth": ["LoginForm.tsx", "useAuth.ts"]  ← WRONG, these are filenames not directories
 
@@ -191,16 +258,25 @@ GOOD — putting directory paths exactly as listed:
 ## Example
 
 Input:
-  src/auth → LoginForm.tsx, useSession.ts
-    src/auth/utils → token.ts
-  src/api/auth → login.ts, logout.ts
-  src/payments → CheckoutForm.tsx, stripe.ts
-    src/payments/hooks → useCheckout.ts
-  src/api/payments → charge.ts, refund.ts
+  app/organizations → page.tsx, org-list-page.tsx
+    app/organizations/[id] → page.tsx, org-detail-page.tsx
+  app/api/organizations → route.ts
+    app/api/organizations/[id] → route.ts
+      app/api/organizations/[id]/sync-status → route.ts
+  app/dashboard → page.tsx, dashboard-page.tsx
+  app/api/dashboard/stats → route.ts
+  app/sign-in → page.tsx
+  hooks → use-organizations.ts, use-dashboard.ts
+  lib → auth.ts, config.ts
+  components/ui → button.tsx, modal.tsx
 
 Result:
-  "user-auth": ["src/auth", "src/auth/utils", "src/api/auth"]
-  "checkout":  ["src/payments", "src/payments/hooks", "src/api/payments"]\
+  "organizations": ["app/organizations", "app/organizations/[id]",
+    "app/api/organizations", "app/api/organizations/[id]",
+    "app/api/organizations/[id]/sync-status"]
+  "dashboard": ["app/dashboard", "app/api/dashboard/stats"]
+  "user-auth": ["app/sign-in", "lib"]
+  "shared-ui": ["hooks", "components/ui"]\
 """
 
 _DIR_DETECTION_USER_PROMPT = """\
@@ -238,6 +314,7 @@ def detect_features_llm(
     commits: list[Commit] | None = None,
     path_prefix: str = "",
     signatures: dict[str, FileSignature] | None = None,
+    layer_context: str = "",
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to Claude and returns a semantic feature mapping.
@@ -278,33 +355,239 @@ def detect_features_llm(
         dir_keywords = _extract_dir_keywords(dirs, files, norm_commits) if norm_commits else {}
         file_tree = _format_dir_tree(dirs, samples)
         route_anchors = _format_route_anchors(signatures, dirs=dirs) if signatures else ""
-        extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors
-        response = _call_dir_detection(client, file_tree, n_dirs=len(dirs), extra_context=extra_context)
+        entity_anchors = _format_entity_anchors(signatures, dirs=dirs) if signatures else ""
+        extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors + entity_anchors
+        response = _call_dir_detection(client, file_tree, n_dirs=len(dirs), extra_context=extra_context, layer_context=layer_context)
         if not response:
             return {}
         result = _expand_dir_mapping(response, files)
     else:
         file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
         route_anchors = _format_route_anchors(signatures) if signatures else ""
-        extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors
-        response = _call_feature_detection(client, file_tree, extra_context, n_files=len(files))
+        entity_anchors = _format_entity_anchors(signatures) if signatures else ""
+        package_anchors = _format_package_anchors(files, signatures)
+        extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors + entity_anchors + package_anchors
+        response = _call_feature_detection(client, file_tree, extra_context, n_files=len(files), layer_context=layer_context)
         if not response:
             return {}
         result = _build_feature_dict(response, set(files))
 
-    # Post-process: re-split oversized features, then redistribute infrastructure noise
+    # Post-process: re-split oversized features, then redistribute
     result = _resplit_oversized_features(client, result)
+    result = _redistribute_oversized_features(result)
     return _redistribute_infra_features(result)
 
 
-_RESPLIT_FILE_THRESHOLD = 80
+_RESPLIT_FILE_THRESHOLD = 15
 _RESPLIT_CONCENTRATION_PCT = 0.70  # re-split if >70% of files in one dir
 
 # Patterns that indicate infrastructure-only features (not business domains)
 _INFRA_FEATURE_PATTERNS = {
     "database-migrations", "migrations", "test-fixtures", "fixtures",
     "management-commands", "commands", "config-files", "infrastructure",
+    "scripts", "build-scripts", "ci-cd", "tooling",
+    "dom-fixtures", "test-fixtures", "storybook",
 }
+
+# Partial patterns — features containing these words are likely infrastructure
+_INFRA_PARTIAL_PATTERNS = {"fixtures", "demo", "scripts", "examples", "samples"}
+
+
+_NEXTJS_API_RE = re.compile(r"^(.*?)app/api/([^/]+)")
+_NEXTJS_PAGE_RE = re.compile(r"^(.*?)app/([^/]+)")
+_HOOK_DOMAIN_RE = re.compile(r"use-([a-z]+)")
+_COMPONENT_DOMAIN_RE = re.compile(r"^([a-z]+-)")
+
+
+def _redistribute_oversized_features(
+    result: dict[str, list[str]],
+    max_files: int = 15,
+) -> dict[str, list[str]]:
+    """Deterministic post-processing: move files from oversized features to matching smaller ones.
+
+    For each file in an oversized feature, tries to find a better home:
+    1. API route files (app/api/X/) → feature that owns app/X/ pages
+    2. Hook files (use-X.ts) → feature with "X" in its name
+    3. Component files (org-*.tsx) → feature with matching domain prefix
+    4. Remaining files → stay in a residual feature or "shared-ui"/"app-shell"
+    """
+    oversized = {n: fs for n, fs in result.items() if len(fs) > max_files}
+    if not oversized:
+        return result
+
+    small = {n: list(fs) for n, fs in result.items() if len(fs) <= max_files}
+
+    # Discover page directories in oversized features and create new features for them
+    # if they don't already exist (e.g. dashboard pages stuck in a catch-all).
+    # Only create features for dirs that have a page.tsx (actual Next.js pages).
+    _SKIP_PAGE_DIRS = {"api", "actions"}
+    all_oversized_files = [f for fs in oversized.values() for f in fs]
+    page_dir_candidates: set[str] = set()
+    for f in all_oversized_files:
+        m = _NEXTJS_PAGE_RE.match(f)
+        if not m or m.group(2) in _SKIP_PAGE_DIRS:
+            continue
+        page_dir = m.group(2)
+        # Skip files directly in app/ root (page.tsx, home-page.tsx, layout.tsx)
+        parts_after_app = f[m.end():]
+        if "/" not in f[len(m.group(1)) + len("app/") + len(page_dir):].lstrip("/"):
+            # This is a direct child of app/<page_dir>/ — it's a real page subdir
+            pass
+        # Only count if this is a page.tsx or *-page.tsx (not layout.tsx, globals.css, etc.)
+        fname = Path(f).name
+        if (fname == "page.tsx" or fname.endswith("-page.tsx")) and page_dir not in ("", ):
+            # Verify it's a named subdirectory, not root app files
+            # app/dashboard/page.tsx → page_dir="dashboard" ✓
+            # app/page.tsx → would match page_dir from previous dir — skip by checking
+            # the file actually lives inside app/<page_dir>/
+            if f"app/{page_dir}/" in f:
+                page_dir_candidates.add(page_dir)
+
+    for page_dir in page_dir_candidates:
+        # Check if any small feature already owns this page domain
+        already_owned = any(
+            any(_NEXTJS_PAGE_RE.match(ff) and _NEXTJS_PAGE_RE.match(ff).group(2) == page_dir
+                for ff in feat_files)
+            for feat_files in small.values()
+        )
+        if not already_owned and page_dir not in small:
+            small[page_dir] = []
+            logger.info("Created new feature '%s' from page directory in oversized feature", page_dir)
+
+    # Build page-domain index: "organizations" → feature name
+    page_domain_to_feature: dict[str, str] = {}
+    for feat_name, feat_files in small.items():
+        for f in feat_files:
+            m = _NEXTJS_PAGE_RE.match(f)
+            if m and m.group(2) not in ("api",):
+                page_domain_to_feature[m.group(2)] = feat_name
+        # Also register empty features created above (page_dir == feat_name)
+        if not feat_files and feat_name not in page_domain_to_feature:
+            page_domain_to_feature[feat_name] = feat_name
+
+    # Also index by feature name keywords
+    feature_keywords: dict[str, str] = {}
+    for feat_name in small:
+        for part in feat_name.split("-"):
+            if len(part) >= 3:
+                feature_keywords[part] = feat_name
+
+    for oversized_name, files in oversized.items():
+        remaining = []
+        for f in files:
+            target = _match_file_to_feature(f, page_domain_to_feature, feature_keywords, small)
+            if target:
+                small[target].append(f)
+            else:
+                remaining.append(f)
+
+        if remaining:
+            # Extract API-only features: API route dirs with no matching page feature
+            api_only: dict[str, list[str]] = {}
+            non_api_remaining = []
+            for f in remaining:
+                api_m = _NEXTJS_API_RE.match(f)
+                if api_m:
+                    api_domain = api_m.group(2)
+                    if api_domain not in page_domain_to_feature:
+                        api_only.setdefault(api_domain, []).append(f)
+                        continue
+                non_api_remaining.append(f)
+
+            for api_domain, api_files in api_only.items():
+                small.setdefault(api_domain, []).extend(api_files)
+                # Register new feature in keyword index so second pass can match hooks/libs
+                for part in api_domain.split("-"):
+                    if len(part) >= 3:
+                        feature_keywords[part] = api_domain
+                logger.info("Created API-only feature '%s' (%d files)", api_domain, len(api_files))
+
+            # Second pass: try matching remaining files against newly created features
+            still_remaining = []
+            for f in non_api_remaining:
+                target = _match_file_to_feature(f, page_domain_to_feature, feature_keywords, small)
+                if target:
+                    small[target].append(f)
+                else:
+                    still_remaining.append(f)
+
+            # Categorize the rest into shared-ui vs app-shell
+            shared_ui = [f for f in still_remaining if "components/ui/" in f]
+            app_shell = [f for f in still_remaining if f not in shared_ui]
+            if shared_ui:
+                small.setdefault("shared-ui", []).extend(shared_ui)
+            if app_shell:
+                small.setdefault("app-shell", []).extend(app_shell)
+
+        logger.info(
+            "Redistributed '%s' (%d files): %d moved to existing features, %d remaining",
+            oversized_name, len(files), len(files) - len(remaining), len(remaining),
+        )
+
+    # Remove empty features that didn't get any files
+    return {n: fs for n, fs in small.items() if fs}
+
+
+def _match_file_to_feature(
+    file_path: str,
+    page_domain_to_feature: dict[str, str],
+    feature_keywords: dict[str, str],
+    features: dict[str, list[str]],
+) -> str | None:
+    """Tries to match a single file to an existing feature by path patterns."""
+    # 1. API route → page feature: app/api/organizations/... → "organizations" page domain
+    api_match = _NEXTJS_API_RE.match(file_path)
+    if api_match:
+        api_domain = api_match.group(2)
+        if api_domain in page_domain_to_feature:
+            return page_domain_to_feature[api_domain]
+
+    # 2. Hook file → feature by domain: use-organizations.ts → "organizations"
+    filename = Path(file_path).stem
+    hook_match = _HOOK_DOMAIN_RE.match(filename)
+    if hook_match:
+        hook_domain = hook_match.group(1)
+        # Try plural, singular, and abbreviation expansion
+        for variant in (hook_domain, hook_domain + "s", hook_domain.rstrip("s")):
+            if variant in feature_keywords:
+                return feature_keywords[variant]
+        # Also try matching hook domain as prefix of feature keywords
+        for kw, feat in feature_keywords.items():
+            if kw.startswith(hook_domain) or hook_domain.startswith(kw):
+                return feat
+
+    # 3. Component with domain prefix: org-sync-status.tsx → "organization*"
+    if "components/" in file_path and "components/ui/" not in file_path:
+        comp_match = _COMPONENT_DOMAIN_RE.match(filename)
+        if comp_match:
+            prefix = comp_match.group(1).rstrip("-")
+            for variant in (prefix, prefix + "s", prefix.rstrip("s")):
+                if variant in feature_keywords:
+                    return feature_keywords[variant]
+            # Expand abbreviations: "org" → match "organization*"
+            for kw, feat in feature_keywords.items():
+                if kw.startswith(prefix) or prefix.startswith(kw):
+                    return feat
+
+    # 4. lib/auth.ts → feature with "auth" in name
+    if "lib/" in file_path:
+        for part in Path(file_path).stem.split("-"):
+            if len(part) >= 3 and part in feature_keywords:
+                return feature_keywords[part]
+
+    # 5. File in a page directory: app/dashboard/layout.tsx → "dashboard"
+    page_match = _NEXTJS_PAGE_RE.match(file_path)
+    if page_match and page_match.group(2) != "api":
+        page_dir = page_match.group(2)
+        if page_dir in page_domain_to_feature:
+            return page_domain_to_feature[page_dir]
+
+    # 6. Any file with feature keyword in filename: dashboard-layout.tsx → "dashboard"
+    for part in filename.split("-"):
+        if len(part) >= 4 and part in feature_keywords:
+            return feature_keywords[part]
+
+    return None
 
 
 def _redistribute_infra_features(
@@ -315,6 +598,7 @@ def _redistribute_infra_features(
         name for name in result
         if name in _INFRA_FEATURE_PATTERNS
         or any(name.endswith(f"-{p}") or name.startswith(f"{p}-") for p in ("migrations", "fixtures", "commands"))
+        or any(p in name for p in _INFRA_PARTIAL_PATTERNS)
     ]
     if not infra_names:
         return result
@@ -365,21 +649,26 @@ def _resplit_oversized_features(
     for feat_name, feat_files in resplit_needed.items():
         logger.info("Re-splitting oversized feature '%s' (%d files) with Sonnet", feat_name, len(feat_files))
         sub_tree = "\n".join(feat_files)
-        min_sub = max(3, len(feat_files) // 30)
-        max_sub = max(5, len(feat_files) // 15)
+        min_sub = max(2, len(feat_files) // 15)
+        max_sub = max(4, len(feat_files) // 8)
         resplit_prompt = (
             f"These {len(feat_files)} files were all grouped into one feature '{feat_name}'. "
             f"This is too coarse. Split them into {min_sub}–{max_sub} distinct sub-features "
             "based on what each file DOES, not which directory it's in.\n\n"
             "KEY PATTERNS to look for:\n"
+            "- In Next.js app-router: match page dirs with their API route dirs by shared path segment. "
+            "app/organizations/ (page) + app/api/organizations/ (routes) = same feature. "
+            "app/dashboard/ + app/api/dashboard/ = same feature. NEVER group all API routes together.\n"
+            "- Hooks belong to the feature they serve: use-organizations.ts → organizations feature.\n"
+            "- Components with domain prefixes belong to that domain: org-sync-status.tsx → organizations.\n"
             "- In Django/Rails/Flask apps, filenames reveal business domains: "
             "tags.py, permissions.py, bulk_edit.py, workflows.py, custom_fields.py each "
             "represent a SEPARATE business capability, even if they're in the same directory.\n"
             "- Files named models.py, views.py, serializers.py, admin.py are shared across "
             "ALL features in that app — assign them to the LARGEST or most core sub-feature.\n"
             "- Match test files (test_tags.py) with their source (tags.py).\n"
-            "- Look for business entity names in filenames: 'correspondent', 'document_type', "
-            "'saved_view', 'storage_path', 'custom_field', 'note', 'share' etc.\n"
+            "- Shared UI components (button.tsx, modal.tsx, card.tsx) → 'shared-ui' feature.\n"
+            "- lib/ utility files → assign to the business feature that uses them most.\n"
             "- Do NOT split a feature that is already cohesive (e.g. 'email-ingestion' with "
             "mail fetching, parsing, rules all serving the same business domain). Only split "
             "when filenames clearly indicate DIFFERENT user-facing capabilities.\n\n"
@@ -415,6 +704,7 @@ def _call_feature_detection(
     file_tree: str,
     extra_context: str = "",
     n_files: int = 0,
+    layer_context: str = "",
 ) -> _FeatureDetectionResponse | None:
     """Calls Claude API for feature detection (file-path mode). Returns None on any failure."""
     hint = _file_feature_count_hint(n_files) if n_files else ""
@@ -423,7 +713,7 @@ def _call_feature_detection(
     )
 
     # Inject minimum feature count into system prompt for large repos
-    system = _DETECTION_SYSTEM_PROMPT
+    system = _DETECTION_SYSTEM_PROMPT + layer_context
     if n_files >= 100:
         min_f = min(max(8, n_files // 30), 15)
         system += (
@@ -467,6 +757,7 @@ def _call_dir_detection(
     file_tree: str,
     n_dirs: int,
     extra_context: str = "",
+    layer_context: str = "",
 ) -> _FeatureDetectionResponse | None:
     """
     Calls Claude API for dir-collapse feature detection.
@@ -481,7 +772,7 @@ def _call_dir_detection(
     )
 
     # Inject minimum feature count into system prompt
-    system = _DIR_DETECTION_SYSTEM_PROMPT
+    system = _DIR_DETECTION_SYSTEM_PROMPT + layer_context
     min_f = min(max(8, n_dirs // 15), 15)
     system += (
         f"\n\n## CRITICAL REQUIREMENT\n"
@@ -794,6 +1085,69 @@ def _format_route_anchors(
         )
 
 
+# ── Package anchors (Python subdirectories with __init__.py) ────────────────
+
+_MAX_PACKAGE_ANCHORS = 20
+
+
+def _format_package_anchors(
+    files: list[str],
+    signatures: dict[str, FileSignature] | None = None,
+) -> str:
+    """Build a <package-anchors> section listing Python sub-packages.
+
+    Each subdirectory with __init__.py is a distinct Python package and is a
+    strong signal for a separate feature. Shows key exports from the package's
+    files to help LLM understand what the package does.
+    """
+    # Find directories that contain __init__.py
+    packages: dict[str, list[str]] = {}
+    for f in files:
+        p = Path(f)
+        if p.name == "__init__.py" and str(p.parent) != ".":
+            packages[str(p.parent)] = []
+
+    if not packages:
+        return ""
+
+    # Collect key exports per package
+    if signatures:
+        for path, sig in signatures.items():
+            if not sig.exports:
+                continue
+            parent = str(Path(path).parent)
+            if parent in packages:
+                packages[parent].extend(sig.exports[:6])
+
+    # Also count files per package
+    pkg_file_counts: dict[str, int] = {pkg: 0 for pkg in packages}
+    for f in files:
+        parent = str(Path(f).parent)
+        if parent in pkg_file_counts:
+            pkg_file_counts[parent] += 1
+
+    lines: list[str] = []
+    for pkg in sorted(packages.keys()):
+        exports = list(dict.fromkeys(packages[pkg]))[:8]
+        count = pkg_file_counts.get(pkg, 0)
+        exports_str = f" → {', '.join(exports)}" if exports else ""
+        lines.append(f"  {pkg}/ ({count} files){exports_str}")
+        if len(lines) >= _MAX_PACKAGE_ANCHORS:
+            break
+
+    if not lines:
+        return ""
+
+    return (
+        "\n\n<package-anchors>\n"
+        "Python packages (directories with __init__.py) — each is a distinct module "
+        "and should be treated as a SEPARATE feature or strong feature boundary. "
+        "Do NOT merge these into a generic 'core-utilities' or 'shared' feature:\n"
+        + "\n".join(lines)
+        + "\n</package-anchors>"
+    )
+
+
 # ── Entity anchors ──────────────────────────────────────────────────────────
 
 _MAX_ENTITY_ANCHOR_FILES = 30
@@ -978,6 +1332,7 @@ def detect_features_ollama(
     commits: list[Commit] | None = None,
     path_prefix: str = "",
     signatures: dict[str, FileSignature] | None = None,
+    layer_context: str = "",
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to a local Ollama model and returns a semantic feature mapping.
@@ -1007,16 +1362,19 @@ def detect_features_ollama(
         dir_keywords = _extract_dir_keywords(dirs, files, norm_commits) if norm_commits else {}
         file_tree = _format_dir_tree(dirs, samples)
         route_anchors = _format_route_anchors(signatures, dirs=dirs) if signatures else ""
-        extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors
-        response = _call_dir_detection_ollama(file_tree, model, host, n_dirs=len(dirs), extra_context=extra_context)
+        entity_anchors = _format_entity_anchors(signatures, dirs=dirs) if signatures else ""
+        extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors + entity_anchors
+        response = _call_dir_detection_ollama(file_tree, model, host, n_dirs=len(dirs), extra_context=extra_context, layer_context=layer_context)
         if not response:
             return {}
         return _expand_dir_mapping(response, files)
     else:
         file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
         route_anchors = _format_route_anchors(signatures) if signatures else ""
-        extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors
-        response = _call_feature_detection_ollama(file_tree, model, host, extra_context, n_files=len(files))
+        entity_anchors = _format_entity_anchors(signatures) if signatures else ""
+        package_anchors = _format_package_anchors(files, signatures)
+        extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors + entity_anchors + package_anchors
+        response = _call_feature_detection_ollama(file_tree, model, host, extra_context, n_files=len(files), layer_context=layer_context)
         if not response:
             return {}
         return _build_feature_dict(response, set(files))
@@ -1028,6 +1386,7 @@ def _call_feature_detection_ollama(
     host: str,
     extra_context: str = "",
     n_files: int = 0,
+    layer_context: str = "",
 ) -> _FeatureDetectionResponse | None:
     """Calls Ollama API for feature detection (file-path mode). Returns None on any failure."""
     try:
@@ -1040,12 +1399,13 @@ def _call_feature_detection_ollama(
         file_tree=file_tree, extra_context=extra_context, feature_hint=hint,
     )
 
+    system = _DETECTION_SYSTEM_PROMPT + layer_context
     try:
         client = _ollama.Client(host=host)
         response = client.chat(
             model=model,
             messages=[
-                {"role": "system", "content": _DETECTION_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             format=_FeatureDetectionResponse.model_json_schema(),
@@ -1061,6 +1421,7 @@ def _call_dir_detection_ollama(
     host: str,
     n_dirs: int,
     extra_context: str = "",
+    layer_context: str = "",
 ) -> _FeatureDetectionResponse | None:
     """
     Calls Ollama API for dir-collapse feature detection.
@@ -1078,12 +1439,13 @@ def _call_dir_detection_ollama(
         extra_context=extra_context,
     )
 
+    system = _DIR_DETECTION_SYSTEM_PROMPT + layer_context
     try:
         client = _ollama.Client(host=host)
         response = client.chat(
             model=model,
             messages=[
-                {"role": "system", "content": _DIR_DETECTION_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             format=_FeatureDetectionResponse.model_json_schema(),
@@ -1134,7 +1496,32 @@ that uses it via a hook; an API service and the page that renders its data).
   BAD: "hooks-utils", "shared-components", "icons-assets", "stories", "general-utils".
   GOOD: merge these into the business features they support.
 - Every cluster must appear in exactly one feature — no omissions.
-- cluster_indices contains 1-based indices from the list provided.\
+- cluster_indices contains 1-based indices from the list provided.
+
+## Size limits — CRITICAL
+- No feature may contain more than 15 files. If merging clusters would create a feature \
+  with >15 files, split it into distinct sub-features by business capability instead.
+- NEVER create a catch-all feature like "backend-api", "api-routes", "core", \
+  "shared-backend", or "platform". Every API route cluster belongs to the business \
+  feature it serves.
+
+## Page ↔ API route matching — CRITICAL
+In Next.js / app-router projects, merge clusters by shared path segment:
+- Cluster with `app/organizations/` files + cluster with `app/api/organizations/` files \
+  → SAME feature "organizations" (not separate features).
+- Cluster with `app/dashboard/` + cluster with `app/api/dashboard/` → SAME feature.
+- Cluster with `hooks/use-organizations.ts` → merge into "organizations" feature.
+- Cluster with `components/org-*.tsx` → merge into "organizations" feature.
+- API route clusters MUST join the page feature they serve, never a separate "api" feature.
+
+BAD — API routes separated from their pages:
+  "organizations": [clusters with app/organizations/* files]
+  "backend-api": [clusters with app/api/organizations/*, app/api/cost/*, app/api/health/*]
+
+GOOD — API routes merged with their pages:
+  "organizations": [clusters with app/organizations/* AND app/api/organizations/* files]
+  "cost-analysis": [clusters with app/cost/* AND app/api/cost/* files]
+  "health-monitoring": [clusters with app/health/* AND app/api/health/* files]\
 """
 
 _MERGE_USER_PROMPT = """\
@@ -1251,6 +1638,45 @@ def _format_clusters_for_merge_prompt(
     return "\n\n".join(lines)
 
 
+_GENERIC_DIR_NAMES = {
+    "src", "lib", "app", "core", "internal", "views", "pages",
+    "components", "shared", "common", "utils", "features",
+    "hooks", "services", "modules",
+}
+
+
+def _derive_feature_name(files: list[str]) -> str:
+    """Derives a descriptive feature name from a list of file paths.
+
+    Uses the most common package/directory as the name. Handles monorepo
+    patterns (packages/react-dom/src/...) and flat structures.
+    """
+    from collections import Counter
+    counts: Counter = Counter()
+
+    for f in files:
+        parts = Path(f).parts
+        # For monorepo: packages/<name>/... → use <name>
+        if len(parts) >= 2 and parts[0] in ("packages", "apps", "modules", "services"):
+            counts[parts[1]] += 1
+        # For flat: find first non-generic directory
+        elif len(parts) >= 2:
+            for part in parts[:-1]:
+                if part.lower() not in _GENERIC_DIR_NAMES:
+                    counts[part] += 1
+                    break
+
+    if counts:
+        name = counts.most_common(1)[0][0]
+        return name.lower().replace("_", "-")
+    return "overflow"
+
+
+# Maximum files per feature after merge — prevents "junk drawer" features
+# where LLM over-merges all related clusters into one giant group.
+_MAX_FEATURE_SIZE_AFTER_MERGE = 150
+
+
 def _apply_cluster_merge(
     cluster_mapping: dict[str, list[str]],
     merge_response: _ClusterMergeResponse,
@@ -1259,6 +1685,8 @@ def _apply_cluster_merge(
 
     Handles duplicate names, out-of-range indices, and unassigned clusters
     (any cluster not referenced falls back to its original directory-derived name).
+    Enforces a hard cap: if merging would create a feature > _MAX_FEATURE_SIZE_AFTER_MERGE
+    files, excess clusters are kept as separate features.
     """
     cluster_ids = list(cluster_mapping.keys())
     assigned: set[int] = set()
@@ -1267,11 +1695,20 @@ def _apply_cluster_merge(
 
     for item in merge_response.features:
         merged_files: list[str] = []
+        overflow_clusters: list[tuple[str, list[str]]] = []
+
         for idx in item.cluster_indices:
             if 1 <= idx <= len(cluster_ids) and idx not in assigned:
                 cluster_id = cluster_ids[idx - 1]
-                merged_files.extend(cluster_mapping[cluster_id])
-                assigned.add(idx)
+                cluster_files = cluster_mapping[cluster_id]
+
+                if len(merged_files) + len(cluster_files) <= _MAX_FEATURE_SIZE_AFTER_MERGE:
+                    merged_files.extend(cluster_files)
+                    assigned.add(idx)
+                else:
+                    # Would exceed cap — keep this cluster separate
+                    overflow_clusters.append((cluster_id, cluster_files))
+                    assigned.add(idx)
 
         if not merged_files:
             continue
@@ -1284,6 +1721,21 @@ def _apply_cluster_merge(
             name = f"{name}-{suffix}"
         used_names.add(name)
         result[name] = sorted(merged_files)
+
+        # Overflow clusters become their own features with descriptive names
+        for cluster_id, cluster_files in overflow_clusters:
+            overflow_name = _derive_feature_name(cluster_files)
+            if overflow_name in used_names:
+                suffix = 2
+                while f"{overflow_name}-{suffix}" in used_names:
+                    suffix += 1
+                overflow_name = f"{overflow_name}-{suffix}"
+            used_names.add(overflow_name)
+            result[overflow_name] = sorted(cluster_files)
+            logger.info(
+                "Cluster '%s' (%d files) overflowed feature '%s' cap (%d) — kept as separate feature '%s'",
+                cluster_id, len(cluster_files), name, _MAX_FEATURE_SIZE_AFTER_MERGE, overflow_name,
+            )
 
     # Unassigned clusters: merge into nearest feature by directory overlap.
     # Clusters with a distinct business directory stay standalone.
@@ -1350,12 +1802,14 @@ def _call_cluster_merge(
     client: anthropic.Anthropic,
     cluster_mapping: dict[str, list[str]],
     keywords_per_cluster: dict[str, list[str]] | None = None,
+    layer_context: str = "",
 ) -> _ClusterMergeResponse | None:
     """Sends all clusters to Claude for merge+name. Returns None on any failure."""
     prompt = _MERGE_USER_PROMPT.format(
         clusters=_format_clusters_for_merge_prompt(cluster_mapping, keywords_per_cluster),
         feature_hint=_merge_feature_count_hint(len(cluster_mapping)),
     )
+    system = _MERGE_SYSTEM_PROMPT + layer_context
     n_clusters = len(cluster_mapping)
     logger.info("Cluster merge: %d clusters, prompt length ~%d chars", n_clusters, len(prompt))
     for attempt in range(_MAX_RETRIES):
@@ -1365,7 +1819,7 @@ def _call_cluster_merge(
                 model=_MODEL,
                 max_tokens=max_tokens,
                 temperature=0,
-                system=_MERGE_SYSTEM_PROMPT,
+                system=system,
                 messages=[{"role": "user", "content": prompt}],
                 output_format=_ClusterMergeResponse,
             )
@@ -1655,6 +2109,7 @@ def _chunked_cluster_merge(
     client: anthropic.Anthropic,
     cluster_mapping: dict[str, list[str]],
     keywords_per_cluster: dict[str, list[str]] | None = None,
+    layer_context: str = "",
 ) -> dict[str, list[str]] | None:
     """Merges clusters in chunks to avoid prompt/response truncation.
 
@@ -1666,7 +2121,7 @@ def _chunked_cluster_merge(
     """
     if len(cluster_mapping) <= _MERGE_CHUNK_SIZE:
         response = _call_cluster_merge(
-            client, cluster_mapping, keywords_per_cluster,
+            client, cluster_mapping, keywords_per_cluster, layer_context=layer_context,
         )
         if response:
             return _apply_cluster_merge(cluster_mapping, response)
@@ -1691,7 +2146,7 @@ def _chunked_cluster_merge(
             if keywords_per_cluster
             else None
         )
-        response = _call_cluster_merge(client, chunk, chunk_kw or None)
+        response = _call_cluster_merge(client, chunk, chunk_kw or None, layer_context=layer_context)
         if response:
             chunk_result = _apply_cluster_merge(chunk, response)
             for name, files in chunk_result.items():
@@ -1805,6 +2260,7 @@ def merge_and_name_clusters_llm(
     cluster_mapping: dict[str, list[str]],
     api_key: str | None = None,
     commits: list[Commit] | None = None,
+    layer_context: str = "",
 ) -> dict[str, list[str]]:
     """Uses Claude to merge import-graph clusters into business features and name them.
 
@@ -1836,7 +2292,10 @@ def merge_and_name_clusters_llm(
     cached = _read_name_cache(cache_key)
     if cached is not None:
         if isinstance(next(iter(cached.values()), None), list):
-            return cached  # type: ignore[return-value]
+            # Cache stores LLM merge result before redistribute — apply redistribute now
+            return _redistribute_oversized_features(
+                _redistribute_infra_features(cached)  # type: ignore[arg-type]
+            )
 
     keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
 
@@ -1845,24 +2304,28 @@ def merge_and_name_clusters_llm(
     # Try single-shot merge first (preserves previous behavior).
     # Fall back to chunked merge only when single-shot fails (large repos).
     merge_response = _call_cluster_merge(
-        client, working_clusters, keywords_per_cluster,
+        client, working_clusters, keywords_per_cluster, layer_context=layer_context,
     )
     if merge_response:
         merged = _filter_technical_features(
             _apply_cluster_merge(working_clusters, merge_response),
         )
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+        merged = _redistribute_infra_features(merged)
+        merged = _redistribute_oversized_features(merged)
         return merged
 
     # Single-shot failed (likely truncation) — try chunked merge
     if len(working_clusters) > _MERGE_CHUNK_SIZE:
         logger.info("Single-shot merge failed, trying chunked merge")
         merged = _chunked_cluster_merge(
-            client, working_clusters, keywords_per_cluster,
+            client, working_clusters, keywords_per_cluster, layer_context=layer_context,
         )
         if merged:
             merged = _filter_technical_features(merged)
             _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+            merged = _redistribute_infra_features(merged)
+            merged = _redistribute_oversized_features(merged)
             return merged
 
     return working_clusters
@@ -1873,6 +2336,7 @@ def _call_cluster_merge_ollama(
     model: str,
     host: str,
     keywords_per_cluster: dict[str, list[str]] | None = None,
+    layer_context: str = "",
 ) -> _ClusterMergeResponse | None:
     """Calls Ollama for cluster merge+name. Returns None on any failure."""
     try:
@@ -1884,12 +2348,13 @@ def _call_cluster_merge_ollama(
         clusters=_format_clusters_for_merge_prompt(cluster_mapping, keywords_per_cluster),
         feature_hint=_merge_feature_count_hint(len(cluster_mapping)),
     )
+    system = _MERGE_SYSTEM_PROMPT + layer_context
     try:
         client = _ollama.Client(host=host)
         response = client.chat(
             model=model,
             messages=[
-                {"role": "system", "content": _MERGE_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             format=_ClusterMergeResponse.model_json_schema(),
@@ -1904,6 +2369,7 @@ def merge_and_name_clusters_ollama(
     model: str = _DEFAULT_OLLAMA_MODEL,
     host: str = _DEFAULT_OLLAMA_HOST,
     commits: list[Commit] | None = None,
+    layer_context: str = "",
 ) -> dict[str, list[str]]:
     """Ollama version of merge_and_name_clusters_llm. See that function for full docs."""
     if not cluster_mapping:
@@ -1916,16 +2382,20 @@ def merge_and_name_clusters_ollama(
     cached = _read_name_cache(cache_key)
     if cached is not None:
         if isinstance(next(iter(cached.values()), None), list):
-            return cached  # type: ignore[return-value]
+            return _redistribute_oversized_features(
+                _redistribute_infra_features(cached)  # type: ignore[arg-type]
+            )
 
     keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
 
-    merge_response = _call_cluster_merge_ollama(working_clusters, model, host, keywords_per_cluster)
+    merge_response = _call_cluster_merge_ollama(working_clusters, model, host, keywords_per_cluster, layer_context=layer_context)
     if merge_response:
         merged = _filter_technical_features(
             _apply_cluster_merge(working_clusters, merge_response),
         )
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+        merged = _redistribute_infra_features(merged)
+        merged = _redistribute_oversized_features(merged)
         return merged
 
     return working_clusters

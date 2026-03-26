@@ -412,10 +412,6 @@ def build_feature_map(
         commits_for_feature = feature_commits.get(feature_name, [])
         total = len(commits_for_feature)
 
-        # Skip features with 0 commits — likely mapping bugs (deleted dirs, config artifacts)
-        if total == 0:
-            continue
-
         bug_fixes = sum(1 for c in commits_for_feature if c.is_bug_fix)
         bug_fix_ratio = bug_fixes / total if total > 0 else 0.0
 
@@ -430,7 +426,7 @@ def build_feature_map(
                 feature_name,
                 datetime.now(tz=timezone.utc)
             ),
-            health_score=_calculate_health(bug_fix_ratio, total, commits_for_feature),
+            health_score=_calculate_health(bug_fix_ratio, total, commits_for_feature) if total > 0 else 100.0,
             bug_fix_prs=_collect_prs(commits_for_feature, remote_url),
         ))
 
