@@ -80,9 +80,27 @@ Given a list of file paths from a git repository, group them into business featu
     Files that define API routes (GET/POST/PUT/DELETE) are entry points to a feature — group
     other files in the same directory tree with the file that shares their route prefix.
 
+## Shared / utility files — CRITICAL
+
+Files in shared directories (hooks/, utils/, helpers/, lib/, components/ui/) are NOT automatically \
+"shared" features. Most of them serve a SPECIFIC business domain:
+- `hooks/useEntitySearch.tsx` → belongs to entity-management feature (NOT "shared-hooks")
+- `hooks/useIPEnrichment.ts` → belongs to enrichment feature (NOT "shared-hooks")
+- `hooks/useOrganizationMembers.tsx` → belongs to organization feature (NOT "shared-hooks")
+- `utils/exportCSV.ts` → belongs to export feature (NOT "shared-utils")
+
+Only truly generic, domain-agnostic files belong to "shared-*" features:
+- `hooks/useHover.ts` → shared (generic UI behavior)
+- `hooks/useDebounce.ts` → shared (generic utility)
+- `utils/formatDate.ts` → shared (generic formatter)
+- `components/ui/Button.tsx` → shared-ui (generic component)
+
+RULE: If a file name contains a business domain keyword (entity, auth, payment, export, etc.), \
+it belongs to that business feature, regardless of which directory it's in.
+
 ## Size limits — CRITICAL
 
-- No feature may contain more than 15 files. If a group grows larger, split it into \
+- No feature may contain more than 40 files. If a group grows larger, split it into \
   distinct sub-features by business capability.
 - API routes that serve different domains (e.g. /api/organizations/*, /api/cost/*, \
   /api/health/*) MUST be separate features, not one "backend-api" bucket.
@@ -200,7 +218,7 @@ business domain area, not a technical layer.
    For example, "billing", "webhooks", "templates", "auth" are SEPARATE features, not one "core-platform".
 6. Deeply nested subdirectories almost always belong to the same feature as their parent. \
    Only split siblings when they serve clearly different business domains (e.g. "payments" vs "auth").
-11. SIZE LIMIT: No feature may contain more than 15 directories. If a group grows larger, \
+11. SIZE LIMIT: No feature may contain more than 40 directories. If a group grows larger, \
     split it into sub-features by business capability.
 12. In Next.js / app-router projects, each `app/<page>/` directory is usually its own feature. \
     The corresponding `app/api/<page>/` routes belong to the SAME feature as the page, not to \
@@ -378,7 +396,7 @@ def detect_features_llm(
     return _redistribute_infra_features(result)
 
 
-_RESPLIT_FILE_THRESHOLD = 15
+_RESPLIT_FILE_THRESHOLD = 40
 _RESPLIT_CONCENTRATION_PCT = 0.70  # re-split if >70% of files in one dir
 
 # Patterns that indicate infrastructure-only features (not business domains)
@@ -401,7 +419,7 @@ _COMPONENT_DOMAIN_RE = re.compile(r"^([a-z]+-)")
 
 def _redistribute_oversized_features(
     result: dict[str, list[str]],
-    max_files: int = 15,
+    max_files: int = 40,
 ) -> dict[str, list[str]]:
     """Deterministic post-processing: move files from oversized features to matching smaller ones.
 
@@ -411,11 +429,34 @@ def _redistribute_oversized_features(
     3. Component files (org-*.tsx) → feature with matching domain prefix
     4. Remaining files → stay in a residual feature or "shared-ui"/"app-shell"
     """
-    oversized = {n: fs for n, fs in result.items() if len(fs) > max_files}
+    # Only redistribute CATCH-ALL features, not legitimate business features
+    # A catch-all feature has files spanning many unrelated directories
+    _CATCHALL_NAMES = {"app-shell", "shared", "services", "core", "platform",
+                       "shared-utilities", "shared-backend", "misc", "other"}
+    oversized: dict[str, list[str]] = {}
+    for n, fs in result.items():
+        if len(fs) <= max_files:
+            continue
+        # Always redistribute known catch-all names
+        if n in _CATCHALL_NAMES or n.startswith("shared-"):
+            oversized[n] = fs
+            continue
+        # Check if it's a catch-all by directory diversity
+        biz_dirs: set[str] = set()
+        for f in fs[:100]:  # sample first 100 files for speed
+            parts = Path(f).parts
+            for part in parts[:-1]:
+                if part.lower() not in _SKIP_DIRS and part.lower() not in _SHARED_DIR_PATTERNS:
+                    biz_dirs.add(part.lower())
+                    break
+        # If files span many unrelated dirs → catch-all, redistribute
+        if len(biz_dirs) > 8:
+            oversized[n] = fs
+
     if not oversized:
         return result
 
-    small = {n: list(fs) for n, fs in result.items() if len(fs) <= max_files}
+    small = {n: list(fs) for n, fs in result.items() if n not in oversized}
 
     # Discover page directories in oversized features and create new features for them
     # if they don't already exist (e.g. dashboard pages stuck in a catch-all).
@@ -511,13 +552,10 @@ def _redistribute_oversized_features(
                 else:
                     still_remaining.append(f)
 
-            # Categorize the rest into shared-ui vs app-shell
-            shared_ui = [f for f in still_remaining if "components/ui/" in f]
-            app_shell = [f for f in still_remaining if f not in shared_ui]
-            if shared_ui:
-                small.setdefault("shared-ui", []).extend(shared_ui)
-            if app_shell:
-                small.setdefault("app-shell", []).extend(app_shell)
+            # Group remaining files by meaningful directory into features
+            grouped = _group_by_directory(still_remaining, small)
+            for group_name, group_files in grouped.items():
+                small.setdefault(group_name, []).extend(group_files)
 
         logger.info(
             "Redistributed '%s' (%d files): %d moved to existing features, %d remaining",
@@ -525,7 +563,360 @@ def _redistribute_oversized_features(
         )
 
     # Remove empty features that didn't get any files
-    return {n: fs for n, fs in small.items() if fs}
+    small = {n: fs for n, fs in small.items() if fs}
+
+    # Fix features with numeric/garbage names (LLM naming bugs)
+    small = _fix_numeric_feature_names(small)
+
+    # Merge fragmented features that share a common prefix
+    return _merge_prefix_siblings(small)
+
+
+_RE_NUMERIC_SUFFIX = re.compile(r"-\d+$")
+
+
+def _fix_numeric_feature_names(
+    features: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Renames features with numeric suffixes (LLM naming bugs) using directory names.
+
+    E.g. "ui-4" with files in Steps/ → renamed to "ui-steps".
+    """
+    result: dict[str, list[str]] = {}
+    for name, files in features.items():
+        if not _RE_NUMERIC_SUFFIX.search(name) or not files:
+            result[name] = files
+            continue
+
+        # Derive name from the most specific common directory of files
+        prefix = _RE_NUMERIC_SUFFIX.sub("", name)
+        prefix_lower = prefix.lower()
+
+        # Collect the deepest meaningful directory that differs from the prefix
+        dirs = set()
+        for f in files:
+            parts = Path(f).parts
+            best_part = None
+            for part in parts[:-1]:  # exclude filename
+                lower = part.lower()
+                if lower in _SKIP_DIRS or lower in _SHARED_DIR_PATTERNS:
+                    continue
+                # Skip dirs that match the prefix (ndr/ when prefix is "ndr")
+                norm = re.sub(r"([a-z])([A-Z])", r"\1-\2", part).lower()
+                if norm == prefix_lower:
+                    continue
+                best_part = part
+            if best_part:
+                dirs.add(best_part)
+
+        if len(dirs) == 1:
+            dir_name = re.sub(r"([a-z])([A-Z])", r"\1-\2", dirs.pop()).lower()
+            new_name = f"{prefix}-{dir_name}" if prefix else dir_name
+        elif len(dirs) == 0:
+            new_name = prefix if prefix else name  # all files in same prefix dir
+        else:
+            new_name = name  # can't determine, keep as-is
+
+        # Merge into existing feature or create new
+        if new_name in result:
+            result[new_name].extend(files)
+        else:
+            result[new_name] = files
+
+        if new_name != name:
+            logger.info("Renamed '%s' → '%s'", name, new_name)
+
+    return result
+
+
+def _merge_prefix_siblings(
+    features: dict[str, list[str]],
+    min_siblings: int = 2,
+) -> dict[str, list[str]]:
+    """Merges features that share a common prefix into one feature.
+
+    E.g. complex-query-hooks, complex-query-utils, complex-query-widgets
+    → merged into "complex-query".
+
+    Only merges when:
+    - At least min_siblings features share the same prefix
+    - Each sibling has <= 50 files (large features are intentional splits)
+    - The prefix is at least 2 chars and is itself a meaningful name
+    """
+    # Skip well-known prefixes that are intentional splits (not duplicates)
+    _SKIP_PREFIXES = {"app", "shared", "ndr", "edr", "ui", "custom"}
+
+    # Group features by their prefix (first N-1 parts of hyphenated name)
+    from collections import defaultdict
+    prefix_groups: dict[str, list[str]] = defaultdict(list)
+    for name in features:
+        parts = name.split("-")
+        if len(parts) >= 2:
+            prefix = "-".join(parts[:-1])
+            if prefix.lower() not in _SKIP_PREFIXES and len(prefix) >= 2:
+                prefix_groups[prefix].append(name)
+
+    # Find groups worth merging
+    result = dict(features)
+    for prefix, siblings in prefix_groups.items():
+        if len(siblings) < min_siblings:
+            continue
+        # Don't merge if any sibling is large (intentional split)
+        if any(len(features[s]) > 50 for s in siblings):
+            continue
+        # Check if the prefix itself is already a feature
+        base_name = prefix if prefix in result else prefix
+        merged_files: list[str] = []
+        for s in siblings:
+            merged_files.extend(result.pop(s, []))
+        # Also grab the base feature if it exists
+        if base_name in result:
+            merged_files.extend(result.pop(base_name))
+        result[base_name] = merged_files
+        logger.info("Merged %d siblings into '%s' (%d files)", len(siblings), base_name, len(merged_files))
+
+    return result
+
+
+# Directories that are shared infrastructure, not business features
+_SHARED_DIR_PATTERNS = {
+    "components", "hooks", "lib", "utils", "helpers", "types", "models",
+    "schemas", "constants", "config", "configs", "middleware", "providers",
+    "contexts", "store", "stores", "assets", "styles", "icons", "svg",
+    "stories", "storybook", "__tests__", "__mocks__", "fixtures", "test",
+}
+
+# Skip these as feature-directory candidates (too generic) — go deeper
+_SKIP_DIRS = {
+    "src", "app", "pages", "api", "public", "static", "dist", "build",
+    "views", "features", "modules", "domains", "routes", "screens",
+}
+
+
+def _extract_domain_keywords(filename: str) -> list[str]:
+    """Extracts potential business-domain keywords from a filename.
+
+    'useEntitySearch.tsx' → ['entity', 'search']
+    'useHover.ts' → ['hover']
+    'exportCSV.ts' → ['export']
+    """
+    stem = Path(filename).stem
+    # Strip common prefixes
+    for prefix in ("use", "with", "create", "get", "set", "fetch", "load"):
+        if stem.lower().startswith(prefix) and len(stem) > len(prefix):
+            stem = stem[len(prefix):]
+            break
+    # Split camelCase/PascalCase into words
+    words = re.sub(r"([a-z])([A-Z])", r"\1 \2", stem).lower().split()
+    # Filter out very short or generic words
+    generic = {"index", "main", "app", "page", "view", "base", "common", "default",
+               "test", "spec", "mock", "stub", "type", "types", "interface", "model"}
+    return [w for w in words if len(w) >= 3 and w not in generic]
+
+
+# Words that indicate a truly generic/shared utility (no business domain)
+_GENERIC_HOOK_KEYWORDS = {
+    "hover", "click", "outside", "debounce", "throttle", "mount", "unmount",
+    "previous", "prev", "props", "update", "effect", "deep", "compare",
+    "stable", "callback", "interval", "periodic", "animation", "count",
+    "resize", "scroll", "window", "media", "query", "local", "storage",
+    "session", "ref", "focus", "keyboard", "shortcut", "clipboard", "copy",
+    "toggle", "boolean", "array", "object", "memo", "lazy", "async",
+    "timeout", "raf", "intersection", "observer", "mutation",
+}
+
+
+def _group_by_directory(
+    files: list[str],
+    existing_features: dict[str, list[str]],
+    min_group_size: int = 3,
+) -> dict[str, list[str]]:
+    """Groups remaining files into features by business domain.
+
+    First tries to match each file to an existing feature by domain keywords
+    in the filename. Only files that can't be matched go into directory-based
+    groups or shared buckets.
+    """
+    # Build keyword → feature index from existing features
+    feat_keyword_index: dict[str, str] = {}
+    for feat_name in existing_features:
+        for part in feat_name.split("-"):
+            if len(part) >= 3:
+                feat_keyword_index[part.lower()] = feat_name
+
+    dir_groups: dict[str, list[str]] = {}
+    shared_ui: list[str] = []
+    shared_generic: list[str] = []
+
+    for f in files:
+        parts = Path(f).parts
+        filename = parts[-1] if parts else f
+
+        # Step 1: Try to match by filename keywords to existing features
+        keywords = _extract_domain_keywords(filename)
+        matched_feature = None
+        for kw in keywords:
+            if kw in feat_keyword_index:
+                matched_feature = feat_keyword_index[kw]
+                break
+
+        if matched_feature:
+            existing_features[matched_feature].append(f)
+            continue
+
+        # Step 2: Check if it's in a shared dir
+        in_shared_dir = False
+        for part in parts[:-1]:
+            if part.lower() in _SHARED_DIR_PATTERNS:
+                in_shared_dir = True
+                break
+
+        if in_shared_dir:
+            # Check if filename suggests a specific business domain
+            # by looking at directory structure for sub-features
+            has_domain_sub = False
+            for i, part in enumerate(parts[:-1]):
+                if part.lower() in _SHARED_DIR_PATTERNS and i + 1 < len(parts) - 1:
+                    next_part = parts[i + 1]
+                    if next_part.lower() not in _SHARED_DIR_PATTERNS and not next_part.startswith("_"):
+                        name = re.sub(r"([a-z])([A-Z])", r"\1-\2", next_part).lower()
+                        dir_groups.setdefault(name, []).append(f)
+                        has_domain_sub = True
+                        break
+
+            if not has_domain_sub:
+                # Check if filename keywords are all generic
+                is_generic = not keywords or all(kw in _GENERIC_HOOK_KEYWORDS for kw in keywords)
+                if "components/ui" in f or "components/UI" in f:
+                    shared_ui.append(f)
+                elif is_generic:
+                    shared_generic.append(f)
+                else:
+                    # Has domain keywords but no matching feature — group by first keyword
+                    group_name = keywords[0] if keywords else "app-shell"
+                    dir_groups.setdefault(group_name, []).append(f)
+            continue
+
+        # Step 3: Find meaningful directory for non-shared files
+        meaningful_dir = None
+        for part in parts[:-1]:
+            lower = part.lower()
+            if lower in _SKIP_DIRS:
+                continue
+            meaningful_dir = part
+            break
+
+        if meaningful_dir:
+            name = re.sub(r"([a-z])([A-Z])", r"\1-\2", meaningful_dir).lower()
+            if name in existing_features:
+                existing_features[name].append(f)
+            else:
+                dir_groups.setdefault(name, []).append(f)
+        else:
+            shared_generic.append(f)
+
+    result: dict[str, list[str]] = {}
+
+    for name, group_files in dir_groups.items():
+        if len(group_files) < min_group_size:
+            # Try to merge small groups into existing features
+            merged = False
+            for kw in name.split("-"):
+                if kw in feat_keyword_index:
+                    existing_features[feat_keyword_index[kw]].extend(group_files)
+                    merged = True
+                    break
+            if not merged:
+                shared_generic.extend(group_files)
+        else:
+            result[name] = group_files
+
+    if shared_ui:
+        result["shared-ui"] = shared_ui
+
+    if shared_generic:
+        result["app-shell"] = shared_generic
+
+    return result
+
+
+def _split_by_subdir(
+    parent_name: str,
+    files: list[str],
+    min_group_size: int,
+    max_size: int = 50,
+) -> dict[str, list[str]]:
+    """Splits a large group by the deepest common directory, recursively.
+
+    Finds the longest common path prefix across all files, then groups by the
+    next directory level after that prefix. Recurses on groups still > max_size.
+    """
+    if len(files) <= max_size:
+        return {parent_name: files}
+
+    # Find common path prefix (directory level)
+    split_parts = [Path(f).parts[:-1] for f in files]  # exclude filename
+    if not split_parts:
+        return {parent_name: files}
+
+    # Common prefix length
+    min_depth = min(len(p) for p in split_parts) if split_parts else 0
+    common_len = 0
+    for i in range(min_depth):
+        vals = {p[i] for p in split_parts}
+        if len(vals) == 1:
+            common_len = i + 1
+        else:
+            break
+
+    # Group by the part right after common prefix
+    sub_groups: dict[str, list[str]] = {}
+    ungrouped: list[str] = []
+    for f in files:
+        parts = Path(f).parts
+        if common_len < len(parts) - 1:
+            sub_dir = parts[common_len]
+            sub_name = re.sub(r"([a-z])([A-Z])", r"\1-\2", sub_dir).lower()
+            full_name = f"{parent_name}-{sub_name}" if sub_name != parent_name else sub_name
+            sub_groups.setdefault(full_name, []).append(f)
+        else:
+            ungrouped.append(f)
+
+    if len(sub_groups) <= 1:
+        # Can't split further at this level — try next level
+        if common_len + 1 < min_depth:
+            deeper_groups: dict[str, list[str]] = {}
+            for f in files:
+                parts = Path(f).parts
+                if common_len + 1 < len(parts) - 1:
+                    sub_dir = parts[common_len + 1]
+                    sub_name = re.sub(r"([a-z])([A-Z])", r"\1-\2", sub_dir).lower()
+                    full_name = f"{parent_name}-{sub_name}"
+                    deeper_groups.setdefault(full_name, []).append(f)
+                else:
+                    ungrouped.append(f)
+            if len(deeper_groups) > 1:
+                sub_groups = deeper_groups
+            else:
+                return {parent_name: files}
+        else:
+            return {parent_name: files}
+
+    result: dict[str, list[str]] = {}
+    for name, group_files in sub_groups.items():
+        if len(group_files) < min_group_size:
+            ungrouped.extend(group_files)
+        elif len(group_files) > max_size:
+            # Recurse
+            sub_result = _split_by_subdir(name, group_files, min_group_size, max_size)
+            result.update(sub_result)
+        else:
+            result[name] = group_files
+
+    if ungrouped:
+        result[parent_name] = ungrouped
+
+    return result
 
 
 def _match_file_to_feature(
@@ -649,8 +1040,8 @@ def _resplit_oversized_features(
     for feat_name, feat_files in resplit_needed.items():
         logger.info("Re-splitting oversized feature '%s' (%d files) with Sonnet", feat_name, len(feat_files))
         sub_tree = "\n".join(feat_files)
-        min_sub = max(2, len(feat_files) // 15)
-        max_sub = max(4, len(feat_files) // 8)
+        min_sub = max(2, len(feat_files) // 40)
+        max_sub = max(3, len(feat_files) // 15)
         resplit_prompt = (
             f"These {len(feat_files)} files were all grouped into one feature '{feat_name}'. "
             f"This is too coarse. Split them into {min_sub}–{max_sub} distinct sub-features "
@@ -1498,9 +1889,25 @@ that uses it via a hook; an API service and the page that renders its data).
 - Every cluster must appear in exactly one feature — no omissions.
 - cluster_indices contains 1-based indices from the list provided.
 
+## Import connections — USE THIS DATA
+Each cluster may show "Imports from: cluster N (count)" lines. This tells you how \
+many file-level import statements connect the two clusters.
+- High connection count (5+) between two clusters = strong signal they serve the same \
+  business feature → MERGE them.
+- Zero or low connections = clusters are independent → keep them as SEPARATE features.
+- Do NOT merge clusters with zero import connections just because their names look similar. \
+  Imports are the ground truth for code relationships.
+
+## Shared / utility clusters — CRITICAL
+- Clusters containing hooks, utils, helpers, or lib files that have DOMAIN-SPECIFIC names \
+  (useEntitySearch, useIPEnrichment, useOrganizationMembers, exportCSV) must be merged into \
+  the business feature they serve, NOT into "shared-hooks" or "shared-utils".
+- Only truly generic, domain-agnostic clusters (useHover, useDebounce, formatDate, Button) \
+  belong in "shared-*" features.
+
 ## Size limits — CRITICAL
-- No feature may contain more than 15 files. If merging clusters would create a feature \
-  with >15 files, split it into distinct sub-features by business capability instead.
+- No feature may contain more than 40 files. If merging clusters would create a feature \
+  with >40 files, split it into distinct sub-features by business capability instead.
 - NEVER create a catch-all feature like "backend-api", "api-routes", "core", \
   "shared-backend", or "platform". Every API route cluster belongs to the business \
   feature it serves.
@@ -1538,14 +1945,14 @@ Every cluster index must appear in exactly one feature.\
 def _merge_feature_count_hint(n_clusters: int) -> str:
     """Generates a scoped feature-count guidance line for the merge prompt.
 
-    Scale: ~1 feature per 8 clusters, clamped to 8–60.
-    Small repo (20 clusters) → 8–12 features.
-    Medium repo (100 clusters) → 12–20 features.
-    Large repo (300 clusters) → 25–50 features.
+    Scale: ~1 feature per 12 clusters, clamped to 6–40.
+    Small repo (20 clusters) → 6–10 features.
+    Medium repo (100 clusters) → 8–16 features.
+    Large repo (300 clusters) → 20–40 features.
     """
-    min_f = max(8, n_clusters // 12)
-    max_f = max(12, n_clusters // 6)
-    max_f = min(max_f, 60)
+    min_f = max(6, n_clusters // 16)
+    max_f = max(10, n_clusters // 8)
+    max_f = min(max_f, 40)
     return (
         f"\nYou have {n_clusters} clusters. "
         f"Aim for {min_f}–{max_f} business features. "
@@ -1621,12 +2028,18 @@ def _extract_cluster_keywords(
 def _format_clusters_for_merge_prompt(
     cluster_mapping: dict[str, list[str]],
     keywords_per_cluster: dict[str, list[str]] | None = None,
+    cluster_edges: dict[str, dict[str, int]] | None = None,
 ) -> str:
     """Formats clusters as a numbered list for the LLM merge prompt.
 
     When keywords_per_cluster is provided, each cluster entry includes its
     top commit message topics as a hint for semantic business domain naming.
+    When cluster_edges is provided, shows import connections to other clusters.
     """
+    # Build cluster_id → index mapping for edge display
+    cluster_ids = list(cluster_mapping.keys())
+    id_to_idx = {cid: i + 1 for i, cid in enumerate(cluster_ids)}
+
     lines = []
     for i, (cluster_id, files) in enumerate(cluster_mapping.items(), start=1):
         sample = files[:8]
@@ -1634,7 +2047,22 @@ def _format_clusters_for_merge_prompt(
         suffix = f"\n  … ({len(files) - 8} more)" if len(files) > 8 else ""
         keywords = (keywords_per_cluster or {}).get(cluster_id, [])
         kw_line = f"\n  Commit topics: {', '.join(keywords)}" if keywords else ""
-        lines.append(f"Cluster {i} ({cluster_id}):{kw_line}\n{file_lines}{suffix}")
+
+        # Format import connections to other clusters
+        edge_line = ""
+        if cluster_edges and cluster_id in cluster_edges:
+            connections = cluster_edges[cluster_id]
+            # Sort by connection count, show top 5
+            top = sorted(connections.items(), key=lambda x: -x[1])[:5]
+            if top:
+                parts = []
+                for target_id, count in top:
+                    if target_id in id_to_idx:
+                        parts.append(f"cluster {id_to_idx[target_id]} ({count})")
+                if parts:
+                    edge_line = f"\n  Imports from: {', '.join(parts)}"
+
+        lines.append(f"Cluster {i} ({cluster_id}):{kw_line}{edge_line}\n{file_lines}{suffix}")
     return "\n\n".join(lines)
 
 
@@ -1803,10 +2231,11 @@ def _call_cluster_merge(
     cluster_mapping: dict[str, list[str]],
     keywords_per_cluster: dict[str, list[str]] | None = None,
     layer_context: str = "",
+    cluster_edges: dict[str, dict[str, int]] | None = None,
 ) -> _ClusterMergeResponse | None:
     """Sends all clusters to Claude for merge+name. Returns None on any failure."""
     prompt = _MERGE_USER_PROMPT.format(
-        clusters=_format_clusters_for_merge_prompt(cluster_mapping, keywords_per_cluster),
+        clusters=_format_clusters_for_merge_prompt(cluster_mapping, keywords_per_cluster, cluster_edges),
         feature_hint=_merge_feature_count_hint(len(cluster_mapping)),
     )
     system = _MERGE_SYSTEM_PROMPT + layer_context
@@ -2216,6 +2645,67 @@ _TECHNICAL_FEATURE_NAMES = {
 }
 
 
+def _validate_merge_cohesion(
+    merged: dict[str, list[str]],
+    original_clusters: dict[str, list[str]],
+    merge_response: _ClusterMergeResponse,
+    min_cohesion: float = 0.005,
+) -> dict[str, list[str]]:
+    """Validates merged features by checking if multi-cluster merges are cohesive.
+
+    For each merged feature that combined 3+ clusters: check if the files
+    share a common directory structure. If not (low cohesion), revert the
+    merge — keep original clusters as separate features.
+
+    Uses directory overlap as a fast cohesion proxy (no import re-analysis needed).
+    A merge is considered low-cohesion if the files span many unrelated directories
+    with little overlap.
+    """
+    cluster_ids = list(original_clusters.keys())
+    result = dict(merged)
+
+    for item in merge_response.features:
+        if len(item.cluster_indices) < 3:
+            continue  # small merges are usually fine
+
+        feat_name = item.feature_name
+        if feat_name not in result:
+            continue
+
+        feat_files = result[feat_name]
+        if len(feat_files) <= 15:
+            continue  # small features don't need validation
+
+        # Check directory cohesion: how many distinct top-level business dirs?
+        biz_dirs: set[str] = set()
+        for f in feat_files:
+            parts = Path(f).parts
+            for part in parts[:-1]:
+                if part.lower() not in {"src", "app", "lib", "components", "hooks",
+                                         "utils", "types", "shared", "common",
+                                         "pages", "views", "features", "modules"}:
+                    biz_dirs.add(part.lower())
+                    break
+
+        # If files span many unrelated directories, this is a bad merge
+        dir_ratio = len(biz_dirs) / len(feat_files) if feat_files else 0
+
+        if dir_ratio > 0.3 and len(biz_dirs) > 5:
+            # Too fragmented — revert to original clusters
+            logger.info(
+                "Reverting merge of '%s' (%d files, %d dirs, ratio=%.2f) — low cohesion",
+                feat_name, len(feat_files), len(biz_dirs), dir_ratio,
+            )
+            del result[feat_name]
+            for idx in item.cluster_indices:
+                if 1 <= idx <= len(cluster_ids):
+                    cid = cluster_ids[idx - 1]
+                    if cid in original_clusters:
+                        result[cid] = original_clusters[cid]
+
+    return result
+
+
 def _filter_technical_features(
     merged: dict[str, list[str]],
 ) -> dict[str, list[str]]:
@@ -2247,9 +2737,18 @@ def _filter_technical_features(
         if target:
             business[target].extend(tech_files)
         else:
-            # No overlap — pick the largest feature
-            largest = max(business, key=lambda k: len(business[k]))
-            business[largest].extend(tech_files)
+            # No single overlap target — try per-file matching
+            unmatched: list[str] = []
+            for f in tech_files:
+                file_target = _find_best_merge_target([f], business)
+                if file_target:
+                    business[file_target].append(f)
+                else:
+                    unmatched.append(f)
+            if unmatched:
+                # Keep as separate feature with original name rather than
+                # dumping into the largest feature
+                business[tech_name] = unmatched
 
     logger.info("Filtered %d technical features, redistributed files into business features",
                 len(technical))
@@ -2261,6 +2760,7 @@ def merge_and_name_clusters_llm(
     api_key: str | None = None,
     commits: list[Commit] | None = None,
     layer_context: str = "",
+    cluster_edges: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, list[str]]:
     """Uses Claude to merge import-graph clusters into business features and name them.
 
@@ -2271,6 +2771,9 @@ def merge_and_name_clusters_llm(
     When commits are provided, extracts top commit message keywords per cluster
     and includes them in the prompt as semantic naming hints.
 
+    When cluster_edges is provided, each cluster in the prompt shows its import
+    connections to other clusters, helping the LLM make informed merge decisions.
+
     Results are cached by cluster structure hash — same codebase → same result.
     Falls back to the original cluster_mapping on any error.
 
@@ -2278,6 +2781,7 @@ def merge_and_name_clusters_llm(
         cluster_mapping: Output of build_import_clusters().
         api_key: Anthropic API key. Falls back to ANTHROPIC_API_KEY env var.
         commits: Optional commit history for keyword extraction.
+        cluster_edges: Inter-cluster import connections from compute_cluster_edges().
     """
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not key or not cluster_mapping:
@@ -2301,15 +2805,22 @@ def merge_and_name_clusters_llm(
 
     client = anthropic.Anthropic(api_key=key)
 
+    # Recompute edges for working_clusters if edges were provided for original clusters
+    # (consolidation/pre-merge may have changed cluster names)
+    working_edges = cluster_edges  # pass through — edge keys may not match perfectly but that's OK
+
     # Try single-shot merge first (preserves previous behavior).
     # Fall back to chunked merge only when single-shot fails (large repos).
     merge_response = _call_cluster_merge(
-        client, working_clusters, keywords_per_cluster, layer_context=layer_context,
+        client, working_clusters, keywords_per_cluster,
+        layer_context=layer_context, cluster_edges=working_edges,
     )
     if merge_response:
         merged = _filter_technical_features(
             _apply_cluster_merge(working_clusters, merge_response),
         )
+        # Validate: revert merges with low internal cohesion
+        merged = _validate_merge_cohesion(merged, working_clusters, merge_response)
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
         merged = _redistribute_infra_features(merged)
         merged = _redistribute_oversized_features(merged)

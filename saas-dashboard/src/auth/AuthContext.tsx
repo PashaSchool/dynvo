@@ -49,11 +49,13 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // TODO: replace with Better Auth client in production
+  // Auto-login for development — skip login/org-select pages
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
-  const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [user, setUser] = useState<User | null>(MOCK_USER);
+  const [activeOrg, setActiveOrg] = useState<Organization | null>(MOCK_ORGS[0]);
+  const [organizations, setOrganizations] = useState<Organization[]>(MOCK_ORGS);
 
   const signIn = useCallback((provider: "github" | "google" | "credentials") => {
     setIsLoading(true);

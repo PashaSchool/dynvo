@@ -289,6 +289,105 @@ def build_import_clusters(
     return _finalize_clusters(split_groups)
 
 
+def compute_cluster_edges(
+    cluster_mapping: dict[str, list[str]],
+    signatures: dict[str, FileSignature],
+    file_set: set[str] | None = None,
+    alias_map: dict[str, str] | None = None,
+    monorepo_packages: set[str] | None = None,
+) -> dict[str, dict[str, int]]:
+    """Computes import connections between clusters.
+
+    Returns:
+        {cluster_name: {other_cluster_name: connection_count}}
+        where connection_count is the number of file-level import edges
+        from files in cluster_name to files in other_cluster_name.
+    """
+    if not cluster_mapping:
+        return {}
+
+    if file_set is None:
+        file_set = {f for fs in cluster_mapping.values() for f in fs}
+
+    # Build file → cluster index
+    file_to_cluster: dict[str, str] = {}
+    for cluster_name, files in cluster_mapping.items():
+        for f in files:
+            file_to_cluster[f] = cluster_name
+
+    # Count cross-cluster imports
+    cross_edges: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    for rel_path, sig in signatures.items():
+        if rel_path not in file_to_cluster:
+            continue
+        src_cluster = file_to_cluster[rel_path]
+        for import_path in sig.imports:
+            resolved = _resolve_import(
+                rel_path, import_path, file_set,
+                alias_map=alias_map or {},
+                monorepo_packages=monorepo_packages,
+            )
+            if not resolved or resolved not in file_to_cluster:
+                continue
+            dst_cluster = file_to_cluster[resolved]
+            if dst_cluster != src_cluster:
+                cross_edges[src_cluster][dst_cluster] += 1
+
+    return dict(cross_edges)
+
+
+def compute_internal_cohesion(
+    cluster_mapping: dict[str, list[str]],
+    signatures: dict[str, FileSignature],
+    file_set: set[str] | None = None,
+    alias_map: dict[str, str] | None = None,
+    monorepo_packages: set[str] | None = None,
+) -> dict[str, float]:
+    """Computes internal import density per cluster.
+
+    Returns:
+        {cluster_name: density} where density = internal_edges / (n * (n-1))
+        for clusters with n >= 2 files. Single-file clusters get density 1.0.
+    """
+    if not cluster_mapping:
+        return {}
+
+    if file_set is None:
+        file_set = {f for fs in cluster_mapping.values() for f in fs}
+
+    file_to_cluster: dict[str, str] = {}
+    for cluster_name, files in cluster_mapping.items():
+        for f in files:
+            file_to_cluster[f] = cluster_name
+
+    internal_edges: dict[str, int] = defaultdict(int)
+
+    for rel_path, sig in signatures.items():
+        if rel_path not in file_to_cluster:
+            continue
+        src_cluster = file_to_cluster[rel_path]
+        for import_path in sig.imports:
+            resolved = _resolve_import(
+                rel_path, import_path, file_set,
+                alias_map=alias_map or {},
+                monorepo_packages=monorepo_packages,
+            )
+            if resolved and resolved in file_to_cluster and file_to_cluster[resolved] == src_cluster:
+                internal_edges[src_cluster] += 1
+
+    result: dict[str, float] = {}
+    for name, files in cluster_mapping.items():
+        n = len(files)
+        if n <= 1:
+            result[name] = 1.0
+        else:
+            max_possible = n * (n - 1)
+            result[name] = internal_edges.get(name, 0) / max_possible if max_possible > 0 else 0.0
+
+    return result
+
+
 # Generic structural directories — skip these when looking for business domain
 _STRUCTURAL_DIRS = {
     "src", "app", "lib", "pkg", "internal", "core",
@@ -571,3 +670,42 @@ def _unique_name(name: str, existing: dict) -> str:
     while f"{name}-{suffix}" in existing:
         suffix += 1
     return f"{name}-{suffix}"
+
+
+def resolve_symbol_imports(
+    signatures: dict[str, FileSignature],
+    alias_map: dict[str, str] | None = None,
+    monorepo_packages: set[str] | None = None,
+) -> dict[str, dict[str, set[str]]]:
+    """Resolves which symbols each file imports from other project files.
+
+    Returns:
+        {importer_file: {imported_file: {symbol_name, ...}}}
+        For namespace imports (import * as X), the symbol set contains "*".
+    """
+    from faultline.analyzer.ast_extractor import extract_named_imports
+
+    file_set = set(signatures.keys())
+    result: dict[str, dict[str, set[str]]] = {}
+
+    for file_path, sig in signatures.items():
+        if not sig.source:
+            continue
+        named = extract_named_imports(sig.source)
+        if not named:
+            continue
+
+        file_imports: dict[str, set[str]] = {}
+        for module_path, symbols in named.items():
+            resolved = _resolve_import(
+                file_path, module_path, file_set,
+                alias_map=alias_map,
+                monorepo_packages=monorepo_packages,
+            )
+            if resolved and resolved in signatures:
+                file_imports.setdefault(resolved, set()).update(symbols)
+
+        if file_imports:
+            result[file_path] = file_imports
+
+    return result

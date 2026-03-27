@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 
-from faultline.models.types import Commit, Feature, FeatureMap, Flow, PullRequest, TimelinePoint
+from faultline.models.types import Commit, Feature, FeatureMap, Flow, PullRequest, SymbolAttribution, TimelinePoint
 
 _MAX_FILES_PER_BULK_COMMIT = 30  # commits touching more files than this are excluded (bulk ops)
 _MIN_COCHANGE_COMMITS = 2        # minimum shared commits for a pair to count
@@ -366,11 +366,15 @@ def build_feature_map(
     feature_paths: dict[str, list[str]],
     days: int,
     remote_url: str = "",
+    shared_attributions: dict[str, list[SymbolAttribution]] | None = None,
 ) -> FeatureMap:
     """Builds a FeatureMap by joining commits with detected features."""
 
     # Merge small/granular features before computing metrics
     feature_paths = _merge_small_features(feature_paths)
+
+    # Deduplicate paths within each feature
+    feature_paths = {name: list(dict.fromkeys(paths)) for name, paths in feature_paths.items()}
 
     # Build file→feature index for O(1) lookup + dir-based fallback for deleted/renamed files
     file_to_feature: dict[str, str] = {}
@@ -382,7 +386,17 @@ def build_feature_map(
             if parent != ".":
                 dir_to_feature.setdefault(parent, feature_name)
 
+    # Pre-compute symbol weights for shared files:
+    # symbol_weights[feature_name][file_path] = weight (0.0-1.0)
+    symbol_weights: dict[str, dict[str, float]] = {}
+    if shared_attributions:
+        for feat_name, attributions in shared_attributions.items():
+            for attr in attributions:
+                weight = attr.attributed_lines / attr.total_file_lines if attr.total_file_lines > 0 else 1.0
+                symbol_weights.setdefault(feat_name, {})[attr.file_path] = min(weight, 1.0)
+
     feature_commits: dict[str, list[Commit]] = defaultdict(list)
+    feature_commit_weights: dict[str, dict[str, float]] = defaultdict(dict)
     feature_authors: dict[str, set[str]] = defaultdict(set)
     feature_last_modified: dict[str, datetime] = {}
 
@@ -392,7 +406,6 @@ def build_feature_map(
         for file_path in commit.files_changed:
             feat = file_to_feature.get(file_path)
             if not feat:
-                # Fallback: match by directory (catches deleted/renamed files)
                 parent = str(Path(file_path).parent)
                 feat = dir_to_feature.get(parent)
             if feat:
@@ -402,7 +415,15 @@ def build_feature_map(
             feature_commits[feature_name].append(commit)
             feature_authors[feature_name].add(commit.author)
 
-            # Track the most recent modification date
+            # Compute commit weight: max weight across all files touched in this commit
+            # that belong to this feature (1.0 for non-shared files)
+            max_weight = 0.0
+            feat_weights = symbol_weights.get(feature_name, {})
+            for fp in commit.files_changed:
+                if file_to_feature.get(fp) == feature_name or dir_to_feature.get(str(Path(fp).parent)) == feature_name:
+                    max_weight = max(max_weight, feat_weights.get(fp, 1.0))
+            feature_commit_weights[feature_name][commit.sha] = max_weight or 1.0
+
             if feature_name not in feature_last_modified or \
                commit.date > feature_last_modified[feature_name]:
                 feature_last_modified[feature_name] = commit.date
@@ -414,6 +435,14 @@ def build_feature_map(
 
         bug_fixes = sum(1 for c in commits_for_feature if c.is_bug_fix)
         bug_fix_ratio = bug_fixes / total if total > 0 else 0.0
+
+        # Symbol-weighted health score
+        sym_health = None
+        commit_weights = feature_commit_weights.get(feature_name, {})
+        if shared_attributions and feature_name in shared_attributions and total > 0:
+            sym_health = _calculate_weighted_health(commits_for_feature, commit_weights)
+
+        feat_attributions = shared_attributions.get(feature_name, []) if shared_attributions else []
 
         features.append(Feature(
             name=feature_name,
@@ -428,6 +457,8 @@ def build_feature_map(
             ),
             health_score=_calculate_health(bug_fix_ratio, total, commits_for_feature) if total > 0 else 100.0,
             bug_fix_prs=_collect_prs(commits_for_feature, remote_url),
+            shared_attributions=feat_attributions,
+            symbol_health_score=round(sym_health, 1) if sym_health is not None else None,
         ))
 
     return FeatureMap(
@@ -640,5 +671,43 @@ def _calculate_health(
 
     base_score = max(0.0, 100.0 - (effective_ratio * 200))
     activity_factor = min(1.0, total_commits / 50)
+
+    return round(base_score * activity_factor + base_score * (1 - activity_factor) * 0.8, 1)
+
+
+def _calculate_weighted_health(
+    commits: list[Commit],
+    commit_weights: dict[str, float],
+) -> float:
+    """Calculates health score with symbol-level line-range weights.
+
+    Same formula as _calculate_health but each commit's contribution is
+    scaled by its weight (fraction of shared file lines attributed to
+    this feature). Non-shared file commits have weight 1.0.
+    """
+    if not commits:
+        return 100.0
+
+    now = datetime.now(tz=timezone.utc)
+    weighted_bugs = 0.0
+    weighted_total = 0.0
+
+    for c in commits:
+        age_days = (now - c.date).days
+        age_weight = 2.0 if age_days < 30 else max(0.5, 1.0 - (age_days - 30) / 365)
+        sym_weight = commit_weights.get(c.sha, 1.0)
+        combined = age_weight * sym_weight
+
+        weighted_total += combined
+        if c.is_bug_fix:
+            weighted_bugs += combined
+
+    if weighted_total == 0:
+        return 100.0
+
+    effective_ratio = weighted_bugs / weighted_total
+    base_score = max(0.0, 100.0 - (effective_ratio * 200))
+    total = sum(commit_weights.get(c.sha, 1.0) for c in commits)
+    activity_factor = min(1.0, total / 50)
 
     return round(base_score * activity_factor + base_score * (1 - activity_factor) * 0.8, 1)
