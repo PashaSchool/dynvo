@@ -254,11 +254,24 @@ def analyze(
                 f"[dim]Import graph: {ts_js_sig_count} TS/JS files → {len(raw_mapping)} clusters[/dim]"
             )
 
+            # Compute inter-cluster import connections for LLM context
+            from faultline.analyzer.import_graph import compute_cluster_edges
+            edges = compute_cluster_edges(
+                raw_mapping, signatures,
+                file_set=set(analysis_files),
+                alias_map=tsconfig_paths,
+                monorepo_packages=monorepo_pkgs or None,
+            )
+            if edges:
+                total_cross = sum(sum(v.values()) for v in edges.values())
+                console.print(f"[dim]Inter-cluster edges: {total_cross} cross-imports[/dim]")
+
             # Step 2a — LLM: merge related clusters into business features + name them
             if llm:
                 raw_mapping = _merge_and_name_with_llm(
                     raw_mapping, provider, api_key, model, ollama_url,
                     commits=commits, layer_context=layer_context,
+                    cluster_edges=edges,
                 )
         elif llm:
             # No import graph (Python, Ruby, Go, etc.) — LLM does file-level detection
@@ -289,6 +302,31 @@ def analyze(
 
         console.print(f"[green]✓[/green] Detected {len(feature_paths)} features")
 
+        # 5b. Symbol-level attribution for shared files (TS/JS only)
+        shared_attributions = None
+        if signatures and ts_js_sig_count >= _MIN_SIGNATURES_FOR_IMPORT_GRAPH:
+            from faultline.analyzer.import_graph import resolve_symbol_imports, load_tsconfig_paths as _ltp
+            from faultline.analyzer.shared_files import build_shared_attributions
+
+            # Build signatures index with full paths (matching feature_paths)
+            full_path_sigs = {}
+            for rel, sig in signatures.items():
+                full_key = (path_prefix + rel) if path_prefix else rel
+                full_path_sigs[full_key] = sig
+
+            tsconfig = load_tsconfig_paths(str(repo.working_tree_dir)) if not locals().get("tsconfig_paths") else tsconfig_paths
+            symbol_imports = resolve_symbol_imports(
+                full_path_sigs,
+                alias_map=tsconfig,
+                monorepo_packages=monorepo_pkgs if locals().get("monorepo_pkgs") else None,
+            )
+            shared_attributions = build_shared_attributions(
+                feature_paths, symbol_imports, full_path_sigs,
+            )
+            if shared_attributions:
+                shared_count = sum(len(v) for v in shared_attributions.values())
+                console.print(f"[dim]Symbol attribution: {shared_count} shared file mappings across {len(shared_attributions)} features[/dim]")
+
         # 6. Build the feature map
         feature_map = build_feature_map(
             repo_path=repo_path,
@@ -296,6 +334,7 @@ def analyze(
             feature_paths=feature_paths,
             days=days,
             remote_url=remote_url,
+            shared_attributions=shared_attributions,
         )
 
         # 6b. Read coverage data (if available)
@@ -416,6 +455,7 @@ def _merge_and_name_with_llm(
     ollama_url: str,
     commits=None,
     layer_context: str = "",
+    cluster_edges: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, list[str]]:
     """Merges import-graph clusters into business features and names them.
 
@@ -432,7 +472,10 @@ def _merge_and_name_with_llm(
     if provider == "anthropic":
         from faultline.llm.detector import merge_and_name_clusters_llm
         console.print("[blue]Merging & naming features with Claude...[/blue]")
-        named = merge_and_name_clusters_llm(cluster_mapping, api_key=api_key, commits=commits, layer_context=layer_context)
+        named = merge_and_name_clusters_llm(
+            cluster_mapping, api_key=api_key, commits=commits,
+            layer_context=layer_context, cluster_edges=cluster_edges,
+        )
 
     elif provider == "ollama":
         from faultline.llm.detector import merge_and_name_clusters_ollama, _DEFAULT_OLLAMA_MODEL

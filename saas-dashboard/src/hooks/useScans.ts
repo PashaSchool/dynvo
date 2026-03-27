@@ -1,21 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { fetchScans, fetchScan } from "../api";
 import type { ScanMeta } from "../api";
 import type { FeatureMap } from "../types";
+
+const POLL_INTERVAL = 5_000;
 
 export function useScans() {
   const [scans, setScans] = useState<ScanMeta[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const prevCountRef = useRef(0);
 
-  useEffect(() => {
+  const poll = useCallback(() => {
     fetchScans()
-      .then(setScans)
+      .then((data) => {
+        setScans(data);
+        prevCountRef.current = data.length;
+      })
       .catch((e) => setError(String(e)))
       .finally(() => setIsLoading(false));
   }, []);
 
-  return { scans, isLoading, error };
+  useEffect(() => {
+    poll();
+    const id = setInterval(poll, POLL_INTERVAL);
+    return () => clearInterval(id);
+  }, [poll]);
+
+  const hasNewScan = scans.length > prevCountRef.current && prevCountRef.current > 0;
+
+  return { scans, isLoading, error, hasNewScan };
 }
 
 export function useScan(filename: string | null) {

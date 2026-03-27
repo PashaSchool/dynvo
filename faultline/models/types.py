@@ -53,6 +53,21 @@ class Flow(BaseModel):
     coverage_pct: float | None = None        # avg line coverage % across source files; None if unavailable
 
 
+class SymbolRange(BaseModel):
+    name: str              # exported symbol name, e.g. "FEATURE_FLAGS"
+    start_line: int        # 1-indexed, inclusive
+    end_line: int          # 1-indexed, inclusive
+    kind: str = "const"    # "const", "function", "class", "type", "enum", "reexport"
+
+
+class SymbolAttribution(BaseModel):
+    file_path: str                          # the shared file
+    symbols: list[str]                      # symbol names attributed to this feature
+    line_ranges: list[tuple[int, int]]      # merged non-overlapping (start, end) spans
+    attributed_lines: int                   # total lines across all ranges
+    total_file_lines: int                   # total lines in the file
+
+
 class Feature(BaseModel):
     name: str
     description: str | None = None  # LLM-generated semantic description
@@ -66,6 +81,8 @@ class Feature(BaseModel):
     flows: list[Flow] = []    # populated when --flows flag is used
     bug_fix_prs: list[PullRequest] = []
     coverage_pct: float | None = None  # avg line coverage % across source files; None if unavailable
+    shared_attributions: list[SymbolAttribution] = []  # symbol-scoped data for shared files
+    symbol_health_score: float | None = None           # health score weighted by symbol line ranges
 
 
 class FeatureMap(BaseModel):

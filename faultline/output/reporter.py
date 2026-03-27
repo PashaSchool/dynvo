@@ -87,14 +87,15 @@ def _print_features_flat(feature_map: FeatureMap) -> None:
         table.add_column("Cov %", justify="right", width=8)
 
     for feature in feature_map.sorted_by_risk():
-        color = _health_color(feature.health_score)
-        icon = _health_icon(feature.health_score)
+        display_health = feature.symbol_health_score if feature.symbol_health_score is not None else feature.health_score
+        color = _health_color(display_health)
+        icon = _health_icon(display_health)
         bug_pct = f"{feature.bug_fix_ratio * 100:.1f}%"
 
         row = [
             f"[{color}]{icon}[/]",
             feature.name,
-            f"[{color}]{feature.health_score:.0f}[/]",
+            f"[{color}]{display_health:.0f}[/]",
             str(feature.total_commits),
             f"[{color}]{feature.bug_fixes}[/]" if feature.bug_fixes > 0 else "0",
             f"[{color}]{bug_pct}[/]",
@@ -131,15 +132,16 @@ def _print_features_with_flows(feature_map: FeatureMap) -> None:
     table.add_column("Bug %", justify="right", width=8)
 
     for feature in feature_map.sorted_by_risk():
-        f_color = _health_color(feature.health_score)
-        f_icon = _health_icon(feature.health_score)
+        f_display_health = feature.symbol_health_score if feature.symbol_health_score is not None else feature.health_score
+        f_color = _health_color(f_display_health)
+        f_icon = _health_icon(f_display_health)
         f_pct = f"{feature.bug_fix_ratio * 100:.1f}%"
 
         # Feature header row
         table.add_row(
             f"[{f_color}]{f_icon}[/]",
             f"[bold]{feature.name}[/bold]",
-            f"[{f_color} bold]{feature.health_score:.0f}[/]",
+            f"[{f_color} bold]{f_display_health:.0f}[/]",
             f"[bold]{feature.total_commits}[/bold]",
             f"[{f_color} bold]{feature.bug_fixes}[/]" if feature.bug_fixes > 0 else "[bold]0[/bold]",
             f"[{f_color} bold]{f_pct}[/]",
