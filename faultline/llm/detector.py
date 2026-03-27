@@ -390,10 +390,12 @@ def detect_features_llm(
             return {}
         result = _build_feature_dict(response, set(files))
 
-    # Post-process: re-split oversized features, then redistribute
+    # Post-process: extract shared UI, re-split oversized features, then redistribute
+    result = _extract_shared_ui(result)
     result = _resplit_oversized_features(client, result)
     result = _redistribute_oversized_features(result)
-    return _redistribute_infra_features(result)
+    result = _redistribute_infra_features(result)
+    return _final_cleanup(result)
 
 
 _RESPLIT_FILE_THRESHOLD = 40
@@ -565,11 +567,7 @@ def _redistribute_oversized_features(
     # Remove empty features that didn't get any files
     small = {n: fs for n, fs in small.items() if fs}
 
-    # Fix features with numeric/garbage names (LLM naming bugs)
-    small = _fix_numeric_feature_names(small)
-
-    # Merge fragmented features that share a common prefix
-    return _merge_prefix_siblings(small)
+    return small
 
 
 _RE_NUMERIC_SUFFIX = re.compile(r"-\d+$")
@@ -578,53 +576,79 @@ _RE_NUMERIC_SUFFIX = re.compile(r"-\d+$")
 def _fix_numeric_feature_names(
     features: dict[str, list[str]],
 ) -> dict[str, list[str]]:
-    """Renames features with numeric suffixes (LLM naming bugs) using directory names.
+    """Eliminates features with numeric suffixes (LLM naming bugs).
 
-    E.g. "ui-4" with files in Steps/ → renamed to "ui-steps".
+    For each numeric-suffix feature (e.g. "ndr-2", "ui-4"):
+    1. If files span multiple directories → split by directory, name each sub-group
+    2. If files are in one directory → derive name from that directory
+    3. Try to merge into existing features with matching names
+    4. If no match → create properly named new features
+
+    This function GUARANTEES no numeric-suffix features in the output.
     """
+    numeric = {}
     result: dict[str, list[str]] = {}
-    for name, files in features.items():
-        if not _RE_NUMERIC_SUFFIX.search(name) or not files:
-            result[name] = files
-            continue
 
-        # Derive name from the most specific common directory of files
+    for name, files in features.items():
+        if _RE_NUMERIC_SUFFIX.search(name) and files:
+            numeric[name] = files
+        else:
+            result[name] = files
+
+    if not numeric:
+        return result
+
+    for name, files in numeric.items():
         prefix = _RE_NUMERIC_SUFFIX.sub("", name)
         prefix_lower = prefix.lower()
 
-        # Collect the deepest meaningful directory that differs from the prefix
-        dirs = set()
+        # Group files by their most specific meaningful directory
+        dir_groups: dict[str, list[str]] = {}
         for f in files:
             parts = Path(f).parts
             best_part = None
-            for part in parts[:-1]:  # exclude filename
+            for part in parts[:-1]:
                 lower = part.lower()
                 if lower in _SKIP_DIRS or lower in _SHARED_DIR_PATTERNS:
                     continue
-                # Skip dirs that match the prefix (ndr/ when prefix is "ndr")
                 norm = re.sub(r"([a-z])([A-Z])", r"\1-\2", part).lower()
                 if norm == prefix_lower:
                     continue
                 best_part = part
-            if best_part:
-                dirs.add(best_part)
+            group_key = best_part or "__root__"
+            dir_groups.setdefault(group_key, []).append(f)
 
-        if len(dirs) == 1:
-            dir_name = re.sub(r"([a-z])([A-Z])", r"\1-\2", dirs.pop()).lower()
-            new_name = f"{prefix}-{dir_name}" if prefix else dir_name
-        elif len(dirs) == 0:
-            new_name = prefix if prefix else name  # all files in same prefix dir
-        else:
-            new_name = name  # can't determine, keep as-is
+        # For each sub-group, derive a proper name and merge/create
+        for dir_key, group_files in dir_groups.items():
+            if dir_key == "__root__":
+                new_name = prefix if prefix else name.rstrip("-0123456789")
+            else:
+                dir_name = re.sub(r"([a-z])([A-Z])", r"\1-\2", dir_key).lower()
+                new_name = f"{prefix}-{dir_name}" if prefix else dir_name
 
-        # Merge into existing feature or create new
-        if new_name in result:
-            result[new_name].extend(files)
-        else:
-            result[new_name] = files
+            # Try to merge into an existing feature
+            merged = False
+            # Exact match
+            if new_name in result:
+                result[new_name].extend(group_files)
+                merged = True
+            else:
+                # Try keyword match against existing features
+                keywords = set(new_name.split("-"))
+                keywords.discard("")
+                for feat_name in list(result.keys()):
+                    feat_keywords = set(feat_name.split("-"))
+                    # If the new name shares ≥2 keywords with an existing feature, merge
+                    overlap = keywords & feat_keywords
+                    if len(overlap) >= 2 or (len(overlap) == 1 and len(keywords) == 1):
+                        result[feat_name].extend(group_files)
+                        merged = True
+                        logger.info("Merged numeric '%s' (%s) into existing '%s'", name, dir_key, feat_name)
+                        break
 
-        if new_name != name:
-            logger.info("Renamed '%s' → '%s'", name, new_name)
+            if not merged:
+                result.setdefault(new_name, []).extend(group_files)
+                logger.info("Renamed numeric '%s' → '%s' (%d files)", name, new_name, len(group_files))
 
     return result
 
@@ -676,6 +700,19 @@ def _merge_prefix_siblings(
         logger.info("Merged %d siblings into '%s' (%d files)", len(siblings), base_name, len(merged_files))
 
     return result
+
+
+def _final_cleanup(result: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Guaranteed last step in every pipeline path.
+
+    1. Fix numeric feature names (ndr-2 → ndr-auto-segmentation)
+    2. Merge prefix siblings (complex-query-hooks + complex-query-utils → complex-query)
+    3. Remove empty features
+    """
+    result = {n: fs for n, fs in result.items() if fs}
+    result = _fix_numeric_feature_names(result)
+    result = _merge_prefix_siblings(result)
+    return {n: fs for n, fs in result.items() if fs}
 
 
 # Directories that are shared infrastructure, not business features
@@ -979,6 +1016,61 @@ def _match_file_to_feature(
             return feature_keywords[part]
 
     return None
+
+
+def _extract_shared_ui(
+    result: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Extracts shared UI library files from business features into a dedicated shared-ui feature.
+
+    Files matching shared UI patterns (components/ui/, common UI directories) are
+    generic reusable components that happen to be imported by business features.
+    The import graph clusters them together, but they should be in their own bucket.
+
+    Only extracts from features where the UI files are clearly a shared library
+    (living in a generic ui/ directory), not domain-specific UI (e.g. NDR/components/ui/).
+    """
+    # Patterns that indicate a shared UI library (not domain-specific UI)
+    _SHARED_UI_PATTERNS = (
+        "/components/ui/",
+        "/ui/hooks/",
+        "/ui/@types/",
+    )
+    # Domain-specific UI dirs that should stay in their business feature
+    # e.g. src/views/NDR/Home/components/ui/ is NDR-specific
+    _DOMAIN_UI_INDICATORS = ("/views/", "/features/", "/pages/", "/screens/")
+
+    shared_ui_files: list[str] = []
+    cleaned: dict[str, list[str]] = {}
+
+    for name, files in result.items():
+        kept: list[str] = []
+        for f in files:
+            is_shared_ui = (
+                any(p in f for p in _SHARED_UI_PATTERNS)
+                and not any(d in f.split("/components/ui/")[0] if "/components/ui/" in f else "" for d in _DOMAIN_UI_INDICATORS)
+            )
+            if is_shared_ui:
+                # Check it's truly top-level shared, not nested under a domain view
+                prefix = f.split("/components/ui/")[0] if "/components/ui/" in f else f.split("/ui/hooks/")[0] if "/ui/hooks/" in f else ""
+                is_domain = any(indicator in prefix for indicator in _DOMAIN_UI_INDICATORS)
+                if is_domain:
+                    kept.append(f)
+                else:
+                    shared_ui_files.append(f)
+            else:
+                kept.append(f)
+        if kept:
+            cleaned[name] = kept
+
+    if shared_ui_files:
+        # Merge into existing shared-ui or create new
+        existing = cleaned.get("shared-ui", [])
+        existing.extend(shared_ui_files)
+        cleaned["shared-ui"] = list(dict.fromkeys(existing))  # dedup
+        logger.info("Extracted %d shared UI files from business features into 'shared-ui'", len(shared_ui_files))
+
+    return cleaned
 
 
 def _redistribute_infra_features(
@@ -2797,9 +2889,11 @@ def merge_and_name_clusters_llm(
     if cached is not None:
         if isinstance(next(iter(cached.values()), None), list):
             # Cache stores LLM merge result before redistribute — apply redistribute now
-            return _redistribute_oversized_features(
-                _redistribute_infra_features(cached)  # type: ignore[arg-type]
-            )
+            return _final_cleanup(_redistribute_oversized_features(
+                _redistribute_infra_features(
+                    _extract_shared_ui(cached)  # type: ignore[arg-type]
+                )
+            ))
 
     keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
 
@@ -2822,9 +2916,10 @@ def merge_and_name_clusters_llm(
         # Validate: revert merges with low internal cohesion
         merged = _validate_merge_cohesion(merged, working_clusters, merge_response)
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+        merged = _extract_shared_ui(merged)
         merged = _redistribute_infra_features(merged)
         merged = _redistribute_oversized_features(merged)
-        return merged
+        return _final_cleanup(merged)
 
     # Single-shot failed (likely truncation) — try chunked merge
     if len(working_clusters) > _MERGE_CHUNK_SIZE:
@@ -2837,9 +2932,9 @@ def merge_and_name_clusters_llm(
             _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
             merged = _redistribute_infra_features(merged)
             merged = _redistribute_oversized_features(merged)
-            return merged
+            return _final_cleanup(merged)
 
-    return working_clusters
+    return _final_cleanup(working_clusters)
 
 
 def _call_cluster_merge_ollama(
@@ -2893,9 +2988,11 @@ def merge_and_name_clusters_ollama(
     cached = _read_name_cache(cache_key)
     if cached is not None:
         if isinstance(next(iter(cached.values()), None), list):
-            return _redistribute_oversized_features(
-                _redistribute_infra_features(cached)  # type: ignore[arg-type]
-            )
+            return _final_cleanup(_redistribute_oversized_features(
+                _redistribute_infra_features(
+                    _extract_shared_ui(cached)  # type: ignore[arg-type]
+                )
+            ))
 
     keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
 
@@ -2905,11 +3002,12 @@ def merge_and_name_clusters_ollama(
             _apply_cluster_merge(working_clusters, merge_response),
         )
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+        merged = _extract_shared_ui(merged)
         merged = _redistribute_infra_features(merged)
         merged = _redistribute_oversized_features(merged)
-        return merged
+        return _final_cleanup(merged)
 
-    return working_clusters
+    return _final_cleanup(working_clusters)
 
 
 # ── Cluster naming (co-change grouping → semantic names) ─────────────────────

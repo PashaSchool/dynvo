@@ -617,8 +617,17 @@ def _detect_flows(
 
         # Skip flow detection for features with very few commits — not enough
         # signal to split into meaningful flows
-        _MIN_COMMITS_FOR_FLOWS = 5
+        _MIN_COMMITS_FOR_FLOWS = 3
         if feature.total_commits < _MIN_COMMITS_FOR_FLOWS:
+            updated_features.append(feature)
+            continue
+
+        # Skip flow detection for non-user-facing features (infra, configs, shared)
+        _SKIP_FLOW_PREFIXES = (
+            "shared-", "app-shell", "constants", "config", "custom-utils",
+            "custom-hooks", "shared", "zustand", "slices", "@types",
+        )
+        if any(feature.name.startswith(p) or feature.name == p for p in _SKIP_FLOW_PREFIXES):
             updated_features.append(feature)
             continue
 
