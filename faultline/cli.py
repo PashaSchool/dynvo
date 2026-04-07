@@ -97,6 +97,17 @@ def analyze(
         "--strategy",
         help="Feature detection strategy: auto (current pipeline) or iterative (3-phase LLM pipeline, better for large repos)",
     ),
+    legacy: bool = typer.Option(
+        False,
+        "--legacy",
+        help=(
+            "Fall back to the pre-rewrite 5-strategy detection pipeline. "
+            "The default is the new single-call Sonnet pipeline "
+            "(faultline.llm.pipeline.run). Use this only if the new pipeline "
+            "produces worse results on your repo."
+        ),
+        is_flag=True,
+    ),
     flows: bool = typer.Option(
         False,
         "--flows",
@@ -252,6 +263,55 @@ def analyze(
         if signatures:
             console.print(f"[dim]Extracted signatures from {len(signatures)} files[/dim]")
 
+        # ── Day 9: new-pipeline cutover ──
+        # When the gate passes, run faultline.llm.pipeline.run() — a single
+        # Sonnet-based dispatch that replaces the legacy 5-strategy block
+        # below. We fall through to the legacy path when any of these are
+        # true:
+        #   • --legacy was passed explicitly
+        #   • --llm is off (heuristic-only analysis)
+        #   • provider is ollama or deepseek (the new pipeline is
+        #     Anthropic-only for now)
+        # The result is assigned to ``raw_mapping`` just like the legacy
+        # branches do, so everything downstream (path_prefix restore,
+        # build_feature_map, flow detection, analytics) stays unchanged.
+        raw_mapping: dict[str, list[str]] | None = None
+        _new_pipeline_result = None
+        _use_new_pipeline = llm and not legacy and provider == "anthropic"
+        if _use_new_pipeline:
+            from faultline.llm.pipeline import run as _run_new_pipeline
+            console.print(
+                "[blue]Running new pipeline[/blue] "
+                "(pass [dim]--legacy[/dim] to use the 5-strategy fallback)"
+            )
+            try:
+                _new_pipeline_result = _run_new_pipeline(
+                    analysis_files=analysis_files,
+                    workspace=workspace,
+                    repo_structure=repo_structure,
+                    signatures=signatures,
+                    commits=commits,
+                    api_key=api_key,
+                    model=model,
+                )
+            except Exception as exc:  # pragma: no cover - surfacing guidance
+                console.print(
+                    f"[yellow]New pipeline raised {type(exc).__name__}: {exc} — "
+                    f"falling through to legacy[/yellow]"
+                )
+                _new_pipeline_result = None
+
+            if _new_pipeline_result is None:
+                console.print(
+                    "[yellow]New pipeline returned no features — "
+                    "falling through to legacy[/yellow]"
+                )
+            else:
+                raw_mapping = dict(_new_pipeline_result.features)
+                console.print(
+                    f"[green]✓[/green] New pipeline: {len(raw_mapping)} features"
+                )
+
         # ── Workspace-aware analysis: per-package detection + merge ──
         _TS_JS_EXTS = {".ts", ".tsx", ".js", ".jsx"}
         _MIN_SIGNATURES_FOR_IMPORT_GRAPH = 10
@@ -261,7 +321,13 @@ def analyze(
         _MAX_LLM_PACKAGES = 12  # limit LLM calls to largest packages
         _SKIP_PREFIXES = ("example", "sample", "demo", "template", "starter", "tutorial")
 
-        if workspace.detected and len(workspace.packages) >= 2 and llm:
+        if raw_mapping is not None:
+            # New pipeline already produced the mapping above — skip the
+            # legacy 5-strategy dispatch entirely. This is the Day 9
+            # cutover; the legacy branches below stay reachable via
+            # --legacy or whenever the new pipeline is gated off.
+            pass
+        elif workspace.detected and len(workspace.packages) >= 2 and llm:
             # Filter: skip example packages, sort by size, limit LLM calls
             llm_packages = [
                 p for p in workspace.packages
@@ -534,6 +600,17 @@ def analyze(
             shared_attributions=shared_attributions,
         )
 
+        # 6a. Day 9: inject descriptions from the new pipeline, if we
+        # used it. ``DeepScanResult.descriptions`` is keyed by the feature
+        # name Sonnet returned, which may differ from the canonicalized
+        # / path-prefixed name on ``feature_map.features[*]`` (e.g.
+        # singular/plural, or ``api/auth`` vs ``auth``). Match with the
+        # same fuzzy rule the deep-scan subcommand uses.
+        if _new_pipeline_result is not None and _new_pipeline_result.descriptions:
+            _inject_new_pipeline_descriptions(
+                feature_map, _new_pipeline_result.descriptions,
+            )
+
         # 6b. Read coverage data (if available)
         from faultline.analyzer.coverage import read_coverage
         coverage_data = read_coverage(str(repo.working_tree_dir), coverage_path=coverage)
@@ -597,6 +674,42 @@ def analyze(
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled[/yellow]")
         raise typer.Exit(0)
+
+
+def _inject_new_pipeline_descriptions(
+    feature_map,
+    descriptions: dict[str, str],
+) -> None:
+    """Copy Sonnet-authored feature descriptions onto the built feature map.
+
+    Sonnet returns descriptions keyed by the feature name it chose, which
+    may differ from the canonicalized name that survives through
+    ``build_feature_map`` (e.g. singular/plural collisions, or workspace
+    prefix collapse). Match with a small ladder of rules:
+
+      1. Exact name match
+      2. Either name contains the other (handles ``api/auth`` ↔ ``auth``)
+      3. Singular / plural strip (handles ``issue`` ↔ ``issues``)
+
+    The first rule that fires wins. A feature that already has a
+    description (from a previous scan or legacy path) is left alone.
+    Mirrors the deep-scan subcommand helper at cli.py:1197-1202 so the
+    two paths produce consistent output.
+    """
+    if not descriptions:
+        return
+    for feat in feature_map.features:
+        if feat.description:
+            continue
+        for desc_name, desc in descriptions.items():
+            if (
+                feat.name == desc_name
+                or feat.name in desc_name
+                or desc_name in feat.name
+                or feat.name.rstrip("s") == desc_name.rstrip("s")
+            ):
+                feat.description = desc
+                break
 
 
 def _detect_iterative(
