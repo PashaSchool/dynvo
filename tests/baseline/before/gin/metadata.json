@@ -1,0 +1,38 @@
+{
+  "status": "ok",
+  "returncode": 0,
+  "runtime_s": 10.3,
+  "tracked_files": 130,
+  "cmd": "faultline analyze /Users/pkuzina/workspace/_faultlines-testrepos/gin --output /Users/pkuzina/workspace/github-playground/featuremap/tests/baseline/before/gin/feature-map.json --days 365",
+  "llm_enabled": false,
+  "flows_enabled": false,
+  "feature_count": 10,
+  "flow_count": 0,
+  "test_features": [
+    "testdata"
+  ],
+  "feature_sizes_top10": [
+    52,
+    30,
+    17,
+    7,
+    5,
+    3,
+    2,
+    2,
+    1,
+    1
+  ],
+  "feature_names": [
+    "root",
+    "binding",
+    "docs",
+    "examples",
+    "gins",
+    "render",
+    "testdata",
+    "codec",
+    "bytesconv",
+    "fs"
+  ]
+}
