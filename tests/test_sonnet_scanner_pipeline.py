@@ -15,6 +15,7 @@ Scenarios are modeled on the real Day 1 baseline failures:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,15 +24,22 @@ import faultline.llm.sonnet_scanner as scanner
 from faultline.llm.cost import BudgetExceeded, CostTracker
 from faultline.analyzer.workspace import WorkspaceInfo, WorkspacePackage
 from faultline.llm.sonnet_scanner import (
+    DeepScanResult,
     SonnetFeature,
     SonnetFlow,
     SonnetOpsResponse,
     _build_system_prompt,
     _clean_inputs,
     _finalize_result,
+    build_commit_context,
     deep_scan,
     deep_scan_workspace,
 )
+
+
+def _ds_result(features: dict[str, list[str]]) -> DeepScanResult:
+    """Build a minimal DeepScanResult for mocked deep_scan returns."""
+    return DeepScanResult(features=features)
 
 
 # ── _clean_inputs: D2, D3 ────────────────────────────────────────────────
@@ -674,7 +682,9 @@ class TestDeepScanWorkspace:
         ws = _ws(packages=[_pkg("dashboard", "apps/dashboard", 100)])
 
         with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
-            mock_ds.return_value = {"dashboard": [f"src/file{i}.ts" for i in range(100)]}
+            mock_ds.return_value = _ds_result(
+                {"dashboard": [f"src/file{i}.ts" for i in range(100)]}
+            )
             deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
 
         assert mock_ds.call_count == 1
@@ -688,9 +698,9 @@ class TestDeepScanWorkspace:
         Avoids ugly names like ``auth/auth``."""
         ws = _ws(packages=[_pkg("auth", "packages/auth", 50)])
         with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
-            mock_ds.return_value = {
+            mock_ds.return_value = _ds_result({
                 "auth": [f"src/file{i}.ts" for i in range(50)],
-            }
+            })
             result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
 
         assert "auth" in result
@@ -702,11 +712,11 @@ class TestDeepScanWorkspace:
         """When the LLM returns N>1 features, they get ``{pkg}/{name}`` keys."""
         ws = _ws(packages=[_pkg("api", "apps/api", 200)])
         with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
-            mock_ds.return_value = {
+            mock_ds.return_value = _ds_result({
                 "auth": [f"src/file{i}.ts" for i in range(60)],
                 "billing": [f"src/file{i}.ts" for i in range(60, 130)],
                 "webhooks": [f"src/file{i}.ts" for i in range(130, 200)],
-            }
+            })
             result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
 
         assert "api/auth" in result
@@ -725,10 +735,10 @@ class TestDeepScanWorkspace:
             root_files=["package.json", ".github/workflows/ci.yml"],
         )
         with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
-            mock_ds.return_value = {
+            mock_ds.return_value = _ds_result({
                 "auth": [f"src/file{i}.ts" for i in range(180)],
                 "shared-infra": [f"src/file{i}.ts" for i in range(180, 200)],
-            }
+            })
             result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
 
         assert "api/shared-infra" not in result
@@ -758,7 +768,7 @@ class TestDeepScanWorkspace:
         ])
         tracker = CostTracker()
         with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
-            mock_ds.return_value = {"x": ["src/file0.ts"]}
+            mock_ds.return_value = _ds_result({"x": ["src/file0.ts"]})
             deep_scan_workspace(
                 ws, api_key="sk-ant-test", tracker=tracker, min_files_for_llm=30,
             )
@@ -795,7 +805,7 @@ class TestDeepScanWorkspace:
         with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
             def capture(*args, **kwargs):
                 seen_order.append(kwargs["package_name"])
-                return {kwargs["package_name"]: ["src/file0.ts"]}
+                return _ds_result({kwargs["package_name"]: ["src/file0.ts"]})
             mock_ds.side_effect = capture
             deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
 
@@ -832,7 +842,7 @@ class TestDeepScanWorkspace:
         def fake_deep_scan(files, candidates, **kwargs):
             name = kwargs["package_name"]
             # Pretend the LLM returned one feature for each large package.
-            return {name: list(files)}
+            return _ds_result({name: list(files)})
 
         with patch(
             "faultline.llm.sonnet_scanner.deep_scan",
@@ -856,3 +866,286 @@ class TestDeepScanWorkspace:
         assert set(result.keys()) == expected_keys
         # Way under the 91-feature legacy baseline.
         assert len(result) <= 10
+
+
+# ── D5: commit context builder + injection ──────────────────────────────
+
+
+class _FakeCommit:
+    """Light stand-in for the Commit pydantic model used in tests."""
+    def __init__(self, date, files_changed):
+        self.date = date
+        self.files_changed = files_changed
+
+
+class TestBuildCommitContext:
+    def test_returns_none_for_empty_commits(self) -> None:
+        assert build_commit_context(None) is None
+        assert build_commit_context([]) is None
+
+    def test_excludes_commits_outside_window(self) -> None:
+        """Commits older than ``days`` must not contribute."""
+        old = _FakeCommit(
+            date=datetime.now(timezone.utc) - timedelta(days=120),
+            files_changed=["src/old/legacy.ts"],
+        )
+        recent = _FakeCommit(
+            date=datetime.now(timezone.utc) - timedelta(days=5),
+            files_changed=["src/auth/login.ts"],
+        )
+        ctx = build_commit_context([old, recent], days=90)
+        assert ctx is not None
+        assert "src/auth/login.ts" in ctx
+        assert "legacy" not in ctx
+
+    def test_aggregates_per_file_and_per_dir(self) -> None:
+        """Both files and parent dirs should appear, dirs marked with /."""
+        commits = [
+            _FakeCommit(
+                date=datetime.now(timezone.utc) - timedelta(days=1),
+                files_changed=["src/auth/login.ts", "src/auth/signup.ts"],
+            ),
+            _FakeCommit(
+                date=datetime.now(timezone.utc) - timedelta(days=2),
+                files_changed=["src/auth/login.ts"],
+            ),
+        ]
+        ctx = build_commit_context(commits, days=30)
+        assert ctx is not None
+        # Files
+        assert "src/auth/login.ts  2 commits" in ctx
+        assert "src/auth/signup.ts  1 commits" in ctx
+        # Directory rolled up — marked with trailing slash
+        assert "src/auth/  3 commits" in ctx
+
+    def test_top_n_caps_output_size(self) -> None:
+        commits = [
+            _FakeCommit(
+                date=datetime.now(timezone.utc) - timedelta(days=1),
+                files_changed=[f"src/feat{i}/index.ts"],
+            )
+            for i in range(50)
+        ]
+        ctx = build_commit_context(commits, top_n=5, days=30)
+        assert ctx is not None
+        assert len(ctx.splitlines()) == 5
+
+    def test_handles_naive_datetimes(self) -> None:
+        """gitpython sometimes hands us naive datetimes; must not crash."""
+        naive = _FakeCommit(
+            date=datetime.utcnow() - timedelta(days=1),
+            files_changed=["src/x.ts"],
+        )
+        ctx = build_commit_context([naive], days=30)
+        assert ctx is not None
+        assert "src/x.ts" in ctx
+
+    def test_returns_none_when_only_old_commits(self) -> None:
+        old = _FakeCommit(
+            date=datetime.now(timezone.utc) - timedelta(days=400),
+            files_changed=["src/old.ts"],
+        )
+        assert build_commit_context([old], days=90) is None
+
+
+class TestCommitContextInjection:
+    def setup_method(self) -> None:
+        scanner._last_scan_result = None
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_no_context_means_no_recent_activity_section(
+        self, mock_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        deep_scan(
+            files=["src/a.ts"],
+            candidates={"auth": ["src/a.ts", "src/b.ts"]},
+            api_key="sk-ant-test",
+        )
+        sent_user = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "## Recent activity" not in sent_user
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_context_appears_in_user_prompt(self, mock_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        deep_scan(
+            files=["src/a.ts"],
+            candidates={"auth": ["src/a.ts", "src/b.ts"]},
+            api_key="sk-ant-test",
+            commit_context="src/auth/login.ts  12 commits\nsrc/auth/  18 commits",
+        )
+        sent_user = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "## Recent activity" in sent_user
+        assert "src/auth/login.ts  12 commits" in sent_user
+        assert "src/auth/  18 commits" in sent_user
+
+
+# ── D10: DeepScanResult dataclass and dict shims ────────────────────────
+
+
+class TestDeepScanResultShims:
+    def test_features_attribute_is_primary(self) -> None:
+        r = DeepScanResult(features={"auth": ["a.ts"]})
+        assert r.features == {"auth": ["a.ts"]}
+
+    def test_dict_membership(self) -> None:
+        r = DeepScanResult(features={"auth": ["a.ts"]})
+        assert "auth" in r
+        assert "billing" not in r
+
+    def test_dict_indexing(self) -> None:
+        r = DeepScanResult(features={"auth": ["a.ts", "b.ts"]})
+        assert r["auth"] == ["a.ts", "b.ts"]
+
+    def test_dict_iteration(self) -> None:
+        r = DeepScanResult(features={"a": ["1"], "b": ["2"]})
+        assert sorted(list(r)) == ["a", "b"]
+        assert sorted(r.keys()) == ["a", "b"]
+
+    def test_dict_items_and_values(self) -> None:
+        r = DeepScanResult(features={"a": ["1"], "b": ["2", "3"]})
+        assert dict(r.items()) == {"a": ["1"], "b": ["2", "3"]}
+        assert sorted([len(v) for v in r.values()]) == [1, 2]
+
+    def test_len(self) -> None:
+        assert len(DeepScanResult(features={})) == 0
+        assert len(DeepScanResult(features={"a": ["1"], "b": ["2"]})) == 2
+
+    def test_truthiness(self) -> None:
+        assert not DeepScanResult(features={})
+        assert DeepScanResult(features={"a": ["1"]})
+
+    def test_get_with_default(self) -> None:
+        r = DeepScanResult(features={"auth": ["a.ts"]})
+        assert r.get("auth") == ["a.ts"]
+        assert r.get("missing", "fallback") == "fallback"
+
+
+class TestDeepScanReturnsDeepScanResult:
+    def setup_method(self) -> None:
+        scanner._last_scan_result = None
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_deep_scan_returns_dataclass(self, mock_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        result = deep_scan(
+            files=["src/auth/a.ts", "src/auth/b.ts"],
+            candidates={"auth": ["src/auth/a.ts", "src/auth/b.ts"]},
+            api_key="sk-ant-test",
+        )
+        assert isinstance(result, DeepScanResult)
+        assert "auth" in result
+        # Description from minimal ops json: name="auth", description="d"
+        assert result.descriptions.get("auth") == "d"
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_deep_scan_includes_cost_summary_when_tracker_used(
+        self, mock_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 1000, 500,
+        )
+
+        tracker = CostTracker()
+        result = deep_scan(
+            files=["src/a.ts"],
+            candidates={"auth": ["src/a.ts", "src/b.ts"]},
+            api_key="sk-ant-test",
+            tracker=tracker,
+        )
+        assert isinstance(result, DeepScanResult)
+        assert result.cost_summary is not None
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_deep_scan_no_tracker_means_none_cost(
+        self, mock_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        result = deep_scan(
+            files=["src/a.ts"],
+            candidates={"auth": ["src/a.ts", "src/b.ts"]},
+            api_key="sk-ant-test",
+        )
+        assert result.cost_summary is None
+
+    def test_workspace_returns_dataclass(self) -> None:
+        ws = _ws(packages=[_pkg("auth", "packages/auth", 5)])
+        result = deep_scan_workspace(ws, api_key="sk-ant-test")
+        assert isinstance(result, DeepScanResult)
+
+    def test_workspace_aggregates_flows_from_per_package_calls(self) -> None:
+        """Per-package DeepScanResult flows must surface in the merged result
+        under the final feature key (with package prefix when split)."""
+        ws = _ws(packages=[_pkg("api", "apps/api", 200)])
+
+        per_pkg = DeepScanResult(
+            features={
+                "auth": [f"src/file{i}.ts" for i in range(120)],
+                "billing": [f"src/file{i}.ts" for i in range(120, 200)],
+            },
+            flows={
+                "auth": ["login-flow", "signup-flow"],
+                "billing": ["checkout-flow"],
+            },
+            descriptions={
+                "auth": "Authentication and session management",
+                "billing": "Subscriptions and invoicing",
+            },
+        )
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+            return_value=per_pkg,
+        ):
+            result = deep_scan_workspace(
+                ws, api_key="sk-ant-test", min_files_for_llm=30,
+            )
+
+        assert isinstance(result, DeepScanResult)
+        # Multi-feature → keys are prefixed
+        assert "api/auth" in result.flows
+        assert "api/billing" in result.flows
+        assert result.flows["api/auth"] == ["login-flow", "signup-flow"]
+        assert "api/auth" in result.descriptions
+
+    def test_workspace_collapsed_single_feature_keeps_flows(self) -> None:
+        """Single-feature collapse: flows attached under the bare package
+        name, not the LLM-returned sub-feature name."""
+        ws = _ws(packages=[_pkg("auth", "packages/auth", 60)])
+        per_pkg = DeepScanResult(
+            features={"authentication": [f"src/file{i}.ts" for i in range(60)]},
+            flows={"authentication": ["login-flow"]},
+            descriptions={"authentication": "Login and signup"},
+        )
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+            return_value=per_pkg,
+        ):
+            result = deep_scan_workspace(
+                ws, api_key="sk-ant-test", min_files_for_llm=30,
+            )
+
+        assert "auth" in result.features
+        assert result.flows.get("auth") == ["login-flow"]
+        assert result.descriptions.get("auth") == "Login and signup"
