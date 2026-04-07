@@ -72,7 +72,7 @@ class SonnetOpsResponse(BaseModel):
 
 # ── Prompts ────────────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT_TEMPLATE = """\
 You are a senior software architect. You will receive pre-grouped feature \
 candidates from structural heuristics. Return operations to clean them up, \
 plus user flows for each surviving feature.
@@ -117,9 +117,11 @@ Format: {"from": "document", "into": ["document-signing", "document-templates", 
 Only split if you can clearly identify 2+ distinct business sub-domains from the file paths. \
 Do NOT split just because a candidate is large.
 
-## Target
+**HARD CAP: never produce more than 8 sub-features from a single split.** If you \
+cannot identify 8 or fewer cohesive business sub-domains, do not split — leave the \
+candidate as one feature.
 
-After all operations: **12-25 business features**. Not 5, not 50.
+{target_block}
 
 ## Feature rules
 
@@ -164,6 +166,56 @@ Return ONLY JSON, no text before or after:
 
 {"merge":[],"rename":[],"remove":[],"split":[],"features":[{"name":"x","description":"...","flows":[{"name":"y-flow","description":"..."}]}]}\
 """
+
+
+# Target-block variants. The repo-wide variant asks for 12-25 features. The
+# package variant tells the LLM it's analyzing a single monorepo package and
+# should return at most 8 features (often just 1). Both are injected into
+# ``_SYSTEM_PROMPT_TEMPLATE`` via ``_build_system_prompt``.
+_TARGET_REPO = (
+    "## Target\n\n"
+    "After all operations: **12-25 business features**. Not 5, not 50."
+)
+
+_TARGET_PACKAGE_TEMPLATE = (
+    "## Target\n\n"
+    "This is a single package within a monorepo (name: `{package_name}`). "
+    "Return **1-8 features** for this package only — NOT 12-25. If the package "
+    "has a single cohesive purpose (e.g. `auth`, `db`, `cli`), return ONE feature "
+    "named after the package. Only split into multiple features if you can identify "
+    "2 or more distinct business sub-domains from the file paths. **HARD CAP: never "
+    "more than 8 features for a single package, ever.**"
+)
+
+
+def _build_system_prompt(
+    *,
+    package_mode: bool = False,
+    package_name: str | None = None,
+) -> str:
+    """Render the system prompt with the right ``## Target`` block.
+
+    When ``package_mode`` is True the LLM is told it's analyzing a single
+    monorepo package and asked for 1-8 features instead of 12-25. Used by
+    ``deep_scan_workspace`` to drive per-package invocations without the
+    cli.py:304 ``_SPLIT_THRESHOLD=200`` hack (delta D7).
+    """
+    if package_mode:
+        # Use .replace, not .format — the template body contains literal
+        # '{' from JSON examples that would otherwise need double-escaping.
+        target = _TARGET_PACKAGE_TEMPLATE.replace(
+            "{package_name}", package_name or "unknown"
+        )
+    else:
+        target = _TARGET_REPO
+    return _SYSTEM_PROMPT_TEMPLATE.replace("{target_block}", target)
+
+
+# Backwards-compat alias for code that imported the old constant by name.
+# Resolves the repo-wide variant lazily so existing tests still see the
+# 12-25 target string they expect.
+_SYSTEM_PROMPT = _build_system_prompt()
+
 
 _USER_PROMPT = """\
 <candidates>
@@ -305,6 +357,8 @@ def deep_scan(
     is_library: bool = False,
     model: str | None = None,
     tracker: CostTracker | None = None,
+    package_mode: bool = False,
+    package_name: str | None = None,
 ) -> dict[str, list[str]] | None:
     """
     Performs a deep scan using Sonnet to detect features and flows.
@@ -325,6 +379,14 @@ def deep_scan(
             ``tracker.check_budget()`` is invoked immediately after —
             which may raise ``BudgetExceeded`` to abort the scan before
             the caller fires further requests.
+        package_mode: When True, swap the system prompt to a per-package
+            variant that asks for 1-8 features instead of 12-25. Used by
+            ``deep_scan_workspace`` to analyze a single monorepo package
+            in isolation. Default False (whole-repo mode).
+        package_name: Name of the package being analyzed in
+            ``package_mode``. Inserted into the per-package prompt so the
+            LLM knows what to call the resulting feature when collapsing
+            to a single bucket. Ignored when ``package_mode=False``.
 
     Returns:
         Tuple of (feature_paths, flow_data) where:
@@ -339,6 +401,10 @@ def deep_scan(
 
     client = anthropic.Anthropic(api_key=key)
     resolved_model = model or _MODEL
+    system_prompt = _build_system_prompt(
+        package_mode=package_mode,
+        package_name=package_name,
+    )
 
     # Pre-process: strip test and docs files before they reach the LLM.
     # This replaces the earlier scattered filtering and makes the LLM's
@@ -433,7 +499,7 @@ def deep_scan(
                 model=resolved_model,
                 max_tokens=8_192,
                 temperature=0,
-                system=_SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -560,6 +626,214 @@ def deep_scan(
     # phantoms, strip flows for libraries. All pure transformations —
     # unit-tested in tests/test_sonnet_scanner_pipeline.py.
     return _finalize_result(result, docs_files, is_library)
+
+
+# ── Workspace-aware orchestration (D6) ─────────────────────────────────────
+#
+# Monorepos like documenso (2.5K files) and cal.com (10K) timed out the
+# legacy single-call ``deep_scan`` at 600s. The fix is to call it once per
+# workspace package, with each call seeing only its own files. This keeps
+# every individual prompt small enough that Sonnet can answer in <60s, and
+# total cost grows linearly with the number of real packages instead of
+# combinatorially with file count.
+#
+# This helper does NOT touch ``cli.py``. The Week 2 cutover will replace
+# the legacy strategy at ``cli.py:264-380`` with a single call to this
+# function. Until then it lives in parallel and can be unit-tested with
+# mocked ``deep_scan`` calls.
+
+# Default size threshold below which a package is treated as a single
+# feature without an LLM call. Tuned to avoid spending tokens on tiny
+# helper packages while still letting medium packages get a name from
+# Sonnet. The legacy ``_SPLIT_THRESHOLD=200`` is intentionally NOT used —
+# the per-package prompt's HARD CAP of 8 features replaces it.
+_DEFAULT_PKG_LLM_FLOOR = 30
+
+# Package-name prefixes that mark example/demo/starter content. These get
+# grouped into a single ``examples`` feature instead of one feature per
+# package. Mirrors the legacy filter at cli.py:262.
+_EXAMPLE_PKG_PREFIXES = (
+    "example", "sample", "demo", "template", "starter", "tutorial",
+)
+
+
+def deep_scan_workspace(
+    workspace_info,  # WorkspaceInfo from faultline.analyzer.workspace
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    signatures: dict | None = None,
+    is_library: bool = False,
+    tracker: CostTracker | None = None,
+    min_files_for_llm: int = _DEFAULT_PKG_LLM_FLOOR,
+) -> dict[str, list[str]] | None:
+    """Run ``deep_scan`` once per workspace package and merge the results.
+
+    For each package in ``workspace_info.packages``:
+
+      - Test packages (``tests``, ``e2e``, ``__tests__``…) are skipped
+        entirely. Tests are never a feature.
+      - Example/demo packages (``examples/foo``, ``demo-app``…) are pooled
+        into a single synthetic ``examples`` feature. None of them get
+        their own LLM call.
+      - Packages smaller than ``min_files_for_llm`` become one feature
+        named after the package, with no LLM call. The package name is
+        already a cohesive label (it came from package.json).
+      - Larger packages get their own ``deep_scan(package_mode=True)``
+        invocation. The returned features are re-prefixed with the
+        package name (``{pkg.name}/{sub-feature}``) when more than one
+        sub-feature comes back; a single sub-feature collapses to the
+        bare package name to avoid noise like ``auth/auth``.
+
+    The shared ``CostTracker`` is threaded through every per-package
+    call so the total cost reported at the end of the run is the sum
+    across all packages. ``BudgetExceeded`` from any one call propagates
+    out immediately so the caller can stop the scan before firing more
+    requests.
+
+    ``workspace_info.root_files`` (anything that wasn't claimed by a
+    package — typically CI config, root package.json, README) becomes
+    the ``shared-infra`` feature.
+
+    Returns the merged feature → file mapping, or ``None`` if the
+    workspace had no usable packages at all.
+    """
+    from faultline.analyzer.features import detect_candidates
+    from faultline.analyzer.validation import (
+        canonical_bucket_name,
+        is_test_feature_name,
+    )
+
+    if workspace_info is None or not workspace_info.packages:
+        return None
+
+    raw_mapping: dict[str, list[str]] = {}
+    examples_files: list[str] = []
+
+    # Largest packages first so a budget abort kills the expensive ones
+    # before we waste calls on small packages.
+    packages = sorted(workspace_info.packages, key=lambda p: -len(p.files))
+
+    for pkg in packages:
+        if not pkg.files:
+            continue
+
+        name_lower = pkg.name.lower()
+
+        # Test packages: skipped entirely (tests are never a feature).
+        if is_test_feature_name(pkg.name):
+            logger.info("workspace: skip test package %s (%d files)", pkg.name, len(pkg.files))
+            continue
+
+        # Example / demo / tutorial packages: pooled into one bucket.
+        if any(name_lower.startswith(prefix) for prefix in _EXAMPLE_PKG_PREFIXES):
+            examples_files.extend(pkg.files)
+            logger.info("workspace: pool %s (%d files) → examples", pkg.name, len(pkg.files))
+            continue
+
+        # Small packages: 1 feature, no LLM call. The package name is
+        # already a good label so spending tokens here is pure waste.
+        if len(pkg.files) < min_files_for_llm:
+            raw_mapping[pkg.name] = list(pkg.files)
+            logger.info(
+                "workspace: %s (%d files) → 1 feature (under LLM floor)",
+                pkg.name,
+                len(pkg.files),
+            )
+            continue
+
+        # Large package: per-package LLM call.
+        # Strip the package path prefix so files passed to deep_scan are
+        # relative to the package root. This keeps the candidate detector
+        # focused and the LLM prompt readable.
+        pkg_prefix = pkg.path.rstrip("/") + "/" if pkg.path else ""
+        if pkg_prefix:
+            pkg_files_rel = [
+                f[len(pkg_prefix):] for f in pkg.files if f.startswith(pkg_prefix)
+            ]
+        else:
+            pkg_files_rel = list(pkg.files)
+
+        if not pkg_files_rel:
+            raw_mapping[pkg.name] = list(pkg.files)
+            continue
+
+        pkg_sigs: dict | None = None
+        if signatures:
+            pkg_sigs = {
+                f[len(pkg_prefix):]: sig
+                for f, sig in signatures.items()
+                if pkg_prefix and f.startswith(pkg_prefix)
+            }
+            if not pkg_sigs:
+                pkg_sigs = None
+
+        try:
+            pkg_candidates = detect_candidates(pkg_files_rel)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "workspace: detect_candidates failed for %s (%s) — fallback 1 feature",
+                pkg.name, exc,
+            )
+            raw_mapping[pkg.name] = list(pkg.files)
+            continue
+
+        try:
+            sub_mapping = deep_scan(
+                pkg_files_rel,
+                pkg_candidates,
+                api_key=api_key,
+                signatures=pkg_sigs,
+                is_library=is_library,
+                model=model,
+                tracker=tracker,
+                package_mode=True,
+                package_name=pkg.name,
+            )
+        except Exception:
+            # BudgetExceeded and any other terminal error propagate out
+            # so the caller can abort the whole scan with a clean stack.
+            raise
+
+        if not sub_mapping:
+            logger.warning(
+                "workspace: deep_scan returned no features for %s — fallback 1 feature",
+                pkg.name,
+            )
+            raw_mapping[pkg.name] = list(pkg.files)
+            continue
+
+        # Re-prefix file paths back to repo-relative form.
+        if len(sub_mapping) == 1:
+            # Single sub-feature → bare package name (avoids "auth/auth").
+            only_files = next(iter(sub_mapping.values()))
+            raw_mapping[pkg.name] = [pkg_prefix + f for f in only_files]
+        else:
+            for sub_name, sub_files in sub_mapping.items():
+                # Canonical infra names from the per-package call go into
+                # the global shared-infra bucket, not pkg.name/shared-infra.
+                if canonical_bucket_name(sub_name) == "shared-infra":
+                    raw_mapping.setdefault("shared-infra", []).extend(
+                        pkg_prefix + f for f in sub_files
+                    )
+                    continue
+                full_files = [pkg_prefix + f for f in sub_files]
+                raw_mapping[f"{pkg.name}/{sub_name}"] = full_files
+        logger.info("workspace: %s → %d feature(s)", pkg.name, len(sub_mapping))
+
+    if examples_files:
+        raw_mapping["examples"] = examples_files
+
+    if workspace_info.root_files:
+        raw_mapping.setdefault("shared-infra", []).extend(workspace_info.root_files)
+
+    if not raw_mapping:
+        return None
+
+    # Deterministic ordering, matches single-call deep_scan (D11).
+    return dict(
+        sorted(raw_mapping.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    )
 
 
 def _normalize_response(data: dict) -> dict:
