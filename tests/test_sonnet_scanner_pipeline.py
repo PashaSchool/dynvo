@@ -1,9 +1,10 @@
 """Unit tests for the pre/post-processing helpers in sonnet_scanner.
 
-These cover deltas D1, D2, D3, D8, D9 from docs/rewrite/sonnet_scanner_delta.md
-without calling the LLM. The helpers are intentionally extracted from
-``deep_scan`` so the validation primitives can be verified here with no
-network, no API key, and sub-millisecond runtime.
+These cover deltas D1, D2, D3, D4, D8, D9, D11, D12 from
+docs/rewrite/sonnet_scanner_delta.md without calling the LLM. The
+helpers are intentionally extracted from ``deep_scan`` so the
+validation primitives can be verified here with no network, no
+API key, and sub-millisecond runtime.
 
 Scenarios are modeled on the real Day 1 baseline failures:
   - fastapi: 21 phantom features from docs_src/tutorial00N paths
@@ -14,13 +15,19 @@ Scenarios are modeled on the real Day 1 baseline failures:
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 import faultline.llm.sonnet_scanner as scanner
+from faultline.llm.cost import BudgetExceeded, CostTracker
 from faultline.llm.sonnet_scanner import (
     SonnetFeature,
     SonnetFlow,
     SonnetOpsResponse,
     _clean_inputs,
     _finalize_result,
+    deep_scan,
 )
 
 
@@ -311,3 +318,216 @@ class TestEndToEndWithoutLLM:
         # Library → flows stripped
         assert scanner._last_scan_result is not None
         assert scanner._last_scan_result.features[0].flows == []
+
+
+# ── D11: deterministic sort ──────────────────────────────────────────────
+
+
+class TestDeterministicSort:
+    def setup_method(self) -> None:
+        scanner._last_scan_result = None
+
+    def test_sorts_by_size_descending(self) -> None:
+        """Largest feature first, then smaller — stable across runs."""
+        result = {
+            "small": ["a.ts"],
+            "huge": ["1.ts", "2.ts", "3.ts", "4.ts"],
+            "medium": ["x.ts", "y.ts"],
+        }
+        cleaned = _finalize_result(result, docs_files=[], is_library=False)
+        assert list(cleaned.keys()) == ["huge", "medium", "small"]
+
+    def test_sorts_by_name_when_sizes_tie(self) -> None:
+        """Two features with identical file counts: alphabetical name wins."""
+        result = {
+            "zebra": ["z1.ts", "z2.ts"],
+            "apple": ["a1.ts", "a2.ts"],
+            "mango": ["m1.ts", "m2.ts"],
+        }
+        cleaned = _finalize_result(result, docs_files=[], is_library=False)
+        assert list(cleaned.keys()) == ["apple", "mango", "zebra"]
+
+    def test_two_runs_produce_identical_order(self) -> None:
+        """Regression: shuffled input → same output order every call."""
+        a = _finalize_result(
+            {"b": ["1"], "a": ["1", "2"], "c": ["1", "2", "3"]},
+            docs_files=[],
+            is_library=False,
+        )
+        b = _finalize_result(
+            {"c": ["1", "2", "3"], "a": ["1", "2"], "b": ["1"]},
+            docs_files=[],
+            is_library=False,
+        )
+        assert list(a.keys()) == list(b.keys())
+        assert list(a.keys()) == ["c", "a", "b"]
+
+    def test_sorts_side_channel_to_match(self) -> None:
+        """_last_scan_result feature ordering must mirror the result dict
+        so downstream flow matching iterates them in the same order."""
+        scanner._last_scan_result = _make_ops([
+            ("small", ["s.ts"]),
+            ("huge", ["1.ts", "2.ts", "3.ts"]),
+            ("medium", ["x.ts", "y.ts"]),
+        ])
+        result = {
+            "small": ["s.ts"],
+            "huge": ["1.ts", "2.ts", "3.ts"],
+            "medium": ["x.ts", "y.ts"],
+        }
+        _finalize_result(result, docs_files=[], is_library=False)
+        names = [f.name for f in scanner._last_scan_result.features]
+        assert names == ["huge", "medium", "small"]
+
+
+# ── D4 + D12: tracker wiring and configurable model ─────────────────────
+
+
+def _make_llm_response(json_text: str, input_tokens: int, output_tokens: int) -> MagicMock:
+    """Build a fake Anthropic response with .content[0].text and .usage.*"""
+    resp = MagicMock()
+    resp.content = [MagicMock()]
+    resp.content[0].text = json_text
+    resp.usage = MagicMock()
+    resp.usage.input_tokens = input_tokens
+    resp.usage.output_tokens = output_tokens
+    return resp
+
+
+_MINIMAL_OPS_JSON = (
+    '{"merge":[],"rename":[],"remove":[],"split":[],'
+    '"features":[{"name":"auth","description":"d","flows":[]}]}'
+)
+
+
+class TestCostTrackerWiring:
+    def setup_method(self) -> None:
+        scanner._last_scan_result = None
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_records_tokens_when_tracker_provided(self, mock_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, input_tokens=12_345, output_tokens=678,
+        )
+
+        tracker = CostTracker()
+        deep_scan(
+            files=["src/auth/login.ts", "src/auth/signup.ts"],
+            candidates={"auth": ["src/auth/login.ts", "src/auth/signup.ts"]},
+            api_key="sk-ant-test",
+            tracker=tracker,
+        )
+
+        assert tracker.call_count == 1
+        rec = tracker.records[0]
+        assert rec.provider == "anthropic"
+        assert rec.input_tokens == 12_345
+        assert rec.output_tokens == 678
+        assert rec.label == "deep-scan"
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_no_tracker_means_no_recording(self, mock_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        # Should not raise even though tracker is None
+        result = deep_scan(
+            files=["src/auth/login.ts", "src/auth/signup.ts"],
+            candidates={"auth": ["src/auth/login.ts", "src/auth/signup.ts"]},
+            api_key="sk-ant-test",
+        )
+        assert result is not None
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_budget_exceeded_raises_and_aborts(self, mock_cls: MagicMock) -> None:
+        """A tight budget should trip check_budget() and bubble up."""
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        # Huge token counts to guarantee the budget is blown.
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON,
+            input_tokens=10_000_000,
+            output_tokens=1_000_000,
+        )
+
+        tracker = CostTracker(max_cost=0.01)
+        with pytest.raises(BudgetExceeded):
+            deep_scan(
+                files=["src/a.ts"],
+                candidates={"auth": ["src/a.ts", "src/b.ts"]},
+                api_key="sk-ant-test",
+                tracker=tracker,
+            )
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_handles_missing_usage_gracefully(self, mock_cls: MagicMock) -> None:
+        """If the Anthropic SDK response has no .usage (old SDK, mocks),
+        tracker should record 0 tokens instead of crashing."""
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        bad_resp = MagicMock()
+        bad_resp.content = [MagicMock()]
+        bad_resp.content[0].text = _MINIMAL_OPS_JSON
+        # Remove usage attribute entirely
+        del bad_resp.usage
+        mock_client.messages.create.return_value = bad_resp
+
+        tracker = CostTracker()
+        deep_scan(
+            files=["src/a.ts"],
+            candidates={"auth": ["src/a.ts", "src/b.ts"]},
+            api_key="sk-ant-test",
+            tracker=tracker,
+        )
+        assert tracker.call_count == 1
+        assert tracker.records[0].input_tokens == 0
+        assert tracker.records[0].output_tokens == 0
+
+
+class TestModelOverride:
+    def setup_method(self) -> None:
+        scanner._last_scan_result = None
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_default_model_used_when_not_specified(self, mock_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        deep_scan(
+            files=["src/a.ts"],
+            candidates={"auth": ["src/a.ts", "src/b.ts"]},
+            api_key="sk-ant-test",
+        )
+
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        assert call_kwargs["model"] == scanner._MODEL
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_custom_model_threads_through(self, mock_cls: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        tracker = CostTracker()
+        deep_scan(
+            files=["src/a.ts"],
+            candidates={"auth": ["src/a.ts", "src/b.ts"]},
+            api_key="sk-ant-test",
+            model="claude-haiku-4-5",
+            tracker=tracker,
+        )
+
+        # Sent to Anthropic
+        assert mock_client.messages.create.call_args.kwargs["model"] == "claude-haiku-4-5"
+        # Recorded in tracker with the override (so pricing lookup hits Haiku, not Sonnet)
+        assert tracker.records[0].model == "claude-haiku-4-5"

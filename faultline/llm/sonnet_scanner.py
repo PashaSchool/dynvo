@@ -28,6 +28,7 @@ from faultline.analyzer.validation import (
     is_test_file,
     partition_docs_vs_code,
 )
+from faultline.llm.cost import CostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +277,20 @@ def _finalize_result(
         for feat in _last_scan_result.features:
             feat.flows = []
 
+    # 5. Deterministic ordering (D11): sort by descending size then name.
+    # Combined with temperature=0 on the LLM call, this makes two
+    # consecutive runs on the same repo produce byte-identical JSON.
+    cleaned = dict(
+        sorted(cleaned.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    )
+    # Also sort _last_scan_result features to match, so flow matching
+    # and downstream rendering use the same order.
+    if _last_scan_result is not None:
+        order = {name: idx for idx, name in enumerate(cleaned.keys())}
+        _last_scan_result.features.sort(
+            key=lambda f: order.get(f.name, len(order))
+        )
+
     return cleaned
 
 
@@ -288,6 +303,8 @@ def deep_scan(
     signatures: dict | None = None,
     *,
     is_library: bool = False,
+    model: str | None = None,
+    tracker: CostTracker | None = None,
 ) -> dict[str, list[str]] | None:
     """
     Performs a deep scan using Sonnet to detect features and flows.
@@ -300,6 +317,14 @@ def deep_scan(
         is_library: When True, the result has flows stripped from every
             feature. Set this when ``repo_classifier.detect_library``
             reports the repo is a consumable library. Default False.
+        model: Override the default Sonnet model id. When omitted,
+            uses the module-level ``_MODEL`` constant. Passed through
+            to the CostTracker so pricing is looked up accurately.
+        tracker: Optional CostTracker. When provided, every successful
+            LLM call is recorded with its token usage and cost, and
+            ``tracker.check_budget()`` is invoked immediately after —
+            which may raise ``BudgetExceeded`` to abort the scan before
+            the caller fires further requests.
 
     Returns:
         Tuple of (feature_paths, flow_data) where:
@@ -313,6 +338,7 @@ def deep_scan(
         return None
 
     client = anthropic.Anthropic(api_key=key)
+    resolved_model = model or _MODEL
 
     # Pre-process: strip test and docs files before they reach the LLM.
     # This replaces the earlier scattered filtering and makes the LLM's
@@ -404,12 +430,29 @@ def deep_scan(
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.create(
-                model=_MODEL,
+                model=resolved_model,
                 max_tokens=8_192,
                 temperature=0,
                 system=_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
+
+            # D4: record token usage and check budget immediately, so
+            # BudgetExceeded aborts the run before we attempt to parse
+            # or retry. The tracker is opt-in; callers without cost
+            # tracking pass tracker=None and nothing happens here.
+            if tracker is not None:
+                usage = getattr(response, "usage", None)
+                input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+                output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+                tracker.record(
+                    provider="anthropic",
+                    model=resolved_model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    label="deep-scan",
+                )
+                tracker.check_budget()  # may raise BudgetExceeded
 
             text = response.content[0].text if response.content else ""
             parsed = _parse_json_response(text)
