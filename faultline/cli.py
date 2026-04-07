@@ -365,9 +365,14 @@ def analyze(
             if other_skip_files:
                 raw_mapping["other-packages"] = other_skip_files
 
-            # Each workspace package = one feature (package is already a cohesive unit)
-            # Only split very large packages (200+ files) into sub-features via LLM
-            _SPLIT_THRESHOLD = 200
+            # Day 10: _SPLIT_THRESHOLD=200 removed (acceptance criterion D).
+            # The new pipeline at faultline.llm.pipeline.run enforces an
+            # 8-sub-feature hard cap at the prompt level, so the threshold
+            # hack is gone on the default path. This legacy branch is only
+            # reached via --legacy; every non-test, non-tiny package now
+            # goes through detect_features_llm unconditionally. Small
+            # packages incur a slightly higher LLM cost here — acceptable
+            # for a deprecated emergency fallback.
             _TEST_PACKAGE_NAMES = {"tests", "test", "testing", "__tests__", "e2e", "cypress", "playwright", "jest"}
 
             for pkg in llm_packages:
@@ -376,13 +381,10 @@ def analyze(
                     console.print(f"  [dim]{pkg.name} ({len(pkg.files)} files) → skipped (tests)[/dim]")
                     continue
 
-                if len(pkg.files) < _SPLIT_THRESHOLD:
-                    # Package is a single feature
-                    raw_mapping[pkg.name] = list(pkg.files)
-                    console.print(f"  [dim]{pkg.name} ({len(pkg.files)} files) → 1 feature[/dim]")
-                    continue
-
-                # Large package — split into sub-features via LLM
+                # Every package gets an LLM sub-split pass. If there's
+                # only one cohesive feature, the LLM will return a single
+                # entry and the downstream re-prefix produces
+                # {pkg.name}/{sub}; the result is canonicalized later.
                 pkg_prefix = pkg.path + "/"
                 pkg_files = [f[len(pkg_prefix):] for f in pkg.files if f.startswith(pkg_prefix)]
                 if not pkg_files:
