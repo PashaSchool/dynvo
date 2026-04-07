@@ -1,0 +1,5 @@
+{
+  "status": "timeout",
+  "runtime_s": 600,
+  "cmd": "faultline analyze /Users/pkuzina/workspace/_faultlines-testrepos/documenso --output /Users/pkuzina/workspace/github-playground/featuremap/tests/baseline/before-llm/documenso/feature-map.json --days 365 --llm --flows"
+}

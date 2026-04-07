@@ -1,0 +1,24 @@
+{
+  "status": "ok",
+  "returncode": 0,
+  "runtime_s": 31.2,
+  "tracked_files": 130,
+  "cmd": "faultline analyze /Users/pkuzina/workspace/_faultlines-testrepos/gin --output /Users/pkuzina/workspace/github-playground/featuremap/tests/baseline/before-llm/gin/feature-map.json --days 365 --llm --flows",
+  "llm_enabled": true,
+  "flows_enabled": true,
+  "feature_count": 4,
+  "flow_count": 2,
+  "test_features": [],
+  "feature_sizes_top10": [
+    47,
+    42,
+    12,
+    5
+  ],
+  "feature_names": [
+    "binding",
+    "codec",
+    "shared-infra",
+    "root"
+  ]
+}
