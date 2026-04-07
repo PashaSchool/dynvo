@@ -21,13 +21,16 @@ import pytest
 
 import faultline.llm.sonnet_scanner as scanner
 from faultline.llm.cost import BudgetExceeded, CostTracker
+from faultline.analyzer.workspace import WorkspaceInfo, WorkspacePackage
 from faultline.llm.sonnet_scanner import (
     SonnetFeature,
     SonnetFlow,
     SonnetOpsResponse,
+    _build_system_prompt,
     _clean_inputs,
     _finalize_result,
     deep_scan,
+    deep_scan_workspace,
 )
 
 
@@ -531,3 +534,325 @@ class TestModelOverride:
         assert mock_client.messages.create.call_args.kwargs["model"] == "claude-haiku-4-5"
         # Recorded in tracker with the override (so pricing lookup hits Haiku, not Sonnet)
         assert tracker.records[0].model == "claude-haiku-4-5"
+
+
+# ── D7: package-mode prompt and split hard cap ──────────────────────────
+
+
+class TestPackageModePrompt:
+    def test_repo_prompt_targets_12_25_features(self) -> None:
+        """Default mode keeps the legacy 12-25 target language."""
+        prompt = _build_system_prompt()
+        assert "12-25" in prompt
+        assert "single package within a monorepo" not in prompt
+
+    def test_package_prompt_targets_1_8_features(self) -> None:
+        """Package mode swaps in the 1-8 target and HARD CAP language."""
+        prompt = _build_system_prompt(package_mode=True, package_name="auth")
+        assert "1-8 features" in prompt
+        assert "HARD CAP" in prompt
+        assert "`auth`" in prompt
+        # Repo target must be gone
+        assert "12-25 business features" not in prompt
+
+    def test_package_prompt_handles_missing_name(self) -> None:
+        """Defensive: package_mode without a name should still render."""
+        prompt = _build_system_prompt(package_mode=True)
+        assert "1-8 features" in prompt
+        assert "unknown" in prompt
+
+    def test_split_rule_has_hard_cap(self) -> None:
+        """D7: every prompt variant carries the 8-sub-feature hard cap."""
+        for prompt in (
+            _build_system_prompt(),
+            _build_system_prompt(package_mode=True, package_name="x"),
+        ):
+            assert "HARD CAP" in prompt
+            assert "8 sub-features" in prompt
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_deep_scan_uses_package_prompt_when_requested(
+        self, mock_cls: MagicMock
+    ) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        deep_scan(
+            files=["src/auth/login.ts", "src/auth/signup.ts"],
+            candidates={"auth": ["src/auth/login.ts", "src/auth/signup.ts"]},
+            api_key="sk-ant-test",
+            package_mode=True,
+            package_name="auth",
+        )
+
+        sent_system = mock_client.messages.create.call_args.kwargs["system"]
+        assert "1-8 features" in sent_system
+        assert "`auth`" in sent_system
+
+
+# ── D6: deep_scan_workspace orchestration ───────────────────────────────
+
+
+def _ws(packages: list[WorkspacePackage], root_files: list[str] | None = None) -> WorkspaceInfo:
+    """Build a WorkspaceInfo for tests."""
+    return WorkspaceInfo(
+        detected=True,
+        manager="pnpm",
+        packages=packages,
+        root_files=root_files or [],
+    )
+
+
+def _pkg(name: str, path: str, n_files: int) -> WorkspacePackage:
+    """Build a WorkspacePackage with N synthetic files under its path."""
+    files = [f"{path}/src/file{i}.ts" for i in range(n_files)]
+    return WorkspacePackage(name=name, path=path, files=files)
+
+
+class TestDeepScanWorkspace:
+    def setup_method(self) -> None:
+        scanner._last_scan_result = None
+
+    def test_returns_none_for_empty_workspace(self) -> None:
+        ws = _ws(packages=[])
+        assert deep_scan_workspace(ws, api_key="sk-ant-test") is None
+
+    def test_returns_none_when_workspace_info_is_none(self) -> None:
+        assert deep_scan_workspace(None, api_key="sk-ant-test") is None
+
+    def test_skips_test_packages_entirely(self) -> None:
+        """Packages named tests/e2e/__tests__ never reach the LLM."""
+        ws = _ws(packages=[
+            _pkg("tests", "packages/tests", 100),
+            _pkg("e2e", "packages/e2e", 50),
+            _pkg("auth", "packages/auth", 5),  # small → no LLM call
+        ])
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+        ) as mock_ds:
+            result = deep_scan_workspace(ws, api_key="sk-ant-test")
+
+        assert mock_ds.call_count == 0
+        assert result is not None
+        assert "tests" not in result
+        assert "e2e" not in result
+        assert "auth" in result
+
+    def test_pools_example_packages_into_examples_feature(self) -> None:
+        """example-* / demo-* / tutorial-* packages share one bucket."""
+        ws = _ws(packages=[
+            _pkg("example-todos", "examples/todos", 20),
+            _pkg("demo-app", "examples/demo", 15),
+            _pkg("auth", "packages/auth", 5),
+        ])
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            result = deep_scan_workspace(ws, api_key="sk-ant-test")
+
+        assert mock_ds.call_count == 0
+        assert "examples" in result
+        assert len(result["examples"]) == 35  # 20 + 15
+        assert "example-todos" not in result
+        assert "demo-app" not in result
+
+    def test_small_package_becomes_one_feature_without_llm(self) -> None:
+        """Packages under min_files_for_llm get the package name verbatim."""
+        ws = _ws(packages=[_pkg("cli", "packages/cli", 8)])
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            result = deep_scan_workspace(
+                ws, api_key="sk-ant-test", min_files_for_llm=30,
+            )
+
+        assert mock_ds.call_count == 0
+        assert "cli" in result
+        assert len(result["cli"]) == 8
+
+    def test_large_package_calls_deep_scan_in_package_mode(self) -> None:
+        """≥ min_files_for_llm triggers a per-package deep_scan call."""
+        ws = _ws(packages=[_pkg("dashboard", "apps/dashboard", 100)])
+
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            mock_ds.return_value = {"dashboard": [f"src/file{i}.ts" for i in range(100)]}
+            deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
+
+        assert mock_ds.call_count == 1
+        kwargs = mock_ds.call_args.kwargs
+        assert kwargs["package_mode"] is True
+        assert kwargs["package_name"] == "dashboard"
+
+    def test_single_subfeature_collapses_to_bare_package_name(self) -> None:
+        """deep_scan returns one feature → result keyed by package name only.
+
+        Avoids ugly names like ``auth/auth``."""
+        ws = _ws(packages=[_pkg("auth", "packages/auth", 50)])
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            mock_ds.return_value = {
+                "auth": [f"src/file{i}.ts" for i in range(50)],
+            }
+            result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
+
+        assert "auth" in result
+        assert "auth/auth" not in result
+        # Files are repo-relative again
+        assert result["auth"][0].startswith("packages/auth/")
+
+    def test_multi_subfeature_prefixes_with_package_name(self) -> None:
+        """When the LLM returns N>1 features, they get ``{pkg}/{name}`` keys."""
+        ws = _ws(packages=[_pkg("api", "apps/api", 200)])
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            mock_ds.return_value = {
+                "auth": [f"src/file{i}.ts" for i in range(60)],
+                "billing": [f"src/file{i}.ts" for i in range(60, 130)],
+                "webhooks": [f"src/file{i}.ts" for i in range(130, 200)],
+            }
+            result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
+
+        assert "api/auth" in result
+        assert "api/billing" in result
+        assert "api/webhooks" in result
+        # All paths should be re-prefixed with the package path
+        for files in result.values():
+            for f in files:
+                assert f.startswith("apps/api/")
+
+    def test_per_package_shared_infra_merges_into_global(self) -> None:
+        """If a package call returns a 'shared-infra' sub-feature, it goes
+        into the global shared-infra bucket, not pkg.name/shared-infra."""
+        ws = _ws(
+            packages=[_pkg("api", "apps/api", 200)],
+            root_files=["package.json", ".github/workflows/ci.yml"],
+        )
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            mock_ds.return_value = {
+                "auth": [f"src/file{i}.ts" for i in range(180)],
+                "shared-infra": [f"src/file{i}.ts" for i in range(180, 200)],
+            }
+            result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
+
+        assert "api/shared-infra" not in result
+        assert "shared-infra" in result
+        # Package's shared-infra files + the workspace root files
+        assert any("apps/api/" in f for f in result["shared-infra"])
+        assert "package.json" in result["shared-infra"]
+        assert ".github/workflows/ci.yml" in result["shared-infra"]
+
+    def test_root_files_become_shared_infra(self) -> None:
+        ws = _ws(
+            packages=[_pkg("auth", "packages/auth", 5)],
+            root_files=["pnpm-workspace.yaml", "turbo.json"],
+        )
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            result = deep_scan_workspace(ws, api_key="sk-ant-test")
+
+        assert mock_ds.call_count == 0
+        assert "shared-infra" in result
+        assert sorted(result["shared-infra"]) == ["pnpm-workspace.yaml", "turbo.json"]
+
+    def test_threads_tracker_through_all_calls(self) -> None:
+        """The same CostTracker instance is passed to every per-package call."""
+        ws = _ws(packages=[
+            _pkg("api", "apps/api", 100),
+            _pkg("web", "apps/web", 80),
+        ])
+        tracker = CostTracker()
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            mock_ds.return_value = {"x": ["src/file0.ts"]}
+            deep_scan_workspace(
+                ws, api_key="sk-ant-test", tracker=tracker, min_files_for_llm=30,
+            )
+
+        assert mock_ds.call_count == 2
+        for call in mock_ds.call_args_list:
+            assert call.kwargs["tracker"] is tracker
+
+    def test_budget_exceeded_propagates(self) -> None:
+        """A BudgetExceeded from any per-package call must abort the scan."""
+        ws = _ws(packages=[
+            _pkg("api", "apps/api", 200),
+            _pkg("web", "apps/web", 200),
+        ])
+
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            mock_ds.side_effect = BudgetExceeded(spent=1.0, limit=0.5)
+            with pytest.raises(BudgetExceeded):
+                deep_scan_workspace(
+                    ws, api_key="sk-ant-test", min_files_for_llm=30,
+                )
+
+        # The largest package is processed first; sort kicks in regardless of order
+        assert mock_ds.call_count == 1
+
+    def test_processes_largest_packages_first(self) -> None:
+        """Sort: biggest package first so budget aborts cheaper later calls."""
+        ws = _ws(packages=[
+            _pkg("small", "packages/small", 40),
+            _pkg("huge", "packages/huge", 500),
+            _pkg("medium", "packages/medium", 100),
+        ])
+        seen_order: list[str] = []
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            def capture(*args, **kwargs):
+                seen_order.append(kwargs["package_name"])
+                return {kwargs["package_name"]: ["src/file0.ts"]}
+            mock_ds.side_effect = capture
+            deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
+
+        assert seen_order == ["huge", "medium", "small"]
+
+    def test_falls_back_when_deep_scan_returns_none(self) -> None:
+        """If a per-package LLM call fails (returns None), the package
+        becomes one feature instead of disappearing from the map."""
+        ws = _ws(packages=[_pkg("api", "apps/api", 100)])
+        with patch("faultline.llm.sonnet_scanner.deep_scan") as mock_ds:
+            mock_ds.return_value = None
+            result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
+
+        assert "api" in result
+        assert len(result["api"]) == 100
+
+    def test_documenso_shape(self) -> None:
+        """End-to-end shape: documenso-style monorepo. 5 packages, mix of
+        skip/small/large. Verifies the orchestrator produces ≤ ~10 features
+        without timing out (vs the 91-feature legacy baseline)."""
+        ws = _ws(
+            packages=[
+                _pkg("web", "apps/web", 600),               # large → LLM
+                _pkg("marketing", "apps/marketing", 200),   # large → LLM
+                _pkg("ee", "packages/ee", 150),             # large → LLM
+                _pkg("lib", "packages/lib", 12),            # small → 1 feature
+                _pkg("tsconfig", "packages/tsconfig", 4),   # small → 1 feature
+                _pkg("tests", "packages/tests", 80),        # skip
+                _pkg("example-app", "examples/app", 30),    # examples
+            ],
+            root_files=["turbo.json", "package.json"],
+        )
+
+        def fake_deep_scan(files, candidates, **kwargs):
+            name = kwargs["package_name"]
+            # Pretend the LLM returned one feature for each large package.
+            return {name: list(files)}
+
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+            side_effect=fake_deep_scan,
+        ) as mock_ds:
+            result = deep_scan_workspace(ws, api_key="sk-ant-test", min_files_for_llm=30)
+
+        # 3 large packages → 3 LLM calls (web, marketing, ee)
+        assert mock_ds.call_count == 3
+        # No test/example packages survive as features
+        assert "tests" not in result
+        assert "example-app" not in result
+        # Pooled examples bucket present
+        assert "examples" in result
+        # All 3 large packages, both small packages, examples, shared-infra
+        expected_keys = {
+            "web", "marketing", "ee",
+            "lib", "tsconfig",
+            "examples", "shared-infra",
+        }
+        assert set(result.keys()) == expected_keys
+        # Way under the 91-feature legacy baseline.
+        assert len(result) <= 10
