@@ -14,7 +14,11 @@ import json
 import logging
 import os
 import time
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import anthropic
 from pydantic import BaseModel, ValidationError
@@ -68,6 +72,152 @@ class SonnetOpsResponse(BaseModel):
     remove: list[str] = []
     split: list[SplitOp] = []
     features: list[SonnetFeature] = []
+
+
+# ── DeepScanResult dataclass (D10) ─────────────────────────────────────────
+#
+# The legacy interface returned a bare ``dict[str, list[str]]`` and stashed
+# flows + descriptions in the module-global ``_last_scan_result``. This
+# breaks reentrancy (you can't analyze two repos in one process) and forces
+# the caller to know about three different read paths.
+#
+# ``DeepScanResult`` collects all of that into a single value. To avoid
+# breaking the existing dict-iterating callers in cli.py and the test
+# suite, the dataclass also implements the dict read interface
+# (``__getitem__``, ``__iter__``, ``__contains__``, ``__len__``,
+# ``items``/``keys``/``values``, ``get``). New code should prefer the
+# explicit attributes (``result.features``, ``result.flows``, etc.) and
+# old code keeps working unchanged.
+
+
+@dataclass
+class DeepScanResult:
+    """Structured return value from ``deep_scan`` and ``deep_scan_workspace``.
+
+    Attributes:
+        features: feature_name → list[file_path] (the primary mapping)
+        flows: feature_name → list[flow_name] (empty for libraries)
+        descriptions: feature_name → one-line description
+        flow_descriptions: feature_name → flow_name → description
+        cost_summary: snapshot of the cost tracker at scan completion
+            (``None`` when no tracker was passed in)
+
+    The dataclass is intentionally dict-compatible at the read level so
+    legacy callers that iterate the result as a feature map keep working.
+    """
+
+    features: dict[str, list[str]] = field(default_factory=dict)
+    flows: dict[str, list[str]] = field(default_factory=dict)
+    descriptions: dict[str, str] = field(default_factory=dict)
+    flow_descriptions: dict[str, dict[str, str]] = field(default_factory=dict)
+    cost_summary: dict[str, Any] | None = None
+
+    # ── dict read shims (legacy compat) ─────────────────────────────────
+    def __getitem__(self, key: str) -> list[str]:
+        return self.features[key]
+
+    def __setitem__(self, key: str, value: list[str]) -> None:
+        self.features[key] = value
+
+    def __contains__(self, key: object) -> bool:
+        return key in self.features
+
+    def __iter__(self):
+        return iter(self.features)
+
+    def __len__(self) -> int:
+        return len(self.features)
+
+    def __bool__(self) -> bool:
+        return bool(self.features)
+
+    def items(self):
+        return self.features.items()
+
+    def keys(self):
+        return self.features.keys()
+
+    def values(self):
+        return self.features.values()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.features.get(key, default)
+
+
+# ── Commit context builder (D5) ────────────────────────────────────────────
+
+
+def build_commit_context(
+    commits: list | None,
+    *,
+    top_n: int = 30,
+    days: int = 90,
+) -> str | None:
+    """Render a compact "recent activity" snippet for the LLM prompt.
+
+    Counts how often each file (and its parent directory) was touched
+    by commits in the last ``days`` days, then returns the top ``top_n``
+    entries as a single newline-separated string. The result is meant
+    to be appended to the user prompt under a ``## Recent activity``
+    heading so Sonnet can distinguish actively developed features
+    from dormant ones.
+
+    The output is intentionally bounded:
+      - Only the ``top_n`` most-touched paths are included
+      - Each entry is a single line (``path  N commits``)
+      - Files and directories are interleaved by commit count, so
+        a hot feature directory rises above its individual files
+
+    Returns ``None`` when there is nothing useful to inject (no
+    commits, no files in the last ``days`` window). The caller can
+    pass ``None`` straight through to ``deep_scan(commit_context=...)``
+    without a guard.
+
+    The shape was chosen to spend at most ~600 tokens on the
+    ``## Recent activity`` section, leaving the rest of Sonnet's
+    context budget for the actual candidates and file lists.
+    """
+    if not commits:
+        return None
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    file_counts: Counter[str] = Counter()
+    dir_counts: Counter[str] = Counter()
+
+    for commit in commits:
+        commit_date = getattr(commit, "date", None)
+        if commit_date is None:
+            continue
+        # Normalize naive datetimes to UTC so the comparison is safe.
+        if commit_date.tzinfo is None:
+            commit_date = commit_date.replace(tzinfo=timezone.utc)
+        if commit_date < cutoff:
+            continue
+
+        files = getattr(commit, "files_changed", None) or []
+        for fp in files:
+            file_counts[fp] += 1
+            parent = str(Path(fp).parent)
+            if parent and parent != ".":
+                dir_counts[parent] += 1
+
+    if not file_counts and not dir_counts:
+        return None
+
+    # Interleave files and directories by count, then take top_n.
+    combined: Counter[str] = Counter()
+    for path, count in file_counts.items():
+        combined[path] = count
+    for path, count in dir_counts.items():
+        # Mark dirs with trailing slash so the LLM can tell them apart.
+        combined[path.rstrip("/") + "/"] = count
+
+    entries = combined.most_common(top_n)
+    if not entries:
+        return None
+
+    lines = [f"{path}  {count} commits" for path, count in entries]
+    return "\n".join(lines)
 
 
 # ── Prompts ────────────────────────────────────────────────────────────────
@@ -359,7 +509,8 @@ def deep_scan(
     tracker: CostTracker | None = None,
     package_mode: bool = False,
     package_name: str | None = None,
-) -> dict[str, list[str]] | None:
+    commit_context: str | None = None,
+) -> DeepScanResult | None:
     """
     Performs a deep scan using Sonnet to detect features and flows.
 
@@ -387,6 +538,12 @@ def deep_scan(
             ``package_mode``. Inserted into the per-package prompt so the
             LLM knows what to call the resulting feature when collapsing
             to a single bucket. Ignored when ``package_mode=False``.
+        commit_context: Optional pre-rendered string describing recent
+            activity (top modified files/dirs over the last N days).
+            Built via ``build_commit_context(commits)``. When provided,
+            appended to the user prompt under a ``## Recent activity``
+            heading so Sonnet can weigh actively developed areas more
+            heavily when naming features.
 
     Returns:
         Tuple of (feature_paths, flow_data) where:
@@ -488,6 +645,16 @@ def deep_scan(
         candidates_text=candidates_text,
         unmatched_text=unmatched_text,
     )
+
+    # D5: append recent-activity context when available. Bounded by
+    # ``build_commit_context`` to ~30 lines so it doesn't blow the
+    # token budget on huge repos.
+    if commit_context:
+        prompt = (
+            f"{prompt}\n\n"
+            f"## Recent activity (last 90 days, top files/dirs)\n"
+            f"{commit_context}"
+        )
 
     logger.info("Deep scan: %d candidates, %d unmatched files → Sonnet", len(real_candidates), len(unmatched))
 
@@ -625,7 +792,59 @@ def deep_scan(
     # Post-process: re-attach docs bucket, canonicalize names, drop
     # phantoms, strip flows for libraries. All pure transformations —
     # unit-tested in tests/test_sonnet_scanner_pipeline.py.
-    return _finalize_result(result, docs_files, is_library)
+    features_dict = _finalize_result(result, docs_files, is_library)
+
+    # D10: wrap into a DeepScanResult that carries flows + descriptions +
+    # cost summary alongside the feature map. Reads from the global
+    # side channel ``_last_scan_result`` populated above; legacy
+    # ``get_deep_scan_*`` accessors continue to work for callers that
+    # haven't migrated yet.
+    return _build_deep_scan_result(features_dict, tracker)
+
+
+# ── DeepScanResult builder (D10) ───────────────────────────────────────────
+
+
+def _build_deep_scan_result(
+    features: dict[str, list[str]],
+    tracker: CostTracker | None,
+) -> DeepScanResult:
+    """Snapshot the global ``_last_scan_result`` into a DeepScanResult.
+
+    Reads flows, descriptions, and flow descriptions from the module-level
+    ``_last_scan_result`` that ``deep_scan`` populated just before calling
+    this helper. Captured here so the return value is self-contained and
+    doesn't leave callers at the mercy of a subsequent ``deep_scan`` call
+    overwriting the global (the old reentrancy hazard).
+
+    The global itself is intentionally NOT cleared — the legacy
+    ``get_deep_scan_flows`` / ``get_deep_scan_descriptions`` readers are
+    still exported so existing callers in ``cli.py`` keep working until
+    the Week 2 cutover.
+    """
+    flows: dict[str, list[str]] = {}
+    descriptions: dict[str, str] = {}
+    flow_descriptions: dict[str, dict[str, str]] = {}
+
+    if _last_scan_result is not None:
+        for feat in _last_scan_result.features:
+            if feat.flows:
+                flows[feat.name] = [fl.name for fl in feat.flows]
+                flow_descriptions[feat.name] = {
+                    fl.name: fl.description for fl in feat.flows
+                }
+            if feat.description:
+                descriptions[feat.name] = feat.description
+
+    cost_summary = tracker.summary() if tracker is not None else None
+
+    return DeepScanResult(
+        features=features,
+        flows=flows,
+        descriptions=descriptions,
+        flow_descriptions=flow_descriptions,
+        cost_summary=cost_summary,
+    )
 
 
 # ── Workspace-aware orchestration (D6) ─────────────────────────────────────
@@ -666,7 +885,8 @@ def deep_scan_workspace(
     is_library: bool = False,
     tracker: CostTracker | None = None,
     min_files_for_llm: int = _DEFAULT_PKG_LLM_FLOOR,
-) -> dict[str, list[str]] | None:
+    commit_context: str | None = None,
+) -> DeepScanResult | None:
     """Run ``deep_scan`` once per workspace package and merge the results.
 
     For each package in ``workspace_info.packages``:
@@ -708,6 +928,9 @@ def deep_scan_workspace(
         return None
 
     raw_mapping: dict[str, list[str]] = {}
+    merged_flows: dict[str, list[str]] = {}
+    merged_descriptions: dict[str, str] = {}
+    merged_flow_descriptions: dict[str, dict[str, str]] = {}
     examples_files: list[str] = []
 
     # Largest packages first so a budget abort kills the expensive ones
@@ -779,7 +1002,7 @@ def deep_scan_workspace(
             continue
 
         try:
-            sub_mapping = deep_scan(
+            sub_result = deep_scan(
                 pkg_files_rel,
                 pkg_candidates,
                 api_key=api_key,
@@ -789,13 +1012,14 @@ def deep_scan_workspace(
                 tracker=tracker,
                 package_mode=True,
                 package_name=pkg.name,
+                commit_context=commit_context,
             )
         except Exception:
             # BudgetExceeded and any other terminal error propagate out
             # so the caller can abort the whole scan with a clean stack.
             raise
 
-        if not sub_mapping:
+        if not sub_result:
             logger.warning(
                 "workspace: deep_scan returned no features for %s — fallback 1 feature",
                 pkg.name,
@@ -803,11 +1027,22 @@ def deep_scan_workspace(
             raw_mapping[pkg.name] = list(pkg.files)
             continue
 
-        # Re-prefix file paths back to repo-relative form.
+        # ``sub_result`` is a DeepScanResult after D10. Use ``.features``
+        # for re-prefixing and pull flows/descriptions for the merged
+        # workspace-level result.
+        sub_mapping = sub_result.features
+
+        # Re-prefix file paths back to repo-relative form, building a
+        # mapping from sub-feature name (in sub_result) → final feature
+        # key (in raw_mapping) so we can re-key flows/descriptions to
+        # match what cli.py will read.
+        sub_to_final: dict[str, str] = {}
+
         if len(sub_mapping) == 1:
             # Single sub-feature → bare package name (avoids "auth/auth").
-            only_files = next(iter(sub_mapping.values()))
+            only_name, only_files = next(iter(sub_mapping.items()))
             raw_mapping[pkg.name] = [pkg_prefix + f for f in only_files]
+            sub_to_final[only_name] = pkg.name
         else:
             for sub_name, sub_files in sub_mapping.items():
                 # Canonical infra names from the per-package call go into
@@ -816,9 +1051,20 @@ def deep_scan_workspace(
                     raw_mapping.setdefault("shared-infra", []).extend(
                         pkg_prefix + f for f in sub_files
                     )
+                    sub_to_final[sub_name] = "shared-infra"
                     continue
-                full_files = [pkg_prefix + f for f in sub_files]
-                raw_mapping[f"{pkg.name}/{sub_name}"] = full_files
+                final_key = f"{pkg.name}/{sub_name}"
+                raw_mapping[final_key] = [pkg_prefix + f for f in sub_files]
+                sub_to_final[sub_name] = final_key
+
+        # Merge flows and descriptions under the final feature keys.
+        for sub_name, final_key in sub_to_final.items():
+            if sub_name in sub_result.flows and final_key not in merged_flows:
+                merged_flows[final_key] = sub_result.flows[sub_name]
+            if sub_name in sub_result.descriptions and final_key not in merged_descriptions:
+                merged_descriptions[final_key] = sub_result.descriptions[sub_name]
+            if sub_name in sub_result.flow_descriptions and final_key not in merged_flow_descriptions:
+                merged_flow_descriptions[final_key] = sub_result.flow_descriptions[sub_name]
         logger.info("workspace: %s → %d feature(s)", pkg.name, len(sub_mapping))
 
     if examples_files:
@@ -831,8 +1077,16 @@ def deep_scan_workspace(
         return None
 
     # Deterministic ordering, matches single-call deep_scan (D11).
-    return dict(
+    sorted_features = dict(
         sorted(raw_mapping.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    )
+
+    return DeepScanResult(
+        features=sorted_features,
+        flows=merged_flows,
+        descriptions=merged_descriptions,
+        flow_descriptions=merged_flow_descriptions,
+        cost_summary=tracker.summary() if tracker is not None else None,
     )
 
 
