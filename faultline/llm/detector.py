@@ -333,6 +333,7 @@ def detect_features_llm(
     path_prefix: str = "",
     signatures: dict[str, FileSignature] | None = None,
     layer_context: str = "",
+    model: str | None = None,
 ) -> dict[str, list[str]]:
     """
     Sends the repository file tree to Claude and returns a semantic feature mapping.
@@ -361,6 +362,7 @@ def detect_features_llm(
     if not key or not files:
         return {}
 
+    effective_model = model or _MODEL
     client = anthropic.Anthropic(api_key=key)
 
     # Normalize commit file paths to match analysis_files (which have path_prefix stripped)
@@ -375,7 +377,7 @@ def detect_features_llm(
         route_anchors = _format_route_anchors(signatures, dirs=dirs) if signatures else ""
         entity_anchors = _format_entity_anchors(signatures, dirs=dirs) if signatures else ""
         extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors + entity_anchors
-        response = _call_dir_detection(client, file_tree, n_dirs=len(dirs), extra_context=extra_context, layer_context=layer_context)
+        response = _call_dir_detection(client, file_tree, n_dirs=len(dirs), extra_context=extra_context, layer_context=layer_context, model=effective_model)
         if not response:
             return {}
         result = _expand_dir_mapping(response, files)
@@ -385,17 +387,232 @@ def detect_features_llm(
         entity_anchors = _format_entity_anchors(signatures) if signatures else ""
         package_anchors = _format_package_anchors(files, signatures)
         extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors + entity_anchors + package_anchors
-        response = _call_feature_detection(client, file_tree, extra_context, n_files=len(files), layer_context=layer_context)
+        response = _call_feature_detection(client, file_tree, extra_context, n_files=len(files), layer_context=layer_context, model=effective_model)
         if not response:
             return {}
         result = _build_feature_dict(response, set(files))
 
-    # Post-process: extract shared UI, re-split oversized features, then redistribute
+    # Post-process: collapse plugins, extract shared UI, re-split, then redistribute
+    result = _collapse_plugin_features(result)
     result = _extract_shared_ui(result)
     result = _resplit_oversized_features(client, result)
     result = _redistribute_oversized_features(result)
     result = _redistribute_infra_features(result)
     return _final_cleanup(result)
+
+
+# ── Candidate-based detection ──────────────────────────────────────────────
+# Uses pre-computed candidates from heuristics and asks LLM to verify/merge/
+# split them and assign unmatched files.
+
+_CANDIDATE_SYSTEM_PROMPT = """\
+You are a senior software architect reviewing pre-detected feature candidates.
+
+## Task
+
+You will receive a list of feature candidates with file counts. Return ONLY merge/rename operations — \
+do NOT return individual file paths.
+
+## Output format
+
+Return a JSON with these operations:
+- **merge**: groups of candidate names that should become one feature
+- **rename**: candidates that need a better business name
+- **remove**: candidates that are infrastructure, not business features (they go to "shared-infra")
+
+## Rules
+
+1. Merge candidates that serve the same business domain (e.g. "investigations" + "investigationdetail" → "investigations")
+2. Merge UI-only candidates into their business feature (e.g. "dropdowns", "empty-state" → remove or merge into parent)
+3. Rename candidates to use business domain names (lowercase, hyphen-separated, 1-3 words)
+4. Remove pure infrastructure candidates: "base-layouts", "navigation", "empty-state", "dropdowns", "icons"
+5. Do NOT merge unrelated features — "issues" and "cycles" are separate even if they share code
+6. Keep candidates that represent real business capabilities
+
+## Example
+
+Input candidates: issues (447 files), cycles (69), modules (66), workspace-notifications (35), \
+dropdowns (26), empty-state (57), base-layouts (17), gantt-chart (76), work-item-filters (7)
+
+Output:
+  merge: [["workspace-notifications", "workspace"], ["work-item-filters", "issues"]]
+  rename: [{"from": "gantt-chart", "to": "timeline"}]
+  remove: ["dropdowns", "empty-state", "base-layouts"]\
+"""
+
+_CANDIDATE_USER_PROMPT = """\
+Review these feature candidates. Return merge/rename/remove operations ONLY.
+
+<candidates>
+{candidates_text}
+</candidates>
+
+<unmatched_directories>
+{unmatched_text}
+</unmatched_directories>
+{extra_context}
+Return JSON with merge, rename, and remove arrays. Keep it minimal — only change what clearly needs changing.\
+"""
+
+
+class _MergeOperation(BaseModel):
+    """List of candidate names to merge (first name becomes the target)."""
+    candidates: list[str]
+
+
+class _RenameOperation(BaseModel):
+    from_name: str
+    to_name: str
+
+
+class _CandidateOperations(BaseModel):
+    merge: list[list[str]] = []
+    rename: list[_RenameOperation] = []
+    remove: list[str] = []
+
+
+def detect_features_with_candidates(
+    files: list[str],
+    candidates: dict[str, list[str]],
+    api_key: str | None = None,
+    commits: list[Commit] | None = None,
+    path_prefix: str = "",
+) -> dict[str, list[str]]:
+    """
+    Uses pre-computed candidates + LLM verification for feature detection.
+
+    Instead of asking the LLM to return all files, we ask it to return
+    OPERATIONS (merge, rename, remove) on the candidate list. This keeps
+    the LLM output tiny and avoids truncation on large repos.
+
+    Returns:
+        dict mapping feature names to lists of file paths.
+        Falls back to candidates as-is if LLM call fails.
+    """
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        return candidates
+
+    client = anthropic.Anthropic(api_key=key)
+
+    # Separate real candidates from unmatched buckets
+    real_candidates: dict[str, list[str]] = {}
+    unmatched_files: list[str] = []
+
+    _CATCHALL_BUCKETS = {"backend", "frontend", "root", "init", "packages", "web", "api", "lib"}
+
+    for name, paths in candidates.items():
+        if name in _CATCHALL_BUCKETS:
+            unmatched_files.extend(paths)
+        elif len(paths) < 2:
+            unmatched_files.extend(paths)
+        else:
+            real_candidates[name] = paths
+
+    # Format candidates — just names + file counts + sample paths
+    candidates_lines = []
+    for name, paths in sorted(real_candidates.items(), key=lambda x: -len(x[1])):
+        samples = ", ".join(Path(p).name for p in paths[:5])
+        candidates_lines.append(f"- {name} ({len(paths)} files): {samples}")
+    candidates_text = "\n".join(candidates_lines)
+
+    # Format unmatched as directory summary
+    from collections import defaultdict as _ddict
+    dir_files: dict[str, list[str]] = _ddict(list)
+    for f in unmatched_files:
+        d = str(Path(f).parent) if "/" in f else "."
+        dir_files[d].append(Path(f).name)
+    unmatched_lines = []
+    for d in sorted(dir_files.keys()):
+        samples = dir_files[d][:3]
+        unmatched_lines.append(f"- {d}/ ({len(dir_files[d])} files): {', '.join(samples)}")
+    unmatched_text = "\n".join(unmatched_lines) if unmatched_lines else "(none)"
+
+    # Build extra context from commits
+    norm_commits = _normalize_commit_files(commits, path_prefix) if commits and path_prefix else commits
+    cochange_pairs = _compute_cochange(norm_commits) if norm_commits else []
+    extra_context = _format_extra_context(cochange_pairs, {})
+
+    prompt = _CANDIDATE_USER_PROMPT.format(
+        candidates_text=candidates_text,
+        unmatched_text=unmatched_text,
+        extra_context=extra_context,
+    )
+
+    system = _CANDIDATE_SYSTEM_PROMPT
+
+    # Call LLM for operations
+    ops = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            response = client.messages.parse(
+                model=_MODEL,
+                max_tokens=4096,
+                temperature=0,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+                output_format=_CandidateOperations,
+            )
+            if response.parsed_output:
+                ops = response.parsed_output
+                break
+        except (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError) as e:
+            delay = _RETRY_BASE_DELAY * (2 ** attempt)
+            logger.warning("Candidate LLM call failed (attempt %d/%d): %s", attempt + 1, _MAX_RETRIES, e)
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(delay)
+        except ValidationError as e:
+            logger.warning("Candidate LLM response validation failed: %s", str(e)[:200])
+            break
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError,
+                anthropic.NotFoundError):
+            break
+        except anthropic.APIStatusError as e:
+            logger.warning("Candidate LLM API error: %s", str(e)[:200])
+            break
+
+    if not ops:
+        logger.warning("Candidate-based LLM call failed — returning raw candidates")
+        return candidates
+
+    # Apply operations to candidates
+    result = dict(real_candidates)
+
+    # Apply merges — target is the candidate with most files
+    for group in ops.merge:
+        if len(group) < 2:
+            continue
+        existing = [(name, len(result.get(name, []))) for name in group if name in result]
+        if len(existing) < 2:
+            continue
+        # Largest candidate becomes the target
+        target = max(existing, key=lambda x: x[1])[0]
+        for name, _ in existing:
+            if name != target:
+                result[target].extend(result.pop(name))
+                logger.info("Merged '%s' into '%s'", name, target)
+
+    # Apply renames
+    for rename in ops.rename:
+        if rename.from_name in result:
+            result[rename.to_name] = result.pop(rename.from_name)
+            logger.info("Renamed '%s' → '%s'", rename.from_name, rename.to_name)
+
+    # Apply removes — move to shared-infra
+    infra_files: list[str] = []
+    for name in ops.remove:
+        if name in result:
+            infra_files.extend(result.pop(name))
+            logger.info("Removed '%s' → shared-infra", name)
+    if infra_files:
+        result["shared-infra"] = infra_files
+
+    # Add unmatched files as catch-all buckets (keep their original grouping)
+    for name, paths in candidates.items():
+        if name in _CATCHALL_BUCKETS and paths:
+            result.setdefault(name, []).extend(paths)
+
+    return result
 
 
 _RESPLIT_FILE_THRESHOLD = 40
@@ -659,60 +876,459 @@ def _merge_prefix_siblings(
 ) -> dict[str, list[str]]:
     """Merges features that share a common prefix into one feature.
 
-    E.g. complex-query-hooks, complex-query-utils, complex-query-widgets
-    → merged into "complex-query".
+    Multi-level: tries longest prefix first, then shorter.
+    E.g. issues-issue-detail-widgets, issues-sub-issues, issues-peek-overview
+    → all merge into "issues" (the shortest common prefix that has siblings).
 
-    Only merges when:
-    - At least min_siblings features share the same prefix
-    - Each sibling has <= 50 files (large features are intentional splits)
-    - The prefix is at least 2 chars and is itself a meaningful name
+    Only skips merging when the prefix is a known intentional split (shared-*, ndr-*).
     """
-    # Skip well-known prefixes that are intentional splits (not duplicates)
-    _SKIP_PREFIXES = {"app", "shared", "ndr", "edr", "ui", "custom"}
+    _SKIP_PREFIXES = {"app", "shared", "custom"}
 
-    # Group features by their prefix (first N-1 parts of hyphenated name)
     from collections import defaultdict
-    prefix_groups: dict[str, list[str]] = defaultdict(list)
-    for name in features:
-        parts = name.split("-")
-        if len(parts) >= 2:
-            prefix = "-".join(parts[:-1])
-            if prefix.lower() not in _SKIP_PREFIXES and len(prefix) >= 2:
-                prefix_groups[prefix].append(name)
 
-    # Find groups worth merging
     result = dict(features)
-    for prefix, siblings in prefix_groups.items():
-        if len(siblings) < min_siblings:
-            continue
-        # Don't merge if any sibling is large (intentional split)
-        if any(len(features[s]) > 50 for s in siblings):
-            continue
-        # Check if the prefix itself is already a feature
-        base_name = prefix if prefix in result else prefix
-        merged_files: list[str] = []
-        for s in siblings:
-            merged_files.extend(result.pop(s, []))
-        # Also grab the base feature if it exists
-        if base_name in result:
-            merged_files.extend(result.pop(base_name))
-        result[base_name] = merged_files
-        logger.info("Merged %d siblings into '%s' (%d files)", len(siblings), base_name, len(merged_files))
+    merged_in_round = True
+
+    # Iterate until no more merges happen (multi-level prefixes need multiple passes)
+    while merged_in_round:
+        merged_in_round = False
+        prefix_groups: dict[str, list[str]] = defaultdict(list)
+
+        for name in result:
+            parts = name.split("-")
+            # Generate all possible prefixes: "issues-sub" and "issues" for "issues-sub-issues"
+            for depth in range(len(parts) - 1, 0, -1):
+                prefix = "-".join(parts[:depth])
+                if prefix.lower() not in _SKIP_PREFIXES and len(prefix) >= 2:
+                    prefix_groups[prefix].append(name)
+
+        # Sort prefixes shortest first — merge at the broadest level
+        for prefix in sorted(prefix_groups.keys(), key=len):
+            # Only consider siblings that still exist in result
+            siblings = [s for s in prefix_groups[prefix] if s in result and s != prefix]
+            if len(siblings) < min_siblings:
+                continue
+
+            base_name = prefix
+            merged_files: list[str] = []
+
+            # Grab the base feature if it exists
+            if base_name in result:
+                merged_files.extend(result.pop(base_name))
+
+            for s in siblings:
+                if s in result:
+                    merged_files.extend(result.pop(s))
+
+            if merged_files:
+                result[base_name] = merged_files
+                merged_in_round = True
+                logger.info("Merged %d siblings into '%s' (%d files)", len(siblings), base_name, len(merged_files))
 
     return result
+
+
+def _merge_by_directory_ancestry(
+    features: dict[str, list[str]],
+    overlap_threshold: float = 0.5,
+) -> dict[str, list[str]]:
+    """Merges features whose files live in the same business directory.
+
+    For each feature, computes the dominant business directory (the top-level
+    non-generic dir where most files live). If 2+ features share the same
+    dominant directory with >overlap_threshold of their files there, merge them.
+
+    Example: survey-list (80% in app/surveys/), survey-responses (90% in app/surveys/)
+    → merged into "surveys" (or the larger feature's name).
+    """
+    from collections import defaultdict
+
+    def _dominant_dir(files: list[str]) -> tuple[str | None, float]:
+        """Returns (dir_name, fraction) of the most common business directory."""
+        if not files:
+            return None, 0.0
+        dir_counts: dict[str, int] = defaultdict(int)
+        for f in files:
+            parts = Path(f).parts
+            for part in parts[:-1]:
+                lower = part.lower()
+                if lower in _SKIP_DIRS or lower in _SHARED_DIR_PATTERNS:
+                    continue
+                dir_counts[part] += 1
+                break
+        if not dir_counts:
+            return None, 0.0
+        top_dir = max(dir_counts, key=dir_counts.get)
+        return top_dir, dir_counts[top_dir] / len(files)
+
+    # Step 1: compute dominant dir for each feature
+    feat_dirs: dict[str, tuple[str, float]] = {}
+    for name, files in features.items():
+        dom_dir, fraction = _dominant_dir(files)
+        if dom_dir and fraction >= overlap_threshold:
+            feat_dirs[name] = (dom_dir, fraction)
+
+    # Step 2: group features by their dominant directory
+    dir_to_features: dict[str, list[str]] = defaultdict(list)
+    for name, (dom_dir, _) in feat_dirs.items():
+        dir_to_features[dom_dir].append(name)
+
+    # Step 3: merge groups with 2+ features
+    result = dict(features)
+    for dom_dir, group in dir_to_features.items():
+        if len(group) < 2:
+            continue
+
+        # Pick the best name: prefer the shortest, or the one matching the directory
+        dir_kebab = re.sub(r"([a-z])([A-Z])", r"\1-\2", dom_dir).lower()
+        # If one feature name matches the dir name, use it
+        best_name = None
+        for name in group:
+            if name == dir_kebab or name == dom_dir.lower():
+                best_name = name
+                break
+        if not best_name:
+            # Use the feature with the most files
+            best_name = max(group, key=lambda n: len(result.get(n, [])))
+
+        merged_files: list[str] = []
+        for name in group:
+            if name in result:
+                merged_files.extend(result.pop(name))
+
+        result[best_name] = merged_files
+        if len(group) > 1:
+            logger.info(
+                "Directory merge: %d features in '%s/' → '%s' (%d files)",
+                len(group), dom_dir, best_name, len(merged_files),
+            )
+
+    return result
+
+
+_CONSOLIDATION_SYSTEM_PROMPT = """\
+You are reviewing a feature list generated by automated code analysis. \
+Your job is to consolidate features that are fragments of the same business domain.
+
+## Rules
+
+1. If two or more features clearly serve the SAME business domain, merge them. \
+   Use the most descriptive name for the merged feature.
+   Example: "survey-list", "survey-responses", "survey-analysis" → "surveys"
+   Example: "project-states", "project-sidebar", "project-management" → "project-management"
+
+2. Do NOT merge features that represent genuinely different business capabilities. \
+   "billing" and "user-auth" are separate even though both are in settings.
+
+3. Keep features that are distinct product areas even if they have few files. \
+   "webhooks" (8 files) is a real feature, not a fragment.
+
+4. The result should be what an Engineering Manager would recognize as their product's feature list.
+
+5. Return ALL features — both merged and untouched ones.
+"""
+
+_CONSOLIDATION_USER_PROMPT = """\
+Here are {n_features} features detected from code analysis. \
+An engineering manager expects roughly {expected_min}–{expected_max} business features.
+
+Features:
+{feature_list}
+
+For each group of features that should merge, provide:
+- merged_name: the consolidated feature name
+- original_names: list of feature names being merged
+
+Also list features that should stay as-is (keep_names).
+Every feature must appear exactly once — either in a merge group or in keep_names.\
+"""
+
+
+class _ConsolidationMerge(BaseModel):
+    merged_name: str
+    original_names: list[str]
+
+
+class _ConsolidationResponse(BaseModel):
+    merges: list[_ConsolidationMerge]
+    keep_names: list[str]
+
+
+def _consolidate_features_llm(
+    features: dict[str, list[str]],
+    client: anthropic.Anthropic,
+) -> dict[str, list[str]]:
+    """Second-pass LLM call: consolidates fragmented features.
+
+    Sends only feature names + file counts (cheap, fast).
+    Returns merged feature dict.
+    """
+    if len(features) <= 15:
+        return features  # already compact
+
+    # Estimate expected range from file count
+    total_files = sum(len(fs) for fs in features.values())
+    expected_min = max(8, total_files // 120)
+    expected_max = max(15, total_files // 50)
+    expected_max = min(expected_max, len(features))
+
+    feature_lines = []
+    for name, files in sorted(features.items(), key=lambda x: -len(x[1])):
+        # Show sample dirs for context
+        dirs = set()
+        for f in files[:20]:
+            parts = Path(f).parts
+            for part in parts[:-1]:
+                if part.lower() not in _SKIP_DIRS:
+                    dirs.add(part)
+                    break
+        dir_hint = f" (dirs: {', '.join(sorted(dirs)[:3])})" if dirs else ""
+        feature_lines.append(f"  {name}: {len(files)} files{dir_hint}")
+
+    prompt = _CONSOLIDATION_USER_PROMPT.format(
+        n_features=len(features),
+        expected_min=expected_min,
+        expected_max=expected_max,
+        feature_list="\n".join(feature_lines),
+    )
+
+    try:
+        response = client.messages.parse(
+            model=_MODEL,
+            max_tokens=2048,
+            temperature=0,
+            system=_CONSOLIDATION_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+            output_format=_ConsolidationResponse,
+        )
+        parsed = response.parsed_output
+
+        result: dict[str, list[str]] = {}
+
+        # Apply merges
+        for merge in parsed.merges:
+            merged_files: list[str] = []
+            for orig_name in merge.original_names:
+                if orig_name in features:
+                    merged_files.extend(features[orig_name])
+            if merged_files:
+                result[merge.merged_name] = merged_files
+                logger.info(
+                    "Consolidated %d features → '%s' (%d files)",
+                    len(merge.original_names), merge.merged_name, len(merged_files),
+                )
+
+        # Keep untouched features
+        for name in parsed.keep_names:
+            if name in features and name not in result:
+                result[name] = features[name]
+
+        # Safety: any features not mentioned by LLM stay as-is
+        all_mentioned = set()
+        for merge in parsed.merges:
+            all_mentioned.update(merge.original_names)
+            all_mentioned.add(merge.merged_name)
+        all_mentioned.update(parsed.keep_names)
+
+        for name, files in features.items():
+            if name not in all_mentioned and name not in result:
+                result[name] = files
+
+        if result:
+            # Guardrail: don't consolidate below minimum
+            if len(result) < expected_min:
+                logger.warning(
+                    "Consolidation too aggressive: %d → %d (min %d) — keeping original",
+                    len(features), len(result), expected_min,
+                )
+                return features
+            logger.info("Consolidation: %d → %d features", len(features), len(result))
+            return result
+
+    except Exception as e:
+        logger.warning("Consolidation pass failed: %s — keeping original features", e)
+
+    return features
 
 
 def _final_cleanup(result: dict[str, list[str]]) -> dict[str, list[str]]:
     """Guaranteed last step in every pipeline path.
 
-    1. Fix numeric feature names (ndr-2 → ndr-auto-segmentation)
-    2. Merge prefix siblings (complex-query-hooks + complex-query-utils → complex-query)
-    3. Remove empty features
+    1. Collapse tech-layer features (api, prisma, trpc, lib, .yarn, etc.) into shared-infra
+    2. Fix numeric feature names (ndr-2 → ndr-auto-segmentation)
+    3. Merge prefix siblings (complex-query-hooks + complex-query-utils → complex-query)
+    4. Absorb tiny features into related larger ones
+    5. Collapse infra-only features into shared-infra
+    6. Remove empty features
     """
     result = {n: fs for n, fs in result.items() if fs}
+    result = _collapse_tech_layer_features(result)
     result = _fix_numeric_feature_names(result)
     result = _merge_prefix_siblings(result)
+    result = _absorb_tiny_features(result)
+    result = _collapse_infra_only_features(result)
     return {n: fs for n, fs in result.items() if fs}
+
+
+def _collapse_tech_layer_features(
+    features: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Collapses features named after technical layers into shared-infra.
+
+    Features like "api", "prisma", "trpc", "lib", ".yarn" are technical
+    infrastructure — not business features. Their files get merged into
+    shared-infra so they don't pollute the feature map.
+    """
+    # Only collapse features that are UNAMBIGUOUSLY technical — never business domains.
+    # "api", "lib", "features" are excluded because they CAN be business features.
+    _TECH_LAYER_NAMES = {
+        # ORM / database layers
+        "prisma", "drizzle", "typeorm", "knex", "sequelize",
+        # API framework layers
+        "trpc", "graphql-schema",
+        # Build / tooling (hidden dirs)
+        ".yarn", ".changeset", ".claude", ".agents", ".opencode",
+        ".devcontainer", ".snaplet", ".storybook", ".husky",
+        # Non-business
+        "specs", "testing", "example-apps", "examples",
+        "dayjs",
+    }
+
+    result: dict[str, list[str]] = {}
+    infra_files: list[str] = []
+
+    for name, paths in features.items():
+        if name.lower() in _TECH_LAYER_NAMES:
+            infra_files.extend(paths)
+        else:
+            result[name] = paths
+
+    if infra_files:
+        result.setdefault("shared-infra", []).extend(infra_files)
+
+    return result
+
+
+def _absorb_tiny_features(
+    features: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Absorbs very small features into the most related larger feature.
+
+    Uses a relative threshold: the median feature size. Features significantly
+    below median are fragments — they get absorbed into the feature with the
+    most keyword overlap in its name.
+
+    The intuition: in a healthy codebase, real features are roughly similar
+    in size. A 3-file "feature" in a repo where median is 50 files is noise.
+    """
+    _PROTECTED = {"shared-ui", "shared-infra", "project-config"}
+
+    sizes = sorted([len(p) for n, p in features.items() if n not in _PROTECTED and p])
+    if len(sizes) < 5:
+        return features
+
+    # Threshold: features below 10% of median size are fragments
+    median = sizes[len(sizes) // 2]
+    threshold = max(2, median // 10)
+
+    result: dict[str, list[str]] = {}
+    tiny: dict[str, list[str]] = {}
+
+    for name, paths in features.items():
+        if len(paths) <= threshold and name not in _PROTECTED:
+            tiny[name] = paths
+        else:
+            result[name] = paths
+
+    if not tiny or not result:
+        result.update(tiny)
+        return result
+
+    for name, paths in tiny.items():
+        target = _find_keyword_match(name, result)
+        if target:
+            result[target].extend(paths)
+        else:
+            # No match — put in shared-infra
+            result.setdefault("shared-infra", []).extend(paths)
+
+    return result
+
+
+def _collapse_infra_only_features(
+    features: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Collapses features whose files are ALL in infrastructure directories.
+
+    If every file in a feature lives in a technical/shared directory
+    (hooks/, utils/, lib/, types/, config/), it's infrastructure — not a
+    business feature. Merge into shared-infra.
+    """
+    _INFRA_DIR_NAMES = {
+        "hooks", "utils", "helpers", "lib", "types", "config", "configs",
+        "constants", "middleware", "providers", "contexts", "assets",
+        "styles", "icons", "svg", "public", "static",
+    }
+
+    result: dict[str, list[str]] = {}
+    infra_files: list[str] = []
+
+    for name, paths in features.items():
+        if name in {"shared-ui", "shared-infra", "project-config"}:
+            result[name] = paths
+            continue
+
+        # Check if ALL files are in infra dirs
+        all_infra = True
+        for fp in paths:
+            parts = Path(fp).parts
+            # Check if any meaningful part is NOT an infra dir
+            has_business_dir = False
+            for part in parts[:-1]:
+                lower = part.lower()
+                if lower not in _INFRA_DIR_NAMES and lower not in {
+                    "src", "app", "core", "packages", "apps", "web", "api",
+                }:
+                    has_business_dir = True
+                    break
+            if has_business_dir:
+                all_infra = False
+                break
+
+        if all_infra and len(paths) > 0:
+            infra_files.extend(paths)
+        else:
+            result[name] = paths
+
+    if infra_files:
+        result.setdefault("shared-infra", []).extend(infra_files)
+
+    return result
+
+
+def _find_keyword_match(
+    name: str,
+    features: dict[str, list[str]],
+) -> str | None:
+    """Finds the best feature to absorb a small feature by keyword overlap."""
+    name_parts = set(re.split(r"[-_]", name))
+    name_parts.discard("")
+
+    best_match = None
+    best_score = 0
+
+    for feat_name, feat_paths in features.items():
+        if feat_name in {"shared-ui", "shared-infra", "project-config"}:
+            continue
+        feat_parts = set(re.split(r"[-_]", feat_name))
+        overlap = name_parts & feat_parts
+        # Score: keyword overlap weighted by target size (prefer larger features)
+        score = len(overlap) * 10 + min(len(feat_paths), 50)
+        if overlap and score > best_score:
+            best_match = feat_name
+            best_score = score
+
+    return best_match
 
 
 # Directories that are shared infrastructure, not business features
@@ -1018,6 +1634,95 @@ def _match_file_to_feature(
     return None
 
 
+def _collapse_plugin_features(
+    features: dict[str, list[str]],
+    min_siblings: int = 8,
+    max_files_per_sibling: int = 8,
+) -> dict[str, list[str]]:
+    """Collapses plugin/integration directory patterns into single features.
+
+    Detects when many small features share the same parent directory structure
+    (e.g. 152 app-store integrations in cal.com). These are a plugin registry,
+    not 152 separate business features.
+
+    Detection criteria:
+    - N+ features whose files share the same parent directory pattern
+    - Each feature has ≤max_files_per_sibling files
+    - The parent directory has a recognizable plugin pattern
+
+    Only triggers for large repos with many small similarly-structured features.
+    """
+    from collections import defaultdict
+
+    if len(features) < 20:
+        return features  # small repos don't have this problem
+
+    # For each feature, find the common parent directory of its files
+    feat_parent: dict[str, str] = {}
+    for name, files in features.items():
+        if not files or len(files) > max_files_per_sibling:
+            continue
+        # Find common parent: go 2 levels up from files
+        parents = set()
+        for f in files:
+            parts = Path(f).parts
+            # Use grandparent dir (parent of the plugin dir)
+            if len(parts) >= 3:
+                parents.add("/".join(parts[:-2]))
+            elif len(parts) >= 2:
+                parents.add(parts[0])
+        if len(parents) == 1:
+            feat_parent[name] = parents.pop()
+
+    # Group features by their common parent
+    parent_groups: dict[str, list[str]] = defaultdict(list)
+    for name, parent in feat_parent.items():
+        parent_groups[parent].append(name)
+
+    # Collapse groups with enough siblings
+    result = dict(features)
+    for parent, group in parent_groups.items():
+        if len(group) < min_siblings:
+            continue
+
+        # Derive a meaningful name from the parent directory
+        parent_parts = parent.split("/")
+        # Find last meaningful part
+        name_parts = []
+        for part in reversed(parent_parts):
+            lower = part.lower()
+            if lower not in _SKIP_DIRS and lower not in _SHARED_DIR_PATTERNS:
+                name_parts.insert(0, part)
+                break
+
+        if not name_parts:
+            collapse_name = "integrations"
+        else:
+            collapse_name = re.sub(r"([a-z])([A-Z])", r"\1-\2", name_parts[0]).lower()
+            # Common patterns
+            if any(kw in collapse_name for kw in ("app", "store", "plugin", "connector", "integration")):
+                collapse_name = "integrations"
+
+        # Merge all sibling features into one
+        merged_files: list[str] = []
+        for name in group:
+            if name in result:
+                merged_files.extend(result.pop(name))
+
+        # Add to existing feature or create new
+        if collapse_name in result:
+            result[collapse_name].extend(merged_files)
+        else:
+            result[collapse_name] = merged_files
+
+        logger.info(
+            "Plugin collapse: %d features under '%s/' → '%s' (%d files)",
+            len(group), parent, collapse_name, len(merged_files),
+        )
+
+    return result
+
+
 def _extract_shared_ui(
     result: dict[str, list[str]],
 ) -> dict[str, list[str]]:
@@ -1188,6 +1893,7 @@ def _call_feature_detection(
     extra_context: str = "",
     n_files: int = 0,
     layer_context: str = "",
+    model: str | None = None,
 ) -> _FeatureDetectionResponse | None:
     """Calls Claude API for feature detection (file-path mode). Returns None on any failure."""
     hint = _file_feature_count_hint(n_files) if n_files else ""
@@ -1210,7 +1916,7 @@ def _call_feature_detection(
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.parse(
-                model=_MODEL,
+                model=model or _MODEL,
                 max_tokens=_MAX_TOKENS_FILE,
                 temperature=0,
                 system=system,
@@ -1241,6 +1947,7 @@ def _call_dir_detection(
     n_dirs: int,
     extra_context: str = "",
     layer_context: str = "",
+    model: str | None = None,
 ) -> _FeatureDetectionResponse | None:
     """
     Calls Claude API for dir-collapse feature detection.
@@ -1268,7 +1975,7 @@ def _call_dir_detection(
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.parse(
-                model=_MODEL,
+                model=model or _MODEL,
                 max_tokens=_MAX_TOKENS_DIR,
                 temperature=0,
                 system=system,
@@ -1936,6 +2643,142 @@ def _call_dir_detection_ollama(
         return _FeatureDetectionResponse.model_validate_json(response.message.content)
     except (ValidationError, Exception):
         return None
+
+
+# ── DeepSeek provider ─────────────────────────────────────────────────────────
+
+_DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+
+
+def detect_features_deepseek(
+    files: list[str],
+    api_key: str | None = None,
+    model: str = _DEFAULT_DEEPSEEK_MODEL,
+    base_url: str | None = None,
+    commits: list[Commit] | None = None,
+    path_prefix: str = "",
+    signatures: dict[str, FileSignature] | None = None,
+    layer_context: str = "",
+) -> dict[str, list[str]]:
+    """Sends file tree to DeepSeek API for feature detection. Returns {} on failure."""
+    from faultline.llm.deepseek_client import call_deepseek_parsed
+
+    if not files:
+        return {}
+
+    norm_commits = _normalize_commit_files(commits, path_prefix) if commits and path_prefix else commits
+    cochange_pairs = _compute_cochange(norm_commits) if norm_commits else []
+
+    if len(files) > _DIR_COLLAPSE_THRESHOLD:
+        dirs = _unique_dirs(files)
+        samples = _dir_to_sample_files(dirs, files)
+        dir_keywords = _extract_dir_keywords(dirs, files, norm_commits) if norm_commits else {}
+        file_tree = _format_dir_tree(dirs, samples)
+        route_anchors = _format_route_anchors(signatures, dirs=dirs) if signatures else ""
+        entity_anchors = _format_entity_anchors(signatures, dirs=dirs) if signatures else ""
+        extra_context = _format_extra_context(cochange_pairs, dir_keywords) + route_anchors + entity_anchors
+
+        system = _DIR_DETECTION_SYSTEM_PROMPT + layer_context
+        min_f = min(max(8, len(dirs) // 15), 15)
+        system += (
+            f"\n\n## CRITICAL REQUIREMENT\n"
+            f"This codebase has {len(dirs)} directories. You MUST return at least {min_f} features."
+        )
+        prompt = _DIR_DETECTION_USER_PROMPT.format(
+            file_tree=file_tree,
+            feature_hint=_feature_count_hint(len(dirs)),
+            extra_context=extra_context,
+        )
+
+        response = call_deepseek_parsed(
+            system, prompt, _FeatureDetectionResponse,
+            api_key=api_key, model=model, base_url=base_url, max_tokens=_MAX_TOKENS_DIR,
+        )
+        if not response:
+            return {}
+        result = _expand_dir_mapping(response, files)
+    else:
+        file_tree = "\n".join(files[:_MAX_FILES_FOR_DETECTION])
+        route_anchors = _format_route_anchors(signatures) if signatures else ""
+        entity_anchors = _format_entity_anchors(signatures) if signatures else ""
+        package_anchors = _format_package_anchors(files, signatures)
+        extra_context = _format_extra_context(cochange_pairs, {}) + route_anchors + entity_anchors + package_anchors
+
+        system = _DETECTION_SYSTEM_PROMPT + layer_context
+        hint = _file_feature_count_hint(len(files)) if files else ""
+        prompt = _DETECTION_USER_PROMPT.format(
+            file_tree=file_tree, extra_context=extra_context, feature_hint=hint,
+        )
+
+        response = call_deepseek_parsed(
+            system, prompt, _FeatureDetectionResponse,
+            api_key=api_key, model=model, base_url=base_url, max_tokens=_MAX_TOKENS_FILE,
+        )
+        if not response:
+            return {}
+        result = _build_feature_dict(response, set(files))
+
+    result = _collapse_plugin_features(result)
+    result = _extract_shared_ui(result)
+    result = _redistribute_oversized_features(result)
+    result = _redistribute_infra_features(result)
+    return _final_cleanup(result)
+
+
+def merge_and_name_clusters_deepseek(
+    cluster_mapping: dict[str, list[str]],
+    api_key: str | None = None,
+    model: str = _DEFAULT_DEEPSEEK_MODEL,
+    base_url: str | None = None,
+    commits: list[Commit] | None = None,
+    layer_context: str = "",
+    cluster_edges: dict[str, dict[str, int]] | None = None,
+) -> dict[str, list[str]]:
+    """Uses DeepSeek to merge import-graph clusters into business features."""
+    from faultline.llm.deepseek_client import call_deepseek_parsed
+
+    if not cluster_mapping:
+        return cluster_mapping
+
+    working_clusters = _consolidate_domain_clusters(cluster_mapping)
+    working_clusters = _pre_merge_tiny_clusters(working_clusters)
+
+    cache_key = _merge_cache_key(working_clusters, model)
+    cached = _read_name_cache(cache_key)
+    if cached is not None:
+        if isinstance(next(iter(cached.values()), None), list):
+            return _final_cleanup(_redistribute_oversized_features(
+                _redistribute_infra_features(
+                    _extract_shared_ui(_collapse_plugin_features(cached))
+                )
+            ))
+
+    keywords_per_cluster = _extract_cluster_keywords(working_clusters, commits) if commits else None
+
+    prompt = _MERGE_USER_PROMPT.format(
+        clusters=_format_clusters_for_merge_prompt(working_clusters, keywords_per_cluster, cluster_edges=cluster_edges),
+        feature_hint=_merge_feature_count_hint(len(working_clusters)),
+    )
+    system = _MERGE_SYSTEM_PROMPT + layer_context
+
+    merge_response = call_deepseek_parsed(
+        system, prompt, _ClusterMergeResponse,
+        api_key=api_key, model=model, base_url=base_url, max_tokens=_MAX_TOKENS_FILE,
+    )
+
+    if merge_response:
+        merged = _filter_technical_features(
+            _apply_cluster_merge(working_clusters, merge_response),
+        )
+        merged = _validate_merge_cohesion(merged, working_clusters, merge_response)
+        _write_name_cache(cache_key, merged)
+        merged = _collapse_plugin_features(merged)
+        merged = _extract_shared_ui(merged)
+        merged = _redistribute_infra_features(merged)
+        merged = _redistribute_oversized_features(merged)
+        return _final_cleanup(merged)
+
+    return _final_cleanup(working_clusters)
 
 
 # ── Cluster merge + name (import graph → semantic features) ──────────────────
@@ -2723,6 +3566,14 @@ _TECHNICAL_FEATURE_WORDS = {
     "stories", "storybook", "mocks", "fixtures", "test", "tests",
     "styles", "css", "scss", "components", "ui",
     "workers", "worker",
+    # Technical artifacts from validation
+    "stores", "store", "dropdowns", "dropdown", "loaders", "loader",
+    "constants", "config", "configs", "providers", "context", "contexts",
+    "types", "models", "schemas", "middleware",
+    "empty", "states", "state",  # "empty-states" is not a feature
+    "list", "readonly", "fields",  # "list-components", "readonly-fields"
+    "web", "manifest",  # "web-manifest"
+    "preferences", "appearance", "sidebar",
 }
 
 # Multi-word patterns: feature names matching these exactly are technical.
@@ -2734,6 +3585,9 @@ _TECHNICAL_FEATURE_NAMES = {
     "dashboard-utils", "chart-components", "input-component", "table-cells",
     "common-store", "template-components", "data-prefetch",
     "filter-processor", "entity-processors",
+    # From validation on real repos
+    "list-components", "rich-filters", "readonly-fields",
+    "sidebar-stats", "web-manifest", "empty-states",
 }
 
 
@@ -2809,12 +3663,16 @@ def _filter_technical_features(
     technical: dict[str, list[str]] = {}
     business: dict[str, list[str]] = {}
 
+    # Prefixes that are always technical regardless of suffix
+    _TECHNICAL_PREFIXES = ("assets-",)
+
     for name, files in merged.items():
         normalized = name.lower().replace("_", "-")
         parts = set(normalized.split("-"))
         is_technical = (
             normalized in _TECHNICAL_FEATURE_NAMES
             or (parts & _TECHNICAL_FEATURE_WORDS and not (parts - _TECHNICAL_FEATURE_WORDS - {""}))
+            or any(normalized.startswith(p) for p in _TECHNICAL_PREFIXES)
         )
         if is_technical:
             technical[name] = files
@@ -2891,7 +3749,9 @@ def merge_and_name_clusters_llm(
             # Cache stores LLM merge result before redistribute — apply redistribute now
             return _final_cleanup(_redistribute_oversized_features(
                 _redistribute_infra_features(
-                    _extract_shared_ui(cached)  # type: ignore[arg-type]
+                    _extract_shared_ui(
+                        _collapse_plugin_features(cached)  # type: ignore[arg-type]
+                    )
                 )
             ))
 
@@ -2915,7 +3775,9 @@ def merge_and_name_clusters_llm(
         )
         # Validate: revert merges with low internal cohesion
         merged = _validate_merge_cohesion(merged, working_clusters, merge_response)
+
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+        merged = _collapse_plugin_features(merged)
         merged = _extract_shared_ui(merged)
         merged = _redistribute_infra_features(merged)
         merged = _redistribute_oversized_features(merged)
@@ -2990,7 +3852,9 @@ def merge_and_name_clusters_ollama(
         if isinstance(next(iter(cached.values()), None), list):
             return _final_cleanup(_redistribute_oversized_features(
                 _redistribute_infra_features(
-                    _extract_shared_ui(cached)  # type: ignore[arg-type]
+                    _extract_shared_ui(
+                        _collapse_plugin_features(cached)  # type: ignore[arg-type]
+                    )
                 )
             ))
 
@@ -3002,6 +3866,7 @@ def merge_and_name_clusters_ollama(
             _apply_cluster_merge(working_clusters, merge_response),
         )
         _write_name_cache(cache_key, merged)  # type: ignore[arg-type]
+        merged = _collapse_plugin_features(merged)
         merged = _extract_shared_ui(merged)
         merged = _redistribute_infra_features(merged)
         merged = _redistribute_oversized_features(merged)

@@ -309,7 +309,16 @@ def detect_flows_llm(
         return []
 
     client = anthropic.Anthropic(api_key=key)
-    phase1 = _call_flow_detection(client, feature_name, feature_files, signatures, e2e_anchors, commits)
+
+    # For very large features, chunk files and detect flows per chunk
+    _MAX_FILES_PER_FLOW_CALL = 150
+    if len(feature_files) > _MAX_FILES_PER_FLOW_CALL:
+        phase1 = _chunked_flow_detection(
+            client, feature_name, feature_files, signatures, e2e_anchors, commits,
+            chunk_size=_MAX_FILES_PER_FLOW_CALL,
+        )
+    else:
+        phase1 = _call_flow_detection(client, feature_name, feature_files, signatures, e2e_anchors, commits)
 
     # Phase 2: deep detection for large features — reads entry-point source code
     if len(feature_files) >= _DEEP_FLOW_THRESHOLD:
@@ -375,6 +384,109 @@ def detect_flows_ollama(
         return []
 
 
+_DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+
+
+def detect_flows_deepseek(
+    feature_name: str,
+    feature_files: list[str],
+    signatures: dict[str, FileSignature],
+    api_key: str | None = None,
+    model: str = _DEFAULT_DEEPSEEK_MODEL,
+    base_url: str | None = None,
+    e2e_anchors: dict[str, list[str]] | None = None,
+    commits: list | None = None,
+) -> list[_FlowFileMapping]:
+    """Detects user-facing flows using DeepSeek API. Returns [] on failure."""
+    if not feature_files:
+        return []
+
+    from faultline.llm.deepseek_client import call_deepseek_parsed
+
+    signatures_text = _build_signatures_text(feature_files, signatures)
+    e2e_context = _format_e2e_anchors(e2e_anchors or {})
+    extra_context = _build_flow_extra_context(feature_files, signatures, commits)
+    prompt = _FLOW_USER_PROMPT.format(
+        feature_name=feature_name,
+        e2e_context=e2e_context,
+        signatures_text=signatures_text,
+        extra_context=extra_context,
+    )
+
+    parsed = call_deepseek_parsed(
+        _FLOW_SYSTEM_PROMPT, prompt, _FlowDetectionResponse,
+        api_key=api_key, model=model, base_url=base_url, max_tokens=4096,
+    )
+    if not parsed:
+        return []
+    return _filter_valid_files(parsed.flows, set(feature_files))
+
+
+def _chunked_flow_detection(
+    client: anthropic.Anthropic,
+    feature_name: str,
+    feature_files: list[str],
+    signatures: dict[str, FileSignature],
+    e2e_anchors: dict[str, list[str]] | None = None,
+    commits: list | None = None,
+    chunk_size: int = 150,
+) -> list[_FlowFileMapping]:
+    """Splits large features into directory-based chunks for flow detection.
+
+    Groups files by their top-level subdirectory, then runs flow detection
+    per chunk. Merges results, deduplicating flow names.
+    """
+    from collections import defaultdict
+
+    # Group files by first meaningful directory
+    dir_groups: dict[str, list[str]] = defaultdict(list)
+    for f in feature_files:
+        parts = Path(f).parts
+        group = parts[0] if parts else "__root__"
+        # Go deeper if first dir is too generic
+        for i, part in enumerate(parts[:-1]):
+            if part.lower() not in ("src", "app", "apps", "packages", "lib", "components"):
+                group = part
+                break
+        dir_groups[group].append(f)
+
+    # Merge small groups into chunks of ~chunk_size
+    chunks: list[list[str]] = []
+    current_chunk: list[str] = []
+    for group_files in sorted(dir_groups.values(), key=len, reverse=True):
+        if len(current_chunk) + len(group_files) > chunk_size and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = []
+        current_chunk.extend(group_files)
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    logger.info("Chunked flow detection for '%s': %d files → %d chunks", feature_name, len(feature_files), len(chunks))
+
+    all_flows: list[_FlowFileMapping] = []
+    seen_names: set[str] = set()
+
+    for i, chunk_files in enumerate(chunks):
+        chunk_result = _call_flow_detection(
+            client, feature_name, chunk_files, signatures, e2e_anchors, commits,
+        )
+        for flow in chunk_result:
+            if flow.flow_name not in seen_names:
+                all_flows.append(flow)
+                seen_names.add(flow.flow_name)
+            else:
+                # Merge files into existing flow with same name
+                for existing in all_flows:
+                    if existing.flow_name == flow.flow_name:
+                        existing_set = set(existing.files)
+                        new_files = [f for f in flow.files if f not in existing_set]
+                        existing.files.extend(new_files)
+                        break
+        logger.info("Chunk %d/%d: %d files → %d flows", i + 1, len(chunks), len(chunk_files), len(chunk_result))
+
+    return all_flows
+
+
 def _call_flow_detection(
     client: anthropic.Anthropic,
     feature_name: str,
@@ -398,7 +510,7 @@ def _call_flow_detection(
         try:
             response = client.messages.parse(
                 model=_MODEL,
-                max_tokens=2048,
+                max_tokens=4096,
                 temperature=0,
                 system=_FLOW_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],

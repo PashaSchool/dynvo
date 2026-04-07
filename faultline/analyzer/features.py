@@ -49,6 +49,580 @@ def compute_cochange(commits: list[Commit]) -> list[tuple[str, str, float]]:
 
 _MAX_FEATURE_FILES = 40  # features larger than this get split
 
+# ── Candidate-based feature detection ──────────────────────────────────────
+# Instead of asking the LLM to group all files from scratch, we first extract
+# "feature candidates" using structural heuristics (anchor directories, naming
+# conventions), then ask the LLM to verify / merge / split them.
+
+# Directories whose *children* are individual feature modules (anchor dirs).
+# e.g. backend/routers/chat.py → candidate "chat"
+_ANCHOR_DIRS = {
+    "routers", "routes", "endpoints", "controllers", "views",
+    "pages", "screens",
+    "features",
+    "apps",  # Django apps
+    "blueprints",  # Flask
+    "handlers",
+}
+
+# "Deep anchor" dirs — their *subdirectories* are feature candidates.
+# e.g. components/graphql/QueryEditor.tsx → candidate "graphql"
+# Unlike _ANCHOR_DIRS (which look at filename stem), these look at the
+# first subdirectory after the deep-anchor dir.
+_DEEP_ANCHOR_DIRS = {
+    "components", "containers", "modules",
+    "store", "stores", "composables",
+    "services",
+}
+
+# Directories that contain supporting files — matched to candidates by stem.
+# e.g. backend/services/chat_executor.py → stem "chat" → candidate "chat"
+_SUPPORT_DIRS = {
+    "services", "service",
+    "models", "schemas", "serializers",
+    "utils", "helpers", "lib",
+    "agent", "agents", "skills",
+    "tasks", "jobs", "workers",
+    "middleware",
+    "hooks", "stores", "context", "contexts", "providers",
+    "components",
+    "queries", "mutations",
+}
+
+# Files in these dirs are infra, not features
+_INFRA_DIRS = {
+    "tests", "test", "__tests__", "migrations", "fixtures",
+    "scripts", "ci", ".github", "docs", "static", "assets",
+    "templates", "locale", "management",
+}
+
+# Technical layer dirs that should NOT become features themselves.
+# Files in these get redistributed to business features or go to "shared-infra".
+_TECH_LAYER_DIRS = {
+    "prisma", "drizzle", "graphql-schema",
+    ".yarn", ".changeset", ".claude", ".agents", ".opencode",
+    ".devcontainer", ".snaplet", ".storybook",
+    "docker", "deploy", "infra", "terraform",
+}
+
+# Dirs that look technical but contain business logic via subdirectories.
+# trpc/server/auth-router/ → "auth", trpc/server/document-router/ → "document"
+# These are treated as deep anchors when they have *-router subdirs.
+_ROUTER_SUFFIX_DIRS = {"trpc", "server"}
+
+# Config/infra files at root level — skip entirely
+_INFRA_EXTENSIONS = {".toml", ".lock", ".cfg", ".ini", ".yml", ".yaml", ".json", ".md", ".txt", ".rst"}
+_INFRA_FILENAMES = {
+    "dockerfile", "docker-compose.yml", "makefile", "caddyfile",
+    ".gitignore", ".env", ".env.example", "readme.md",
+    "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
+    "package.json", "package-lock.json", "tsconfig.json",
+    "vite.config.ts", "next.config.js", "tailwind.config.js",
+}
+
+
+def detect_candidates(files: list[str]) -> dict[str, list[str]]:
+    """
+    Extracts feature candidates from file paths using structural heuristics.
+
+    Strategy:
+    1. Find "anchor" files — files in routers/, pages/, features/ etc.
+       Each anchor file's stem becomes a candidate name.
+    2. Find "support" files — files in services/, models/, schemas/ etc.
+       Match them to candidates by stem overlap.
+    3. Remaining files — group by first meaningful directory (existing heuristic).
+
+    Returns:
+        dict mapping candidate names to lists of file paths.
+        Candidates are prefixed with their top-level dir for disambiguation
+        (e.g. "backend:chat", "frontend:integrations").
+    """
+    candidates: dict[str, list[str]] = defaultdict(list)
+    unmatched: list[str] = []
+
+    # Track which anchor types each candidate was found through.
+    # A real business feature appears in multiple anchor types (pages + components + stores).
+    # A UI primitive appears only in deep-anchor dirs (only components/).
+    candidate_anchor_types: dict[str, set[str]] = defaultdict(set)
+
+    # Collect all anchor stems for matching support files later
+    anchor_stems: dict[str, str] = {}  # stem → candidate_name
+
+    # Phase 1: extract anchors
+    for fp in files:
+        if _is_infra_file(fp):
+            continue
+
+        parts = Path(fp).parts
+        anchor_dir, stem = _find_anchor(parts)
+        if anchor_dir and stem:
+            candidate_name = stem
+            candidates[candidate_name].append(fp)
+            candidate_anchor_types[candidate_name].add(anchor_dir)
+            for s in _stem_variants(stem):
+                anchor_stems[s] = candidate_name
+        else:
+            unmatched.append(fp)
+
+    # Phase 2: match support files to candidates by stem
+    still_unmatched: list[str] = []
+    for fp in unmatched:
+        parts = Path(fp).parts
+        matched_candidate = _match_support_file(parts, anchor_stems)
+        if matched_candidate:
+            candidates[matched_candidate].append(fp)
+            # Track the support dir as an additional source layer
+            for part in parts[:-1]:
+                lower = part.lower()
+                if lower in _SUPPORT_DIRS or lower in _DEEP_ANCHOR_DIRS:
+                    candidate_anchor_types[matched_candidate].add(lower)
+        else:
+            still_unmatched.append(fp)
+
+    # Phase 3: deeper matching for remaining files
+    # Try filename stem, parent dir name, or hook pattern (useXxx → xxx)
+    phase4_unmatched: list[str] = []
+    for fp in still_unmatched:
+        parts = Path(fp).parts
+        matched = _deep_match_file(parts, anchor_stems)
+        if matched:
+            candidates[matched].append(fp)
+            # Track ALL parent dirs as source layers — if ANY dir besides
+            # components/ contains this candidate's files, it's multi-layer
+            for part in parts[:-1]:
+                lower = part.lower()
+                if lower in _SUPPORT_DIRS or lower in _DEEP_ANCHOR_DIRS:
+                    candidate_anchor_types[matched].add(lower)
+                elif _normalize_stem(lower) == matched:
+                    # Dir name matches candidate (e.g. stores/issues/ → "issues")
+                    candidate_anchor_types[matched].add(lower)
+        else:
+            phase4_unmatched.append(fp)
+
+    # Phase 4: group remaining files by meaningful directory
+    for fp in phase4_unmatched:
+        parts = Path(fp).parts
+        feature_name = _extract_feature_name(parts)
+        if feature_name == "root":
+            stem = Path(fp).stem.lower().replace("-", "_")
+            matched = _best_stem_match(stem, anchor_stems)
+            if matched:
+                candidates[matched].append(fp)
+                continue
+        candidates[feature_name].append(fp)
+
+    # Phase 5: collapse UI-only candidates into "shared-ui"
+    # A candidate that was found ONLY through deep-anchor dirs (components/, stores/)
+    # and never through regular anchors (pages/, routers/, features/) is likely a
+    # UI primitive (dropdowns, empty-state, breadcrumbs) — not a business feature.
+    result = _collapse_ui_primitives(dict(candidates), candidate_anchor_types)
+
+    # Phase 6: merge small candidates into parent candidates
+    result = _merge_candidate_siblings(result)
+
+    return result
+
+
+def _collapse_ui_primitives(
+    candidates: dict[str, list[str]],
+    anchor_types: dict[str, set[str]],
+) -> dict[str, list[str]]:
+    """
+    Moves candidates that exist only in deep-anchor dirs to "shared-ui".
+
+    A real business feature like "issues" appears in routers/, pages/, AND
+    components/. A UI primitive like "dropdowns" appears ONLY in components/.
+
+    The structural signal: if a candidate was discovered exclusively through
+    deep-anchor dirs (components/, stores/, containers/) and never through
+    regular anchors (routers/, pages/, features/, handlers/) or support dirs,
+    it's likely generic UI — not a business feature.
+    """
+    result: dict[str, list[str]] = {}
+    shared_ui: list[str] = []
+
+    for name, paths in candidates.items():
+        sources = anchor_types.get(name, set())
+
+        # A real business feature spans multiple architectural layers:
+        # components/ + stores/, or pages/ + services/, etc.
+        # A UI primitive lives in only ONE source dir (just components/).
+        is_ui_primitive = (
+            len(sources) == 1
+            and sources.issubset({"components", "containers"})
+        )
+
+        if is_ui_primitive:
+            shared_ui.extend(paths)
+        else:
+            result[name] = paths
+
+    if shared_ui:
+        result.setdefault("shared-ui", []).extend(shared_ui)
+
+    return result
+
+
+def _deep_match_file(
+    parts: tuple[str, ...],
+    anchor_stems: dict[str, str],
+) -> str | None:
+    """
+    Deeper matching for files not caught by anchor/support matching.
+
+    Strategies:
+    1. Hook pattern: useIssues.ts → "issues", useCycles.ts → "cycles"
+    2. Store subdirs: stores/issues/store.ts → "issues"
+    3. Any meaningful parent dir that matches a candidate
+    4. Filename stem match against candidates
+    """
+    filename = parts[-1]
+    stem = Path(filename).stem
+
+    # Strategy 1: hook pattern (useXxx, use-xxx)
+    hook_match = re.match(r"^use[-_]?([A-Z][a-zA-Z]+|[a-z][-a-z]+)", stem)
+    if hook_match:
+        hook_name = _normalize_stem(hook_match.group(1))
+        matched = _best_stem_match(hook_name, anchor_stems)
+        if matched:
+            return matched
+
+    # Strategy 2: parent directory matches a candidate
+    # Walk up from deepest meaningful dir to shallowest.
+    # Skip generic dirs UNLESS the dir name matches an existing candidate
+    # (e.g. "views" is a generic dir name but also a real feature in Plane).
+    _SKIP_PARENT = {
+        "src", "app", "core", "lib", "web", "api", "ce", "ee",
+        "packages", "apps", "internal", "public", "types", "constants",
+    }
+    for part in reversed(parts[:-1]):
+        lower = part.lower()
+        normalized = _normalize_stem(lower)
+
+        # Always check if this dir name directly matches a candidate
+        if normalized in anchor_stems:
+            return anchor_stems[normalized]
+
+        # Skip generic/structural dirs
+        if lower in _SKIP_PARENT or lower in _SUPPORT_DIRS or lower in _DEEP_ANCHOR_DIRS:
+            continue
+        if lower in _INFRA_DIRS or lower in _TECH_LAYER_DIRS:
+            continue
+
+        matched = _best_stem_match(normalized, anchor_stems)
+        if matched:
+            return matched
+
+    # Strategy 3: filename stem
+    file_stem = _normalize_stem(stem)
+    if file_stem and len(file_stem) >= 3:
+        return _best_stem_match(file_stem, anchor_stems)
+
+    return None
+
+
+def _merge_plural_duplicates(
+    candidates: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """
+    Merges singular/plural duplicate candidates.
+
+    "issue" + "issues" → "issues" (larger wins)
+    "notification" + "notifications" → "notifications"
+    "sticky" + "stickies" → "stickies"
+    "analytic" + "analytics" → "analytics"
+    """
+    result: dict[str, list[str]] = {}
+    merged_into: dict[str, str] = {}  # name → target
+
+    # Sort by size descending — larger candidate becomes the target
+    sorted_items = sorted(candidates.items(), key=lambda x: -len(x[1]))
+
+    for name, paths in sorted_items:
+        if name in merged_into:
+            continue
+
+        # Check if a plural/singular variant already exists in result
+        variants = _plural_variants(name)
+        target = None
+        for v in variants:
+            if v in result and v != name:
+                target = v
+                break
+
+        if target:
+            result[target].extend(paths)
+            merged_into[name] = target
+        else:
+            result[name] = list(paths)
+
+    return result
+
+
+def _plural_variants(name: str) -> list[str]:
+    """Returns singular/plural variants of a name."""
+    variants = []
+    # issues → issue, issue → issues
+    if name.endswith("ies"):
+        variants.append(name[:-3] + "y")  # stickies → sticky
+    if name.endswith("s") and not name.endswith("ss"):
+        variants.append(name[:-1])  # issues → issue, analytics → analytic
+    if not name.endswith("s"):
+        variants.append(name + "s")  # issue → issues, analytic → analytics
+    if name.endswith("y") and not name.endswith("ey"):
+        variants.append(name[:-1] + "ies")  # sticky → stickies
+    return variants
+
+
+def _merge_candidate_siblings(
+    candidates: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """
+    Merges related candidates:
+    1. Singular/plural duplicates: "issue" + "issues" → "issues" (larger wins)
+    2. Small candidates into parent by prefix: "workspace-notifications" → "workspace"
+    """
+    # Phase 1: merge singular/plural duplicates
+    result = _merge_plural_duplicates(candidates)
+
+    # Phase 2: merge small candidates into parent by prefix
+    _MIN_FILES_TO_KEEP = 5
+    merge_targets: dict[str, str] = {}
+    sorted_candidates = sorted(result.items(), key=lambda x: -len(x[1]))
+
+    for name, paths in sorted_candidates:
+        if len(paths) >= _MIN_FILES_TO_KEEP:
+            continue
+
+        name_parts = re.split(r"[-_]", name)
+        for prefix_len in range(len(name_parts) - 1, 0, -1):
+            prefix = "-".join(name_parts[:prefix_len])
+            prefix_us = "_".join(name_parts[:prefix_len])
+            parent = None
+            if prefix in result and prefix != name:
+                parent = prefix
+            elif prefix_us in result and prefix_us != name:
+                parent = prefix_us
+
+            if parent and len(result[parent]) > len(paths):
+                merge_targets[name] = parent
+                break
+
+    # Execute merges
+    for child, parent in merge_targets.items():
+        if child in result and parent in result:
+            result[parent].extend(result.pop(child))
+
+    return result
+
+
+def _is_infra_file(fp: str) -> bool:
+    """Returns True if this file should be skipped entirely (config/infra)."""
+    parts = Path(fp).parts
+    filename = parts[-1].lower()
+
+    # Skip files in infra directories
+    for part in parts[:-1]:
+        lower = part.lower()
+        if lower in _INFRA_DIRS:
+            return True
+        # Skip tech layer dirs (prisma/, .yarn/, .changeset/, etc.)
+        if lower in _TECH_LAYER_DIRS:
+            return True
+        # Skip hidden dirs (but not .github which is already in _INFRA_DIRS)
+        if lower.startswith(".") and lower not in {".github"}:
+            return True
+
+    # Skip known infra files
+    if filename in _INFRA_FILENAMES:
+        return True
+
+    # Skip config files at root or shallow depth (< 3 levels)
+    if len(parts) <= 2 and Path(filename).suffix in _INFRA_EXTENSIONS:
+        return True
+
+    return False
+
+
+def _find_anchor(parts: tuple[str, ...]) -> tuple[str | None, str | None]:
+    """
+    Checks if a file is in an anchor directory and extracts the feature stem.
+
+    Supports two types of anchors:
+    - Regular anchors (routers/, pages/): filename stem = feature
+    - Deep anchors (components/, stores/): subdirectory name = feature
+
+    Examples:
+        backend/routers/chat.py → ("routers", "chat")
+        frontend/src/pages/ChatPage.tsx → ("pages", "chat")
+        frontend/src/features/integrations/IntegrationsPage.tsx → ("features", "integrations")
+        components/graphql/QueryEditor.tsx → ("components", "graphql")
+        components/collections/CollectionList.tsx → ("components", "collections")
+        components/ui/Button.tsx → (None, None) — "ui" is generic, skip
+        backend/agent/skills/base_persona.py → (None, None) — agent is support, not anchor
+    """
+    # Generic subdirs inside deep-anchor dirs that should NOT become candidates
+    _GENERIC_SUBDIRS = {
+        "ui", "common", "shared", "layout", "layouts", "base",
+        "icons", "primitives", "core", "general", "app",
+    }
+
+    # First pass: check for deep anchors (higher priority for monorepos
+    # where components/X/ is the primary feature signal)
+    for i, part in enumerate(parts[:-1]):
+        lower = part.lower()
+        if lower in _DEEP_ANCHOR_DIRS and i + 1 < len(parts) - 1:
+            subdir = parts[i + 1].lower()
+            if subdir not in _GENERIC_SUBDIRS:
+                return (lower, _normalize_stem(subdir))
+
+    # Pass 1.5: detect *-router pattern (tRPC, etc.)
+    # trpc/server/auth-router/handler.ts → ("router", "auth")
+    for i, part in enumerate(parts[:-1]):
+        lower = part.lower()
+        if lower.endswith("-router") and len(lower) > 7:
+            stem = lower[:-7]  # "auth-router" → "auth"
+            return ("router", _normalize_stem(stem))
+
+    # Second pass: regular anchor dirs
+    # Common wrapper names that should NOT be treated as features
+    _WRAPPER_NAMES = {
+        "web", "api", "admin", "server", "client", "frontend", "backend",
+        "mobile", "desktop", "docs", "cli", "common", "shared", "main",
+        "app", "core", "src",
+    }
+
+    for i, part in enumerate(parts[:-1]):
+        lower = part.lower()
+        if lower in _ANCHOR_DIRS:
+            if i + 1 < len(parts) - 1:
+                next_part = parts[i + 1].lower()
+                if next_part.startswith("(") and next_part.endswith(")"):
+                    next_part = next_part[1:-1]
+                # Skip if next part is a common wrapper (apps/web/ is not a feature)
+                if next_part in _WRAPPER_NAMES:
+                    continue
+                return (lower, _normalize_stem(next_part))
+            else:
+                stem = _normalize_stem(Path(parts[-1]).stem)
+                if stem and stem not in {"__init__", "index", "base", "main"}:
+                    return (lower, stem)
+
+    return (None, None)
+
+
+def _normalize_stem(raw: str) -> str:
+    """
+    Normalizes a stem for matching.
+    ChatPage → chat, chat_executor → chat, v1_messages → messages
+    """
+    # Remove common suffixes
+    s = raw.lower()
+    for suffix in ("page", "router", "controller", "handler", "view",
+                    "service", "executor", "worker", "model", "schema",
+                    "serializer", "blueprint", "container", "dialog"):
+        if s.endswith(suffix) and len(s) > len(suffix):
+            s = s[:len(s) - len(suffix)]
+            break
+
+    # Remove common prefixes
+    for prefix in ("v1_", "v2_", "api_"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+
+    # Convert camelCase/PascalCase to snake_case for matching
+    s = re.sub(r"([a-z])([A-Z])", r"\1_\2", s).lower()
+
+    # Remove trailing underscores and hyphens
+    s = s.strip("_- ")
+
+    return s
+
+
+def _stem_variants(stem: str) -> list[str]:
+    """
+    Returns stem variants for fuzzy matching.
+    "chat" → ["chat", "chat_"]
+    "shared_conversation" → ["shared_conversation", "shared_conversation_", "shared", "conversation"]
+    """
+    variants = [stem]
+    # Add individual parts for compound names
+    parts = re.split(r"[_-]", stem)
+    if len(parts) > 1:
+        variants.extend(parts)
+    return variants
+
+
+def _match_support_file(
+    parts: tuple[str, ...],
+    anchor_stems: dict[str, str],
+) -> str | None:
+    """
+    Tries to match a support file to an existing candidate.
+
+    Matching strategies (in order):
+    1. Subdirectory after support dir matches a candidate
+       e.g. components/chat/widget-block.tsx → "chat"
+       e.g. services/edr/crowdstrike.py → "edr" or "integrations"
+    2. Filename stem matches a candidate
+       e.g. services/chat_executor.py → "chat"
+       e.g. schemas/chat.py → "chat"
+    """
+    # Find the support directory and what comes after it
+    support_idx = None
+    for i, part in enumerate(parts[:-1]):
+        if part.lower() in _SUPPORT_DIRS:
+            support_idx = i
+            break
+
+    if support_idx is None:
+        return None
+
+    # Strategy 1: subdirectory after support dir
+    if support_idx + 1 < len(parts) - 1:
+        subdir = _normalize_stem(parts[support_idx + 1])
+        match = _best_stem_match(subdir, anchor_stems)
+        if match:
+            return match
+
+    # Strategy 2: filename stem
+    file_stem = _normalize_stem(Path(parts[-1]).stem)
+    return _best_stem_match(file_stem, anchor_stems)
+
+
+def _best_stem_match(
+    file_stem: str,
+    anchor_stems: dict[str, str],
+) -> str | None:
+    """Finds the best matching candidate for a file stem."""
+    if not file_stem:
+        return None
+
+    # Exact match
+    if file_stem in anchor_stems:
+        return anchor_stems[file_stem]
+
+    # Check if file_stem starts with or contains an anchor stem
+    best_match = None
+    best_len = 0
+    for stem, candidate in anchor_stems.items():
+        if len(stem) < 3:
+            continue
+        if file_stem.startswith(stem) or stem.startswith(file_stem):
+            if len(stem) > best_len:
+                best_match = candidate
+                best_len = len(stem)
+        # Also check if any part of the file stem matches
+        file_parts = re.split(r"[_-]", file_stem)
+        for fp in file_parts:
+            if fp == stem and len(fp) >= 3:
+                if len(stem) > best_len:
+                    best_match = candidate
+                    best_len = len(stem)
+
+    return best_match
+
 
 def detect_features_from_structure(files: list[str]) -> dict[str, list[str]]:
     """
