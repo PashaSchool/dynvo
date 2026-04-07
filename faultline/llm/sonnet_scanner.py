@@ -19,6 +19,16 @@ from pathlib import Path
 import anthropic
 from pydantic import BaseModel, ValidationError
 
+from faultline.analyzer.validation import (
+    canonical_bucket_name,
+    drop_phantom_features,
+    filter_test_files,
+    is_documentation_file,
+    is_test_feature_name,
+    is_test_file,
+    partition_docs_vs_code,
+)
+
 logger = logging.getLogger(__name__)
 
 _MODEL = "claude-sonnet-4-20250514"
@@ -167,6 +177,108 @@ Return JSON. Rules: merge aggressively, split god-features (>100 files), 12-25 f
 """
 
 
+# ── Pre/post-processing helpers ────────────────────────────────────────────
+#
+# These are extracted from deep_scan() so they can be unit-tested without
+# hitting the LLM. The real function below just orchestrates:
+#     _clean_inputs → LLM call → apply ops → _finalize_result
+
+
+def _clean_inputs(
+    files: list[str],
+    candidates: dict[str, list[str]],
+) -> tuple[list[str], dict[str, list[str]], list[str]]:
+    """Apply validation primitives upstream of the LLM call.
+
+    Filters test files and documentation files out of both ``files`` and
+    every candidate bucket, and drops any candidate whose name is a
+    test-infrastructure alias (``vitest-mocks``, ``__tests__``, etc.).
+
+    Returns a 3-tuple:
+      - ``cleaned_files``: input minus docs and test files
+      - ``cleaned_candidates``: candidates with docs/test paths removed;
+        empty buckets and test-named buckets are dropped entirely
+      - ``docs_files``: every file that matched ``is_documentation_file``,
+        to be re-attached as a single ``documentation`` feature in
+        ``_finalize_result``
+
+    Rationale: the Day 1 baseline showed heuristic candidates leaking
+    ``vitest-mocks`` (cal.com) and splitting ``docs_src/tutorial001_py310``
+    into 21 features (fastapi). Running the LLM on that noise wastes
+    tokens and produces phantom features. Doing the filtering here keeps
+    the LLM's context focused on actual business code.
+    """
+    code_files, docs_files = partition_docs_vs_code(files)
+    cleaned_files = filter_test_files(code_files)
+
+    cleaned_candidates: dict[str, list[str]] = {}
+    for name, paths in candidates.items():
+        if is_test_feature_name(name):
+            continue
+        kept = [
+            p for p in paths
+            if not is_documentation_file(p) and not is_test_file(p)
+        ]
+        if kept:
+            cleaned_candidates[name] = kept
+
+    return cleaned_files, cleaned_candidates, docs_files
+
+
+def _finalize_result(
+    result: dict[str, list[str]],
+    docs_files: list[str],
+    is_library: bool,
+) -> dict[str, list[str]]:
+    """Apply post-processing cleanups to the LLM operation result.
+
+    Steps (in order):
+      1. Attach a synthetic ``documentation`` feature containing every
+         file previously partitioned out by ``_clean_inputs``.
+      2. Canonicalize bucket names (``root``/``init``/``main`` → ``shared-infra``),
+         merging any duplicates that resolve to the same canonical name.
+         Also rewrites feature names in the module-global
+         ``_last_scan_result`` so ``get_deep_scan_flows`` can still match
+         by name.
+      3. Drop phantom features — empty buckets and test-infrastructure
+         names that slipped through (belt-and-braces; ``_clean_inputs``
+         should have caught these already).
+      4. If ``is_library=True``, strip flows from every feature in
+         ``_last_scan_result``. Libraries per acceptance criterion C
+         produce feature maps but no user-journey flows; the operations
+         prompt still runs because it handles naming/merging, just not
+         flow output.
+
+    Returns the cleaned feature map.
+    """
+    # 1. Attach documentation bucket
+    if docs_files:
+        result.setdefault("documentation", []).extend(docs_files)
+
+    # 2. Canonicalize bucket names, merging duplicates
+    canonicalized: dict[str, list[str]] = {}
+    for name, paths in result.items():
+        canonical = canonical_bucket_name(name)
+        canonicalized.setdefault(canonical, []).extend(paths)
+
+    # 2b. Canonicalize feature names in the side-channel so fuzzy flow
+    # matching in get_deep_scan_flows() still resolves correctly.
+    global _last_scan_result
+    if _last_scan_result is not None:
+        for feat in _last_scan_result.features:
+            feat.name = canonical_bucket_name(feat.name)
+
+    # 3. Drop phantom features (empty, test-named)
+    cleaned = drop_phantom_features(canonicalized)
+
+    # 4. Strip flows for libraries
+    if is_library and _last_scan_result is not None:
+        for feat in _last_scan_result.features:
+            feat.flows = []
+
+    return cleaned
+
+
 # ── Main function ──────────────────────────────────────────────────────────
 
 def deep_scan(
@@ -174,6 +286,8 @@ def deep_scan(
     candidates: dict[str, list[str]],
     api_key: str | None = None,
     signatures: dict | None = None,
+    *,
+    is_library: bool = False,
 ) -> dict[str, list[str]] | None:
     """
     Performs a deep scan using Sonnet to detect features and flows.
@@ -182,6 +296,10 @@ def deep_scan(
         files: All file paths in the repo.
         candidates: Pre-computed candidates from detect_candidates().
         api_key: Anthropic API key.
+        signatures: Optional AST-extracted signatures keyed by file path.
+        is_library: When True, the result has flows stripped from every
+            feature. Set this when ``repo_classifier.detect_library``
+            reports the repo is a consumable library. Default False.
 
     Returns:
         Tuple of (feature_paths, flow_data) where:
@@ -195,6 +313,16 @@ def deep_scan(
         return None
 
     client = anthropic.Anthropic(api_key=key)
+
+    # Pre-process: strip test and docs files before they reach the LLM.
+    # This replaces the earlier scattered filtering and makes the LLM's
+    # token budget go toward real business code, not tutorial samples.
+    files, candidates, docs_files = _clean_inputs(files, candidates)
+    if docs_files:
+        logger.info(
+            "Deep scan: partitioned %d documentation files into synthetic bucket",
+            len(docs_files),
+        )
 
     # Separate real candidates from catch-all buckets
     _CATCHALL = {"backend", "frontend", "root", "init", "packages", "web", "api", "lib"}
@@ -385,7 +513,10 @@ def deep_scan(
     global _last_scan_result
     _last_scan_result = ops
 
-    return result
+    # Post-process: re-attach docs bucket, canonicalize names, drop
+    # phantoms, strip flows for libraries. All pure transformations —
+    # unit-tested in tests/test_sonnet_scanner_pipeline.py.
+    return _finalize_result(result, docs_files, is_library)
 
 
 def _normalize_response(data: dict) -> dict:
