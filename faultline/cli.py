@@ -92,11 +92,6 @@ def analyze(
         "--max-commits",
         help="Maximum number of commits to analyze",
     ),
-    strategy: str = typer.Option(
-        "auto",
-        "--strategy",
-        help="Feature detection strategy: auto (current pipeline) or iterative (3-phase LLM pipeline, better for large repos)",
-    ),
     legacy: bool = typer.Option(
         False,
         "--legacy",
@@ -175,14 +170,6 @@ def analyze(
 
     # --flows requires --llm
     if flows and not llm:
-        llm = True
-
-    if strategy not in ("auto", "iterative"):
-        console.print(f"[red]Unknown strategy '{strategy}'. Use: auto or iterative[/red]")
-        raise typer.Exit(1)
-
-    # --strategy iterative requires --llm
-    if strategy == "iterative" and not llm:
         llm = True
 
     if llm and provider not in ("anthropic", "ollama", "deepseek"):
@@ -451,15 +438,6 @@ def analyze(
             console.print(
                 f"[green]✓[/green] Workspace analysis: {len(raw_mapping)} features "
                 f"across {len(workspace.packages)} packages"
-            )
-
-        # ── Iterative strategy: 3-phase LLM pipeline ──
-        # Bypasses import graph and uses LLM for all phases.
-        elif strategy == "iterative":
-            raw_mapping = _detect_iterative(
-                analysis_files, provider, api_key, model, ollama_url,
-                commits=commits, path_prefix=path_prefix,
-                signatures=signatures, layer_context=layer_context,
             )
 
         # ── Mixed repo detection ──
@@ -732,58 +710,6 @@ def _inject_new_pipeline_descriptions(
             ):
                 feat.description = desc
                 break
-
-
-def _detect_iterative(
-    files: list[str],
-    provider: str,
-    api_key: str | None,
-    model: str | None,
-    ollama_url: str,
-    commits=None,
-    path_prefix: str = "",
-    signatures=None,
-    layer_context: str = "",
-) -> dict[str, list[str]]:
-    """Runs the 3-phase iterative LLM pipeline for feature detection."""
-    from faultline.llm.iterative_detector import (
-        detect_features_iterative,
-        detect_features_iterative_ollama,
-        estimate_cost,
-    )
-
-    def on_progress(phase: int, msg: str):
-        console.print(f"[blue]Phase {phase}:[/blue] {msg}")
-
-    # Show cost estimate
-    cost = estimate_cost(len(files))
-    console.print(f"[dim]Iterative strategy: ~{cost['n_llm_calls']} LLM calls, est. ${cost['total']:.3f} (${cost['total_batch']:.3f} batch)[/dim]")
-
-    if provider == "anthropic":
-        result = detect_features_iterative(
-            files, api_key=api_key, commits=commits,
-            path_prefix=path_prefix, signatures=signatures,
-            layer_context=layer_context, on_progress=on_progress,
-        )
-    elif provider == "ollama":
-        resolved_model = model or _DEFAULT_OLLAMA_MODEL
-        result = detect_features_iterative_ollama(
-            files, model=resolved_model, host=ollama_url,
-            commits=commits, path_prefix=path_prefix,
-            signatures=signatures, layer_context=layer_context,
-            on_progress=on_progress,
-        )
-    else:
-        result = {}
-
-    if result:
-        label = "Claude" if provider == "anthropic" else "Ollama"
-        console.print(f"[green]✓[/green] Iterative {label} detected {len(result)} features")
-        return result
-
-    # Fallback
-    console.print("[yellow]Iterative detection failed — falling back to directory heuristic[/yellow]")
-    return detect_features_from_structure(files)
 
 
 def _strip_src_prefix(
