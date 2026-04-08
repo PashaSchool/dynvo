@@ -581,7 +581,25 @@ def analyze(
                 shared_count = sum(len(v) for v in shared_attributions.values())
                 console.print(f"[dim]Symbol attribution: {shared_count} shared file mappings across {len(shared_attributions)} features[/dim]")
 
-        # 6. Build the feature map
+        # 6. Build the feature map.
+        # Day 14 library-mode fix: libraries should not have their
+        # per-module features collapsed into parent directories — that
+        # undoes the per-stem candidate promotion in deep_scan. Skip
+        # the small-feature merge pass only when the repo is a
+        # library AND the new pipeline ran the single-call path (not
+        # the workspace per-package loop). Workspace libraries like
+        # trpc already get granularity via per-package isolation;
+        # letting _merge_small_features fire there keeps the 1-file
+        # helpers from drowning out real modules.
+        _new_pipeline_used_workspace = (
+            _new_pipeline_result is not None
+            and workspace.detected
+            and len(workspace.packages) >= 2
+        )
+        _skip_merge = (
+            bool(repo_structure.is_library)
+            and not _new_pipeline_used_workspace
+        )
         feature_map = build_feature_map(
             repo_path=repo_path,
             commits=commits,
@@ -589,6 +607,7 @@ def analyze(
             days=days,
             remote_url=remote_url,
             shared_attributions=shared_attributions,
+            skip_small_feature_merge=_skip_merge,
         )
 
         # 6a. Day 9: inject descriptions from the new pipeline, if we

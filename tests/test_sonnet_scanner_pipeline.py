@@ -31,10 +31,88 @@ from faultline.llm.sonnet_scanner import (
     _build_system_prompt,
     _clean_inputs,
     _finalize_result,
+    _promote_library_root_candidates,
     build_commit_context,
     deep_scan,
     deep_scan_workspace,
 )
+
+
+class TestPromoteLibraryRootCandidates:
+    """Day 14 library-mode fix: split root catchall by filename stem."""
+
+    def test_gin_root_splits_by_stem(self) -> None:
+        """Typical gin case: 'root' catchall holds top-level .go files that
+        should each become their own per-stem candidate."""
+        candidates = {
+            "root": [
+                "auth.go", "context.go", "context_appengine.go",
+                "errors.go", "logger.go", "recovery.go",
+                "routergroup.go", "tree.go",
+            ],
+            "binding": ["binding/json.go", "binding/xml.go"],
+        }
+        result = _promote_library_root_candidates(candidates)
+        assert "root" not in result
+        assert "binding" in result  # untouched
+        assert result["auth"] == ["auth.go"]
+        assert result["errors"] == ["errors.go"]
+        assert result["logger"] == ["logger.go"]
+        assert result["recovery"] == ["recovery.go"]
+        assert result["routergroup"] == ["routergroup.go"]
+        assert result["tree"] == ["tree.go"]
+        # context.go + context_appengine.go should collapse to "context"
+        assert set(result["context"]) == {"context.go", "context_appengine.go"}
+
+    def test_init_catchall_also_split(self) -> None:
+        """Python-style catchall 'init' gets the same treatment as 'root'."""
+        candidates = {
+            "init": ["routing.py", "security.py", "middleware.py"],
+        }
+        result = _promote_library_root_candidates(candidates)
+        assert "init" not in result
+        assert result["routing"] == ["routing.py"]
+        assert result["security"] == ["security.py"]
+        assert result["middleware"] == ["middleware.py"]
+
+    def test_no_root_catchall_is_noop(self) -> None:
+        """When there's nothing to split, return candidates unchanged."""
+        candidates = {
+            "binding": ["binding/json.go"],
+            "render": ["render/json.go"],
+        }
+        result = _promote_library_root_candidates(candidates)
+        assert result == candidates
+
+    def test_stem_collision_with_existing_candidate(self) -> None:
+        """If a stem matches an existing subdir candidate, merge — never
+        drop files on the floor."""
+        candidates = {
+            "root": ["render.go"],
+            "render": ["render/json.go", "render/xml.go"],
+        }
+        result = _promote_library_root_candidates(candidates)
+        assert "root" not in result
+        assert sorted(result["render"]) == ["render.go", "render/json.go", "render/xml.go"]
+
+    def test_trims_os_arch_suffixes(self) -> None:
+        """Files differing only by OS/arch/test suffix should group together."""
+        candidates = {
+            "root": [
+                "fs.go", "fs_linux.go", "fs_windows.go", "fs_darwin.go",
+                "fs_test.go",
+            ],
+        }
+        result = _promote_library_root_candidates(candidates)
+        assert "root" not in result
+        assert "fs" in result
+        assert len(result["fs"]) == 5
+
+    def test_handles_empty_root(self) -> None:
+        candidates = {"root": [], "binding": ["binding/json.go"]}
+        result = _promote_library_root_candidates(candidates)
+        assert "root" not in result
+        assert result["binding"] == ["binding/json.go"]
 
 
 def _ds_result(features: dict[str, list[str]]) -> DeepScanResult:
@@ -574,9 +652,69 @@ class TestPackageModePrompt:
         for prompt in (
             _build_system_prompt(),
             _build_system_prompt(package_mode=True, package_name="x"),
+            _build_system_prompt(is_library=True),
         ):
             assert "HARD CAP" in prompt
             assert "8 sub-features" in prompt
+
+    def test_library_prompt_targets_5_15_modules(self) -> None:
+        """Day 14 library-mode fix: libraries ask for 5-15 public modules,
+        not 12-25 business features."""
+        prompt = _build_system_prompt(is_library=True)
+        assert "5-15 public modules" in prompt
+        assert "consumable library" in prompt
+        # Must name common library modules to prime the LLM
+        assert "router" in prompt
+        assert "middleware" in prompt
+        # Must explicitly forbid the over-merge failure mode
+        assert "shared-infra" in prompt
+        # Must not use the repo-wide target
+        assert "12-25 business features" not in prompt
+        # Must not apply the package-mode language
+        assert "single package within a monorepo" not in prompt
+
+    def test_package_mode_beats_library_mode(self) -> None:
+        """Precedence: package_mode wins because each per-package call
+        is already isolated enough that library-vs-app is irrelevant."""
+        prompt = _build_system_prompt(
+            package_mode=True,
+            package_name="auth",
+            is_library=True,
+        )
+        # Package-mode target should be active
+        assert "1-8 features" in prompt
+        assert "`auth`" in prompt
+        # Library-mode target should NOT leak in
+        assert "5-15 public modules" not in prompt
+        assert "consumable library" not in prompt
+
+    def test_default_still_repo_mode(self) -> None:
+        """Default (no flags) keeps the 12-25 target language."""
+        prompt = _build_system_prompt()
+        assert "12-25 business features" in prompt
+        assert "5-15 public modules" not in prompt
+        assert "single package within a monorepo" not in prompt
+
+    @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
+    def test_deep_scan_uses_library_prompt_when_is_library(
+        self, mock_cls: MagicMock,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _make_llm_response(
+            _MINIMAL_OPS_JSON, 100, 50,
+        )
+
+        deep_scan(
+            files=["src/router.go", "src/middleware.go"],
+            candidates={"router": ["src/router.go"], "middleware": ["src/middleware.go"]},
+            api_key="sk-ant-test",
+            is_library=True,
+        )
+
+        sent_system = mock_client.messages.create.call_args.kwargs["system"]
+        assert "5-15 public modules" in sent_system
+        assert "consumable library" in sent_system
 
     @patch("faultline.llm.sonnet_scanner.anthropic.Anthropic")
     def test_deep_scan_uses_package_prompt_when_requested(
