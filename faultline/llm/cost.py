@@ -22,6 +22,7 @@ a stable target to import against.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -146,6 +147,16 @@ class CostTracker:
 
     max_cost: float | None = None
     records: list[CostRecord] = field(default_factory=list)
+    # Day 12: lock for thread-safe record / summary when
+    # deep_scan_workspace runs per-package calls in parallel via
+    # ThreadPoolExecutor. All mutations and derived-value reads
+    # acquire this so iteration over ``records`` doesn't race with
+    # an append from another thread.
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        repr=False,
+        compare=False,
+    )
 
     def record(
         self,
@@ -179,24 +190,29 @@ class CostTracker:
             label=label,
             batch=batch,
         )
-        self.records.append(rec)
+        with self._lock:
+            self.records.append(rec)
         return rec
 
     @property
     def total_cost_usd(self) -> float:
-        return sum(r.cost_usd for r in self.records)
+        with self._lock:
+            return sum(r.cost_usd for r in self.records)
 
     @property
     def total_input_tokens(self) -> int:
-        return sum(r.input_tokens for r in self.records)
+        with self._lock:
+            return sum(r.input_tokens for r in self.records)
 
     @property
     def total_output_tokens(self) -> int:
-        return sum(r.output_tokens for r in self.records)
+        with self._lock:
+            return sum(r.output_tokens for r in self.records)
 
     @property
     def call_count(self) -> int:
-        return len(self.records)
+        with self._lock:
+            return len(self.records)
 
     def check_budget(self) -> None:
         """Raise BudgetExceeded if accumulated cost exceeds max_cost.
@@ -210,9 +226,17 @@ class CostTracker:
             raise BudgetExceeded(self.total_cost_usd, self.max_cost)
 
     def summary(self) -> dict:
-        """Return a JSON-serializable summary for logs / metadata.json."""
+        """Return a JSON-serializable summary for logs / metadata.json.
+
+        Thread-safe: takes a single snapshot of ``records`` and computes
+        all derived values from it, so concurrent ``record()`` calls
+        can't corrupt the report or produce inconsistent totals.
+        """
+        with self._lock:
+            records_snapshot = list(self.records)
+
         by_label: dict[str, dict[str, float | int]] = {}
-        for r in self.records:
+        for r in records_snapshot:
             b = by_label.setdefault(
                 r.label or "unlabeled",
                 {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
@@ -222,11 +246,16 @@ class CostTracker:
             b["output_tokens"] = int(b["output_tokens"]) + r.output_tokens
             b["cost_usd"] = float(b["cost_usd"]) + r.cost_usd
 
+        total_calls = len(records_snapshot)
+        total_input_tokens = sum(r.input_tokens for r in records_snapshot)
+        total_output_tokens = sum(r.output_tokens for r in records_snapshot)
+        total_cost_usd = sum(r.cost_usd for r in records_snapshot)
+
         return {
-            "total_calls": self.call_count,
-            "total_input_tokens": self.total_input_tokens,
-            "total_output_tokens": self.total_output_tokens,
-            "total_cost_usd": round(self.total_cost_usd, 6),
+            "total_calls": total_calls,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_cost_usd": round(total_cost_usd, 6),
             "max_cost_usd": self.max_cost,
             "by_label": {
                 k: {

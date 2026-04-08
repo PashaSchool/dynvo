@@ -13,6 +13,7 @@ Output is a standard dict[str, SonnetFeature] that cli.py converts to FeatureMap
 import json
 import logging
 import os
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -39,6 +40,17 @@ logger = logging.getLogger(__name__)
 _MODEL = "claude-sonnet-4-20250514"
 _MAX_RETRIES = 2
 _RETRY_BASE_DELAY = 2.0
+
+# Day 12: serializes the short critical section at the end of
+# ``deep_scan`` where the module-global ``_last_scan_result`` is written,
+# finalized, and then snapshot into a ``DeepScanResult``. The expensive
+# LLM call itself stays OUTSIDE the lock, so parallel workspace runs
+# overlap the network round-trips and only serialize microseconds of
+# post-processing. Without this lock, ``deep_scan_workspace``'s
+# ``ThreadPoolExecutor`` path would let two threads stomp on the global
+# between write and snapshot, cross-contaminating flow and description
+# data across packages.
+_GLOBAL_RESULT_LOCK = threading.Lock()
 
 
 # ── Response models ────────────────────────────────────────────────────────
@@ -785,21 +797,30 @@ def deep_scan(
         if name in _CATCHALL and paths:
             result.setdefault("shared-infra", []).extend(paths)
 
-    # Store features with flow data for later extraction
-    global _last_scan_result
-    _last_scan_result = ops
+    # Day 12: the rest of this function touches the module-global
+    # ``_last_scan_result`` (write, canonicalize names, sort) and then
+    # reads it back inside ``_build_deep_scan_result``. All of that
+    # must be atomic relative to other threads also inside ``deep_scan``,
+    # otherwise the ThreadPoolExecutor path in ``deep_scan_workspace``
+    # cross-contaminates flows and descriptions between packages. The
+    # lock window is microseconds — negligible next to the minute-long
+    # LLM call above that runs fully in parallel.
+    with _GLOBAL_RESULT_LOCK:
+        # Store features with flow data for later extraction
+        global _last_scan_result
+        _last_scan_result = ops
 
-    # Post-process: re-attach docs bucket, canonicalize names, drop
-    # phantoms, strip flows for libraries. All pure transformations —
-    # unit-tested in tests/test_sonnet_scanner_pipeline.py.
-    features_dict = _finalize_result(result, docs_files, is_library)
+        # Post-process: re-attach docs bucket, canonicalize names, drop
+        # phantoms, strip flows for libraries. All pure transformations —
+        # unit-tested in tests/test_sonnet_scanner_pipeline.py.
+        features_dict = _finalize_result(result, docs_files, is_library)
 
-    # D10: wrap into a DeepScanResult that carries flows + descriptions +
-    # cost summary alongside the feature map. Reads from the global
-    # side channel ``_last_scan_result`` populated above; legacy
-    # ``get_deep_scan_*`` accessors continue to work for callers that
-    # haven't migrated yet.
-    return _build_deep_scan_result(features_dict, tracker)
+        # D10: wrap into a DeepScanResult that carries flows + descriptions +
+        # cost summary alongside the feature map. Reads from the global
+        # side channel ``_last_scan_result`` populated above; legacy
+        # ``get_deep_scan_*`` accessors continue to work for callers that
+        # haven't migrated yet.
+        return _build_deep_scan_result(features_dict, tracker)
 
 
 # ── DeepScanResult builder (D10) ───────────────────────────────────────────
@@ -875,6 +896,13 @@ _EXAMPLE_PKG_PREFIXES = (
     "example", "sample", "demo", "template", "starter", "tutorial",
 )
 
+# Day 12: how many per-package ``deep_scan`` calls to run concurrently
+# inside ``deep_scan_workspace``. Four is chosen to stay well under
+# Anthropic's default-tier 50 req/min rate limit while still cutting
+# wall-clock time by ~4x for large monorepos like cal.com (15+ large
+# packages × ~60s each = 15 min serial → ~4 min parallel).
+_MAX_WORKERS = 4
+
 
 def deep_scan_workspace(
     workspace_info,  # WorkspaceInfo from faultline.analyzer.workspace
@@ -886,6 +914,7 @@ def deep_scan_workspace(
     tracker: CostTracker | None = None,
     min_files_for_llm: int = _DEFAULT_PKG_LLM_FLOOR,
     commit_context: str | None = None,
+    max_workers: int = _MAX_WORKERS,
 ) -> DeepScanResult | None:
     """Run ``deep_scan`` once per workspace package and merge the results.
 
@@ -918,11 +947,14 @@ def deep_scan_workspace(
     Returns the merged feature → file mapping, or ``None`` if the
     workspace had no usable packages at all.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from faultline.analyzer.features import detect_candidates
     from faultline.analyzer.validation import (
         canonical_bucket_name,
         is_test_feature_name,
     )
+    from faultline.llm.cost import BudgetExceeded
 
     if workspace_info is None or not workspace_info.packages:
         return None
@@ -936,6 +968,13 @@ def deep_scan_workspace(
     # Largest packages first so a budget abort kills the expensive ones
     # before we waste calls on small packages.
     packages = sorted(workspace_info.packages, key=lambda p: -len(p.files))
+
+    # ── Phase 1: serial pre-processing ─────────────────────────────────
+    # Filter tests/examples, short-circuit small packages, build
+    # per-package candidates. This is all pure Python (no I/O) so
+    # parallelism wouldn't help. Output is a list of "llm_jobs" ready
+    # for the thread pool.
+    llm_jobs: list[tuple] = []  # (pkg, pkg_prefix, pkg_files_rel, pkg_sigs, pkg_candidates)
 
     for pkg in packages:
         if not pkg.files:
@@ -965,7 +1004,7 @@ def deep_scan_workspace(
             )
             continue
 
-        # Large package: per-package LLM call.
+        # Large package: prepare the inputs for a per-package LLM call.
         # Strip the package path prefix so files passed to deep_scan are
         # relative to the package root. This keeps the candidate detector
         # focused and the LLM prompt readable.
@@ -1001,6 +1040,24 @@ def deep_scan_workspace(
             raw_mapping[pkg.name] = list(pkg.files)
             continue
 
+        llm_jobs.append((pkg, pkg_prefix, pkg_files_rel, pkg_sigs, pkg_candidates))
+
+    # ── Phase 2: parallel LLM calls ────────────────────────────────────
+    # Submit each prepared job to a ThreadPoolExecutor. The LLM round-trip
+    # is ~60s per package; running ``max_workers`` in parallel cuts
+    # wall-clock by that factor. Results are collected and merged in
+    # the main thread after all futures finish so the merge logic stays
+    # single-threaded and deterministic.
+    #
+    # Error handling: ``BudgetExceeded`` from any future is propagated
+    # out of the whole function immediately so the caller can stop the
+    # scan. Any other exception is logged and the package falls back to
+    # a single-feature entry.
+
+    def _run_pkg(
+        pkg, pkg_prefix, pkg_files_rel, pkg_sigs, pkg_candidates,
+    ) -> tuple:
+        """Thread-pool worker: returns (pkg, pkg_prefix, sub_result_or_None)."""
         try:
             sub_result = deep_scan(
                 pkg_files_rel,
@@ -1014,11 +1071,45 @@ def deep_scan_workspace(
                 package_name=pkg.name,
                 commit_context=commit_context,
             )
-        except Exception:
-            # BudgetExceeded and any other terminal error propagate out
-            # so the caller can abort the whole scan with a clean stack.
+        except BudgetExceeded:
             raise
+        except Exception as exc:
+            logger.warning(
+                "workspace: deep_scan raised %s for %s — fallback 1 feature",
+                type(exc).__name__, pkg.name,
+            )
+            return (pkg, pkg_prefix, None)
+        return (pkg, pkg_prefix, sub_result)
 
+    effective_workers = max(1, min(max_workers, len(llm_jobs) or 1))
+    sub_results: list[tuple] = []
+
+    if llm_jobs:
+        logger.info(
+            "workspace: %d packages queued for parallel LLM (max_workers=%d)",
+            len(llm_jobs), effective_workers,
+        )
+        with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+            futures = {pool.submit(_run_pkg, *job): job[0] for job in llm_jobs}
+            try:
+                for fut in as_completed(futures):
+                    sub_results.append(fut.result())
+            except BudgetExceeded:
+                # Cancel any unstarted futures and propagate. Running
+                # futures can't be interrupted mid-LLM-call but the
+                # budget abort stops everything queued after them.
+                for f in futures:
+                    f.cancel()
+                raise
+
+    # ── Phase 3: deterministic serial merge ───────────────────────────
+    # Process results in the same largest-first order as the jobs were
+    # submitted so the final feature ordering is stable across runs.
+    sub_results.sort(
+        key=lambda t: (-len(t[0].files), t[0].name),
+    )
+
+    for pkg, pkg_prefix, sub_result in sub_results:
         if not sub_result:
             logger.warning(
                 "workspace: deep_scan returned no features for %s — fallback 1 feature",

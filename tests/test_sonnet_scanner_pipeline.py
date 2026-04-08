@@ -1129,6 +1129,130 @@ class TestDeepScanReturnsDeepScanResult:
         assert result.flows["api/auth"] == ["login-flow", "signup-flow"]
         assert "api/auth" in result.descriptions
 
+    def test_workspace_parallel_submits_all_large_packages(self) -> None:
+        """Day 12: parallel path submits every large package exactly once
+        to deep_scan, and small/test/example packages bypass the pool."""
+        ws = _ws(
+            packages=[
+                _pkg("api", "apps/api", 150),
+                _pkg("web", "apps/web", 100),
+                _pkg("ee", "packages/ee", 80),
+                _pkg("tiny", "packages/tiny", 5),          # under floor
+                _pkg("tests", "packages/tests", 60),        # test filter
+                _pkg("example-a", "examples/a", 50),        # example pool
+            ],
+        )
+        call_names: list[str] = []
+
+        def fake_deep_scan(files, candidates, **kwargs):
+            call_names.append(kwargs["package_name"])
+            return _ds_result({kwargs["package_name"]: list(files)})
+
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+            side_effect=fake_deep_scan,
+        ) as mock_ds:
+            result = deep_scan_workspace(
+                ws, api_key="sk-ant-test", min_files_for_llm=30,
+            )
+
+        assert mock_ds.call_count == 3
+        assert sorted(call_names) == ["api", "ee", "web"]
+        # All three large packages + tiny + examples + no tests
+        assert "api" in result.features
+        assert "web" in result.features
+        assert "ee" in result.features
+        assert "tiny" in result.features
+        assert "examples" in result.features
+        assert "tests" not in result.features
+
+    def test_workspace_parallel_max_workers_1_serializes(self) -> None:
+        """max_workers=1 runs one LLM call at a time but produces the
+        same final result as the default."""
+        ws = _ws(
+            packages=[
+                _pkg("api", "apps/api", 100),
+                _pkg("web", "apps/web", 100),
+            ],
+        )
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+        ) as mock_ds:
+            mock_ds.side_effect = lambda *args, **kw: _ds_result(
+                {kw["package_name"]: ["src/file0.ts"]}
+            )
+            result = deep_scan_workspace(
+                ws, api_key="sk-ant-test", min_files_for_llm=30, max_workers=1,
+            )
+        assert mock_ds.call_count == 2
+        assert set(result.keys()) == {"api", "web"}
+
+    def test_workspace_parallel_budget_exceeded_propagates(self) -> None:
+        """A BudgetExceeded from any worker tears down the whole scan."""
+        ws = _ws(
+            packages=[
+                _pkg("api", "apps/api", 100),
+                _pkg("web", "apps/web", 100),
+                _pkg("ee", "packages/ee", 100),
+            ],
+        )
+        call_count = {"n": 0}
+
+        def fake(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                raise BudgetExceeded(spent=1.0, limit=0.5)
+            return _ds_result({kwargs["package_name"]: ["src/file0.ts"]})
+
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+            side_effect=fake,
+        ):
+            with pytest.raises(BudgetExceeded):
+                deep_scan_workspace(
+                    ws, api_key="sk-ant-test", min_files_for_llm=30,
+                )
+
+    def test_workspace_parallel_deterministic_ordering(self) -> None:
+        """Two runs with the same inputs must produce identical ordered
+        feature lists even when futures complete out of order."""
+        import time
+
+        ws = _ws(
+            packages=[
+                _pkg("alpha", "packages/alpha", 150),
+                _pkg("bravo", "packages/bravo", 100),
+                _pkg("charlie", "packages/charlie", 50),
+            ],
+        )
+
+        def slow_fake(files, candidates, **kwargs):
+            # Inject variable delay so completion order differs from
+            # submission order.
+            name = kwargs["package_name"]
+            delay = {"alpha": 0.03, "bravo": 0.01, "charlie": 0.02}[name]
+            time.sleep(delay)
+            return _ds_result({name: list(files)})
+
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+            side_effect=slow_fake,
+        ):
+            r1 = deep_scan_workspace(
+                ws, api_key="sk-ant-test", min_files_for_llm=30,
+            )
+        with patch(
+            "faultline.llm.sonnet_scanner.deep_scan",
+            side_effect=slow_fake,
+        ):
+            r2 = deep_scan_workspace(
+                ws, api_key="sk-ant-test", min_files_for_llm=30,
+            )
+
+        assert list(r1.features.keys()) == list(r2.features.keys())
+        # Sort is (-size, name); alpha is largest, then bravo, then charlie
+        assert list(r1.features.keys()) == ["alpha", "bravo", "charlie"]
+
     def test_workspace_collapsed_single_feature_keeps_flows(self) -> None:
         """Single-feature collapse: flows attached under the bare package
         name, not the LLM-returned sub-feature name."""
