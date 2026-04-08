@@ -1,9 +1,9 @@
 """Centralized LLM cost tracking for the detection pipeline.
 
-The legacy pipeline only tracks cost for the iterative strategy
-(``iterative_detector.estimate_cost``). Every other strategy flies
-blind — which is why documenso timed out at $unknown and cal.com
-was left unscanned in the Day 1 baseline.
+The pre-rewrite pipeline only tracked cost for the (now-deleted)
+iterative strategy. Every other strategy flew blind — which is why
+documenso timed out at $unknown and cal.com was left unscanned in
+the Day 1 baseline.
 
 This module provides a single ``CostTracker`` that:
   - records every LLM call (provider, model, tokens, cost)
@@ -13,11 +13,8 @@ This module provides a single ``CostTracker`` that:
   - serializes a summary for logs and the ``metadata.json`` baseline
 
 Nothing here calls an LLM or performs I/O. Adding a new model is a
-single line in ``_PRICING``.
-
-Wiring into ``sonnet_scanner`` / ``iterative_detector`` happens in
-Day 5–7 of the rewrite. This file lands first so those modules have
-a stable target to import against.
+single line in ``_PRICING``. Used by ``sonnet_scanner`` and threaded
+through ``pipeline.run``.
 """
 
 from __future__ import annotations
