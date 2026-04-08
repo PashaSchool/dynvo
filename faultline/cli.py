@@ -238,11 +238,17 @@ def analyze(
         # Strip --src prefix so LLM/heuristic sees clean relative paths (e.g. EDR/... not src/views/EDR/...)
         analysis_files, path_prefix = _strip_src_prefix(files, src)
 
-        # Classify repo structure to adapt LLM strategy
-        repo_structure = classify_repo(analysis_files)
+        # Classify repo structure to adapt LLM strategy. ``repo_root`` is
+        # required for ``detect_library`` (Day 11 fix) — without it the
+        # new pipeline never sees ``is_library=True`` and ``_detect_flows``
+        # below happily generates user-flow output for libraries like trpc.
+        repo_structure = classify_repo(analysis_files, repo_root=str(repo.working_tree_dir))
         layer_context = build_layer_context(repo_structure)
         if repo_structure.layout != "feature":
             console.print(f"[dim]Repo layout: {repo_structure.layout} (layer ratio: {repo_structure.layer_ratio:.0%})[/dim]")
+        if repo_structure.is_library:
+            signals = ", ".join(repo_structure.library_signals[:3])
+            console.print(f"[dim]Library detected ({signals}) — flows will be suppressed[/dim]")
 
         # Detect workspace packages for per-package analysis
         from faultline.analyzer.workspace import detect_workspace
@@ -551,8 +557,13 @@ def analyze(
             raw_mapping = detect_features_from_structure(analysis_files)
 
         # Split oversized features — only for non-TS/JS repos (Django/Rails monoliths)
-        # TS/JS repos already have fine-grained features from import graph + LLM merge
-        if ts_js_sig_count < _MIN_SIGNATURES_FOR_IMPORT_GRAPH:
+        # TS/JS repos already have fine-grained features from import graph + LLM merge.
+        # Day 11: skip for the new pipeline. Sonnet's prompt already targets
+        # 12-25 features and the docs collapse in _clean_inputs produces a
+        # single ``documentation`` bucket; ``split_large_features`` would
+        # explode it back into one sub-feature per tutorial directory
+        # (regression observed on fastapi: 1 → 130+ documentation-tutorialNNN).
+        if ts_js_sig_count < _MIN_SIGNATURES_FOR_IMPORT_GRAPH and _new_pipeline_result is None:
             raw_mapping = split_large_features(raw_mapping)
 
         # Restore full paths so commit matching works against git history
@@ -621,7 +632,16 @@ def analyze(
             _apply_feature_coverage(feature_map, coverage_data, path_prefix)
 
         # 6c. Detect flows within each feature (optional)
-        if flows:
+        # Day 11: skip flow detection for libraries entirely. Libraries
+        # don't have user-facing flows — their "users" are developers
+        # invoking APIs, and the legacy Haiku flow detector hallucinates
+        # flows like "interact-with-twitter-profile-flow" on a library
+        # repo. Acceptance criterion C: libraries → 0 flows.
+        if flows and repo_structure.is_library:
+            console.print(
+                "[dim]Skipping flow detection — repo classified as library[/dim]"
+            )
+        if flows and not repo_structure.is_library:
             from faultline.llm.flow_detector import detect_e2e_anchors
             e2e_anchors = detect_e2e_anchors(analysis_files)
             if e2e_anchors:
