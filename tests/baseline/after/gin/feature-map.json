@@ -1,0 +1,810 @@
+{
+  "repo_path": "/Users/pkuzina/workspace/_faultlines-testrepos/gin",
+  "remote_url": "https://github.com/gin-gonic/gin",
+  "analyzed_at": "2026-04-08T08:47:29.324120Z",
+  "total_commits": 179,
+  "date_range_days": 365,
+  "features": [
+    {
+      "name": "root",
+      "description": null,
+      "paths": [
+        ".gitignore",
+        ".golangci.yml",
+        ".goreleaser.yaml",
+        "BENCHMARKS.md",
+        "CHANGELOG.md",
+        "CODE_OF_CONDUCT.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "Makefile",
+        "README.md",
+        "auth.go",
+        "auth_test.go",
+        "benchmarks_test.go",
+        "codecov.yml",
+        "context.go",
+        "context_appengine.go",
+        "context_file_test.go",
+        "context_test.go",
+        "debug.go",
+        "debug_test.go",
+        "deprecated.go",
+        "deprecated_test.go",
+        "doc.go",
+        "errors.go",
+        "errors_test.go",
+        "fs.go",
+        "fs_test.go",
+        "gin.go",
+        "gin_integration_test.go",
+        "gin_test.go",
+        "githubapi_test.go",
+        "go.mod",
+        "logger.go",
+        "logger_test.go",
+        "middleware_test.go",
+        "mode.go",
+        "mode_test.go",
+        "path.go",
+        "path_test.go",
+        "recovery.go",
+        "recovery_test.go",
+        "response_writer.go",
+        "response_writer_test.go",
+        "routergroup.go",
+        "routergroup_test.go",
+        "routes_test.go",
+        "test_helpers.go",
+        "tree.go",
+        "tree_test.go",
+        "utils.go",
+        "utils_test.go",
+        "version.go"
+      ],
+      "authors": [
+        "Abhiyan Khanal",
+        "Aeddis Desauw",
+        "Alessandro (Ale) Segala",
+        "Andreas Deininger",
+        "Andrey Bolonin",
+        "Artur Melanchyk",
+        "AtoriUzawa",
+        "Aum Patel",
+        "Bo-Yi Wu",
+        "Bob Du",
+        "Denny Septian Panggabean",
+        "Flc\u309b",
+        "HolynnChen",
+        "Jacob McSwain",
+        "Laurent Caumont",
+        "Leon cap",
+        "Liu Ziming",
+        "M. Ilham Surya Pratama",
+        "Mahan Adhikari",
+        "Max Katz",
+        "Mehrdad Banikian",
+        "Meng Xun",
+        "NARITA",
+        "Name",
+        "Nurysso",
+        "OHZEKI Naoki",
+        "Orkhan Alikhanov",
+        "Paulo Henrique",
+        "Pawan Kalyan",
+        "Raju Ahmed",
+        "Siddhesh Mhadnak",
+        "Spyder01",
+        "Tim",
+        "Twacqwq",
+        "Varun Chawla",
+        "Wayne Aki",
+        "WeidiDeng",
+        "Yash",
+        "Yilong Li",
+        "appleboy",
+        "chenhuiluo",
+        "cui",
+        "dependabot[bot]",
+        "eduardo-ax",
+        "efcking",
+        "eqsdxr",
+        "goldlinker",
+        "letreturn",
+        "ljz",
+        "maskpp",
+        "sunshineplan",
+        "tsinglua",
+        "wanghaolong613",
+        "yangquanshi",
+        "\u8acf\u8a2a\u539f\u6176\u6597"
+      ],
+      "total_commits": 136,
+      "bug_fixes": 46,
+      "bug_fix_ratio": 0.338,
+      "last_modified": "2026-03-16T12:49:59Z",
+      "health_score": 32.8,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 4571,
+          "url": "https://github.com/gin-gonic/gin/pull/4571",
+          "title": "test(engine): add regression tests for HandleContext with NoRoute (#4571)",
+          "author": "Abhiyan Khanal",
+          "date": "2026-03-16T12:49:59Z"
+        },
+        {
+          "number": 4580,
+          "url": "https://github.com/gin-gonic/gin/pull/4580",
+          "title": "chore(deps): upgrade Go dependencies and CI action versions (#4580)",
+          "author": "Bo-Yi Wu",
+          "date": "2026-03-13T14:40:18Z"
+        },
+        {
+          "number": 4551,
+          "url": "https://github.com/gin-gonic/gin/pull/4551",
+          "title": "docs: document and finalize Gin v1.12.0 release (#4551)",
+          "author": "Bo-Yi Wu",
+          "date": "2026-02-28T10:07:46Z"
+        },
+        {
+          "number": 4535,
+          "url": "https://github.com/gin-gonic/gin/pull/4535",
+          "title": "fix(tree): panic in findCaseInsensitivePathRec with RedirectFixedPath (#4535)",
+          "author": "Varun Chawla",
+          "date": "2026-02-28T03:15:27Z"
+        },
+        {
+          "number": 4547,
+          "url": "https://github.com/gin-gonic/gin/pull/4547",
+          "title": "chore(logger): allow skipping query string output (#4547)",
+          "author": "Jacob McSwain",
+          "date": "2026-02-27T15:33:46Z"
+        },
+        {
+          "number": 4533,
+          "url": "https://github.com/gin-gonic/gin/pull/4533",
+          "title": "chore(deps): bump go.mongodb.org/mongo-driver from 1.17.7 to 1.17.9 (#4533)",
+          "author": "dependabot[bot]",
+          "date": "2026-02-15T02:57:27Z"
+        },
+        {
+          "number": 4507,
+          "url": "https://github.com/gin-gonic/gin/pull/4507",
+          "title": "chore(deps): bump github.com/goccy/go-yaml from 1.19.1 to 1.19.2 (#4507)",
+          "author": "dependabot[bot]",
+          "date": "2026-02-13T05:56:40Z"
+        },
+        {
+          "number": 4476,
+          "url": "https://github.com/gin-gonic/gin/pull/4476",
+          "title": "chore(deps): bump github.com/goccy/go-yaml from 1.19.0 to 1.19.1 (#4476)",
+          "author": "dependabot[bot]",
+          "date": "2026-01-24T09:55:09Z"
+        },
+        {
+          "number": 4502,
+          "url": "https://github.com/gin-gonic/gin/pull/4502",
+          "title": "feat(context): add GetError and GetErrorSlice methods for error retrieval (#4502)",
+          "author": "Raju Ahmed",
+          "date": "2026-01-24T09:54:37Z"
+        },
+        {
+          "number": 4142,
+          "url": "https://github.com/gin-gonic/gin/pull/4142",
+          "title": "refactor(recovery): smart error comparison (#4142)",
+          "author": "OHZEKI Naoki",
+          "date": "2026-01-17T08:40:43Z"
+        },
+        {
+          "number": 4472,
+          "url": "https://github.com/gin-gonic/gin/pull/4472",
+          "title": "fix(context): ClientIP handling for multiple X-Forwarded-For header values (#4472)",
+          "author": "Nurysso",
+          "date": "2026-01-02T02:15:27Z"
+        },
+        {
+          "number": 4403,
+          "url": "https://github.com/gin-gonic/gin/pull/4403",
+          "title": "fix(debug): version mismatch (#4403)",
+          "author": "OHZEKI Naoki",
+          "date": "2025-12-04T02:49:37Z"
+        },
+        {
+          "number": 4453,
+          "url": "https://github.com/gin-gonic/gin/pull/4453",
+          "title": "test(gin): resolve race conditions in integration tests (#4453)",
+          "author": "Wayne Aki",
+          "date": "2025-11-30T07:38:07Z"
+        },
+        {
+          "number": 4336,
+          "url": "https://github.com/gin-gonic/gin/pull/4336",
+          "title": "fix(recover): suppress http.ErrAbortHandler in recover (#4336)",
+          "author": "Yilong Li",
+          "date": "2025-11-27T15:20:52Z"
+        },
+        {
+          "number": 4415,
+          "url": "https://github.com/gin-gonic/gin/pull/4415",
+          "title": "fix(gin): literal colon routes not working with engine.Handler() (#4415)",
+          "author": "Pawan Kalyan",
+          "date": "2025-11-16T01:22:07Z"
+        },
+        {
+          "number": 4437,
+          "url": "https://github.com/gin-gonic/gin/pull/4437",
+          "title": "ci(sec): improve type safety and server organization in HTTP middleware (#4437)",
+          "author": "Bo-Yi Wu",
+          "date": "2025-11-15T15:03:32Z"
+        },
+        {
+          "number": 4436,
+          "url": "https://github.com/gin-gonic/gin/pull/4436",
+          "title": "ci(lint): refactor test assertions and linter configuration (#4436)",
+          "author": "Bo-Yi Wu",
+          "date": "2025-11-15T11:21:42Z"
+        },
+        {
+          "number": 4422,
+          "url": "https://github.com/gin-gonic/gin/pull/4422",
+          "title": "fix(gin): close os.File in RunFd to prevent resource leak (#4422)",
+          "author": "Name",
+          "date": "2025-11-07T04:01:19Z"
+        },
+        {
+          "number": 4426,
+          "url": "https://github.com/gin-gonic/gin/pull/4426",
+          "title": "docs(README): add a Trivy security scan badge (#4426)",
+          "author": "Bo-Yi Wu",
+          "date": "2025-11-07T03:57:12Z"
+        },
+        {
+          "number": 4409,
+          "url": "https://github.com/gin-gonic/gin/pull/4409",
+          "title": "chore(deps): bump github.com/ugorji/go/codec from 1.3.0 to 1.3.1 (#4409)",
+          "author": "dependabot[bot]",
+          "date": "2025-10-31T14:03:29Z"
+        },
+        {
+          "number": 4410,
+          "url": "https://github.com/gin-gonic/gin/pull/4410",
+          "title": "chore(deps): bump github.com/bytedance/sonic from 1.14.0 to 1.14.2 (#4410)",
+          "author": "dependabot[bot]",
+          "date": "2025-10-31T14:02:56Z"
+        },
+        {
+          "number": 4396,
+          "url": "https://github.com/gin-gonic/gin/pull/4396",
+          "title": "docs(context): fix some comments (#4396)",
+          "author": "letreturn",
+          "date": "2025-10-14T14:37:07Z"
+        },
+        {
+          "number": 4382,
+          "url": "https://github.com/gin-gonic/gin/pull/4382",
+          "title": "docs(context): fix wrong function name in comment (#4382)",
+          "author": "goldlinker",
+          "date": "2025-10-03T13:26:47Z"
+        },
+        {
+          "number": 4383,
+          "url": "https://github.com/gin-gonic/gin/pull/4383",
+          "title": "chore(deps): bump google.golang.org/protobuf from 1.36.9 to 1.36.10 (#4383)",
+          "author": "dependabot[bot]",
+          "date": "2025-10-03T13:25:35Z"
+        },
+        {
+          "number": 4375,
+          "url": "https://github.com/gin-gonic/gin/pull/4375",
+          "title": "test(benchmarks): fix the incorrect function name (#4375)",
+          "author": "Meng Xun",
+          "date": "2025-09-26T00:15:35Z"
+        },
+        {
+          "number": 4373,
+          "url": "https://github.com/gin-gonic/gin/pull/4373",
+          "title": "fix(response): refine hijack behavior for response lifecycle (#4373)",
+          "author": "Bo-Yi Wu",
+          "date": "2025-09-26T00:13:39Z"
+        },
+        {
+          "number": 4379,
+          "url": "https://github.com/gin-gonic/gin/pull/4379",
+          "title": "chore(deps): bump github.com/quic-go/quic-go from 0.54.0 to 0.54.1 (#4379)",
+          "author": "dependabot[bot]",
+          "date": "2025-09-26T00:10:02Z"
+        },
+        {
+          "number": 4365,
+          "url": "https://github.com/gin-gonic/gin/pull/4365",
+          "title": "docs: revamp contributing guidelines with comprehensive instructions (#4365)",
+          "author": "Bo-Yi Wu",
+          "date": "2025-09-21T09:39:33Z"
+        },
+        {
+          "number": 4361,
+          "url": "https://github.com/gin-gonic/gin/pull/4361",
+          "title": "docs(changelog): upgrade Gin to v1.11.0 and add release notes (#4361)",
+          "author": "Bo-Yi Wu",
+          "date": "2025-09-20T11:38:42Z"
+        },
+        {
+          "number": 4356,
+          "url": "https://github.com/gin-gonic/gin/pull/4356",
+          "title": "chore(deps): bump google.golang.org/protobuf from 1.36.8 to 1.36.9 (#4356)",
+          "author": "dependabot[bot]",
+          "date": "2025-09-19T00:35:54Z"
+        },
+        {
+          "number": 4346,
+          "url": "https://github.com/gin-gonic/gin/pull/4346",
+          "title": "chore(deps): bump google.golang.org/protobuf from 1.36.6 to 1.36.8 (#4346)",
+          "author": "dependabot[bot]",
+          "date": "2025-09-13T23:26:29Z"
+        },
+        {
+          "number": 4307,
+          "url": "https://github.com/gin-gonic/gin/pull/4307",
+          "title": "test(context): add comprehensive unit tests for `Context.File()` method (#4307)",
+          "author": "Leon cap",
+          "date": "2025-07-22T13:38:32Z"
+        },
+        {
+          "number": 4310,
+          "url": "https://github.com/gin-gonic/gin/pull/4310",
+          "title": "docs(context): fix AbortWithStatusPureJSON comment typo (#4310)",
+          "author": "Name",
+          "date": "2025-07-22T13:36:47Z"
+        },
+        {
+          "number": 4301,
+          "url": "https://github.com/gin-gonic/gin/pull/4301",
+          "title": "docs: correct article usage in comments (#4301)",
+          "author": "Leon cap",
+          "date": "2025-07-19T06:58:12Z"
+        },
+        {
+          "number": 4299,
+          "url": "https://github.com/gin-gonic/gin/pull/4299",
+          "title": "fix: version number discrepancy (#4299)",
+          "author": "\u8acf\u8a2a\u539f\u6176\u6597",
+          "date": "2025-07-17T11:51:40Z"
+        },
+        {
+          "number": 3963,
+          "url": "https://github.com/gin-gonic/gin/pull/3963",
+          "title": "refactor(context): refactor `Keys` type to `map[any]any` (#3963)",
+          "author": "Flc\u309b",
+          "date": "2025-05-26T15:15:14Z"
+        },
+        {
+          "number": 4227,
+          "url": "https://github.com/gin-gonic/gin/pull/4227",
+          "title": "chore(bind): return 413 status code when error is `http.MaxBytesError` (#4227)",
+          "author": "Alessandro (Ale) Segala",
+          "date": "2025-05-25T12:36:33Z"
+        },
+        {
+          "number": 4115,
+          "url": "https://github.com/gin-gonic/gin/pull/4115",
+          "title": "context_test.go: fix useless asserts (#4115)",
+          "author": "Andreas Deininger",
+          "date": "2025-05-21T11:16:29Z"
+        },
+        {
+          "number": 4131,
+          "url": "https://github.com/gin-gonic/gin/pull/4131",
+          "title": "chore: fix some function names in comment (#4131)",
+          "author": "yangquanshi",
+          "date": "2025-05-21T11:14:28Z"
+        },
+        {
+          "number": 4240,
+          "url": "https://github.com/gin-gonic/gin/pull/4240",
+          "title": "feat(context): add SetCookieData (#4240)",
+          "author": "NARITA",
+          "date": "2025-05-21T00:20:44Z"
+        },
+        {
+          "number": 4232,
+          "url": "https://github.com/gin-gonic/gin/pull/4232",
+          "title": "fix(errors): change Unwrap method receiver to value type (#4232)",
+          "author": "Orkhan Alikhanov",
+          "date": "2025-05-11T14:38:33Z"
+        },
+        {
+          "number": 4212,
+          "url": "https://github.com/gin-gonic/gin/pull/4212",
+          "title": "chore(deps): bump github.com/pelletier/go-toml/v2 from 2.2.2 to 2.2.4 (#4212)",
+          "author": "dependabot[bot]",
+          "date": "2025-05-11T14:35:03Z"
+        },
+        {
+          "number": 4234,
+          "url": "https://github.com/gin-gonic/gin/pull/4234",
+          "title": "fix: sonic on arm64 (#4234)",
+          "author": "Yash",
+          "date": "2025-05-11T14:34:09Z"
+        },
+        {
+          "number": 4222,
+          "url": "https://github.com/gin-gonic/gin/pull/4222",
+          "title": "fix(readme): fix broken link to English documentation (#4222)",
+          "author": "eduardo-ax",
+          "date": "2025-04-20T16:01:03Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "binding",
+      "description": null,
+      "paths": [
+        "binding/binding.go",
+        "binding/binding_msgpack_test.go",
+        "binding/binding_nomsgpack.go",
+        "binding/binding_test.go",
+        "binding/bson.go",
+        "binding/default_validator.go",
+        "binding/default_validator_benchmark_test.go",
+        "binding/default_validator_test.go",
+        "binding/form.go",
+        "binding/form_mapping.go",
+        "binding/form_mapping_benchmark_test.go",
+        "binding/form_mapping_test.go",
+        "binding/header.go",
+        "binding/json.go",
+        "binding/json_test.go",
+        "binding/msgpack.go",
+        "binding/msgpack_test.go",
+        "binding/multipart_form_mapping.go",
+        "binding/multipart_form_mapping_test.go",
+        "binding/plain.go",
+        "binding/protobuf.go",
+        "binding/query.go",
+        "binding/toml.go",
+        "binding/toml_test.go",
+        "binding/uri.go",
+        "binding/validate_test.go",
+        "binding/xml.go",
+        "binding/xml_test.go",
+        "binding/yaml.go",
+        "binding/yaml_test.go"
+      ],
+      "authors": [
+        "Bo-Yi Wu",
+        "Bob Du",
+        "Flc\u309b",
+        "Kashiwa",
+        "Laurent Caumont",
+        "Leon cap",
+        "M. Ilham Surya Pratama",
+        "Name",
+        "NezhaFan",
+        "Tim",
+        "efcking",
+        "guonaihong",
+        "russcoss",
+        "takanuva15",
+        "wanghaolong613"
+      ],
+      "total_commits": 16,
+      "bug_fixes": 5,
+      "bug_fix_ratio": 0.312,
+      "last_modified": "2026-02-27T15:20:01Z",
+      "health_score": 38.4,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 2169,
+          "url": "https://github.com/gin-gonic/gin/pull/2169",
+          "title": "fix(binding): empty value error (#2169)",
+          "author": "guonaihong",
+          "date": "2025-12-03T11:18:10Z"
+        },
+        {
+          "number": 4380,
+          "url": "https://github.com/gin-gonic/gin/pull/4380",
+          "title": "fix(binding): improve empty slice/array handling in form binding (#4380)",
+          "author": "Name",
+          "date": "2025-10-11T11:20:41Z"
+        },
+        {
+          "number": 4301,
+          "url": "https://github.com/gin-gonic/gin/pull/4301",
+          "title": "docs: correct article usage in comments (#4301)",
+          "author": "Leon cap",
+          "date": "2025-07-19T06:58:12Z"
+        },
+        {
+          "number": 4245,
+          "url": "https://github.com/gin-gonic/gin/pull/4245",
+          "title": "Revert \"fix(time): binding time with empty value (#4103)\" (#4245)",
+          "author": "Bo-Yi Wu",
+          "date": "2025-05-22T11:20:04Z"
+        },
+        {
+          "number": 4103,
+          "url": "https://github.com/gin-gonic/gin/pull/4103",
+          "title": "fix(time): binding time with empty value (#4103)",
+          "author": "Kashiwa",
+          "date": "2025-05-21T11:21:46Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "docs",
+      "description": null,
+      "paths": [
+        "docs/doc.md"
+      ],
+      "authors": [
+        "Adlai Bridson-Boyczuk",
+        "Bo-Yi Wu",
+        "Jacob McSwain",
+        "NARITA",
+        "Tim",
+        "Victor Dusart",
+        "Yash",
+        "sunshineplan",
+        "takanuva15"
+      ],
+      "total_commits": 9,
+      "bug_fixes": 5,
+      "bug_fix_ratio": 0.556,
+      "last_modified": "2026-03-13T14:30:54Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 4579,
+          "url": "https://github.com/gin-gonic/gin/pull/4579",
+          "title": "docs: reorganize doc.md TOC into thematic groups (#4579)",
+          "author": "Bo-Yi Wu",
+          "date": "2026-03-13T14:30:54Z"
+        },
+        {
+          "number": 4547,
+          "url": "https://github.com/gin-gonic/gin/pull/4547",
+          "title": "chore(logger): allow skipping query string output (#4547)",
+          "author": "Jacob McSwain",
+          "date": "2026-02-27T15:33:46Z"
+        },
+        {
+          "number": 4266,
+          "url": "https://github.com/gin-gonic/gin/pull/4266",
+          "title": "fix(docs): missing go markdown codeblock (#4266)",
+          "author": "Victor Dusart",
+          "date": "2025-06-16T14:59:53Z"
+        },
+        {
+          "number": 4240,
+          "url": "https://github.com/gin-gonic/gin/pull/4240",
+          "title": "feat(context): add SetCookieData (#4240)",
+          "author": "NARITA",
+          "date": "2025-05-21T00:20:44Z"
+        },
+        {
+          "number": 4234,
+          "url": "https://github.com/gin-gonic/gin/pull/4234",
+          "title": "fix: sonic on arm64 (#4234)",
+          "author": "Yash",
+          "date": "2025-05-11T14:34:09Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "examples",
+      "description": null,
+      "paths": [
+        "examples/README.md"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T08:47:29.324026Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "gins",
+      "description": null,
+      "paths": [
+        "ginS/README.md",
+        "ginS/gins.go",
+        "ginS/gins_test.go"
+      ],
+      "authors": [
+        "Flc\u309b",
+        "Milad",
+        "Name",
+        "NezhaFan",
+        "sunshineplan"
+      ],
+      "total_commits": 5,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-11-27T15:01:57Z",
+      "health_score": 82.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "render",
+      "description": null,
+      "paths": [
+        "render/bson.go",
+        "render/data.go",
+        "render/html.go",
+        "render/json.go",
+        "render/msgpack.go",
+        "render/pdf.go",
+        "render/protobuf.go",
+        "render/reader.go",
+        "render/reader_test.go",
+        "render/redirect.go",
+        "render/render.go",
+        "render/render_msgpack_test.go",
+        "render/render_test.go",
+        "render/text.go",
+        "render/toml.go",
+        "render/xml.go",
+        "render/yaml.go"
+      ],
+      "authors": [
+        "Amirhf",
+        "Aum Patel",
+        "Bob Du",
+        "Denis Galeev",
+        "Flc\u309b",
+        "Laurent Caumont",
+        "M. Ilham Surya Pratama",
+        "Name",
+        "Tim",
+        "Varus Hsu",
+        "sunshineplan"
+      ],
+      "total_commits": 15,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.067,
+      "last_modified": "2026-02-28T13:04:54Z",
+      "health_score": 69.7,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 4541,
+          "url": "https://github.com/gin-gonic/gin/pull/4541",
+          "title": "test(render): add comprehensive error handling tests (#4541)",
+          "author": "Amirhf",
+          "date": "2026-02-28T02:11:57Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "testdata",
+      "description": null,
+      "paths": [
+        "testdata/test_file.txt",
+        "testdata/certificate/cert.pem",
+        "testdata/certificate/key.pem",
+        "testdata/protoexample/test.pb.go",
+        "testdata/protoexample/test.proto",
+        "testdata/template/hello.tmpl",
+        "testdata/template/raw.tmpl"
+      ],
+      "authors": [
+        "Leon cap"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2025-07-22T13:38:32Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 4307,
+          "url": "https://github.com/gin-gonic/gin/pull/4307",
+          "title": "test(context): add comprehensive unit tests for `Context.File()` method (#4307)",
+          "author": "Leon cap",
+          "date": "2025-07-22T13:38:32Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "codec",
+      "description": null,
+      "paths": [
+        "codec/json/api.go",
+        "codec/json/go_json.go",
+        "codec/json/json.go",
+        "codec/json/jsoniter.go",
+        "codec/json/sonic.go"
+      ],
+      "authors": [
+        "Tim"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-06-16T15:16:36Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "bytesconv",
+      "description": null,
+      "paths": [
+        "internal/bytesconv/bytesconv.go",
+        "internal/bytesconv/bytesconv_test.go"
+      ],
+      "authors": [
+        "Flc\u309b",
+        "Milad",
+        "Name",
+        "reddaisyy",
+        "wanghaolong613"
+      ],
+      "total_commits": 5,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-01-24T16:51:11Z",
+      "health_score": 82.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "fs",
+      "description": null,
+      "paths": [
+        "internal/fs/fs.go",
+        "internal/fs/fs_test.go"
+      ],
+      "authors": [
+        "Flc\u309b",
+        "Salim Absi",
+        "sunshineplan"
+      ],
+      "total_commits": 3,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-05-23T06:46:48Z",
+      "health_score": 81.2,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    }
+  ]
+}

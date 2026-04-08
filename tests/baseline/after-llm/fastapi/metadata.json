@@ -1,0 +1,22 @@
+{
+  "status": "ok",
+  "returncode": 0,
+  "runtime_s": 80.3,
+  "tracked_files": 2981,
+  "cmd": "faultline analyze /Users/pkuzina/workspace/fastapi --output /Users/pkuzina/workspace/github-playground/featuremap/tests/baseline/after-llm/fastapi/feature-map.json --days 365 --llm --flows",
+  "llm_enabled": true,
+  "flows_enabled": true,
+  "feature_count": 3,
+  "flow_count": 0,
+  "test_features": [],
+  "feature_sizes_top10": [
+    2006,
+    43,
+    9
+  ],
+  "feature_names": [
+    "documentation",
+    "web-framework",
+    "shared-infra"
+  ]
+}

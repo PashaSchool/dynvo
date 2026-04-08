@@ -1,0 +1,42 @@
+{
+  "status": "ok",
+  "returncode": 0,
+  "runtime_s": 76.7,
+  "tracked_files": 1573,
+  "cmd": "faultline analyze /Users/pkuzina/workspace/_faultlines-testrepos/trpc --output /Users/pkuzina/workspace/github-playground/featuremap/tests/baseline/after-llm/trpc/feature-map.json --days 365 --llm --flows",
+  "llm_enabled": true,
+  "flows_enabled": true,
+  "feature_count": 16,
+  "flow_count": 0,
+  "test_features": [],
+  "feature_sizes_top10": [
+    388,
+    270,
+    117,
+    91,
+    39,
+    26,
+    24,
+    23,
+    22,
+    17
+  ],
+  "feature_names": [
+    "examples",
+    "shared-infra",
+    "www/versioned_docs",
+    "www/documentation",
+    "server/trpc-core",
+    "server/adapters",
+    "client/links",
+    "next",
+    "og-image",
+    "server/skills",
+    "tanstack-react-query/internals",
+    "openapi",
+    "deno-deploy",
+    "server/observable",
+    "src",
+    "upgrade/ast"
+  ]
+}
