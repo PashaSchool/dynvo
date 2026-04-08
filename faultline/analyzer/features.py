@@ -941,11 +941,22 @@ def build_feature_map(
     days: int,
     remote_url: str = "",
     shared_attributions: dict[str, list[SymbolAttribution]] | None = None,
+    skip_small_feature_merge: bool = False,
 ) -> FeatureMap:
-    """Builds a FeatureMap by joining commits with detected features."""
+    """Builds a FeatureMap by joining commits with detected features.
 
-    # Merge small/granular features before computing metrics
-    feature_paths = _merge_small_features(feature_paths)
+    ``skip_small_feature_merge`` (Day 14 library-mode fix): when True,
+    do not collapse features that have fewer than ``_MIN_FEATURE_FILES``
+    files into their parent directories. Libraries routinely keep one
+    ``.go`` or ``.py`` file per public module, and collapsing those
+    into a single shared-infra bucket destroys the whole point of
+    per-module detection. The caller (``cli.py``) sets this True when
+    ``repo_structure.is_library`` is True.
+    """
+
+    # Merge small/granular features before computing metrics.
+    if not skip_small_feature_merge:
+        feature_paths = _merge_small_features(feature_paths)
 
     # Deduplicate paths within each feature
     feature_paths = {name: list(dict.fromkeys(paths)) for name, paths in feature_paths.items()}

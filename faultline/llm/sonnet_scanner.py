@@ -330,10 +330,14 @@ Return ONLY JSON, no text before or after:
 """
 
 
-# Target-block variants. The repo-wide variant asks for 12-25 features. The
-# package variant tells the LLM it's analyzing a single monorepo package and
-# should return at most 8 features (often just 1). Both are injected into
+# Target-block variants. The repo-wide variant asks for 12-25 business
+# features. The package variant tells the LLM it's analyzing a single
+# monorepo package and should return at most 8 features. The library
+# variant tells the LLM it's analyzing a consumable library whose "users"
+# are developers, not end users, so it should return public modules
+# rather than business features. All three are injected into
 # ``_SYSTEM_PROMPT_TEMPLATE`` via ``_build_system_prompt``.
+
 _TARGET_REPO = (
     "## Target\n\n"
     "After all operations: **12-25 business features**. Not 5, not 50."
@@ -349,18 +353,87 @@ _TARGET_PACKAGE_TEMPLATE = (
     "more than 8 features for a single package, ever.**"
 )
 
+# Day 14 post-mission polish: libraries over-merged when the repo-wide
+# prompt was used. A 120-file Go library or a 3K-file Python framework
+# would get everything collapsed into "shared-infra" or "web-framework"
+# because Sonnet can't find 12-25 "business features" in a library — the
+# library IS the feature. The library variant reframes the task: decompose
+# into the library's own public modules (router, middleware, binding,
+# render…) using names the library's own authors would recognize. This
+# lifts gin and fastapi from 0% F1 to (measured after rollout) a useful
+# granularity without touching the workspace per-package path.
+_TARGET_LIBRARY = (
+    "## Target\n\n"
+    "This repository is a **consumable library**, not an application. "
+    "Its users are developers calling its public APIs, not end users "
+    "clicking through a product. Return **5-15 public modules** — the "
+    "top-level pieces of the library's API surface — rather than "
+    "business features.\n\n"
+    "Good module names come from the library's own source tree. Use the "
+    "directory / package names the library's authors chose (e.g. "
+    "`router`, `middleware`, `binding`, `render`, `validator`, "
+    "`context`, `errors`, `recovery`, `dependencies`, `security`, "
+    "`responses`, `exceptions`, `websockets`, `background-tasks`, "
+    "`testing`, `openapi`).\n\n"
+    "Do NOT produce end-user business-feature names like "
+    "\"document signing\" or \"user onboarding\" — those don't apply "
+    "to a library. Do NOT collapse everything into one giant "
+    "`shared-infra` or `web-framework` bucket — that destroys "
+    "granularity. Do NOT split into 12-25 entries if the library "
+    "genuinely has only 6-10 modules.\n\n"
+    "**HARD CAP: never more than 15 modules. FLOOR: at least 5 modules "
+    "unless the library is trivially small (<20 source files).** "
+    "If a candidate clearly corresponds to a public module, keep it "
+    "under its own name instead of merging it into shared-infra.\n\n"
+    "**Split the flat root candidate aggressively.** Many libraries keep "
+    "their top-level files in a single directory (e.g. `auth.go`, "
+    "`logger.go`, `recovery.go`, `routergroup.go`, `tree.go`, "
+    "`errors.go`, `context.go`). The heuristic detector will group all "
+    "of these into ONE `shared-infra` or `root` candidate. Even if "
+    "that candidate has only 20-30 files, you MUST split it into its "
+    "public modules based on the filenames alone. Do not leave it as "
+    "a single bucket. For the example above: split into `router` "
+    "(routergroup.go + tree.go), `recovery`, `logger`, `errors`, "
+    "`context`, `auth`.\n\n"
+    "**Do NOT use the `remove` operation on module-like candidates.** "
+    "In library mode, the `remove` op is reserved for test scaffolding "
+    "(`testdata`, `test-helpers`) and trivial wrapper files. Things "
+    "like `auth`, `context`, `errors`, `logger`, `recovery`, `router`, "
+    "`routergroup`, `tree`, `middleware`, `validator`, `binding`, "
+    "`render`, `codec`, `debug`, `fs`, `path`, `response-writer` are "
+    "ALL public modules of the library's API surface. If you see a "
+    "candidate with that kind of name, KEEP it as a feature (optionally "
+    "`rename` it for canonicalization). NEVER `remove` it into "
+    "shared-infra. Libraries should produce 5-15 modules, not 2.\n\n"
+    "**Prefer `rename` over `merge` for canonicalization.** If you see "
+    "`routergroup` + `tree` and think they're both part of a 'router' "
+    "concept, rename one to `router` rather than merging both into "
+    "something generic. Keep module-level granularity."
+)
+
 
 def _build_system_prompt(
     *,
     package_mode: bool = False,
     package_name: str | None = None,
+    is_library: bool = False,
 ) -> str:
     """Render the system prompt with the right ``## Target`` block.
 
-    When ``package_mode`` is True the LLM is told it's analyzing a single
-    monorepo package and asked for 1-8 features instead of 12-25. Used by
-    ``deep_scan_workspace`` to drive per-package invocations without the
-    cli.py:304 ``_SPLIT_THRESHOLD=200`` hack (delta D7).
+    Precedence (highest to lowest):
+      1. ``package_mode=True`` → per-package prompt (1-8 features). Used
+         inside ``deep_scan_workspace`` where the library-vs-app
+         distinction doesn't matter because each package is isolated.
+      2. ``is_library=True``   → library prompt (5-15 public modules).
+         Used in the single-call ``deep_scan`` path for libraries like
+         gin and fastapi, where the repo-wide "12-25 business features"
+         target causes over-merging.
+      3. default              → repo-wide prompt (12-25 features). Used
+         for monolith applications in the single-call path.
+
+    The three modes are mutually exclusive in practice: ``package_mode``
+    wins because it's invoked per-package and already carries enough
+    context (the package name) that library-vs-app becomes irrelevant.
     """
     if package_mode:
         # Use .replace, not .format — the template body contains literal
@@ -368,6 +441,8 @@ def _build_system_prompt(
         target = _TARGET_PACKAGE_TEMPLATE.replace(
             "{package_name}", package_name or "unknown"
         )
+    elif is_library:
+        target = _TARGET_LIBRARY
     else:
         target = _TARGET_REPO
     return _SYSTEM_PROMPT_TEMPLATE.replace("{target_block}", target)
@@ -397,6 +472,72 @@ Return JSON. Rules: merge aggressively, split god-features (>100 files), 12-25 f
 # These are extracted from deep_scan() so they can be unit-tested without
 # hitting the LLM. The real function below just orchestrates:
 #     _clean_inputs → LLM call → apply ops → _finalize_result
+
+
+def _promote_library_root_candidates(
+    candidates: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Split the catchall ``root``/``init`` bucket by filename stem.
+
+    Day 14 post-mission polish: libraries like Gin keep each public
+    module in a top-level source file — ``auth.go``, ``logger.go``,
+    ``recovery.go``, ``routergroup.go``, ``tree.go``, ``errors.go``,
+    ``context.go``. The heuristic candidate detector groups all of
+    those into the ``root`` catchall, which ``deep_scan`` then dumps
+    into ``shared-infra``. Sonnet never sees them as distinct
+    candidates and can't emit useful split operations.
+
+    When ``is_library=True``, this helper runs BEFORE the candidate
+    pipeline and rewrites ``root`` / ``init`` into per-stem candidates.
+    OS/arch/test suffixes are stripped so related files group together:
+    ``context.go`` + ``context_appengine.go`` + ``context_test.go``
+    all land in the ``context`` candidate.
+
+    This is a pure transformation — it doesn't call the LLM or touch
+    any module globals, so it's unit-testable without mocks.
+    """
+    result = dict(candidates)
+
+    for catchall in ("root", "init"):
+        if catchall not in result:
+            continue
+        root_files = result.pop(catchall)
+        stems: dict[str, list[str]] = {}
+
+        # Strip suffixes that are about variant/test/platform, not module.
+        _TRIM_SUFFIXES = (
+            "_test", "_tests",
+            "_appengine", "_unix", "_windows", "_linux", "_darwin", "_bsd",
+            "_freebsd", "_openbsd", "_netbsd", "_plan9", "_js", "_wasm",
+            "_amd64", "_arm64", "_386",
+            "_file", "_multipart", "_legacy", "_deprecated",
+        )
+
+        for fp in root_files:
+            stem = Path(fp).stem.lower()
+            while True:
+                trimmed = stem
+                for suf in _TRIM_SUFFIXES:
+                    if trimmed.endswith(suf):
+                        trimmed = trimmed[: -len(suf)]
+                        break
+                if trimmed == stem:
+                    break
+                stem = trimmed
+            stem = stem.strip("_-.")
+            if not stem:
+                continue
+            stems.setdefault(stem, []).append(fp)
+
+        # Merge back: if a stem already exists as a candidate name (rare
+        # collision), append rather than overwrite so we don't drop files.
+        for stem, paths in stems.items():
+            if stem in result:
+                result[stem].extend(paths)
+            else:
+                result[stem] = paths
+
+    return result
 
 
 def _clean_inputs(
@@ -573,6 +714,7 @@ def deep_scan(
     system_prompt = _build_system_prompt(
         package_mode=package_mode,
         package_name=package_name,
+        is_library=is_library,
     )
 
     # Pre-process: strip test and docs files before they reach the LLM.
@@ -585,13 +727,32 @@ def deep_scan(
             len(docs_files),
         )
 
-    # Separate real candidates from catch-all buckets
+    # Day 14 library-mode fix: split the root/init catchall by filename
+    # stem so gin's top-level files (auth.go, logger.go, recovery.go…)
+    # surface as distinct per-module candidates instead of getting dumped
+    # into shared-infra. Gated on ``not package_mode`` because workspace
+    # per-package calls are already isolated and don't need this escape
+    # hatch (trpc regressed from 16 → 106 features when this ran
+    # per-package).
+    library_mode_active = is_library and not package_mode
+    if library_mode_active:
+        candidates = _promote_library_root_candidates(candidates)
+        logger.info(
+            "Deep scan (library mode): promoted root/init into %d per-stem candidates",
+            len(candidates),
+        )
+
+    # Separate real candidates from catch-all buckets. Library mode keeps
+    # single-file candidates because libraries commonly have one .go/.py
+    # file per public module — rejecting them would collapse everything
+    # back into shared-infra. Package mode keeps the legacy ≥2 threshold.
     _CATCHALL = {"backend", "frontend", "root", "init", "packages", "web", "api", "lib"}
+    _MIN_CANDIDATE_FILES = 1 if library_mode_active else 2
     real_candidates: dict[str, list[str]] = {}
     unmatched: list[str] = []
 
     for name, paths in candidates.items():
-        if name in _CATCHALL or len(paths) < 2:
+        if name in _CATCHALL or len(paths) < _MIN_CANDIDATE_FILES:
             unmatched.extend(paths)
         else:
             real_candidates[name] = paths
@@ -733,18 +894,33 @@ def deep_scan(
     # Apply operations to candidates
     result = dict(real_candidates)
 
-    # Apply merges — largest candidate becomes target
-    for group in ops.merge:
-        if len(group) < 2:
-            continue
-        existing = [(n, len(result.get(n, []))) for n in group if n in result]
-        if len(existing) < 2:
-            continue
-        target = max(existing, key=lambda x: x[1])[0]
-        for name, _ in existing:
-            if name != target:
-                result[target].extend(result.pop(name))
-                logger.info("Merged '%s' into '%s'", name, target)
+    # Apply merges — largest candidate becomes target.
+    # Day 14: library mode (single-call path only) deliberately skips
+    # ops.merge. Prompts told Sonnet "don't collapse modules into
+    # shared-infra" but it still emits aggressive merges that undo the
+    # `_promote_library_root_candidates` stem split. Skipping merges
+    # here preserves per-module granularity; trustworthy merges
+    # (singular/plural duplicates) are rare enough on libraries that
+    # losing them is cheaper than losing module names. Package-mode
+    # calls keep the legacy merge behaviour because they're already
+    # per-package isolated.
+    if not library_mode_active:
+        for group in ops.merge:
+            if len(group) < 2:
+                continue
+            existing = [(n, len(result.get(n, []))) for n in group if n in result]
+            if len(existing) < 2:
+                continue
+            target = max(existing, key=lambda x: x[1])[0]
+            for name, _ in existing:
+                if name != target:
+                    result[target].extend(result.pop(name))
+                    logger.info("Merged '%s' into '%s'", name, target)
+    elif ops.merge:
+        logger.info(
+            "Deep scan (library mode, single-call): ignoring %d merge op(s) to preserve module granularity",
+            len(ops.merge),
+        )
 
     # Apply splits — distribute files by keyword matching on subdirectory/filename
     for split_op in ops.split:
@@ -783,12 +959,29 @@ def deep_scan(
             result[new] = result.pop(old)
             logger.info("Renamed '%s' → '%s'", old, new)
 
-    # Apply removes → shared-infra
+    # Apply removes → shared-infra.
+    # Day 14: library mode narrows ops.remove to obvious non-module names
+    # (test scaffolding, license, build config). Anything that could be
+    # a public module is kept. Without this guard Sonnet removes 80% of
+    # candidates for small libraries and everything collapses.
+    _LIBRARY_REMOVE_WHITELIST = frozenset({
+        "testdata", "test-helpers", "test_helpers", "testhelpers",
+        "license", "go", "package",
+        "benchmark", "benchmarks", "example", "examples",
+        "deprecated", "legacy",
+    })
     infra_files: list[str] = []
     for name in ops.remove:
-        if name in result:
-            infra_files.extend(result.pop(name))
-            logger.info("Removed '%s' → shared-infra", name)
+        if name not in result:
+            continue
+        if library_mode_active and name.lower() not in _LIBRARY_REMOVE_WHITELIST:
+            logger.info(
+                "Deep scan (library mode, single-call): ignoring remove('%s') — kept as module",
+                name,
+            )
+            continue
+        infra_files.extend(result.pop(name))
+        logger.info("Removed '%s' → shared-infra", name)
     if infra_files:
         result.setdefault("shared-infra", []).extend(infra_files)
 
