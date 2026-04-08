@@ -1,0 +1,2244 @@
+{
+  "repo_path": "/Users/pkuzina/workspace/_faultlines-testrepos/axios",
+  "remote_url": "https://github.com/axios/axios",
+  "analyzed_at": "2026-04-08T13:02:57.325596Z",
+  "total_commits": 255,
+  "date_range_days": 365,
+  "features": [
+    {
+      "name": "documentation",
+      "description": null,
+      "paths": [
+        "docs/index.md",
+        "docs/package.json",
+        "docs/site.webmanifest",
+        "examples/README.md",
+        "examples/improved-network-errors.md",
+        "examples/network_enhanced.js",
+        "examples/server.js",
+        "sandbox/client.html",
+        "sandbox/client.js",
+        "sandbox/server.js",
+        "docs/.vitepress/config.mts",
+        "docs/data/sponsors.json",
+        "docs/patches/@splidejs+splide+4.1.4.patch",
+        "docs/public/site.webmanifest",
+        "docs/scripts/process-sponsors.js",
+        "docs/scripts/utils.js",
+        "examples/abort-controller/index.html",
+        "examples/abort-controller/server.js",
+        "examples/all/index.html",
+        "examples/amd/index.html",
+        "examples/get/index.html",
+        "examples/get/server.js",
+        "examples/post/index.html",
+        "examples/post/server.js",
+        "examples/postMultipartFormData/index.html",
+        "examples/postMultipartFormData/server.js",
+        "examples/transform-response/index.html",
+        "examples/upload/index.html",
+        "examples/upload/server.js",
+        "docs/.vitepress/theme/index.ts",
+        "docs/.vitepress/theme/style.css",
+        "docs/pages/advanced/adapters.md",
+        "docs/pages/advanced/api-reference.md",
+        "docs/pages/advanced/authentication.md",
+        "docs/pages/advanced/cancellation.md",
+        "docs/pages/advanced/config-defaults.md",
+        "docs/pages/advanced/create-an-instance.md",
+        "docs/pages/advanced/error-handling.md",
+        "docs/pages/advanced/fetch-adapter.md",
+        "docs/pages/advanced/file-posting.md",
+        "docs/pages/advanced/header-methods.md",
+        "docs/pages/advanced/headers.md",
+        "docs/pages/advanced/html-form-processing.md",
+        "docs/pages/advanced/http2.md",
+        "docs/pages/advanced/interceptors.md",
+        "docs/pages/advanced/multipart-form-data-format.md",
+        "docs/pages/advanced/progress-capturing.md",
+        "docs/pages/advanced/promises.md",
+        "docs/pages/advanced/rate-limiting.md",
+        "docs/pages/advanced/request-config.md",
+        "docs/pages/advanced/request-method-aliases.md",
+        "docs/pages/advanced/response-schema.md",
+        "docs/pages/advanced/retry.md",
+        "docs/pages/advanced/testing.md",
+        "docs/pages/advanced/type-script.md",
+        "docs/pages/advanced/x-www-form-urlencoded-format.md",
+        "docs/pages/getting-started/features.md",
+        "docs/pages/getting-started/first-steps.md",
+        "docs/pages/getting-started/upgrade-guide.md",
+        "docs/pages/misc/security.md",
+        "docs/pages/misc/semver.md",
+        "docs/pages/misc/sponsors.md",
+        "docs/pages/getting-started/examples/commonjs.md",
+        "docs/pages/getting-started/examples/typescript.md"
+      ],
+      "authors": [
+        "Akash Dhar Dubey",
+        "Anchal Singh",
+        "Aviraj2929",
+        "Dhvani Maktuporia",
+        "Jay",
+        "Kai Lee",
+        "Samyak Dandge",
+        "Zeroday BYTE",
+        "ikuy1203",
+        "prasoon patel",
+        "techcodie"
+      ],
+      "total_commits": 19,
+      "bug_fixes": 7,
+      "bug_fix_ratio": 0.368,
+      "last_modified": "2026-04-06T10:46:43Z",
+      "health_score": 23.9,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 10659,
+          "url": "https://github.com/axios/axios/pull/10659",
+          "title": "docs: fix for platinum sponsors (#10659)",
+          "author": "Jay",
+          "date": "2026-04-06T10:46:43Z"
+        },
+        {
+          "number": 10649,
+          "url": "https://github.com/axios/axios/pull/10649",
+          "title": "feat: unify docs to main repo (#10649)",
+          "author": "Jay",
+          "date": "2026-04-04T18:25:41Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7169,
+          "url": "https://github.com/axios/axios/pull/7169",
+          "title": "feat: enhance pipeFileToResponse with error handling (#7169)",
+          "author": "Anchal Singh",
+          "date": "2025-12-05T07:12:15Z"
+        },
+        {
+          "number": 7171,
+          "url": "https://github.com/axios/axios/pull/7171",
+          "title": "docs: added example for improved network error handling (with Wrapper/Middleware approach) (#7171)",
+          "author": "Samyak Dandge",
+          "date": "2025-10-23T13:20:22Z"
+        },
+        {
+          "number": 7175,
+          "url": "https://github.com/axios/axios/pull/7175",
+          "title": "fix: sandbox ui updated (#7175)",
+          "author": "Dhvani Maktuporia",
+          "date": "2025-10-23T12:33:51Z"
+        },
+        {
+          "number": 7166,
+          "url": "https://github.com/axios/axios/pull/7166",
+          "title": "chore: fix typos in examples (#7166)",
+          "author": "ikuy1203",
+          "date": "2025-10-20T07:23:22Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "platform",
+      "description": "Platform-specific utilities and classes for browser and Node.js environments",
+      "paths": [
+        "lib/platform/index.js",
+        "lib/platform/browser/index.js",
+        "lib/platform/common/utils.js",
+        "lib/platform/node/index.js",
+        "lib/platform/browser/classes/Blob.js",
+        "lib/platform/browser/classes/FormData.js",
+        "lib/platform/browser/classes/URLSearchParams.js",
+        "lib/platform/node/classes/FormData.js",
+        "lib/platform/node/classes/URLSearchParams.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "adapters",
+      "description": "HTTP adapters for different environments (browser XHR, Node.js HTTP, fetch)",
+      "paths": [
+        "lib/adapters/adapters.js",
+        "lib/adapters/fetch.js",
+        "lib/adapters/http.js",
+        "lib/adapters/xhr.js"
+      ],
+      "authors": [
+        "Ameer Assadi",
+        "Aviraj2929",
+        "Dmitriy Fedotov",
+        "Dmitriy Mozgovoy",
+        "Gabriel Quaresma",
+        "Jane Wangari",
+        "Jay",
+        "Justin Dhillon",
+        "KT0803",
+        "Kai Lee",
+        "Kasper Isager Dalsgar\u00f0",
+        "Old Autumn",
+        "Subhan Kumar Rai",
+        "Uhyeon Park",
+        "Willian Agostini",
+        "khani"
+      ],
+      "total_commits": 25,
+      "bug_fixes": 21,
+      "bug_fix_ratio": 0.84,
+      "last_modified": "2026-04-06T11:47:03Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 10661,
+          "url": "https://github.com/axios/axios/pull/10661",
+          "title": "fix: no_proxy hostname normalization bypass leads to ssrf (#10661)",
+          "author": "Jay",
+          "date": "2026-04-06T11:47:03Z"
+        },
+        {
+          "number": 7515,
+          "url": "https://github.com/axios/axios/pull/7515",
+          "title": "fix(fetch): cancel ReadableStream body after request stream capability probe (#7515)",
+          "author": "Old Autumn",
+          "date": "2026-03-16T07:12:42Z"
+        },
+        {
+          "number": 7499,
+          "url": "https://github.com/axios/axios/pull/7499",
+          "title": "fix: proxy from env v2 fix (#7499)",
+          "author": "Jay",
+          "date": "2026-03-14T17:10:06Z"
+        },
+        {
+          "number": 7457,
+          "url": "https://github.com/axios/axios/pull/7457",
+          "title": "fix(http): closing detached http2 session on timeout (#7457)",
+          "author": "Dmitriy Fedotov",
+          "date": "2026-03-06T21:50:51Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7368,
+          "url": "https://github.com/axios/axios/pull/7368",
+          "title": "fix: status is missing in AxiosError on and after v1.13.3 (#7368)",
+          "author": "Willian Agostini",
+          "date": "2026-02-04T07:47:12Z"
+        },
+        {
+          "number": 7256,
+          "url": "https://github.com/axios/axios/pull/7256",
+          "title": "fix(http2): Use port 443 for HTTPS connections by default. (#7256)",
+          "author": "Subhan Kumar Rai",
+          "date": "2025-12-19T00:22:38Z"
+        },
+        {
+          "number": 7229,
+          "url": "https://github.com/axios/axios/pull/7229",
+          "title": "chore: remove TODO comment and dead code from http adapter error handler (#7229)",
+          "author": "KT0803",
+          "date": "2025-11-18T06:40:53Z"
+        },
+        {
+          "number": 6314,
+          "url": "https://github.com/axios/axios/pull/6314",
+          "title": "fix: unclear error message is thrown when specifying an empty proxy authorization (#6314)",
+          "author": "Gabriel Quaresma",
+          "date": "2025-11-12T19:04:39Z"
+        },
+        {
+          "number": 7206,
+          "url": "https://github.com/axios/axios/pull/7206",
+          "title": "fix(http): fix 'socket hang up' bug for keep-alive requests when using timeouts; (#7206)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-11-03T23:08:35Z"
+        },
+        {
+          "number": 7202,
+          "url": "https://github.com/axios/axios/pull/7202",
+          "title": "perf(http): fix early loop exit; (#7202)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-11-03T22:43:10Z"
+        },
+        {
+          "number": 7196,
+          "url": "https://github.com/axios/axios/pull/7196",
+          "title": "fix(http): use default export for http2 module to support stubs; (#7196)",
+          "author": "Kasper Isager Dalsgar\u00f0",
+          "date": "2025-10-29T19:10:29Z"
+        },
+        {
+          "number": 7193,
+          "url": "https://github.com/axios/axios/pull/7193",
+          "title": "fix(http): fixed a regression that caused the data stream to be interrupted for responses with non-OK HTTP statuses; (#7",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-10-28T18:44:08Z"
+        },
+        {
+          "number": 7186,
+          "url": "https://github.com/axios/axios/pull/7186",
+          "title": "fix(http2): fix possible race condition when handling http2 stream on almost timed out session by improving timeout out ",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-10-26T22:46:40Z"
+        },
+        {
+          "number": 7155,
+          "url": "https://github.com/axios/axios/pull/7155",
+          "title": "fix(fetch): prevent TypeError when config.env is undefined (#7155)",
+          "author": "Jane Wangari",
+          "date": "2025-10-16T15:20:26Z"
+        },
+        {
+          "number": 7030,
+          "url": "https://github.com/axios/axios/pull/7030",
+          "title": "fix(fetch): use current global fetch instead of cached one when env fetch is not specified to keep MSW support; (#7030)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-09-13T20:24:16Z"
+        },
+        {
+          "number": 7011,
+          "url": "https://github.com/axios/axios/pull/7011",
+          "title": "fix(node): enforce maxContentLength for data: URLs (#7011)",
+          "author": "Ameer Assadi",
+          "date": "2025-09-10T13:08:43Z"
+        },
+        {
+          "number": 7003,
+          "url": "https://github.com/axios/axios/pull/7003",
+          "title": "feat(fetch): add fetch, Request, Response env config variables for the adapter; (#7003)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-08-30T19:02:24Z"
+        },
+        {
+          "number": 6982,
+          "url": "https://github.com/axios/axios/pull/6982",
+          "title": "feat(adapter): surface low\u2011level network error details; attach original error via cause (#6982)",
+          "author": "khani",
+          "date": "2025-07-30T07:57:27Z"
+        },
+        {
+          "number": 6883,
+          "url": "https://github.com/axios/axios/pull/6883",
+          "title": "fix(adapter): pass fetchOptions to fetch function (#6883)",
+          "author": "Uhyeon Park",
+          "date": "2025-06-01T16:57:50Z"
+        },
+        {
+          "number": 6767,
+          "url": "https://github.com/axios/axios/pull/6767",
+          "title": "fix(fetch): fixed ERR_NETWORK mapping for Safari browsers; (#6767)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-04-14T22:52:53Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "cancel",
+      "description": "Request cancellation system using CancelToken and cancellation signals",
+      "paths": [
+        "lib/cancel/CancelToken.js",
+        "lib/cancel/CanceledError.js",
+        "lib/cancel/isCancel.js"
+      ],
+      "authors": [
+        "Jay",
+        "Julian Dax"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 5558,
+          "url": "https://github.com/axios/axios/pull/5558",
+          "title": "fix: turn AxiosError into a native error (#5394) (#5558)",
+          "author": "Julian Dax",
+          "date": "2025-11-11T17:06:10Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "axios",
+      "description": "Core Axios HTTP client class and main entry point",
+      "paths": [
+        "lib/axios.js",
+        "lib/core/Axios.js"
+      ],
+      "authors": [
+        "Dmitriy Mozgovoy",
+        "Jay",
+        "Justin Dhillon",
+        "Noritaka Kobayashi",
+        "Tackoil",
+        "Willian Agostini"
+      ],
+      "total_commits": 10,
+      "bug_fixes": 7,
+      "bug_fix_ratio": 0.7,
+      "last_modified": "2026-04-06T12:01:54Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 10660,
+          "url": "https://github.com/axios/axios/pull/10660",
+          "title": "fix: unrestricted cloud metadata exfiltration via header injection chain (#10660)",
+          "author": "Jay",
+          "date": "2026-04-06T12:01:54Z"
+        },
+        {
+          "number": 7509,
+          "url": "https://github.com/axios/axios/pull/7509",
+          "title": "refactor: update eslint to v10 (#7509)",
+          "author": "Jay",
+          "date": "2026-03-15T17:08:58Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7352,
+          "url": "https://github.com/axios/axios/pull/7352",
+          "title": "fix: issues with version 1.13.3 (#7352)",
+          "author": "Jay",
+          "date": "2026-01-27T06:04:06Z"
+        },
+        {
+          "number": 6269,
+          "url": "https://github.com/axios/axios/pull/6269",
+          "title": "fix(interceptor): handle the error in the same interceptor (#6269)",
+          "author": "Tackoil",
+          "date": "2026-01-08T19:11:34Z"
+        },
+        {
+          "number": 6881,
+          "url": "https://github.com/axios/axios/pull/6881",
+          "title": "fix(core): fix the Axios constructor implementation to treat the config argument as optional; (#6881)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-04-17T23:22:31Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "defaults",
+      "description": null,
+      "paths": [
+        "lib/defaults/index.js",
+        "lib/defaults/transitional.js"
+      ],
+      "authors": [
+        "Jay",
+        "Rudransh",
+        "Willian Agostini"
+      ],
+      "total_commits": 5,
+      "bug_fixes": 4,
+      "bug_fix_ratio": 0.8,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7298,
+          "url": "https://github.com/axios/axios/pull/7298",
+          "title": "Revert \"fix: silentJSONParsing=false should throw on invalid JSON (#7253) (#7\u2026\" (#7298)",
+          "author": "Jay",
+          "date": "2025-12-08T12:19:20Z"
+        },
+        {
+          "number": 7257,
+          "url": "https://github.com/axios/axios/pull/7257",
+          "title": "fix: silentJSONParsing=false should throw on invalid JSON (#7253) (#7257)",
+          "author": "Rudransh",
+          "date": "2025-12-06T08:45:54Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "env",
+      "description": null,
+      "paths": [
+        "lib/env/data.js",
+        "lib/env/classes/FormData.js"
+      ],
+      "authors": [
+        "Jay",
+        "github-actions[bot]"
+      ],
+      "total_commits": 16,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.062,
+      "last_modified": "2026-04-07T16:03:51Z",
+      "health_score": 74.4,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "index.d",
+      "description": null,
+      "paths": [
+        "index.d.cts",
+        "index.d.ts"
+      ],
+      "authors": [
+        "Adrian Knapp",
+        "Albie",
+        "Aleksandar Dimitrov",
+        "Copilot",
+        "Dmitriy Mozgovoy",
+        "FatahChan",
+        "Gabriel Quaresma",
+        "James Nail",
+        "Jason Saayman",
+        "Jay",
+        "Tibor Pilz",
+        "Willian Agostini",
+        "khani",
+        "svihpinc",
+        "techcodie"
+      ],
+      "total_commits": 19,
+      "bug_fixes": 14,
+      "bug_fix_ratio": 0.737,
+      "last_modified": "2026-04-07T18:58:30Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7529,
+          "url": "https://github.com/axios/axios/pull/7529",
+          "title": "fix(types): align runWhen type with runtime behavior in InterceptorManager (#7529)",
+          "author": "techcodie",
+          "date": "2026-04-07T18:58:30Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7327,
+          "url": "https://github.com/axios/axios/pull/7327",
+          "title": "fix(types): restore AxiosError.cause type from unknown to Error (#7327)",
+          "author": "Copilot",
+          "date": "2026-01-12T14:20:00Z"
+        },
+        {
+          "number": 5551,
+          "url": "https://github.com/axios/axios/pull/5551",
+          "title": "fix(types): add handlers to AxiosInterceptorManager interface (#5551)",
+          "author": "Tibor Pilz",
+          "date": "2025-12-30T11:58:26Z"
+        },
+        {
+          "number": 5560,
+          "url": "https://github.com/axios/axios/pull/5560",
+          "title": "feat: add `undefined` as a value in AxiosRequestConfig (#5560)",
+          "author": "Albie",
+          "date": "2025-11-06T19:15:33Z"
+        },
+        {
+          "number": 7020,
+          "url": "https://github.com/axios/axios/pull/7020",
+          "title": "fix(types): fixed env config types; (#7020)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-09-12T13:33:42Z"
+        },
+        {
+          "number": 7003,
+          "url": "https://github.com/axios/axios/pull/7003",
+          "title": "feat(fetch): add fetch, Request, Response env config variables for the adapter; (#7003)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-08-30T19:02:24Z"
+        },
+        {
+          "number": 5595,
+          "url": "https://github.com/axios/axios/pull/5595",
+          "title": "fix(types): change the type guard on isCancel (#5595)",
+          "author": "Aleksandar Dimitrov",
+          "date": "2025-07-30T18:38:36Z"
+        },
+        {
+          "number": 6982,
+          "url": "https://github.com/axios/axios/pull/6982",
+          "title": "feat(adapter): surface low\u2011level network error details; attach original error via cause (#6982)",
+          "author": "khani",
+          "date": "2025-07-30T07:57:27Z"
+        },
+        {
+          "number": 6956,
+          "url": "https://github.com/axios/axios/pull/6956",
+          "title": "fix(types): resolve type discrepancies between ESM and CJS TypeScript declaration files (#6956)",
+          "author": "James Nail",
+          "date": "2025-07-16T17:50:56Z"
+        },
+        {
+          "number": 6867,
+          "url": "https://github.com/axios/axios/pull/6867",
+          "title": "feat(types): improved fetchOptions interface (#6867)",
+          "author": "Adrian Knapp",
+          "date": "2025-04-25T19:31:32Z"
+        },
+        {
+          "number": 6855,
+          "url": "https://github.com/axios/axios/pull/6855",
+          "title": "fix(types): fix autocomplete for adapter config (#6855)",
+          "author": "FatahChan",
+          "date": "2025-04-19T15:54:33Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "shared-infra",
+      "description": null,
+      "paths": [
+        "lib/utils.js",
+        "LICENSE"
+      ],
+      "authors": [
+        "Ameer Assadi",
+        "Dmitriy Mozgovoy",
+        "Janaka66",
+        "Jay",
+        "Manish Sahani",
+        "Mohsen",
+        "Noritaka Kobayashi",
+        "SANDESH LENDVE",
+        "Sachin",
+        "Shiwaangee",
+        "Turadg Aleahmad"
+      ],
+      "total_commits": 13,
+      "bug_fixes": 10,
+      "bug_fix_ratio": 0.769,
+      "last_modified": "2026-02-24T18:36:32Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 5764,
+          "url": "https://github.com/axios/axios/pull/5764",
+          "title": "feat: support react native blob objects (#5764)",
+          "author": "Mohsen",
+          "date": "2026-02-24T18:36:32Z"
+        },
+        {
+          "number": 7324,
+          "url": "https://github.com/axios/axios/pull/7324",
+          "title": "fix: safe FormData detection for WeChat Mini Program (#7306) (#7324)",
+          "author": "Shiwaangee",
+          "date": "2026-02-14T15:42:56Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7369,
+          "url": "https://github.com/axios/axios/pull/7369",
+          "title": "fix: Denial of Service via __proto__ Key in mergeConfig (#7369)",
+          "author": "Jay",
+          "date": "2026-02-04T18:25:06Z"
+        },
+        {
+          "number": 7246,
+          "url": "https://github.com/axios/axios/pull/7246",
+          "title": "doc: update deprecated var usage in documentation examples (#7246)",
+          "author": "SANDESH LENDVE",
+          "date": "2025-12-30T11:16:52Z"
+        },
+        {
+          "number": 6265,
+          "url": "https://github.com/axios/axios/pull/6265",
+          "title": "feat: compatibility with frozen prototypes (#6265)",
+          "author": "Turadg Aleahmad",
+          "date": "2025-11-14T12:26:43Z"
+        },
+        {
+          "number": 7011,
+          "url": "https://github.com/axios/axios/pull/7011",
+          "title": "fix(node): enforce maxContentLength for data: URLs (#7011)",
+          "author": "Ameer Assadi",
+          "date": "2025-09-10T13:08:43Z"
+        },
+        {
+          "number": 7003,
+          "url": "https://github.com/axios/axios/pull/7003",
+          "title": "feat(fetch): add fetch, Request, Response env config variables for the adapter; (#7003)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-08-30T19:02:24Z"
+        },
+        {
+          "number": 6961,
+          "url": "https://github.com/axios/axios/pull/6961",
+          "title": "fix: prevent RangeError when using large Buffers (#6961)",
+          "author": "Manish Sahani",
+          "date": "2025-07-15T18:18:24Z"
+        },
+        {
+          "number": 6873,
+          "url": "https://github.com/axios/axios/pull/6873",
+          "title": "fix(headers): allow iterable objects to be a data source for the set method; (#6873)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-04-14T18:55:27Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "axioserror",
+      "description": "Core Axios HTTP client class and main entry point",
+      "paths": [
+        "lib/core/AxiosError.js"
+      ],
+      "authors": [
+        "Alexander Gehres",
+        "Denis Frenademetz",
+        "Jay",
+        "Julian Dax",
+        "khani"
+      ],
+      "total_commits": 5,
+      "bug_fixes": 5,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-18T17:33:28Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7403,
+          "url": "https://github.com/axios/axios/pull/7403",
+          "title": "fix(core): copy status from source error in AxiosError.from (#7403)",
+          "author": "Denis Frenademetz",
+          "date": "2026-02-18T17:33:28Z"
+        },
+        {
+          "number": 7392,
+          "url": "https://github.com/axios/axios/pull/7392",
+          "title": "fix: make AxiosError.message property enumerable (#7392)",
+          "author": "Alexander Gehres",
+          "date": "2026-02-14T15:31:52Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 5558,
+          "url": "https://github.com/axios/axios/pull/5558",
+          "title": "fix: turn AxiosError into a native error (#5394) (#5558)",
+          "author": "Julian Dax",
+          "date": "2025-11-11T17:06:10Z"
+        },
+        {
+          "number": 6982,
+          "url": "https://github.com/axios/axios/pull/6982",
+          "title": "feat(adapter): surface low\u2011level network error details; attach original error via cause (#6982)",
+          "author": "khani",
+          "date": "2025-07-30T07:57:27Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "axiosheaders",
+      "description": "Core Axios HTTP client class and main entry point",
+      "paths": [
+        "lib/core/AxiosHeaders.js"
+      ],
+      "authors": [
+        "Dmitriy Mozgovoy",
+        "Eve",
+        "Jay"
+      ],
+      "total_commits": 6,
+      "bug_fixes": 6,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-04-06T12:01:54Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 10660,
+          "url": "https://github.com/axios/axios/pull/10660",
+          "title": "fix: unrestricted cloud metadata exfiltration via header injection chain (#10660)",
+          "author": "Jay",
+          "date": "2026-04-06T12:01:54Z"
+        },
+        {
+          "number": 7456,
+          "url": "https://github.com/axios/axios/pull/7456",
+          "title": "fix(headers): trim trailing CRLF in normalized header values (#7456)",
+          "author": "Eve",
+          "date": "2026-03-01T15:48:03Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 6885,
+          "url": "https://github.com/axios/axios/pull/6885",
+          "title": "fix(headers): fixed support for setting multiple header values from an iterated source; (#6885)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-04-23T16:24:08Z"
+        },
+        {
+          "number": 6874,
+          "url": "https://github.com/axios/axios/pull/6874",
+          "title": "fix(headers): fix `getSetCookie` by using 'get' method for caseless access; (#6874)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-04-14T19:38:27Z"
+        },
+        {
+          "number": 6873,
+          "url": "https://github.com/axios/axios/pull/6873",
+          "title": "fix(headers): allow iterable objects to be a data source for the set method; (#6873)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-04-14T18:55:27Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "bind",
+      "description": null,
+      "paths": [
+        "lib/helpers/bind.js"
+      ],
+      "authors": [
+        "Abhishek3880"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-10-09T07:43:07Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "buildurl",
+      "description": null,
+      "paths": [
+        "lib/helpers/buildURL.js"
+      ],
+      "authors": [
+        "Jay",
+        "Nandan Acharya",
+        "nthbotast",
+        "\ucd5c\uc608\ucc2c"
+      ],
+      "total_commits": 4,
+      "bug_fixes": 3,
+      "bug_fix_ratio": 0.75,
+      "last_modified": "2026-03-12T13:29:27Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7478,
+          "url": "https://github.com/axios/axios/pull/7478",
+          "title": "docs(buildURL): fix outdated encode() comment (#7478)",
+          "author": "nthbotast",
+          "date": "2026-03-12T13:29:27Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 5715,
+          "url": "https://github.com/axios/axios/pull/5715",
+          "title": "fix(params): removing '[' and ']' from URL encode exclude characters (#3316) (#5715)",
+          "author": "\ucd5c\uc608\ucc2c",
+          "date": "2025-08-01T18:44:47Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "callbackify",
+      "description": null,
+      "paths": [
+        "lib/helpers/callbackify.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "combineurls",
+      "description": null,
+      "paths": [
+        "lib/helpers/combineURLs.js"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:57.325079Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "composesignals",
+      "description": null,
+      "paths": [
+        "lib/helpers/composeSignals.js"
+      ],
+      "authors": [
+        "Jay",
+        "techcodie"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "compression-streams",
+      "description": null,
+      "paths": [
+        "lib/helpers/ZlibHeaderTransformStream.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "config-merger",
+      "description": "Configuration merging and resolution system for request options",
+      "paths": [
+        "lib/core/mergeConfig.js"
+      ],
+      "authors": [
+        "Jay",
+        "Noritaka Kobayashi",
+        "Usama Ayoub",
+        "Ved Vadnere"
+      ],
+      "total_commits": 5,
+      "bug_fixes": 3,
+      "bug_fix_ratio": 0.6,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7369,
+          "url": "https://github.com/axios/axios/pull/7369",
+          "title": "fix: Denial of Service via __proto__ Key in mergeConfig (#7369)",
+          "author": "Jay",
+          "date": "2026-02-04T18:25:06Z"
+        },
+        {
+          "number": 7133,
+          "url": "https://github.com/axios/axios/pull/7133",
+          "title": "fix: resolve issue #7131 (added spacing in mergeConfig.js) (#7133)",
+          "author": "Usama Ayoub",
+          "date": "2025-10-12T14:47:04Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "config-resolver",
+      "description": null,
+      "paths": [
+        "lib/helpers/resolveConfig.js"
+      ],
+      "authors": [
+        "Emiedonmokumo Dick-Boro",
+        "Jay"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 6998,
+          "url": "https://github.com/axios/axios/pull/6998",
+          "title": "fix(fetch-adapter): set correct Content-Type for Node FormData (#6998)",
+          "author": "Emiedonmokumo Dick-Boro",
+          "date": "2025-08-25T18:46:53Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "cookie-handler",
+      "description": null,
+      "paths": [
+        "lib/helpers/cookies.js"
+      ],
+      "authors": [
+        "Amit Verma",
+        "Jay",
+        "Justin Dhillon"
+      ],
+      "total_commits": 3,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.333,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 12.3,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "data-transformer",
+      "description": "Request and response data transformation pipeline",
+      "paths": [
+        "lib/core/transformData.js"
+      ],
+      "authors": [
+        "Justin Dhillon"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-11-12T19:11:56Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "deprecation",
+      "description": null,
+      "paths": [
+        "lib/helpers/deprecatedMethod.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "eslint.config",
+      "description": null,
+      "paths": [
+        "eslint.config.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-03-15T17:08:58Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7509,
+          "url": "https://github.com/axios/axios/pull/7509",
+          "title": "refactor: update eslint to v10 (#7509)",
+          "author": "Jay",
+          "date": "2026-03-15T17:08:58Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "estimatedataurldecodedbytes",
+      "description": null,
+      "paths": [
+        "lib/helpers/estimateDataURLDecodedBytes.js"
+      ],
+      "authors": [
+        "Ameer Assadi"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2025-09-10T13:08:43Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7011,
+          "url": "https://github.com/axios/axios/pull/7011",
+          "title": "fix(node): enforce maxContentLength for data: URLs (#7011)",
+          "author": "Ameer Assadi",
+          "date": "2025-09-10T13:08:43Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "formdatatojson",
+      "description": null,
+      "paths": [
+        "lib/helpers/formDataToJSON.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "formdatatostream",
+      "description": null,
+      "paths": [
+        "lib/helpers/formDataToStream.js"
+      ],
+      "authors": [
+        "Ionu\u021b G. Stan",
+        "Jay"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 6661,
+          "url": "https://github.com/axios/axios/pull/6661",
+          "title": "fix(http): send minimal end multipart boundary (#6661)",
+          "author": "Ionu\u021b G. Stan",
+          "date": "2025-04-24T19:19:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "fromdatauri",
+      "description": null,
+      "paths": [
+        "lib/helpers/fromDataURI.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "gulpfile",
+      "description": null,
+      "paths": [
+        "gulpfile.js"
+      ],
+      "authors": [
+        "Jay",
+        "Justin Dhillon"
+      ],
+      "total_commits": 3,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 0.667,
+      "last_modified": "2026-03-30T18:15:15Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 10584,
+          "url": "https://github.com/axios/axios/pull/10584",
+          "title": "chore: remove all old and un-needed files (#10584)",
+          "author": "Jay",
+          "date": "2026-03-30T18:15:15Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "index",
+      "description": null,
+      "paths": [
+        "index.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "interceptors",
+      "description": "Request and response interceptor management system",
+      "paths": [
+        "lib/core/InterceptorManager.js"
+      ],
+      "authors": [
+        "Jake Hayes",
+        "Jay",
+        "Justin Dhillon",
+        "Nikhil Simon Toppo"
+      ],
+      "total_commits": 4,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7172,
+          "url": "https://github.com/axios/axios/pull/7172",
+          "title": "docs: fix mismatched return type (#7172)",
+          "author": "Nikhil Simon Toppo",
+          "date": "2025-10-23T12:39:30Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "isabsoluteurl",
+      "description": null,
+      "paths": [
+        "lib/helpers/isAbsoluteURL.js"
+      ],
+      "authors": [
+        "Jay",
+        "asmitha-16"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "isaxioserror",
+      "description": "Core Axios HTTP client class and main entry point",
+      "paths": [
+        "lib/helpers/isAxiosError.js"
+      ],
+      "authors": [
+        "Jay",
+        "Justin Dhillon"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "npmignore",
+      "description": null,
+      "paths": [
+        ".npmignore"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:57.325300Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "null-handler",
+      "description": null,
+      "paths": [
+        "lib/helpers/null.js"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:57.325307Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "origin-validator",
+      "description": null,
+      "paths": [
+        "lib/helpers/isURLSameOrigin.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "parseheaders",
+      "description": null,
+      "paths": [
+        "lib/helpers/parseHeaders.js"
+      ],
+      "authors": [
+        "Jay",
+        "Justin Dhillon"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "parseprotocol",
+      "description": null,
+      "paths": [
+        "lib/helpers/parseProtocol.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "prettierignore",
+      "description": null,
+      "paths": [
+        ".prettierignore"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "progresseventreducer",
+      "description": null,
+      "paths": [
+        "lib/helpers/progressEventReducer.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "proxy-bypass",
+      "description": null,
+      "paths": [
+        "lib/helpers/shouldBypassProxy.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-04-06T11:47:03Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 10661,
+          "url": "https://github.com/axios/axios/pull/10661",
+          "title": "fix: no_proxy hostname normalization bypass leads to ssrf (#10661)",
+          "author": "Jay",
+          "date": "2026-04-06T11:47:03Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "readblob",
+      "description": null,
+      "paths": [
+        "lib/helpers/readBlob.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "request-dispatcher",
+      "description": "Core request dispatching logic that orchestrates the HTTP request lifecycle",
+      "paths": [
+        "lib/core/dispatchRequest.js"
+      ],
+      "authors": [
+        "Dmitriy Mozgovoy",
+        "Jay"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 7003,
+          "url": "https://github.com/axios/axios/pull/7003",
+          "title": "feat(fetch): add fetch, Request, Response env config variables for the adapter; (#7003)",
+          "author": "Dmitriy Mozgovoy",
+          "date": "2025-08-30T19:02:24Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "response-settler",
+      "description": null,
+      "paths": [
+        "lib/core/settle.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "rollup.config",
+      "description": null,
+      "paths": [
+        "rollup.config.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 4,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-03-15T13:53:41Z",
+      "health_score": 0.8,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7499,
+          "url": "https://github.com/axios/axios/pull/7499",
+          "title": "fix: proxy from env v2 fix (#7499)",
+          "author": "Jay",
+          "date": "2026-03-14T17:10:06Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "speedometer",
+      "description": null,
+      "paths": [
+        "lib/helpers/speedometer.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "spread",
+      "description": null,
+      "paths": [
+        "lib/helpers/spread.js"
+      ],
+      "authors": [
+        "SANDESH LENDVE"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2025-12-30T11:16:52Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7246,
+          "url": "https://github.com/axios/axios/pull/7246",
+          "title": "doc: update deprecated var usage in documentation examples (#7246)",
+          "author": "SANDESH LENDVE",
+          "date": "2025-12-30T11:16:52Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "status-codes",
+      "description": null,
+      "paths": [
+        "lib/helpers/HttpStatusCode.js"
+      ],
+      "authors": [
+        "Abhishek3880"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-10-09T07:42:44Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "throttle",
+      "description": null,
+      "paths": [
+        "lib/helpers/throttle.js"
+      ],
+      "authors": [
+        "Jay",
+        "Noritaka Kobayashi"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "toformdata",
+      "description": null,
+      "paths": [
+        "lib/helpers/toFormData.js"
+      ],
+      "authors": [
+        "Dimitrios Lazanas",
+        "Jay",
+        "Mohsen"
+      ],
+      "total_commits": 3,
+      "bug_fixes": 3,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-24T18:36:32Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 5764,
+          "url": "https://github.com/axios/axios/pull/5764",
+          "title": "feat: support react native blob objects (#5764)",
+          "author": "Mohsen",
+          "date": "2026-02-24T18:36:32Z"
+        },
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        },
+        {
+          "number": 6917,
+          "url": "https://github.com/axios/axios/pull/6917",
+          "title": "fix(form-data): convert boolean values to strings in FormData serialization (#6917)",
+          "author": "Dimitrios Lazanas",
+          "date": "2025-05-21T15:32:38Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "tourlencodedform",
+      "description": null,
+      "paths": [
+        "lib/helpers/toURLEncodedForm.js"
+      ],
+      "authors": [
+        "Jay",
+        "Noritaka Kobayashi"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "trackstream",
+      "description": null,
+      "paths": [
+        "lib/helpers/trackStream.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "transform-streams",
+      "description": null,
+      "paths": [
+        "lib/helpers/AxiosTransformStream.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "url-builder",
+      "description": "URL construction and manipulation utilities",
+      "paths": [
+        "lib/core/buildFullPath.js"
+      ],
+      "authors": [
+        "Nitya Jain"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-04-07T17:48:21Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7252,
+          "url": "https://github.com/axios/axios/pull/7252",
+          "title": "fix(core): use strict equality in buildFullPath check (#7252)",
+          "author": "Nitya Jain",
+          "date": "2026-04-07T17:48:21Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "url-params",
+      "description": null,
+      "paths": [
+        "lib/helpers/AxiosURLSearchParams.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "validation",
+      "description": "Input validation and type checking utilities",
+      "paths": [
+        "lib/helpers/validator.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "vitest.config",
+      "description": null,
+      "paths": [
+        "vitest.config.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.5,
+      "last_modified": "2026-03-12T13:27:09Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7489,
+          "url": "https://github.com/axios/axios/pull/7489",
+          "title": "refactor: refresh test suite to be modernised (#7489)",
+          "author": "Jay",
+          "date": "2026-03-12T13:27:09Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "webpack.config",
+      "description": null,
+      "paths": [
+        "webpack.config.js"
+      ],
+      "authors": [
+        "Jay"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-14T14:59:48Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 7385,
+          "url": "https://github.com/axios/axios/pull/7385",
+          "title": "feat: implement prettier and fix all issues (#7385)",
+          "author": "Jay",
+          "date": "2026-02-14T14:59:48Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    }
+  ]
+}

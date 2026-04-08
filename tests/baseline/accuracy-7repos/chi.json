@@ -1,0 +1,800 @@
+{
+  "repo_path": "/Users/pkuzina/workspace/_faultlines-testrepos/chi",
+  "remote_url": "https://github.com/go-chi/chi",
+  "analyzed_at": "2026-04-08T13:02:19.044612Z",
+  "total_commits": 26,
+  "date_range_days": 365,
+  "features": [
+    {
+      "name": "_examples",
+      "description": null,
+      "paths": [
+        "_examples/custom-handler/main.go",
+        "_examples/custom-method/main.go",
+        "_examples/fileserver/main.go",
+        "_examples/graceful/main.go",
+        "_examples/hello-world/main.go",
+        "_examples/limits/main.go",
+        "_examples/logging/main.go",
+        "_examples/pathvalue/main.go",
+        "_examples/rest/go.mod",
+        "_examples/rest/main.go",
+        "_examples/rest/routes.json",
+        "_examples/rest/routes.md",
+        "_examples/router-walk/main.go",
+        "_examples/todos-resource/main.go",
+        "_examples/todos-resource/todos.go",
+        "_examples/todos-resource/users.go",
+        "_examples/versions/go.mod",
+        "_examples/versions/main.go",
+        "_examples/fileserver/data/notes.txt",
+        "_examples/versions/data/article.go",
+        "_examples/versions/data/errors.go",
+        "_examples/versions/presenter/v1/article.go",
+        "_examples/versions/presenter/v2/article.go",
+        "_examples/versions/presenter/v3/article.go"
+      ],
+      "authors": [
+        "James Raspass",
+        "Tatsuya Kaneko",
+        "mikereid1"
+      ],
+      "total_commits": 3,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-08T10:48:22Z",
+      "health_score": 81.2,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "shared-infra",
+      "description": null,
+      "paths": [
+        "testdata/cert.pem",
+        "testdata/key.pem"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044199Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "basic_auth",
+      "description": null,
+      "paths": [
+        "middleware/basic_auth.go"
+      ],
+      "authors": [
+        "James Raspass",
+        "Mahan Adhikari",
+        "Ot\u00e1vio Bernardes",
+        "Peter Kieltyka",
+        "Vasily Tsybenko",
+        "Vojtech Vitek (golang.cz)"
+      ],
+      "total_commits": 7,
+      "bug_fixes": 2,
+      "bug_fix_ratio": 0.286,
+      "last_modified": "2026-02-19T12:38:50Z",
+      "health_score": 33.5,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 1045,
+          "url": "https://github.com/go-chi/chi/pull/1045",
+          "title": "fix(middleware): add missing return in RouteHeaders empty check (#1045)",
+          "author": "Mahan Adhikari",
+          "date": "2026-02-05T11:05:34Z"
+        },
+        {
+          "number": 1016,
+          "url": "https://github.com/go-chi/chi/pull/1016",
+          "title": "fix/608 - Fix flaky Throttle middleware test by synchronizing token usage (#1016)",
+          "author": "Ot\u00e1vio Bernardes",
+          "date": "2025-08-26T11:19:23Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "chain",
+      "description": "Middleware chaining and composition utilities",
+      "paths": [
+        "chain.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044319Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "chi",
+      "description": "Main router interface and factory functions",
+      "paths": [
+        "chi.go"
+      ],
+      "authors": [
+        "James Raspass",
+        "Steven Dee (J\u014dshin)"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-10-09T19:21:01Z",
+      "health_score": 80.8,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "clean_path",
+      "description": null,
+      "paths": [
+        "middleware/clean_path.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044342Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "compress",
+      "description": null,
+      "paths": [
+        "middleware/compress.go"
+      ],
+      "authors": [
+        "James Raspass"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-19T13:12:48Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "content_charset",
+      "description": null,
+      "paths": [
+        "middleware/content_charset.go"
+      ],
+      "authors": [
+        "James Raspass",
+        "Ville Skytt\u00e4"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-09-17T08:51:46Z",
+      "health_score": 80.8,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "content_encoding",
+      "description": null,
+      "paths": [
+        "middleware/content_encoding.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044368Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "content_type",
+      "description": null,
+      "paths": [
+        "middleware/content_type.go"
+      ],
+      "authors": [
+        "Ville Skytt\u00e4"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-06-20T12:19:39Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "context",
+      "description": "Request context management and parameter extraction",
+      "paths": [
+        "context.go"
+      ],
+      "authors": [
+        "srpvpn"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-08-26T12:03:15Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "get_head",
+      "description": null,
+      "paths": [
+        "middleware/get_head.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044391Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "heartbeat",
+      "description": null,
+      "paths": [
+        "middleware/heartbeat.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044400Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "licensing",
+      "description": null,
+      "paths": [
+        "LICENSE"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044405Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "logger",
+      "description": null,
+      "paths": [
+        "middleware/logger.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044411Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "maybe",
+      "description": null,
+      "paths": [
+        "middleware/maybe.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044417Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "middleware",
+      "description": "Collection of HTTP middleware for common functionality",
+      "paths": [
+        "middleware/middleware.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044423Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "module-config",
+      "description": null,
+      "paths": [
+        "go.mod"
+      ],
+      "authors": [
+        "James Raspass"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-02-19T13:13:31Z",
+      "health_score": 80.8,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "mux",
+      "description": "HTTP multiplexer for routing requests to handlers",
+      "paths": [
+        "mux.go"
+      ],
+      "authors": [
+        "Gusted",
+        "James Raspass",
+        "Ville Skytt\u00e4"
+      ],
+      "total_commits": 5,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.2,
+      "last_modified": "2026-02-19T13:13:31Z",
+      "health_score": 54.5,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 1013,
+          "url": "https://github.com/go-chi/chi/pull/1013",
+          "title": "Allow multiple whitespace between method & pattern (#1013)",
+          "author": "James Raspass",
+          "date": "2025-08-15T15:26:17Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "nocache",
+      "description": null,
+      "paths": [
+        "middleware/nocache.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044470Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "page_route",
+      "description": null,
+      "paths": [
+        "middleware/page_route.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044476Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "path_rewrite",
+      "description": null,
+      "paths": [
+        "middleware/path_rewrite.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044482Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "profiler",
+      "description": null,
+      "paths": [
+        "middleware/profiler.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044489Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "realip",
+      "description": null,
+      "paths": [
+        "middleware/realip.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044496Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "recoverer",
+      "description": null,
+      "paths": [
+        "middleware/recoverer.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044502Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "request_id",
+      "description": null,
+      "paths": [
+        "middleware/request_id.go"
+      ],
+      "authors": [
+        "cui"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-09-17T12:32:30Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "request_size",
+      "description": null,
+      "paths": [
+        "middleware/request_size.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044518Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "route_headers",
+      "description": null,
+      "paths": [
+        "middleware/route_headers.go"
+      ],
+      "authors": [
+        "Mahan Adhikari"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 1.0,
+      "last_modified": "2026-02-05T11:05:34Z",
+      "health_score": 0.0,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 1045,
+          "url": "https://github.com/go-chi/chi/pull/1045",
+          "title": "fix(middleware): add missing return in RouteHeaders empty check (#1045)",
+          "author": "Mahan Adhikari",
+          "date": "2026-02-05T11:05:34Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "strip",
+      "description": null,
+      "paths": [
+        "middleware/strip.go"
+      ],
+      "authors": [
+        "Peter Kieltyka",
+        "Vojtech Vitek (golang.cz)"
+      ],
+      "total_commits": 2,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-01-14T16:02:00Z",
+      "health_score": 80.8,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "sunset",
+      "description": null,
+      "paths": [
+        "middleware/sunset.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044543Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "supress_notfound",
+      "description": null,
+      "paths": [
+        "middleware/supress_notfound.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044549Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "terminal",
+      "description": null,
+      "paths": [
+        "middleware/terminal.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044555Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "throttle",
+      "description": null,
+      "paths": [
+        "middleware/throttle.go"
+      ],
+      "authors": [
+        "Vasily Tsybenko"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-08-26T11:23:50Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "timeout",
+      "description": null,
+      "paths": [
+        "middleware/timeout.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044569Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "tree",
+      "description": "Radix tree implementation for efficient route matching",
+      "paths": [
+        "tree.go"
+      ],
+      "authors": [
+        "Ehden Sinai",
+        "James Raspass",
+        "Lukas Jenicek"
+      ],
+      "total_commits": 6,
+      "bug_fixes": 1,
+      "bug_fix_ratio": 0.167,
+      "last_modified": "2026-02-19T13:12:24Z",
+      "health_score": 47.7,
+      "flows": [],
+      "bug_fix_prs": [
+        {
+          "number": 1049,
+          "url": "https://github.com/go-chi/chi/pull/1049",
+          "title": "Propagate inline middlewares across mounted subrouters (#1049)",
+          "author": "Lukas Jenicek",
+          "date": "2026-02-12T11:31:51Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "url_format",
+      "description": null,
+      "paths": [
+        "middleware/url_format.go"
+      ],
+      "authors": [
+        "Maxim Korotkov"
+      ],
+      "total_commits": 1,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-08-15T15:26:41Z",
+      "health_score": 80.4,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "value",
+      "description": null,
+      "paths": [
+        "middleware/value.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044598Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    },
+    {
+      "name": "wrap_writer",
+      "description": null,
+      "paths": [
+        "middleware/wrap_writer.go"
+      ],
+      "authors": [],
+      "total_commits": 0,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2026-04-08T13:02:19.044604Z",
+      "health_score": 100.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "symbol_health_score": null
+    }
+  ]
+}

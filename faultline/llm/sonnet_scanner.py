@@ -474,68 +474,95 @@ Return JSON. Rules: merge aggressively, split god-features (>100 files), 12-25 f
 #     _clean_inputs → LLM call → apply ops → _finalize_result
 
 
+_STEM_TRIM_SUFFIXES = (
+    "_test", "_tests",
+    "_appengine", "_unix", "_windows", "_linux", "_darwin", "_bsd",
+    "_freebsd", "_openbsd", "_netbsd", "_plan9", "_js", "_wasm",
+    "_amd64", "_arm64", "_386",
+    "_file", "_multipart", "_legacy", "_deprecated",
+)
+
+
+def _stem_for_path(path: str) -> str:
+    """Return the normalized module stem for a file path.
+
+    Strips OS/arch/test/variant suffixes so `context.go`,
+    `context_appengine.go`, and `context_test.go` all produce the
+    same `context` stem.
+    """
+    stem = Path(path).stem.lower()
+    while True:
+        trimmed = stem
+        for suf in _STEM_TRIM_SUFFIXES:
+            if trimmed.endswith(suf):
+                trimmed = trimmed[: -len(suf)]
+                break
+        if trimmed == stem:
+            break
+        stem = trimmed
+    return stem.strip("_-.")
+
+
+def _split_candidate_by_stem(paths: list[str]) -> dict[str, list[str]]:
+    """Group a flat file list by normalized filename stem."""
+    stems: dict[str, list[str]] = {}
+    for fp in paths:
+        stem = _stem_for_path(fp)
+        if not stem:
+            continue
+        stems.setdefault(stem, []).append(fp)
+    return stems
+
+
 def _promote_library_root_candidates(
     candidates: dict[str, list[str]],
 ) -> dict[str, list[str]]:
-    """Split the catchall ``root``/``init`` bucket by filename stem.
+    """Split the ``root`` / ``init`` catchall buckets by filename stem.
 
-    Day 14 post-mission polish: libraries like Gin keep each public
-    module in a top-level source file — ``auth.go``, ``logger.go``,
-    ``recovery.go``, ``routergroup.go``, ``tree.go``, ``errors.go``,
-    ``context.go``. The heuristic candidate detector groups all of
-    those into the ``root`` catchall, which ``deep_scan`` then dumps
-    into ``shared-infra``. Sonnet never sees them as distinct
-    candidates and can't emit useful split operations.
+    Libraries like Gin keep each public module in a top-level source
+    file — ``auth.go``, ``logger.go``, ``recovery.go``, ``routergroup.go``,
+    ``tree.go``, ``errors.go``, ``context.go``. The heuristic candidate
+    detector groups all of those into the ``root`` catchall, which
+    ``deep_scan`` then dumps into ``shared-infra``. Sonnet never sees
+    them as distinct candidates and can't emit useful split operations.
 
-    When ``is_library=True``, this helper runs BEFORE the candidate
-    pipeline and rewrites ``root`` / ``init`` into per-stem candidates.
+    This helper rewrites ``root`` / ``init`` into per-stem candidates.
     OS/arch/test suffixes are stripped so related files group together:
     ``context.go`` + ``context_appengine.go`` + ``context_test.go``
     all land in the ``context`` candidate.
 
-    This is a pure transformation — it doesn't call the LLM or touch
-    any module globals, so it's unit-testable without mocks.
+    Intentionally limited to the ``root``/``init`` catchalls because
+    named candidates like Gin's ``binding`` or ``render`` also have
+    high per-file stem diversity (``binding/json.go``, ``binding/xml.go``,
+    ``binding/form.go``…) but each of those IS the binding module's
+    format implementations, NOT distinct public modules. Splitting
+    them would explode ``binding`` into 20+ format features.
+    The downside is that flat library-named candidates like Flask's
+    ``flask`` bucket (``flask/app.py``, ``flask/cli.py``,
+    ``flask/blueprints.py``…) don't get stem-split, so Flask hits
+    ~50% recall instead of ~90%. Accepted trade-off: 100% recall on
+    chi/axios and 86-90% on gin/fastapi, with Flask as a known soft
+    spot.
+
+    Pure transformation — no LLM calls, no module globals. Unit-tested.
     """
-    result = dict(candidates)
+    result: dict[str, list[str]] = {}
 
-    for catchall in ("root", "init"):
-        if catchall not in result:
-            continue
-        root_files = result.pop(catchall)
-        stems: dict[str, list[str]] = {}
-
-        # Strip suffixes that are about variant/test/platform, not module.
-        _TRIM_SUFFIXES = (
-            "_test", "_tests",
-            "_appengine", "_unix", "_windows", "_linux", "_darwin", "_bsd",
-            "_freebsd", "_openbsd", "_netbsd", "_plan9", "_js", "_wasm",
-            "_amd64", "_arm64", "_386",
-            "_file", "_multipart", "_legacy", "_deprecated",
-        )
-
-        for fp in root_files:
-            stem = Path(fp).stem.lower()
-            while True:
-                trimmed = stem
-                for suf in _TRIM_SUFFIXES:
-                    if trimmed.endswith(suf):
-                        trimmed = trimmed[: -len(suf)]
-                        break
-                if trimmed == stem:
-                    break
-                stem = trimmed
-            stem = stem.strip("_-.")
-            if not stem:
-                continue
-            stems.setdefault(stem, []).append(fp)
-
-        # Merge back: if a stem already exists as a candidate name (rare
-        # collision), append rather than overwrite so we don't drop files.
-        for stem, paths in stems.items():
+    def _merge_in(stems_map: dict[str, list[str]]) -> None:
+        for stem, paths in stems_map.items():
             if stem in result:
                 result[stem].extend(paths)
             else:
-                result[stem] = paths
+                result[stem] = list(paths)
+
+    for name, paths in candidates.items():
+        if name in ("root", "init"):
+            _merge_in(_split_candidate_by_stem(paths))
+        else:
+            if name in result:
+                result[name].extend(paths)
+            else:
+                result[name] = list(paths)
 
     return result
 
