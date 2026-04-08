@@ -101,6 +101,7 @@ def run_one(
     use_llm: bool,
     use_flows: bool,
     model: str | None,
+    timeout_s: int = 600,
 ) -> dict:
     """Run faultline against one repo, return result metadata."""
     if not repo.exists():
@@ -128,12 +129,12 @@ def run_one(
             cmd,
             capture_output=True,
             text=True,
-            timeout=600,  # 10-min hard cap per repo
+            timeout=timeout_s,
         )
     except subprocess.TimeoutExpired:
         return {
             "status": "timeout",
-            "runtime_s": 600,
+            "runtime_s": timeout_s,
             "cmd": " ".join(cmd),
         }
     elapsed = time.time() - start
@@ -158,8 +159,7 @@ def main() -> int:
     ap.add_argument(
         "--label",
         required=True,
-        choices=["before", "after"],
-        help="Which snapshot directory to write to",
+        help="Snapshot directory name under tests/baseline/ (e.g. before, before-llm, after, after-llm)",
     )
     ap.add_argument(
         "--repo",
@@ -169,6 +169,10 @@ def main() -> int:
     ap.add_argument("--llm", action="store_true", help="Enable --llm flag")
     ap.add_argument("--flows", action="store_true", help="Enable --flows flag")
     ap.add_argument("--model", help="Override LLM model")
+    ap.add_argument(
+        "--timeout", type=int, default=600,
+        help="Per-repo timeout in seconds (default 600, raise to 1800 for cal.com).",
+    )
     args = ap.parse_args()
 
     if args.llm and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -192,6 +196,7 @@ def main() -> int:
             use_llm=args.llm,
             use_flows=args.flows,
             model=args.model,
+            timeout_s=args.timeout,
         )
         results[name] = result
         # Write per-repo metadata
