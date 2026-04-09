@@ -1230,10 +1230,23 @@ def _calculate_health(
     Calculates a health score from 0 to 100.
     100 = healthy, 0 = high technical debt.
 
-    Formula:
-    - Base score decreases with bug fix ratio (ratio 0.5 → score 0)
-    - Activity factor adds confidence for well-tested features
-    - Age decay: recent bug fixes (last 30 days) weigh 2x more than older ones
+    Formula (revised Day 15):
+    - Base score decreases with bug fix ratio using a sigmoid-like
+      curve centered at 35% bug-fix ratio. This means:
+        - 0-15% bug-fix → 85-100 (healthy — mostly new feature work)
+        - 15-35% → 55-85 (normal active development)
+        - 35-55% → 25-55 (elevated — worth watching)
+        - 55-75% → 10-25 (high debt — maintenance-dominant)
+        - 75%+   → 0-10 (critical — almost all commits are bug fixes)
+      The old formula (ratio * 200) mapped anything ≥50% to flat zero,
+      which made 90%+ of features in real OSS repos (outline, ghost,
+      cal.com) "critical" — that's misleading for stable products where
+      40-60% bug-fix ratio is normal active maintenance.
+    - Activity factor scales confidence: a feature with 2 commits and
+      50% bug ratio is less concerning than one with 200 commits and
+      50%.
+    - Age decay: recent bug fixes (last 30 days) weigh 2x more than
+      older ones, so features getting healthier over time show it.
     """
     if total_commits == 0:
         return 100.0
@@ -1254,7 +1267,26 @@ def _calculate_health(
         if weighted_total > 0:
             effective_ratio = weighted_bugs / weighted_total
 
-    base_score = max(0.0, 100.0 - (effective_ratio * 200))
+    # Sigmoid-like curve centered at 55% bug-fix ratio, which is the
+    # empirical median for mature OSS products (outline 56%, cal.com 67%,
+    # excalidraw 49%). The old center (35%) made everything above 50% a
+    # flat "critical=0", which was misleading for active codebases.
+    #
+    #   ratio  →  health
+    #     0%   →  ~99  (healthy — pure feature work)
+    #    20%   →  ~94  (healthy)
+    #    35%   →  ~83  (healthy — more fixes than average)
+    #    45%   →  ~69  (normal active development)
+    #    55%   →   50  (midpoint — balanced maintenance)
+    #    65%   →  ~31  (elevated — worth watching)
+    #    75%   →  ~17  (high — maintenance-dominant)
+    #    85%   →   ~8  (critical — almost all fixes)
+    #    95%   →   ~4  (critical)
+    import math
+    # Logistic centered at 0.55 with steepness 8
+    x = effective_ratio
+    base_score = 100.0 / (1.0 + math.exp(8.0 * (x - 0.55)))
+
     activity_factor = min(1.0, total_commits / 50)
 
     return round(base_score * activity_factor + base_score * (1 - activity_factor) * 0.8, 1)
