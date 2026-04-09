@@ -722,10 +722,13 @@ class TestCalculateHealth:
         assert score_many >= score_few
 
     def test_without_commits_list_uses_raw_ratio(self) -> None:
-        """When commits list is not provided, uses raw bug_fix_ratio."""
-        score = _calculate_health(0.5, 10)
-        # Base: max(0, 100 - 0.5*200) = 0
-        assert score == 0.0
+        """When commits list is not provided, uses raw bug_fix_ratio.
+        With the revised sigmoid formula (center=0.55), 50% ratio maps
+        to ~50 health (midpoint area), not 0."""
+        score = _calculate_health(0.5, 100)
+        # Sigmoid: 100 / (1 + exp(8*(0.5-0.55))) ≈ 60. With full
+        # activity factor (100 commits): ≈ 60
+        assert 40 < score < 75
 
     def test_score_bounded_0_to_100(self) -> None:
         assert _calculate_health(0.0, 0) <= 100.0

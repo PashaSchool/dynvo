@@ -34,16 +34,20 @@ type RepoShowcase = {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────
+// Impact/color bands calibrated against real OSS health scores.
+// With the revised sigmoid formula, a 50% bug-fix ratio → health ≈35.
+// Healthy active features land at 40-70, only truly maintenance-
+// dominant code (<25 health) gets danger red.
 const colorFor = (health: number): string => {
-  if (health < 35) return "var(--danger)";
-  if (health < 60) return "var(--warning)";
+  if (health < 25) return "var(--danger)";
+  if (health < 45) return "var(--warning)";
   return "var(--success)";
 };
 const impactFor = (health: number): Feature["impact"] => {
-  if (health < 20) return "critical";
-  if (health < 40) return "high";
-  if (health < 60) return "medium";
-  if (health < 80) return "low";
+  if (health < 15) return "critical";
+  if (health < 25) return "high";
+  if (health < 45) return "medium";
+  if (health < 70) return "low";
   return "healthy";
 };
 const feat = (
@@ -85,16 +89,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-calcom.json",
     topNote: "top 6 of 282 shown",
     features: [
-      feat("trpc/viewer", "packages/trpc/server/routers/viewer", 0, 68, 539, 728, [
-        { name: "list-event-types", health: 0, ratio: 71, commits: 187 },
-        { name: "update-availability", health: 0, ratio: 65, commits: 142 },
-        { name: "manage-team-members", health: 0, ratio: 69, commits: 98 },
+      feat("trpc/viewer", "packages/trpc/server/routers/viewer", 26, 68, 539, 728, [
+        { name: "list-event-types", health: 22, ratio: 71, commits: 187 },
+        { name: "update-availability", health: 31, ratio: 65, commits: 142 },
+        { name: "manage-team-members", health: 25, ratio: 69, commits: 98 },
       ]),
-      feat("web/bookings", "apps/web/pages/bookings", 0, 76, 172, 109),
-      feat("web/settings", "apps/web/pages/settings", 0, 70, 206, 178),
-      feat("ee/billing", "packages/features/ee/billing", 0, 63, 142, 171),
-      feat("lib/server", "packages/lib/server", 0, 63, 177, 48),
-      feat("web/dashboard", "apps/web/pages/dashboard", 0, 67, 175, 128),
+      feat("web/bookings", "apps/web/pages/bookings", 16, 76, 172, 109),
+      feat("web/settings", "apps/web/pages/settings", 23, 70, 206, 178),
+      feat("ee/billing", "packages/features/ee/billing", 35, 63, 142, 171),
+      feat("lib/server", "packages/lib/server", 35, 63, 177, 48),
+      feat("web/dashboard", "apps/web/pages/dashboard", 28, 67, 175, 128),
     ],
   },
   {
@@ -113,16 +117,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-plane.json",
     topNote: "top 6 of 134 shown",
     features: [
-      feat("web/issues", "apps/web/ce/components/issues", 0, 62, 172, 447, [
-        { name: "view-issues-in-layout", health: 0, ratio: 64, commits: 78 },
-        { name: "filter-and-sort-issues", health: 0, ratio: 59, commits: 52 },
-        { name: "delete-issue", health: 0, ratio: 68, commits: 34 },
+      feat("web/issues", "apps/web/ce/components/issues", 36, 62, 172, 447, [
+        { name: "view-issues-in-layout", health: 33, ratio: 64, commits: 78 },
+        { name: "filter-and-sort-issues", health: 42, ratio: 59, commits: 52 },
+        { name: "delete-issue", health: 26, ratio: 68, commits: 34 },
       ]),
-      feat("editor/editor-extensions", "packages/editor/src/extensions", 0, 72, 104, 111),
-      feat("web/workspace", "apps/web/ce/components/workspace", 0, 54, 106, 100),
-      feat("web/pages", "apps/web/ce/components/pages", 0, 62, 76, 99),
-      feat("web/project", "apps/web/core/components/project", 0, 57, 87, 88),
-      feat("web/inbox", "apps/web/ce/components/inbox", 0, 61, 67, 48),
+      feat("editor/editor-extensions", "packages/editor/src/extensions", 20, 72, 104, 111),
+      feat("web/workspace", "apps/web/ce/components/workspace", 52, 54, 106, 100),
+      feat("web/pages", "apps/web/ce/components/pages", 36, 62, 76, 99),
+      feat("web/project", "apps/web/core/components/project", 46, 57, 87, 88),
+      feat("web/inbox", "apps/web/ce/components/inbox", 38, 61, 67, 48),
     ],
   },
   {
@@ -141,16 +145,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-documenso.json",
     topNote: "top 6 of 49 shown",
     features: [
-      feat("trpc/envelope", "packages/trpc/server/envelope-router", 30, 37, 57, 132, [
-        { name: "create-envelope", health: 28, ratio: 40, commits: 24 },
-        { name: "send-for-signing", health: 31, ratio: 36, commits: 19 },
-        { name: "track-status", health: 34, ratio: 33, commits: 14 },
+      feat("trpc/envelope", "packages/trpc/server/envelope-router", 81, 37, 57, 132, [
+        { name: "create-envelope", health: 77, ratio: 40, commits: 24 },
+        { name: "send-for-signing", health: 82, ratio: 36, commits: 19 },
+        { name: "track-status", health: 85, ratio: 33, commits: 14 },
       ]),
-      feat("remix/document-signing", "apps/remix/app/routes/sign", 20, 46, 28, 25),
-      feat("ee/billing-management", "packages/ee/billing", 0, 57, 44, 49),
-      feat("trpc/organisation", "packages/trpc/server/organisation", 15, 48, 41, 28),
-      feat("ui/document", "packages/ui/primitives/document", 0, 52, 67, 51),
-      feat("auth/server", "packages/auth/server", 45, 31, 18, 14),
+      feat("remix/document-signing", "apps/remix/app/routes/sign", 67, 46, 28, 25),
+      feat("ee/billing-management", "packages/ee/billing", 46, 57, 44, 49),
+      feat("trpc/organisation", "packages/trpc/server/organisation", 64, 48, 41, 28),
+      feat("ui/document", "packages/ui/primitives/document", 56, 52, 67, 51),
+      feat("auth/server", "packages/auth/server", 87, 31, 18, 14),
     ],
   },
   {
@@ -169,16 +173,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-outline.json",
     topNote: "top 6 of 22 shown",
     features: [
-      feat("rich-text-editor", "shared/editor", 0, 66, 438, 249, [
-        { name: "insert-table", health: 0, ratio: 71, commits: 62 },
-        { name: "render-editor", health: 0, ratio: 64, commits: 87 },
-        { name: "structure-content", health: 0, ratio: 68, commits: 54 },
+      feat("rich-text-editor", "shared/editor", 29, 66, 438, 249, [
+        { name: "insert-table", health: 22, ratio: 71, commits: 62 },
+        { name: "render-editor", health: 33, ratio: 64, commits: 87 },
+        { name: "structure-content", health: 26, ratio: 68, commits: 54 },
       ]),
-      feat("api-backend", "server/routes + server/collaboration", 0, 58, 375, 275),
-      feat("dashboard", "app/scenes + server/routes/app", 0, 64, 318, 256),
-      feat("document-management", "app/components/DocumentExplorer", 0, 61, 218, 74),
-      feat("document-editor", "app/components/DocumentBreadcrumb", 0, 70, 212, 64),
-      feat("plugins", "plugins/* (azure, slack, …)", 0, 55, 101, 95),
+      feat("api-backend", "server/routes + server/collaboration", 44, 58, 375, 275),
+      feat("dashboard", "app/scenes + server/routes/app", 33, 64, 318, 256),
+      feat("document-management", "app/components/DocumentExplorer", 38, 61, 218, 74),
+      feat("document-editor", "app/components/DocumentBreadcrumb", 23, 70, 212, 64),
+      feat("plugins", "plugins/* (azure, slack, …)", 50, 55, 101, 95),
     ],
   },
   {
@@ -197,16 +201,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-formbricks.json",
     topNote: "top 6 of 33 shown",
     features: [
-      feat("web/survey", "apps/web/modules/survey", 0, 53, 289, 249, [
-        { name: "create-survey-from-template", health: 0, ratio: 58, commits: 62 },
-        { name: "take-survey-via-link", health: 0, ratio: 49, commits: 41 },
-        { name: "take-contact-survey", health: 0, ratio: 52, commits: 28 },
+      feat("web/survey", "apps/web/modules/survey", 54, 53, 289, 249, [
+        { name: "create-survey-from-template", health: 44, ratio: 58, commits: 62 },
+        { name: "take-survey-via-link", health: 62, ratio: 49, commits: 41 },
+        { name: "take-contact-survey", health: 56, ratio: 52, commits: 28 },
       ]),
-      feat("web/shared-ui", "apps/web/modules/ui", 7, 44, 331, 428),
-      feat("web/ee", "apps/web/modules/ee", 0, 43, 166, 181),
-      feat("web/organization", "apps/web/modules/organization", 0, 47, 114, 94),
-      feat("surveys/general", "packages/surveys/src", 0, 62, 98, 45),
-      feat("web/auth", "apps/web/modules/auth", 29, 34, 64, 67),
+      feat("web/shared-ui", "apps/web/modules/ui", 71, 44, 331, 428),
+      feat("web/ee", "apps/web/modules/ee", 72, 43, 166, 181),
+      feat("web/organization", "apps/web/modules/organization", 65, 47, 114, 94),
+      feat("surveys/general", "packages/surveys/src", 36, 62, 98, 45),
+      feat("web/auth", "apps/web/modules/auth", 84, 34, 64, 67),
     ],
   },
   {
@@ -225,16 +229,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-excalidraw.json",
     topNote: "top 6 of 15 shown",
     features: [
-      feat("excalidraw/shared-ui", "packages/excalidraw/components", 4, 53, 64, 132, [
-        { name: "render-toolbar", health: 4, ratio: 55, commits: 24 },
-        { name: "show-context-menu", health: 4, ratio: 50, commits: 18 },
-        { name: "toggle-panels", health: 4, ratio: 52, commits: 14 },
+      feat("excalidraw/shared-ui", "packages/excalidraw/components", 54, 53, 64, 132, [
+        { name: "render-toolbar", health: 50, ratio: 55, commits: 24 },
+        { name: "show-context-menu", health: 60, ratio: 50, commits: 18 },
+        { name: "toggle-panels", health: 56, ratio: 52, commits: 14 },
       ]),
-      feat("excalidraw/data", "packages/excalidraw/data", 0, 62, 40, 22),
-      feat("excalidraw/renderer", "packages/excalidraw/renderer", 0, 62, 34, 16),
-      feat("excalidraw-app/data", "packages/excalidraw-app/data", 0, 58, 12, 17),
-      feat("math", "packages/math", 9, 48, 21, 26),
-      feat("excalidraw/selection-tools", "packages/excalidraw/components/LassoTrail", 0, 56, 9, 2),
+      feat("excalidraw/data", "packages/excalidraw/data", 36, 62, 40, 22),
+      feat("excalidraw/renderer", "packages/excalidraw/renderer", 36, 62, 34, 16),
+      feat("excalidraw-app/data", "packages/excalidraw-app/data", 44, 58, 12, 17),
+      feat("math", "packages/math", 64, 48, 21, 26),
+      feat("excalidraw/selection-tools", "packages/excalidraw/components/LassoTrail", 48, 56, 9, 2),
     ],
   },
   {
@@ -253,16 +257,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-ghost.json",
     topNote: "top 6 of 101 shown",
     features: [
-      feat("admin-x-framework", "apps/admin-x-framework/src", 0, 78, 203, 77, [
-        { name: "manage-site-settings", health: 0, ratio: 80, commits: 62 },
-        { name: "manage-staff-users", health: 0, ratio: 76, commits: 48 },
-        { name: "manage-content", health: 0, ratio: 79, commits: 54 },
+      feat("admin-x-framework", "apps/admin-x-framework/src", 14, 78, 203, 77, [
+        { name: "manage-site-settings", health: 12, ratio: 80, commits: 62 },
+        { name: "manage-staff-users", health: 16, ratio: 76, commits: 48 },
+        { name: "manage-content", health: 13, ratio: 79, commits: 54 },
       ]),
-      feat("ghost/members", "ghost/core/core/server/services/members", 0, 90, 173, 112),
-      feat("stats/stats", "apps/stats/src", 0, 82, 174, 44),
-      feat("ghost/email", "ghost/core/core/server/services/email", 0, 83, 144, 62),
-      feat("shade/ui", "apps/shade/src", 0, 80, 143, 124),
-      feat("posts/post-analytics", "apps/posts/src/views", 0, 84, 139, 25),
+      feat("ghost/members", "ghost/core/core/server/services/members", 6, 90, 173, 112),
+      feat("stats/stats", "apps/stats/src", 10, 82, 174, 44),
+      feat("ghost/email", "ghost/core/core/server/services/email", 10, 83, 144, 62),
+      feat("shade/ui", "apps/shade/src", 12, 80, 143, 124),
+      feat("posts/post-analytics", "apps/posts/src/views", 9, 84, 139, 25),
     ],
   },
   {
@@ -281,12 +285,12 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-trpc.json",
     topNote: "top 6 of 16 modules · library mode · no flows",
     features: [
-      feat("server/trpc-core", "packages/server/src", 0, 77, 35, 39),
-      feat("client/links", "packages/client/src/links", 0, 78, 18, 24),
-      feat("server/adapters", "packages/server/src/adapters", 0, 71, 17, 26),
-      feat("tanstack-react-query", "packages/tanstack-react-query", 0, 91, 11, 8),
-      feat("openapi", "packages/openapi/src", 0, 52, 25, 7),
-      feat("next-adapter", "packages/next/src", 45, 30, 63, 23),
+      feat("server/trpc-core", "packages/server/src", 15, 77, 35, 39),
+      feat("client/links", "packages/client/src/links", 14, 78, 18, 24),
+      feat("server/adapters", "packages/server/src/adapters", 22, 71, 17, 26),
+      feat("tanstack-react-query", "packages/tanstack-react-query", 5, 91, 11, 8),
+      feat("openapi", "packages/openapi/src", 56, 52, 25, 7),
+      feat("next-adapter", "packages/next/src", 88, 30, 63, 23),
     ],
   },
   {
@@ -305,12 +309,12 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-chi.json",
     topNote: "top 6 of 38 modules · library mode",
     features: [
-      feat("chi", "chi.go", 81, 0, 2, 1),
-      feat("mux", "mux.go", 54, 20, 5, 1),
-      feat("tree", "tree.go", 48, 17, 6, 1),
-      feat("basic_auth", "middleware/basic_auth.go", 34, 29, 7, 1),
-      feat("compress", "middleware/compress.go", 80, 0, 1, 1),
-      feat("recoverer", "middleware/recoverer.go", 72, 14, 4, 1),
+      feat("chi", "chi.go", 99, 0, 2, 1),
+      feat("mux", "mux.go", 94, 20, 5, 1),
+      feat("tree", "tree.go", 95, 17, 6, 1),
+      feat("basic_auth", "middleware/basic_auth.go", 89, 29, 7, 1),
+      feat("compress", "middleware/compress.go", 99, 0, 1, 1),
+      feat("recoverer", "middleware/recoverer.go", 96, 14, 4, 1),
     ],
   },
   {
@@ -329,12 +333,12 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-gin.json",
     topNote: "top 6 of 22 modules · library mode",
     features: [
-      feat("binding", "binding/", 38, 31, 16, 17),
-      feat("render", "render/", 58, 15, 10, 14),
-      feat("context", "context.go + context_*.go", 33, 35, 23, 2),
-      feat("recovery", "recovery.go", 22, 29, 7, 1),
-      feat("routergroup", "routergroup.go", 30, 28, 7, 1),
-      feat("logger", "logger.go", 0, 75, 4, 1),
+      feat("binding", "binding/", 87, 31, 16, 17),
+      feat("render", "render/", 96, 15, 10, 14),
+      feat("context", "context.go + context_*.go", 83, 35, 23, 2),
+      feat("recovery", "recovery.go", 89, 29, 7, 1),
+      feat("routergroup", "routergroup.go", 90, 28, 7, 1),
+      feat("logger", "logger.go", 17, 75, 4, 1),
     ],
   },
 ];
