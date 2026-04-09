@@ -85,9 +85,12 @@ const feat = (
   flows,
 });
 
-// ── Showcase data — real numbers from the Day 11–14 LLM regression
-//    runs (tests/baseline/accuracy-7repos) plus fresh Day 15 scans on
-//    5 additional popular OSS applications. ──
+// ── AUTO-GENERATED from real scan JSONs — all data below is from
+//    actual faultlines analyze runs, not hand-crafted. Features, flows,
+//    health scores, bug-fix ratios, commits, and file counts are pulled
+//    directly from tests/baseline/ and /tmp/ feature-map JSONs. Coverage
+//    is null on all repos (no lcov/jest coverage data in any clone).
+//    Health uses sigmoid formula: 100 / (1 + exp(8 * (ratio - 0.55))).
 const REPOS: RepoShowcase[] = [
   {
     id: "calcom",
@@ -105,16 +108,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-calcom.json",
     topNote: "top 6 of 282 shown",
     features: [
-      feat("trpc/viewer", "packages/trpc/server/routers/viewer", 26, 68, 539, 728, [
-        { name: "list-event-types", health: 22, cov: 44, ratio: 71, commits: 187 },
-        { name: "update-availability", health: 31, cov: 47, ratio: 65, commits: 142 },
-        { name: "manage-team-members", health: 25, cov: 39, ratio: 69, commits: 98 },
-      ], 52),
-      feat("web/bookings", "apps/web/pages/bookings", 16, 76, 172, 109, undefined, 48),
-      feat("web/settings", "apps/web/pages/settings", 23, 70, 206, 178, undefined, 61),
-      feat("ee/billing", "packages/features/ee/billing", 35, 63, 142, 171, undefined, 72),
-      feat("lib/server", "packages/lib/server", 35, 63, 177, 48, undefined, 68),
-      feat("web/dashboard", "apps/web/pages/dashboard", 28, 67, 175, 128, undefined, 45),
+      feat("web/settings", "apps/web/components", 23, 70, 206, 178, [
+        { name: "manage-organization-roles-flow", health: 11, cov: null, ratio: 81, commits: 37 },
+        { name: "manage-oauth-clients-flow", health: 15, cov: null, ratio: 77, commits: 13 },
+        { name: "manage-out-of-office-flow", health: 21, cov: null, ratio: 71, commits: 14 },
+      ], null),
+      feat("trpc/viewer", "packages/trpc/server", 26, 68, 539, 728, undefined, null),
+      feat("web/bookings", "apps/web/modules", 16, 76, 172, 109, undefined, null),
+      feat("prisma", "packages/prisma/selects", 47, 56, 220, 21, undefined, null),
+      feat("web/dashboard", "apps/web/pages", 27, 67, 175, 128, undefined, null),
+      feat("lib/server", "packages/lib/server", 34, 63, 177, 48, undefined, null),
     ],
   },
   {
@@ -133,16 +136,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-plane.json",
     topNote: "top 6 of 134 shown",
     features: [
-      feat("web/issues", "apps/web/ce/components/issues", 36, 62, 172, 447, [
-        { name: "view-issues-in-layout", health: 33, cov: 35, ratio: 64, commits: 78 },
-        { name: "filter-and-sort-issues", health: 42, cov: 32, ratio: 59, commits: 52 },
-        { name: "delete-issue", health: 26, cov: 26, ratio: 68, commits: 34 },
-      ], 41),
-      feat("editor/editor-extensions", "packages/editor/src/extensions", 20, 72, 104, 111, undefined, 28),
-      feat("web/workspace", "apps/web/ce/components/workspace", 52, 54, 106, 100, undefined, 55),
-      feat("web/pages", "apps/web/ce/components/pages", 36, 62, 76, 99, undefined, 38),
-      feat("web/project", "apps/web/core/components/project", 46, 57, 87, 88, undefined, 52),
-      feat("web/inbox", "apps/web/ce/components/inbox", 38, 61, 67, 48, undefined, 34),
+      feat("web/issues", "apps/web/ce", 37, 62, 172, 447, [
+        { name: "view-issues-in-layout-flow", health: 56, cov: null, ratio: 52, commits: 54 },
+        { name: "filter-and-sort-issues-flow", health: 72, cov: null, ratio: 43, commits: 21 },
+        { name: "delete-issue-flow", health: 53, cov: null, ratio: 54, commits: 43 },
+      ], null),
+      feat("editor/editor-extensions", "packages/editor/src", 20, 72, 104, 111, undefined, null),
+      feat("editor/shared-ui", "packages/editor/src", 20, 72, 86, 42, undefined, null),
+      feat("web/workspace", "apps/web/ce", 52, 54, 106, 100, undefined, null),
+      feat("web/project", "apps/web/core", 45, 57, 87, 88, undefined, null),
+      feat("web/pages", "apps/web/ce", 37, 62, 76, 99, undefined, null),
     ],
   },
   {
@@ -161,16 +164,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-documenso.json",
     topNote: "top 6 of 49 shown",
     features: [
-      feat("trpc/envelope", "packages/trpc/server/envelope-router", 81, 37, 57, 132, [
-        { name: "create-envelope", health: 77, cov: 63, ratio: 40, commits: 24 },
-        { name: "send-for-signing", health: 82, cov: 58, ratio: 36, commits: 19 },
-        { name: "track-status", health: 85, cov: 66, ratio: 33, commits: 14 },
-      ], 71),
-      feat("remix/document-signing", "apps/remix/app/routes/sign", 67, 46, 28, 25, undefined, 64),
-      feat("ee/billing-management", "packages/ee/billing", 46, 57, 44, 49, undefined, 78),
-      feat("trpc/organisation", "packages/trpc/server/organisation", 64, 48, 41, 28, undefined, 59),
-      feat("ui/document", "packages/ui/primitives/document", 56, 52, 67, 51, undefined, 55),
-      feat("auth/server", "packages/auth/server", 87, 31, 18, 14, undefined, 82),
+      feat("lib/server-utils", "packages/lib/server-only", 55, 53, 152, 250, [
+        { name: "send-document-flow", health: 60, cov: null, ratio: 50, commits: 42 },
+        { name: "create-organisation-flow", health: 70, cov: null, ratio: 44, commits: 9 },
+        { name: "invite-organisation-members-flow", health: 99, cov: null, ratio: 0, commits: 2 },
+      ], null),
+      feat("remix/shared-components", "apps/remix/app", 54, 53, 106, 105, undefined, null),
+      feat("remix/dashboard", "apps/remix/app", 72, 43, 83, 84, undefined, null),
+      feat("ui/document", "packages/ui/components", 56, 52, 67, 51, undefined, null),
+      feat("lib/jobs", "packages/lib/jobs", 46, 57, 44, 49, undefined, null),
+      feat("remix/envelope-editor", "apps/remix/server", 53, 53, 45, 19, undefined, null),
     ],
   },
   {
@@ -189,16 +192,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-outline.json",
     topNote: "top 6 of 22 shown",
     features: [
-      feat("rich-text-editor", "shared/editor", 29, 66, 438, 249, [
-        { name: "insert-table", health: 22, cov: 42, ratio: 71, commits: 62 },
-        { name: "render-editor", health: 33, cov: 38, ratio: 64, commits: 87 },
-        { name: "structure-content", health: 26, cov: 36, ratio: 68, commits: 54 },
-      ], 51),
-      feat("api-backend", "server/routes + server/collaboration", 44, 58, 375, 275, undefined, 68),
-      feat("dashboard", "app/scenes + server/routes/app", 33, 64, 318, 256, undefined, 43),
-      feat("document-management", "app/components/DocumentExplorer", 38, 61, 218, 74, undefined, 62),
-      feat("document-editor", "app/components/DocumentBreadcrumb", 23, 70, 212, 64, undefined, 47),
-      feat("plugins", "plugins/* (azure, slack, …)", 50, 55, 101, 95, undefined, 38),
+      feat("rich-text-editor", "shared/components/EmojiText.tsx", 29, 66, 438, 249, [
+        { name: "insert-table-flow", health: 48, cov: null, ratio: 56, commits: 41 },
+        { name: "render-editor-flow", health: 29, cov: null, ratio: 66, commits: 56 },
+        { name: "structure-content-flow", health: 85, cov: null, ratio: 33, commits: 3 },
+      ], null),
+      feat("api-backend", "server/collaboration/APIUpdateExtension.ts", 44, 58, 375, 275, undefined, null),
+      feat("dashboard", "server/routes/app.ts", 33, 64, 318, 256, undefined, null),
+      feat("document-editor", "app/components/DocumentBreadcrumb.tsx", 23, 70, 212, 64, undefined, null),
+      feat("document-management", "app/components/DocumentExplorer", 38, 61, 218, 74, undefined, null),
+      feat("plugins", "plugins/azure/plugin.json", 49, 55, 101, 95, undefined, null),
     ],
   },
   {
@@ -217,16 +220,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-formbricks.json",
     topNote: "top 6 of 33 shown",
     features: [
-      feat("web/survey", "apps/web/modules/survey", 54, 53, 289, 249, [
-        { name: "create-survey-from-template", health: 44, cov: 49, ratio: 58, commits: 62 },
-        { name: "take-survey-via-link", health: 62, cov: 45, ratio: 49, commits: 41 },
-        { name: "take-contact-survey", health: 56, cov: 43, ratio: 52, commits: 28 },
-      ], 58),
-      feat("web/shared-ui", "apps/web/modules/ui", 71, 44, 331, 428, undefined, 44),
-      feat("web/ee", "apps/web/modules/ee", 72, 43, 166, 181, undefined, 52),
-      feat("web/organization", "apps/web/modules/organization", 65, 47, 114, 94, undefined, 48),
-      feat("surveys/general", "packages/surveys/src", 36, 62, 98, 45, undefined, 65),
-      feat("web/auth", "apps/web/modules/auth", 84, 34, 64, 67, undefined, 72),
+      feat("web/survey", "apps/web/modules", 54, 53, 289, 249, [
+        { name: "create-survey-from-template-flow", health: 65, cov: null, ratio: 47, commits: 38 },
+        { name: "take-survey-via-link-flow", health: 79, cov: null, ratio: 38, commits: 52 },
+        { name: "take-contact-survey-flow", health: 87, cov: null, ratio: 31, commits: 13 },
+      ], null),
+      feat("web/shared-ui", "apps/web/modules", 70, 44, 331, 428, undefined, null),
+      feat("web/ee", "apps/web/modules", 72, 43, 166, 181, undefined, null),
+      feat("surveys/general", "packages/surveys/src", 36, 62, 98, 45, undefined, null),
+      feat("web/organization", "apps/web/modules", 65, 47, 114, 94, undefined, null),
+      feat("web/response-badges", "apps/web/modules", 73, 42, 111, 44, undefined, null),
     ],
   },
   {
@@ -239,22 +242,18 @@ const REPOS: RepoShowcase[] = [
     fileCount: "1,225 files",
     commitCount: "3,842 commits",
     featureCount: 15,
-    flowCount: 62,
+    flowCount: 0,
     elapsed: "3m 51s",
     cost: "$0.14",
     outputFile: "~/.faultlines/feature-map-excalidraw.json",
-    topNote: "top 6 of 15 shown",
+    topNote: "top 6 of 15 shown · no flows",
     features: [
-      feat("excalidraw/shared-ui", "packages/excalidraw/components", 54, 53, 64, 132, [
-        { name: "render-toolbar", health: 50, cov: 54, ratio: 55, commits: 24 },
-        { name: "show-context-menu", health: 60, cov: 50, ratio: 50, commits: 18 },
-        { name: "toggle-panels", health: 56, cov: 47, ratio: 52, commits: 14 },
-      ], 62),
-      feat("excalidraw/data", "packages/excalidraw/data", 36, 62, 40, 22, undefined, 74),
-      feat("excalidraw/renderer", "packages/excalidraw/renderer", 36, 62, 34, 16, undefined, 55),
-      feat("excalidraw-app/data", "packages/excalidraw-app/data", 44, 58, 12, 17, undefined, 68),
-      feat("math", "packages/math", 64, 48, 21, 26, undefined, 82),
-      feat("excalidraw/selection-tools", "packages/excalidraw/components/LassoTrail", 48, 56, 9, 2, undefined, 48),
+      feat("excalidraw/shared-ui", "packages/excalidraw/components", 54, 53, 64, 132, undefined, null),
+      feat("common", "packages/common/debug.ts", 49, 56, 54, 20, undefined, null),
+      feat("excalidraw/data", "packages/excalidraw/data", 35, 62, 40, 22, undefined, null),
+      feat("excalidraw/renderer", "packages/excalidraw/renderer", 37, 62, 34, 16, undefined, null),
+      feat("utils", "packages/utils/CHANGELOG.md", 60, 50, 24, 17, undefined, null),
+      feat("math", "packages/math/README.md", 64, 48, 21, 26, undefined, null),
     ],
   },
   {
@@ -273,16 +272,16 @@ const REPOS: RepoShowcase[] = [
     outputFile: "~/.faultlines/feature-map-ghost.json",
     topNote: "top 6 of 101 shown",
     features: [
-      feat("admin-x-framework", "apps/admin-x-framework/src", 14, 78, 203, 77, [
-        { name: "manage-site-settings", health: 12, cov: 55, ratio: 80, commits: 62 },
-        { name: "manage-staff-users", health: 16, cov: 48, ratio: 76, commits: 48 },
-        { name: "manage-content", health: 13, cov: 52, ratio: 79, commits: 54 },
-      ], 63),
-      feat("ghost/members", "ghost/core/core/server/services/members", 6, 90, 173, 112, undefined, 71),
-      feat("stats/stats", "apps/stats/src", 10, 82, 174, 44, undefined, 58),
-      feat("ghost/email", "ghost/core/core/server/services/email", 10, 83, 144, 62, undefined, 76),
-      feat("shade/ui", "apps/shade/src", 12, 80, 143, 124, undefined, 42),
-      feat("posts/post-analytics", "apps/posts/src/views", 9, 84, 139, 25, undefined, 55),
+      feat("admin-x-framework", "apps/admin-x-framework/.eslintrc.cjs", 13, 78, 203, 77, [
+        { name: "manage-site-settings-flow", health: 15, cov: null, ratio: 77, commits: 13 },
+        { name: "manage-staff-users-flow", health: 3, cov: null, ratio: 100, commits: 2 },
+        { name: "manage-content-flow", health: 17, cov: null, ratio: 75, commits: 20 },
+      ], null),
+      feat("ghost/members", "ghost/core/core", 6, 90, 173, 112, undefined, null),
+      feat("stats/stats", "apps/stats/src", 11, 82, 174, 44, undefined, null),
+      feat("ghost/email", "ghost/core/core", 9, 83, 144, 62, undefined, null),
+      feat("posts/post-analytics", "apps/posts/src", 9, 84, 139, 25, undefined, null),
+      feat("shade/ui", "apps/shade/src", 12, 80, 143, 124, undefined, null),
     ],
   },
   {
@@ -295,22 +294,18 @@ const REPOS: RepoShowcase[] = [
     fileCount: "1,573 files",
     commitCount: "3,421 commits",
     featureCount: 16,
-    flowCount: 48,
+    flowCount: 0,
     elapsed: "1m 17s",
     cost: "$0.11",
     outputFile: "~/.faultlines/feature-map-trpc.json",
-    topNote: "top 6 of 16 modules",
+    topNote: "top 6 of 16 shown · no flows",
     features: [
-      feat("server/trpc-core", "packages/server/src", 15, 77, 35, 39, [
-        { name: "define-procedure", health: 12, cov: 71, ratio: 80, commits: 14 },
-        { name: "compose-router", health: 18, cov: 66, ratio: 74, commits: 11 },
-        { name: "attach-middleware", health: 16, cov: 63, ratio: 76, commits: 8 },
-      ], 78),
-      feat("client/links", "packages/client/src/links", 14, 78, 18, 24, undefined, 72),
-      feat("server/adapters", "packages/server/src/adapters", 22, 71, 17, 26, undefined, 65),
-      feat("tanstack-react-query", "packages/tanstack-react-query", 5, 91, 11, 8, undefined, 84),
-      feat("openapi", "packages/openapi/src", 56, 52, 25, 7, undefined, 61),
-      feat("next-adapter", "packages/next/src", 88, 30, 63, 23, undefined, 88),
+      feat("www/documentation", "www/docs/.gitignore", 29, 66, 59, 91, undefined, null),
+      feat("server/trpc-core", "packages/server/src", 15, 77, 35, 39, undefined, null),
+      feat("next", "packages/next/README.md", 88, 30, 63, 23, undefined, null),
+      feat("client/links", "packages/client/src", 14, 78, 18, 24, undefined, null),
+      feat("openapi", "packages/openapi/tsdown.config.ts", 56, 52, 25, 7, undefined, null),
+      feat("server/adapters", "packages/server/src", 22, 71, 17, 26, undefined, null),
     ],
   },
   {
@@ -327,18 +322,14 @@ const REPOS: RepoShowcase[] = [
     elapsed: "22s",
     cost: "$0.03",
     outputFile: "~/.faultlines/feature-map-axios.json",
-    topNote: "top 6 of 57 modules",
+    topNote: "top 6 of 57 shown · no flows",
     features: [
-      feat("adapters", "lib/adapters", 36, 62, 28, 4, [
-        { name: "send-http-request", health: 32, cov: 72, ratio: 65, commits: 12 },
-        { name: "handle-xhr", health: 38, cov: 68, ratio: 60, commits: 9 },
-        { name: "stream-response", health: 34, cov: 64, ratio: 63, commits: 7 },
-      ], 76),
-      feat("interceptors", "lib/core/InterceptorManager.js", 50, 55, 18, 1, undefined, 82),
-      feat("cancel", "lib/cancel", 64, 48, 14, 3, undefined, 78),
-      feat("platform", "lib/platform", 36, 62, 22, 9, undefined, 58),
-      feat("defaults", "lib/defaults", 60, 50, 16, 2, undefined, 71),
-      feat("data-transformer", "lib/core/transformData.js", 44, 58, 11, 1, undefined, 68),
+      feat("adapters", "lib/adapters/adapters.js", 9, 84, 25, 4, undefined, null),
+      feat("index.d", "index.d.cts", 18, 74, 19, 2, undefined, null),
+      feat("axios", "lib/axios.js", 23, 70, 10, 2, undefined, null),
+      feat("axiosheaders", "lib/core/AxiosHeaders.js", 3, 100, 6, 1, undefined, null),
+      feat("axioserror", "lib/core/AxiosError.js", 3, 100, 5, 1, undefined, null),
+      feat("defaults", "lib/defaults/index.js", 12, 80, 5, 2, undefined, null),
     ],
   },
   {
@@ -347,29 +338,26 @@ const REPOS: RepoShowcase[] = [
     repoUrl: "https://github.com/gin-gonic/gin",
     shortName: "gin",
     langLabel: "Go · web framework · flat layout",
-    detected: "library (go.mod, no cmd/ dir) — flows suppressed",
+    detected: "library (go.mod, no cmd/ dir)",
     fileCount: "130 files",
     commitCount: "3,987 commits",
     featureCount: 22,
-    flowCount: 36,
+    flowCount: 0,
     elapsed: "15s",
     cost: "$0.01",
     outputFile: "~/.faultlines/feature-map-gin.json",
-    topNote: "top 6 of 22 modules",
+    topNote: "top 6 of 22 shown · no flows",
     features: [
-      feat("binding", "binding/", 87, 31, 16, 17, [
-        { name: "bind-json-body", health: 85, cov: 71, ratio: 33, commits: 8 },
-        { name: "bind-form-data", health: 89, cov: 65, ratio: 29, commits: 5 },
-        { name: "validate-struct", health: 83, cov: 63, ratio: 35, commits: 4 },
-      ], 78),
-      feat("render", "render/", 96, 15, 10, 14, undefined, 72),
-      feat("context", "context.go + context_*.go", 83, 35, 23, 2, undefined, 84),
-      feat("recovery", "recovery.go", 89, 29, 7, 1, undefined, 68),
-      feat("routergroup", "routergroup.go", 90, 28, 7, 1, undefined, 75),
-      feat("logger", "logger.go", 17, 75, 4, 1, undefined, 42),
+      feat("context", "context.go", 83, 35, 23, 2, undefined, null),
+      feat("binding", "binding/binding.go", 87, 31, 16, 17, undefined, null),
+      feat("gin", "gin.go", 80, 38, 8, 1, undefined, null),
+      feat("logger", "logger.go", 17, 75, 4, 1, undefined, null),
+      feat("recovery", "recovery.go", 89, 29, 7, 1, undefined, null),
+      feat("tree", "tree.go", 89, 29, 7, 1, undefined, null),
     ],
   },
 ];
+
 
 // Auto-advance interval in ms. Paused on hover.
 const SLIDE_MS = 6500;
