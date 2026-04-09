@@ -629,16 +629,18 @@ def analyze(
             _apply_feature_coverage(feature_map, coverage_data, path_prefix)
 
         # 6c. Detect flows within each feature (optional)
-        # Day 11: skip flow detection for libraries entirely. Libraries
+        # Day 11: skip flow detection for libraries by default. Libraries
         # don't have user-facing flows — their "users" are developers
-        # invoking APIs, and the legacy Haiku flow detector hallucinates
-        # flows like "interact-with-twitter-profile-flow" on a library
-        # repo. Acceptance criterion C: libraries → 0 flows.
-        if flows and repo_structure.is_library:
+        # invoking APIs. Override with FAULTLINE_FORCE_FLOWS=1 env var
+        # for repos that are both library AND app (e.g. excalidraw).
+        import os as _os
+        _force_flows = _os.environ.get("FAULTLINE_FORCE_FLOWS") == "1"
+        if flows and repo_structure.is_library and not _force_flows:
             console.print(
-                "[dim]Skipping flow detection — repo classified as library[/dim]"
+                "[dim]Skipping flow detection — repo classified as library "
+                "(set FAULTLINE_FORCE_FLOWS=1 to override)[/dim]"
             )
-        if flows and not repo_structure.is_library:
+        if flows and (not repo_structure.is_library or _force_flows):
             from faultline.llm.flow_detector import detect_e2e_anchors
             e2e_anchors = detect_e2e_anchors(analysis_files)
             if e2e_anchors:
