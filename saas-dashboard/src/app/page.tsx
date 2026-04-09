@@ -1,5 +1,6 @@
 import React from "react";
 import LandingFx from "@/components/LandingFx";
+import ScanCarousel from "@/components/ScanCarousel";
 import {
   GitBranch,
   Activity,
@@ -515,6 +516,71 @@ export default async function LandingPage({
         .lp-footer a { color: var(--fg-dim); text-decoration: none; margin-left: 20px; transition: color .15s; }
         .lp-footer a:hover { color: var(--fg); }
 
+        /* ── Scan carousel (interactive live showcase) ── */
+        .lp-carousel {
+          max-width: 900px; margin: 0 auto;
+        }
+        .lp-carousel-tabs {
+          display: flex; justify-content: center; gap: 6px;
+          margin-bottom: 18px; flex-wrap: wrap;
+        }
+        .lp-carousel-tab {
+          font-family: var(--mono); font-size: 12px;
+          padding: 7px 14px; border-radius: 999px;
+          background: transparent; border: 1px solid var(--border);
+          color: var(--fg-dim); cursor: pointer;
+          transition: all 0.18s ease;
+          letter-spacing: 0.2px;
+        }
+        .lp-carousel-tab:hover {
+          border-color: rgba(91,140,255,0.35);
+          color: var(--fg);
+        }
+        .lp-carousel-tab.is-active {
+          background: var(--accent-soft);
+          border-color: rgba(91,140,255,0.45);
+          color: var(--accent-hi);
+          box-shadow: 0 0 0 1px rgba(91,140,255,0.15);
+        }
+        .lp-carousel-footer {
+          display: flex; align-items: center; justify-content: center;
+          gap: 18px; margin-top: 18px;
+        }
+        .lp-carousel-arrow {
+          width: 32px; height: 32px; border-radius: 50%;
+          background: var(--surface); border: 1px solid var(--border);
+          color: var(--fg-dim); cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          transition: all 0.18s ease;
+        }
+        .lp-carousel-arrow:hover {
+          border-color: rgba(91,140,255,0.4);
+          color: var(--fg);
+          transform: translateY(-1px);
+        }
+        .lp-carousel-dots {
+          display: flex; gap: 8px;
+        }
+        .lp-carousel-dot {
+          width: 8px; height: 8px; border-radius: 50%;
+          background: var(--fg-muted); opacity: 0.35;
+          border: none; padding: 0; cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .lp-carousel-dot:hover { opacity: 0.7; }
+        .lp-carousel-dot.is-active {
+          background: var(--accent-hi); opacity: 1;
+          width: 22px; border-radius: 4px;
+        }
+        /* Fade-in when the terminal body re-renders */
+        .lp-showcase-body {
+          animation: scFadeIn 0.35s ease;
+        }
+        @keyframes scFadeIn {
+          from { opacity: 0.35; transform: translateY(4px); }
+          to   { opacity: 1;    transform: translateY(0);   }
+        }
+
         /* ── OSS benchmark gallery ── */
         .lp-bench { max-width: 960px; margin: 0 auto; }
         .lp-bench-intro {
@@ -718,126 +784,7 @@ export default async function LandingPage({
             </p>
           </div>
 
-          <div className="lp-showcase">
-            <div className="lp-showcase-head">
-              <div className="lp-showcase-dots">
-                <span className="lp-showcase-dot" style={{ background: "#ff5f57" }} />
-                <span className="lp-showcase-dot" style={{ background: "#febc2e" }} />
-                <span className="lp-showcase-dot" style={{ background: "#28c840" }} />
-              </div>
-              <div className="lp-showcase-title mono">~/cal.com — faultlines analyze</div>
-              <div className="lp-showcase-badge ok">
-                <span className="pulse" />
-                Live
-              </div>
-            </div>
-
-            <div className="lp-showcase-body mono">
-              <div className="lp-sc-line">
-                <span className="lp-sc-prompt">$</span>
-                <span className="lp-sc-cmd">faultlines analyze . --llm --flows</span>
-              </div>
-              <div className="lp-sc-out">
-                <span className="dim">→</span> Detected <span className="hi">monorepo</span>{" "}
-                <span className="dim">(pnpm workspace, 20 packages)</span>
-              </div>
-              <div className="lp-sc-out">
-                <span className="dim">→</span> Reading git blame{" "}
-                <span className="dim">10,142 files · 84,391 commits</span>
-              </div>
-              <div className="lp-sc-out">
-                <span className="dim">→</span> Clustering with Claude Sonnet 4.6{" "}
-                <span className="ok">✓</span>
-              </div>
-              <div className="lp-sc-out">
-                <span className="dim">→</span> Scoring features{" "}
-                <span className="ok">✓</span>
-              </div>
-
-              <div className="lp-sc-spacer" />
-
-              <div className="lp-sc-feature-row">
-                <span className="f-icon">●</span>
-                <span className="f-name" style={{ color: "var(--fg-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                  feature
-                </span>
-                <span className="f-health" style={{ color: "var(--fg-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                  health
-                </span>
-                <span className="f-ratio" style={{ color: "var(--fg-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                  bug%
-                </span>
-                <span className="f-commits" style={{ color: "var(--fg-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                  commits
-                </span>
-                <span className="f-impact" style={{ color: "var(--fg-muted)" }}>
-                  impact
-                </span>
-              </div>
-
-              {[
-                {
-                  name: "booking-engine", sub: "apps/web/lib/booking",
-                  health: 29, ratio: 31, commits: 487, impact: "critical", color: "var(--danger)",
-                  flows: [
-                    { name: "create-booking", health: 24, ratio: 34, commits: 198 },
-                    { name: "reschedule", health: 31, ratio: 29, commits: 142 },
-                    { name: "cancel-refund", health: 33, ratio: 27, commits: 87 },
-                  ],
-                },
-                { name: "availability", sub: "packages/core/schedules", health: 38, ratio: 26, commits: 312, impact: "high", color: "var(--danger)" },
-                { name: "stripe-payments", sub: "packages/app-store/stripepayment", health: 44, ratio: 22, commits: 289, impact: "high", color: "var(--warning)" },
-                { name: "google-calendar", sub: "packages/app-store/googlecalendar", health: 57, ratio: 18, commits: 201, impact: "medium", color: "var(--warning)" },
-                { name: "team-management", sub: "apps/web/pages/teams", health: 74, ratio: 11, commits: 156, impact: "low", color: "var(--success)" },
-                { name: "auth", sub: "packages/features/auth", health: 86, ratio: 6, commits: 98, impact: "healthy", color: "var(--success)" },
-              ].map((f) => (
-                <React.Fragment key={f.name}>
-                  <div className="lp-sc-feature-row">
-                    <span className="f-icon" style={{ color: f.color }}>●</span>
-                    <span className="f-name">
-                      {f.name}
-                      <span className="dim">{f.sub}</span>
-                    </span>
-                    <span className="f-health" style={{ color: f.color }}>{f.health}</span>
-                    <span className="f-ratio">{f.ratio}%</span>
-                    <span className="f-commits">{f.commits}</span>
-                    <span className="f-impact" style={{ color: f.color }}>{f.impact}</span>
-                  </div>
-                  {f.flows?.map((fl) => (
-                    <div className="lp-sc-flow-row" key={fl.name}>
-                      <span className="fl-icon" />
-                      <span className="fl-name">{fl.name}</span>
-                      <span className="fl-val" style={{ color: f.color }}>{fl.health}</span>
-                      <span className="fl-val">{fl.ratio}%</span>
-                      <span className="fl-val">{fl.commits}</span>
-                      <span />
-                    </div>
-                  ))}
-                </React.Fragment>
-              ))}
-
-              <div className="lp-sc-spacer" />
-
-              <div className="lp-sc-out">
-                <span className="ok">✓</span> Wrote{" "}
-                <span className="hi">~/.faultlines/feature-map-calcom.json</span>{" "}
-                <span className="dim">(282 features, 725 flows)</span>
-              </div>
-              <div className="lp-sc-out">
-                <span className="dim">elapsed 23m 34s · cost $2.14 · top 6 of 282 shown</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="lp-showcase-caption">
-            <span className="lp-showcase-caption-dot" />
-            Real run on{" "}
-            <a href="https://github.com/calcom/cal.com" target="_blank" rel="noopener noreferrer">
-              calcom/cal.com
-            </a>{" "}
-            — pnpm monorepo, 10,142 files, 84,391 commits. Reproduce yourself with{" "}
-            <span className="mono">pip install faultlines</span>.
-          </div>
+          <ScanCarousel />
         </section>
 
         {/* ── Benchmark gallery — reproducible proof on 7 public OSS repos ── */}
