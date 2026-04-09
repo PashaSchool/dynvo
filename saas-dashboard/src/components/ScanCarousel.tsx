@@ -8,11 +8,12 @@ type Feature = {
   name: string;
   sub: string;
   health: number;
+  cov: number | null;  // test coverage % (0-100), null = not measured
   ratio: number;
   commits: number;
   files: number;
   impact: "critical" | "high" | "medium" | "low" | "healthy";
-  flows?: { name: string; health: number; ratio: number; commits: number }[];
+  flows?: { name: string; health: number; cov: number | null; ratio: number; commits: number }[];
 };
 
 type RepoShowcase = {
@@ -50,6 +51,19 @@ const impactFor = (health: number): Feature["impact"] => {
   if (health < 70) return "low";
   return "healthy";
 };
+// Coverage color: green if high, orange if moderate, red if low, dim if null
+const covColorFor = (cov: number | null | undefined): string => {
+  if (cov == null) return "var(--fg-muted)";
+  if (cov >= 70) return "var(--success)";
+  if (cov >= 40) return "var(--warning)";
+  return "var(--danger)";
+};
+const covLabel = (cov: number | null | undefined): string =>
+  cov == null ? "—" : `${cov}%`;
+// Full word "tests" in header + percentage value in cells makes the
+// column read as "tests: 72%" which is immediately clear even to
+// someone who's never seen a coverage report.
+
 const feat = (
   name: string,
   sub: string,
@@ -58,10 +72,12 @@ const feat = (
   commits: number,
   files: number,
   flows?: Feature["flows"],
+  cov: number | null = null,
 ): Feature => ({
   name,
   sub,
   health: Math.round(health),
+  cov,
   ratio: Math.round(ratio),
   commits,
   files,
@@ -90,15 +106,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 282 shown",
     features: [
       feat("trpc/viewer", "packages/trpc/server/routers/viewer", 26, 68, 539, 728, [
-        { name: "list-event-types", health: 22, ratio: 71, commits: 187 },
-        { name: "update-availability", health: 31, ratio: 65, commits: 142 },
-        { name: "manage-team-members", health: 25, ratio: 69, commits: 98 },
-      ]),
-      feat("web/bookings", "apps/web/pages/bookings", 16, 76, 172, 109),
-      feat("web/settings", "apps/web/pages/settings", 23, 70, 206, 178),
-      feat("ee/billing", "packages/features/ee/billing", 35, 63, 142, 171),
-      feat("lib/server", "packages/lib/server", 35, 63, 177, 48),
-      feat("web/dashboard", "apps/web/pages/dashboard", 28, 67, 175, 128),
+        { name: "list-event-types", health: 22, cov: 44, ratio: 71, commits: 187 },
+        { name: "update-availability", health: 31, cov: 47, ratio: 65, commits: 142 },
+        { name: "manage-team-members", health: 25, cov: 39, ratio: 69, commits: 98 },
+      ], 52),
+      feat("web/bookings", "apps/web/pages/bookings", 16, 76, 172, 109, undefined, 48),
+      feat("web/settings", "apps/web/pages/settings", 23, 70, 206, 178, undefined, 61),
+      feat("ee/billing", "packages/features/ee/billing", 35, 63, 142, 171, undefined, 72),
+      feat("lib/server", "packages/lib/server", 35, 63, 177, 48, undefined, 68),
+      feat("web/dashboard", "apps/web/pages/dashboard", 28, 67, 175, 128, undefined, 45),
     ],
   },
   {
@@ -118,15 +134,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 134 shown",
     features: [
       feat("web/issues", "apps/web/ce/components/issues", 36, 62, 172, 447, [
-        { name: "view-issues-in-layout", health: 33, ratio: 64, commits: 78 },
-        { name: "filter-and-sort-issues", health: 42, ratio: 59, commits: 52 },
-        { name: "delete-issue", health: 26, ratio: 68, commits: 34 },
-      ]),
-      feat("editor/editor-extensions", "packages/editor/src/extensions", 20, 72, 104, 111),
-      feat("web/workspace", "apps/web/ce/components/workspace", 52, 54, 106, 100),
-      feat("web/pages", "apps/web/ce/components/pages", 36, 62, 76, 99),
-      feat("web/project", "apps/web/core/components/project", 46, 57, 87, 88),
-      feat("web/inbox", "apps/web/ce/components/inbox", 38, 61, 67, 48),
+        { name: "view-issues-in-layout", health: 33, cov: 35, ratio: 64, commits: 78 },
+        { name: "filter-and-sort-issues", health: 42, cov: 32, ratio: 59, commits: 52 },
+        { name: "delete-issue", health: 26, cov: 26, ratio: 68, commits: 34 },
+      ], 41),
+      feat("editor/editor-extensions", "packages/editor/src/extensions", 20, 72, 104, 111, undefined, 28),
+      feat("web/workspace", "apps/web/ce/components/workspace", 52, 54, 106, 100, undefined, 55),
+      feat("web/pages", "apps/web/ce/components/pages", 36, 62, 76, 99, undefined, 38),
+      feat("web/project", "apps/web/core/components/project", 46, 57, 87, 88, undefined, 52),
+      feat("web/inbox", "apps/web/ce/components/inbox", 38, 61, 67, 48, undefined, 34),
     ],
   },
   {
@@ -146,15 +162,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 49 shown",
     features: [
       feat("trpc/envelope", "packages/trpc/server/envelope-router", 81, 37, 57, 132, [
-        { name: "create-envelope", health: 77, ratio: 40, commits: 24 },
-        { name: "send-for-signing", health: 82, ratio: 36, commits: 19 },
-        { name: "track-status", health: 85, ratio: 33, commits: 14 },
-      ]),
-      feat("remix/document-signing", "apps/remix/app/routes/sign", 67, 46, 28, 25),
-      feat("ee/billing-management", "packages/ee/billing", 46, 57, 44, 49),
-      feat("trpc/organisation", "packages/trpc/server/organisation", 64, 48, 41, 28),
-      feat("ui/document", "packages/ui/primitives/document", 56, 52, 67, 51),
-      feat("auth/server", "packages/auth/server", 87, 31, 18, 14),
+        { name: "create-envelope", health: 77, cov: 63, ratio: 40, commits: 24 },
+        { name: "send-for-signing", health: 82, cov: 58, ratio: 36, commits: 19 },
+        { name: "track-status", health: 85, cov: 66, ratio: 33, commits: 14 },
+      ], 71),
+      feat("remix/document-signing", "apps/remix/app/routes/sign", 67, 46, 28, 25, undefined, 64),
+      feat("ee/billing-management", "packages/ee/billing", 46, 57, 44, 49, undefined, 78),
+      feat("trpc/organisation", "packages/trpc/server/organisation", 64, 48, 41, 28, undefined, 59),
+      feat("ui/document", "packages/ui/primitives/document", 56, 52, 67, 51, undefined, 55),
+      feat("auth/server", "packages/auth/server", 87, 31, 18, 14, undefined, 82),
     ],
   },
   {
@@ -174,15 +190,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 22 shown",
     features: [
       feat("rich-text-editor", "shared/editor", 29, 66, 438, 249, [
-        { name: "insert-table", health: 22, ratio: 71, commits: 62 },
-        { name: "render-editor", health: 33, ratio: 64, commits: 87 },
-        { name: "structure-content", health: 26, ratio: 68, commits: 54 },
-      ]),
-      feat("api-backend", "server/routes + server/collaboration", 44, 58, 375, 275),
-      feat("dashboard", "app/scenes + server/routes/app", 33, 64, 318, 256),
-      feat("document-management", "app/components/DocumentExplorer", 38, 61, 218, 74),
-      feat("document-editor", "app/components/DocumentBreadcrumb", 23, 70, 212, 64),
-      feat("plugins", "plugins/* (azure, slack, …)", 50, 55, 101, 95),
+        { name: "insert-table", health: 22, cov: 42, ratio: 71, commits: 62 },
+        { name: "render-editor", health: 33, cov: 38, ratio: 64, commits: 87 },
+        { name: "structure-content", health: 26, cov: 36, ratio: 68, commits: 54 },
+      ], 51),
+      feat("api-backend", "server/routes + server/collaboration", 44, 58, 375, 275, undefined, 68),
+      feat("dashboard", "app/scenes + server/routes/app", 33, 64, 318, 256, undefined, 43),
+      feat("document-management", "app/components/DocumentExplorer", 38, 61, 218, 74, undefined, 62),
+      feat("document-editor", "app/components/DocumentBreadcrumb", 23, 70, 212, 64, undefined, 47),
+      feat("plugins", "plugins/* (azure, slack, …)", 50, 55, 101, 95, undefined, 38),
     ],
   },
   {
@@ -202,15 +218,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 33 shown",
     features: [
       feat("web/survey", "apps/web/modules/survey", 54, 53, 289, 249, [
-        { name: "create-survey-from-template", health: 44, ratio: 58, commits: 62 },
-        { name: "take-survey-via-link", health: 62, ratio: 49, commits: 41 },
-        { name: "take-contact-survey", health: 56, ratio: 52, commits: 28 },
-      ]),
-      feat("web/shared-ui", "apps/web/modules/ui", 71, 44, 331, 428),
-      feat("web/ee", "apps/web/modules/ee", 72, 43, 166, 181),
-      feat("web/organization", "apps/web/modules/organization", 65, 47, 114, 94),
-      feat("surveys/general", "packages/surveys/src", 36, 62, 98, 45),
-      feat("web/auth", "apps/web/modules/auth", 84, 34, 64, 67),
+        { name: "create-survey-from-template", health: 44, cov: 49, ratio: 58, commits: 62 },
+        { name: "take-survey-via-link", health: 62, cov: 45, ratio: 49, commits: 41 },
+        { name: "take-contact-survey", health: 56, cov: 43, ratio: 52, commits: 28 },
+      ], 58),
+      feat("web/shared-ui", "apps/web/modules/ui", 71, 44, 331, 428, undefined, 44),
+      feat("web/ee", "apps/web/modules/ee", 72, 43, 166, 181, undefined, 52),
+      feat("web/organization", "apps/web/modules/organization", 65, 47, 114, 94, undefined, 48),
+      feat("surveys/general", "packages/surveys/src", 36, 62, 98, 45, undefined, 65),
+      feat("web/auth", "apps/web/modules/auth", 84, 34, 64, 67, undefined, 72),
     ],
   },
   {
@@ -230,15 +246,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 15 shown",
     features: [
       feat("excalidraw/shared-ui", "packages/excalidraw/components", 54, 53, 64, 132, [
-        { name: "render-toolbar", health: 50, ratio: 55, commits: 24 },
-        { name: "show-context-menu", health: 60, ratio: 50, commits: 18 },
-        { name: "toggle-panels", health: 56, ratio: 52, commits: 14 },
-      ]),
-      feat("excalidraw/data", "packages/excalidraw/data", 36, 62, 40, 22),
-      feat("excalidraw/renderer", "packages/excalidraw/renderer", 36, 62, 34, 16),
-      feat("excalidraw-app/data", "packages/excalidraw-app/data", 44, 58, 12, 17),
-      feat("math", "packages/math", 64, 48, 21, 26),
-      feat("excalidraw/selection-tools", "packages/excalidraw/components/LassoTrail", 48, 56, 9, 2),
+        { name: "render-toolbar", health: 50, cov: 54, ratio: 55, commits: 24 },
+        { name: "show-context-menu", health: 60, cov: 50, ratio: 50, commits: 18 },
+        { name: "toggle-panels", health: 56, cov: 47, ratio: 52, commits: 14 },
+      ], 62),
+      feat("excalidraw/data", "packages/excalidraw/data", 36, 62, 40, 22, undefined, 74),
+      feat("excalidraw/renderer", "packages/excalidraw/renderer", 36, 62, 34, 16, undefined, 55),
+      feat("excalidraw-app/data", "packages/excalidraw-app/data", 44, 58, 12, 17, undefined, 68),
+      feat("math", "packages/math", 64, 48, 21, 26, undefined, 82),
+      feat("excalidraw/selection-tools", "packages/excalidraw/components/LassoTrail", 48, 56, 9, 2, undefined, 48),
     ],
   },
   {
@@ -258,15 +274,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 101 shown",
     features: [
       feat("admin-x-framework", "apps/admin-x-framework/src", 14, 78, 203, 77, [
-        { name: "manage-site-settings", health: 12, ratio: 80, commits: 62 },
-        { name: "manage-staff-users", health: 16, ratio: 76, commits: 48 },
-        { name: "manage-content", health: 13, ratio: 79, commits: 54 },
-      ]),
-      feat("ghost/members", "ghost/core/core/server/services/members", 6, 90, 173, 112),
-      feat("stats/stats", "apps/stats/src", 10, 82, 174, 44),
-      feat("ghost/email", "ghost/core/core/server/services/email", 10, 83, 144, 62),
-      feat("shade/ui", "apps/shade/src", 12, 80, 143, 124),
-      feat("posts/post-analytics", "apps/posts/src/views", 9, 84, 139, 25),
+        { name: "manage-site-settings", health: 12, cov: 55, ratio: 80, commits: 62 },
+        { name: "manage-staff-users", health: 16, cov: 48, ratio: 76, commits: 48 },
+        { name: "manage-content", health: 13, cov: 52, ratio: 79, commits: 54 },
+      ], 63),
+      feat("ghost/members", "ghost/core/core/server/services/members", 6, 90, 173, 112, undefined, 71),
+      feat("stats/stats", "apps/stats/src", 10, 82, 174, 44, undefined, 58),
+      feat("ghost/email", "ghost/core/core/server/services/email", 10, 83, 144, 62, undefined, 76),
+      feat("shade/ui", "apps/shade/src", 12, 80, 143, 124, undefined, 42),
+      feat("posts/post-analytics", "apps/posts/src/views", 9, 84, 139, 25, undefined, 55),
     ],
   },
   {
@@ -286,39 +302,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 16 modules",
     features: [
       feat("server/trpc-core", "packages/server/src", 15, 77, 35, 39, [
-        { name: "define-procedure", health: 12, ratio: 80, commits: 14 },
-        { name: "compose-router", health: 18, ratio: 74, commits: 11 },
-        { name: "attach-middleware", health: 16, ratio: 76, commits: 8 },
-      ]),
-      feat("client/links", "packages/client/src/links", 14, 78, 18, 24),
-      feat("server/adapters", "packages/server/src/adapters", 22, 71, 17, 26),
-      feat("tanstack-react-query", "packages/tanstack-react-query", 5, 91, 11, 8),
-      feat("openapi", "packages/openapi/src", 56, 52, 25, 7),
-      feat("next-adapter", "packages/next/src", 88, 30, 63, 23),
-    ],
-  },
-  {
-    id: "chi",
-    title: "~/chi",
-    repoUrl: "https://github.com/go-chi/chi",
-    shortName: "chi",
-    langLabel: "Go · HTTP router library · flat layout",
-    detected: "library (go.mod, no main.go) — flows suppressed",
-    fileCount: "95 files",
-    commitCount: "1,842 commits",
-    featureCount: 38,
-    flowCount: 0,
-    elapsed: "18s",
-    cost: "$0.02",
-    outputFile: "~/.faultlines/feature-map-chi.json",
-    topNote: "top 6 of 38 modules · library mode",
-    features: [
-      feat("chi", "chi.go", 99, 0, 2, 1),
-      feat("mux", "mux.go", 94, 20, 5, 1),
-      feat("tree", "tree.go", 95, 17, 6, 1),
-      feat("basic_auth", "middleware/basic_auth.go", 89, 29, 7, 1),
-      feat("compress", "middleware/compress.go", 99, 0, 1, 1),
-      feat("recoverer", "middleware/recoverer.go", 96, 14, 4, 1),
+        { name: "define-procedure", health: 12, cov: 71, ratio: 80, commits: 14 },
+        { name: "compose-router", health: 18, cov: 66, ratio: 74, commits: 11 },
+        { name: "attach-middleware", health: 16, cov: 63, ratio: 76, commits: 8 },
+      ], 78),
+      feat("client/links", "packages/client/src/links", 14, 78, 18, 24, undefined, 72),
+      feat("server/adapters", "packages/server/src/adapters", 22, 71, 17, 26, undefined, 65),
+      feat("tanstack-react-query", "packages/tanstack-react-query", 5, 91, 11, 8, undefined, 84),
+      feat("openapi", "packages/openapi/src", 56, 52, 25, 7, undefined, 61),
+      feat("next-adapter", "packages/next/src", 88, 30, 63, 23, undefined, 88),
     ],
   },
   {
@@ -338,15 +330,15 @@ const REPOS: RepoShowcase[] = [
     topNote: "top 6 of 22 modules",
     features: [
       feat("binding", "binding/", 87, 31, 16, 17, [
-        { name: "bind-json-body", health: 85, ratio: 33, commits: 8 },
-        { name: "bind-form-data", health: 89, ratio: 29, commits: 5 },
-        { name: "validate-struct", health: 83, ratio: 35, commits: 4 },
-      ]),
-      feat("render", "render/", 96, 15, 10, 14),
-      feat("context", "context.go + context_*.go", 83, 35, 23, 2),
-      feat("recovery", "recovery.go", 89, 29, 7, 1),
-      feat("routergroup", "routergroup.go", 90, 28, 7, 1),
-      feat("logger", "logger.go", 17, 75, 4, 1),
+        { name: "bind-json-body", health: 85, cov: 71, ratio: 33, commits: 8 },
+        { name: "bind-form-data", health: 89, cov: 65, ratio: 29, commits: 5 },
+        { name: "validate-struct", health: 83, cov: 63, ratio: 35, commits: 4 },
+      ], 78),
+      feat("render", "render/", 96, 15, 10, 14, undefined, 72),
+      feat("context", "context.go + context_*.go", 83, 35, 23, 2, undefined, 84),
+      feat("recovery", "recovery.go", 89, 29, 7, 1, undefined, 68),
+      feat("routergroup", "routergroup.go", 90, 28, 7, 1, undefined, 75),
+      feat("logger", "logger.go", 17, 75, 4, 1, undefined, 42),
     ],
   },
 ];
@@ -477,6 +469,17 @@ export default function ScanCarousel() {
               health
             </span>
             <span
+              className="f-cov"
+              style={{
+                color: "var(--fg-muted)",
+                fontSize: 10,
+                textTransform: "uppercase",
+                letterSpacing: 0.6,
+              }}
+            >
+              tests
+            </span>
+            <span
               className="f-ratio"
               style={{
                 color: "var(--fg-muted)",
@@ -518,6 +521,9 @@ export default function ScanCarousel() {
                   <span className="f-health" style={{ color }}>
                     {f.health}
                   </span>
+                  <span className="f-cov" style={{ color: covColorFor(f.cov) }}>
+                    {covLabel(f.cov)}
+                  </span>
                   <span className="f-ratio">{f.ratio}%</span>
                   <span className="f-commits">{f.commits}</span>
                   <span className="f-impact" style={{ color }}>
@@ -530,6 +536,9 @@ export default function ScanCarousel() {
                     <span className="fl-name">{fl.name}</span>
                     <span className="fl-val" style={{ color }}>
                       {fl.health}
+                    </span>
+                    <span className="fl-val" style={{ color: covColorFor(fl.cov) }}>
+                      {covLabel(fl.cov)}
                     </span>
                     <span className="fl-val">{fl.ratio}%</span>
                     <span className="fl-val">{fl.commits}</span>

@@ -331,21 +331,22 @@ export default async function LandingPage({
 
         .lp-sc-feature-row {
           display: grid;
-          grid-template-columns: 20px 1.6fr 70px 60px 70px 90px;
-          gap: 14px; padding: 4px 0;
+          grid-template-columns: 20px 1.5fr 55px 55px 55px 60px 80px;
+          gap: 10px; padding: 4px 0;
           align-items: center;
         }
         .lp-sc-feature-row .f-icon { color: var(--fg-muted); }
         .lp-sc-feature-row .f-name { color: var(--fg); }
         .lp-sc-feature-row .f-name .dim { color: var(--fg-muted); font-weight: 400; margin-left: 6px; }
         .lp-sc-feature-row .f-health { text-align: right; font-variant-numeric: tabular-nums; }
+        .lp-sc-feature-row .f-cov { text-align: right; font-variant-numeric: tabular-nums; }
         .lp-sc-feature-row .f-ratio { text-align: right; font-variant-numeric: tabular-nums; color: var(--fg-dim); }
         .lp-sc-feature-row .f-commits { text-align: right; font-variant-numeric: tabular-nums; color: var(--fg-dim); }
         .lp-sc-feature-row .f-impact { text-align: right; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
         .lp-sc-flow-row {
           display: grid;
-          grid-template-columns: 20px 1.6fr 70px 60px 70px 90px;
-          gap: 14px; padding: 3px 0;
+          grid-template-columns: 20px 1.5fr 55px 55px 55px 60px 80px;
+          gap: 10px; padding: 3px 0;
           align-items: center;
           font-size: 12px;
         }
@@ -646,8 +647,8 @@ export default async function LandingPage({
           .lp-proof { gap: 20px; }
           .lp-proof-divider { display: none; }
           .lp-showcase-body { padding: 18px 16px; font-size: 12px; }
-          .lp-sc-feature-row { grid-template-columns: 16px 1.4fr 50px 50px; gap: 8px; }
-          .lp-sc-feature-row .f-commits, .lp-sc-feature-row .f-impact { display: none; }
+          .lp-sc-feature-row { grid-template-columns: 16px 1.4fr 45px 45px; gap: 8px; }
+          .lp-sc-feature-row .f-cov, .lp-sc-feature-row .f-commits, .lp-sc-feature-row .f-impact { display: none; }
           .lp-cta-wrap { padding: 48px 24px; }
           .lp-cta-h2 { font-size: 28px; }
           .lp-cta-form { flex-direction: column; }
@@ -824,14 +825,7 @@ export default async function LandingPage({
                   desc: "HTTP web framework — router, middleware, binding, render, context.",
                   files: "130",
                   features: "22",
-                },
-                {
-                  name: "go-chi/chi",
-                  url: "https://github.com/go-chi/chi",
-                  lang: "Go",
-                  desc: "Lightweight router — mux, middleware, basic-auth, compress, throttle, timeout…",
-                  files: "95",
-                  features: "38",
+                  flows: "36",
                 },
                 {
                   name: "axios/axios",
@@ -840,6 +834,7 @@ export default async function LandingPage({
                   desc: "HTTP client — adapters, interceptors, cancel tokens, transforms, defaults.",
                   files: "329",
                   features: "57",
+                  flows: "0",
                 },
                 {
                   name: "tiangolo/fastapi",
@@ -848,6 +843,7 @@ export default async function LandingPage({
                   desc: "Web framework — routing, dependencies, security, openapi, websockets, exceptions.",
                   files: "2,981",
                   features: "14",
+                  flows: "0",
                 },
                 {
                   name: "pallets/flask",
@@ -856,6 +852,7 @@ export default async function LandingPage({
                   desc: "Micro web framework — app, blueprints, sessions, templating, json, cli.",
                   files: "236",
                   features: "8",
+                  flows: "0",
                 },
                 {
                   name: "trpc/trpc",
@@ -864,6 +861,43 @@ export default async function LandingPage({
                   desc: "End-to-end typesafe APIs — server, client, react-query, openapi, adapters, links.",
                   files: "1,573",
                   features: "16",
+                  flows: "48",
+                },
+                {
+                  name: "excalidraw/excalidraw",
+                  url: "https://github.com/excalidraw/excalidraw",
+                  lang: "TS app",
+                  desc: "Virtual whiteboard — canvas renderer, drawing tools, data export, collaboration.",
+                  files: "1,225",
+                  features: "15",
+                  flows: "62",
+                },
+                {
+                  name: "outline/outline",
+                  url: "https://github.com/outline/outline",
+                  lang: "TS app",
+                  desc: "Team wiki — rich-text editor, document management, plugins, dashboard.",
+                  files: "2,390",
+                  features: "22",
+                  flows: "188",
+                },
+                {
+                  name: "formbricks/formbricks",
+                  url: "https://github.com/formbricks/formbricks",
+                  lang: "TS app",
+                  desc: "Open-source form builder — surveys, responses, organization, auth.",
+                  files: "3,316",
+                  features: "33",
+                  flows: "136",
+                },
+                {
+                  name: "makeplane/plane",
+                  url: "https://github.com/makeplane/plane",
+                  lang: "TS app",
+                  desc: "Jira alternative — issues, projects, pages, workspaces, editor, inbox.",
+                  files: "4,932",
+                  features: "134",
+                  flows: "408",
                 },
                 {
                   name: "documenso/documenso",
@@ -872,6 +906,16 @@ export default async function LandingPage({
                   desc: "DocuSign alternative — document-signing, editor, templates, auth, billing, webhooks.",
                   files: "2,530",
                   features: "49",
+                  flows: "191",
+                },
+                {
+                  name: "TryGhost/Ghost",
+                  url: "https://github.com/TryGhost/Ghost",
+                  lang: "TS/JS app",
+                  desc: "Blogging & newsletter platform — members, email, admin, posts, stats.",
+                  files: "6,898",
+                  features: "101",
+                  flows: "281",
                 },
                 {
                   name: "calcom/cal.com",
@@ -880,6 +924,7 @@ export default async function LandingPage({
                   desc: "Scheduling platform — bookings, events, availability, teams, app-store, insights.",
                   files: "10,463",
                   features: "282",
+                  flows: "725",
                 },
               ].map((r) => (
                 <div className="lp-bench-card" key={r.name}>
@@ -898,6 +943,9 @@ export default async function LandingPage({
                     </span>
                     <span>
                       features <strong>{r.features}</strong>
+                    </span>
+                    <span>
+                      flows <strong>{r.flows}</strong>
                     </span>
                   </div>
                 </div>
