@@ -206,23 +206,31 @@ export default async function LandingPage({
         .lp-privacy svg { color: var(--success); }
 
         .lp-hero-form {
-          display: flex; gap: 8px;
-          max-width: 460px; margin: 0 auto;
-          padding: 6px;
+          display: flex; flex-direction: column; gap: 8px;
+          max-width: 480px; margin: 0 auto;
+          padding: 8px;
           background: var(--surface);
           border: 1px solid var(--border-hi);
           border-radius: 14px;
           box-shadow: 0 0 0 1px rgba(255,255,255,0.02), 0 24px 60px rgba(0,0,0,0.4);
         }
-        .lp-hero-form-input {
-          flex: 1; padding: 12px 14px; border-radius: 9px;
-          border: none; background: transparent;
-          color: var(--fg); font-size: 14px; font-family: inherit; outline: none;
+        .lp-hero-form-row {
+          display: flex; gap: 8px;
         }
+        .lp-hero-form-input {
+          flex: 1; padding: 11px 14px; border-radius: 9px;
+          border: 1px solid var(--border); background: var(--bg-1);
+          color: var(--fg); font-size: 14px; font-family: inherit; outline: none;
+          transition: border-color 0.15s;
+        }
+        .lp-hero-form-input:focus { border-color: var(--accent); }
         .lp-hero-form-input::placeholder { color: var(--fg-muted); }
+        .lp-hero-form-input.repo-input {
+          font-family: var(--mono); font-size: 13px;
+        }
         .lp-hero-form-btn {
           display: inline-flex; align-items: center; gap: 7px;
-          padding: 12px 18px; border-radius: 9px;
+          padding: 11px 18px; border-radius: 9px;
           background: var(--fg); color: #07070b;
           font-size: 14px; font-weight: 600; border: none;
           cursor: pointer; font-family: inherit; white-space: nowrap;
@@ -231,7 +239,7 @@ export default async function LandingPage({
         .lp-hero-form-btn:hover { background: #fff; }
         .lp-hero-form-hint {
           font-size: 12px; color: var(--fg-muted);
-          margin-top: 14px; line-height: 1.6;
+          margin-top: 10px; line-height: 1.6;
         }
         .lp-hero-form-hint a {
           color: var(--fg-dim); text-decoration: none;
@@ -723,24 +731,34 @@ export default async function LandingPage({
 
           <form className="lp-hero-form" action="/api/waitlist" method="POST">
             <input
-              className="lp-hero-form-input"
-              type="email"
-              name="email"
-              placeholder="you@company.com"
+              className="lp-hero-form-input repo-input"
+              type="url"
+              name="repo_url"
+              placeholder="https://github.com/your-org/your-repo"
               required
-              aria-label="Email for hosted dashboard early access"
+              aria-label="Public GitHub repo URL to scan"
             />
-            <button className="lp-hero-form-btn" type="submit">
-              Get early access <ArrowRight size={14} />
-            </button>
+            <div className="lp-hero-form-row">
+              <input
+                className="lp-hero-form-input"
+                type="email"
+                name="email"
+                placeholder="you@company.com"
+                required
+                aria-label="Email for scan results"
+              />
+              <button className="lp-hero-form-btn" type="submit">
+                Scan for free <ArrowRight size={14} />
+              </button>
+            </div>
           </form>
 
           <div className="lp-hero-form-hint">
-            Hosted dashboard private beta. Or{" "}
+            We&apos;ll run a full AI-powered scan on your repo and email you the
+            feature map + health report. No API key needed — we cover the cost.{" "}
             <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
               ★ star on GitHub
             </a>
-            {" "}— it&apos;s free forever for any repo.
           </div>
 
           {/* proof strip */}
@@ -1159,8 +1177,8 @@ export default async function LandingPage({
           <div className="lp-cta-wrap" data-awaken>
             <h2 className="lp-cta-h2">Stop arguing about<br />where to refactor.</h2>
             <p className="lp-cta-sub">
-              Your next planning meeting deserves real numbers. Install the CLI in 30 seconds,
-              or join the private beta for the hosted dashboard.
+              Drop your repo URL — we&apos;ll scan it with Claude Sonnet and email you the
+              feature map + health report. Free, no API key needed.
             </p>
             {joined ? (
               <div
@@ -1172,7 +1190,7 @@ export default async function LandingPage({
                   color: "var(--success)",
                   fontSize: 14,
                   fontWeight: 600,
-                  maxWidth: 440,
+                  maxWidth: 480,
                   margin: "0 auto 20px",
                   display: "flex",
                   alignItems: "center",
@@ -1180,24 +1198,33 @@ export default async function LandingPage({
                   justifyContent: "center",
                 }}
               >
-                <Check size={16} /> You&apos;re on the list. We&apos;ll be in touch.
+                <Check size={16} /> Scan queued! We&apos;ll email your report within 24 hours.
               </div>
             ) : (
-              <form className="lp-cta-form" action="/api/waitlist" method="POST">
+              <form className="lp-hero-form" action="/api/waitlist" method="POST" style={{ maxWidth: 480, margin: "0 auto 20px" }}>
                 <input
-                  className="lp-cta-input"
-                  type="email"
-                  name="email"
-                  placeholder="you@company.com"
+                  className="lp-hero-form-input repo-input"
+                  type="url"
+                  name="repo_url"
+                  placeholder="https://github.com/your-org/your-repo"
                   required
                 />
-                <button className="lp-cta-btn" type="submit">
-                  Join waitlist
-                </button>
+                <div className="lp-hero-form-row">
+                  <input
+                    className="lp-hero-form-input"
+                    type="email"
+                    name="email"
+                    placeholder="you@company.com"
+                    required
+                  />
+                  <button className="lp-hero-form-btn" type="submit">
+                    Scan for free <ArrowRight size={14} />
+                  </button>
+                </div>
               </form>
             )}
             <div className="lp-cta-pricing">
-              Free during private beta. Early users shape what ships next.
+              Free scan — we cover the LLM cost. Public repos only.
             </div>
           </div>
         </section>
