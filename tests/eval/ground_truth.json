@@ -12,15 +12,30 @@
     "_research_iterations": "iter1=README listed notification service categories (chat, SMS, email, desktop, webhooks) plus core capabilities (config, attachments, tags, persistent storage, CLI, API). iter2=wiki ToC confirmed same buckets and added plugin/dev API. Iterations agreed; wiki added 'custom plugins' explicitly.",
     "stack": "python-flat",
     "expected_features": [
-      "chat-notifications", "sms-notifications", "email-notifications",
-      "desktop-notifications", "webhook-notifications", "configuration-files",
-      "attachments", "tagging", "persistent-storage", "cli", "python-api",
+      "chat-notifications",
+      "sms-notifications",
+      "email-notifications",
+      "desktop-notifications",
+      "webhook-notifications",
+      "configuration-files",
+      "attachments",
+      "tagging",
+      "persistent-storage",
+      "cli",
+      "python-api",
       "custom-plugins"
     ],
     "expected_flows": [
-      "send-notification", "load-config-file", "attach-file", "filter-by-tag",
-      "register-custom-plugin", "send-via-cli", "configure-smtp",
-      "send-to-discord", "send-sms", "cache-persistent-storage"
+      "send-notification",
+      "load-config-file",
+      "attach-file",
+      "filter-by-tag",
+      "register-custom-plugin",
+      "send-via-cli",
+      "configure-smtp",
+      "send-to-discord",
+      "send-sms",
+      "cache-persistent-storage"
     ],
     "source": "README: https://github.com/caronc/apprise + Wiki",
     "annotated_by": "pkuzina",
@@ -31,15 +46,32 @@
     "_research_iterations": "iter1=README mentioned hosted web app, real-time collab, unlimited workspaces, page publishing, guests. iter2=doc/ folder + AppFlowy product site filled gaps with auth (GoTrue/SAML), realtime sync, object storage, AI, databases, comments.",
     "stack": "rust-modular",
     "expected_features": [
-      "authentication", "workspaces", "pages", "real-time-collaboration",
-      "page-publishing", "guest-sharing", "comments", "databases",
-      "ai-assistant", "file-storage", "search", "history-versioning",
+      "authentication",
+      "workspaces",
+      "pages",
+      "real-time-collaboration",
+      "page-publishing",
+      "guest-sharing",
+      "comments",
+      "databases",
+      "ai-assistant",
+      "file-storage",
+      "search",
+      "history-versioning",
       "import-export"
     ],
     "expected_flows": [
-      "sign-in-user", "create-workspace", "invite-guest", "publish-page",
-      "edit-page-realtime", "comment-on-page", "upload-attachment", "ask-ai",
-      "search-content", "restore-version", "share-workspace"
+      "sign-in-user",
+      "create-workspace",
+      "invite-guest",
+      "publish-page",
+      "edit-page-realtime",
+      "comment-on-page",
+      "upload-attachment",
+      "ask-ai",
+      "search-content",
+      "restore-version",
+      "share-workspace"
     ],
     "source": "README + doc/ folder + appflowy.com",
     "annotated_by": "pkuzina",
@@ -50,15 +82,30 @@
     "_research_iterations": "iter1=README focused on group scheduling polls. iter2=support.rallly.co + llms.txt added Spaces (teams), SSO, billing, branding, i18n.",
     "stack": "next-app-router",
     "expected_features": [
-      "scheduling-polls", "poll-voting", "participant-management",
-      "spaces-teams", "billing-subscriptions", "authentication",
-      "email-notifications", "calendar-integration", "custom-branding",
-      "internationalization", "finalize-event"
+      "scheduling-polls",
+      "poll-voting",
+      "participant-management",
+      "spaces-teams",
+      "billing-subscriptions",
+      "authentication",
+      "email-notifications",
+      "calendar-integration",
+      "custom-branding",
+      "internationalization",
+      "finalize-event"
     ],
     "expected_flows": [
-      "create-poll", "invite-participants", "vote-on-poll", "finalize-date",
-      "create-space", "add-team-member", "manage-billing", "sign-in",
-      "send-poll-invite-email", "configure-branding", "comment-on-poll"
+      "create-poll",
+      "invite-participants",
+      "vote-on-poll",
+      "finalize-date",
+      "create-space",
+      "add-team-member",
+      "manage-billing",
+      "sign-in",
+      "send-poll-invite-email",
+      "configure-branding",
+      "comment-on-poll"
     ],
     "source": "README + support.rallly.co/llms.txt",
     "annotated_by": "pkuzina",
@@ -69,14 +116,31 @@
     "_research_iterations": "iter1=README sparse (deployment-focused, archived 2025). iter2=wiki listed Vision/Roadmap/Security/AI; product site blocked, so consolidation from wiki + personal-finance domain knowledge.",
     "stack": "rails-app",
     "expected_features": [
-      "accounts", "transactions", "budgets", "investments", "net-worth",
-      "categories", "rules", "imports", "ai-assistant", "reports",
-      "multi-currency", "authentication"
+      "accounts",
+      "transactions",
+      "budgets",
+      "investments",
+      "net-worth",
+      "categories",
+      "rules",
+      "imports",
+      "ai-assistant",
+      "reports",
+      "multi-currency",
+      "authentication"
     ],
     "expected_flows": [
-      "add-account", "import-transactions", "categorize-transaction",
-      "create-budget", "track-investment", "view-net-worth", "create-rule",
-      "ask-ai-question", "view-report", "sign-in", "link-bank-account"
+      "add-account",
+      "import-transactions",
+      "categorize-transaction",
+      "create-budget",
+      "track-investment",
+      "view-net-worth",
+      "create-rule",
+      "ask-ai-question",
+      "view-report",
+      "sign-in",
+      "link-bank-account"
     ],
     "source": "README + GitHub wiki",
     "annotated_by": "pkuzina",
@@ -87,17 +151,31 @@
     "_research_iterations": "iter1=README (core task model + reliability), iter2=docs/introduction (workflows, AI agents, realtime). Strong overlap on tasks/schedules/realtime/observability.",
     "stack": "node-monorepo",
     "expected_features": [
-      "tasks", "scheduled-tasks", "queues-and-concurrency",
-      "retries-and-error-handling", "waitpoints-and-human-approval",
-      "realtime-runs", "react-hooks-sdk", "runs-and-traces",
-      "alerts-and-notifications", "environments-and-preview-branches",
-      "tags-and-metadata", "machine-and-build-config", "batch-triggering",
+      "tasks",
+      "scheduled-tasks",
+      "queues-and-concurrency",
+      "retries-and-error-handling",
+      "waitpoints-and-human-approval",
+      "realtime-runs",
+      "react-hooks-sdk",
+      "runs-and-traces",
+      "alerts-and-notifications",
+      "environments-and-preview-branches",
+      "tags-and-metadata",
+      "machine-and-build-config",
+      "batch-triggering",
       "dashboard"
     ],
     "expected_flows": [
-      "trigger-task", "schedule-recurring-task", "batch-trigger-tasks",
-      "wait-for-human-approval", "subscribe-to-run-realtime", "view-run-trace",
-      "configure-retry-policy", "deploy-to-environment", "create-preview-branch",
+      "trigger-task",
+      "schedule-recurring-task",
+      "batch-trigger-tasks",
+      "wait-for-human-approval",
+      "subscribe-to-run-realtime",
+      "view-run-trace",
+      "configure-retry-policy",
+      "deploy-to-environment",
+      "create-preview-branch",
       "set-up-alert"
     ],
     "source": "README + https://trigger.dev/docs/introduction",
@@ -109,15 +187,31 @@
     "_research_iterations": "iter1=README (links, conversions, partners), iter2=docs/introduction (partner programs, attribution, webhooks, integrations). Consistent core feature set.",
     "stack": "next-app-router",
     "expected_features": [
-      "short-links", "custom-domains", "link-analytics", "conversion-tracking",
-      "partner-programs", "affiliate-payouts", "qr-codes", "utm-builder",
-      "link-cloaking-and-password", "bulk-link-creation", "webhooks",
-      "workspaces-and-teams", "api-keys-and-sdk", "integrations"
+      "short-links",
+      "custom-domains",
+      "link-analytics",
+      "conversion-tracking",
+      "partner-programs",
+      "affiliate-payouts",
+      "qr-codes",
+      "utm-builder",
+      "link-cloaking-and-password",
+      "bulk-link-creation",
+      "webhooks",
+      "workspaces-and-teams",
+      "api-keys-and-sdk",
+      "integrations"
     ],
     "expected_flows": [
-      "create-short-link", "bulk-import-links", "track-conversion-event",
-      "view-link-analytics", "create-partner-program", "invite-affiliate",
-      "process-affiliate-payout", "generate-qr-code", "configure-custom-domain",
+      "create-short-link",
+      "bulk-import-links",
+      "track-conversion-event",
+      "view-link-analytics",
+      "create-partner-program",
+      "invite-affiliate",
+      "process-affiliate-payout",
+      "generate-qr-code",
+      "configure-custom-domain",
       "set-up-webhook"
     ],
     "source": "README + https://dub.co/docs/introduction",
@@ -129,16 +223,32 @@
     "_research_iterations": "iter1=README (secrets, syncs, rotation, PKI, KMS), iter2=docs/getting-started (secrets/PKI/KMS/PAM/scanning). Both align on 5 product pillars.",
     "stack": "next-monorepo",
     "expected_features": [
-      "secrets-management", "secret-syncs", "secret-versioning-and-rollback",
-      "secret-rotation", "dynamic-secrets", "secret-scanning",
-      "certificate-management", "key-management-kms", "access-management-pam",
-      "ssh-certificates", "approval-workflows", "rbac-and-policies",
-      "audit-logs", "cli-and-sdk", "kubernetes-operator"
+      "secrets-management",
+      "secret-syncs",
+      "secret-versioning-and-rollback",
+      "secret-rotation",
+      "dynamic-secrets",
+      "secret-scanning",
+      "certificate-management",
+      "key-management-kms",
+      "access-management-pam",
+      "ssh-certificates",
+      "approval-workflows",
+      "rbac-and-policies",
+      "audit-logs",
+      "cli-and-sdk",
+      "kubernetes-operator"
     ],
     "expected_flows": [
-      "create-secret", "sync-secrets-to-platform", "rotate-secret",
-      "request-temporary-access", "approve-access-request", "issue-certificate",
-      "scan-repo-for-leaks", "encrypt-data-with-kms", "generate-dynamic-secret",
+      "create-secret",
+      "sync-secrets-to-platform",
+      "rotate-secret",
+      "request-temporary-access",
+      "approve-access-request",
+      "issue-certificate",
+      "scan-repo-for-leaks",
+      "encrypt-data-with-kms",
+      "generate-dynamic-secret",
       "configure-rbac-policy"
     ],
     "source": "README + https://infisical.com/docs/documentation/getting-started/introduction",
@@ -150,17 +260,33 @@
     "_research_iterations": "iter1=README (modular commerce, customization), iter2=docs site (cart, merchandising, fulfillment, regions, admin). Docs gave concrete commerce module list.",
     "stack": "node-monorepo",
     "expected_features": [
-      "cart-and-checkout", "products-and-variants", "pricing-engine",
-      "promotions-and-discounts", "orders", "fulfillment-and-shipping",
-      "inventory-and-stock-locations", "customers-and-groups",
-      "regions-and-currencies", "tax-management", "sales-channels",
-      "payment-providers", "admin-dashboard", "workflows-engine",
+      "cart-and-checkout",
+      "products-and-variants",
+      "pricing-engine",
+      "promotions-and-discounts",
+      "orders",
+      "fulfillment-and-shipping",
+      "inventory-and-stock-locations",
+      "customers-and-groups",
+      "regions-and-currencies",
+      "tax-management",
+      "sales-channels",
+      "payment-providers",
+      "admin-dashboard",
+      "workflows-engine",
       "api-keys-and-auth"
     ],
     "expected_flows": [
-      "add-to-cart", "checkout-order", "create-product", "apply-promotion",
-      "fulfill-order", "process-return", "manage-inventory",
-      "create-sales-channel", "configure-region", "issue-refund"
+      "add-to-cart",
+      "checkout-order",
+      "create-product",
+      "apply-promotion",
+      "fulfill-order",
+      "process-return",
+      "manage-inventory",
+      "create-sales-channel",
+      "configure-region",
+      "issue-refund"
     ],
     "source": "README + https://docs.medusajs.com/",
     "annotated_by": "pkuzina",
@@ -171,16 +297,31 @@
     "_research_iterations": "iter1=README (basic feature summary), iter2=docs+homepage (much richer: data rooms, AI chat, watermarking, access control). Homepage was the gold source.",
     "stack": "next-app-router",
     "expected_features": [
-      "document-sharing", "shareable-links", "data-rooms",
-      "document-analytics", "page-by-page-tracking", "access-control",
-      "custom-branding", "custom-domains", "watermarking",
-      "password-protection", "ai-document-chat", "team-workspaces",
-      "notifications", "rest-api"
+      "document-sharing",
+      "shareable-links",
+      "data-rooms",
+      "document-analytics",
+      "page-by-page-tracking",
+      "access-control",
+      "custom-branding",
+      "custom-domains",
+      "watermarking",
+      "password-protection",
+      "ai-document-chat",
+      "team-workspaces",
+      "notifications",
+      "rest-api"
     ],
     "expected_flows": [
-      "upload-document", "create-share-link", "create-data-room",
-      "set-link-password", "add-watermark", "view-document-analytics",
-      "revoke-link-access", "configure-custom-domain", "invite-team-member",
+      "upload-document",
+      "create-share-link",
+      "create-data-room",
+      "set-link-password",
+      "add-watermark",
+      "view-document-analytics",
+      "revoke-link-access",
+      "configure-custom-domain",
+      "invite-team-member",
       "chat-with-document"
     ],
     "source": "README + papermark.com/docs + papermark.com",
@@ -192,17 +333,35 @@
     "_research_iterations": "iter1=README (comprehensive protocol/feature list), iter2=docs (workspace-focused, narrower).",
     "stack": "vue-nuxt-monorepo",
     "expected_features": [
-      "rest-client", "graphql-client", "websocket-client", "server-sent-events",
-      "socket-io-client", "mqtt-client", "request-collections",
-      "environments-and-variables", "pre-request-scripts", "post-request-tests",
-      "authorization-handlers", "code-snippet-generation", "curl-import",
-      "workspaces-and-teams", "request-history"
+      "rest-client",
+      "graphql-client",
+      "websocket-client",
+      "server-sent-events",
+      "socket-io-client",
+      "mqtt-client",
+      "request-collections",
+      "environments-and-variables",
+      "pre-request-scripts",
+      "post-request-tests",
+      "authorization-handlers",
+      "code-snippet-generation",
+      "curl-import",
+      "workspaces-and-teams",
+      "request-history"
     ],
     "expected_flows": [
-      "send-rest-request", "send-graphql-query", "open-websocket-connection",
-      "create-collection", "save-request", "create-environment", "import-curl",
-      "generate-code-snippet", "create-workspace", "invite-team-member",
-      "run-pre-request-script", "share-request"
+      "send-rest-request",
+      "send-graphql-query",
+      "open-websocket-connection",
+      "create-collection",
+      "save-request",
+      "create-environment",
+      "import-curl",
+      "generate-code-snippet",
+      "create-workspace",
+      "invite-team-member",
+      "run-pre-request-script",
+      "share-request"
     ],
     "source": "README + docs.hoppscotch.io",
     "annotated_by": "pkuzina",
@@ -213,17 +372,36 @@
     "_research_iterations": "iter1=README (block taxonomy + integrations), iter2=docs.typebot.com (4 block categories: bubbles/inputs/logic/integrations). Aligned well.",
     "stack": "next-monorepo",
     "expected_features": [
-      "flow-builder", "bubble-blocks", "input-blocks", "logic-blocks",
-      "integration-blocks", "conditional-branching", "javascript-scripting",
-      "ab-testing", "stripe-payment-input", "openai-integration",
-      "google-sheets-integration", "webhook-integration", "theme-customization",
-      "bot-embedding", "results-analytics", "custom-domains"
+      "flow-builder",
+      "bubble-blocks",
+      "input-blocks",
+      "logic-blocks",
+      "integration-blocks",
+      "conditional-branching",
+      "javascript-scripting",
+      "ab-testing",
+      "stripe-payment-input",
+      "openai-integration",
+      "google-sheets-integration",
+      "webhook-integration",
+      "theme-customization",
+      "bot-embedding",
+      "results-analytics",
+      "custom-domains"
     ],
     "expected_flows": [
-      "create-typebot", "add-input-block", "add-logic-block",
-      "configure-webhook", "preview-typebot", "publish-typebot", "embed-bot",
-      "view-results", "export-results-csv", "customize-theme",
-      "configure-custom-domain", "duplicate-typebot"
+      "create-typebot",
+      "add-input-block",
+      "add-logic-block",
+      "configure-webhook",
+      "preview-typebot",
+      "publish-typebot",
+      "embed-bot",
+      "view-results",
+      "export-results-csv",
+      "customize-theme",
+      "configure-custom-domain",
+      "duplicate-typebot"
     ],
     "source": "README + docs.typebot.com",
     "annotated_by": "pkuzina",
@@ -234,42 +412,38 @@
     "_research_iterations": "iter1=README (feature pitch), iter2=docs (AI Chat, Calendar, Inbox Zero Tabs, Auto-File added). Docs broader.",
     "stack": "next-app-router",
     "expected_features": [
-      "ai-personal-assistant", "ai-chat", "ai-rules", "reply-zero",
-      "bulk-unsubscriber", "bulk-archiver", "cold-email-blocker",
-      "email-analytics", "meeting-briefs", "auto-file-attachments",
-      "calendar-integration", "slack-integration", "telegram-integration",
+      "ai-personal-assistant",
+      "ai-chat",
+      "ai-rules",
+      "reply-zero",
+      "bulk-unsubscriber",
+      "bulk-archiver",
+      "cold-email-blocker",
+      "email-analytics",
+      "meeting-briefs",
+      "auto-file-attachments",
+      "calendar-integration",
+      "slack-integration",
+      "telegram-integration",
       "inbox-zero-tabs"
     ],
     "expected_flows": [
-      "connect-email-account", "create-ai-rule", "run-bulk-unsubscribe",
-      "block-cold-email", "draft-reply", "view-email-analytics",
-      "generate-meeting-brief", "auto-file-attachment", "send-slack-digest",
-      "archive-old-emails", "configure-reply-zero"
+      "connect-email-account",
+      "create-ai-rule",
+      "run-bulk-unsubscribe",
+      "block-cold-email",
+      "draft-reply",
+      "view-email-analytics",
+      "generate-meeting-brief",
+      "auto-file-attachment",
+      "send-slack-digest",
+      "archive-old-emails",
+      "configure-reply-zero"
     ],
     "source": "README + docs.getinboxzero.com",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-07",
     "verified_via": "two independent WebFetch iterations: README + docs site"
-  },
-  "langfuse": {
-    "_research_iterations": "iter1=README (6 core features), iter2=docs (experiments, annotation queue, sessions, agent graphs, dashboards added).",
-    "stack": "next-app-router",
-    "expected_features": [
-      "tracing", "sessions", "user-tracking", "agent-graph", "dashboards",
-      "prompt-management", "prompt-versioning", "llm-playground", "evaluations",
-      "llm-as-judge", "user-feedback-scoring", "annotation-queue", "datasets",
-      "experiments", "public-api"
-    ],
-    "expected_flows": [
-      "ingest-trace", "view-trace", "create-prompt", "version-prompt",
-      "run-playground", "create-dataset", "run-experiment",
-      "configure-llm-judge", "score-trace", "create-annotation-queue",
-      "view-dashboard", "invite-project-member"
-    ],
-    "source": "README + langfuse.com/docs",
-    "annotated_by": "pkuzina",
-    "annotated_at": "2026-05-07",
-    "verified_via": "two independent WebFetch iterations: README + langfuse.com/docs"
   },
   "axios": {
     "expected_features": [
@@ -293,7 +467,8 @@
     "source": "https://github.com/axios/axios#features",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on raw README, 2026-05-06"
+    "verified_via": "WebFetch on raw README, 2026-05-06",
+    "stack": "js-library"
   },
   "immich": {
     "expected_features": [
@@ -323,7 +498,8 @@
     "source": "https://github.com/immich-app/immich#features",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06 \u2014 names consolidated from the 15 maintainer bullets into 12 product-level domains a code-detection tool can plausibly recover"
+    "verified_via": "WebFetch on README, 2026-05-06 \u2014 names consolidated from the 15 maintainer bullets into 12 product-level domains a code-detection tool can plausibly recover",
+    "stack": "next-monorepo"
   },
   "dify": {
     "expected_features": [
@@ -355,7 +531,8 @@
     "source": "https://github.com/langgenius/dify#features",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README + cross-checked against S13/S14/S15 live scan outputs. Auth + billing not in upstream README's features section but ARE first-class user-visible concerns and we already detect them."
+    "verified_via": "WebFetch on README + cross-checked against S13/S14/S15 live scan outputs. Auth + billing not in upstream README's features section but ARE first-class user-visible concerns and we already detect them.",
+    "stack": "next-monorepo"
   },
   "supabase": {
     "_note": "supabase/supabase is the studio dashboard + docs monorepo. Storage / Realtime / Edge Functions / Cron / Queues / GraphQL live in SEPARATE repositories (supabase/storage, supabase/realtime, supabase/supabase-edge-runtime, etc.) \u2014 they appear here only as dashboard integration code and docs guides. This ground truth scopes expectations to features ACTUALLY implemented in this repo.",
@@ -385,7 +562,8 @@
     "source": "scan of supabase/supabase + repo browse",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "rescan post-S15 + manual classification by tier; supersedes earlier marketing-level ground truth which expected 6 features (storage/realtime/cron/etc.) that physically aren't in this repo"
+    "verified_via": "rescan post-S15 + manual classification by tier; supersedes earlier marketing-level ground truth which expected 6 features (storage/realtime/cron/etc.) that physically aren't in this repo",
+    "stack": "next-monorepo"
   },
   "documenso": {
     "expected_features": [
@@ -416,7 +594,8 @@
     "source": "https://github.com/documenso/documenso + benchmarks/documenso/expected_features.yaml",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-04-27",
-    "verified_via": "manual annotation from repo browse + Sprint 1-5 reference scan (see benchmarks/documenso/expected_features.yaml for source aliases)"
+    "verified_via": "manual annotation from repo browse + Sprint 1-5 reference scan (see benchmarks/documenso/expected_features.yaml for source aliases)",
+    "stack": "next-monorepo"
   },
   "plane": {
     "expected_features": [
@@ -446,7 +625,8 @@
     "source": "https://github.com/makeplane/plane#features",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06 \u2014 granular items (rich-text-editor / file-uploads / burn-down-charts) consolidated into product-level domains a code-detection tool can plausibly recover"
+    "verified_via": "WebFetch on README, 2026-05-06 \u2014 granular items (rich-text-editor / file-uploads / burn-down-charts) consolidated into product-level domains a code-detection tool can plausibly recover",
+    "stack": "next-monorepo"
   },
   "outline": {
     "expected_features": [
@@ -476,7 +656,8 @@
     "source": "https://github.com/outline/outline#features",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06 \u2014 README is light on explicit features list; entries inferred from product description (knowledge-base, real-time collab) + standard wiki app surfaces (comments, versions)"
+    "verified_via": "WebFetch on README, 2026-05-06 \u2014 README is light on explicit features list; entries inferred from product description (knowledge-base, real-time collab) + standard wiki app surfaces (comments, versions)",
+    "stack": "next-monorepo"
   },
   "saleor": {
     "expected_features": [
@@ -506,7 +687,8 @@
     "source": "https://github.com/saleor/saleor",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06; consolidated 'shopping-cart' into 'checkout' and dropped 'multi-language-translations' (infra-ish i18n)"
+    "verified_via": "WebFetch on README, 2026-05-06; consolidated 'shopping-cart' into 'checkout' and dropped 'multi-language-translations' (infra-ish i18n)",
+    "stack": "python-modules"
   },
   "gitea": {
     "expected_features": [
@@ -537,7 +719,8 @@
     "source": "https://github.com/go-gitea/gitea",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06"
+    "verified_via": "WebFetch on README, 2026-05-06",
+    "stack": "go-modular"
   },
   "meilisearch": {
     "expected_features": [
@@ -567,7 +750,8 @@
     "source": "https://github.com/meilisearch/meilisearch",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06; consolidated 'hybrid-search'/'search-as-you-type'/'conversational-search' into 'search', 'personalization' dropped (not detectable), kept 'ranking-rules' as a configurable feature"
+    "verified_via": "WebFetch on README, 2026-05-06; consolidated 'hybrid-search'/'search-as-you-type'/'conversational-search' into 'search', 'personalization' dropped (not detectable), kept 'ranking-rules' as a configurable feature",
+    "stack": "rust-modular"
   },
   "ollama": {
     "expected_features": [
@@ -596,7 +780,8 @@
     "source": "https://github.com/ollama/ollama",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06; dropped SDK / Docker items as meta (downloadable client libs and deployment surface, not core features in this repo)"
+    "verified_via": "WebFetch on README, 2026-05-06; dropped SDK / Docker items as meta (downloadable client libs and deployment surface, not core features in this repo)",
+    "stack": "go-modular"
   },
   "n8n": {
     "expected_features": [
@@ -626,7 +811,8 @@
     "source": "https://github.com/n8n-io/n8n",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06; dropped meta items (javascript-python-support, self-hosting, cloud-deployment) \u2014 not detectable as features"
+    "verified_via": "WebFetch on README, 2026-05-06; dropped meta items (javascript-python-support, self-hosting, cloud-deployment) \u2014 not detectable as features",
+    "stack": "next-monorepo"
   },
   "uptime-kuma": {
     "_research_iterations": "iter1=README features (monitor types, notifications), iter2=Wiki ToC (status-pages, maintenance, api-keys, prometheus). Consolidated to product-level concepts; deployment configs (cloudflare-tunnel/systemd/env-vars) excluded as infra not features.",
@@ -658,7 +844,8 @@
     "source": "https://github.com/louislam/uptime-kuma + wiki",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-07",
-    "verified_via": "two independent WebFetch iterations: (1) README features list, (2) Wiki Table of Contents — cross-referenced; consolidated 8 monitor sub-types into 'monitors' (Sonnet typically detects monitor as 1 feature, not 8 separate)"
+    "verified_via": "two independent WebFetch iterations: (1) README features list, (2) Wiki Table of Contents \u2014 cross-referenced; consolidated 8 monitor sub-types into 'monitors' (Sonnet typically detects monitor as 1 feature, not 8 separate)",
+    "stack": "vue-spa"
   },
   "cal.com": {
     "_research_iterations": "iter1=GitHub README (event-types, calendars, video, embed), iter2=docs/llms.txt index (added: workflows, routing-forms, teams-and-orgs, payments, webhooks, out-of-office). Final 12 covers product surface a maintainer would name.",
@@ -691,7 +878,8 @@
     "source": "https://github.com/calcom/cal.com + cal.com/docs/llms.txt",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-07",
-    "verified_via": "two independent WebFetch iterations: (1) repo README, (2) cal.com docs index. Iter2 surfaced workflows/routing-forms/teams/payments/webhooks/out-of-office which iter1 missed; merged final list."
+    "verified_via": "two independent WebFetch iterations: (1) repo README, (2) cal.com docs index. Iter2 surfaced workflows/routing-forms/teams/payments/webhooks/out-of-office which iter1 missed; merged final list.",
+    "stack": "next-monorepo"
   },
   "fastapi": {
     "expected_features": [
@@ -716,6 +904,7 @@
     "source": "https://fastapi.tiangolo.com/features/",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on official features page, 2026-05-06 \u2014 meta items (modern-python, editor-support, high-test-coverage, unlimited-plugins) excluded as non-detectable"
+    "verified_via": "WebFetch on official features page, 2026-05-06 \u2014 meta items (modern-python, editor-support, high-test-coverage, unlimited-plugins) excluded as non-detectable",
+    "stack": "python-library"
   }
 }

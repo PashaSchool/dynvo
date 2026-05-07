@@ -52,10 +52,14 @@ def _latest_feature_map(repo: str) -> Path | None:
     if lives:
         return lives[0]
     home = Path.home() / ".faultline"
+    # Faultlines sanitizes repo slugs (dot → dash) when writing files, so
+    # ground-truth keys like "trigger.dev" map to feature-map-trigger-dev-*.json.
+    slugs = {repo, repo.replace(".", "-")}
+    user_scans = []
+    for slug in slugs:
+        user_scans.extend(home.glob(f"feature-map-{slug}-*.json"))
     user_scans = sorted(
-        home.glob(f"feature-map-{repo}-*.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
+        user_scans, key=lambda p: p.stat().st_mtime, reverse=True,
     )
     if user_scans:
         return user_scans[0]
