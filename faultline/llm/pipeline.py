@@ -204,11 +204,20 @@ def run(
         except Exception as exc:  # noqa: BLE001 — opportunistic
             logger.debug("pipeline: load_assignments skipped (%s)", exc)
 
-    # S19 — auto-detect stack via static signals (no LLM cost) unless
-    # the caller passed a hint. Used to pick stack-specific decomposition
-    # guidance in deep_scan's system prompt. Different from S18 few-shot:
-    # changes INSTRUCTIONS not examples, no domain bleed. Default ON.
-    if stack_hint is None and repo_root is not None:
+    # S19 (REVERTED 2026-05-07) — stack-specific guidance failed A/B:
+    # avg F1 -14.7pp on 3 repos, worst -33.7pp on inbox-zero (model
+    # collapsed all 15 features into 1 bucket "inbox-zero-ai" with
+    # 1753 files when told "apps/* = ONE feature unless 2+ surfaces").
+    # Same root cause as S18: Sonnet 4.6 baseline is well-calibrated;
+    # adding rigid stack-specific INSTRUCTIONS makes it OVER-apply
+    # the rule.
+    #
+    # Stack detector + guidance dict kept as scaffold. Auto-detect is
+    # OFF by default. CLI --stack-hint still works for opt-in
+    # experimentation, but it's documented as "may hurt accuracy".
+    #
+    # Day 3 verdict in EVAL_REPORT.md.
+    if False and stack_hint is None and repo_root is not None:
         try:
             from faultline.llm.stack_detector import detect_stack
             _profile = detect_stack(repo_root, source_files[:60], api_key=None)
