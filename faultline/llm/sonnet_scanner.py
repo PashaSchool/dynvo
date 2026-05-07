@@ -497,6 +497,8 @@ def _build_system_prompt(
     package_name: str | None = None,
     package_size: int = 0,
     is_library: bool = False,
+    stack_hint: str | None = None,
+    enable_few_shot: bool = False,
 ) -> str:
     """Render the system prompt with the right ``## Target`` block.
 
@@ -530,7 +532,22 @@ def _build_system_prompt(
         target = _TARGET_LIBRARY
     else:
         target = _TARGET_REPO
-    return _SYSTEM_PROMPT_TEMPLATE.replace("{target_block}", target)
+    rendered = _SYSTEM_PROMPT_TEMPLATE.replace("{target_block}", target)
+
+    # S18 — append stack-aware few-shot examples when explicitly enabled.
+    # Default OFF; activated in S18 Day 2 once corpus examples are filled
+    # in. The flag and stack_hint flow through from the pipeline so we
+    # can toggle without touching the prompt template.
+    if enable_few_shot:
+        from faultline.llm.few_shot_examples import build_examples_block
+        block, picked = build_examples_block(stack_hint)
+        if block:
+            rendered = f"{rendered}\n\n{block}"
+            logger.info(
+                "sonnet_scanner: few-shot examples appended (stack=%s, repos=%s)",
+                stack_hint, picked,
+            )
+    return rendered
 
 
 # Backwards-compat alias for code that imported the old constant by name.
