@@ -80,7 +80,7 @@
   },
   "rallly": {
     "_research_iterations": "iter1=README focused on group scheduling polls. iter2=support.rallly.co + llms.txt added Spaces (teams), SSO, billing, branding, i18n.",
-    "stack": "next-app-router",
+    "stack": "next-monorepo",
     "expected_features": [
       "scheduling-polls",
       "poll-voting",
@@ -185,7 +185,7 @@
   },
   "dub": {
     "_research_iterations": "iter1=README (links, conversions, partners), iter2=docs/introduction (partner programs, attribution, webhooks, integrations). Consistent core feature set.",
-    "stack": "next-app-router",
+    "stack": "next-monorepo",
     "expected_features": [
       "short-links",
       "custom-domains",
@@ -221,7 +221,7 @@
   },
   "infisical": {
     "_research_iterations": "iter1=README (secrets, syncs, rotation, PKI, KMS), iter2=docs/getting-started (secrets/PKI/KMS/PAM/scanning). Both align on 5 product pillars.",
-    "stack": "next-monorepo",
+    "stack": "mixed",
     "expected_features": [
       "secrets-management",
       "secret-syncs",
@@ -331,7 +331,7 @@
   },
   "hoppscotch": {
     "_research_iterations": "iter1=README (comprehensive protocol/feature list), iter2=docs (workspace-focused, narrower).",
-    "stack": "vue-nuxt-monorepo",
+    "stack": "node-monorepo",
     "expected_features": [
       "rest-client",
       "graphql-client",
@@ -410,7 +410,7 @@
   },
   "inbox-zero": {
     "_research_iterations": "iter1=README (feature pitch), iter2=docs (AI Chat, Calendar, Inbox Zero Tabs, Auto-File added). Docs broader.",
-    "stack": "next-app-router",
+    "stack": "next-monorepo",
     "expected_features": [
       "ai-personal-assistant",
       "ai-chat",
