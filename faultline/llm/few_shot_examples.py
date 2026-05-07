@@ -1,5 +1,36 @@
 """Sprint 18 — Few-shot examples for ``deep_scan`` system prompt.
 
+STATUS (2026-05-07): S18 FAILED ITS ACCEPTANCE GATE.
+==============================================================
+
+A/B on 3 repos (apprise, rallly, inbox-zero) showed:
+  - avg F1 delta: -9.9pp (gate required ≥ +3pp)
+  - worst single regression: inbox-zero -28pp (gate required > -10pp)
+
+Root cause: stack-tag → example mismatch contaminates decomposition.
+inbox-zero (next-app-router, ~14 features) gets documenso example
+(next-monorepo, 5 features in expected_output) → model copies
+documenso's domain shape ('signed-in', 'teams') instead of inferring
+inbox-zero's actual features (ai-rules, bulk-unsubscriber).
+
+Sonnet 4.6 is strong enough that biased examples HURT more than the
+shape-of-output signal helps. The intro fix (telling model to ignore
+example count) recovers apprise but does NOT save inbox-zero where
+the example DOMAIN bleeds into the output names.
+
+Module is kept as scaffold:
+  - --few-shot CLI flag remains, default OFF
+  - S19 may reuse the registry for per-stack prompts that change
+    INSTRUCTIONS (not just add examples)
+  - Future S20+ may revisit if we can isolate the wiring (separate
+    `<example>` markers, smaller examples, etc.)
+
+DO NOT enable --few-shot in production scans. It will silently
+degrade accuracy on next-app-router and next-monorepo cohorts.
+==============================================================
+
+
+
 Modern LLMs (especially Sonnet 4.6) reliably absorb output-shape and
 domain-vocabulary patterns from in-context examples. Showing the model
 "here's how a Next.js monorepo gets broken into features" raises
@@ -670,9 +701,23 @@ _FEW_SHOT_INTRO = """\
 
 Below are real-world examples showing how to decompose repos of \
 different stacks into features. Each shows a sample of input file \
-paths and the expected output JSON envelope. Match this style and \
-shape — produce features at the same granularity, naming convention, \
-and flow detail level.\
+paths and the expected output JSON envelope.
+
+**CRITICAL — copy the STYLE, NOT the COUNT.** Examples show 5-8 \
+features for brevity, but your output must follow the size guidance \
+in the ## Target block above:
+  - Repo-wide mode: 12-25 features (NOT 5-8)
+  - Library mode: 5-15 modules
+  - Per-package mode: 1 to (file_count // 8) features
+
+Use the examples to learn:
+  - Naming style (kebab-case domain names, never code structure)
+  - Granularity per feature (one user-recognisable concept)
+  - JSON envelope shape (merge / rename / remove / split / features)
+  - Flow naming (lowercase, ends with -flow, describes user action)
+
+Do NOT use the examples to set the feature count for the actual repo. \
+Always derive count from the repo's actual size and structure.\
 """
 
 
