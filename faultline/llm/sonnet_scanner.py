@@ -390,6 +390,116 @@ _TARGET_REPO = (
     "After all operations: **12-25 business features**. Not 5, not 50."
 )
 
+
+# Sprint 19 — stack-specific decomposition guidance. Appended to the
+# target block when the pipeline knows the repo's stack (via static
+# detector or --stack-hint). Different from S18 few-shot examples
+# (which failed): these CHANGE INSTRUCTIONS, they do not show domain
+# examples. No domain bleed risk.
+_STACK_GUIDANCE: dict[str, str] = {
+    "next-monorepo": (
+        "\n\n## Stack guidance — Next.js monorepo\n\n"
+        "Your input came through ``deep_scan_workspace``, so package "
+        "boundaries are already enforced. For the OVERALL feature list:\n\n"
+        "1. Each ``apps/<name>`` is typically ONE product feature (the "
+        "app itself). Only split it when the app's pages clearly cover "
+        "2+ distinct user surfaces (e.g. ``apps/web`` = customer + admin).\n"
+        "2. ``packages/<lib>`` shared by multiple apps → keep as ONE "
+        "feature named after the library if it has cohesive purpose. "
+        "Don't sub-split a UI / utils / auth-helpers package.\n"
+        "3. AGGRESSIVELY remove pure-scaffolding packages: "
+        "``ui``, ``design-system``, ``shared``, ``utils``, ``types``, "
+        "``config``, ``eslint-config``, ``tsconfig``. Fold into "
+        "``shared-infra``.\n"
+        "4. Top-level config files / Dockerfiles / CI manifests → "
+        "``shared-infra``.\n\n"
+        "Common over-decomposition trap: producing 50+ features by "
+        "treating every sub-folder as its own feature. A 10K-file "
+        "monorepo usually has 10-20 real product features, not 100."
+    ),
+    "next-app-router": (
+        "\n\n## Stack guidance — Next.js single app\n\n"
+        "1. Top-level route groups in ``app/`` (``(auth)/``, ``(dashboard)/``) "
+        "are strong feature signals — each route group is typically one "
+        "feature surface.\n"
+        "2. ``components/<feature>/`` directories often align 1:1 with "
+        "features. Use folder names as feature names when descriptive.\n"
+        "3. ``api/`` routes group by domain — ``api/users/*`` = users "
+        "feature flow; ``api/billing/*`` = billing feature.\n"
+        "4. Pages directly in ``app/`` root (e.g. ``settings/``, "
+        "``onboarding/``) are usually their own feature.\n"
+        "5. Hooks / utils / lib folders are scaffolding — fold into "
+        "``shared-infra`` unless they expose a distinct domain "
+        "(``lib/auth/`` IS auth, not scaffolding)."
+    ),
+    "vue-spa": (
+        "\n\n## Stack guidance — Vue single-page app\n\n"
+        "Vue SPAs typically have a FLAT ``src/components/*.vue`` directory "
+        "with NO feature folders. You CANNOT use directory structure to "
+        "find features here. Instead, use **filename prefix patterns**:\n\n"
+        "1. Group components by name prefix: ``TagsManager.vue``, "
+        "``Tag.vue``, ``TagEditDialog.vue`` → all belong to feature "
+        "``tags``.\n"
+        "2. SMALL features (1-2 .vue files with a distinctive prefix) "
+        "ARE valid features. Don't fold ``BadgeGenerator.vue`` into a "
+        "bigger neighbor — it's the ``badges`` feature even if alone.\n"
+        "3. Pages in ``src/pages/<Name>.vue`` are also feature signals — "
+        "``ManageAPIKey.vue`` = api-keys feature.\n"
+        "4. Backend (``server/*.js``) lives in the same repo — group "
+        "server files by domain matching the frontend (e.g. "
+        "``server/notification.js`` joins the ``notifications`` feature).\n\n"
+        "Common trap: over-merging because everything is in the same "
+        "``components/`` dir. Resist — use prefix patterns."
+    ),
+    "rails-app": (
+        "\n\n## Stack guidance — Ruby on Rails\n\n"
+        "Rails has STRICT MVC convention. Use it directly:\n\n"
+        "1. Each ``app/controllers/<resource>_controller.rb`` = ONE "
+        "feature named after the resource.\n"
+        "2. Sub-controllers in subdirs (``transactions/bulk_deletions/``, "
+        "``import/cleans/``) are FLOWS within the parent feature, not "
+        "separate features.\n"
+        "3. Matching ``app/models/<resource>.rb`` and "
+        "``app/views/<resource>/`` belong to the same feature as the "
+        "controller.\n"
+        "4. ``ApplicationController`` / ``ApplicationRecord`` / shared "
+        "concerns → ``shared-infra``.\n"
+        "5. ``app/jobs/``, ``app/mailers/`` group by what they serve — "
+        "``UserMailer`` joins users feature.\n\n"
+        "Skip ``test/``, ``spec/``, ``config/``, ``db/``."
+    ),
+    "go-modular": (
+        "\n\n## Stack guidance — Go modular\n\n"
+        "Go's package convention forces one-feature-per-directory:\n\n"
+        "1. Each top-level directory under ``./`` (or ``internal/``) "
+        "is ONE bounded domain = ONE feature. Examples: ``server/``, "
+        "``model/``, ``api/``, ``auth/``, ``cmd/``.\n"
+        "2. Sub-directories (``internal/server/cloud_proxy/``, "
+        "``server/download/``) are flows or sub-features of the parent "
+        "package.\n"
+        "3. Cross-cutting concerns get their own feature: ``openai/`` "
+        "(API compatibility shim), ``discover/`` (GPU detection).\n"
+        "4. ``cmd/<name>/`` dirs are CLI entry points — usually ONE "
+        "``cli`` feature even if there are multiple cmd subdirs.\n"
+        "5. ``proto/``, ``vendor/``, ``examples/`` → ``shared-infra``.\n\n"
+        "Don't merge top-level dirs — Go's package boundaries are "
+        "intentional."
+    ),
+    "python-modules": (
+        "\n\n## Stack guidance — Python multi-module / Django\n\n"
+        "1. Each top-level package directory (with ``__init__.py``) "
+        "that isn't ``tests/``, ``docs/``, or ``scripts/`` is typically "
+        "ONE feature.\n"
+        "2. Django apps inside a project: each app folder = feature. "
+        "``users/models.py``, ``users/views.py``, ``users/urls.py`` all "
+        "belong to ``users`` feature.\n"
+        "3. ``manage.py``, ``settings/``, ``wsgi.py``, ``asgi.py`` → "
+        "``shared-infra``.\n"
+        "4. GraphQL repos (Saleor): ``saleor/graphql/<domain>/`` → "
+        "domain is feature."
+    ),
+}
+
 _TARGET_PACKAGE_TEMPLATE = (
     "## Target\n\n"
     "This is a single package within a monorepo (name: `{package_name}`, "
@@ -532,6 +642,16 @@ def _build_system_prompt(
         target = _TARGET_LIBRARY
     else:
         target = _TARGET_REPO
+
+    # S19 — append stack-specific decomposition guidance when stack is
+    # known. Different from S18 few-shot: this CHANGES INSTRUCTIONS, no
+    # domain examples, so no domain-bleed risk. Falls back silently when
+    # stack_hint is None or unknown.
+    if stack_hint and not package_mode:
+        guidance = _STACK_GUIDANCE.get(stack_hint, "")
+        if guidance:
+            target = target + guidance
+
     rendered = _SYSTEM_PROMPT_TEMPLATE.replace("{target_block}", target)
 
     # S18 — append stack-aware few-shot examples when explicitly enabled.

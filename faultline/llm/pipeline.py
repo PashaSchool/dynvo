@@ -204,6 +204,22 @@ def run(
         except Exception as exc:  # noqa: BLE001 — opportunistic
             logger.debug("pipeline: load_assignments skipped (%s)", exc)
 
+    # S19 — auto-detect stack via static signals (no LLM cost) unless
+    # the caller passed a hint. Used to pick stack-specific decomposition
+    # guidance in deep_scan's system prompt. Different from S18 few-shot:
+    # changes INSTRUCTIONS not examples, no domain bleed. Default ON.
+    if stack_hint is None and repo_root is not None:
+        try:
+            from faultline.llm.stack_detector import detect_stack
+            _profile = detect_stack(repo_root, source_files[:60], api_key=None)
+            stack_hint = _profile.kind
+            logger.info(
+                "pipeline: stack auto-detected as %s (confidence=%.2f, via=%s)",
+                _profile.kind, _profile.confidence, _profile.via,
+            )
+        except Exception as exc:  # noqa: BLE001 — non-fatal
+            logger.debug("pipeline: stack detection skipped (%s)", exc)
+
     if _should_use_workspace_path(workspace):
         filtered_workspace = _filter_workspace_sources(workspace, source_files)
         logger.info(
