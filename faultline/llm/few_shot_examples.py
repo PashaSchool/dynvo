@@ -269,35 +269,326 @@ _VUE_SPA_EXAMPLES: list[FewShotExample] = [
 
 
 _PYTHON_FLAT_EXAMPLES: list[FewShotExample] = [
-    # TODO S18 Day 1: pick best Python example after S17 eval.
-    # Likely candidate: fastapi (library mode) or apprise (flat lib).
+    # apprise — F1 73.7%, prec 100%. Flat Python notification library.
+    # Teaching value: filename suffix patterns matter more than directory.
+    FewShotExample(
+        stack="python-flat",
+        repo="apprise",
+        file_paths_sample=[
+            "apprise/apprise.py",
+            "apprise/cli.py",
+            "apprise/apprise_config.py",
+            "apprise/plugins/email/base.py",
+            "apprise/plugins/google_chat.py",
+            "apprise/plugins/rocketchat.py",
+            "apprise/plugins/discord.py",
+            "apprise/plugins/octopush.py",
+            "apprise/plugins/clickatell.py",
+            "apprise/plugins/webhook.py",
+            "apprise/manager_config.py",
+            "apprise/attachment.py",
+        ],
+        expected_output={
+            "merge": [],
+            "rename": [],
+            "remove": [],
+            "split": [],
+            "features": [
+                {"name": "chat-notifications", "description": "Notifications via Discord, Slack, Google Chat, Rocket.Chat, etc.", "flows": [
+                    {"name": "send-to-discord-flow", "description": "Send a notification to a Discord webhook."},
+                    {"name": "send-to-slack-flow", "description": "Send a notification via Slack incoming webhook."},
+                ]},
+                {"name": "sms-notifications", "description": "SMS via providers like Octopush, Clickatell, Twilio.", "flows": [
+                    {"name": "send-sms-flow", "description": "Send an SMS via configured provider."},
+                ]},
+                {"name": "email-notifications", "description": "Email via SMTP including attachments and HTML.", "flows": [
+                    {"name": "configure-smtp-flow", "description": "Set up SMTP connection details."},
+                ]},
+                {"name": "webhook-notifications", "description": "Generic JSON/form-encoded webhook posts.", "flows": [
+                    {"name": "send-via-webhook-flow", "description": "POST notification payload to a custom URL."},
+                ]},
+                {"name": "configuration-files", "description": "YAML/text config to define notification destinations.", "flows": [
+                    {"name": "load-config-file-flow", "description": "Parse config file and create notification objects."},
+                ]},
+                {"name": "cli", "description": "Command-line interface for sending notifications.", "flows": [
+                    {"name": "send-via-cli-flow", "description": "Invoke `apprise` to dispatch to all configured targets."},
+                ]},
+            ],
+        },
+        rationale=(
+            "Flat Python lib. Teaches: per-plugin files (discord.py, "
+            "rocketchat.py, octopush.py) collapse into category features "
+            "by transport (chat, sms, email, webhook), not 1-feature-per-"
+            "plugin. Configuration/CLI are separate cross-cutting features."
+        ),
+    ),
 ]
 
 
 _GO_MODULAR_EXAMPLES: list[FewShotExample] = [
-    # TODO S18 Day 1: pick best Go example after S17 eval.
-    # Likely candidate: gitea (good package layout) or ollama.
+    # ollama — F1 90%, prec 100%. Go LLM runtime, clean module layout.
+    # Teaching value: Go directory = bounded domain, names are precise.
+    FewShotExample(
+        stack="go-modular",
+        repo="ollama",
+        file_paths_sample=[
+            "server/routes.go",
+            "server/download.go",
+            "server/cloud_proxy.go",
+            "kvcache/cache.go",
+            "kvcache/causal.go",
+            "model/model.go",
+            "cmd/cmd.go",
+            "api/client.go",
+            "openai/openai.go",
+            "discover/gpu.go",
+            "envconfig/config.go",
+            "auth/auth.go",
+        ],
+        expected_output={
+            "merge": [],
+            "rename": [],
+            "remove": [],
+            "split": [],
+            "features": [
+                {"name": "model-runtime", "description": "Inference runtime, KV cache, GPU dispatch.", "flows": [
+                    {"name": "run-model-locally-flow", "description": "Load model weights and serve inference."},
+                ]},
+                {"name": "model-management", "description": "Pull, list, push, delete model artifacts.", "flows": [
+                    {"name": "pull-model-flow", "description": "Download model from registry."},
+                    {"name": "list-installed-models-flow", "description": "Show locally available models."},
+                ]},
+                {"name": "rest-api", "description": "HTTP API for chat / generate / embeddings.", "flows": [
+                    {"name": "chat-with-model-flow", "description": "Send chat-format request, stream response."},
+                    {"name": "generate-embeddings-flow", "description": "Compute vector embeddings from text."},
+                ]},
+                {"name": "cli", "description": "Command-line interface (`ollama run`, `ollama pull`).", "flows": [
+                    {"name": "run-cli-command-flow", "description": "Dispatch CLI subcommand to API client."},
+                ]},
+                {"name": "modelfile", "description": "Modelfile DSL for custom model variants.", "flows": [
+                    {"name": "create-custom-modelfile-flow", "description": "Author + build a custom modelfile."},
+                ]},
+                {"name": "openai-compat", "description": "OpenAI-compatible API endpoints.", "flows": [
+                    {"name": "openai-chat-completion-flow", "description": "OpenAI-format chat completion."},
+                ]},
+                {"name": "gpu-acceleration", "description": "Detect and target NVIDIA/AMD/Metal GPUs.", "flows": [
+                    {"name": "discover-gpu-flow", "description": "Probe system for accelerators."},
+                ]},
+            ],
+        },
+        rationale=(
+            "Go modular layout. Teaches: top-level dirs (server/, model/, "
+            "kvcache/, api/, cmd/, auth/) ARE features by Go convention. "
+            "Don't merge them — keep granular. Cross-cutting concerns "
+            "(openai, discover) get their own feature."
+        ),
+    ),
+]
+
+
+_RUST_MODULAR_EXAMPLES: list[FewShotExample] = [
+    # meilisearch — F1 89%. Cargo workspace, search engine.
+    FewShotExample(
+        stack="rust-modular",
+        repo="meilisearch",
+        file_paths_sample=[
+            "crates/meilisearch/src/routes/indexes/search.rs",
+            "crates/meilisearch/src/routes/indexes/documents.rs",
+            "crates/meilisearch/src/routes/indexes/settings/synonyms.rs",
+            "crates/milli/src/search/hybrid.rs",
+            "crates/milli/src/search/facet/mod.rs",
+            "crates/milli/src/documents/builder.rs",
+            "crates/index-scheduler/src/scheduler/autobatcher.rs",
+            "crates/meilisearch/src/routes/api_key.rs",
+            "crates/meilisearch-auth/src/lib.rs",
+            "crates/milli/src/search/typo_tolerance.rs",
+            "crates/milli/src/search/sort.rs",
+            "crates/milli/src/search/geo.rs",
+        ],
+        expected_output={
+            "merge": [],
+            "rename": [],
+            "remove": [],
+            "split": [],
+            "features": [
+                {"name": "search", "description": "Core search query execution including hybrid/vector.", "flows": [
+                    {"name": "search-with-filters-flow", "description": "Run a query against an index with filters applied."},
+                    {"name": "perform-vector-search-flow", "description": "Hybrid keyword + vector search."},
+                ]},
+                {"name": "indexing", "description": "Document add/update/delete pipeline.", "flows": [
+                    {"name": "create-index-flow", "description": "Provision a new index."},
+                    {"name": "add-documents-flow", "description": "Bulk-ingest documents."},
+                ]},
+                {"name": "typo-tolerance", "description": "Fuzzy match settings + edit distance.", "flows": [
+                    {"name": "configure-typo-flow", "description": "Tune typo thresholds per field."},
+                ]},
+                {"name": "filtering", "description": "Field-level filter expressions.", "flows": [
+                    {"name": "filter-results-flow", "description": "Apply boolean filters to a search."},
+                ]},
+                {"name": "faceted-search", "description": "Faceted aggregations + filter UIs.", "flows": [
+                    {"name": "compute-facets-flow", "description": "Return facet counts for a query."},
+                ]},
+                {"name": "synonyms", "description": "Per-index synonym groups.", "flows": [
+                    {"name": "configure-synonyms-flow", "description": "Define synonym groups for a field."},
+                ]},
+                {"name": "api-keys", "description": "Tenant tokens + scoped key management.", "flows": [
+                    {"name": "issue-api-key-flow", "description": "Mint a scoped API key."},
+                ]},
+            ],
+        },
+        rationale=(
+            "Cargo workspace. Teaches: route files in routes/indexes/* "
+            "indicate features (search, documents, settings/synonyms). "
+            "Search algorithms in milli/src/search/* are sub-features of "
+            "the search feature, not separate features."
+        ),
+    ),
+]
+
+
+_RAILS_APP_EXAMPLES: list[FewShotExample] = [
+    # maybe — F1 75%. Personal-finance Rails app, MVC convention.
+    FewShotExample(
+        stack="rails-app",
+        repo="maybe",
+        file_paths_sample=[
+            "app/controllers/accounts_controller.rb",
+            "app/models/account.rb",
+            "app/controllers/transactions_controller.rb",
+            "app/controllers/transactions/bulk_deletions_controller.rb",
+            "app/controllers/budgets_controller.rb",
+            "app/controllers/holdings_controller.rb",
+            "app/controllers/import/configurations_controller.rb",
+            "app/controllers/import/cleans_controller.rb",
+            "app/controllers/categories_controller.rb",
+            "app/controllers/rules_controller.rb",
+            "app/controllers/chats_controller.rb",
+            "app/views/holdings/_cash.html.erb",
+        ],
+        expected_output={
+            "merge": [],
+            "rename": [],
+            "remove": [],
+            "split": [],
+            "features": [
+                {"name": "accounts", "description": "Bank/brokerage/loan account ledger.", "flows": [
+                    {"name": "add-account-flow", "description": "User connects or manually creates an account."},
+                ]},
+                {"name": "transactions", "description": "Transaction CRUD, bulk operations, splits.", "flows": [
+                    {"name": "categorize-transaction-flow", "description": "Assign category to a transaction."},
+                    {"name": "bulk-delete-flow", "description": "Mass-delete transactions."},
+                ]},
+                {"name": "budgets", "description": "Per-category monthly budget tracking.", "flows": [
+                    {"name": "create-budget-flow", "description": "Define a budget for a category and period."},
+                ]},
+                {"name": "investments", "description": "Holdings, positions, performance.", "flows": [
+                    {"name": "track-investment-flow", "description": "Record a holding and value over time."},
+                ]},
+                {"name": "imports", "description": "CSV/OFX import with cleaning + mapping.", "flows": [
+                    {"name": "import-transactions-flow", "description": "Upload + clean + map import file."},
+                ]},
+                {"name": "categories", "description": "Hierarchical category taxonomy.", "flows": [
+                    {"name": "manage-categories-flow", "description": "Create/edit/delete category."},
+                ]},
+                {"name": "rules", "description": "Auto-categorization rules.", "flows": [
+                    {"name": "create-rule-flow", "description": "Define an if/then auto-categorization rule."},
+                ]},
+                {"name": "ai-assistant", "description": "Conversational AI chat about finances.", "flows": [
+                    {"name": "ask-ai-question-flow", "description": "Send chat message to AI assistant."},
+                ]},
+            ],
+        },
+        rationale=(
+            "Rails app with strict MVC convention. Teaches: each "
+            "app/controllers/<resource>_controller.rb = one feature. "
+            "Sub-controllers in subdirs (transactions/bulk_deletions/, "
+            "import/cleans/) are flows within the parent feature."
+        ),
+    ),
+]
+
+
+_PYTHON_LIBRARY_EXAMPLES: list[FewShotExample] = [
+    # fastapi — F1 100% (library mode). Reference example for Python libs.
+    FewShotExample(
+        stack="python-library",
+        repo="fastapi",
+        file_paths_sample=[
+            "fastapi/applications.py",
+            "fastapi/routing.py",
+            "fastapi/dependencies/utils.py",
+            "fastapi/security/oauth2.py",
+            "fastapi/security/api_key.py",
+            "fastapi/openapi/utils.py",
+            "fastapi/openapi/docs.py",
+            "fastapi/websockets.py",
+            "fastapi/background.py",
+            "fastapi/exceptions.py",
+            "fastapi/responses.py",
+            "fastapi/encoders.py",
+        ],
+        expected_output={
+            "merge": [],
+            "rename": [],
+            "remove": [],
+            "split": [],
+            "features": [
+                {"name": "routing", "description": "Path operations, route registration, decorators.", "flows": [
+                    {"name": "register-route-flow", "description": "Decorate a function as a path operation."},
+                ]},
+                {"name": "validation", "description": "Pydantic request body / query / path validation.", "flows": [
+                    {"name": "validate-request-body-flow", "description": "Parse and validate JSON body."},
+                ]},
+                {"name": "dependency-injection", "description": "Depends() utility for shared resources.", "flows": [
+                    {"name": "inject-dependency-flow", "description": "Resolve a dependency tree per request."},
+                ]},
+                {"name": "security-and-authentication", "description": "OAuth2, API key, HTTP basic, OpenID.", "flows": [
+                    {"name": "authenticate-with-bearer-token-flow", "description": "Verify JWT bearer token."},
+                ]},
+                {"name": "automatic-docs", "description": "OpenAPI / Swagger UI / ReDoc auto-generation.", "flows": [
+                    {"name": "generate-openapi-spec-flow", "description": "Render OpenAPI JSON from routes."},
+                ]},
+                {"name": "websocket-support", "description": "Native WebSocket endpoints.", "flows": [
+                    {"name": "handle-websocket-message-flow", "description": "Accept connection and exchange messages."},
+                ]},
+                {"name": "background-tasks", "description": "Defer work after response is returned.", "flows": [
+                    {"name": "schedule-background-task-flow", "description": "Queue a task to run after response."},
+                ]},
+                {"name": "exceptions", "description": "HTTPException + custom exception handlers.", "flows": [
+                    {"name": "raise-http-exception-flow", "description": "Raise typed HTTP error from handler."},
+                ]},
+            ],
+        },
+        rationale=(
+            "Python library reference. Teaches: top-level modules in "
+            "fastapi/* map directly to library 'public modules' (not "
+            "business features). Submodules like security/ split by "
+            "auth scheme into sub-features. No 'business' framing."
+        ),
+    ),
 ]
 
 
 _MIXED_FALLBACK_EXAMPLES: list[FewShotExample] = [
-    # Generic example used when stack tag is unknown or a niche stack
-    # (Rust, Rails, mixed). Should be neutral re: directory conventions.
-    # TODO S18 Day 1: curate after S17 eval reveals neutral best repo.
+    # Use documenso as neutral fallback for mixed/unknown stacks.
+    # Already shown via _NEXT_MONOREPO_EXAMPLES; reference it directly.
 ]
+_MIXED_FALLBACK_EXAMPLES.extend(_NEXT_MONOREPO_EXAMPLES[:1])
 
 
 EXAMPLES_BY_STACK: dict[str, list[FewShotExample]] = {
     "next-monorepo": _NEXT_MONOREPO_EXAMPLES,
-    "next-app-router": _NEXT_MONOREPO_EXAMPLES,  # share examples; pattern is similar
+    "next-app-router": _NEXT_MONOREPO_EXAMPLES,  # share — pattern is similar
     "vue-spa": _VUE_SPA_EXAMPLES,
     "vue-nuxt-monorepo": _VUE_SPA_EXAMPLES,
     "python-flat": _PYTHON_FLAT_EXAMPLES,
     "python-modules": _PYTHON_FLAT_EXAMPLES,
+    "python-library": _PYTHON_LIBRARY_EXAMPLES,
     "go-modular": _GO_MODULAR_EXAMPLES,
-    "rust-modular": _MIXED_FALLBACK_EXAMPLES,
-    "rails-app": _MIXED_FALLBACK_EXAMPLES,
+    "rust-modular": _RUST_MODULAR_EXAMPLES,
+    "rails-app": _RAILS_APP_EXAMPLES,
     "node-monorepo": _NEXT_MONOREPO_EXAMPLES,
+    "js-library": _PYTHON_LIBRARY_EXAMPLES,  # closest neutral fit (axios)
     "mixed": _MIXED_FALLBACK_EXAMPLES,
 }
 

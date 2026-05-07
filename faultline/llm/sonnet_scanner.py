@@ -1286,6 +1286,8 @@ def deep_scan(
     package_size: int = 0,
     commit_context: str | None = None,
     preferred_names: list[str] | None = None,
+    few_shot: bool = False,
+    stack_hint: str | None = None,
 ) -> DeepScanResult | None:
     """
     Performs a deep scan using Sonnet to detect features and flows.
@@ -1339,6 +1341,8 @@ def deep_scan(
         package_name=package_name,
         package_size=package_size or len(files),
         is_library=is_library,
+        stack_hint=stack_hint,
+        enable_few_shot=few_shot,
     )
 
     # Pre-process: strip test and docs files before they reach the LLM.
@@ -1817,6 +1821,8 @@ def deep_scan_workspace(
     use_tools: bool = False,
     repo_root=None,  # pathlib.Path; required when use_tools=True
     preferred_names: list[str] | None = None,
+    few_shot: bool = False,
+    stack_hint: str | None = None,
 ) -> DeepScanResult | None:
     """Run ``deep_scan`` once per workspace package and merge the results.
 
@@ -2005,6 +2011,8 @@ def deep_scan_workspace(
                     package_size=len(pkg_files_rel),
                     commit_context=commit_context,
                     preferred_names=preferred_names,
+                    few_shot=few_shot,
+                    stack_hint=stack_hint,
                 )
         except BudgetExceeded:
             raise

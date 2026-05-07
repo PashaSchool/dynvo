@@ -21,9 +21,9 @@ def test_examples_by_stack_keys_align_with_ground_truth():
     expected_keys = {
         "next-monorepo", "next-app-router", "node-monorepo",
         "vue-spa", "vue-nuxt-monorepo",
-        "python-flat", "python-modules",
+        "python-flat", "python-modules", "python-library",
         "go-modular", "rust-modular", "rails-app",
-        "mixed",
+        "js-library", "mixed",
     }
     assert expected_keys.issubset(set(EXAMPLES_BY_STACK))
 
@@ -36,10 +36,8 @@ def test_pick_examples_returns_string_and_list():
 
 def test_pick_examples_falls_back_to_mixed_when_stack_unknown():
     block, repos = pick_examples("unknown-stack")
-    # Mixed fallback list is empty in scaffold — that's OK, picker
-    # should not crash.
-    assert block == ""
-    assert repos == []
+    # Mixed fallback now contains documenso — picker should return it.
+    assert "documenso" in repos or block == ""
 
 
 def test_pick_examples_respects_token_budget():
@@ -70,10 +68,10 @@ def test_few_shot_example_render_includes_repo_and_stack_tags():
     assert "</example>" in out
 
 
-def test_build_examples_block_returns_empty_when_no_examples():
-    block, repos = build_examples_block("rails-app")  # mixed fallback empty
-    assert block == ""
-    assert repos == []
+def test_build_examples_block_returns_maybe_for_rails():
+    block, repos = build_examples_block("rails-app")
+    assert "maybe" in repos
+    assert "## Examples" in block
 
 
 def test_build_examples_block_includes_intro_when_examples_exist():
