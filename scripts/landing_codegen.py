@@ -260,6 +260,48 @@ REPO_META = {
         "lang": "TS monorepo · virtual whiteboard · canvas-based · 90k★",
         "detected": "virtual whiteboard",
     },
+    "documenso": {
+        "title": "~/documenso",
+        "url": "https://github.com/documenso/documenso",
+        "lang": "Next.js monorepo · DocuSign alternative · turborepo · 9k★",
+        "detected": "Next.js monorepo",
+    },
+    "fastapi": {
+        "title": "~/fastapi",
+        "url": "https://github.com/fastapi/fastapi",
+        "lang": "Python · web framework · 80k★",
+        "detected": "Python library",
+    },
+    "uptime-kuma": {
+        "title": "~/uptime-kuma",
+        "url": "https://github.com/louislam/uptime-kuma",
+        "lang": "Vue + Express · self-hosted monitoring · 60k★",
+        "detected": "Vue SPA",
+    },
+    "papermark": {
+        "title": "~/papermark",
+        "url": "https://github.com/mfts/papermark",
+        "lang": "Next.js · doc-sharing SaaS · 7k★",
+        "detected": "Next.js app",
+    },
+    "maybe": {
+        "title": "~/maybe",
+        "url": "https://github.com/maybe-finance/maybe",
+        "lang": "Rails · personal finance OS · 30k★",
+        "detected": "Rails app",
+    },
+    "apprise": {
+        "title": "~/apprise",
+        "url": "https://github.com/caronc/apprise",
+        "lang": "Python · notification library · 12k★",
+        "detected": "Python library",
+    },
+    "inbox-zero": {
+        "title": "~/inbox-zero",
+        "url": "https://github.com/elie222/inbox-zero",
+        "lang": "Next.js · AI email assistant · 4k★",
+        "detected": "Next.js app",
+    },
 }
 
 
