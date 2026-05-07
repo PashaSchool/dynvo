@@ -244,9 +244,13 @@ def _build_metrics(
     if not matches:
         return (0.0, 0.0, 0.0)
     hits = sum(1 for m in matches if m.is_hit)
-    coverage = hits / len(matches)
+    coverage = min(1.0, hits / len(matches))
     n_detected = len(set(detected))
-    precision = (hits / n_detected) if n_detected else 0.0
+    # Precision capped at 1.0 — multiple expected mapping to one detected
+    # is semantically valid (e.g. "rest-api" + "graphql-api" both match
+    # detected "api"), but it makes raw hits/n_detected inflate above 1
+    # which is mathematically meaningless.
+    precision = min(1.0, hits / n_detected) if n_detected else 0.0
     if coverage + precision == 0:
         f1 = 0.0
     else:
