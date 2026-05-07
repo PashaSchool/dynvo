@@ -113,6 +113,14 @@ def _detected_features(
         if tier == "hidden":
             continue
         eligible_features.append(name)
+        # S20 — also surface aliases (names of merged-in dropped features)
+        # so the judge can match against the maintainer's vocabulary even
+        # when our compact name uses a different word. Recovers coverage
+        # lost during S19.5 reattribution.
+        for alias in f.get("aliases") or []:
+            if alias and alias != name and alias not in eligible_features:
+                eligible_features.append(alias)
+                per_feature_tier[alias] = tier
         for fl in f.get("flows", []) or []:
             eligible_flows.append(fl["name"])
     return eligible_features, eligible_flows, per_feature_tier, tier_counts

@@ -221,8 +221,21 @@ def _merge_into(target: dict, source: dict) -> None:
     - total_commits / bug_fixes: sum
     - bug_fix_ratio: recompute
     - flows: extend with non-duplicate names
+    - aliases: append source's name (S20 — for eval coverage recovery)
     - other numeric fields untouched (target's value wins)
     """
+    # S20 — preserve dropped feature's name as alias so eval / dashboard
+    # can still match against maintainer's GT vocabulary even after
+    # reattribution. Recovers coverage lost in S19.5 compaction.
+    aliases = list(target.get("aliases") or [])
+    src_name = (source.get("name") or "").strip()
+    if src_name and src_name != target.get("name") and src_name not in aliases:
+        aliases.append(src_name)
+    for a in source.get("aliases") or []:
+        if a and a != target.get("name") and a not in aliases:
+            aliases.append(a)
+    target["aliases"] = aliases
+
     target_paths = list(target.get("paths") or [])
     source_paths = list(source.get("paths") or [])
     seen = set(target_paths)
