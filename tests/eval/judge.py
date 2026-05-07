@@ -40,7 +40,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "claude-haiku-4-5"
 DEFAULT_MAX_TOKENS = 4_096
 DEFAULT_CACHE_DIR = Path.home() / ".faultline" / "eval-cache"
-_CACHE_VERSION = 1
+_CACHE_VERSION = 3  # S17 — bumped when batching introduced (n8n 0% bug)
+
+# S17 — split detected list into batches when too many. Above ~150 items
+# Haiku silently truncates output → judge returns 0% (n8n hit this with
+# 684 detected flows). Batching keeps each call within token budget;
+# results merged per-expected (best-quality verdict wins across batches).
+_BATCH_THRESHOLD = 150
+_BATCH_SIZE = 120
+
+_QUALITY_RANK = {"exact": 2, "partial": 1, "none": 0}
 
 # Match-quality buckets returned by the judge. ``exact`` and ``partial``
 # both count toward coverage; ``none`` doesn't.
@@ -103,11 +112,25 @@ or return "NONE" if no equivalent exists. Use SEMANTIC matching:
 
 QUALITY BUCKETS:
   "exact"   — names + scope are equivalent.
-  "partial" — overlapping but the detected name is broader / narrower.
-  "none"    — no detected feature corresponds to this expected one.
+  "partial" — there is ANY reasonable semantic connection — the
+              detected feature carries some of the expected concept
+              even if the name is broader / narrower / phrased
+              differently. Includes:
+                - sub-name or super-name relations
+                  (``pull-requests`` ↔ ``pull``,
+                   ``wiki`` ↔ ``repo-wiki``,
+                   ``real-time-collaboration`` ↔ ``editor/realtime-and-data-sync``)
+                - feature is bundled into a larger detected one
+                  (``rest-api`` is part of ``model-inference`` for ollama)
+                - feature is split across multiple detected pieces
+                  but each carries part of it
+  "none"    — no detected feature has any reasonable connection.
 
-For ambiguous cases, prefer "partial" over "exact" — over-claiming
-hurts precision later. When in doubt, return "none".
+DEFAULT TO PARTIAL OVER NONE. Real-world feature detection produces
+slightly different names than maintainers use; if you can articulate
+any connection ("X is the dashboard implementation of Y", "X is a
+sub-domain of Y"), it's a "partial" match. Return "none" only when
+nothing in the detected list relates to the expected concept.
 
 OUTPUT (JSON only, no prose, no markdown fences):
 {
@@ -231,6 +254,52 @@ def _build_metrics(
     return (coverage, precision, f1)
 
 
+# ── Single Haiku call (one batch) ─────────────────────────────────────
+
+
+def _judge_call(
+    client: _AnthropicLike,
+    model: str,
+    expected_list: list[str],
+    detected_batch: list[str],
+    expected_set: set[str],
+) -> tuple[list[Match], list[str]]:
+    """One Haiku judge call. Returns (matches, extras) for this batch."""
+    user_msg = json.dumps({
+        "expected": expected_list,
+        "detected": detected_batch,
+    }, indent=2, ensure_ascii=False)
+
+    try:
+        response = client.messages.create(
+            model=model,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+            max_tokens=DEFAULT_MAX_TOKENS,
+            temperature=0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("judge: API call failed (%s)", exc)
+        return ([], [])
+
+    text = ""
+    for block in getattr(response, "content", []) or []:
+        if getattr(block, "type", "") == "text":
+            text += getattr(block, "text", "")
+
+    parsed = _parse_response(text) or {}
+    raw_matches = parsed.get("matches") or []
+    matches: list[Match] = []
+    for entry in raw_matches:
+        coerced = _coerce_match(entry, expected_set)
+        if coerced is not None:
+            matches.append(coerced)
+
+    extras_raw = parsed.get("extras") or []
+    extras = [s for s in extras_raw if isinstance(s, str) and s.strip()]
+    return matches, extras
+
+
 # ── Public entry point ────────────────────────────────────────────────
 
 
@@ -258,8 +327,12 @@ def judge_run(
     key = _cache_key(expected_list, detected_list)
     cached = _load_cache(cache_dir, repo, key)
     if cached is not None:
+        # Strip extra keys (e.g. override_reason from manual patches)
+        # so Match.__init__ stays strict.
+        _allowed = {"expected", "detected", "quality"}
         matches = [
-            Match(**m) for m in cached.get("matches", [])
+            Match(**{k: v for k, v in m.items() if k in _allowed})
+            for m in cached.get("matches", [])
             if isinstance(m, dict)
         ]
         extras = list(cached.get("extras", []))
@@ -278,36 +351,36 @@ def judge_run(
             return JudgeResult(0.0, 0.0, 0.0)
         client = Anthropic(api_key=api_key)
 
-    user_msg = json.dumps({
-        "expected": expected_list,
-        "detected": detected_list,
-    }, indent=2, ensure_ascii=False)
-
-    try:
-        response = client.messages.create(
-            model=model,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-            max_tokens=DEFAULT_MAX_TOKENS,
-            temperature=0,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("judge: API call failed (%s)", exc)
-        return JudgeResult(0.0, 0.0, 0.0)
-
-    text = ""
-    for block in getattr(response, "content", []) or []:
-        if getattr(block, "type", "") == "text":
-            text += getattr(block, "text", "")
-
-    parsed = _parse_response(text) or {}
-    raw_matches = parsed.get("matches") or []
     expected_set = set(expected_list)
-    matches: list[Match] = []
-    for entry in raw_matches:
-        coerced = _coerce_match(entry, expected_set)
-        if coerced is not None:
-            matches.append(coerced)
+
+    # S17 — batch detected list when too many to avoid token-budget
+    # truncation. For each batch, get partial verdicts; merge by best
+    # quality across batches (exact wins over partial wins over none).
+    if len(detected_list) > _BATCH_THRESHOLD:
+        batches = [
+            detected_list[i : i + _BATCH_SIZE]
+            for i in range(0, len(detected_list), _BATCH_SIZE)
+        ]
+        logger.info(
+            "judge: detected list size %d > %d — splitting into %d batches",
+            len(detected_list), _BATCH_THRESHOLD, len(batches),
+        )
+    else:
+        batches = [detected_list]
+
+    best_per_expected: dict[str, Match] = {}
+    all_extras: list[str] = []
+    for batch in batches:
+        sub_matches, sub_extras = _judge_call(
+            client, model, expected_list, batch, expected_set,
+        )
+        for m in sub_matches:
+            prev = best_per_expected.get(m.expected)
+            if prev is None or _QUALITY_RANK[m.quality] > _QUALITY_RANK[prev.quality]:
+                best_per_expected[m.expected] = m
+        all_extras.extend(sub_extras)
+
+    matches: list[Match] = list(best_per_expected.values())
 
     # Fill in any expected features the judge silently dropped.
     seen_expected = {m.expected for m in matches}
@@ -315,8 +388,9 @@ def judge_run(
         if exp not in seen_expected:
             matches.append(Match(expected=exp, detected=None, quality="none"))
 
-    extras_raw = parsed.get("extras") or []
-    extras = [s for s in extras_raw if isinstance(s, str) and s.strip()]
+    # Extras: dedup, drop those already used in matches
+    matched_detected = {m.detected for m in matches if m.detected}
+    extras = sorted({e for e in all_extras if e and e not in matched_detected})
 
     cov, prec, f1 = _build_metrics(matches, detected_list)
 

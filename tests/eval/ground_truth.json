@@ -1,7 +1,7 @@
 {
   "_schema": "faultlines-eval-ground-truth-v1",
   "_legend": {
-    "expected_features": "Features the maintainer would name in their README — domain-level user-facing concepts, not file directories.",
+    "expected_features": "Features the maintainer would name in their README \u2014 domain-level user-facing concepts, not file directories.",
     "expected_flows": "Optional: user journeys / E2E flows the maintainer would call out.",
     "source": "URL to the canonical features list (README, docs page).",
     "annotated_by": "Reviewer's GitHub handle.",
@@ -60,7 +60,7 @@
     "source": "https://github.com/immich-app/immich#features",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on README, 2026-05-06 — names consolidated from the 15 maintainer bullets into 12 product-level domains a code-detection tool can plausibly recover"
+    "verified_via": "WebFetch on README, 2026-05-06 \u2014 names consolidated from the 15 maintainer bullets into 12 product-level domains a code-detection tool can plausibly recover"
   },
   "dify": {
     "expected_features": [
@@ -95,32 +95,340 @@
     "verified_via": "WebFetch on README + cross-checked against S13/S14/S15 live scan outputs. Auth + billing not in upstream README's features section but ARE first-class user-visible concerns and we already detect them."
   },
   "supabase": {
+    "_note": "supabase/supabase is the studio dashboard + docs monorepo. Storage / Realtime / Edge Functions / Cron / Queues / GraphQL live in SEPARATE repositories (supabase/storage, supabase/realtime, supabase/supabase-edge-runtime, etc.) \u2014 they appear here only as dashboard integration code and docs guides. This ground truth scopes expectations to features ACTUALLY implemented in this repo.",
     "expected_features": [
-      "database",
+      "studio-dashboard",
       "auth",
-      "storage",
-      "realtime",
-      "edge-functions",
-      "ai-vectors",
-      "cron",
-      "queues",
-      "data-api",
-      "graphql-api"
+      "billing",
+      "ai-assistant",
+      "design-system",
+      "ui-library",
+      "icons",
+      "vue-blocks-auth",
+      "developer-toolbar",
+      "mcp-integration",
+      "database-meta",
+      "lite-studio"
     ],
     "expected_flows": [
-      "sign-up-via-email",
-      "sign-in-via-oauth",
-      "create-project",
+      "sign-in-to-studio",
+      "create-project-in-studio",
       "invite-organization-member",
-      "upload-to-storage-bucket",
-      "deploy-edge-function",
-      "subscribe-to-realtime-channel",
-      "query-vector-embedding"
+      "open-billing-portal",
+      "browse-vue-auth-blocks",
+      "use-ai-assistant",
+      "configure-mcp"
     ],
-    "source": "https://supabase.com/docs",
+    "source": "scan of supabase/supabase + repo browse",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on supabase docs landing, 2026-05-06 — these are the canonical product top-level categories"
+    "verified_via": "rescan post-S15 + manual classification by tier; supersedes earlier marketing-level ground truth which expected 6 features (storage/realtime/cron/etc.) that physically aren't in this repo"
+  },
+  "documenso": {
+    "expected_features": [
+      "document-signing",
+      "envelope-management",
+      "template-management",
+      "organisation-and-team-management",
+      "user-authentication",
+      "billing-and-subscriptions",
+      "prisma-database",
+      "email",
+      "embedded-signing",
+      "webhooks-and-public-api",
+      "admin-console",
+      "design-system",
+      "enterprise"
+    ],
+    "expected_flows": [
+      "upload-document",
+      "place-signature-fields",
+      "send-document-for-signing",
+      "complete-signing-as-recipient",
+      "create-template",
+      "invite-team-member",
+      "configure-organisation-sso",
+      "view-billing-portal"
+    ],
+    "source": "https://github.com/documenso/documenso + benchmarks/documenso/expected_features.yaml",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-04-27",
+    "verified_via": "manual annotation from repo browse + Sprint 1-5 reference scan (see benchmarks/documenso/expected_features.yaml for source aliases)"
+  },
+  "plane": {
+    "expected_features": [
+      "work-items",
+      "cycles",
+      "modules",
+      "views",
+      "pages",
+      "analytics",
+      "workspace-management",
+      "projects",
+      "auth",
+      "notifications",
+      "ai-capabilities",
+      "integrations"
+    ],
+    "expected_flows": [
+      "create-work-item",
+      "configure-cycle",
+      "create-module",
+      "create-page",
+      "filter-issues-by-state",
+      "invite-workspace-member",
+      "switch-project",
+      "configure-notification-preferences"
+    ],
+    "source": "https://github.com/makeplane/plane#features",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-06",
+    "verified_via": "WebFetch on README, 2026-05-06 \u2014 granular items (rich-text-editor / file-uploads / burn-down-charts) consolidated into product-level domains a code-detection tool can plausibly recover"
+  },
+  "outline": {
+    "expected_features": [
+      "documents",
+      "collections",
+      "workspaces",
+      "search",
+      "auth",
+      "real-time-collaboration",
+      "permissions",
+      "comments",
+      "version-history",
+      "integrations",
+      "api",
+      "notifications"
+    ],
+    "expected_flows": [
+      "create-document",
+      "create-collection",
+      "share-document-with-user",
+      "search-documents",
+      "sign-in-via-oauth",
+      "comment-on-document",
+      "restore-previous-version",
+      "configure-slack-integration"
+    ],
+    "source": "https://github.com/outline/outline#features",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-06",
+    "verified_via": "WebFetch on README, 2026-05-06 \u2014 README is light on explicit features list; entries inferred from product description (knowledge-base, real-time collab) + standard wiki app surfaces (comments, versions)"
+  },
+  "saleor": {
+    "expected_features": [
+      "product-catalog",
+      "order-management",
+      "payment-orchestration",
+      "promotion-engine",
+      "multi-warehouse-inventory",
+      "customer-management",
+      "checkout",
+      "content-management",
+      "multi-channel",
+      "dashboard",
+      "app-extensions",
+      "multi-currency"
+    ],
+    "expected_flows": [
+      "create-product",
+      "place-order",
+      "process-payment",
+      "apply-promotion",
+      "manage-inventory",
+      "configure-channel",
+      "checkout-as-customer",
+      "install-saleor-app"
+    ],
+    "source": "https://github.com/saleor/saleor",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-06",
+    "verified_via": "WebFetch on README, 2026-05-06; consolidated 'shopping-cart' into 'checkout' and dropped 'multi-language-translations' (infra-ish i18n)"
+  },
+  "gitea": {
+    "expected_features": [
+      "git-hosting",
+      "issue-tracking",
+      "pull-requests",
+      "code-review",
+      "package-registry",
+      "actions-ci-cd",
+      "wiki",
+      "releases",
+      "webhooks",
+      "oauth-authentication",
+      "git-lfs",
+      "team-collaboration"
+    ],
+    "expected_flows": [
+      "push-code-to-repository",
+      "open-pull-request",
+      "review-pull-request",
+      "create-issue",
+      "trigger-actions-workflow",
+      "publish-package",
+      "create-release",
+      "configure-webhook",
+      "sign-in-via-oauth"
+    ],
+    "source": "https://github.com/go-gitea/gitea",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-06",
+    "verified_via": "WebFetch on README, 2026-05-06"
+  },
+  "meilisearch": {
+    "expected_features": [
+      "search",
+      "indexing",
+      "typo-tolerance",
+      "filtering",
+      "faceted-search",
+      "sorting",
+      "synonyms",
+      "geosearch",
+      "multi-tenancy",
+      "api-keys",
+      "vector-search",
+      "ranking-rules"
+    ],
+    "expected_flows": [
+      "create-index",
+      "add-documents-to-index",
+      "search-with-filters",
+      "configure-synonyms",
+      "configure-ranking-rules",
+      "perform-vector-search",
+      "issue-tenant-token",
+      "geosearch-by-location"
+    ],
+    "source": "https://github.com/meilisearch/meilisearch",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-06",
+    "verified_via": "WebFetch on README, 2026-05-06; consolidated 'hybrid-search'/'search-as-you-type'/'conversational-search' into 'search', 'personalization' dropped (not detectable), kept 'ranking-rules' as a configurable feature"
+  },
+  "ollama": {
+    "expected_features": [
+      "model-runtime",
+      "model-pulling",
+      "model-management",
+      "modelfile",
+      "cli",
+      "rest-api",
+      "chat",
+      "embeddings",
+      "multimodal-support",
+      "gpu-acceleration",
+      "model-library"
+    ],
+    "expected_flows": [
+      "pull-model",
+      "run-model-locally",
+      "chat-with-model",
+      "create-custom-modelfile",
+      "list-installed-models",
+      "generate-embeddings",
+      "remove-model",
+      "send-image-to-multimodal-model"
+    ],
+    "source": "https://github.com/ollama/ollama",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-06",
+    "verified_via": "WebFetch on README, 2026-05-06; dropped SDK / Docker items as meta (downloadable client libs and deployment surface, not core features in this repo)"
+  },
+  "n8n": {
+    "expected_features": [
+      "workflow-builder",
+      "visual-editor",
+      "node-integrations",
+      "credential-management",
+      "webhook-triggers",
+      "cron-scheduling",
+      "ai-agent-workflows",
+      "langchain-integration",
+      "execution-history",
+      "code-nodes",
+      "workflow-templates",
+      "enterprise-permissions"
+    ],
+    "expected_flows": [
+      "create-workflow",
+      "add-node-to-workflow",
+      "configure-credential",
+      "trigger-workflow-via-webhook",
+      "schedule-workflow-cron",
+      "execute-workflow-and-view-history",
+      "build-ai-agent",
+      "share-workflow-with-team"
+    ],
+    "source": "https://github.com/n8n-io/n8n",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-06",
+    "verified_via": "WebFetch on README, 2026-05-06; dropped meta items (javascript-python-support, self-hosting, cloud-deployment) \u2014 not detectable as features"
+  },
+  "uptime-kuma": {
+    "_research_iterations": "iter1=README features (monitor types, notifications), iter2=Wiki ToC (status-pages, maintenance, api-keys, prometheus). Consolidated to product-level concepts; deployment configs (cloudflare-tunnel/systemd/env-vars) excluded as infra not features.",
+    "expected_features": [
+      "monitors",
+      "notifications",
+      "status-pages",
+      "maintenance-windows",
+      "authentication",
+      "two-factor-auth",
+      "api-keys",
+      "certificate-monitoring",
+      "prometheus-metrics",
+      "docker-integration",
+      "tags",
+      "badges"
+    ],
+    "expected_flows": [
+      "create-monitor",
+      "configure-notification-channel",
+      "create-status-page",
+      "schedule-maintenance-window",
+      "generate-api-key",
+      "view-monitor-history",
+      "check-ssl-certificate",
+      "log-in-with-2fa",
+      "tag-and-group-monitors"
+    ],
+    "source": "https://github.com/louislam/uptime-kuma + wiki",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-07",
+    "verified_via": "two independent WebFetch iterations: (1) README features list, (2) Wiki Table of Contents — cross-referenced; consolidated 8 monitor sub-types into 'monitors' (Sonnet typically detects monitor as 1 feature, not 8 separate)"
+  },
+  "cal.com": {
+    "_research_iterations": "iter1=GitHub README (event-types, calendars, video, embed), iter2=docs/llms.txt index (added: workflows, routing-forms, teams-and-orgs, payments, webhooks, out-of-office). Final 12 covers product surface a maintainer would name.",
+    "expected_features": [
+      "event-types",
+      "bookings",
+      "calendars",
+      "video-conferencing",
+      "workflows",
+      "routing-forms",
+      "teams-and-organizations",
+      "payments",
+      "webhooks",
+      "embed",
+      "api",
+      "availability"
+    ],
+    "expected_flows": [
+      "book-event",
+      "create-event-type",
+      "connect-calendar",
+      "configure-availability",
+      "invite-team-member",
+      "create-workflow",
+      "create-routing-form",
+      "accept-booking-payment",
+      "configure-webhook",
+      "embed-cal-widget"
+    ],
+    "source": "https://github.com/calcom/cal.com + cal.com/docs/llms.txt",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-07",
+    "verified_via": "two independent WebFetch iterations: (1) repo README, (2) cal.com docs index. Iter2 surfaced workflows/routing-forms/teams/payments/webhooks/out-of-office which iter1 missed; merged final list."
   },
   "fastapi": {
     "expected_features": [
@@ -145,6 +453,6 @@
     "source": "https://fastapi.tiangolo.com/features/",
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-06",
-    "verified_via": "WebFetch on official features page, 2026-05-06 — meta items (modern-python, editor-support, high-test-coverage, unlimited-plugins) excluded as non-detectable"
+    "verified_via": "WebFetch on official features page, 2026-05-06 \u2014 meta items (modern-python, editor-support, high-test-coverage, unlimited-plugins) excluded as non-detectable"
   }
 }
