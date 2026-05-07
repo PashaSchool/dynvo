@@ -161,3 +161,24 @@ def test_reattribute_hard_drops_unrelated_tail():
     ]
     kept, stats = reattribute(feats, top_n=2, min_similarity=0.3)
     assert stats["hard_dropped"] == 1
+
+
+def test_merge_preserves_alias_names():
+    """S20 — merged-in feature's name is preserved as alias."""
+    target = {"name": "secrets", "paths": ["a.py"]}
+    source = {"name": "secret-blind-index", "paths": ["b.py"]}
+    _merge_into(target, source)
+    assert "secret-blind-index" in target["aliases"]
+
+
+def test_reattribute_returns_aliases():
+    feats = [
+        _ft("secret-manager", 100),
+        _ft("auth", 50),
+        _ft("secret-blind-index", 20),
+        _ft("secret-rotations", 15),
+    ]
+    kept, _ = reattribute(feats, top_n=2)
+    secret = next(k for k in kept if k["name"] == "secret-manager")
+    assert "secret-blind-index" in secret.get("aliases", [])
+    assert "secret-rotations" in secret.get("aliases", [])

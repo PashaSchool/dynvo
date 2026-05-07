@@ -55581,7 +55581,10 @@
         }
       ],
       "symbol_health_score": 100.0,
-      "shared_participants": []
+      "shared_participants": [],
+      "aliases": [
+        "build-info"
+      ]
     },
     {
       "name": "milli/update",
@@ -84992,7 +84995,10 @@
         }
       ],
       "symbol_health_score": 100.0,
-      "shared_participants": []
+      "shared_participants": [],
+      "aliases": [
+        "meilisearch-auth"
+      ]
     },
     {
       "name": "developer-infrastructure",
@@ -93658,7 +93664,10 @@
         }
       ],
       "symbol_health_score": 100.0,
-      "shared_participants": []
+      "shared_participants": [],
+      "aliases": [
+        "json-depth-checker"
+      ]
     },
     {
       "name": "documentation",
