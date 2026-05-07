@@ -72,6 +72,8 @@ def run(
     dedup: bool = True,  # Fix #3: auto-on (was opt-in via --dedup)
     sub_decompose: bool = False,
     tool_flows: bool = False,
+    few_shot: bool = False,
+    stack_hint: str | None = None,
     critique: bool = False,
     trace_flows: bool = False,
     rename_generic: bool = False,  # Fix #4: REVERTED — Haiku too conservative
@@ -220,6 +222,8 @@ def run(
             use_tools=use_tools,
             repo_root=repo_root,
             preferred_names=preferred_names or None,
+            few_shot=few_shot,
+            stack_hint=stack_hint,
         )
     else:
         logger.info(
@@ -236,6 +240,8 @@ def run(
             is_library=is_library,
             commit_context=commit_context,
             preferred_names=preferred_names or None,
+            few_shot=few_shot,
+            stack_hint=stack_hint,
         )
 
     if result is None:
@@ -1258,6 +1264,8 @@ def _run_single_call(
     is_library: bool,
     commit_context: str | None,
     preferred_names: list[str] | None = None,
+    few_shot: bool = False,
+    stack_hint: str | None = None,
 ) -> DeepScanResult | None:
     """Single-call dispatch: build candidates, hand them to ``deep_scan``.
 
@@ -1282,4 +1290,6 @@ def _run_single_call(
         tracker=tracker,
         commit_context=commit_context,
         preferred_names=preferred_names,
+        few_shot=few_shot,
+        stack_hint=stack_hint,
     )

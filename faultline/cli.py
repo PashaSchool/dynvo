@@ -144,6 +144,27 @@ def analyze(
         ),
         is_flag=True,
     ),
+    few_shot: bool = typer.Option(
+        False,
+        "--few-shot",
+        help=(
+            "Sprint 18: append stack-specific few-shot examples to the "
+            "deep_scan system prompt. Examples are curated from S17 corpus "
+            "ground-truth (top-F1 repo per stack). Adds ~800-1500 tokens "
+            "to system prompt (~$0.005/scan). Targets +3-15pp F1 gain."
+        ),
+        is_flag=True,
+    ),
+    stack_hint: str = typer.Option(
+        None,
+        "--stack-hint",
+        help=(
+            "Override auto-detected stack tag (e.g. 'next-monorepo', "
+            "'vue-spa', 'rails-app'). Used by --few-shot to pick which "
+            "examples to inject. When omitted, future S19 stack detector "
+            "will auto-detect; for now defaults to 'mixed' fallback."
+        ),
+    ),
     critique: bool = typer.Option(
         False,
         "--critique",
@@ -640,6 +661,8 @@ def analyze(
                         smart_aggregators=smart_aggregators,
                         flow_judge=flow_judge,
                         rename_generic=rename_generic,
+                        few_shot=few_shot,
+                        stack_hint=stack_hint,
                     )
                 except Exception as exc:  # pragma: no cover - surfacing guidance
                     console.print(
