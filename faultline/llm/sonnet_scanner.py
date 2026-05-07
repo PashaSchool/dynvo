@@ -1759,7 +1759,23 @@ _EXAMPLE_PKG_PREFIXES = (
 # Anthropic's default-tier 50 req/min rate limit while still cutting
 # wall-clock time by ~4x for large monorepos like cal.com (15+ large
 # packages × ~60s each = 15 min serial → ~4 min parallel).
-_MAX_WORKERS = 4
+def _resolve_max_workers() -> int:
+    """Workspace per-package LLM concurrency.
+
+    Default 4. Override via ``FAULTLINE_MAX_WORKERS`` env var — set to 1
+    on big repos (cal.com, n8n) where peak RAM × 4 parallel jobs OOMs
+    the host. Trades wall-clock for stability without touching the
+    algorithm.
+    """
+    raw = os.environ.get("FAULTLINE_MAX_WORKERS")
+    if raw and raw.strip().isdigit():
+        n = int(raw.strip())
+        if n >= 1:
+            return n
+    return 4
+
+
+_MAX_WORKERS = _resolve_max_workers()
 
 # Sprint 1 size guard. Above this file count, the tool_use_scan final
 # JSON consistently truncates at max_tokens (every path is echoed in
