@@ -68,6 +68,9 @@ def _latest_feature_map(repo: str) -> Path | None:
 
 def _detected_features(
     fm_path: Path,
+    *,
+    apply_compact: bool = False,
+    top_n: int | None = None,
 ) -> tuple[list[str], list[str], dict[str, str], dict[str, int]]:
     """Extract detected names + flows + tier breakdown.
 
@@ -79,12 +82,24 @@ def _detected_features(
         tier_counts: tier name → count of features.
     """
     fm = json.loads(fm_path.read_text())
+    # S19.5 — prefer derived compact_features when present (already
+    # noise-filtered + top-N-truncated + reattributed). When absent
+    # (older scans without writer's derived field), fall back to raw
+    # features and apply on-the-fly compaction if --compact / --top-n
+    # was requested.
+    if "compact_features" in fm and not apply_compact and not top_n:
+        feats = fm["compact_features"]
+    else:
+        feats = fm.get("features", [])
+        if apply_compact or top_n:
+            from faultline.analyzer.feature_compaction import compact
+            feats = compact(feats, top_n=top_n)
     eligible_features: list[str] = []
     eligible_flows: list[str] = []
     per_feature_tier: dict[str, str] = {}
     tier_counts: dict[str, int] = {"product": 0, "supporting": 0, "hidden": 0}
 
-    for f in fm.get("features", []):
+    for f in feats:
         name = f["name"]
         cat = classify_feature(
             name, f.get("paths", []), f.get("description"),
@@ -107,6 +122,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repos", nargs="*", default=None,
                         help="Subset of repos to evaluate; default = all in ground_truth.json")
+    parser.add_argument("--compact", action="store_true",
+                        help="Apply feature_compaction filter before scoring (S19.5 noise filter)")
+    parser.add_argument("--top-n", type=int, default=None,
+                        help="Cap detected features at top-N by path count (compaction lever)")
     parser.add_argument("--json-out", default=str(DEFAULT_OUT))
     parser.add_argument("--baseline", default=None,
                         help="Path to a previous eval-results.json for delta comparison")
@@ -145,7 +164,9 @@ def main() -> int:
         (
             detected_features, detected_flows,
             per_feature_tier, tier_counts,
-        ) = _detected_features(fm_path)
+        ) = _detected_features(
+            fm_path, apply_compact=args.compact, top_n=args.top_n,
+        )
 
         feat_result = judge_run(
             expected=expected_features, detected=detected_features, repo=repo,
