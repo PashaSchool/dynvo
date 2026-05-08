@@ -51,8 +51,13 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GEMINI_PRO = "gemini-2.5-pro"
-DEFAULT_GEMINI_FLASH = "gemini-flash-latest"
+import os as _os
+
+# Default Gemini model ids — overridable via env vars so users can swap
+# in 3.x preview models, deep-think variants, or older versions without
+# touching code. Fallback chain: explicit env → hardcoded default.
+DEFAULT_GEMINI_PRO = _os.environ.get("FAULTLINE_GEMINI_PRO_MODEL", "gemini-2.5-pro")
+DEFAULT_GEMINI_FLASH = _os.environ.get("FAULTLINE_GEMINI_FLASH_MODEL", "gemini-flash-latest")
 
 
 # ── Retriable detection ──────────────────────────────────────────────
@@ -181,13 +186,11 @@ class _MessagesAPI:
         from google import genai
         sdk = genai.Client(api_key=self._client.api_key)
 
-        # Compose prompt — google-genai uses role-based contents.
         contents = []
         for m in messages:
             role = m.get("role", "user")
             content = m.get("content", "")
             if isinstance(content, list):
-                # Anthropic-style multi-block; flatten text only.
                 content = " ".join(
                     b.get("text", "") for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
@@ -204,19 +207,47 @@ class _MessagesAPI:
         if system:
             config["system_instruction"] = system
 
-        try:
-            resp = sdk.models.generate_content(
-                model=model, contents=contents, config=config,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("GeminiClient.messages.create failed: %s", exc)
-            raise
-
-        text = getattr(resp, "text", None) or ""
-        return _GeminiResponse(
-            content=[_GeminiBlock(type="text", text=text)],
-            model=model,
-        )
+        # S24 — auto-retry on 503/UNAVAILABLE / 429 / 500. Pro preview
+        # models in particular hit high-demand spikes; SDK's default
+        # behaviour is to surface the error immediately, which kills
+        # the whole pipeline. Up to 4 retries with exponential backoff.
+        import time
+        last_exc: Exception | None = None
+        for attempt in range(5):
+            try:
+                resp = sdk.models.generate_content(
+                    model=model, contents=contents, config=config,
+                )
+                text = getattr(resp, "text", None) or ""
+                return _GeminiResponse(
+                    content=[_GeminiBlock(type="text", text=text)],
+                    model=model,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                msg = str(exc)
+                retriable = (
+                    "503" in msg or "429" in msg or "500" in msg or
+                    "UNAVAILABLE" in msg or "RESOURCE_EXHAUSTED" in msg or
+                    "Overloaded" in msg or "high demand" in msg
+                )
+                if not retriable or attempt >= 4:
+                    logger.warning(
+                        "GeminiClient.messages.create failed (attempt %d): %s",
+                        attempt + 1, exc,
+                    )
+                    raise
+                # Exponential backoff: 5s, 12s, 25s, 50s
+                wait = 5 * (2 ** attempt)
+                logger.info(
+                    "GeminiClient: retriable error (%s), waiting %ds before retry %d/4",
+                    type(exc).__name__, wait, attempt + 1,
+                )
+                time.sleep(wait)
+        # Unreachable
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("GeminiClient: exhausted retries with no exception")
 
 
 # ── Fallback runner ──────────────────────────────────────────────────
