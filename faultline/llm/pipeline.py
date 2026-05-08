@@ -74,6 +74,7 @@ def run(
     tool_flows: bool = False,
     few_shot: bool = False,
     stack_hint: str | None = None,
+    hierarchical: bool = False,
     critique: bool = False,
     trace_flows: bool = False,
     rename_generic: bool = False,  # Fix #4: REVERTED — Haiku too conservative
@@ -229,7 +230,27 @@ def run(
         except Exception as exc:  # noqa: BLE001 — non-fatal
             logger.debug("pipeline: stack detection skipped (%s)", exc)
 
-    if _should_use_workspace_path(workspace):
+    # S22 — hierarchical dispatch overrides workspace + single paths
+    # when explicitly enabled. Two-pass: Sonnet plans buckets, then
+    # decomposes per bucket. Default OFF.
+    if hierarchical:
+        logger.info(
+            "pipeline: hierarchical path (%d source files)",
+            len(source_files),
+        )
+        result = _run_hierarchical_scan(
+            analysis_files=source_files,
+            signatures=signatures,
+            api_key=api_key,
+            model=model,
+            tracker=tracker,
+            is_library=is_library,
+            commit_context=commit_context,
+            preferred_names=preferred_names or None,
+            few_shot=few_shot,
+            stack_hint=stack_hint,
+        )
+    elif _should_use_workspace_path(workspace):
         filtered_workspace = _filter_workspace_sources(workspace, source_files)
         logger.info(
             "pipeline: workspace path (%d packages, %d source files)",
@@ -1317,4 +1338,141 @@ def _run_single_call(
         preferred_names=preferred_names,
         few_shot=few_shot,
         stack_hint=stack_hint,
+    )
+
+
+def _run_hierarchical_scan(
+    *,
+    analysis_files: list[str],
+    signatures: dict | None,
+    api_key: str | None,
+    model: str | None,
+    tracker: CostTracker | None,
+    is_library: bool,
+    commit_context: str | None,
+    preferred_names: list[str] | None = None,
+    few_shot: bool = False,
+    stack_hint: str | None = None,
+) -> DeepScanResult | None:
+    """Sprint 22 — two-pass scan: bucket planning + per-bucket deep_scan.
+
+    Pass 1: ``plan_buckets`` asks Sonnet to group files into 8-15
+            logical buckets from the directory tree (~\$0.005/scan).
+
+    Pass 2: For each bucket, ``deep_scan(package_mode=True)`` with
+            only the bucket's files. Sonnet sees a bounded payload
+            (50-800 files per call) and returns 1-3 sub-features.
+
+    Result merge: same shape as ``deep_scan_workspace`` — concatenate
+    per-bucket DeepScanResults, dedupe paths per feature.
+
+    Falls back to ``_run_single_call`` when Pass 1 produces a single
+    bucket (no useful split).
+    """
+    from faultline.analyzer.features import detect_candidates
+    from faultline.llm.hierarchical import describe_buckets, plan_buckets
+
+    buckets = plan_buckets(analysis_files, api_key=api_key, model=model or "claude-sonnet-4-6")
+    logger.info("hierarchical: pass-1\n%s", describe_buckets(buckets))
+    if len(buckets) <= 1:
+        logger.info("hierarchical: trivial bucketing — falling back to single-call")
+        return _run_single_call(
+            analysis_files=analysis_files,
+            signatures=signatures, api_key=api_key, model=model,
+            tracker=tracker, is_library=is_library,
+            commit_context=commit_context, preferred_names=preferred_names,
+            few_shot=few_shot, stack_hint=stack_hint,
+        )
+
+    features_agg: dict[str, list[str]] = {}
+    flows_agg: dict[str, list[str]] = {}
+    descriptions_agg: dict[str, str] = {}
+    flow_descriptions_agg: dict[str, dict[str, str]] = {}
+
+    for i, b in enumerate(buckets):
+        if not b.files:
+            continue
+        cluster_candidates = detect_candidates(b.files)
+        try:
+            sub = deep_scan(
+                b.files,
+                cluster_candidates,
+                api_key=api_key,
+                signatures=signatures,
+                is_library=is_library,
+                model=model,
+                tracker=tracker,
+                package_mode=True,
+                package_name=b.name,
+                package_size=len(b.files),
+                commit_context=commit_context,
+                preferred_names=preferred_names,
+                few_shot=few_shot,
+                stack_hint=stack_hint,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "hierarchical: bucket %s (%d) failed (%s) — skipping",
+                b.name, i, type(exc).__name__,
+            )
+            continue
+        if sub is None:
+            logger.warning("hierarchical: bucket %s returned None", b.name)
+            continue
+
+        # S22 — force bucket-prefix on EVERY Pass 2 output so different
+        # buckets producing the same generic Sonnet umbrella name don't
+        # collapse into a mega-feature on aggregation.
+        # Mapping rules:
+        #   sub returns 1 feature → use bucket name as-is
+        #   sub returns 2+ features → prefix each with bucket name (
+        #     e.g. 'notification-plugins/chat', 'notification-plugins/sms')
+        sub_features = dict(sub.features or {})
+        rename_map: dict[str, str] = {}
+        if len(sub_features) == 1:
+            (sonnet_name,) = list(sub_features.keys())
+            rename_map[sonnet_name] = b.name
+        elif len(sub_features) > 1:
+            for sonnet_name in sub_features:
+                # Avoid double-prefix when Sonnet already used bucket prefix
+                if "/" in sonnet_name and sonnet_name.startswith(b.name + "/"):
+                    rename_map[sonnet_name] = sonnet_name
+                else:
+                    leaf = sonnet_name.split("/")[-1]
+                    rename_map[sonnet_name] = f"{b.name}/{leaf}"
+
+        logger.info(
+            "hierarchical: bucket '%s' → renames %s",
+            b.name, rename_map,
+        )
+
+        def _resolve(n: str, _rmap=rename_map) -> str:
+            return _rmap.get(n, n)
+
+        for name, paths in sub_features.items():
+            features_agg.setdefault(_resolve(name), []).extend(paths)
+        for name, fl_list in (sub.flows or {}).items():
+            target = _resolve(name)
+            existing = set(flows_agg.get(target, []))
+            for fl in fl_list:
+                if fl not in existing:
+                    flows_agg.setdefault(target, []).append(fl)
+                    existing.add(fl)
+        for name, desc in (sub.descriptions or {}).items():
+            descriptions_agg.setdefault(_resolve(name), desc)
+        for name, fdesc in (sub.flow_descriptions or {}).items():
+            flow_descriptions_agg.setdefault(_resolve(name), {}).update(fdesc)
+
+    if not features_agg:
+        logger.warning("hierarchical: empty result after Pass-2 — abort")
+        return None
+
+    for name in list(features_agg.keys()):
+        features_agg[name] = sorted(set(features_agg[name]))
+
+    return DeepScanResult(
+        features=features_agg,
+        flows=flows_agg,
+        descriptions=descriptions_agg,
+        flow_descriptions=flow_descriptions_agg,
     )

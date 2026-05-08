@@ -105,23 +105,33 @@ def summarise_layout(
             key = parts[0]
         bucket[key].append(f)
 
-    # If too coarse (1-2 top dirs covering >80% of files), drill one
-    # level deeper into the dominant top dirs.
-    if len(bucket) <= 2 and files:
-        coverage = sum(len(v) for v in bucket.values()) / max(len(files), 1)
-        if coverage >= 0.5:
-            deep: dict[str, list[str]] = defaultdict(list)
-            for f in files:
-                parts = f.split("/")
-                if len(parts) >= 3:
-                    key = f"{parts[0]}/{parts[1]}"
-                elif len(parts) == 2:
-                    key = parts[0]  # bare top-level file
-                else:
-                    key = parts[0] if parts else "root"
-                deep[key].append(f)
-            if len(deep) >= 3:
-                bucket = deep
+    # If too coarse — drill deeper. Two triggers:
+    #  (a) repo has only 1-2 top-level dirs (small repos like apprise
+    #      where everything lives under apprise/)
+    #  (b) ONE top-level dir dominates (≥80% of files), so the OTHER
+    #      few dirs are just bin/, packaging/, examples/. Drill into
+    #      the dominant dir.
+    needs_drill = False
+    if files:
+        if len(bucket) <= 2:
+            needs_drill = True
+        else:
+            largest = max((len(v) for v in bucket.values()), default=0)
+            if largest / max(len(files), 1) >= 0.8:
+                needs_drill = True
+    if needs_drill:
+        deep: dict[str, list[str]] = defaultdict(list)
+        for f in files:
+            parts = f.split("/")
+            if len(parts) >= 3:
+                key = f"{parts[0]}/{parts[1]}"
+            elif len(parts) == 2:
+                key = parts[0]
+            else:
+                key = parts[0] if parts else "root"
+            deep[key].append(f)
+        if len(deep) >= 3:
+            bucket = deep
 
     # Sort by file count desc; Sonnet sees biggest dirs first
     sorted_dirs = sorted(bucket.items(), key=lambda kv: -len(kv[1]))
