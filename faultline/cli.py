@@ -165,6 +165,18 @@ def analyze(
             "will auto-detect; for now defaults to 'mixed' fallback."
         ),
     ),
+    embeddings: str = typer.Option(
+        None,
+        "--embeddings",
+        help=(
+            "Sprint 21: cluster file paths via embeddings BEFORE Sonnet, "
+            "then call Sonnet per cluster (bounded payloads). Provider: "
+            "'voyage' (cloud, requires VOYAGE_AI_API_KEY) or 'local' "
+            "(offline, sentence-transformers). Default off — uses "
+            "current monolith / workspace dispatch. Targets weak cohort "
+            "(flat-Vue, large monorepos) where path soup over-decomposes."
+        ),
+    ),
     critique: bool = typer.Option(
         False,
         "--critique",
@@ -663,6 +675,7 @@ def analyze(
                         rename_generic=rename_generic,
                         few_shot=few_shot,
                         stack_hint=stack_hint,
+                        embeddings=embeddings,
                     )
                 except Exception as exc:  # pragma: no cover - surfacing guidance
                     console.print(

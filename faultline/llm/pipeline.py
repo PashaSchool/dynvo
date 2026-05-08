@@ -74,6 +74,7 @@ def run(
     tool_flows: bool = False,
     few_shot: bool = False,
     stack_hint: str | None = None,
+    embeddings: str | None = None,
     critique: bool = False,
     trace_flows: bool = False,
     rename_generic: bool = False,  # Fix #4: REVERTED — Haiku too conservative
@@ -229,7 +230,27 @@ def run(
         except Exception as exc:  # noqa: BLE001 — non-fatal
             logger.debug("pipeline: stack detection skipped (%s)", exc)
 
-    if _should_use_workspace_path(workspace):
+    # S21 — embeddings dispatch wins over both other paths when enabled.
+    # Default behaviour unchanged: no flag → no embeddings.
+    if embeddings:
+        logger.info(
+            "pipeline: embedding-clustered path (provider=%s, %d source files)",
+            embeddings, len(source_files),
+        )
+        result = _run_embedding_clustered(
+            analysis_files=source_files,
+            signatures=signatures,
+            api_key=api_key,
+            model=model,
+            tracker=tracker,
+            is_library=is_library,
+            commit_context=commit_context,
+            preferred_names=preferred_names or None,
+            embeddings_provider=embeddings,
+            few_shot=few_shot,
+            stack_hint=stack_hint,
+        )
+    elif _should_use_workspace_path(workspace):
         filtered_workspace = _filter_workspace_sources(workspace, source_files)
         logger.info(
             "pipeline: workspace path (%d packages, %d source files)",
@@ -1317,4 +1338,153 @@ def _run_single_call(
         preferred_names=preferred_names,
         few_shot=few_shot,
         stack_hint=stack_hint,
+    )
+
+
+def _run_embedding_clustered(
+    *,
+    analysis_files: list[str],
+    signatures: dict | None,
+    api_key: str | None,
+    model: str | None,
+    tracker: CostTracker | None,
+    is_library: bool,
+    commit_context: str | None,
+    preferred_names: list[str] | None = None,
+    embeddings_provider: str = "voyage",
+    few_shot: bool = False,
+    stack_hint: str | None = None,
+) -> DeepScanResult | None:
+    """Sprint 21 — cluster paths via embeddings, scan per cluster.
+
+    Architecture:
+      1. Embed all source paths via Voyage / local
+      2. K-means cluster (adaptive K)
+      3. For each cluster, call deep_scan(package_mode=True) with the
+         cluster's paths as the "package". Sonnet sees a bounded payload
+         (~50-200 paths) and just NAMES the cluster + emits flows.
+      4. Concatenate per-cluster DeepScanResults into one.
+
+    This works for repos of any size — the per-cluster bound prevents
+    Sonnet from over-decomposing and from hitting context-window limits
+    on big monorepos. Different lever from deep_scan_workspace (which
+    relies on file-system workspace markers).
+    """
+    from faultline.analyzer.features import detect_candidates
+    from faultline.llm.path_embeddings import (
+        LocalEmbedder, VoyageEmbedder, adaptive_k, cluster_paths,
+    )
+
+    # Pick embedder by flag
+    embedder = None
+    try:
+        if embeddings_provider == "voyage":
+            embedder = VoyageEmbedder()
+        elif embeddings_provider == "local":
+            embedder = LocalEmbedder()
+        else:
+            logger.warning(
+                "embeddings: unknown provider %r — falling back to single-call",
+                embeddings_provider,
+            )
+            return _run_single_call(
+                analysis_files=analysis_files,
+                signatures=signatures, api_key=api_key, model=model,
+                tracker=tracker, is_library=is_library,
+                commit_context=commit_context, preferred_names=preferred_names,
+                few_shot=few_shot, stack_hint=stack_hint,
+            )
+    except (ValueError, ImportError) as exc:
+        logger.warning(
+            "embeddings: provider init failed (%s) — falling back to single-call",
+            exc,
+        )
+        return _run_single_call(
+            analysis_files=analysis_files,
+            signatures=signatures, api_key=api_key, model=model,
+            tracker=tracker, is_library=is_library,
+            commit_context=commit_context, preferred_names=preferred_names,
+            few_shot=few_shot, stack_hint=stack_hint,
+        )
+
+    n = len(analysis_files)
+    k = adaptive_k(n)
+    logger.info("embeddings: clustering %d paths into k=%d clusters", n, k)
+    clusters = cluster_paths(analysis_files, k=k, embedder=embedder)
+    if not clusters or len(clusters) == 1:
+        logger.info("embeddings: trivial clustering — falling back to single-call")
+        return _run_single_call(
+            analysis_files=analysis_files,
+            signatures=signatures, api_key=api_key, model=model,
+            tracker=tracker, is_library=is_library,
+            commit_context=commit_context, preferred_names=preferred_names,
+            few_shot=few_shot, stack_hint=stack_hint,
+        )
+
+    # Aggregator buckets — same shape as DeepScanResult fields.
+    features_agg: dict[str, list[str]] = {}
+    flows_agg: dict[str, list[str]] = {}
+    descriptions_agg: dict[str, str] = {}
+    flow_descriptions_agg: dict[str, dict[str, str]] = {}
+
+    for i, cluster in enumerate(clusters):
+        if not cluster:
+            continue
+        cluster_name = f"cluster-{i}"
+        # Build candidates: one bucket per cluster keeps Sonnet's prompt
+        # in package_mode, where it returns 1-N sub-features.
+        cluster_candidates = detect_candidates(cluster)
+        try:
+            sub = deep_scan(
+                cluster,
+                cluster_candidates,
+                api_key=api_key,
+                signatures=signatures,
+                is_library=is_library,
+                model=model,
+                tracker=tracker,
+                package_mode=True,
+                package_name=cluster_name,
+                package_size=len(cluster),
+                commit_context=commit_context,
+                preferred_names=preferred_names,
+                few_shot=few_shot,
+                stack_hint=stack_hint,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "embeddings: cluster %d failed (%s) — skipping",
+                i, type(exc).__name__,
+            )
+            continue
+        if sub is None:
+            logger.warning("embeddings: cluster %d returned None — skipping", i)
+            continue
+        # Merge sub-result into aggregate
+        for name, paths in (sub.features or {}).items():
+            features_agg.setdefault(name, []).extend(paths)
+        for name, fl_list in (sub.flows or {}).items():
+            existing = set(flows_agg.get(name, []))
+            for fl in fl_list:
+                if fl not in existing:
+                    flows_agg.setdefault(name, []).append(fl)
+                    existing.add(fl)
+        for name, desc in (sub.descriptions or {}).items():
+            descriptions_agg.setdefault(name, desc)
+        for name, fdesc in (sub.flow_descriptions or {}).items():
+            flow_descriptions_agg.setdefault(name, {}).update(fdesc)
+
+    if not features_agg:
+        logger.warning("embeddings: no features after clustering — empty result")
+        return None
+
+    # Dedupe paths per feature
+    for name in list(features_agg.keys()):
+        features_agg[name] = sorted(set(features_agg[name]))
+
+    return DeepScanResult(
+        features=features_agg,
+        flows=flows_agg,
+        descriptions=descriptions_agg,
+        flow_descriptions=flow_descriptions_agg,
     )
