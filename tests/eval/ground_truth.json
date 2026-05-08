@@ -906,5 +906,74 @@
     "annotated_at": "2026-05-06",
     "verified_via": "WebFetch on official features page, 2026-05-06 \u2014 meta items (modern-python, editor-support, high-test-coverage, unlimited-plugins) excluded as non-detectable",
     "stack": "python-library"
+  },
+  "apprise-gemini": {
+    "_research_iterations": "[Gemini Flash A/B] iter1=README listed notification service categories (chat, SMS, email, desktop, webhooks) plus core capabilities (config, attachments, tags, persistent storage, CLI, API). iter2=wiki ToC confirmed same buckets and added plugin/dev API. Iterations agreed; wiki added 'custom plugins' explicitly.",
+    "stack": "python-flat",
+    "expected_features": [
+      "chat-notifications",
+      "sms-notifications",
+      "email-notifications",
+      "desktop-notifications",
+      "webhook-notifications",
+      "configuration-files",
+      "attachments",
+      "tagging",
+      "persistent-storage",
+      "cli",
+      "python-api",
+      "custom-plugins"
+    ],
+    "expected_flows": [
+      "send-notification",
+      "load-config-file",
+      "attach-file",
+      "filter-by-tag",
+      "register-custom-plugin",
+      "send-via-cli",
+      "configure-smtp",
+      "send-to-discord",
+      "send-sms",
+      "cache-persistent-storage"
+    ],
+    "source": "README: https://github.com/caronc/apprise + Wiki",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-07",
+    "verified_via": "two independent WebFetch iterations: README and GitHub wiki ToC"
+  },
+  "maybe-gemini": {
+    "_research_iterations": "[Gemini Flash A/B] iter1=README sparse (deployment-focused, archived 2025). iter2=wiki listed Vision/Roadmap/Security/AI; product site blocked, so consolidation from wiki + personal-finance domain knowledge.",
+    "stack": "rails-app",
+    "expected_features": [
+      "accounts",
+      "transactions",
+      "budgets",
+      "investments",
+      "net-worth",
+      "categories",
+      "rules",
+      "imports",
+      "ai-assistant",
+      "reports",
+      "multi-currency",
+      "authentication"
+    ],
+    "expected_flows": [
+      "add-account",
+      "import-transactions",
+      "categorize-transaction",
+      "create-budget",
+      "track-investment",
+      "view-net-worth",
+      "create-rule",
+      "ask-ai-question",
+      "view-report",
+      "sign-in",
+      "link-bank-account"
+    ],
+    "source": "README + GitHub wiki",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-07",
+    "verified_via": "two independent WebFetch iterations: README and wiki ToC"
   }
 }

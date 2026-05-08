@@ -174,14 +174,16 @@ def detect_flows_for_feature(
 
     if client is None:
         import os
-        import anthropic
+        from faultline.llm.client_factory import (
+            _gemini_only_enabled, gemini_model_for, make_llm_client,
+        )
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
+        if not key and not _gemini_only_enabled():
             logger.warning("flow_v2(%s): no API key — skipping", name)
             return None
-        client = anthropic.Anthropic(api_key=key)
+        client = make_llm_client(api_key=key)
 
-    resolved_model = model or DEFAULT_MODEL
+    resolved_model = gemini_model_for(model or DEFAULT_MODEL) or model or DEFAULT_MODEL
 
     try:
         parsed = tool_use_scan(

@@ -143,10 +143,15 @@ class GeminiClient:
     """
 
     def __init__(self, api_key: str | None = None) -> None:
-        self.api_key = api_key or os.environ.get("GOOGLE_API_KEY")
+        self.api_key = (
+            api_key
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
         if not self.api_key:
             raise ValueError(
-                "GeminiClient requires GOOGLE_API_KEY env var or api_key=...",
+                "GeminiClient requires GEMINI_API_KEY (preferred) or "
+                "GOOGLE_API_KEY env var, or api_key=...",
             )
         try:
             from google import genai  # noqa: F401

@@ -711,13 +711,16 @@ def re_judge_with_signals(
 
     if client is None:
         api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
+        from faultline.llm.client_factory import (
+            _gemini_only_enabled, gemini_model_for, make_llm_client,
+        )
+        if not api_key and not _gemini_only_enabled():
             return 0
         try:
-            from anthropic import Anthropic
-        except ImportError:
+            client = make_llm_client(api_key=api_key)
+        except Exception:  # noqa: BLE001
             return 0
-        client = Anthropic(api_key=api_key)
+        model = gemini_model_for(model) or model
 
     params = deterministic_params(model)
     _create_kwargs = dict(
@@ -846,19 +849,20 @@ def judge_flow_attribution(
     # Build / get client (only when there's fresh work)
     if fresh_flows:
         if client is None:
+            from faultline.llm.client_factory import (
+                _gemini_only_enabled, gemini_model_for, make_llm_client,
+            )
             api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-            if not api_key:
+            if not api_key and not _gemini_only_enabled():
                 logger.warning("flow_judge: no API key — skipping fresh batch")
-                # Still apply cached verdicts even without API
                 fresh_flows = []
             else:
                 try:
-                    from anthropic import Anthropic
-                except ImportError:
-                    logger.warning("flow_judge: anthropic package missing")
+                    client = make_llm_client(api_key=api_key)
+                    model = gemini_model_for(model) or model
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("flow_judge: client init failed (%s)", exc)
                     fresh_flows = []
-                else:
-                    client = Anthropic(api_key=api_key)
 
     # Batch fresh flows
     batches = (
