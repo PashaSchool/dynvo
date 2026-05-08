@@ -58,7 +58,7 @@ def analyze(
     provider: str = typer.Option(
         "anthropic",
         "--provider",
-        help="LLM provider: anthropic, ollama, or deepseek",
+        help="LLM provider: anthropic (default) or ollama",
     ),
     model: Optional[str] = typer.Option(
         None,
@@ -67,7 +67,6 @@ def analyze(
             "Model name override. "
             "Anthropic default: claude-haiku-4-5. "
             "Ollama default: llama3.1:8b (recommended). "
-            "DeepSeek default: deepseek-chat (V3). "
             "Other Ollama options: mistral-nemo:12b (best quality), qwen2.5:7b."
         ),
     ),
@@ -75,11 +74,6 @@ def analyze(
         None,
         "--api-key",
         help="Anthropic API key (or set ANTHROPIC_API_KEY env var)",
-    ),
-    deepseek_key: Optional[str] = typer.Option(
-        None,
-        "--deepseek-key",
-        help="DeepSeek API key (or set DEEPSEEK_API_KEY env var)",
     ),
     ollama_url: str = typer.Option(
         _DEFAULT_OLLAMA_HOST,
@@ -376,8 +370,8 @@ def analyze(
     if flows and not llm:
         llm = True
 
-    if llm and provider not in ("anthropic", "ollama", "deepseek"):
-        console.print(f"[red]Unknown provider '{provider}'. Use: anthropic, ollama, or deepseek[/red]")
+    if llm and provider not in ("anthropic", "ollama"):
+        console.print(f"[red]Unknown provider '{provider}'. Use: anthropic or ollama[/red]")
         raise typer.Exit(1)
 
     if llm and provider == "ollama":
@@ -398,10 +392,6 @@ def analyze(
         remote_url = get_remote_url(repo)
 
         # 2. Validate LLM access early — before the long git analysis
-        # Resolve effective API key based on provider
-        if provider == "deepseek":
-            import os as _os
-            api_key = deepseek_key or _os.environ.get("DEEPSEEK_API_KEY") or api_key
         if llm:
             _validate_llm_access(provider, api_key, model, ollama_url)
 
@@ -467,7 +457,7 @@ def analyze(
         # true:
         #   • --legacy was passed explicitly
         #   • --llm is off (heuristic-only analysis)
-        #   • provider is ollama or deepseek (the new pipeline is
+        #   • provider is ollama (the new pipeline is
         #     Anthropic-only for now)
         # The result is assigned to ``raw_mapping`` just like the legacy
         # branches do, so everything downstream (path_prefix restore,
@@ -1742,18 +1732,6 @@ def _validate_llm_access(
             raise typer.Exit(1)
         console.print(f"[green]✓[/green] Ollama ready ({resolved_model})")
 
-    elif provider == "deepseek":
-        from faultline.llm.deepseek_client import validate_deepseek, _DEFAULT_MODEL as _DS_MODEL
-        resolved_model = model or _DS_MODEL
-        console.print(f"[dim]Validating DeepSeek ({resolved_model})...[/dim]")
-        # deepseek_key is passed via api_key parameter in CLI flow
-        is_valid, error_msg = validate_deepseek(api_key=api_key, model=resolved_model)
-        if not is_valid:
-            console.print(f"[red]✗ {error_msg}[/red]")
-            raise typer.Exit(1)
-        console.print(f"[green]✓[/green] DeepSeek ready ({resolved_model})")
-
-
 def _merge_and_name_with_llm(
     cluster_mapping: dict[str, list[str]],
     provider: str,
@@ -1792,19 +1770,10 @@ def _merge_and_name_with_llm(
             cluster_mapping, model=resolved_model, host=ollama_url, commits=commits, layer_context=layer_context
         )
 
-    elif provider == "deepseek":
-        from faultline.llm.detector import merge_and_name_clusters_deepseek, _DEFAULT_DEEPSEEK_MODEL
-        resolved_model = model or _DEFAULT_DEEPSEEK_MODEL
-        console.print(f"[blue]Merging & naming features with DeepSeek ({resolved_model})...[/blue]")
-        named = merge_and_name_clusters_deepseek(
-            cluster_mapping, api_key=api_key, model=resolved_model, commits=commits,
-            layer_context=layer_context, cluster_edges=cluster_edges,
-        )
-
     else:
         named = cluster_mapping
 
-    labels = {"anthropic": "Claude", "ollama": "Ollama", "deepseek": "DeepSeek"}
+    labels = {"anthropic": "Claude", "ollama": "Ollama"}
     console.print(f"[green]✓[/green] {labels.get(provider, provider)} merged → {len(named)} features")
     return named
 
@@ -1840,19 +1809,11 @@ def _detect_with_llm(
             path_prefix=path_prefix, signatures=signatures,
             layer_context=layer_context,
         )
-    elif provider == "deepseek":
-        from faultline.llm.detector import detect_features_deepseek, _DEFAULT_DEEPSEEK_MODEL
-        resolved_model = model or _DEFAULT_DEEPSEEK_MODEL
-        result = detect_features_deepseek(
-            files, api_key=api_key, model=resolved_model, commits=commits,
-            path_prefix=path_prefix, signatures=signatures,
-            layer_context=layer_context,
-        )
     else:
         result = {}
 
     if result:
-        labels = {"anthropic": "Claude", "ollama": "Ollama", "deepseek": "DeepSeek"}
+        labels = {"anthropic": "Claude", "ollama": "Ollama"}
         console.print(f"[green]✓[/green] {labels.get(provider, provider)} detected {len(result)} features")
         return result
 
@@ -2052,7 +2013,7 @@ def _detect_flows(
     from faultline.llm.flow_detector import detect_flows_llm, detect_flows_ollama, _DEFAULT_OLLAMA_MODEL as _OLLAMA_MODEL
     from faultline.llm.flow_detector import _FlowFileMapping
 
-    labels = {"anthropic": "Claude", "ollama": "Ollama", "deepseek": "DeepSeek"}
+    labels = {"anthropic": "Claude", "ollama": "Ollama"}
     label = labels.get(provider, provider)
     console.print(f"[blue]Detecting flows with {label}...[/blue]")
 
@@ -2118,18 +2079,6 @@ def _detect_flows(
                 feature_files=analysis_feature_files,
                 signatures=signatures,
                 api_key=api_key,
-                e2e_anchors=feature_e2e or None,
-                commits=feature_commits,
-            )
-        elif provider == "deepseek":
-            from faultline.llm.flow_detector import detect_flows_deepseek, _DEFAULT_DEEPSEEK_MODEL as _DS_MODEL
-            resolved_model = model or _DS_MODEL
-            flow_mappings = detect_flows_deepseek(
-                feature_name=feature.name,
-                feature_files=analysis_feature_files,
-                signatures=signatures,
-                api_key=api_key,
-                model=resolved_model,
                 e2e_anchors=feature_e2e or None,
                 commits=feature_commits,
             )

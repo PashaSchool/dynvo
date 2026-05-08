@@ -397,45 +397,6 @@ def detect_flows_ollama(
         return []
 
 
-_DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
-
-
-def detect_flows_deepseek(
-    feature_name: str,
-    feature_files: list[str],
-    signatures: dict[str, FileSignature],
-    api_key: str | None = None,
-    model: str = _DEFAULT_DEEPSEEK_MODEL,
-    base_url: str | None = None,
-    e2e_anchors: dict[str, list[str]] | None = None,
-    commits: list | None = None,
-) -> list[_FlowFileMapping]:
-    """Detects user-facing flows using DeepSeek API. Returns [] on failure."""
-    if not feature_files:
-        return []
-
-    from faultline.llm.deepseek_client import call_deepseek_parsed
-
-    signatures_text = _build_signatures_text(feature_files, signatures)
-    e2e_context = _format_e2e_anchors(e2e_anchors or {})
-    extra_context = _build_flow_extra_context(feature_files, signatures, commits)
-    prompt = _FLOW_USER_PROMPT.format(
-        feature_name=feature_name,
-        e2e_context=e2e_context,
-        signatures_text=signatures_text,
-        extra_context=extra_context,
-    )
-
-    parsed = call_deepseek_parsed(
-        _FLOW_SYSTEM_PROMPT, prompt, _FlowDetectionResponse,
-        api_key=api_key, model=model, base_url=base_url, max_tokens=4096,
-    )
-    if not parsed:
-        return []
-    filtered = _filter_valid_files(parsed.flows, set(feature_files))
-    return _enrich_crud_gaps(filtered, feature_name, feature_files, signatures)
-
-
 def _chunked_flow_detection(
     client: anthropic.Anthropic,
     feature_name: str,

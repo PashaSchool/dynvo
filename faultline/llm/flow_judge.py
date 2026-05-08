@@ -720,20 +720,40 @@ def re_judge_with_signals(
         client = Anthropic(api_key=api_key)
 
     params = deterministic_params(model)
+    _create_kwargs = dict(
+        model=model,
+        system=_SYSTEM_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": _build_prompt(candidates, features),
+        }],
+        max_tokens=DEFAULT_MAX_TOKENS,
+        **params,
+    )
     try:
-        response = client.messages.create(
-            model=model,
-            system=_SYSTEM_PROMPT,
-            messages=[{
-                "role": "user",
-                "content": _build_prompt(candidates, features),
-            }],
-            max_tokens=DEFAULT_MAX_TOKENS,
-            **params,
-        )
+        response = client.messages.create(**_create_kwargs)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("re_judge_with_signals: API call failed (%s)", exc)
-        return 0
+        # S24 — try Gemini fallback on retriable errors
+        from faultline.llm.gemini_fallback import (
+            GeminiClient, is_retriable, map_to_gemini,
+        )
+        if is_retriable(exc) and os.environ.get("GOOGLE_API_KEY"):
+            try:
+                logger.warning(
+                    "re_judge_with_signals: Anthropic %s — retrying via Gemini",
+                    type(exc).__name__,
+                )
+                _create_kwargs["model"] = map_to_gemini(model)
+                response = GeminiClient().messages.create(**_create_kwargs)
+            except Exception as gem_exc:  # noqa: BLE001
+                logger.warning(
+                    "re_judge_with_signals: Gemini fallback also failed (%s)",
+                    gem_exc,
+                )
+                return 0
+        else:
+            logger.warning("re_judge_with_signals: API call failed (%s)", exc)
+            return 0
 
     if tracker is not None:
         try:
@@ -850,20 +870,40 @@ def judge_flow_attribution(
 
     for batch in batches:
         params = deterministic_params(model)
+        _kwargs = dict(
+            model=model,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": _build_prompt(batch, features)}],
+            max_tokens=DEFAULT_MAX_TOKENS,
+            **params,
+        )
         try:
-            response = client.messages.create(
-                model=model,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": _build_prompt(batch, features)}],
-                max_tokens=DEFAULT_MAX_TOKENS,
-                **params,
+            response = client.messages.create(**_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            # S24 — Gemini fallback on retriable errors
+            from faultline.llm.gemini_fallback import (
+                GeminiClient, is_retriable, map_to_gemini,
             )
-        except Exception as exc:  # noqa: BLE001 — opportunistic
-            logger.warning(
-                "flow_judge: API call failed (%s) — skipping batch of %d",
-                exc, len(batch),
-            )
-            continue
+            if is_retriable(exc) and os.environ.get("GOOGLE_API_KEY"):
+                try:
+                    logger.warning(
+                        "flow_judge: Anthropic %s — retrying batch via Gemini",
+                        type(exc).__name__,
+                    )
+                    _kwargs["model"] = map_to_gemini(model)
+                    response = GeminiClient().messages.create(**_kwargs)
+                except Exception as gem_exc:  # noqa: BLE001
+                    logger.warning(
+                        "flow_judge: Gemini fallback also failed (%s) — skip batch %d",
+                        gem_exc, len(batch),
+                    )
+                    continue
+            else:
+                logger.warning(
+                    "flow_judge: API call failed (%s) — skipping batch of %d",
+                    exc, len(batch),
+                )
+                continue
 
         if tracker is not None:
             usage = getattr(response, "usage", None)

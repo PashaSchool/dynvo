@@ -116,64 +116,6 @@ def summarize_with_llm(
         return None
 
 
-def summarize_with_deepseek(
-    digest_data: dict,
-    api_key: str | None = None,
-    model: str = "deepseek-chat",
-    base_url: str = "https://api.deepseek.com",
-) -> dict | None:
-    """Summarizes daily commit data using DeepSeek API (OpenAI-compatible).
-
-    Zero imports from faultline core — fully self-contained.
-    """
-    key = api_key or os.environ.get("DEEPSEEK_API_KEY")
-    if not key:
-        return None
-
-    if digest_data["total_commits"] == 0:
-        return {
-            "summary": f"No commits merged to {digest_data['branch']} on {digest_data['date']}.",
-            "highlights": [],
-            "risk_signals": [],
-            "categories": [],
-        }
-
-    try:
-        from openai import OpenAI
-    except ImportError:
-        logger.warning("openai package not installed (required for DeepSeek)")
-        return None
-
-    prompt = _format_digest_prompt(digest_data)
-
-    try:
-        client = OpenAI(api_key=key, base_url=base_url)
-        response = client.chat.completions.create(
-            model=model,
-            max_tokens=2048,
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT + "\n\nRespond with valid JSON only."},
-                {"role": "user", "content": prompt},
-            ],
-        )
-
-        text = response.choices[0].message.content
-        if not text:
-            return None
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-
-        return json.loads(text)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning("DeepSeek digest summarization failed: %s", e)
-        return None
-
 
 def _format_digest_prompt(digest_data: dict) -> str:
     """Formats commit data into a prompt string. Shared by all providers."""
