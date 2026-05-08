@@ -165,6 +165,19 @@ def analyze(
             "will auto-detect; for now defaults to 'mixed' fallback."
         ),
     ),
+    hierarchical: bool = typer.Option(
+        False,
+        "--hierarchical",
+        help=(
+            "Sprint 22 (experimental): two-pass scan. Pass 1 — Sonnet "
+            "plans 8-15 logical buckets from the dir tree. Pass 2 — "
+            "per-bucket deep_scan with bounded payload (50-800 files). "
+            "Bypasses workspace + single-call paths. Targets large "
+            "monorepos where the monolith path over-decomposes. Adds "
+            "~\$0.005 (Pass 1) + ~\$0.02/bucket (Pass 2)."
+        ),
+        is_flag=True,
+    ),
     critique: bool = typer.Option(
         False,
         "--critique",
@@ -663,6 +676,7 @@ def analyze(
                         rename_generic=rename_generic,
                         few_shot=few_shot,
                         stack_hint=stack_hint,
+                        hierarchical=hierarchical,
                     )
                 except Exception as exc:  # pragma: no cover - surfacing guidance
                     console.print(
