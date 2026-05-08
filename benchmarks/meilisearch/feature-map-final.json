@@ -48059,7 +48059,17 @@
         "crates/build-info/Cargo.toml",
         "crates/build-info/build.rs",
         "crates/build-info/src/lib.rs",
-        "crates/build-info/src/main.rs"
+        "crates/build-info/src/main.rs",
+        "crates/http-client/Cargo.toml",
+        "crates/http-client/src/lib.rs",
+        "crates/http-client/src/policy.rs",
+        "crates/http-client/src/reqwest/error.rs",
+        "crates/http-client/src/reqwest/mod.rs",
+        "crates/http-client/src/reqwest/request.rs",
+        "crates/http-client/src/reqwest/resolver.rs",
+        "crates/http-client/src/ureq/config.rs",
+        "crates/http-client/src/ureq/mod.rs",
+        "crates/http-client/src/ureq/resolver.rs"
       ],
       "authors": [
         "Bruno Verachten",
@@ -48084,9 +48094,9 @@
         "dependabot[bot]",
         "nnethercott"
       ],
-      "total_commits": 481,
-      "bug_fixes": 70,
-      "bug_fix_ratio": 0.14553014553014554,
+      "total_commits": 489,
+      "bug_fixes": 71,
+      "bug_fix_ratio": 0.14519427402862986,
       "last_modified": "2026-04-15T06:42:27Z",
       "health_score": 96.3,
       "flows": [
@@ -55583,7 +55593,8 @@
       "symbol_health_score": 100.0,
       "shared_participants": [],
       "aliases": [
-        "build-info"
+        "build-info",
+        "http-client"
       ]
     },
     {
@@ -80298,12 +80309,7 @@
         "crates/meilisearch/src/search/mod_test.rs",
         "crates/meilisearch/src/search/ranking_rules.rs",
         "crates/meilisearch/src/search/value_paths_visitor.rs",
-        "crates/meilisearch/src/search_queue.rs",
-        "crates/meilisearch-auth/Cargo.toml",
-        "crates/meilisearch-auth/src/dump.rs",
-        "crates/meilisearch-auth/src/error.rs",
-        "crates/meilisearch-auth/src/lib.rs",
-        "crates/meilisearch-auth/src/store.rs"
+        "crates/meilisearch/src/search_queue.rs"
       ],
       "authors": [
         "Bruno Verachten",
@@ -80334,9 +80340,9 @@
         "nicolasvienot",
         "nnethercott"
       ],
-      "total_commits": 704,
-      "bug_fixes": 109,
-      "bug_fix_ratio": 0.15482954545454544,
+      "total_commits": 658,
+      "bug_fixes": 103,
+      "bug_fix_ratio": 0.157,
       "last_modified": "2026-04-29T09:53:39Z",
       "health_score": 95.9,
       "flows": [
@@ -81168,290 +81174,6 @@
           "secondary_features": [
             "dump"
           ]
-        },
-        {
-          "name": "create-api-key",
-          "display_name": "Create API Key",
-          "description": "User creates a new API key with specified actions, indexes, and expiration.",
-          "participants": [],
-          "entry_point_file": "crates/meilisearch-auth/src/lib.rs",
-          "entry_point_line": 52,
-          "paths": [
-            "crates/meilisearch-auth/Cargo.toml",
-            "crates/meilisearch-auth/src/dump.rs",
-            "crates/meilisearch-auth/src/error.rs",
-            "crates/meilisearch-auth/src/lib.rs",
-            "crates/meilisearch-auth/src/store.rs"
-          ],
-          "authors": [
-            "Cl\u00e9ment Renault",
-            "Cl\u00e9mentine",
-            "Kerollmops",
-            "Louis Dureuil",
-            "Many the fish",
-            "Martin Grigorov",
-            "Mubelotix",
-            "Tamo",
-            "Yo Eight",
-            "YoEight",
-            "curquiza",
-            "dependabot[bot]"
-          ],
-          "total_commits": 46,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.13,
-          "last_modified": "2026-03-26T14:25:18Z",
-          "health_score": 95.3,
-          "bug_fix_prs": [],
-          "test_file_count": 0,
-          "test_files": [],
-          "weekly_points": [],
-          "bus_factor": 1,
-          "health_trend": null,
-          "hotspot_files": [],
-          "coverage_pct": null,
-          "symbol_attributions": [],
-          "secondary_features": []
-        },
-        {
-          "name": "update-api-key",
-          "display_name": "Update API Key",
-          "description": "User updates the name or description of an existing API key.",
-          "participants": [],
-          "entry_point_file": "crates/meilisearch-auth/src/lib.rs",
-          "entry_point_line": 59,
-          "paths": [
-            "crates/meilisearch-auth/Cargo.toml",
-            "crates/meilisearch-auth/src/dump.rs",
-            "crates/meilisearch-auth/src/error.rs",
-            "crates/meilisearch-auth/src/lib.rs",
-            "crates/meilisearch-auth/src/store.rs"
-          ],
-          "authors": [
-            "Cl\u00e9ment Renault",
-            "Cl\u00e9mentine",
-            "Kerollmops",
-            "Louis Dureuil",
-            "Many the fish",
-            "Martin Grigorov",
-            "Mubelotix",
-            "Tamo",
-            "Yo Eight",
-            "YoEight",
-            "curquiza",
-            "dependabot[bot]"
-          ],
-          "total_commits": 46,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.13,
-          "last_modified": "2026-03-26T14:25:18Z",
-          "health_score": 95.3,
-          "bug_fix_prs": [],
-          "test_file_count": 0,
-          "test_files": [],
-          "weekly_points": [],
-          "bus_factor": 1,
-          "health_trend": null,
-          "hotspot_files": [],
-          "coverage_pct": null,
-          "symbol_attributions": [],
-          "secondary_features": []
-        },
-        {
-          "name": "authorize-api-key-action",
-          "display_name": "Authorize API Key Action",
-          "description": "System validates an encoded API key and checks whether it is permitted to perform a given action on a target index.",
-          "participants": [],
-          "entry_point_file": "crates/meilisearch-auth/src/lib.rs",
-          "entry_point_line": 93,
-          "paths": [
-            "crates/meilisearch-auth/Cargo.toml",
-            "crates/meilisearch-auth/src/dump.rs",
-            "crates/meilisearch-auth/src/error.rs",
-            "crates/meilisearch-auth/src/lib.rs",
-            "crates/meilisearch-auth/src/store.rs"
-          ],
-          "authors": [
-            "Cl\u00e9ment Renault",
-            "Cl\u00e9mentine",
-            "Kerollmops",
-            "Louis Dureuil",
-            "Many the fish",
-            "Martin Grigorov",
-            "Mubelotix",
-            "Tamo",
-            "Yo Eight",
-            "YoEight",
-            "curquiza",
-            "dependabot[bot]"
-          ],
-          "total_commits": 46,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.13,
-          "last_modified": "2026-03-26T14:25:18Z",
-          "health_score": 95.3,
-          "bug_fix_prs": [],
-          "test_file_count": 0,
-          "test_files": [],
-          "weekly_points": [],
-          "bus_factor": 1,
-          "health_trend": null,
-          "hotspot_files": [],
-          "coverage_pct": null,
-          "symbol_attributions": [],
-          "secondary_features": []
-        },
-        {
-          "name": "dump-api-keys",
-          "display_name": "Dump API Keys",
-          "description": "Operator exports all stored API keys to a flat file as part of a database dump.",
-          "participants": [],
-          "entry_point_file": "crates/meilisearch-auth/src/dump.rs",
-          "entry_point_line": 13,
-          "paths": [
-            "crates/meilisearch-auth/Cargo.toml",
-            "crates/meilisearch-auth/src/dump.rs",
-            "crates/meilisearch-auth/src/error.rs",
-            "crates/meilisearch-auth/src/lib.rs",
-            "crates/meilisearch-auth/src/store.rs"
-          ],
-          "authors": [
-            "Cl\u00e9ment Renault",
-            "Cl\u00e9mentine",
-            "Kerollmops",
-            "Louis Dureuil",
-            "Many the fish",
-            "Martin Grigorov",
-            "Mubelotix",
-            "Tamo",
-            "Yo Eight",
-            "YoEight",
-            "curquiza",
-            "dependabot[bot]"
-          ],
-          "total_commits": 46,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.13,
-          "last_modified": "2026-03-26T14:25:18Z",
-          "health_score": 95.3,
-          "bug_fix_prs": [],
-          "test_file_count": 0,
-          "test_files": [],
-          "weekly_points": [],
-          "bus_factor": 1,
-          "health_trend": null,
-          "hotspot_files": [],
-          "coverage_pct": null,
-          "symbol_attributions": [],
-          "secondary_features": [
-            "dump"
-          ]
-        },
-        {
-          "name": "restore-api-keys-from-dump",
-          "display_name": "Restore API Keys From Dump",
-          "description": "Operator imports API keys from a previously created dump file into the auth store.",
-          "participants": [],
-          "entry_point_file": "crates/meilisearch-auth/src/dump.rs",
-          "entry_point_line": 28,
-          "paths": [
-            "crates/meilisearch-auth/Cargo.toml",
-            "crates/meilisearch-auth/src/dump.rs",
-            "crates/meilisearch-auth/src/error.rs",
-            "crates/meilisearch-auth/src/lib.rs",
-            "crates/meilisearch-auth/src/store.rs"
-          ],
-          "authors": [
-            "Cl\u00e9ment Renault",
-            "Cl\u00e9mentine",
-            "Kerollmops",
-            "Louis Dureuil",
-            "Many the fish",
-            "Martin Grigorov",
-            "Mubelotix",
-            "Tamo",
-            "Yo Eight",
-            "YoEight",
-            "curquiza",
-            "dependabot[bot]"
-          ],
-          "total_commits": 46,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.13,
-          "last_modified": "2026-03-26T14:25:18Z",
-          "health_score": 95.3,
-          "bug_fix_prs": [],
-          "test_file_count": 0,
-          "test_files": [],
-          "weekly_points": [],
-          "bus_factor": 1,
-          "health_trend": null,
-          "hotspot_files": [],
-          "coverage_pct": null,
-          "symbol_attributions": [],
-          "secondary_features": [
-            "dump"
-          ]
-        },
-        {
-          "name": "auth-control-flow",
-          "display_name": "Auth Control Flow",
-          "description": "Manages authentication controller initialization and credential validation.",
-          "participants": [
-            {
-              "path": "crates/meilisearch-auth/src/lib.rs",
-              "layer": "support",
-              "depth": 0,
-              "side_effect_only": false,
-              "symbols": [
-                {
-                  "name": "AuthController",
-                  "start_line": 20,
-                  "end_line": 25,
-                  "kind": "class"
-                }
-              ],
-              "role": null
-            }
-          ],
-          "entry_point_file": null,
-          "entry_point_line": null,
-          "paths": [
-            "crates/meilisearch-auth/Cargo.toml",
-            "crates/meilisearch-auth/src/dump.rs",
-            "crates/meilisearch-auth/src/error.rs",
-            "crates/meilisearch-auth/src/lib.rs",
-            "crates/meilisearch-auth/src/store.rs"
-          ],
-          "authors": [
-            "Cl\u00e9ment Renault",
-            "Cl\u00e9mentine",
-            "Kerollmops",
-            "Louis Dureuil",
-            "Many the fish",
-            "Martin Grigorov",
-            "Mubelotix",
-            "Tamo",
-            "Yo Eight",
-            "YoEight",
-            "curquiza",
-            "dependabot[bot]"
-          ],
-          "total_commits": 46,
-          "bug_fixes": 6,
-          "bug_fix_ratio": 0.13,
-          "last_modified": "2026-03-26T14:25:18Z",
-          "health_score": 95.3,
-          "bug_fix_prs": [],
-          "test_file_count": 0,
-          "test_files": [],
-          "weekly_points": [],
-          "bus_factor": 1,
-          "health_trend": null,
-          "hotspot_files": [],
-          "coverage_pct": null,
-          "symbol_attributions": [],
-          "secondary_features": []
         }
       ],
       "bug_fix_prs": [
@@ -84995,10 +84717,7 @@
         }
       ],
       "symbol_health_score": 100.0,
-      "shared_participants": [],
-      "aliases": [
-        "meilisearch-auth"
-      ]
+      "shared_participants": []
     },
     {
       "name": "developer-infrastructure",
@@ -91066,456 +90785,6 @@
       "shared_participants": []
     },
     {
-      "name": "http-client",
-      "display_name": "HTTP Client",
-      "description": null,
-      "category": "sdk",
-      "paths": [
-        "crates/http-client/Cargo.toml",
-        "crates/http-client/src/lib.rs",
-        "crates/http-client/src/policy.rs",
-        "crates/http-client/src/reqwest/error.rs",
-        "crates/http-client/src/reqwest/mod.rs",
-        "crates/http-client/src/reqwest/request.rs",
-        "crates/http-client/src/reqwest/resolver.rs",
-        "crates/http-client/src/ureq/config.rs",
-        "crates/http-client/src/ureq/mod.rs",
-        "crates/http-client/src/ureq/resolver.rs"
-      ],
-      "authors": [
-        "Cl\u00e9ment Renault",
-        "Louis Dureuil"
-      ],
-      "total_commits": 8,
-      "bug_fixes": 1,
-      "bug_fix_ratio": 0.125,
-      "last_modified": "2026-02-09T10:29:19Z",
-      "health_score": 80.4,
-      "flows": [],
-      "bug_fix_prs": [
-        {
-          "number": 6148,
-          "url": "https://github.com/meilisearch/meilisearch/pull/6148",
-          "title": "Merge pull request #6148 from meilisearch/fix-tests-one-more-time",
-          "author": "Louis Dureuil",
-          "date": "2026-02-09T10:29:19Z"
-        }
-      ],
-      "coverage_pct": null,
-      "shared_attributions": [],
-      "participants": [
-        {
-          "path": "crates/http-client/Cargo.toml",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/lib.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "reqwest",
-              "start_line": 1,
-              "end_line": 1,
-              "kind": "const"
-            },
-            {
-              "name": "ureq",
-              "start_line": 2,
-              "end_line": 2,
-              "kind": "const"
-            },
-            {
-              "name": "policy",
-              "start_line": 3,
-              "end_line": 73,
-              "kind": "const"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/policy.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "IpPolicy",
-              "start_line": 7,
-              "end_line": 12,
-              "kind": "class"
-            },
-            {
-              "name": "deny_all_local_ips",
-              "start_line": 13,
-              "end_line": 17,
-              "kind": "function"
-            },
-            {
-              "name": "deny_local_ips",
-              "start_line": 18,
-              "end_line": 22,
-              "kind": "function"
-            },
-            {
-              "name": "danger_always_allow",
-              "start_line": 23,
-              "end_line": 27,
-              "kind": "function"
-            },
-            {
-              "name": "check_ip_in_hostname",
-              "start_line": 28,
-              "end_line": 40,
-              "kind": "function"
-            },
-            {
-              "name": "check_socket_addr",
-              "start_line": 41,
-              "end_line": 44,
-              "kind": "function"
-            },
-            {
-              "name": "check_ip",
-              "start_line": 45,
-              "end_line": 73,
-              "kind": "function"
-            },
-            {
-              "name": "Error",
-              "start_line": 74,
-              "end_line": 140,
-              "kind": "class"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/reqwest/error.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "Error",
-              "start_line": 8,
-              "end_line": 13,
-              "kind": "class"
-            },
-            {
-              "name": "is_timeout",
-              "start_line": 14,
-              "end_line": 19,
-              "kind": "function"
-            },
-            {
-              "name": "without_url",
-              "start_line": 20,
-              "end_line": 39,
-              "kind": "function"
-            },
-            {
-              "name": "Result",
-              "start_line": 40,
-              "end_line": 53,
-              "kind": "type"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/reqwest/mod.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "error",
-              "start_line": 6,
-              "end_line": 16,
-              "kind": "const"
-            },
-            {
-              "name": "Client",
-              "start_line": 17,
-              "end_line": 22,
-              "kind": "class"
-            },
-            {
-              "name": "builder",
-              "start_line": 23,
-              "end_line": 32,
-              "kind": "function"
-            },
-            {
-              "name": "get",
-              "start_line": 33,
-              "end_line": 42,
-              "kind": "function"
-            },
-            {
-              "name": "post",
-              "start_line": 43,
-              "end_line": 52,
-              "kind": "function"
-            },
-            {
-              "name": "put",
-              "start_line": 53,
-              "end_line": 62,
-              "kind": "function"
-            },
-            {
-              "name": "patch",
-              "start_line": 63,
-              "end_line": 72,
-              "kind": "function"
-            },
-            {
-              "name": "delete",
-              "start_line": 73,
-              "end_line": 82,
-              "kind": "function"
-            },
-            {
-              "name": "head",
-              "start_line": 83,
-              "end_line": 95,
-              "kind": "function"
-            },
-            {
-              "name": "request",
-              "start_line": 96,
-              "end_line": 113,
-              "kind": "function"
-            },
-            {
-              "name": "execute",
-              "start_line": 114,
-              "end_line": 123,
-              "kind": "function"
-            },
-            {
-              "name": "ClientBuilder",
-              "start_line": 124,
-              "end_line": 129,
-              "kind": "class"
-            },
-            {
-              "name": "new",
-              "start_line": 130,
-              "end_line": 140,
-              "kind": "function"
-            },
-            {
-              "name": "build_with_policies",
-              "start_line": 141,
-              "end_line": 168,
-              "kind": "function"
-            },
-            {
-              "name": "danger_build_no_ip_policy",
-              "start_line": 169,
-              "end_line": 176,
-              "kind": "function"
-            },
-            {
-              "name": "prepare",
-              "start_line": 177,
-              "end_line": 188,
-              "kind": "function"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/reqwest/request.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "RequestBuilder",
-              "start_line": 11,
-              "end_line": 17,
-              "kind": "class"
-            },
-            {
-              "name": "from_parts",
-              "start_line": 18,
-              "end_line": 22,
-              "kind": "function"
-            },
-            {
-              "name": "from_client_inner",
-              "start_line": 23,
-              "end_line": 32,
-              "kind": "function"
-            },
-            {
-              "name": "build",
-              "start_line": 33,
-              "end_line": 41,
-              "kind": "function"
-            },
-            {
-              "name": "build_split",
-              "start_line": 42,
-              "end_line": 70,
-              "kind": "function"
-            },
-            {
-              "name": "send",
-              "start_line": 71,
-              "end_line": 97,
-              "kind": "function"
-            },
-            {
-              "name": "try_clone",
-              "start_line": 98,
-              "end_line": 109,
-              "kind": "function"
-            },
-            {
-              "name": "prepare",
-              "start_line": 110,
-              "end_line": 125,
-              "kind": "function"
-            },
-            {
-              "name": "try_prepare",
-              "start_line": 126,
-              "end_line": 133,
-              "kind": "function"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/reqwest/resolver.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "ExternalRequestResolver",
-              "start_line": 6,
-              "end_line": 11,
-              "kind": "class"
-            },
-            {
-              "name": "new",
-              "start_line": 12,
-              "end_line": 52,
-              "kind": "function"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/ureq/config.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "Config",
-              "start_line": 10,
-              "end_line": 10,
-              "kind": "class"
-            },
-            {
-              "name": "ConfigBuilder",
-              "start_line": 11,
-              "end_line": 14,
-              "kind": "class"
-            },
-            {
-              "name": "builder",
-              "start_line": 15,
-              "end_line": 17,
-              "kind": "function"
-            },
-            {
-              "name": "new_agent",
-              "start_line": 18,
-              "end_line": 32,
-              "kind": "function"
-            },
-            {
-              "name": "build",
-              "start_line": 33,
-              "end_line": 35,
-              "kind": "function"
-            },
-            {
-              "name": "prepare",
-              "start_line": 36,
-              "end_line": 44,
-              "kind": "function"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/ureq/mod.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "config",
-              "start_line": 10,
-              "end_line": 14,
-              "kind": "const"
-            },
-            {
-              "name": "Agent",
-              "start_line": 15,
-              "end_line": 19,
-              "kind": "class"
-            },
-            {
-              "name": "new_with_config",
-              "start_line": 20,
-              "end_line": 38,
-              "kind": "function"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "crates/http-client/src/ureq/resolver.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "ExternalRequestResolver",
-              "start_line": 6,
-              "end_line": 11,
-              "kind": "class"
-            },
-            {
-              "name": "new",
-              "start_line": 12,
-              "end_line": 33,
-              "kind": "function"
-            }
-          ],
-          "role": null
-        }
-      ],
-      "symbol_health_score": 100.0,
-      "shared_participants": []
-    },
-    {
       "name": "meilisearch/network",
       "display_name": "Network",
       "description": "Distributed network topology management for multi-node Meilisearch clusters, including shard configuration, remote node registration, and request proxying between nodes.",
@@ -93480,12 +92749,7 @@
         "crates/flatten-serde-json/fuzz/Cargo.toml",
         "crates/flatten-serde-json/src/lib.rs",
         "crates/flatten-serde-json/src/main.rs",
-        "crates/flatten-serde-json/fuzz/fuzz_targets/flatten.rs",
-        "crates/json-depth-checker/Cargo.toml",
-        "crates/json-depth-checker/benches/depth.rs",
-        "crates/json-depth-checker/fuzz/Cargo.toml",
-        "crates/json-depth-checker/src/lib.rs",
-        "crates/json-depth-checker/fuzz/fuzz_targets/depth.rs"
+        "crates/flatten-serde-json/fuzz/fuzz_targets/flatten.rs"
       ],
       "authors": [
         "Cl\u00e9ment Renault",
@@ -93493,7 +92757,7 @@
         "Many the fish",
         "Martin Grigorov"
       ],
-      "total_commits": 10,
+      "total_commits": 5,
       "bug_fixes": 0,
       "bug_fix_ratio": 0.0,
       "last_modified": "2025-11-26T13:26:27Z",
@@ -93664,131 +92928,6 @@
         }
       ],
       "symbol_health_score": 100.0,
-      "shared_participants": [],
-      "aliases": [
-        "json-depth-checker"
-      ]
-    },
-    {
-      "name": "documentation",
-      "display_name": "Documentation",
-      "description": "Documentation, tutorials, examples, and marketing pages.",
-      "category": "documentation",
-      "paths": [
-        "documentation/experimental-features.md",
-        "documentation/prototypes.md",
-        "documentation/release.md",
-        "documentation/versioning-policy.md",
-        "external-crates/reqwest-eventsource/examples/server.rs",
-        "external-crates/reqwest-eventsource/examples/simple.rs"
-      ],
-      "authors": [
-        "Cl\u00e9ment Renault",
-        "Cl\u00e9mentine",
-        "Kerollmops",
-        "Louis Dureuil",
-        "Many the fish",
-        "Mubelotix",
-        "Tamo",
-        "curquiza",
-        "meili-bot"
-      ],
-      "total_commits": 25,
-      "bug_fixes": 4,
-      "bug_fix_ratio": 0.16,
-      "last_modified": "2026-01-28T10:50:50Z",
-      "health_score": 86.5,
-      "flows": [],
-      "bug_fix_prs": [
-        {
-          "number": 5942,
-          "url": "https://github.com/meilisearch/meilisearch/pull/5942",
-          "title": "Merge pull request #5942 from meilisearch/meili-bot-patch-1",
-          "author": "Many the fish",
-          "date": "2025-10-15T11:22:03Z"
-        },
-        {
-          "number": 5824,
-          "url": "https://github.com/meilisearch/meilisearch/pull/5824",
-          "title": "Merge pull request #5824 from meilisearch/curquiza-patch-1",
-          "author": "Cl\u00e9ment Renault",
-          "date": "2025-08-12T06:33:40Z"
-        },
-        {
-          "number": 5815,
-          "url": "https://github.com/meilisearch/meilisearch/pull/5815",
-          "title": "Merge pull request #5815 from meilisearch/curquiza-patch-2",
-          "author": "Cl\u00e9ment Renault",
-          "date": "2025-08-11T17:14:48Z"
-        },
-        {
-          "number": 5803,
-          "url": "https://github.com/meilisearch/meilisearch/pull/5803",
-          "title": "Merge pull request #5803 from meilisearch/curquiza-patch-1",
-          "author": "Tamo",
-          "date": "2025-08-06T09:14:57Z"
-        }
-      ],
-      "coverage_pct": null,
-      "shared_attributions": [],
-      "participants": [
-        {
-          "path": "documentation/experimental-features.md",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [],
-          "role": null
-        },
-        {
-          "path": "documentation/prototypes.md",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [],
-          "role": null
-        },
-        {
-          "path": "documentation/release.md",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [],
-          "role": null
-        },
-        {
-          "path": "documentation/versioning-policy.md",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [],
-          "role": null
-        },
-        {
-          "path": "external-crates/reqwest-eventsource/examples/server.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [
-            {
-              "name": "LastEventId",
-              "start_line": 9,
-              "end_line": 70,
-              "kind": "class"
-            }
-          ],
-          "role": null
-        },
-        {
-          "path": "external-crates/reqwest-eventsource/examples/simple.rs",
-          "layer": "support",
-          "depth": 0,
-          "side_effect_only": false,
-          "symbols": [],
-          "role": null
-        }
-      ],
-      "symbol_health_score": 100.0,
       "shared_participants": []
     },
     {
@@ -93909,11 +93048,833 @@
       ],
       "symbol_health_score": 100.0,
       "shared_participants": []
+    },
+    {
+      "name": "meilisearch-auth",
+      "display_name": "Meilisearch Auth",
+      "description": null,
+      "category": "product",
+      "paths": [
+        "crates/meilisearch-auth/Cargo.toml",
+        "crates/meilisearch-auth/src/dump.rs",
+        "crates/meilisearch-auth/src/error.rs",
+        "crates/meilisearch-auth/src/lib.rs",
+        "crates/meilisearch-auth/src/store.rs"
+      ],
+      "authors": [
+        "Cl\u00e9ment Renault",
+        "Cl\u00e9mentine",
+        "Kerollmops",
+        "Louis Dureuil",
+        "Many the fish",
+        "Martin Grigorov",
+        "Mubelotix",
+        "Tamo",
+        "Yo Eight",
+        "YoEight",
+        "curquiza",
+        "dependabot[bot]"
+      ],
+      "total_commits": 46,
+      "bug_fixes": 6,
+      "bug_fix_ratio": 0.13,
+      "last_modified": "2026-03-26T14:25:18Z",
+      "health_score": 95.3,
+      "flows": [
+        {
+          "name": "create-api-key",
+          "display_name": "Create API Key",
+          "description": "User creates a new API key with specified actions, indexes, and expiration.",
+          "participants": [],
+          "entry_point_file": "crates/meilisearch-auth/src/lib.rs",
+          "entry_point_line": 52,
+          "paths": [
+            "crates/meilisearch-auth/Cargo.toml",
+            "crates/meilisearch-auth/src/dump.rs",
+            "crates/meilisearch-auth/src/error.rs",
+            "crates/meilisearch-auth/src/lib.rs",
+            "crates/meilisearch-auth/src/store.rs"
+          ],
+          "authors": [
+            "Cl\u00e9ment Renault",
+            "Cl\u00e9mentine",
+            "Kerollmops",
+            "Louis Dureuil",
+            "Many the fish",
+            "Martin Grigorov",
+            "Mubelotix",
+            "Tamo",
+            "Yo Eight",
+            "YoEight",
+            "curquiza",
+            "dependabot[bot]"
+          ],
+          "total_commits": 46,
+          "bug_fixes": 6,
+          "bug_fix_ratio": 0.13,
+          "last_modified": "2026-03-26T14:25:18Z",
+          "health_score": 95.3,
+          "bug_fix_prs": [],
+          "test_file_count": 0,
+          "test_files": [],
+          "weekly_points": [],
+          "bus_factor": 1,
+          "health_trend": null,
+          "hotspot_files": [],
+          "coverage_pct": null,
+          "symbol_attributions": [],
+          "secondary_features": []
+        },
+        {
+          "name": "update-api-key",
+          "display_name": "Update API Key",
+          "description": "User updates the name or description of an existing API key.",
+          "participants": [],
+          "entry_point_file": "crates/meilisearch-auth/src/lib.rs",
+          "entry_point_line": 59,
+          "paths": [
+            "crates/meilisearch-auth/Cargo.toml",
+            "crates/meilisearch-auth/src/dump.rs",
+            "crates/meilisearch-auth/src/error.rs",
+            "crates/meilisearch-auth/src/lib.rs",
+            "crates/meilisearch-auth/src/store.rs"
+          ],
+          "authors": [
+            "Cl\u00e9ment Renault",
+            "Cl\u00e9mentine",
+            "Kerollmops",
+            "Louis Dureuil",
+            "Many the fish",
+            "Martin Grigorov",
+            "Mubelotix",
+            "Tamo",
+            "Yo Eight",
+            "YoEight",
+            "curquiza",
+            "dependabot[bot]"
+          ],
+          "total_commits": 46,
+          "bug_fixes": 6,
+          "bug_fix_ratio": 0.13,
+          "last_modified": "2026-03-26T14:25:18Z",
+          "health_score": 95.3,
+          "bug_fix_prs": [],
+          "test_file_count": 0,
+          "test_files": [],
+          "weekly_points": [],
+          "bus_factor": 1,
+          "health_trend": null,
+          "hotspot_files": [],
+          "coverage_pct": null,
+          "symbol_attributions": [],
+          "secondary_features": []
+        },
+        {
+          "name": "authorize-api-key-action",
+          "display_name": "Authorize API Key Action",
+          "description": "System validates an encoded API key and checks whether it is permitted to perform a given action on a target index.",
+          "participants": [],
+          "entry_point_file": "crates/meilisearch-auth/src/lib.rs",
+          "entry_point_line": 93,
+          "paths": [
+            "crates/meilisearch-auth/Cargo.toml",
+            "crates/meilisearch-auth/src/dump.rs",
+            "crates/meilisearch-auth/src/error.rs",
+            "crates/meilisearch-auth/src/lib.rs",
+            "crates/meilisearch-auth/src/store.rs"
+          ],
+          "authors": [
+            "Cl\u00e9ment Renault",
+            "Cl\u00e9mentine",
+            "Kerollmops",
+            "Louis Dureuil",
+            "Many the fish",
+            "Martin Grigorov",
+            "Mubelotix",
+            "Tamo",
+            "Yo Eight",
+            "YoEight",
+            "curquiza",
+            "dependabot[bot]"
+          ],
+          "total_commits": 46,
+          "bug_fixes": 6,
+          "bug_fix_ratio": 0.13,
+          "last_modified": "2026-03-26T14:25:18Z",
+          "health_score": 95.3,
+          "bug_fix_prs": [],
+          "test_file_count": 0,
+          "test_files": [],
+          "weekly_points": [],
+          "bus_factor": 1,
+          "health_trend": null,
+          "hotspot_files": [],
+          "coverage_pct": null,
+          "symbol_attributions": [],
+          "secondary_features": []
+        },
+        {
+          "name": "dump-api-keys",
+          "display_name": "Dump API Keys",
+          "description": "Operator exports all stored API keys to a flat file as part of a database dump.",
+          "participants": [],
+          "entry_point_file": "crates/meilisearch-auth/src/dump.rs",
+          "entry_point_line": 13,
+          "paths": [
+            "crates/meilisearch-auth/Cargo.toml",
+            "crates/meilisearch-auth/src/dump.rs",
+            "crates/meilisearch-auth/src/error.rs",
+            "crates/meilisearch-auth/src/lib.rs",
+            "crates/meilisearch-auth/src/store.rs"
+          ],
+          "authors": [
+            "Cl\u00e9ment Renault",
+            "Cl\u00e9mentine",
+            "Kerollmops",
+            "Louis Dureuil",
+            "Many the fish",
+            "Martin Grigorov",
+            "Mubelotix",
+            "Tamo",
+            "Yo Eight",
+            "YoEight",
+            "curquiza",
+            "dependabot[bot]"
+          ],
+          "total_commits": 46,
+          "bug_fixes": 6,
+          "bug_fix_ratio": 0.13,
+          "last_modified": "2026-03-26T14:25:18Z",
+          "health_score": 95.3,
+          "bug_fix_prs": [],
+          "test_file_count": 0,
+          "test_files": [],
+          "weekly_points": [],
+          "bus_factor": 1,
+          "health_trend": null,
+          "hotspot_files": [],
+          "coverage_pct": null,
+          "symbol_attributions": [],
+          "secondary_features": [
+            "dump"
+          ]
+        },
+        {
+          "name": "restore-api-keys-from-dump",
+          "display_name": "Restore API Keys From Dump",
+          "description": "Operator imports API keys from a previously created dump file into the auth store.",
+          "participants": [],
+          "entry_point_file": "crates/meilisearch-auth/src/dump.rs",
+          "entry_point_line": 28,
+          "paths": [
+            "crates/meilisearch-auth/Cargo.toml",
+            "crates/meilisearch-auth/src/dump.rs",
+            "crates/meilisearch-auth/src/error.rs",
+            "crates/meilisearch-auth/src/lib.rs",
+            "crates/meilisearch-auth/src/store.rs"
+          ],
+          "authors": [
+            "Cl\u00e9ment Renault",
+            "Cl\u00e9mentine",
+            "Kerollmops",
+            "Louis Dureuil",
+            "Many the fish",
+            "Martin Grigorov",
+            "Mubelotix",
+            "Tamo",
+            "Yo Eight",
+            "YoEight",
+            "curquiza",
+            "dependabot[bot]"
+          ],
+          "total_commits": 46,
+          "bug_fixes": 6,
+          "bug_fix_ratio": 0.13,
+          "last_modified": "2026-03-26T14:25:18Z",
+          "health_score": 95.3,
+          "bug_fix_prs": [],
+          "test_file_count": 0,
+          "test_files": [],
+          "weekly_points": [],
+          "bus_factor": 1,
+          "health_trend": null,
+          "hotspot_files": [],
+          "coverage_pct": null,
+          "symbol_attributions": [],
+          "secondary_features": [
+            "dump"
+          ]
+        },
+        {
+          "name": "auth-control-flow",
+          "display_name": "Auth Control Flow",
+          "description": "Manages authentication controller initialization and credential validation.",
+          "participants": [
+            {
+              "path": "crates/meilisearch-auth/src/lib.rs",
+              "layer": "support",
+              "depth": 0,
+              "side_effect_only": false,
+              "symbols": [
+                {
+                  "name": "AuthController",
+                  "start_line": 20,
+                  "end_line": 25,
+                  "kind": "class"
+                }
+              ],
+              "role": null
+            }
+          ],
+          "entry_point_file": null,
+          "entry_point_line": null,
+          "paths": [
+            "crates/meilisearch-auth/Cargo.toml",
+            "crates/meilisearch-auth/src/dump.rs",
+            "crates/meilisearch-auth/src/error.rs",
+            "crates/meilisearch-auth/src/lib.rs",
+            "crates/meilisearch-auth/src/store.rs"
+          ],
+          "authors": [
+            "Cl\u00e9ment Renault",
+            "Cl\u00e9mentine",
+            "Kerollmops",
+            "Louis Dureuil",
+            "Many the fish",
+            "Martin Grigorov",
+            "Mubelotix",
+            "Tamo",
+            "Yo Eight",
+            "YoEight",
+            "curquiza",
+            "dependabot[bot]"
+          ],
+          "total_commits": 46,
+          "bug_fixes": 6,
+          "bug_fix_ratio": 0.13,
+          "last_modified": "2026-03-26T14:25:18Z",
+          "health_score": 95.3,
+          "bug_fix_prs": [],
+          "test_file_count": 0,
+          "test_files": [],
+          "weekly_points": [],
+          "bus_factor": 1,
+          "health_trend": null,
+          "hotspot_files": [],
+          "coverage_pct": null,
+          "symbol_attributions": [],
+          "secondary_features": []
+        }
+      ],
+      "bug_fix_prs": [
+        {
+          "number": 6077,
+          "url": "https://github.com/meilisearch/meilisearch/pull/6077",
+          "title": "Merge pull request #6077 from meilisearch/fix-low-cve",
+          "author": "Cl\u00e9mentine",
+          "date": "2026-01-19T12:04:41Z"
+        }
+      ],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "participants": [
+        {
+          "path": "crates/meilisearch-auth/Cargo.toml",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [],
+          "role": null
+        },
+        {
+          "path": "crates/meilisearch-auth/src/dump.rs",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [
+            {
+              "name": "dump",
+              "start_line": 13,
+              "end_line": 26,
+              "kind": "function"
+            },
+            {
+              "name": "load_dump",
+              "start_line": 27,
+              "end_line": 45,
+              "kind": "function"
+            }
+          ],
+          "role": null
+        },
+        {
+          "path": "crates/meilisearch-auth/src/error.rs",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [
+            {
+              "name": "Result",
+              "start_line": 5,
+              "end_line": 8,
+              "kind": "type"
+            },
+            {
+              "name": "AuthControllerError",
+              "start_line": 9,
+              "end_line": 34,
+              "kind": "class"
+            }
+          ],
+          "role": null
+        },
+        {
+          "path": "crates/meilisearch-auth/src/lib.rs",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [
+            {
+              "name": "error",
+              "start_line": 2,
+              "end_line": 19,
+              "kind": "const"
+            },
+            {
+              "name": "AuthController",
+              "start_line": 20,
+              "end_line": 25,
+              "kind": "class"
+            },
+            {
+              "name": "new",
+              "start_line": 26,
+              "end_line": 36,
+              "kind": "function"
+            },
+            {
+              "name": "health",
+              "start_line": 37,
+              "end_line": 42,
+              "kind": "function"
+            },
+            {
+              "name": "size",
+              "start_line": 43,
+              "end_line": 47,
+              "kind": "function"
+            },
+            {
+              "name": "used_size",
+              "start_line": 48,
+              "end_line": 50,
+              "kind": "function"
+            },
+            {
+              "name": "create_key",
+              "start_line": 51,
+              "end_line": 57,
+              "kind": "function"
+            },
+            {
+              "name": "update_key",
+              "start_line": 58,
+              "end_line": 71,
+              "kind": "function"
+            },
+            {
+              "name": "get_key",
+              "start_line": 72,
+              "end_line": 77,
+              "kind": "function"
+            },
+            {
+              "name": "get_optional_uid_from_encoded_key",
+              "start_line": 78,
+              "end_line": 86,
+              "kind": "function"
+            },
+            {
+              "name": "get_uid_from_encoded_key",
+              "start_line": 87,
+              "end_line": 91,
+              "kind": "function"
+            },
+            {
+              "name": "get_key_filters",
+              "start_line": 92,
+              "end_line": 105,
+              "kind": "function"
+            },
+            {
+              "name": "list_keys",
+              "start_line": 106,
+              "end_line": 109,
+              "kind": "function"
+            },
+            {
+              "name": "delete_key",
+              "start_line": 110,
+              "end_line": 117,
+              "kind": "function"
+            },
+            {
+              "name": "get_master_key",
+              "start_line": 118,
+              "end_line": 124,
+              "kind": "function"
+            },
+            {
+              "name": "generate_key",
+              "start_line": 125,
+              "end_line": 130,
+              "kind": "function"
+            },
+            {
+              "name": "is_key_authorized",
+              "start_line": 131,
+              "end_line": 156,
+              "kind": "function"
+            },
+            {
+              "name": "raw_delete_all_keys",
+              "start_line": 157,
+              "end_line": 161,
+              "kind": "function"
+            },
+            {
+              "name": "raw_insert_key",
+              "start_line": 162,
+              "end_line": 168,
+              "kind": "function"
+            },
+            {
+              "name": "AuthFilter",
+              "start_line": 169,
+              "end_line": 186,
+              "kind": "class"
+            },
+            {
+              "name": "allow_index_creation",
+              "start_line": 187,
+              "end_line": 192,
+              "kind": "function"
+            },
+            {
+              "name": "is_tenant_token",
+              "start_line": 193,
+              "end_line": 195,
+              "kind": "function"
+            },
+            {
+              "name": "with_allowed_indexes",
+              "start_line": 196,
+              "end_line": 203,
+              "kind": "function"
+            },
+            {
+              "name": "all_indexes_authorized",
+              "start_line": 204,
+              "end_line": 214,
+              "kind": "function"
+            },
+            {
+              "name": "is_index_authorized",
+              "start_line": 215,
+              "end_line": 224,
+              "kind": "function"
+            },
+            {
+              "name": "api_key_is_index_authorized",
+              "start_line": 225,
+              "end_line": 229,
+              "kind": "function"
+            },
+            {
+              "name": "tenant_token_is_index_authorized",
+              "start_line": 230,
+              "end_line": 237,
+              "kind": "function"
+            },
+            {
+              "name": "tenant_token_list_index_authorized",
+              "start_line": 238,
+              "end_line": 252,
+              "kind": "function"
+            },
+            {
+              "name": "api_key_list_index_authorized",
+              "start_line": 253,
+              "end_line": 260,
+              "kind": "function"
+            },
+            {
+              "name": "get_index_search_rules",
+              "start_line": 261,
+              "end_line": 273,
+              "kind": "function"
+            },
+            {
+              "name": "SearchRules",
+              "start_line": 274,
+              "end_line": 347,
+              "kind": "class"
+            },
+            {
+              "name": "IndexSearchRules",
+              "start_line": 348,
+              "end_line": 359,
+              "kind": "class"
+            },
+            {
+              "name": "MASTER_KEY_MIN_SIZE",
+              "start_line": 360,
+              "end_line": 362,
+              "kind": "const"
+            },
+            {
+              "name": "generate_master_key",
+              "start_line": 363,
+              "end_line": 378,
+              "kind": "function"
+            }
+          ],
+          "role": null
+        },
+        {
+          "path": "crates/meilisearch-auth/src/store.rs",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [
+            {
+              "name": "HeedAuthStore",
+              "start_line": 30,
+              "end_line": 34,
+              "kind": "class"
+            },
+            {
+              "name": "open_auth_store_env",
+              "start_line": 35,
+              "end_line": 44,
+              "kind": "function"
+            },
+            {
+              "name": "new",
+              "start_line": 45,
+              "end_line": 54,
+              "kind": "function"
+            },
+            {
+              "name": "health",
+              "start_line": 55,
+              "end_line": 61,
+              "kind": "function"
+            },
+            {
+              "name": "size",
+              "start_line": 62,
+              "end_line": 66,
+              "kind": "function"
+            },
+            {
+              "name": "used_size",
+              "start_line": 67,
+              "end_line": 69,
+              "kind": "function"
+            },
+            {
+              "name": "is_empty",
+              "start_line": 70,
+              "end_line": 75,
+              "kind": "function"
+            },
+            {
+              "name": "put_api_key",
+              "start_line": 76,
+              "end_line": 188,
+              "kind": "function"
+            },
+            {
+              "name": "get_api_key",
+              "start_line": 189,
+              "end_line": 193,
+              "kind": "function"
+            },
+            {
+              "name": "get_uid_from_encoded_key",
+              "start_line": 194,
+              "end_line": 220,
+              "kind": "function"
+            },
+            {
+              "name": "delete_api_key",
+              "start_line": 221,
+              "end_line": 229,
+              "kind": "function"
+            },
+            {
+              "name": "delete_all_keys",
+              "start_line": 230,
+              "end_line": 236,
+              "kind": "function"
+            },
+            {
+              "name": "list_api_keys",
+              "start_line": 237,
+              "end_line": 247,
+              "kind": "function"
+            },
+            {
+              "name": "get_expiration_date",
+              "start_line": 248,
+              "end_line": 275,
+              "kind": "function"
+            },
+            {
+              "name": "prefix_first_expiration_date",
+              "start_line": 276,
+              "end_line": 309,
+              "kind": "function"
+            },
+            {
+              "name": "KeyIdActionCodec",
+              "start_line": 310,
+              "end_line": 349,
+              "kind": "class"
+            },
+            {
+              "name": "SliceTooShortError",
+              "start_line": 350,
+              "end_line": 353,
+              "kind": "class"
+            },
+            {
+              "name": "InvalidActionError",
+              "start_line": 354,
+              "end_line": 356,
+              "kind": "class"
+            },
+            {
+              "name": "generate_key_as_hexa",
+              "start_line": 357,
+              "end_line": 372,
+              "kind": "function"
+            },
+            {
+              "name": "verify_key_matches",
+              "start_line": 373,
+              "end_line": 390,
+              "kind": "function"
+            },
+            {
+              "name": "try_split_at",
+              "start_line": 391,
+              "end_line": 400,
+              "kind": "function"
+            },
+            {
+              "name": "try_split_array_at",
+              "start_line": 401,
+              "end_line": 468,
+              "kind": "function"
+            }
+          ],
+          "role": null
+        }
+      ],
+      "symbol_health_score": 100.0,
+      "shared_participants": []
+    },
+    {
+      "name": "json-depth-checker",
+      "display_name": "JSON Depth Checker",
+      "description": null,
+      "category": "product",
+      "paths": [
+        "crates/json-depth-checker/Cargo.toml",
+        "crates/json-depth-checker/benches/depth.rs",
+        "crates/json-depth-checker/fuzz/Cargo.toml",
+        "crates/json-depth-checker/src/lib.rs",
+        "crates/json-depth-checker/fuzz/fuzz_targets/depth.rs"
+      ],
+      "authors": [
+        "Cl\u00e9ment Renault",
+        "Louis Dureuil",
+        "Many the fish",
+        "Martin Grigorov"
+      ],
+      "total_commits": 5,
+      "bug_fixes": 0,
+      "bug_fix_ratio": 0.0,
+      "last_modified": "2025-11-26T13:26:27Z",
+      "health_score": 81.0,
+      "flows": [],
+      "bug_fix_prs": [],
+      "coverage_pct": null,
+      "shared_attributions": [],
+      "participants": [
+        {
+          "path": "crates/json-depth-checker/Cargo.toml",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [],
+          "role": null
+        },
+        {
+          "path": "crates/json-depth-checker/benches/depth.rs",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [],
+          "role": null
+        },
+        {
+          "path": "crates/json-depth-checker/fuzz/Cargo.toml",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [],
+          "role": null
+        },
+        {
+          "path": "crates/json-depth-checker/fuzz/fuzz_targets/depth.rs",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [],
+          "role": null
+        },
+        {
+          "path": "crates/json-depth-checker/src/lib.rs",
+          "layer": "support",
+          "depth": 0,
+          "side_effect_only": false,
+          "symbols": [
+            {
+              "name": "should_flatten_from_unchecked_slice",
+              "start_line": 9,
+              "end_line": 66,
+              "kind": "function"
+            },
+            {
+              "name": "should_flatten_from_value",
+              "start_line": 67,
+              "end_line": 115,
+              "kind": "function"
+            }
+          ],
+          "role": null
+        }
+      ],
+      "symbol_health_score": 100.0,
+      "shared_participants": []
     }
   ],
   "compact_stats": {
-    "merged": 3,
-    "hard_dropped": 0,
+    "merged": 2,
+    "hard_dropped": 1,
     "kept": 15
   }
 }

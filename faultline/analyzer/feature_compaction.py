@@ -42,10 +42,17 @@ logger = logging.getLogger(__name__)
 # Pure conventional commit verbs / placeholders — never legit features.
 # Anything matching here is dropped regardless of size.
 NEVER_FEATURES: frozenset[str] = frozenset({
-    "improvement", "improvements", "fix", "fixes", "feat", "feats",
-    "feature", "chore", "chores", "refactor", "perf",
-    "hotfix", "bugfix", "patch", "patches", "cleanup", "tweak",
-    "tweaks", "misc", "common", "base", "general", "shared",
+    "improvement", "improvements", "improve", "improving",
+    "fix", "fixes", "fixing", "fixed",
+    "feat", "feats", "feature", "features",
+    "chore", "chores", "refactor", "refactoring", "perf",
+    "hotfix", "bugfix", "patch", "patches",
+    "cleanup", "cleanups", "tweak", "tweaks",
+    "update", "updates", "updated", "updating",
+    "enhance", "enhancement", "enhancements", "enhanced",
+    "optimize", "optimization", "optimizations", "optimized",
+    "rework", "reworked", "rewrite", "rewrites",
+    "misc", "common", "base", "general", "shared",
     "util", "utils", "helper", "helpers", "core", "main", "lib",
     "libs",
 })
@@ -270,6 +277,7 @@ def reattribute(
     *,
     top_n: int,
     min_similarity: float = 0.15,
+    tier_aware: bool = True,
 ) -> tuple[list[dict], dict]:
     """Variant C — drop noise, cap at top-N, merge cut features into nearest kept.
 
@@ -278,6 +286,11 @@ def reattribute(
       2. If similarity ≥ ``min_similarity``, merge into that kept feature
          (paths, bug_fixes, total_commits, flows all sum/extend).
       3. Else drop (no good merge target — pure noise).
+
+    S20 Bug 3 fix — ``tier_aware=True`` (default): product-tier features
+    are NEVER cut by top-N truncation, even when small. Saves features
+    like ``kms`` (21 paths, real product domain) from being merged into
+    bigger neighbors and lost from the dashboard.
 
     Returns:
         (compact_features, stats)
@@ -295,8 +308,79 @@ def reattribute(
             {"merged": 0, "hard_dropped": 0, "kept": len(after_noise_sorted)},
         )
 
-    kept_originals = after_noise_sorted[:top_n]
-    tail = after_noise_sorted[top_n:]
+    if tier_aware:
+        # S20 Bug 3 — protect product-tier features from truncation while
+        # preserving top_n cap. Among the top_n slots: take big features
+        # regardless of tier first, then BACKFILL the bottom of the slot
+        # window with small product-tier features that would otherwise
+        # be cut. The total stays at top_n; only WHICH features change.
+        try:
+            from faultline.analyzer.feature_category import (
+                classify_feature, tier_for,
+            )
+        except Exception:  # noqa: BLE001 — defensive import
+            classify_feature = None
+            tier_for = None
+        if classify_feature and tier_for and len(after_noise_sorted) > top_n:
+            top_slice = after_noise_sorted[:top_n]
+            tail_slice = after_noise_sorted[top_n:]
+            # Find any product-tier features in tail with ≥5 paths
+            # (filter out very tiny fragments).
+            tail_products = [
+                f for f in tail_slice
+                if len(f.get("paths") or []) >= 5
+                and tier_for(classify_feature(
+                    f.get("name") or "",
+                    f.get("paths") or [],
+                    f.get("description"),
+                )) == "product"
+            ]
+            if tail_products:
+                # Swap out smallest non-product features from top_slice with
+                # tail products. Cap swaps at min(len(tail_products), 5)
+                # to avoid pathological cases.
+                max_swaps = min(len(tail_products), 5)
+                # Sort top_slice by tier-then-size — non-product first,
+                # smallest first within group, so swap candidates are
+                # easiest to identify.
+                annotated_top = [
+                    (
+                        tier_for(classify_feature(
+                            f.get("name") or "",
+                            f.get("paths") or [],
+                            f.get("description"),
+                        )),
+                        len(f.get("paths") or []),
+                        f,
+                    )
+                    for f in top_slice
+                ]
+                swap_indices = sorted(
+                    range(len(annotated_top)),
+                    key=lambda i: (
+                        annotated_top[i][0] == "product",  # non-product first
+                        annotated_top[i][1],                 # smaller first
+                    ),
+                )[:max_swaps]
+                # Identify the non-product features to evict
+                to_evict = {i for i in swap_indices if annotated_top[i][0] != "product"}
+                # Apply swaps: remove evicted from top_slice, add tail products
+                evicted = [annotated_top[i][2] for i in to_evict]
+                kept_top = [f for f in top_slice if f not in evicted]
+                kept_originals = kept_top + tail_products[:len(evicted)]
+                tail = (
+                    [f for f in tail_slice if f not in tail_products[:len(evicted)]]
+                    + evicted
+                )
+            else:
+                kept_originals = top_slice
+                tail = tail_slice
+        else:
+            kept_originals = after_noise_sorted[:top_n]
+            tail = after_noise_sorted[top_n:]
+    else:
+        kept_originals = after_noise_sorted[:top_n]
+        tail = after_noise_sorted[top_n:]
 
     # Deep-copy kept so we don't mutate original feature dicts.
     kept = [dict(f) for f in kept_originals]

@@ -58,6 +58,16 @@ _COMMIT_TYPE_WORDS = frozenset({
     "security", "release", "merge", "bump", "update", "rename", "remove",
     "feature", "ref", "hotfix", "patch", "minor", "major", "tick",
     "readme", "license", "changelog", "deps-dev",
+    # Sprint 20 — additional conventional verbs that leaked into infisical
+    # (676 + 353 paths in `improvement` / `improvements` buckets — they
+    # stole 18 KMS files from the real `kms` feature). These are commit
+    # CATEGORY words, not feature names.
+    "improvement", "improvements", "improve", "improving",
+    "fixes", "fixing", "fixed", "updates", "updated", "updating",
+    "cleanup", "cleanups", "tweak", "tweaks", "refactoring",
+    "enhance", "enhancement", "enhancements", "enhanced",
+    "optimize", "optimization", "optimizations", "optimized",
+    "rework", "reworked", "rewrites", "rewrite",
 })
 
 _GO_GENERIC_PREFIXES = frozenset({
