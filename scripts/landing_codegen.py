@@ -302,6 +302,18 @@ REPO_META = {
         "lang": "Next.js · AI email assistant · 4k★",
         "detected": "Next.js app",
     },
+    "soc0": {
+        "title": "~/soc0",
+        "url": "https://github.com/pkuzina/soc0",
+        "lang": "Python + TS · AI SOC platform · private",
+        "detected": "Python + Next.js",
+    },
+    "infisical": {
+        "title": "~/infisical",
+        "url": "https://github.com/Infisical/infisical",
+        "lang": "TS + Node · secrets management · 17k★",
+        "detected": "Next.js + Express",
+    },
 }
 
 
@@ -320,7 +332,9 @@ def emit_repo(slug: str) -> str:
     if src is None:
         raise FileNotFoundError(f"no feature-map JSON found for {slug}")
     d = json.loads(Path(src).read_text())
-    features = d.get("features", [])
+    # S19.5 — prefer compact_features when present (top-15 cleaner view).
+    # Falls back to raw features for older scans.
+    features = d.get("compact_features") or d.get("features", [])
     n_features = len(features)
     n_flows = sum(len(f.get("flows") or []) for f in features)
     n_files = sum(len(f.get("paths") or []) for f in features)
