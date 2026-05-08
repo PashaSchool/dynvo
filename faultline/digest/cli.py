@@ -12,7 +12,6 @@ from pathlib import Path
 from faultline.digest.git_reader import get_daily_commits
 from faultline.digest.summarizer import (
     summarize_with_llm,
-    summarize_with_deepseek,
     build_digest_report,
 )
 
@@ -33,7 +32,7 @@ def generate_digest(
         branch: Branch to analyze. Auto-detects main/master.
         api_key: API key for LLM provider.
         use_llm: Whether to use LLM for summarization.
-        provider: LLM provider: "anthropic" or "deepseek".
+        provider: LLM provider: "anthropic" (default).
 
     Returns:
         Complete digest report as a dict.
@@ -45,10 +44,7 @@ def generate_digest(
 
     llm_summary = None
     if use_llm and digest_data["total_commits"] > 0:
-        if provider == "deepseek":
-            llm_summary = summarize_with_deepseek(digest_data, api_key=api_key)
-        else:
-            llm_summary = summarize_with_llm(digest_data, api_key=api_key)
+        llm_summary = summarize_with_llm(digest_data, api_key=api_key)
 
     return build_digest_report(digest_data, llm_summary)
 
@@ -62,7 +58,7 @@ def main():
     parser.add_argument("--date", "-d", default=None, help="Date (YYYY-MM-DD), default: today")
     parser.add_argument("--branch", "-b", default=None, help="Branch name, default: auto-detect")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM summarization")
-    parser.add_argument("--provider", default="anthropic", help="LLM provider: anthropic or deepseek")
+    parser.add_argument("--provider", default="anthropic", help="LLM provider: anthropic (default)")
     parser.add_argument("--api-key", default=None, help="API key for LLM provider")
     parser.add_argument("--output", "-o", default=None, help="Output file path (default: stdout)")
     args = parser.parse_args()
