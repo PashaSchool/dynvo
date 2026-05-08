@@ -1450,12 +1450,17 @@ def deep_scan(
         Returns None on failure.
     """
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
+    # When FAULTLINE_USE_GEMINI=1, the factory swaps to GeminiClient.
+    # Anthropic key is not required in that mode.
+    from faultline.llm.client_factory import (
+        _gemini_only_enabled, gemini_model_for, make_llm_client,
+    )
+    if not key and not _gemini_only_enabled():
         logger.error("No API key for deep scan")
         return None
 
-    client = anthropic.Anthropic(api_key=key)
-    resolved_model = model or _MODEL
+    client = make_llm_client(api_key=key)
+    resolved_model = gemini_model_for(model or _MODEL) or model or _MODEL
     system_prompt = _build_system_prompt(
         package_mode=package_mode,
         package_name=package_name,
