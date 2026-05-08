@@ -144,7 +144,8 @@ def test_reattribute_merges_similar_into_top_n():
         _ft("secret-rotations", 15),
         _ft("auth-helpers", 5),
     ]
-    kept, stats = reattribute(feats, top_n=3)
+    # tier_aware=False to exercise the truncate-and-merge path directly
+    kept, stats = reattribute(feats, top_n=3, tier_aware=False)
     names = {k["name"] for k in kept}
     assert names == {"secret-manager", "auth", "billing"}
     # secret-blind-index + secret-rotations should merge into secret-manager
@@ -159,7 +160,9 @@ def test_reattribute_hard_drops_unrelated_tail():
         _ft("auth", 80),
         _ft("zzz-unrelated-feature-xyz", 10),
     ]
-    kept, stats = reattribute(feats, top_n=2, min_similarity=0.3)
+    kept, stats = reattribute(
+        feats, top_n=2, min_similarity=0.3, tier_aware=False,
+    )
     assert stats["hard_dropped"] == 1
 
 
@@ -178,7 +181,35 @@ def test_reattribute_returns_aliases():
         _ft("secret-blind-index", 20),
         _ft("secret-rotations", 15),
     ]
-    kept, _ = reattribute(feats, top_n=2)
+    # tier_aware=False so the test exercises pure truncation+merge
+    kept, _ = reattribute(feats, top_n=2, tier_aware=False)
     secret = next(k for k in kept if k["name"] == "secret-manager")
     assert "secret-blind-index" in secret.get("aliases", [])
     assert "secret-rotations" in secret.get("aliases", [])
+
+
+def test_tier_aware_swaps_nonproduct_for_small_product():
+    """S20 Bug 3 — when a small product-tier feature would be truncated,
+    swap it in for the smallest non-product feature in the top slice."""
+    feats = [
+        _ft("billing", 200),       # product
+        _ft("auth", 150),           # product
+        _ft("documentation", 100),  # hidden tier
+        _ft("kms", 10),             # small product, would normally be dropped
+    ]
+    kept, _ = reattribute(feats, top_n=3, tier_aware=True)
+    names = {k["name"] for k in kept}
+    # documentation (non-product) should be evicted; kms (small product) saved
+    assert "kms" in names
+    assert "documentation" not in names
+
+
+def test_tier_aware_off_uses_simple_top_n():
+    feats = [
+        _ft("auth", 100),
+        _ft("kms", 5),
+    ]
+    kept, _ = reattribute(feats, top_n=1, tier_aware=False)
+    names = {k["name"] for k in kept}
+    # without tier-awareness, simple top-N drops the small one
+    assert "kms" not in names
