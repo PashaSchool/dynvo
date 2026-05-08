@@ -44,8 +44,9 @@ class FakeEmbedder:
 
 
 def test_adaptive_k_floor():
-    assert adaptive_k(0) >= 8
-    assert adaptive_k(50) >= 8
+    # S21 Day 3 — floor raised to 12 to prevent mega-cluster
+    assert adaptive_k(0) >= 12
+    assert adaptive_k(50) >= 12
 
 
 def test_adaptive_k_ceiling():
