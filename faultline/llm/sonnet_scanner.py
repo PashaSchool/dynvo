@@ -2366,6 +2366,27 @@ def _normalize_response(data: dict, model: str | None = None) -> dict:
                 normalized.append(feat)
         result["features"] = normalized
 
+    # S21 — Sonnet sometimes returns flows as bare string list:
+    #   "flows": ["build-rpm-flow", "send-notification-flow"]
+    # Schema expects list[{name: str, description: str}]. Coerce
+    # strings into dicts with empty descriptions before pydantic
+    # validation. Reproducible on apprise smoke (S21 Day 2).
+    feats = result.get("features", [])
+    if isinstance(feats, list):
+        for f in feats:
+            if not isinstance(f, dict):
+                continue
+            flows = f.get("flows")
+            if not isinstance(flows, list):
+                continue
+            coerced = []
+            for fl in flows:
+                if isinstance(fl, str):
+                    coerced.append({"name": fl, "description": ""})
+                elif isinstance(fl, dict):
+                    coerced.append(fl)
+            f["flows"] = coerced
+
     # Normalize rename items — Sonnet may return:
     # [{"from": "x", "to": "y"}] or [["old", "new"]] or [{"from_name": "x", "to": "y"}]
     renames = result.get("rename", [])

@@ -50,11 +50,14 @@ DEFAULT_LOCAL_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_BATCH_SIZE = 128
 
 # Adaptive K bounds — established by the 26-repo S17 corpus where GT
-# averages ~13 features/repo. Floor 8 keeps small repos from
-# collapsing; ceiling 25 keeps big monorepos from over-decomposing.
-_K_FLOOR = 8
+# averages ~13 features/repo. Floor 12 keeps small repos granular
+# enough that one cluster doesn't swallow most of the repo (S21 Day 2
+# apprise smoke showed K=9 → one cluster with 210 paths, killing
+# precision). Ceiling 25 keeps big monorepos from over-decomposing.
+# Files-per-cluster 35 (down from 50) gives slightly higher K growth.
+_K_FLOOR = 12
 _K_CEILING = 25
-_FILES_PER_CLUSTER = 50
+_FILES_PER_CLUSTER = 35
 
 
 def adaptive_k(n_files: int) -> int:
