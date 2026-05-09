@@ -183,6 +183,15 @@ class _MessagesAPI:
         temperature: float = 0,
         **_: Any,
     ) -> _GeminiResponse:
+        # S24 — Gemini Pro / Flash support much larger output windows
+        # than Anthropic (Pro 2.5+: 65K, Flash: 8K). Bump caller's
+        # max_tokens upward when the model can take it — protects
+        # against truncation on big repos like infisical (200+
+        # features → 30K+ output JSON).
+        if "pro" in (model or "").lower():
+            max_tokens = max(max_tokens, 32_768)
+        elif "flash" in (model or "").lower():
+            max_tokens = max(max_tokens, 8_192)
         from google import genai
         sdk = genai.Client(api_key=self._client.api_key)
 

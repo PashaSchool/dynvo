@@ -2376,19 +2376,41 @@ def _normalize_response(data: dict, model: str | None = None) -> dict:
     # Schema expects list[{name: str, description: str}]. Coerce
     # strings into dicts with empty descriptions before pydantic
     # validation. Reproducible on apprise smoke (S21 Day 2).
+    # S24 — Gemini Pro 3.1 returns Title Case + spaces feature names
+    # ("Multi-Platform Messaging Integration"). Coerce to kebab-case
+    # before pydantic validation.
+    import re as _re_norm
     feats = result.get("features", [])
     if isinstance(feats, list):
         for f in feats:
             if not isinstance(f, dict):
                 continue
+            # Coerce feature name → kebab-case if needed
+            name = f.get("name")
+            if isinstance(name, str) and (" " in name or _re_norm.search(r"[A-Z]", name)):
+                kebab = _re_norm.sub(r"[\s_]+", "-", name.strip())
+                kebab = _re_norm.sub(r"([a-z0-9])([A-Z])", r"\1-\2", kebab)
+                f["name"] = kebab.lower().strip("-")
             flows = f.get("flows")
             if not isinstance(flows, list):
                 continue
             coerced = []
             for fl in flows:
                 if isinstance(fl, str):
-                    coerced.append({"name": fl, "description": ""})
+                    flow_name = fl
+                    if " " in flow_name or _re_norm.search(r"[A-Z]", flow_name):
+                        flow_name = _re_norm.sub(r"[\s_]+", "-", flow_name.strip())
+                        flow_name = _re_norm.sub(r"([a-z0-9])([A-Z])", r"\1-\2", flow_name)
+                        flow_name = flow_name.lower().strip("-")
+                    if not flow_name.endswith("-flow"):
+                        flow_name = flow_name + "-flow"
+                    coerced.append({"name": flow_name, "description": ""})
                 elif isinstance(fl, dict):
+                    fl_name = fl.get("name")
+                    if isinstance(fl_name, str) and (" " in fl_name or _re_norm.search(r"[A-Z]", fl_name)):
+                        kebab = _re_norm.sub(r"[\s_]+", "-", fl_name.strip())
+                        kebab = _re_norm.sub(r"([a-z0-9])([A-Z])", r"\1-\2", kebab)
+                        fl["name"] = kebab.lower().strip("-")
                     coerced.append(fl)
             f["flows"] = coerced
 
