@@ -1713,6 +1713,16 @@ def _validate_llm_access(
     ollama_url: str,
 ) -> None:
     """Validates LLM connectivity before the long git analysis. Exits on failure."""
+    # S24 — when FAULTLINE_USE_GEMINI is set, skip Anthropic validation
+    # (Gemini takes over the primary client via client_factory).
+    import os as _os_check
+    if _os_check.environ.get("FAULTLINE_USE_GEMINI", "").strip().lower() in {"1", "true", "yes", "on", "pro", "flash"}:
+        if not _os_check.environ.get("GEMINI_API_KEY") and not _os_check.environ.get("GOOGLE_API_KEY"):
+            console.print("[red]✗ FAULTLINE_USE_GEMINI is set but GEMINI_API_KEY is missing[/red]")
+            raise typer.Exit(1)
+        console.print("[green]✓[/green] Gemini key present (FAULTLINE_USE_GEMINI active)")
+        return
+
     if provider == "anthropic":
         from faultline.llm.detector import validate_api_key
         console.print("[dim]Validating Anthropic API key...[/dim]")
@@ -2073,7 +2083,17 @@ def _detect_flows(
         ]
 
         # Detect flows for this feature
-        if provider == "anthropic":
+        # S24 — when in Gemini-only mode, the legacy detect_flows_llm
+        # uses anthropic.messages.parse() (structured-output) which
+        # GeminiClient doesn't support. Bypass entirely: flow_v2 path
+        # (--tool-flows flag) routes through messages.create which IS
+        # Gemini-compatible. Without --tool-flows, just emit an empty
+        # flow list so the scan completes; users wanting flows on
+        # Gemini should pass --tool-flows.
+        import os as _os_gem
+        if _os_gem.environ.get("FAULTLINE_USE_GEMINI", "").strip().lower() in {"1", "true", "yes", "on", "pro", "flash"}:
+            flow_mappings = []
+        elif provider == "anthropic":
             flow_mappings = detect_flows_llm(
                 feature_name=feature.name,
                 feature_files=analysis_feature_files,

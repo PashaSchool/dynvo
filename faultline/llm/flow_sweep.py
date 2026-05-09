@@ -307,14 +307,17 @@ def promote_unattached_as_flows(
         return 0
 
     if client is None:
+        from faultline.llm.client_factory import (
+            _gemini_only_enabled, gemini_model_for, make_llm_client,
+        )
         api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
+        if not api_key and not _gemini_only_enabled():
             return 0
         try:
-            from anthropic import Anthropic
-        except ImportError:
+            client = make_llm_client(api_key=api_key)
+            model = gemini_model_for(model) or model
+        except Exception:  # noqa: BLE001
             return 0
-        client = Anthropic(api_key=api_key)
 
     created = 0
     # Batch to keep the prompt under the limit.
@@ -528,14 +531,17 @@ def cross_validate_neighbours(
             flow_index[fn] = (owner, descs.get(fn, "") if isinstance(descs, dict) else "")
 
     if client is None:
+        from faultline.llm.client_factory import (
+            _gemini_only_enabled, gemini_model_for, make_llm_client,
+        )
         api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
+        if not api_key and not _gemini_only_enabled():
             return 0
         try:
-            from anthropic import Anthropic
-        except ImportError:
+            client = make_llm_client(api_key=api_key)
+            model = gemini_model_for(model) or model
+        except Exception:  # noqa: BLE001
             return 0
-        client = Anthropic(api_key=api_key)
 
     claims_recorded = 0
     for fname, fdesc in feature_menu.items():
