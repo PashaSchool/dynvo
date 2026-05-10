@@ -975,5 +975,39 @@
     "annotated_by": "pkuzina",
     "annotated_at": "2026-05-07",
     "verified_via": "two independent WebFetch iterations: README and wiki ToC"
+  },
+  "apprise-gemini-31": {
+    "_research_iterations": "[Gemini 3.1 Pro Preview A/B] iter1=README listed notification service categories (chat, SMS, email, desktop, webhooks) plus core capabilities (config, attachments, tags, persistent storage, CLI, API). iter2=wiki ToC confirmed same buckets and added plugin/dev API. Iterations agreed; wiki added 'custom plugins' explicitly.",
+    "stack": "python-flat",
+    "expected_features": [
+      "chat-notifications",
+      "sms-notifications",
+      "email-notifications",
+      "desktop-notifications",
+      "webhook-notifications",
+      "configuration-files",
+      "attachments",
+      "tagging",
+      "persistent-storage",
+      "cli",
+      "python-api",
+      "custom-plugins"
+    ],
+    "expected_flows": [
+      "send-notification",
+      "load-config-file",
+      "attach-file",
+      "filter-by-tag",
+      "register-custom-plugin",
+      "send-via-cli",
+      "configure-smtp",
+      "send-to-discord",
+      "send-sms",
+      "cache-persistent-storage"
+    ],
+    "source": "README: https://github.com/caronc/apprise + Wiki",
+    "annotated_by": "pkuzina",
+    "annotated_at": "2026-05-07",
+    "verified_via": "two independent WebFetch iterations: README and GitHub wiki ToC"
   }
 }
