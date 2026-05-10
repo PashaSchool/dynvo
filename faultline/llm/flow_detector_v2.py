@@ -172,11 +172,11 @@ def detect_flows_for_feature(
     if not files:
         return None
 
+    from faultline.llm.client_factory import (
+        _gemini_only_enabled, gemini_model_for, make_llm_client,
+    )
     if client is None:
         import os
-        from faultline.llm.client_factory import (
-            _gemini_only_enabled, gemini_model_for, make_llm_client,
-        )
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key and not _gemini_only_enabled():
             logger.warning("flow_v2(%s): no API key — skipping", name)
