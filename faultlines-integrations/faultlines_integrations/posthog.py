@@ -1,31 +1,16 @@
-"""PostHog analytics provider for FeatureMap."""
+"""PostHog analytics provider."""
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import httpx
 
-from faultline.integrations.base import (
-    AnalyticsProvider,
-    ErrorEntry,
-    ErrorMetrics,
-    PageMetrics,
-)
+from .models import ErrorEntry, ErrorMetrics, PageMetrics
 
 
 class PostHogProvider:
-    """Fetches traffic and error metrics from PostHog API.
-
-    Supports both PostHog Cloud and self-hosted instances.
-
-    Usage:
-        provider = PostHogProvider(
-            api_key="phx_...",
-            project_id="12345",
-            host="https://app.posthog.com",  # or self-hosted URL
-        )
-        if await provider.validate_connection():
-            traffic = await provider.get_page_traffic(days=30)
-    """
+    """Fetches traffic and error metrics from the PostHog HogQL API."""
 
     name = "posthog"
 
@@ -45,7 +30,6 @@ class PostHogProvider:
         )
 
     async def validate_connection(self) -> bool:
-        """Verify API key and project access."""
         try:
             resp = await self._client.get("/")
             return resp.status_code == 200
@@ -53,26 +37,20 @@ class PostHogProvider:
             return False
 
     async def get_page_traffic(self, days: int = 30) -> list[PageMetrics]:
-        """Query PostHog for $pageview events grouped by current_url."""
         query = {
             "query": {
                 "kind": "HogQLQuery",
                 "query": (
-                    "SELECT "
-                    "  properties.$current_url AS url, "
-                    "  count() AS views, "
-                    "  count(DISTINCT person_id) AS visitors, "
-                    "  avg(properties.$session_duration) AS avg_duration "
-                    "FROM events "
-                    "WHERE event = '$pageview' "
-                    f"  AND timestamp > now() - INTERVAL {days} DAY "
-                    "GROUP BY url "
-                    "ORDER BY views DESC "
-                    "LIMIT 500"
+                    "SELECT properties.$current_url AS url, "
+                    "count() AS views, "
+                    "count(DISTINCT person_id) AS visitors, "
+                    "avg(properties.$session_duration) AS avg_duration "
+                    "FROM events WHERE event = '$pageview' "
+                    f"AND timestamp > now() - INTERVAL {days} DAY "
+                    "GROUP BY url ORDER BY views DESC LIMIT 500"
                 ),
             }
         }
-
         try:
             resp = await self._client.post("/query/", json=query)
             resp.raise_for_status()
@@ -94,30 +72,23 @@ class PostHogProvider:
                     avg_session_duration_sec=float(avg_dur or 0),
                 )
             )
-
         return _dedupe_routes(results)
 
     async def get_error_counts(self, days: int = 30) -> list[ErrorMetrics]:
-        """Query PostHog for $exception events grouped by current_url."""
         query = {
             "query": {
                 "kind": "HogQLQuery",
                 "query": (
-                    "SELECT "
-                    "  properties.$current_url AS url, "
-                    "  count() AS errors, "
-                    "  count(DISTINCT properties.$exception_message) AS unique_errs, "
-                    "  groupArray(10)(properties.$exception_message) AS messages "
-                    "FROM events "
-                    "WHERE event = '$exception' "
-                    f"  AND timestamp > now() - INTERVAL {days} DAY "
-                    "GROUP BY url "
-                    "ORDER BY errors DESC "
-                    "LIMIT 200"
+                    "SELECT properties.$current_url AS url, "
+                    "count() AS errors, "
+                    "count(DISTINCT properties.$exception_message) AS unique_errs, "
+                    "groupArray(10)(properties.$exception_message) AS messages "
+                    "FROM events WHERE event = '$exception' "
+                    f"AND timestamp > now() - INTERVAL {days} DAY "
+                    "GROUP BY url ORDER BY errors DESC LIMIT 200"
                 ),
             }
         }
-
         try:
             resp = await self._client.post("/query/", json=query)
             resp.raise_for_status()
@@ -131,13 +102,10 @@ class PostHogProvider:
             route = _extract_route(url or "")
             if not route:
                 continue
-
             top_errors = [
                 ErrorEntry(title=msg, count=1)
-                for msg in (messages or [])
-                if msg
+                for msg in (messages or []) if msg
             ]
-
             results.append(
                 ErrorMetrics(
                     route=route,
@@ -146,7 +114,6 @@ class PostHogProvider:
                     top_errors=top_errors,
                 )
             )
-
         return results
 
     async def close(self) -> None:
@@ -154,26 +121,16 @@ class PostHogProvider:
 
 
 def _extract_route(full_url: str) -> str:
-    """Extract path from a full URL, stripping query params and hash."""
-    from urllib.parse import urlparse
-
     if not full_url:
         return ""
-
-    parsed = urlparse(full_url)
-    path = parsed.path or "/"
-
-    # Normalize trailing slash
+    path = urlparse(full_url).path or "/"
     if path != "/" and path.endswith("/"):
         path = path.rstrip("/")
-
     return path
 
 
 def _dedupe_routes(metrics: list[PageMetrics]) -> list[PageMetrics]:
-    """Merge metrics for the same route (different query params, etc.)."""
     merged: dict[str, PageMetrics] = {}
-
     for pm in metrics:
         if pm.route in merged:
             existing = merged[pm.route]
@@ -187,5 +144,4 @@ def _dedupe_routes(metrics: list[PageMetrics]) -> list[PageMetrics]:
             )
         else:
             merged[pm.route] = pm
-
     return sorted(merged.values(), key=lambda m: m.pageviews, reverse=True)
