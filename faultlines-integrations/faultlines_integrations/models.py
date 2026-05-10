@@ -1,8 +1,12 @@
-"""Base protocol and models for analytics integrations."""
+"""Data models + impact-score math for analytics enrichment.
+
+Moved verbatim from `faultline/integrations/base.py` so this package
+has no runtime dependency on the faultline CLI codebase.
+"""
 
 from __future__ import annotations
 
-from datetime import datetime
+import math
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -18,6 +22,14 @@ class PageMetrics(BaseModel):
     bounce_rate: float | None = None
 
 
+class ErrorEntry(BaseModel):
+    """Single error type with count and optional link."""
+
+    title: str
+    count: int
+    url: str = ""
+
+
 class ErrorMetrics(BaseModel):
     """Aggregated error metrics for a single route or component."""
 
@@ -27,14 +39,6 @@ class ErrorMetrics(BaseModel):
     top_errors: list[ErrorEntry] = []
 
 
-class ErrorEntry(BaseModel):
-    """Single error type with count and optional link."""
-
-    title: str
-    count: int
-    url: str = ""  # link to Sentry issue / PostHog error page
-
-
 class ImpactScore(BaseModel):
     """Computed impact combining health score with analytics data."""
 
@@ -42,46 +46,25 @@ class ImpactScore(BaseModel):
     health_score: float
     pageviews: int
     error_count: int
-    impact_level: str  # "critical" | "high" | "medium" | "low" | "healthy"
+    impact_level: str  # critical | high | medium | low | healthy
     score: float  # 0-100, lower = more urgent
-
-
-# Fix forward reference
-ErrorMetrics.model_rebuild()
 
 
 @runtime_checkable
 class AnalyticsProvider(Protocol):
-    """Protocol that all analytics providers must implement.
-
-    Each provider connects to an external analytics service and returns
-    standardized metrics that FeatureMap can correlate with code features.
-    """
+    """Protocol that all analytics providers must implement."""
 
     @property
-    def name(self) -> str:
-        """Provider identifier, e.g. 'posthog', 'sentry', 'ga4'."""
-        ...
+    def name(self) -> str: ...
 
-    async def validate_connection(self) -> bool:
-        """Test that API credentials are valid. Returns True if OK."""
-        ...
+    async def validate_connection(self) -> bool: ...
 
-    async def get_page_traffic(
-        self, days: int = 30
-    ) -> list[PageMetrics]:
-        """Return traffic metrics per page/route for the last N days."""
-        ...
+    async def get_page_traffic(self, days: int = 30) -> list[PageMetrics]: ...
 
-    async def get_error_counts(
-        self, days: int = 30
-    ) -> list[ErrorMetrics]:
-        """Return error metrics per route for the last N days.
+    async def get_error_counts(self, days: int = 30) -> list[ErrorMetrics]: ...
 
-        Not all providers support this (e.g. GA4 doesn't).
-        Return empty list if unsupported.
-        """
-        ...
+
+# ── Scoring ──────────────────────────────────────────────────────────
 
 
 def compute_impact_scores(
@@ -96,14 +79,12 @@ def compute_impact_scores(
         traffic: page traffic from analytics provider
         errors: error counts from analytics provider
 
-    Returns:
-        Impact scores sorted by urgency (most critical first).
+    Returns sorted by urgency (most critical first).
     """
     traffic_by_route = {pm.route: pm for pm in traffic}
     errors_by_route = {em.route: em for em in errors}
 
     scores: list[ImpactScore] = []
-
     for flow in flows:
         flow_name = flow["name"]
         health = flow["health_score"]
@@ -111,24 +92,21 @@ def compute_impact_scores(
 
         total_views = 0
         total_errors = 0
-
         for path in flow_paths:
-            route = _path_to_route(path)
+            route = path_to_route(path)
             if route in traffic_by_route:
                 total_views += traffic_by_route[route].pageviews
             if route in errors_by_route:
                 total_errors += errors_by_route[route].error_count
 
         score = _calculate_score(health, total_views, total_errors)
-        level = _score_to_level(score)
-
         scores.append(
             ImpactScore(
                 flow_name=flow_name,
                 health_score=health,
                 pageviews=total_views,
                 error_count=total_errors,
-                impact_level=level,
+                impact_level=_score_to_level(score),
                 score=score,
             )
         )
@@ -136,23 +114,13 @@ def compute_impact_scores(
     return sorted(scores, key=lambda s: s.score)
 
 
-def _path_to_route(file_path: str) -> str:
-    """Convert a file path to a URL route for matching.
-
-    Examples:
-        src/app/dashboard/settings/page.tsx -> /dashboard/settings
-        pages/api/webhooks/github.ts -> /api/webhooks/github
-        src/routes/checkout/+page.svelte -> /checkout
-    """
+def path_to_route(file_path: str) -> str:
+    """Convert a file path to a URL route for matching analytics rows."""
     route = file_path
-
-    # Strip common prefixes
     for prefix in ("src/app/", "src/pages/", "app/", "pages/", "src/routes/"):
         if route.startswith(prefix):
             route = route[len(prefix):]
             break
-
-    # Strip file extensions and index/page markers
     for suffix in (
         "/page.tsx", "/page.ts", "/page.jsx", "/page.js",
         "/+page.svelte", "/+page.ts",
@@ -162,46 +130,21 @@ def _path_to_route(file_path: str) -> str:
         if route.endswith(suffix):
             route = route[: -len(suffix)]
             break
-
-    # Ensure leading slash
     if not route.startswith("/"):
         route = "/" + route
-
-    # Clean trailing slash
     if route != "/" and route.endswith("/"):
         route = route.rstrip("/")
-
     return route
 
 
 def _calculate_score(health: float, pageviews: int, errors: int) -> float:
-    """Lower score = more urgent to fix.
-
-    Formula weights:
-    - health_score: 40% (inverted — low health = low score)
-    - traffic_factor: 35% (more traffic = lower score = more urgent)
-    - error_factor: 25% (more errors = lower score = more urgent)
-    """
-    health_component = health  # 0-100, higher is better
-
-    # Normalize traffic: log scale, cap at 100K views
-    import math
+    """Lower score = more urgent. health 40% / traffic 35% / errors 25%."""
     traffic_norm = min(math.log10(max(pageviews, 1)) / 5.0, 1.0) * 100
-    traffic_component = 100 - traffic_norm  # invert: more traffic = lower
-
-    # Normalize errors: log scale, cap at 10K errors
     error_norm = min(math.log10(max(errors, 1)) / 4.0, 1.0) * 100
-    error_component = 100 - error_norm
-
-    return (
-        health_component * 0.40
-        + traffic_component * 0.35
-        + error_component * 0.25
-    )
+    return health * 0.40 + (100 - traffic_norm) * 0.35 + (100 - error_norm) * 0.25
 
 
 def _score_to_level(score: float) -> str:
-    """Convert numeric score to human-readable impact level."""
     if score < 25:
         return "critical"
     if score < 45:

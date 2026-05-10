@@ -1,32 +1,17 @@
-"""Sentry error monitoring provider for FeatureMap."""
+"""Sentry error monitoring provider."""
 
 from __future__ import annotations
 
 import httpx
 
-from faultline.integrations.base import (
-    AnalyticsProvider,
-    ErrorEntry,
-    ErrorMetrics,
-    PageMetrics,
-)
+from .models import ErrorEntry, ErrorMetrics, PageMetrics
 
 
 class SentryProvider:
-    """Fetches error metrics from Sentry API.
+    """Fetches error metrics from the Sentry API.
 
-    Provides error counts per URL/route that can be correlated
-    with FeatureMap flows to identify high-impact technical debt.
-
-    Usage:
-        provider = SentryProvider(
-            auth_token="sntrys_...",
-            organization="my-org",
-            project="my-project",
-            host="https://sentry.io",  # or self-hosted
-        )
-        if await provider.validate_connection():
-            errors = await provider.get_error_counts(days=30)
+    Sentry has no pageviews — `get_page_traffic` returns []. Pair with
+    PostHog (or another traffic source) for full impact-score input.
     """
 
     name = "sentry"
@@ -49,7 +34,6 @@ class SentryProvider:
         )
 
     async def validate_connection(self) -> bool:
-        """Verify auth token and project access."""
         try:
             url = f"/projects/{self._organization}/{self._project}/"
             resp = await self._client.get(url)
@@ -58,19 +42,14 @@ class SentryProvider:
             return False
 
     async def get_page_traffic(self, days: int = 30) -> list[PageMetrics]:
-        """Sentry doesn't track pageviews. Returns empty list."""
         return []
 
     async def get_error_counts(self, days: int = 30) -> list[ErrorMetrics]:
-        """Fetch top issues grouped by URL tag from Sentry."""
-        stat_period = f"{days}d"
-
         try:
-            # Get top issues for the project
             resp = await self._client.get(
                 f"/projects/{self._organization}/{self._project}/issues/",
                 params={
-                    "statsPeriod": stat_period,
+                    "statsPeriod": f"{days}d",
                     "sort": "freq",
                     "limit": 200,
                     "query": "is:unresolved",
@@ -82,20 +61,14 @@ class SentryProvider:
             return []
 
         route_errors: dict[str, _RouteAccumulator] = {}
-
         for issue in issues:
             route = _extract_route_from_issue(issue)
             if not route:
                 continue
-
             event_count = int(issue.get("count", "0"))
             title = issue.get("title", "Unknown error")
             issue_url = issue.get("permalink", "")
-
-            if route not in route_errors:
-                route_errors[route] = _RouteAccumulator()
-
-            acc = route_errors[route]
+            acc = route_errors.setdefault(route, _RouteAccumulator())
             acc.total_errors += event_count
             acc.unique_errors += 1
             acc.entries.append(
@@ -113,7 +86,6 @@ class SentryProvider:
                     top_errors=top,
                 )
             )
-
         return sorted(results, key=lambda m: m.error_count, reverse=True)
 
     async def close(self) -> None:
@@ -121,8 +93,6 @@ class SentryProvider:
 
 
 class _RouteAccumulator:
-    """Temp accumulator for grouping errors by route."""
-
     def __init__(self) -> None:
         self.total_errors = 0
         self.unique_errors = 0
@@ -130,42 +100,23 @@ class _RouteAccumulator:
 
 
 def _extract_route_from_issue(issue: dict) -> str:
-    """Try to extract a URL route from a Sentry issue.
-
-    Sentry issues may have a 'url' tag or transaction name
-    that maps to a route.
-    """
-    # Check metadata for url
-    metadata = issue.get("metadata", {})
-
-    # Transaction name is often the route
-    # e.g. "GET /api/checkout" or "/dashboard/settings"
     culprit = issue.get("culprit", "")
     if culprit and "/" in culprit:
-        # Strip HTTP method prefix if present
         parts = culprit.split(" ", 1)
         route = parts[-1] if len(parts) > 1 and parts[0].isupper() else culprit
         if route.startswith("/"):
             return _normalize_route(route)
-
-    # Fallback: check title for route patterns
     title = issue.get("title", "")
     if " /" in title:
         for part in title.split():
             if part.startswith("/") and len(part) > 1:
                 return _normalize_route(part)
-
     return ""
 
 
 def _normalize_route(route: str) -> str:
-    """Clean up route for consistent matching."""
-    # Remove query params
     if "?" in route:
         route = route.split("?")[0]
-
-    # Remove trailing slash
     if route != "/" and route.endswith("/"):
         route = route.rstrip("/")
-
     return route
