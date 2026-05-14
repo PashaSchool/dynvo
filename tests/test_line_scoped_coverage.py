@@ -145,8 +145,11 @@ class TestApplyFeatureCoverageTier1:
             fm, coverage_data={"utils.ts": 50.0}, path_prefix="",
             detailed=detailed,
         )
-        # Tier 1 should win — 100% (the symbol's specific lines)
+        # Tier 1 should win — 100% (the symbol's specific lines) and the
+        # provenance label must reflect that, otherwise the dashboard will
+        # mislabel real line-scoped data as file-level (Strategy A surface).
         assert feature.coverage_pct == 100.0
+        assert feature.coverage_source == "lcov-line"
 
     def test_falls_back_to_file_level_when_no_attributions(self):
         line_hits = {1: 1, 2: 0}
@@ -158,6 +161,7 @@ class TestApplyFeatureCoverageTier1:
             detailed=detailed,
         )
         assert feature.coverage_pct == 50.0  # file-level
+        assert feature.coverage_source == "lcov-file"
 
     def test_falls_back_when_detailed_missing(self):
         feature = _feature(
@@ -191,6 +195,7 @@ class TestFlowCoverage:
         )
         # Flow should get 100% (only its symbol's lines)
         assert flow.coverage_pct == 100.0
+        assert flow.coverage_source == "lcov-line"
 
     def test_two_flows_diverge(self):
         # Same file, two flows pulling different symbols → different coverage
