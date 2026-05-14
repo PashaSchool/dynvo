@@ -1631,6 +1631,36 @@ def deep_scan(
             f"{names_block}"
         )
 
+    # Phase 3b: route-file hints injection (Next.js App Router for now).
+    # Opt-in via FAULTLINE_ROUTE_HINTS=1. Tells Sonnet about route
+    # groups the maintainer literally created — strong feature-boundary
+    # signal that the LLM otherwise has to guess at. Documented in
+    # .claude/skills/route-file-extractor/SKILL.md (faultlines-app repo).
+    try:
+        from faultline.extractors.route_file import (
+            build_route_hints_block,
+            is_route_hints_enabled,
+        )
+        if is_route_hints_enabled() and files:
+            # Walk up from the first file looking for package.json to
+            # find the repo root (deep_scan doesn't get repo_root).
+            _f0 = Path(files[0]).resolve()
+            _hint_repo = None
+            for parent in [_f0, *_f0.parents]:
+                if (parent / "package.json").exists():
+                    _hint_repo = parent
+                    break
+            if _hint_repo is not None:
+                hints = build_route_hints_block(_hint_repo)
+                if hints:
+                    prompt = f"{hints}\n\n{prompt}"
+                    logger.info(
+                        "Deep scan: route-hints injector active "
+                        "(+%d chars, repo=%s)", len(hints), _hint_repo,
+                    )
+    except Exception as exc:  # noqa: BLE001 — opt-in opportunistic enrichment
+        logger.warning("route-hints injection skipped: %s", exc)
+
     # Phase 3a: dependency-context window injection (ArchAgent technique).
     # Opt-in via FAULTLINE_DEP_CONTEXT=1 — gives Sonnet a 1-hop import
     # neighbourhood around the chunk so it stops guessing how files

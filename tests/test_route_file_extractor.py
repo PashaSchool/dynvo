@@ -118,6 +118,57 @@ def test_api_signal_lists_all_methods():
     assert "POST" in methods
 
 
-# property added by the dataclass: NextRoute.method - check we expose it via tuple
-def _ensure_method_attr_compat():
-    pass
+def test_build_route_hints_block_empty_for_non_nextjs(tmp_path):
+    from faultline.extractors.route_file import build_route_hints_block
+    assert build_route_hints_block(tmp_path) == ""
+
+
+def test_build_route_hints_block_contains_groups_and_routes():
+    from faultline.extractors.route_file import build_route_hints_block
+    block = build_route_hints_block(REPO)
+    assert "ROUTING-HINT" in block
+    assert "Next.js App Router" in block
+    # Both maintainer-declared groups should appear
+    assert "(marketing)" in block
+    assert "(dashboard)" in block
+    # API + page lines
+    assert "/api/webhooks/stripe" in block
+    assert "/billing" in block
+    # Method labels for API
+    assert "GET" in block and "POST" in block
+    # Top-level routes (root page) labelled separately
+    assert "Top-level routes" in block
+
+
+def test_build_route_hints_block_excludes_layouts():
+    from faultline.extractors.route_file import build_route_hints_block
+    block = build_route_hints_block(REPO)
+    # layout.tsx exists in fixture but should NOT appear in hints
+    # (framework files don't help feature clustering)
+    assert "layout.tsx" not in block
+    assert "kind: layout" not in block
+
+
+def test_route_hints_budget_truncates_with_marker():
+    """Hints over budget should truncate gracefully."""
+    from faultline.extractors.route_file import build_route_hints_block
+    # Tiny budget forces truncation; PoC fixture has ~8 routes
+    block = build_route_hints_block(REPO, budget_chars=200)
+    assert len(block) <= 350   # close to budget plus footer
+    assert "ROUTING-HINT" in block
+
+
+def test_is_route_hints_enabled_off_by_default(monkeypatch):
+    monkeypatch.delenv("FAULTLINE_ROUTE_HINTS", raising=False)
+    from faultline.extractors.route_file import is_route_hints_enabled
+    assert is_route_hints_enabled() is False
+
+
+def test_is_route_hints_enabled_on(monkeypatch):
+    from faultline.extractors.route_file import is_route_hints_enabled
+    monkeypatch.setenv("FAULTLINE_ROUTE_HINTS", "1")
+    assert is_route_hints_enabled() is True
+    monkeypatch.setenv("FAULTLINE_ROUTE_HINTS", "true")
+    assert is_route_hints_enabled() is True
+    monkeypatch.setenv("FAULTLINE_ROUTE_HINTS", "0")
+    assert is_route_hints_enabled() is False
