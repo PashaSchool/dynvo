@@ -480,6 +480,28 @@ def run(
         except Exception as exc:  # noqa: BLE001 — opportunistic
             logger.warning("pipeline: trace_flows failed (%s) — skipping", exc)
 
+    # Stage 1.96 (Phase 5): Recall-critique pass. Out-of-band extractor
+    # signals (package-anchor, schema-domain, MVC controllers, route
+    # groups) get diffed against the detected feature set; the missing
+    # categories go to a single Haiku call that confirms or rejects
+    # each one and produces a feature name + files. Opt-in via the
+    # ``FAULTLINE_CRITIQUE_RECALL`` env var so it stays off the
+    # default scan path until the corpus A/B validates it.
+    from faultline.llm import recall_critique_runner
+    if recall_critique_runner.is_enabled() and repo_root is not None:
+        try:
+            result = recall_critique_runner.run_recall_critique(
+                result=result,
+                repo_root=repo_root,
+                api_key=api_key,
+                model=None,
+                tracker=tracker,
+            )
+        except Exception as exc:  # noqa: BLE001 — opportunistic
+            logger.warning(
+                "pipeline: recall critique failed (%s) — skipping", exc,
+            )
+
     if critique:
         from faultline.llm.critique import critique_and_refine
         # Lock canonical names from the user's .faultline.yaml so
