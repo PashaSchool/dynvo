@@ -1631,6 +1631,36 @@ def deep_scan(
             f"{names_block}"
         )
 
+    # Phase 3a: dependency-context window injection (ArchAgent technique).
+    # Opt-in via FAULTLINE_DEP_CONTEXT=1 — gives Sonnet a 1-hop import
+    # neighbourhood around the chunk so it stops guessing how files
+    # relate. Documented in
+    # .claude/skills/dependency-context-injector/SKILL.md (in the
+    # faultlines-app repo). No-op when the env var is unset.
+    try:
+        from faultline.extractors.dependency_context import (
+            build_dependency_context_block,
+            is_enabled as _dep_ctx_enabled,
+        )
+        if _dep_ctx_enabled():
+            from faultline.analyzer.symbol_graph import build_symbol_graph
+            _repo_root_hint = None
+            for _f in files[:1]:
+                _repo_root_hint = str(Path(_f).resolve().parent)
+                break
+            graph = build_symbol_graph(_repo_root_hint or ".", files)
+            dep_block = build_dependency_context_block(
+                chunk_files=files, graph=graph,
+            )
+            if dep_block:
+                prompt = f"{dep_block}\n\n{prompt}"
+                logger.info(
+                    "Deep scan: dependency-context injector active "
+                    "(+%d chars)", len(dep_block),
+                )
+    except Exception as exc:  # noqa: BLE001 — opt-in opportunistic enrichment
+        logger.warning("dependency-context injection skipped: %s", exc)
+
     logger.info("Deep scan: %d candidates, %d unmatched files → Sonnet", len(real_candidates), len(unmatched))
 
     # Call Sonnet (operations-based — no file lists in response)
