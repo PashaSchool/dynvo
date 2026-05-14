@@ -81,14 +81,53 @@ def is_nextjs_app_router(repo_root: Path) -> bool:
         # Could also live under apps/web/app for monorepos — handle later
         if not _has_app_dir_in_workspace(repo_root):
             return False
-    pkg = repo_root / "package.json"
-    if not pkg.exists():
-        return False
-    try:
-        text = pkg.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    return '"next"' in text or "'next'" in text
+    return _has_next_dep(repo_root)
+
+
+def is_nextjs_pages_router(repo_root: Path) -> bool:
+    """True iff the repo has a `pages/` directory + `next` in
+    package.json. Pages Router is the legacy convention; many real
+    repos still use it (and quite a few hybrid app+pages exist).
+    """
+    if not (repo_root / "pages").is_dir():
+        if not _has_pages_dir_in_workspace(repo_root):
+            return False
+    return _has_next_dep(repo_root)
+
+
+def _has_next_dep(repo_root: Path) -> bool:
+    """True if `next` appears in the root package.json OR any
+    apps/*/package.json or packages/*/package.json (monorepo)."""
+    candidates = [repo_root / "package.json"]
+    for parent_name in ("apps", "packages"):
+        parent = repo_root / parent_name
+        if not parent.is_dir():
+            continue
+        for child in parent.iterdir():
+            pkg = child / "package.json"
+            if pkg.exists():
+                candidates.append(pkg)
+    for pkg in candidates:
+        if not pkg.exists():
+            continue
+        try:
+            text = pkg.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if '"next"' in text or "'next'" in text:
+            return True
+    return False
+
+
+def _has_pages_dir_in_workspace(repo_root: Path) -> bool:
+    for parent_name in ("apps", "packages"):
+        parent = repo_root / parent_name
+        if not parent.is_dir():
+            continue
+        for child in parent.iterdir():
+            if child.is_dir() and (child / "pages").is_dir():
+                return True
+    return False
 
 
 def _has_app_dir_in_workspace(repo_root: Path) -> bool:
@@ -213,7 +252,123 @@ def _detect_api_methods(route_file: Path) -> tuple[str, ...]:
     return tuple(methods)
 
 
+# ── Pages Router (legacy) ────────────────────────────────────────────
+
+
+_PAGES_FRAMEWORK_FILES = {"_app", "_document", "_error", "404", "500"}
+
+
+def _all_pages_dirs(repo_root: Path) -> list[Path]:
+    out: list[Path] = []
+    if (repo_root / "pages").is_dir():
+        out.append(repo_root / "pages")
+    for parent_name in ("apps", "packages"):
+        parent = repo_root / parent_name
+        if not parent.is_dir():
+            continue
+        for child in parent.iterdir():
+            if child.is_dir() and (child / "pages").is_dir():
+                out.append(child / "pages")
+    return out
+
+
+def collect_pages_routes(repo_root: Path) -> list[NextRoute]:
+    """Walk every `pages/` tree (legacy Next.js Pages Router).
+
+    File conventions:
+      pages/index.{tsx,jsx,ts,js,mdx}  → URL = '/<parent_path>'
+      pages/<name>.{...}               → URL = '/<parent_path>/<name>'
+      pages/api/<...>.{ts,js}          → API endpoint (single handler;
+                                         method = 'ANY')
+      pages/[slug].tsx                 → /:slug
+      pages/[...catchall].tsx          → /*catchall
+      pages/_{app,document,error,...}  → SKIPPED (framework)
+
+    Pages Router has no equivalent of (group) — there's no parent_hint
+    concept. Every detected route is parent_hint=None.
+    """
+    if not is_nextjs_pages_router(repo_root):
+        return []
+    out: list[NextRoute] = []
+    valid_exts = (".tsx", ".jsx", ".ts", ".js", ".mdx")
+    for pages_dir in _all_pages_dirs(repo_root):
+        for path in pages_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in valid_exts:
+                continue
+            rel_parts = path.relative_to(repo_root).parts
+            if any(p in _SKIP_DIRS for p in rel_parts):
+                continue
+            stem = path.stem
+            if stem in _PAGES_FRAMEWORK_FILES:
+                continue
+            # Determine if it's an API route (lives under pages/api/)
+            pages_rel = pages_dir.relative_to(repo_root).parts
+            after_pages = rel_parts[len(pages_rel):]
+            is_api = len(after_pages) >= 1 and after_pages[0] == "api"
+
+            # Build URL: drop the file's own segment if it's "index";
+            # convert dynamic segments
+            segments = list(after_pages[:-1])     # excl. file itself
+            if stem != "index":
+                segments.append(stem)
+            url_parts: list[str] = []
+            for seg in segments:
+                if seg.startswith("[...") and seg.endswith("]"):
+                    url_parts.append("*" + seg[4:-1])
+                elif seg.startswith("[") and seg.endswith("]"):
+                    url_parts.append(":" + seg[1:-1])
+                else:
+                    url_parts.append(seg)
+            url_path = "/" + "/".join(url_parts) if url_parts else "/"
+
+            kind = "api" if is_api else "page"
+            handler_file = str(path.relative_to(repo_root)).replace("\\", "/")
+
+            out.append(NextRoute(
+                handler_file=handler_file,
+                url_path=url_path,
+                methods=("ANY",) if is_api else ("GET",),
+                kind=kind,
+                parent_hint=None,
+            ))
+    return out
+
+
 # ── Extractor wrapper (Protocol-conforming, Phase 3b PoC) ────────────
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NextPagesRouteFileExtractor:
+    """Phase 3b extractor for Next.js Pages Router (legacy)."""
+
+    name: str = "route-file-extractor:nextjs-pages-router"
+
+    def applicable(self, repo_root: Path) -> bool:
+        return is_nextjs_pages_router(repo_root)
+
+    def extract(
+        self, repo_root: Path, files: Iterable[Path],
+    ) -> list[Signal]:
+        _ = files
+        routes = collect_pages_routes(repo_root)
+        return [
+            Signal(
+                kind="route",
+                source=self.name,
+                payload={
+                    "framework": "nextjs-pages-router",
+                    "method": (r.methods[0] if r.methods else None),
+                    "methods": r.methods,
+                    "path": r.url_path,
+                    "handler_file": r.handler_file,
+                    "kind": r.kind,
+                    "parent_hint": r.parent_hint,
+                },
+            )
+            for r in routes
+        ]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -256,9 +411,12 @@ class NextRouteFileExtractor:
 __all__ = [
     "NextRoute",
     "NextRouteFileExtractor",
+    "NextPagesRouteFileExtractor",
     "build_route_hints_block",
     "collect_routes",
+    "collect_pages_routes",
     "is_nextjs_app_router",
+    "is_nextjs_pages_router",
     "is_route_hints_enabled",
 ]
 
@@ -312,7 +470,12 @@ def build_route_hints_block(
     maintainer literally put these files inside (group)/ to declare
     them as one feature. The LLM should respect that grouping.
     """
+    # Try App Router first; fall back to Pages Router.
     routes = collect_routes(repo_root)
+    framework_label = "Next.js App Router"
+    if not routes:
+        routes = collect_pages_routes(repo_root)
+        framework_label = "Next.js Pages Router"
     if not routes:
         return ""
 
@@ -327,7 +490,7 @@ def build_route_hints_block(
     if not grouped:
         return ""
 
-    parts: list[str] = ["=== ROUTING-HINT (Next.js App Router) ==="]
+    parts: list[str] = [f"=== ROUTING-HINT ({framework_label}) ==="]
     parts.append(
         f"Routes the maintainer organised below. Use these maintainer-"
         f"declared groupings as feature boundaries; the (group) names "
