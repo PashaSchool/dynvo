@@ -256,6 +256,120 @@ class NextRouteFileExtractor:
 __all__ = [
     "NextRoute",
     "NextRouteFileExtractor",
+    "build_route_hints_block",
     "collect_routes",
     "is_nextjs_app_router",
+    "is_route_hints_enabled",
 ]
+
+
+# ── Prompt-hint formatting (Phase 3b LLM integration) ────────────────
+
+
+import os as _os
+from collections import Counter as _Counter, defaultdict as _defaultdict
+
+
+def is_route_hints_enabled() -> bool:
+    """True iff FAULTLINE_ROUTE_HINTS env var is set.
+
+    Off by default during Phase 3b rollout so A/B testing is clean
+    (run with and without to measure recall delta on the golden corpus).
+    """
+    return _os.environ.get("FAULTLINE_ROUTE_HINTS", "").lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+# Default budget for the route-hints block. Routes are short strings
+# (~60-100 chars each); 2000 chars ≈ 500 tokens fits ~25 routes
+# with grouping headers — enough signal without overflowing the prompt.
+DEFAULT_ROUTE_HINTS_BUDGET_CHARS = 2000
+
+
+def build_route_hints_block(
+    repo_root: Path,
+    *,
+    budget_chars: int = DEFAULT_ROUTE_HINTS_BUDGET_CHARS,
+) -> str:
+    """Render a prompt-ready hints block listing routes grouped by
+    parent_hint. Empty when no routes detected.
+
+    Format example:
+      === ROUTING-HINT (Next.js App Router) ===
+      Routes maintainer-grouped under (dashboard):
+        page  /billing
+        page  /settings/:tab
+        api   POST /api/billing/webhook
+      Routes maintainer-grouped under (auth):
+        page  /login
+        page  /signup
+      Top-level routes:
+        page  /
+      === END ROUTING-HINT ===
+
+    Each route group is a strong feature-clustering hint — the
+    maintainer literally put these files inside (group)/ to declare
+    them as one feature. The LLM should respect that grouping.
+    """
+    routes = collect_routes(repo_root)
+    if not routes:
+        return ""
+
+    # Sort: pages then api, by path; group by parent_hint
+    grouped: dict[str | None, list[NextRoute]] = _defaultdict(list)
+    for r in routes:
+        if r.kind in ("layout", "loading", "error", "not-found", "template",
+                      "default", "global-error", "metadata"):
+            continue   # framework files don't help feature clustering
+        grouped[r.parent_hint].append(r)
+
+    if not grouped:
+        return ""
+
+    parts: list[str] = ["=== ROUTING-HINT (Next.js App Router) ==="]
+    parts.append(
+        f"Routes the maintainer organised below. Use these maintainer-"
+        f"declared groupings as feature boundaries; the (group) names "
+        f"in particular are explicit feature buckets."
+    )
+
+    # Order groups: explicit (groups) first by route count desc, then None last
+    explicit_groups = sorted(
+        (g for g in grouped if g is not None),
+        key=lambda g: -len(grouped[g]),
+    )
+    for g in explicit_groups:
+        parts.append(f"")
+        parts.append(f"Routes maintainer-grouped under {g}:")
+        for r in sorted(grouped[g], key=lambda r: (r.kind != "page", r.url_path)):
+            parts.append(_format_route_line(r))
+
+    if grouped.get(None):
+        parts.append("")
+        parts.append("Top-level routes (no group):")
+        for r in sorted(grouped[None], key=lambda r: (r.kind != "page", r.url_path)):
+            parts.append(_format_route_line(r))
+
+    parts.append("=== END ROUTING-HINT ===")
+
+    block = "\n".join(parts)
+    if len(block) <= budget_chars:
+        return block
+
+    # Trim from the tail with an "N more omitted" marker
+    truncated: list[str] = []
+    for line in parts:
+        if sum(len(x) + 1 for x in truncated) + len(line) > budget_chars - 80:
+            truncated.append("  … (more routes omitted for budget)")
+            truncated.append("=== END ROUTING-HINT ===")
+            return "\n".join(truncated)
+        truncated.append(line)
+    return "\n".join(truncated)
+
+
+def _format_route_line(r: NextRoute) -> str:
+    if r.kind == "api":
+        methods = ",".join(r.methods) if r.methods else "?"
+        return f"  api    {methods:<12} {r.url_path}"
+    return f"  page   {r.url_path}"
