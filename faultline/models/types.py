@@ -61,6 +61,16 @@ class Flow(BaseModel):
     health_trend: float | None = None        # first_half_bug_ratio - second_half; positive = improving
     hotspot_files: list[str] = []            # source files with >40% bug_fix_ratio (≥3 commits)
     coverage_pct: float | None = None        # avg line coverage % across source files; None if unavailable
+    # Provenance for ``coverage_pct``. Drives a UI badge so the reader
+    # knows what the number actually measures. One of:
+    #   ``"lcov-line"``         — real lcov data intersected with the flow's
+    #                             SymbolAttribution.line_ranges (most precise)
+    #   ``"lcov-file"``         — real lcov, but only file-level avg available
+    #   ``"static-reach-line"`` — static reach (no lcov), credited at line level
+    #                             via test→symbol matching (Strategy B)
+    #   ``"static-reach-file"`` — static reach, file-level only (Strategy A baseline)
+    # ``None`` when coverage_pct is itself None.
+    coverage_source: str | None = None
     symbol_attributions: list["SymbolAttribution"] = []  # symbols (functions/classes) that belong to this flow — populated when --symbols is enabled
     # Sprint 12 Day 3.5 — multi-feature ownership. A flow can
     # legitimately participate in more than one feature ("Create
@@ -168,6 +178,7 @@ class Feature(BaseModel):
     flows: list[Flow] = []    # populated when --flows flag is used
     bug_fix_prs: list[PullRequest] = []
     coverage_pct: float | None = None  # avg line coverage % across source files; None if unavailable
+    coverage_source: str | None = None  # see Flow.coverage_source — same enum
     shared_attributions: list[SymbolAttribution] = []  # symbol-scoped data for shared files
     # Refactor Day 1: participants — every file (with line ranges and
     # role) imported transitively from any of this feature's source

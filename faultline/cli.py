@@ -1841,6 +1841,7 @@ def _apply_feature_coverage(
         )
         if scoped_pct is not None:
             feature.coverage_pct = scoped_pct
+            feature.coverage_source = "lcov-line"
         else:
             # Tier 2: file-level average
             coverages = []
@@ -1853,6 +1854,7 @@ def _apply_feature_coverage(
                     coverages.append(pct)
             if coverages:
                 feature.coverage_pct = round(sum(coverages) / len(coverages), 1)
+                feature.coverage_source = "lcov-file"
 
         # Apply coverage to flows within this feature.
         # Refactor Day 4: prefer ``flow.participants`` over legacy
@@ -1865,6 +1867,7 @@ def _apply_feature_coverage(
             )
             if flow_scoped is not None:
                 flow.coverage_pct = flow_scoped
+                flow.coverage_source = "lcov-line"
                 continue
             flow_coverages = []
             for file_path in flow.paths:
@@ -1876,6 +1879,7 @@ def _apply_feature_coverage(
                     flow_coverages.append(pct)
             if flow_coverages:
                 flow.coverage_pct = round(sum(flow_coverages) / len(flow_coverages), 1)
+                flow.coverage_source = "lcov-file"
 
 
 def _coverage_for_attributions(
