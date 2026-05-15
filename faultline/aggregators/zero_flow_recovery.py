@@ -102,11 +102,21 @@ _SKIP_NAMES = frozenset({
     "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
     "handler", "handle",
     # React / TS noise
-    "Component", "memo", "forwardRef", "useState", "useEffect",
+    "Component", "memo", "forwardRef",
     # Test fixtures
     "describe", "it", "test", "expect", "beforeEach", "afterEach",
     "fixture", "setup", "teardown",
 })
+
+
+# React hook convention: ``useFoo`` (lowercase ``use`` followed by
+# an uppercase letter) is a React hook, not a user-facing flow.
+# Skip them entirely from zero-flow recovery.
+_REACT_HOOK_RE = re.compile(r"^use[A-Z]")
+
+
+def _is_react_hook(name: str) -> bool:
+    return bool(_REACT_HOOK_RE.match(name))
 
 
 def _humanize_callable(name: str) -> str:
@@ -124,7 +134,7 @@ def _humanize_callable(name: str) -> str:
     spaced = re.sub(r"-+", "-", spaced).strip("-")
     if not spaced:
         return ""
-    # If first token isn't a verb, prepend "manage" so it reads
+    # If first token isn't a verb, prepend "use" so it reads
     # like a flow rather than a noun.
     first = spaced.split("-", 1)[0]
     verb_starts = {
@@ -152,8 +162,10 @@ def _humanize_callable(name: str) -> str:
         "subscribe", "unsubscribe", "follow", "unfollow",
         "schedule", "trigger", "fire", "dispatch",
     }
+    # If first token isn't a verb, prepend "manage" — reads more
+    # human than "use-X" (which looks like a React hook to readers).
     if first not in verb_starts:
-        spaced = f"use-{spaced}"
+        spaced = f"manage-{spaced}"
     if not spaced.endswith("-flow"):
         spaced = f"{spaced}-flow"
     return spaced
@@ -263,7 +275,7 @@ class ZeroFlowRecovery:
                     if _at_cap(len(new_flows)):
                         break
             # Fallback when no callables were extracted: emit ONE
-            # generic "use-<feature-name>-flow" so the dashboard
+            # generic "manage-<feature-name>-flow" so the dashboard
             # never displays a feature card with literally zero
             # flows. Critique-discovered features whose paths are
             # configs / docs / SQL fall into this bucket.
