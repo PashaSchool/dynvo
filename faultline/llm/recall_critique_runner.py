@@ -151,9 +151,15 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         NextRouteFileExtractor,
     )
     from faultline.extractors.schema_domain import SchemaDomainExtractor
+    from faultline.extractors.python_package_subdir import (
+        PythonPackageSubdirExtractor,
+    )
     from faultline.extractors.schema_relations import SchemaRelationsExtractor
     from faultline.extractors.server_actions import ServerActionsExtractor
     from faultline.extractors.trpc_router import TrpcRouterExtractor
+    from faultline.extractors.ts_library_exports import (
+        TsLibraryExportsExtractor,
+    )
 
     candidates = [
         PackageAnchorExtractor(),
@@ -166,6 +172,8 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         JsxNavExtractor(),
         ServerActionsExtractor(),
         TrpcRouterExtractor(),
+        PythonPackageSubdirExtractor(),
+        TsLibraryExportsExtractor(),
     ]
 
     out: list[Signal] = []
