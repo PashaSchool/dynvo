@@ -1101,6 +1101,23 @@ def analyze(
                 f"({_n_before_noise} → {_n_after_noise})[/dim]"
             )
 
+        # 6a.56 (Sprint 1 2026-05-15): Flow consolidator. UI-heavy
+        # SaaS apps over-decompose into per-button micro-flows
+        # (inbox-zero baseline: 176 flows for 8 truth journeys).
+        # The consolidator groups semantic duplicates per feature and
+        # caps at N flows. Pure deterministic — no LLM cost — so it
+        # runs always, not opt-in.
+        try:
+            from faultline.aggregators.flow_consolidator import FlowConsolidator
+            _flow_n_before, _flow_n_after = FlowConsolidator().consolidate(feature_map)
+            if _flow_n_after < _flow_n_before:
+                console.print(
+                    f"[dim]Flow consolidator: {_flow_n_before} → "
+                    f"{_flow_n_after} flows[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(f"[dim]Flow consolidator skipped: {_exc}[/dim]")
+
         # 6a.57 (Phase 5 Layer A 2026-05-15): Recall-critique pass.
         # Out-of-band extractor signals (package-anchor, schema-domain,
         # MVC controllers, route groups) get diffed against the
