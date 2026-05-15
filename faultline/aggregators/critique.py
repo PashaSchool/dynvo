@@ -243,6 +243,45 @@ def _category_from_signal(
             else f"route-group:{hint}"
         return display, ev, "heuristic"
 
+    if sig.kind == "server-actions-file":
+        # One signal per Next.js Server Actions file. The file's
+        # parent dir often names the feature (app/billing/actions.ts
+        # → "billing"). Use the parent dir as the category display;
+        # if that's a generic name like "actions", fall back to the
+        # grandparent.
+        f = p.get("file")
+        if not isinstance(f, str) or not f:
+            return None
+        parts = Path(f).parts
+        # Walk up until we find a non-generic segment.
+        generic = {"actions", "server", "lib", "src", "app", "api", "pages"}
+        display = ""
+        for seg in reversed(parts[:-1]):  # skip the file itself
+            if seg.lower() not in generic:
+                display = seg
+                break
+        if not display:
+            return None
+        sample = p.get("sample_names", ())
+        count = p.get("action_count", 0)
+        ev = f"server-actions:{f} ({count} actions: {list(sample)[:4]})"
+        return display, ev, "should"
+
+    if sig.kind == "trpc-router-file":
+        # tRPC router file. The router basename is the canonical
+        # category name in tRPC convention (billing.ts → Billing
+        # router).
+        basename = p.get("router_basename")
+        if not isinstance(basename, str) or not basename:
+            return None
+        # Skip generic basenames like "index", "router", "_app".
+        if basename.lower() in {"index", "router", "_app", "root", "trpc"}:
+            return None
+        sample = p.get("sample_procedures", ())
+        count = p.get("procedure_count", 0)
+        ev = f"trpc-router:{basename} ({count} procedures: {list(sample)[:4]})"
+        return basename, ev, "should"
+
     if sig.kind == "nav-link":
         # JSX nav-component output. The author wrote this label, so
         # it's a high-confidence customer-facing surface name. When
