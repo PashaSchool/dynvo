@@ -1040,6 +1040,14 @@ def _rename_dynamic_segment_features(features: list) -> int:
             new_name = candidate
         old_name = feat.name
         feat.name = new_name
+        # Clear display_name so a downstream canonicalizer (or
+        # _populate_display_names) re-derives it from the NEW slug.
+        # Without this, ``trpc`` → renamed slug
+        # ``mixed-resource-operations-2`` keeps its old display
+        # ``Trpc`` and the dashboard still shows the structural
+        # label.
+        if hasattr(feat, "display_name"):
+            feat.display_name = None
         seen_names.discard(old_name)
         seen_names.add(new_name)
         renamed += 1
