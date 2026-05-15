@@ -35,13 +35,34 @@ from pathlib import Path
 from faultline.signals import Signal
 
 
-# When a connected component exceeds this many models it almost
-# certainly indicates a mega-cluster where every model transitively
-# links through a central User / Account hub. Such clusters carry
-# no feature granularity ("everything is one feature") so we drop
-# them. Tuned 2026-05-15 against inbox-zero (61-model cluster) and
-# papermark (15-model cluster — kept).
-MAX_CLUSTER_SIZE = 12
+# Mega-cluster detection — a connected component is treated as
+# noise (every model links through a central User / Account hub,
+# carrying no feature granularity) when it dominates the schema.
+#
+# Why ratio + floor instead of an absolute cap:
+#   - Schemas vary wildly in size: 5 models in a tiny lib, 300+
+#     in a giant SaaS. Any single magic number gets one of those
+#     wrong.
+#   - Ratio answers the actual question — "is this component
+#     basically the whole schema?". A 30-model component in a
+#     60-model schema (50%) is a hub; a 30-model component in a
+#     200-model schema (15%) is a real domain.
+#   - The MIN_TOTAL_MODELS_FOR_CAP floor protects tiny schemas
+#     where one connected component IS the whole product (a 5-model
+#     schema with 4 connected models is fine — keep it).
+#
+# Scale-invariant; no per-repo tuning required.
+MEGA_CLUSTER_RATIO = 0.5
+MIN_TOTAL_MODELS_FOR_CAP = 8
+
+
+def _is_mega_cluster(cluster_size: int, total_models: int) -> bool:
+    """A cluster is mega when the schema is non-trivial AND the
+    cluster contains more than half the models in it.
+    """
+    if total_models < MIN_TOTAL_MODELS_FOR_CAP:
+        return False
+    return cluster_size > MEGA_CLUSTER_RATIO * total_models
 
 
 _SKIP_DIR_NAMES = frozenset({
@@ -292,12 +313,13 @@ def collect_schema_clusters(repo_root: Path) -> list[SchemaCluster]:
         if not models:
             continue
         rel = str(path.relative_to(repo_root))
+        total_models = len(models)
         for cluster in _cluster_models(models, edges):
-            if len(cluster) > MAX_CLUSTER_SIZE:
-                # Mega-cluster — every model transitively links
-                # through a central hub. No feature granularity,
-                # skip emission rather than report a single "User"
-                # cluster that spans the whole product.
+            if _is_mega_cluster(len(cluster), total_models):
+                # Hub-and-spoke component dominating the schema.
+                # No feature granularity, skip emission rather
+                # than report a single "User" cluster that spans
+                # the whole product.
                 continue
             anchor = _pick_anchor(cluster, edges)
             n_internal_edges = sum(

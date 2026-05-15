@@ -215,14 +215,13 @@ def test_extractor_applicable_false_without_schema_files(tmp_path):
     assert SchemaRelationsExtractor().applicable(tmp_path) is False
 
 
-def test_mega_clusters_above_size_cap_are_dropped(tmp_path):
-    """Schemas where every model transitively links to a central
-    hub produce mega-clusters that carry no feature granularity.
-    Drop them before emission.
+def test_mega_cluster_dropped_when_dominates_a_large_schema(tmp_path):
+    """Hub-and-spoke shape on a non-trivial schema (>= 8 models):
+    the dominating component (>50% of schema) is dropped.
     """
     body_lines = ["model Hub { id Int @id }"]
-    # Create 20 models all FK-pointing at Hub. With a hub-and-spoke
-    # shape the connected component is 21 (Hub + 20).
+    # 20 models all FK-pointing at Hub. Connected component = 21.
+    # Total models = 21. Component is 21/21 = 100% — definitely mega.
     for i in range(20):
         body_lines.append(f"""
 model M{i:02d} {{
@@ -233,25 +232,72 @@ model M{i:02d} {{
 """)
     _w(tmp_path, "prisma/schema.prisma", "\n".join(body_lines))
     clusters = collect_schema_clusters(tmp_path)
-    # Mega-cluster (size 21) silently dropped; no other clusters.
+    # Mega component silently dropped; no other clusters in this
+    # schema since everything is in one component.
     assert clusters == []
 
 
-def test_below_size_cap_clusters_still_emit(tmp_path):
-    """Sanity: a cluster of size 5 (under the cap) still emits."""
-    body_lines = ["model Root { id Int @id }"]
-    for i in range(4):
-        body_lines.append(f"""
-model M{i} {{
+def test_dominating_cluster_in_TINY_schema_is_kept(tmp_path):
+    """Schemas with < MIN_TOTAL_MODELS_FOR_CAP models are exempt
+    from the mega-cluster filter — in a 5-model schema, a 4-model
+    cluster is the WHOLE PRODUCT and SHOULD be emitted.
+    """
+    _w(tmp_path, "prisma/schema.prisma", """
+model Root {
   id Int @id
-  root Root @relation(fields: [rootId], references: [id])
-  rootId Int
+}
+model A {
+  id Int @id
+  root Root @relation(fields: [rId], references: [id])
+  rId Int
+}
+model B {
+  id Int @id
+  root Root @relation(fields: [rId], references: [id])
+  rId Int
+}
+model C {
+  id Int @id
+  root Root @relation(fields: [rId], references: [id])
+  rId Int
+}
+model Solo {
+  id Int @id
+}
+""")
+    clusters = collect_schema_clusters(tmp_path)
+    # 5 models < 8 → no cap. Big cluster (Root+A+B+C, size 4) survives.
+    big = [c for c in clusters if len(c.members) > 1]
+    assert len(big) == 1
+    assert set(big[0].members) == {"Root", "A", "B", "C"}
+
+
+def test_real_domain_clusters_kept_even_in_large_schema(tmp_path):
+    """A 30-model component in a 100-model schema is 30% — well
+    under the 50% cap. Should be kept.
+    """
+    body = []
+    # 30-model auth-shaped cluster: Hub + 29 spokes
+    body.append("model AuthHub { id Int @id }")
+    for i in range(29):
+        body.append(f"""
+model A{i:02d} {{
+  id Int @id
+  hub AuthHub @relation(fields: [hId], references: [id])
+  hId Int
 }}
 """)
-    _w(tmp_path, "prisma/schema.prisma", "\n".join(body_lines))
+    # 70 unrelated solo models
+    for i in range(70):
+        body.append(f"model Solo{i:02d} {{ id Int @id }}")
+
+    _w(tmp_path, "prisma/schema.prisma", "\n".join(body))
     clusters = collect_schema_clusters(tmp_path)
-    assert len(clusters) == 1
-    assert len(clusters[0].members) == 5
+    # 30-model cluster = 30% of 100, under the cap → emitted.
+    big = [c for c in clusters if len(c.members) > 1]
+    assert len(big) == 1
+    assert big[0].anchor == "AuthHub"
+    assert len(big[0].members) == 30
 
 
 def test_extractor_applicable_true_with_prisma(tmp_path):
