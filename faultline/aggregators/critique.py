@@ -243,6 +243,28 @@ def _category_from_signal(
             else f"route-group:{hint}"
         return display, ev, "heuristic"
 
+    if sig.kind == "nav-link":
+        # JSX nav-component output. The author wrote this label, so
+        # it's a high-confidence customer-facing surface name. When
+        # both label and href are present, prefer label as the
+        # display (it IS the customer-facing phrase). When label is
+        # empty (icon-only nav), fall back to the route's last
+        # segment so we still have something.
+        label = p.get("label")
+        href = p.get("href", "")
+        f = p.get("file", "")
+        display: str | None = None
+        if isinstance(label, str) and label.strip():
+            display = label.strip()
+        elif isinstance(href, str) and href:
+            seg = href.rstrip("/").rsplit("/", 1)[-1]
+            if seg:
+                display = seg
+        if not display:
+            return None
+        ev = f"nav-link:{display!r} → {href} ({f})" if f else f"nav-link:{display!r} → {href}"
+        return display, ev, "should"
+
     if sig.kind == "plugin-system":
         # ONE signal per plugin directory describes the architectural
         # feature ("plugin extensibility", "notification delivery",
