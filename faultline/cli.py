@@ -1244,6 +1244,23 @@ def analyze(
                     f"flows {fl_before} → {fl_after}[/dim]"
                 )
 
+        # 6a.75 (2026-05-15): Re-run dynamic-segment renamer AFTER
+        # post_process. post_process can MERGE features and create
+        # new structural-named feature (e.g. merging apps/remix +
+        # apps/web → "apps"). The Stage 6a.54 renamer ran before
+        # post_process and didn't see those merged names. This
+        # second invocation is the safety net.
+        try:
+            from faultline.analyzer.features import _rename_dynamic_segment_features
+            _n_renamed_pp = _rename_dynamic_segment_features(feature_map.features)
+            if _n_renamed_pp:
+                console.print(
+                    f"[dim]Dynamic-segment rename (post-process): fixed "
+                    f"{_n_renamed_pp} feature(s)[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(f"[dim]Dynamic-segment rename (post-process) skipped: {_exc}[/dim]")
+
         # 6a.8 (Sprint 1, RELOCATED 2026-05-15): Flow consolidator.
         # Runs AFTER post_process — earlier ordering put it before
         # post_process which then merged features and combined their
@@ -1259,6 +1276,25 @@ def analyze(
                 )
         except Exception as _exc:  # noqa: BLE001 — opportunistic
             console.print(f"[dim]Flow consolidator skipped: {_exc}[/dim]")
+
+        # 6a.85 (2026-05-15): Flow reattribution by name match.
+        # Sonnet's flow_judge sometimes attaches a flow to the
+        # wrong feature when their semantics overlap (e.g. documenso
+        # had "enterprise-billing-flow" attached to
+        # organisation-management instead of ee/enterprise-billing).
+        # The aggregator computes token-overlap between each flow's
+        # name and every feature's name, moves to strictly-better
+        # match. Pure deterministic.
+        try:
+            from faultline.aggregators.flow_reattribution import FlowReattribution
+            _n_moved = FlowReattribution().reattribute(feature_map)
+            if _n_moved:
+                console.print(
+                    f"[dim]Flow reattribution: moved "
+                    f"{_n_moved} flow(s) to better-matching features[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(f"[dim]Flow reattribution skipped: {_exc}[/dim]")
 
         # 6a.9 (Sprint 6.3 2026-05-15): Zero-flow recovery. Many
         # features land with empty .flows — library-shape repos

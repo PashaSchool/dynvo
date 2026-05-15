@@ -48,9 +48,11 @@ def test_humanize_camelcase_with_verb_prefix():
     assert _humanize_callable("createInvoice") == "create-invoice-flow"
 
 
-def test_humanize_inserts_use_when_no_verb():
-    """Names without verb prefix get a "use-" prefix."""
-    assert _humanize_callable("Subscription") == "use-subscription-flow"
+def test_humanize_inserts_manage_when_no_verb():
+    """Names without verb prefix get a "manage-" prefix (more
+    human-readable than "use-" which reads like a React hook).
+    """
+    assert _humanize_callable("Subscription") == "manage-subscription-flow"
 
 
 def test_humanize_snake_case():
@@ -59,7 +61,7 @@ def test_humanize_snake_case():
 
 def test_humanize_strips_leading_underscores_safely():
     """Underscores treated as separators."""
-    assert _humanize_callable("_private_helper") == "use-private-helper-flow"
+    assert _humanize_callable("_private_helper") == "manage-private-helper-flow"
 
 
 def test_humanize_already_kebab():
@@ -245,7 +247,7 @@ class Subscription:
 def test_recovery_emits_fallback_when_no_callables_extracted(tmp_path):
     """Critique features sometimes cite paths that don't exist
     OR have no exported callables (config files, docs, SQL).
-    The recovery falls back to ONE generic ``use-<name>-flow``
+    The recovery falls back to ONE generic ``manage-<name>-flow``
     so the dashboard never shows a feature with literally zero
     flows.
     """
@@ -253,7 +255,7 @@ def test_recovery_emits_fallback_when_no_callables_extracted(tmp_path):
     n_feat, n_flow = ZeroFlowRecovery().recover(fm, tmp_path)
     assert n_feat == 1
     assert n_flow == 1
-    assert fm.features[0].flows[0].name == "use-ghost-feature-flow"
+    assert fm.features[0].flows[0].name == "manage-ghost-feature-flow"
 
 
 def test_recovery_default_has_no_cap():
