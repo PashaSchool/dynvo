@@ -144,6 +144,7 @@ def gather_signals(repo_root: Path) -> list[Signal]:
     # dependencies for one extractor still load the runner.
     from faultline.extractors.mvc_controller import RailsControllerExtractor
     from faultline.extractors.package_anchor import PackageAnchorExtractor
+    from faultline.extractors.plugin_module import PluginModuleExtractor
     from faultline.extractors.route_file import (
         NextPagesRouteFileExtractor,
         NextRouteFileExtractor,
@@ -156,6 +157,7 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         RailsControllerExtractor(),
         NextRouteFileExtractor(),
         NextPagesRouteFileExtractor(),
+        PluginModuleExtractor(),
     ]
 
     out: list[Signal] = []
