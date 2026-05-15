@@ -930,13 +930,31 @@ def _is_dynamic_route_segment(part: str) -> bool:
 # in the heuristic-fallback path; this renamer is the LLM-path
 # safety net.
 _STRUCTURAL_FEATURE_NAMES = frozenset({
+    # Source roots
     "app", "src", "lib", "pkg", "internal", "core",
+    # Monorepo workspace conventions
+    "apps", "packages", "libs", "modules",
+    # Frontend structural dirs
     "pages", "api", "actions", "hooks", "providers",
     "components", "layouts", "containers", "views", "screens",
     "routes", "router", "controllers", "handlers", "services",
     "helpers", "utils", "types", "schemas", "models",
     "middleware", "config", "constants", "assets", "styles",
     "public", "static", "common", "shared",
+    # Documentation / examples / vendored code
+    "docs", "documentation", "examples", "example", "samples",
+    "demo", "demos", "tutorial", "tutorials",
+    "vendor", "vendored", "third_party",
+    # Framework / stack labels — when a top-level dir is named after
+    # the framework, it's an organizational marker, not a feature.
+    # (e.g. apps/remix/, packages/trpc/, packages/react/).
+    "remix", "trpc", "react", "vue", "angular", "svelte",
+    "next", "nextjs", "nuxt", "astro", "solid",
+    "graphql", "rest",
+    # Build / tooling
+    "build", "dist", "bin", "scripts",
+    # Infra-ish
+    "infra", "infrastructure", "deployment", "deploy", "ops",
 })
 
 
@@ -1005,11 +1023,21 @@ def _rename_dynamic_segment_features(features: list) -> int:
             new_name = "mixed-resource-operations"
         else:
             new_name = top
-        # Avoid clobbering a sibling feature that already owns the name.
+        # Avoid clobbering a sibling feature that already owns the
+        # name. Try suffix-2, suffix-3, ... until we find a free one.
+        # Without this loop, multiple structural features (lib /
+        # trpc / documentation / packages) all racing to rename to
+        # "mixed-resource-operations" would have to give up after
+        # the first collision.
         if new_name in seen_names:
-            new_name = f"{new_name}-detail"
-        if new_name in seen_names:
-            continue  # give up — leave original
+            base = new_name
+            attempt = 2
+            while f"{base}-{attempt}" in seen_names and attempt < 20:
+                attempt += 1
+            candidate = f"{base}-{attempt}"
+            if candidate in seen_names:
+                continue  # give up — pathological collision
+            new_name = candidate
         old_name = feat.name
         feat.name = new_name
         seen_names.discard(old_name)

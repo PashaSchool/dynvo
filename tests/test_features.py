@@ -260,9 +260,9 @@ class TestRenameDynamicSegmentFeatures:
         assert n == 0
         assert feats[0].name == "billing"
 
-    def test_appends_detail_suffix_on_collision(self) -> None:
+    def test_appends_indexed_suffix_on_collision(self) -> None:
         from faultline.analyzer.features import _rename_dynamic_segment_features
-        # "[id]" → "links" but "links" already exists → append -detail
+        # "[id]" → "links" but "links" already exists → append -2
         feats = [
             self._feat("links", ["links/index.ts"]),
             self._feat("[id]", [
@@ -273,7 +273,38 @@ class TestRenameDynamicSegmentFeatures:
         ]
         n = _rename_dynamic_segment_features(feats)
         assert n == 1
-        assert feats[1].name == "links-detail"
+        assert feats[1].name == "links-2"
+
+    def test_indexed_suffix_walks_when_multiple_collisions(self) -> None:
+        """Multiple structural features collapsing to the same
+        fallback name get -2, -3, -4 suffixes instead of giving up.
+        """
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        # All 4 features map to "mixed-resource-operations" (no
+        # parent dominates ≥40%). They get suffix-2/-3/-4.
+        feats = [
+            # All have widely-varied parents → mixed-resource-operations
+            self._feat("lib", [
+                f"src/lib/parent{i}/file.ts" for i in range(20)
+            ]),
+            self._feat("trpc", [
+                f"packages/trpc/parent{i}/file.ts" for i in range(20)
+            ]),
+            self._feat("packages", [
+                f"packages/parent{i}/file.ts" for i in range(20)
+            ]),
+            self._feat("modules", [
+                f"src/modules/parent{i}/file.ts" for i in range(20)
+            ]),
+        ]
+        n = _rename_dynamic_segment_features(feats)
+        assert n == 4
+        names = [f.name for f in feats]
+        # All 4 get distinct names with indexed suffixes.
+        assert names[0] == "mixed-resource-operations"
+        assert names[1] == "mixed-resource-operations-2"
+        assert names[2] == "mixed-resource-operations-3"
+        assert names[3] == "mixed-resource-operations-4"
 
     def test_handles_remix_and_django_styles(self) -> None:
         from faultline.analyzer.features import _rename_dynamic_segment_features
