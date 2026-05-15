@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from faultline.aggregators.critique import (
     CritiqueAggregator,
     apply_findings_to_deepscan,
+    apply_findings_to_feature_map,
 )
 from faultline.signals import LlmResponse, Signal
 
@@ -256,8 +257,89 @@ def run_recall_critique(
     return result
 
 
+def apply_critique_to_feature_map(
+    *,
+    feature_map,
+    repo_root: Path | None,
+    api_key: str | None,
+    model: str | None = None,
+    tracker: "CostTracker | None" = None,
+) -> int:
+    """Phase 5 Layer A entry point — runs the critique pass against
+    a built ``FeatureMap`` and appends findings as new Feature
+    objects with ``discovery_method="critique"``.
+
+    Called from ``cli.py`` AFTER ``build_feature_map`` and the
+    primary noise-drop filter, so critique findings reach the final
+    JSON without being dropped by safety heuristics designed for
+    primary-scan content.
+
+    Returns the number of features actually appended (0 when
+    skipped for any reason — missing API key, no signals, no
+    findings, all findings already-owned, etc.). The function never
+    raises on operational failure; the caller's FeatureMap is left
+    unchanged if anything goes wrong.
+    """
+    if repo_root is None:
+        logger.info("critique-recall: repo_root=None; skipping")
+        return 0
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        logger.warning("critique-recall: no API key; skipping")
+        return 0
+
+    try:
+        signals = gather_signals(repo_root)
+    except Exception as exc:  # noqa: BLE001 — opportunistic
+        logger.warning("critique-recall: gather_signals failed (%s)", exc)
+        return 0
+
+    if not signals:
+        logger.info("critique-recall: no extractor signals; skipping")
+        return 0
+
+    try:
+        import anthropic
+    except ImportError:  # pragma: no cover
+        logger.warning("critique-recall: anthropic SDK not available")
+        return 0
+
+    sdk_client = anthropic.Anthropic(api_key=key)
+    llm = _AnthropicLlmClient(
+        client=sdk_client,
+        model=model or DEFAULT_MODEL,
+        tracker=tracker,
+    )
+
+    detected = [f.name for f in feature_map.features]
+    try:
+        findings = CritiqueAggregator(
+            max_tokens=DEFAULT_MAX_TOKENS,
+        ).run(
+            detected_features=detected,
+            signals=signals,
+            llm=llm,
+            repo_root=repo_root,
+        )
+    except Exception as exc:  # noqa: BLE001 — opportunistic
+        logger.warning("critique-recall: aggregator failed (%s)", exc)
+        return 0
+
+    if not findings:
+        logger.info("critique-recall: no findings produced")
+        return 0
+
+    added = apply_findings_to_feature_map(feature_map, findings)
+    logger.info(
+        "critique-recall: appended %d new feature(s) to FeatureMap",
+        added,
+    )
+    return added
+
+
 __all__ = [
     "is_enabled",
     "gather_signals",
     "run_recall_critique",
+    "apply_critique_to_feature_map",
 ]

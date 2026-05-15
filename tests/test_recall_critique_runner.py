@@ -183,6 +183,87 @@ def test_run_skipped_when_no_signals(tmp_path):
     assert out is result
 
 
+def test_apply_critique_to_feature_map_skipped_when_repo_root_none():
+    from dataclasses import dataclass, field as _f
+    @dataclass
+    class FM:
+        features: list = _f(default_factory=list)
+    added = rc.apply_critique_to_feature_map(
+        feature_map=FM(), repo_root=None, api_key="k",
+    )
+    assert added == 0
+
+
+def test_apply_critique_to_feature_map_skipped_when_no_api_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from dataclasses import dataclass, field as _f
+    @dataclass
+    class FM:
+        features: list = _f(default_factory=list)
+    fm = FM()
+    added = rc.apply_critique_to_feature_map(
+        feature_map=fm, repo_root=tmp_path, api_key=None,
+    )
+    assert added == 0
+    assert fm.features == []
+
+
+def test_apply_critique_to_feature_map_skipped_when_no_signals(tmp_path):
+    from dataclasses import dataclass, field as _f
+    @dataclass
+    class FM:
+        features: list = _f(default_factory=list)
+    fm = FM()
+    added = rc.apply_critique_to_feature_map(
+        feature_map=fm, repo_root=tmp_path, api_key="k",
+    )
+    assert added == 0
+
+
+def test_apply_critique_to_feature_map_appends_features_with_critique_provenance(
+    monkeypatch, tmp_path,
+):
+    """End-to-end: package.json with stripe → critique adds Billing
+    feature → appended to FeatureMap with discovery_method='critique'.
+    """
+    (tmp_path / "package.json").write_text(json.dumps({
+        "name": "x", "dependencies": {"stripe": "*"},
+    }))
+    raw = json.dumps({"missed": [
+        {"feature_name": "Billing & Subscriptions",
+         "matched_category": "billing",
+         "files": ["package.json"],
+         "rationale": "Stripe present, no detected billing."},
+    ]})
+    fake_client = _FakeAnthropicClient(response_text=raw)
+    import anthropic
+    monkeypatch.setattr(anthropic, "Anthropic", lambda api_key: fake_client)
+
+    from datetime import datetime, timezone
+    from faultline.models.types import Feature
+    primary = Feature(
+        name="Dashboard", paths=["src/page.tsx"], authors=[],
+        total_commits=10, bug_fixes=1, bug_fix_ratio=0.1,
+        last_modified=datetime.now(tz=timezone.utc), health_score=80.0,
+    )
+
+    from dataclasses import dataclass, field as _f
+    @dataclass
+    class FM:
+        features: list = _f(default_factory=list)
+    fm = FM(features=[primary])
+
+    added = rc.apply_critique_to_feature_map(
+        feature_map=fm, repo_root=tmp_path, api_key="dummy",
+    )
+    assert added == 1
+    assert len(fm.features) == 2
+    new = fm.features[-1]
+    assert new.name == "Billing & Subscriptions"
+    assert new.discovery_method == "critique"
+    assert new.description.startswith("[critique]")
+
+
 def test_run_end_to_end_with_stub_anthropic(monkeypatch, tmp_path):
     """Wire fake anthropic SDK in; verify findings flow to result."""
     # Stripe dep → expected category "Billing", not in detected.
