@@ -285,6 +285,16 @@ You MUST aggressively merge. Apply these rules:
    "shared-ui" (keep this name but as infrastructure). "helpers", "src" → remove.
 4. **Technical layers** → remove. "editor" (if it's a rich-text editor used by many features), \
    "live" (if it's real-time infrastructure), "deploy", "proxy" → remove.
+5. **Per-page variants of the same domain** → merge. Two candidates that differ \
+   only by a generic page-shape suffix ("X-page", "X-list", "X-view", \
+   "X-detail", "X-edit", "X-create", "X-modal", "X-dialog") are the SAME feature \
+   from a customer's perspective — collapse them into the bare domain name. \
+   Example: "billing-list" + "billing-detail" + "billing-edit" → "billing".
+6. **Same-domain admin/user-side variants** → merge by default. \
+   "user-billing" + "admin-billing" are usually one "billing" feature with \
+   role-gated views. Only keep them split when the candidates have COMPLETELY \
+   disjoint code paths AND distinct user audiences (e.g. "admin-impersonation" \
+   is genuinely admin-only and stays separate).
 
 ## Split rules — CRITICAL
 
@@ -319,11 +329,19 @@ EVERY feature MUST have flows. No exceptions. A flow = a user action sequence.
 - Each flow has a 1-sentence description
 - Think about what a user DOES with this feature
 
-**Flow count scales with feature size:**
-- Small feature (<20 files): 3-5 flows
-- Medium feature (20-100 files): 5-8 flows
-- Large feature (100-300 files): 8-12 flows
-- Very large feature (300+ files): 10-15 flows — use the subdirectory breakdown to identify flows
+**Flow count scales with feature size — be conservative:**
+- Small feature (<20 files): 2-3 flows
+- Medium feature (20-100 files): 3-5 flows
+- Large feature (100-300 files): 4-7 flows
+- Very large feature (300+ files): 6-9 flows — use the subdirectory breakdown to identify flows
+
+A flow is a USER JOURNEY (multi-step task), not a button click. Three flows
+per feature is plenty for most surfaces — list/create/edit covers a CRUD
+domain and there is no value in adding "view-list-flow" + "browse-list-flow"
++ "open-list-page-flow" alongside it. A downstream consolidator merges
+verb-synonym duplicates (configure/setup/manage → one), so leaning toward
+fewer-but-distinct flow names helps both precision and the user's reading
+of the dashboard.
 
 **Derive flows from exported functions and routes.** Some files show their exports and API routes:
 - "exports: create_dashboard, delete_dashboard, duplicate_dashboard" → flows: create, delete, duplicate
