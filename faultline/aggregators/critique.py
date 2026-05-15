@@ -243,6 +243,28 @@ def _category_from_signal(
             else f"route-group:{hint}"
         return display, ev, "heuristic"
 
+    if sig.kind == "plugin-system":
+        # ONE signal per plugin directory describes the architectural
+        # feature ("plugin extensibility", "notification delivery",
+        # "provider integrations") — not N per-plugin features.
+        # Ground-truth feature lists for plugin-based libraries
+        # typically describe this as ONE horizontal capability.
+        plugin_dir = p.get("plugin_dir")
+        peer_count = p.get("peer_count", 0)
+        if not isinstance(plugin_dir, str) or not plugin_dir:
+            return None
+        # Display: take the last path segment as the category name
+        # (e.g. "apprise/plugins" → "plugins"). The aggregator's
+        # token matcher uses "plugins" as a token; ground-truth
+        # entries with "plugin" in name/aliases will match.
+        leaf = plugin_dir.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if not leaf:
+            return None
+        # Peer count anchors the description so the LLM can decide
+        # whether to add a new feature or confirm coverage.
+        ev = f"plugin-system:{plugin_dir} ({peer_count} modules)"
+        return leaf, ev, "should"
+
     return None
 
 
