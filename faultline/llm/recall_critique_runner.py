@@ -142,6 +142,7 @@ def gather_signals(repo_root: Path) -> list[Signal]:
     """
     # Import lazily so test envs that don't have the optional
     # dependencies for one extractor still load the runner.
+    from faultline.extractors.jsx_nav import JsxNavExtractor
     from faultline.extractors.mvc_controller import RailsControllerExtractor
     from faultline.extractors.package_anchor import PackageAnchorExtractor
     from faultline.extractors.plugin_module import PluginModuleExtractor
@@ -158,6 +159,7 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         NextRouteFileExtractor(),
         NextPagesRouteFileExtractor(),
         PluginModuleExtractor(),
+        JsxNavExtractor(),
     ]
 
     out: list[Signal] = []
