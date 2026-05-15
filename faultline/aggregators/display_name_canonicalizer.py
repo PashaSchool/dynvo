@@ -174,26 +174,48 @@ def apply_nav_labels(
 
 
 _LLM_SYSTEM_PROMPT = """\
-You produce customer-facing Title Case display names for product
-features detected by a code scanner. Each input has a stable internal
-slug (lowercase, kebab- or snake-case) and a short description.
+You produce BUSINESS-LANGUAGE display names for product features
+detected by a code scanner. The audience is a non-technical
+product manager, founder, or sales person who is reading a
+dashboard. They will skim feature names and decide what each one
+DOES for their customer.
+
+Each input has a stable internal slug (lowercase, kebab- or
+snake-case) and a short description.
 
 Return JSON only — no prose, no markdown fences. Schema:
 {
   "names": [
-    {"slug": "<exact input slug>", "display_name": "Title Case Phrase"},
+    {"slug": "<exact input slug>", "display_name": "Business Phrase"},
     ...
   ]
 }
 
 Rules:
-- Display name is 1-4 words, customer-facing, no abbreviations
-  unless universal (API, OAuth, SSO, MFA).
-- If the slug is already a clean Title Case rendering and you have
-  no better suggestion, return ``"display_name": null`` for that
-  slug — do NOT echo the input as the suggestion.
-- Never invent product capabilities the description doesn't support.
-- Preserve domain words from the description verbatim when present.
+- Display name is 1-4 words. Use the language a CEO/PM/marketing
+  person would put on a pricing page or a feature comparison table.
+- AVOID implementation jargon. Bad: "Layer", "Service", "Engine",
+  "Manager", "Pipeline", "Provider", "Handler", "Adapter",
+  "Framework", "Module", "Component", "Token", "Certificate"
+  (when used as plumbing). These read as "internal code" not
+  "product feature".
+- PREFER product / outcome words. Good: "Compliance", "Trust",
+  "Audit Trail", "Sync", "Workflows", "Insights", "Notifications",
+  "Onboarding", "Integrations", "Analytics", "Permissions".
+- Translate technical concepts into business language:
+    "Document Certificate & Audit Log" → "Compliance & Audit Trail"
+    "Background Job Queue"             → "Background Tasks"
+    "Prisma Database Layer"            → "Data & Storage"
+    "RPC Framework"                    → "API"
+    "File Storage Service"             → "File Storage"
+    "Transactional Email"              → "Email Notifications"
+    "AI Integration"                   → "AI Assistant"
+- If the slug already reads as a business phrase ("Billing", "Auth",
+  "Notifications") and you have no improvement, return
+  ``"display_name": null`` for that slug — do NOT echo the input.
+- Allowed abbreviations only when universal: API, OAuth, SSO, MFA,
+  PDF, CSV, JSON, OTP. Anything else write out fully.
+- Never invent capabilities the description doesn't support.
 """
 
 

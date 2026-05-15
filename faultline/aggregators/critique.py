@@ -467,6 +467,12 @@ OUTPUT: valid JSON only, no prose, no markdown fences. Schema:
 Rules:
 - Every input category MUST appear in either ``missed`` or ``covered``.
 - ``feature_name`` must be Title Case, 2-4 words, product-facing.
+- Each ``feature_name`` represents EXACTLY ONE product capability.
+  Do NOT combine two concepts via ``&`` or ``and``. Bad:
+  ``Document Certificate & Audit Log`` (two features). If the
+  evidence supports two distinct capabilities, emit them as TWO
+  separate ``missed`` entries with their own files. If the
+  evidence supports only one, name only that one.
 - ``files`` MUST list AT LEAST 3 source files that together implement
   the feature — typically the controller + model + view + job for
   Rails, or page route + API route + model for Next.js. Aim for the
