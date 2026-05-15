@@ -860,6 +860,8 @@ def _extract_feature_name(parts: tuple[str, ...]) -> str:
     - app/api/payments/...    → "payments"
     - lib/utils/helpers.py    → "utils"
     - app/(dashboard)/settings/page.tsx → "settings"
+    - pages/links/[id]/index.tsx → "links"   (skips dynamic segment)
+    - app/teams/[teamId]/datarooms/... → "teams"
     - index.py                → "root"
     """
     # Skip common top-level wrapper directories (not feature names themselves)
@@ -882,11 +884,138 @@ def _extract_feature_name(parts: tuple[str, ...]) -> str:
 
     for part in parts[:-1]:  # Exclude the filename
         normalized = part.lower()
-        if normalized not in skip_prefixes and not _is_route_group(part):
+        if (
+            normalized not in skip_prefixes
+            and not _is_route_group(part)
+            and not _is_dynamic_route_segment(part)
+        ):
             return normalized
 
     # File is at the repo root or only in structural dirs
     return "root"
+
+
+# Dynamic route placeholders across the major web frameworks. None of
+# these forms are real feature names — they're URL-template variables.
+# Universal across Next.js / Remix / SvelteKit / Astro / Rails /
+# Django / FastAPI / Spring per memory/rule-no-repo-specific-paths.
+_DYNAMIC_SEGMENT_RE = re.compile(
+    r"""^(?:
+        \[ \.{0,3} [\w$-]+ \]                # Next.js: [id], [...slug], [[...slug]], [id-with-dash]
+      | \[\[ \.{0,3} [\w$-]+ \]\]            # Next.js optional catch-all: [[...slug]]
+      | \$ \w+                               # Remix / SvelteKit: $id
+      | : \w+                                # Rails: :id  (kept for completeness — Rails routes
+                                             # don't usually appear as path segments, but Phoenix does)
+      | \{ [^}]+ \}                          # FastAPI / Spring / Symfony: {id}, {path:path}
+      | < [^>]+ >                            # Django: <int:id>, <slug:slug>
+    )$""",
+    re.VERBOSE,
+)
+
+
+def _is_dynamic_route_segment(part: str) -> bool:
+    """True iff ``part`` is a dynamic-route placeholder rather than
+    a real path segment. Used by ``_extract_feature_name`` and route
+    extractors to skip placeholders so they never become feature
+    candidates (e.g. papermark's `[id]` showing up as a "feature").
+    """
+    return bool(_DYNAMIC_SEGMENT_RE.match(part))
+
+
+# Names that the LLM bucketizer sometimes returns as feature names
+# even though they are structural / scaffolding segments. Same fix
+# class as dynamic-route placeholders ([id], $slug, etc.) — the
+# bucketizer leaks the path segment as the feature name when many
+# files share it. ``_extract_feature_name`` already filters these
+# in the heuristic-fallback path; this renamer is the LLM-path
+# safety net.
+_STRUCTURAL_FEATURE_NAMES = frozenset({
+    "app", "src", "lib", "pkg", "internal", "core",
+    "pages", "api", "actions", "hooks", "providers",
+    "components", "layouts", "containers", "views", "screens",
+    "routes", "router", "controllers", "handlers", "services",
+    "helpers", "utils", "types", "schemas", "models",
+    "middleware", "config", "constants", "assets", "styles",
+    "public", "static", "common", "shared",
+})
+
+
+def _rename_dynamic_segment_features(features: list) -> int:
+    """Post-process rename for features whose NAME is a dynamic-route
+    placeholder (``[id]``, ``$slug``, ``{path}``) OR a structural
+    scaffolding segment (``app``, ``src``, ``components``, ...).
+
+    Origin: the LLM bucketizer occasionally returns these as
+    candidate names when many files share the segment. Both classes
+    are NEVER product features — they're path artefacts.
+
+    Strategy: find the most common non-structural parent segment
+    across the feature's paths. Use that as the new name. If paths
+    span multiple distinct domains (no single parent dominates
+    ≥40%), keep a generic placeholder so the dashboard doesn't
+    show a meaningless name.
+
+    Returns the number of features renamed.
+    """
+    from collections import Counter
+    from pathlib import Path
+
+    renamed = 0
+    seen_names = {f.name for f in features}
+
+    def _needs_rename(name: str) -> bool:
+        if _is_dynamic_route_segment(name):
+            return True
+        if name.lower() in _STRUCTURAL_FEATURE_NAMES:
+            return True
+        return False
+
+    def _is_skippable_parent(part: str) -> bool:
+        # When walking up the path for a better name, skip both
+        # dynamic segments AND structural scaffolding dirs so we
+        # don't just rename "app" → "api".
+        if _is_dynamic_route_segment(part):
+            return True
+        # Strip Next.js route group parens: (dashboard) → dashboard
+        if part.startswith("(") and part.endswith(")"):
+            return True
+        if part.lower() in _STRUCTURAL_FEATURE_NAMES:
+            return True
+        return False
+
+    for feat in features:
+        if not _needs_rename(feat.name):
+            continue
+        # For each path, find the most meaningful non-structural,
+        # non-dynamic segment — walk in reverse from the filename
+        # and pick the first qualifying part.
+        parents = []
+        for p in (feat.paths or []):
+            parts = Path(p).parts
+            for part in reversed(parts[:-1]):  # exclude filename
+                if not _is_skippable_parent(part):
+                    parents.append(part.lower())
+                    break
+        if not parents:
+            continue
+        counts = Counter(parents)
+        top, top_count = counts.most_common(1)[0]
+        # Need clear majority for a confident rename.
+        if top_count / len(parents) < 0.40:
+            new_name = "mixed-resource-operations"
+        else:
+            new_name = top
+        # Avoid clobbering a sibling feature that already owns the name.
+        if new_name in seen_names:
+            new_name = f"{new_name}-detail"
+        if new_name in seen_names:
+            continue  # give up — leave original
+        old_name = feat.name
+        feat.name = new_name
+        seen_names.discard(old_name)
+        seen_names.add(new_name)
+        renamed += 1
+    return renamed
 
 
 _TEST_FILE_RE = re.compile(

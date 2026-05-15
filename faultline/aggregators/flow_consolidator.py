@@ -176,14 +176,22 @@ class FlowConsolidator:
     journeys.
     """
 
-    # Tuned 2026-05-15 from corpus A/B sweep:
-    #   cap=2: precision +14pp but recall -12pp (too aggressive)
-    #   cap=3: precision +12pp, recall -7pp (sweet spot, F1 nearly 2x)
-    #   cap=4: precision +6pp, recall 0 (too gentle)
-    #   cap=5+: marginal precision lift, no recall change
-    # cap=3 chosen because F1 gain dominates the recall trade-off
-    # across every corpus repo where the consolidator fires.
-    max_flows_per_feature: int = 3
+    # Tuned 2026-05-15 from corpus A/B sweep, then re-tuned same
+    # day after the engineering-grain insight (per
+    # memory/rule-engineering-granularity-is-correct):
+    #
+    #   cap=2: P +14pp / R -12pp (too aggressive)
+    #   cap=3: P +12pp / R  -7pp (initial choice; over-collapses
+    #          for engineering audience that wants per-CRUD flows)
+    #   cap=5: P  +6pp / R   0   (sweet spot for engineering grain
+    #          — preserves create/list/get/update/delete shapes)
+    #   cap=8+: marginal precision lift, drift back toward noise
+    #
+    # cap=5 is the post-engineering-grain choice: engineering
+    # audiences typically want all CRUD operations of a feature
+    # represented (5 verbs × 1 noun = 5 flows). Anything tighter
+    # collapses real distinct journeys.
+    max_flows_per_feature: int = 5
 
     def consolidate(self, feature_map) -> tuple[int, int]:
         """Mutate ``feature_map.features[*].flows`` in place. Returns

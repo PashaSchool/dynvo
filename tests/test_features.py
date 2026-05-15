@@ -176,6 +176,15 @@ class TestExtractFeatureName:
             (("features", "dashboard", "chart.tsx"), "dashboard"),
             (("src", "payments", "stripe.py"), "payments"),
             (("app", "(dashboard)", "settings", "page.tsx"), "settings"),  # route group skipped
+            # Dynamic-route segments are placeholders, not features. Walk past them.
+            (("pages", "links", "[id]", "index.tsx"), "links"),         # Next.js Pages
+            (("app", "teams", "[teamId]", "datarooms", "page.tsx"), "teams"),
+            (("app", "[...slug]", "page.tsx"), "root"),                  # Next.js catch-all
+            (("app", "[[...slug]]", "page.tsx"), "root"),                # Next.js optional catch-all
+            (("routes", "$id.tsx",), "root"),                            # Remix dynamic file (single-token after walk)
+            (("app", "users", "$userId", "route.ts"), "users"),          # Remix
+            (("src", "users", "{id}.ts"), "users"),                      # FastAPI/Spring style
+            (("views", "post", "<int:id>", "view.py"), "post"),          # Django path
         ],
     )
     def test_extracts_correct_name(
@@ -188,6 +197,94 @@ class TestExtractFeatureName:
 
     def test_single_dir_not_skipped(self) -> None:
         assert _extract_feature_name(("billing", "invoice.py")) == "billing"
+
+    def test_dynamic_segment_helper_recognises_all_framework_styles(self) -> None:
+        from faultline.analyzer.features import _is_dynamic_route_segment
+        # Truthy
+        for s in ("[id]", "[slug]", "[...slug]", "[[...slug]]",
+                  "[user-id]", "$id", "$userId",
+                  "{id}", "{path:path}", "<int:id>", "<slug:slug>"):
+            assert _is_dynamic_route_segment(s) is True, s
+        # Falsy
+        for s in ("billing", "users", "[", "]", "$", "{}", "(dashboard)"):
+            assert _is_dynamic_route_segment(s) is False, s
+
+
+class TestRenameDynamicSegmentFeatures:
+    """Tests for _rename_dynamic_segment_features post-processor."""
+
+    def _feat(self, name, paths):
+        from datetime import datetime, timezone
+        from faultline.models.types import Feature
+        return Feature(
+            name=name, paths=paths, authors=[],
+            total_commits=10, bug_fixes=0, bug_fix_ratio=0.0,
+            last_modified=datetime.now(tz=timezone.utc),
+            health_score=99.0,
+        )
+
+    def test_renames_dominant_parent_above_threshold(self) -> None:
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        # 5 paths under "links/[id]/", 1 under "datarooms/[id]/"
+        # → links dominates 5/6 = 83%
+        feats = [self._feat("[id]", [
+            "pages/api/links/[id]/index.ts",
+            "pages/api/links/[id]/archive.ts",
+            "pages/api/links/[id]/duplicate.ts",
+            "pages/api/links/[id]/preview.ts",
+            "pages/api/links/[id]/upload.ts",
+            "pages/api/datarooms/[id]/view.ts",
+        ])]
+        n = _rename_dynamic_segment_features(feats)
+        assert n == 1
+        assert feats[0].name == "links"
+
+    def test_keeps_generic_name_when_no_clear_majority(self) -> None:
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        # 5 paths each across 3 different parents — no parent ≥40%
+        # → generic placeholder
+        feats = [self._feat("[id]", [
+            "links/[id]/a.ts", "links/[id]/b.ts",
+            "datarooms/[id]/a.ts", "datarooms/[id]/b.ts",
+            "documents/[id]/a.ts", "documents/[id]/b.ts",
+            "teams/[id]/a.ts", "teams/[id]/b.ts",
+        ])]
+        n = _rename_dynamic_segment_features(feats)
+        assert n == 1
+        assert feats[0].name == "mixed-resource-operations"
+
+    def test_skips_non_dynamic_features(self) -> None:
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        feats = [self._feat("billing", ["billing/x.ts", "billing/y.ts"])]
+        n = _rename_dynamic_segment_features(feats)
+        assert n == 0
+        assert feats[0].name == "billing"
+
+    def test_appends_detail_suffix_on_collision(self) -> None:
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        # "[id]" → "links" but "links" already exists → append -detail
+        feats = [
+            self._feat("links", ["links/index.ts"]),
+            self._feat("[id]", [
+                "pages/api/links/[id]/a.ts",
+                "pages/api/links/[id]/b.ts",
+                "pages/api/links/[id]/c.ts",
+            ]),
+        ]
+        n = _rename_dynamic_segment_features(feats)
+        assert n == 1
+        assert feats[1].name == "links-detail"
+
+    def test_handles_remix_and_django_styles(self) -> None:
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        feats = [
+            self._feat("$slug", ["blog/$slug/post.tsx", "blog/$slug/edit.tsx"]),
+            self._feat("<int:id>", ["users/<int:id>/view.py", "users/<int:id>/edit.py"]),
+        ]
+        n = _rename_dynamic_segment_features(feats)
+        assert n == 2
+        assert feats[0].name == "blog"
+        assert feats[1].name == "users"
 
 
 # ===================================================================
