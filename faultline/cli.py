@@ -1083,6 +1083,24 @@ def analyze(
                 ),
             )
 
+        # 6a.54 (2026-05-15): Dynamic-segment renamer. The LLM
+        # bucketizer occasionally returns ``[id]`` / ``$slug`` /
+        # ``{path}`` style names when many files share that route
+        # placeholder. Rename to the most common non-dynamic parent
+        # segment so the dashboard never shows a route placeholder
+        # as a "feature". Generic across Next/Remix/Rails/Django/
+        # FastAPI per memory/rule-no-repo-specific-paths.
+        try:
+            from faultline.analyzer.features import _rename_dynamic_segment_features
+            _n_renamed = _rename_dynamic_segment_features(feature_map.features)
+            if _n_renamed:
+                console.print(
+                    f"[dim]Dynamic-segment rename: fixed "
+                    f"{_n_renamed} feature(s)[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(f"[dim]Dynamic-segment rename skipped: {_exc}[/dim]")
+
         # 6a.55: Commit-aware noise drop (Fix #2 from Fixable-accuracy
         # eval). Folds tiny-and-cold features (<4 files AND <30 commits
         # AND no flows) into shared-infra. The 30-commit escape hatch
@@ -1100,23 +1118,6 @@ def analyze(
                 f"tiny+cold feature(s) into shared-infra "
                 f"({_n_before_noise} → {_n_after_noise})[/dim]"
             )
-
-        # 6a.56 (Sprint 1 2026-05-15): Flow consolidator. UI-heavy
-        # SaaS apps over-decompose into per-button micro-flows
-        # (inbox-zero baseline: 176 flows for 8 truth journeys).
-        # The consolidator groups semantic duplicates per feature and
-        # caps at N flows. Pure deterministic — no LLM cost — so it
-        # runs always, not opt-in.
-        try:
-            from faultline.aggregators.flow_consolidator import FlowConsolidator
-            _flow_n_before, _flow_n_after = FlowConsolidator().consolidate(feature_map)
-            if _flow_n_after < _flow_n_before:
-                console.print(
-                    f"[dim]Flow consolidator: {_flow_n_before} → "
-                    f"{_flow_n_after} flows[/dim]"
-                )
-        except Exception as _exc:  # noqa: BLE001 — opportunistic
-            console.print(f"[dim]Flow consolidator skipped: {_exc}[/dim]")
 
         # 6a.57 (Phase 5 Layer A 2026-05-15): Recall-critique pass.
         # Out-of-band extractor signals (package-anchor, schema-domain,
@@ -1242,6 +1243,43 @@ def analyze(
                     f"[dim]Post-process: features {n_before} → {n_after}, "
                     f"flows {fl_before} → {fl_after}[/dim]"
                 )
+
+        # 6a.8 (Sprint 1, RELOCATED 2026-05-15): Flow consolidator.
+        # Runs AFTER post_process — earlier ordering put it before
+        # post_process which then merged features and combined their
+        # flow lists, undoing the consolidator's work. Now it caps
+        # the FINAL flow shape that lands in the JSON.
+        try:
+            from faultline.aggregators.flow_consolidator import FlowConsolidator
+            _flow_n_before, _flow_n_after = FlowConsolidator().consolidate(feature_map)
+            if _flow_n_after < _flow_n_before:
+                console.print(
+                    f"[dim]Flow consolidator: {_flow_n_before} → "
+                    f"{_flow_n_after} flows[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(f"[dim]Flow consolidator skipped: {_exc}[/dim]")
+
+        # 6a.9 (Sprint 6.3 2026-05-15): Zero-flow recovery. Many
+        # features land with empty .flows — library-shape repos
+        # (no routes/pages) and critique-discovered features both
+        # bypass the primary flow detector. Recover by parsing each
+        # feature's paths for exported callables and synthesising
+        # one Flow per public function/method.
+        # Pure deterministic, no LLM cost.
+        try:
+            from faultline.aggregators.zero_flow_recovery import ZeroFlowRecovery
+            _recovered_feats, _recovered_flows = ZeroFlowRecovery().recover(
+                feature_map, repo_root=Path(str(repo.working_tree_dir)),
+            )
+            if _recovered_feats:
+                console.print(
+                    f"[dim]Zero-flow recovery: synthesised "
+                    f"{_recovered_flows} flow(s) across "
+                    f"{_recovered_feats} feature(s)[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(f"[dim]Zero-flow recovery skipped: {_exc}[/dim]")
 
         # 6b. Read coverage data (if available).
         # Sprint 2 Day 9: prefer line-level data so we can scope coverage

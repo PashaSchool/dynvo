@@ -196,9 +196,13 @@ def test_consolidator_realistic_inbox_zero_pattern():
     assert "view-assistant-page-flow" not in names
 
 
-def test_consolidator_default_cap_is_three():
-    """Default tuned by corpus A/B 2026-05-15."""
-    assert FlowConsolidator().max_flows_per_feature == 3
+def test_consolidator_default_cap_is_five():
+    """Default tuned by corpus A/B 2026-05-15. Re-tuned same day
+    after the engineering-grain insight: cap=5 preserves CRUD-shaped
+    flow lists (create/list/get/update/delete) per
+    memory/rule-engineering-granularity-is-correct.
+    """
+    assert FlowConsolidator().max_flows_per_feature == 5
 
 
 def test_consolidator_no_op_when_under_threshold():
