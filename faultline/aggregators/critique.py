@@ -243,6 +243,39 @@ def _category_from_signal(
             else f"route-group:{hint}"
         return display, ev, "heuristic"
 
+    if sig.kind == "python-subpackage":
+        # Each named sub-package is a horizontal capability of the
+        # parent Python library (apprise/config → "Configuration",
+        # apprise/i18n → "Internationalization").
+        name = p.get("name")
+        if not isinstance(name, str) or not name:
+            return None
+        f = p.get("file", "")
+        count = p.get("module_count", 0)
+        ev = f"python-subpackage:{f} ({count} modules)" if f \
+            else f"python-subpackage:{name}"
+        return name, ev, "should"
+
+    if sig.kind == "ts-library-index":
+        # A TS library's index file lists its public capabilities.
+        # The package_dir basename gives a feature-shaped category
+        # (e.g. "plugins" for /src/plugins/index.ts → "Plugins").
+        # Skip when the package_dir is the repo root or a generic
+        # path; in that case the file is too high-level to anchor.
+        package_dir = p.get("package_dir") or ""
+        leaf = package_dir.rstrip("/").rsplit("/", 1)[-1] if package_dir else ""
+        if not leaf or leaf in {"src", "packages", "."}:
+            # Try the file's parent dir name instead.
+            f = p.get("file", "")
+            from pathlib import Path as _P
+            leaf = _P(f).parent.name
+            if leaf in {"src", "packages", "lib", "."} or not leaf:
+                return None
+        count = p.get("export_count", 0)
+        sample = p.get("sample_exports", ())
+        ev = f"ts-library-index:{leaf} ({count} exports: {list(sample)[:4]})"
+        return leaf, ev, "should"
+
     if sig.kind == "schema-cluster":
         # Connected component of related models from a schema file.
         # Anchor (most-connected member) is the cluster's
