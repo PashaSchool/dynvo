@@ -434,3 +434,106 @@ def test_apply_findings_skips_finding_with_no_files():
     )]
     apply_findings_to_deepscan(result, findings)
     assert result.features == {}
+
+
+# ── apply_findings_to_feature_map (Phase 5 Layer A) ───────────────────
+
+
+from faultline.aggregators.critique import apply_findings_to_feature_map
+from faultline.models.types import Feature
+from datetime import datetime, timezone
+
+
+def _primary_feature(name: str, paths: list[str]) -> Feature:
+    return Feature(
+        name=name, paths=paths, authors=[], total_commits=10,
+        bug_fixes=1, bug_fix_ratio=0.1,
+        last_modified=datetime.now(tz=timezone.utc),
+        health_score=80.0,
+    )
+
+
+@dataclass
+class _FakeFeatureMap:
+    features: list = field(default_factory=list)
+
+
+def test_apply_to_feature_map_appends_with_critique_provenance():
+    fm = _FakeFeatureMap(features=[_primary_feature("dashboard", ["app/page.tsx"])])
+    findings = [CritiqueFinding(
+        feature_name="Two-Factor Auth",
+        files=("app/mfa/controller.rb", "app/mfa/model.rb"),
+        rationale="MFA flow.",
+        matched_categories=("mfa",),
+    )]
+    added = apply_findings_to_feature_map(fm, findings)
+    assert added == 1
+    assert len(fm.features) == 2
+    new = fm.features[-1]
+    assert new.name == "Two-Factor Auth"
+    assert new.discovery_method == "critique"
+    assert new.description.startswith("[critique]")
+    assert new.paths == ["app/mfa/controller.rb", "app/mfa/model.rb"]
+    assert new.total_commits == 0
+
+
+def test_apply_to_feature_map_allows_path_co_ownership_with_primary():
+    """A critique feature may share paths with primary features. The
+    primary feature is untouched (already-built Feature objects keep
+    their commits/metrics); the critique feature is a separate entry
+    with discovery_method="critique" pointing at the same file. This
+    correctly models the case where one source file (e.g. an MFA
+    controller) belongs to BOTH a broad bucket (Settings) and a
+    specific product feature (MFA).
+    """
+    fm = _FakeFeatureMap(features=[
+        _primary_feature("settings", ["app/settings.rb", "app/mfa.rb"]),
+    ])
+    findings = [CritiqueFinding(
+        feature_name="Two-Factor Auth",
+        files=("app/mfa.rb",),  # already owned by 'settings'
+        rationale="MFA exists as own feature.",
+        matched_categories=("mfa",),
+    )]
+    added = apply_findings_to_feature_map(fm, findings)
+    assert added == 1
+    # Critique feature retains all cited paths (co-ownership is fine).
+    new = fm.features[-1]
+    assert new.paths == ["app/mfa.rb"]
+    # Primary 'settings' is unchanged — Feature objects don't get
+    # mutated by appending another Feature with overlapping paths.
+    assert fm.features[0].paths == ["app/settings.rb", "app/mfa.rb"]
+    assert fm.features[0].total_commits == 10  # primary metrics preserved
+
+
+def test_apply_to_feature_map_skips_existing_name():
+    fm = _FakeFeatureMap(features=[_primary_feature("Auth", ["a.rb"])])
+    findings = [CritiqueFinding(
+        feature_name="Auth", files=("b.rb",),
+        rationale="x", matched_categories=("auth",),
+    )]
+    added = apply_findings_to_feature_map(fm, findings)
+    assert added == 0
+    assert len(fm.features) == 1
+
+
+def test_apply_to_feature_map_distinct_critique_features_may_share_paths():
+    """Two critique findings may share paths with each other and with
+    primary features. The aggregator does not de-duplicate paths
+    across features — features are sets of files, not partitions.
+    """
+    fm = _FakeFeatureMap(features=[])
+    findings = [
+        CritiqueFinding(
+            feature_name="Billing", files=("a.rb", "shared.rb"),
+            rationale="x", matched_categories=("billing",),
+        ),
+        CritiqueFinding(
+            feature_name="Subscriptions", files=("shared.rb", "b.rb"),
+            rationale="x", matched_categories=("sub",),
+        ),
+    ]
+    added = apply_findings_to_feature_map(fm, findings)
+    assert added == 2
+    assert fm.features[0].paths == ["a.rb", "shared.rb"]
+    assert fm.features[1].paths == ["shared.rb", "b.rb"]

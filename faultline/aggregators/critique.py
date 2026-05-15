@@ -538,15 +538,19 @@ def apply_findings_to_deepscan(
 ) -> None:
     """Merge critique findings into a ``DeepScanResult`` in place.
 
+    LEGACY entry — used by the original Stage 1.96 pipeline wire and
+    by older tests. New callers should prefer
+    ``apply_findings_to_feature_map`` which runs AFTER
+    ``build_feature_map`` and consequently bypasses the noise / merge
+    safety filters that exist for primary-scan content.
+
     Adds each finding as a new entry in ``result.features`` (mapped to
     its file tuple) and writes the rationale into ``result.descriptions``
-    with a ``[critique]`` provenance prefix so downstream consumers
-    (cloud sync, CLI report) can distinguish critique-discovered
-    features from primary-scan ones.
+    with a ``[critique]`` provenance prefix.
 
     Skips findings whose feature_name already exists in the result —
     we don't overwrite primary-scan content. Skips findings with no
-    files (we won't add a feature with no source attribution).
+    files.
     """
     for f in findings:
         if not f.files:
@@ -564,6 +568,75 @@ def apply_findings_to_deepscan(
         )
 
 
+def apply_findings_to_feature_map(
+    feature_map,
+    findings: Iterable[CritiqueFinding],
+) -> int:
+    """Append critique findings to a built ``FeatureMap`` as new
+    ``Feature`` objects with ``discovery_method="critique"``.
+
+    Phase 5 Layer A — replaces the pre-Layer-A behaviour of mutating
+    DeepScanResult.features inside ``pipeline.run`` (which left the
+    findings vulnerable to ``_merge_small_features`` /
+    ``_drop_noise_features``). Now critique runs AFTER
+    ``build_feature_map`` and the safety filters in cli.py, so the
+    findings reach the final JSON intact.
+
+    Path co-ownership is allowed: a critique feature may share file
+    paths with one or more primary features. This is correct because
+    a single source file (e.g. an MFA controller) can legitimately
+    belong to BOTH a broad bucket (Settings) and a specific feature
+    (MFA). The papermark-style regression that motivated an earlier
+    "anti-cannibalisation" filter was specific to the
+    ``file_to_feature`` dict-overwrite inside ``build_feature_map``;
+    that path no longer applies since critique runs after the
+    FeatureMap is built and primary features already have their
+    commits attributed in their Feature objects. Adding new
+    Feature instances cannot perturb the primaries.
+
+    Returns the number of new features actually added (skipped only
+    when a finding has no files at all OR its name collides with an
+    existing feature).
+    """
+    from datetime import datetime, timezone
+    from faultline.models.types import Feature
+
+    existing_names = {f.name for f in feature_map.features}
+
+    added = 0
+    now = datetime.now(tz=timezone.utc)
+
+    for finding in findings:
+        if not finding.files:
+            continue
+        if finding.feature_name in existing_names:
+            logger.info(
+                "critique: feature %r already present; skipping",
+                finding.feature_name,
+            )
+            continue
+        prefix = "[critique] "
+        description = prefix + (
+            finding.rationale or "Recovered via recall critique pass."
+        )
+        feature_map.features.append(Feature(
+            name=finding.feature_name,
+            description=description,
+            paths=list(finding.files),
+            authors=[],
+            total_commits=0,
+            bug_fixes=0,
+            bug_fix_ratio=0.0,
+            last_modified=now,
+            health_score=100.0,
+            discovery_method="critique",
+        ))
+        existing_names.add(finding.feature_name)
+        added += 1
+
+    return added
+
+
 __all__ = [
     "ExpectedCategory",
     "CritiqueFinding",
@@ -574,4 +647,5 @@ __all__ = [
     "build_critique_prompt",
     "parse_critique_response",
     "apply_findings_to_deepscan",
+    "apply_findings_to_feature_map",
 ]

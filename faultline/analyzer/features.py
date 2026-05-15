@@ -987,6 +987,24 @@ _NOISE_MAX_FILES = 4
 _NOISE_HOT_COMMITS = 30
 _NOISE_PROTECTED_BUCKETS = frozenset({"shared-infra", "documentation", "examples"})
 
+# Phase 5 Layer A — features whose ``discovery_method`` is in this
+# set bypass the noise-drop and small-merge safety filters. The
+# filters exist to suppress phantoms produced by primary-scan
+# bucketization; out-of-band aggregators (critique, future ones)
+# supply their own evidence and shouldn't be subject to the same
+# suspicion. Generic by design — any new aggregator that wants
+# survival just sets a discovery_method value listed here, no
+# per-aggregator filter conditional needed.
+_PROTECTED_DISCOVERY_METHODS = frozenset({"critique"})
+
+
+def _is_protected_discovery(feature: "Feature") -> bool:
+    """True iff this feature should bypass noise/merge safety filters
+    because it came from an out-of-band aggregator with its own
+    evidence rather than from the primary scan path.
+    """
+    return getattr(feature, "discovery_method", "primary") in _PROTECTED_DISCOVERY_METHODS
+
 
 def _drop_noise_features(
     features: list["Feature"],
@@ -1016,6 +1034,12 @@ def _drop_noise_features(
 
     for feat in features:
         if feat.name in _NOISE_PROTECTED_BUCKETS:
+            keep.append(feat)
+            continue
+        if _is_protected_discovery(feat):
+            # Phase 5 Layer A: out-of-band aggregator features bypass
+            # the tiny-and-cold drop. They carry their own evidence
+            # and rarely have ≥30 commits or attached flows by design.
             keep.append(feat)
             continue
         is_tiny = len(feat.paths) < _NOISE_MAX_FILES

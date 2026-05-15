@@ -595,6 +595,7 @@ def commit_prefix_enrichment_pass(
 # ── Stage 6: drop noise / vendored / phantom / mega-bucket ──────────
 
 def drop_noise_features(features: list[Feature]) -> tuple[list[Feature], list[tuple[str, str, int]]]:
+    from faultline.analyzer.features import _is_protected_discovery
     cleaned: list[Feature] = []
     dropped: list[tuple[str, str, int]] = []
     total_files = sum(len(f.paths) for f in features)
@@ -602,6 +603,14 @@ def drop_noise_features(features: list[Feature]) -> tuple[list[Feature], list[tu
     for f in features:
         name = f.name
         path_count = len(f.paths)
+
+        # Phase 5 Layer A — out-of-band aggregator features bypass
+        # all the post-process noise heuristics. They carry their
+        # own evidence and shouldn't be evaluated as primary-scan
+        # phantoms.
+        if _is_protected_discovery(f):
+            cleaned.append(f)
+            continue
 
         # 1. shared-infra / Shared Infra
         if name in _NOISE_NAMES:

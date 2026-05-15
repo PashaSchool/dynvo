@@ -1101,6 +1101,34 @@ def analyze(
                 f"({_n_before_noise} → {_n_after_noise})[/dim]"
             )
 
+        # 6a.57 (Phase 5 Layer A 2026-05-15): Recall-critique pass.
+        # Out-of-band extractor signals (package-anchor, schema-domain,
+        # MVC controllers, route groups) get diffed against the
+        # detected feature set; missing categories go to a single
+        # Haiku call that confirms each one and supplies file paths.
+        # Findings append as Feature objects with
+        # discovery_method="critique" — this protects them from the
+        # noise filter above and from post_process below.
+        # Anti-cannibalisation drops paths already owned by primary
+        # features, preventing the papermark-style regression where
+        # critique stole paths from primary features.
+        # Opt-in via FAULTLINE_CRITIQUE_RECALL=1 env var.
+        from faultline.llm import recall_critique_runner as _rcr
+        if _rcr.is_enabled():
+            _critique_repo_root = Path(str(repo.working_tree_dir))
+            _critique_tracker = locals().get("_cost_tracker")
+            _added = _rcr.apply_critique_to_feature_map(
+                feature_map=feature_map,
+                repo_root=_critique_repo_root,
+                api_key=api_key,
+                tracker=_critique_tracker,
+            )
+            if _added:
+                console.print(
+                    f"[green]✓[/green] Recall critique appended "
+                    f"{_added} feature(s)"
+                )
+
         # 6a.6: Populate Title Case display_name on every feature +
         # flow. Internal slug-form name stays untouched — it's the
         # stable ID used for dedup / config / API lookups. Dashboards

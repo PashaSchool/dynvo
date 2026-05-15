@@ -196,6 +196,19 @@ class Feature(BaseModel):
     # owned-file list for blame / commit-attribution; this list is
     # the additive N:M overlay.
     shared_participants: list[SharedParticipant] = []
+    # Phase 5 Layer A — provenance of how this feature entered the
+    # map. ``"primary"`` (default): came from the primary scan path
+    # (sonnet_scanner / new pipeline / heuristic detector). Other
+    # values mark features added by out-of-band aggregators that
+    # supply their own evidence, e.g. ``"critique"`` for findings
+    # from ``faultline.aggregators.critique``. Filters that exist
+    # to suppress primary-scan noise (e.g. ``_drop_noise_features``,
+    # ``post_process.drop_noise_features``) skip features whose
+    # discovery_method is in ``_PROTECTED_DISCOVERY_METHODS``
+    # (``analyzer/features.py``) because those features bring their
+    # own ground-truth evidence and shouldn't be treated as bucketizer
+    # noise.
+    discovery_method: str = "primary"
 
 
 class FeatureMap(BaseModel):
