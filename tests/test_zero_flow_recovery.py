@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from faultline.aggregators.zero_flow_recovery import (
-    DEFAULT_MAX_FLOWS,
     ZeroFlowRecovery,
     _extract_callables_from_file,
     _humanize_callable,
@@ -243,14 +242,28 @@ class Subscription:
     assert any("refund" in n for n in names)
 
 
-def test_recovery_handles_critique_discovered_feature_with_no_paths_on_disk(tmp_path):
+def test_recovery_emits_fallback_when_no_callables_extracted(tmp_path):
     """Critique features sometimes cite paths that don't exist
-    (model hallucination); recover gracefully."""
-    fm = _fm([_feat("ghost", ["does-not-exist.ts"])])
+    OR have no exported callables (config files, docs, SQL).
+    The recovery falls back to ONE generic ``use-<name>-flow``
+    so the dashboard never shows a feature with literally zero
+    flows.
+    """
+    fm = _fm([_feat("ghost-feature", ["does-not-exist.ts"])])
     n_feat, n_flow = ZeroFlowRecovery().recover(fm, tmp_path)
-    assert n_feat == 0 and n_flow == 0
+    assert n_feat == 1
+    assert n_flow == 1
+    assert fm.features[0].flows[0].name == "use-ghost-feature-flow"
 
 
-def test_recovery_default_max_matches_consolidator():
+def test_recovery_default_has_no_cap():
+    """Per memory/rule-no-magic-tuning, no hardcoded cap. Recovered
+    count = whatever the source-file callable extraction yields.
+    """
+    assert ZeroFlowRecovery().max_flows_per_feature is None
+
+
+def test_recovery_default_matches_consolidator_default():
+    """Both should default to None — neither hardcodes a magic cap."""
     from faultline.aggregators.flow_consolidator import FlowConsolidator
     assert ZeroFlowRecovery().max_flows_per_feature == FlowConsolidator().max_flows_per_feature

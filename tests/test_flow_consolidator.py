@@ -196,13 +196,14 @@ def test_consolidator_realistic_inbox_zero_pattern():
     assert "view-assistant-page-flow" not in names
 
 
-def test_consolidator_default_cap_is_five():
-    """Default tuned by corpus A/B 2026-05-15. Re-tuned same day
-    after the engineering-grain insight: cap=5 preserves CRUD-shaped
-    flow lists (create/list/get/update/delete) per
-    memory/rule-engineering-granularity-is-correct.
+def test_consolidator_default_has_no_cap():
+    """Per memory/rule-no-magic-tuning, the consolidator default has
+    NO numeric cap on flows-per-feature. Output count is whatever
+    the (verb, noun) signature dedup yields — that IS the
+    structural truth. The optional ``max_flows_per_feature`` knob
+    stays for ad-hoc CLI workflows but is None by default.
     """
-    assert FlowConsolidator().max_flows_per_feature == 5
+    assert FlowConsolidator().max_flows_per_feature is None
 
 
 def test_consolidator_no_op_when_under_threshold():

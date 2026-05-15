@@ -590,12 +590,14 @@ def parse_critique_response(
 # ── Orchestrator ──────────────────────────────────────────────────────
 
 
-# Default cap on how many missing categories we send to the LLM in one
-# critique pass. The candidate list is sorted severity-desc so the
-# ``"must"`` deps land first. Big-route repos (papermark = 355 routes)
-# can otherwise overflow the token budget — see
-# finding-prompt-injection memory.
-DEFAULT_MAX_CANDIDATES = 12
+# NO default cap on how many missing categories we send to the LLM.
+# Per memory/rule-no-magic-tuning, hardcoding "12" was the wrong
+# number on every other repo size. The list is already sorted
+# severity-desc (must → should → heuristic) by
+# derive_expected_categories, so the highest-value items are at
+# the top regardless of how many we send. If a pathological repo
+# overflows Haiku's input budget, the LLM transport already
+# raises and is caught by ``run()``'s opportunistic try/except.
 DEFAULT_MAX_TOKENS = 2_048
 
 
@@ -616,7 +618,7 @@ class CritiqueAggregator:
     side-effecting line in the module.
     """
 
-    max_candidates: int = DEFAULT_MAX_CANDIDATES
+    max_candidates: int | None = None
     max_tokens: int = DEFAULT_MAX_TOKENS
 
     def run(
@@ -642,7 +644,11 @@ class CritiqueAggregator:
             logger.info("critique: no missing categories; skipping LLM call")
             return []
 
-        candidates = missing[: self.max_candidates]
+        candidates = (
+            missing[: self.max_candidates]
+            if self.max_candidates is not None
+            else missing
+        )
         system, user = build_critique_prompt(
             detected_features=detected_list,
             missing=candidates,

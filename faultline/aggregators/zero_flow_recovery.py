@@ -42,8 +42,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-# Default cap matches FlowConsolidator default (5).
-DEFAULT_MAX_FLOWS = 5
+# NO default cap. Per memory/rule-no-magic-tuning, the recovered
+# count is whatever the source-file callable extraction yields —
+# that IS the structural truth for this feature. Caller can pass
+# ``max_flows_per_feature`` explicitly for ad-hoc CLI use, but the
+# engine's normal pipeline uses None (no cap).
 
 
 # Patterns to find exported callables in TypeScript / JavaScript.
@@ -205,7 +208,7 @@ class ZeroFlowRecovery:
     be resolved on disk).
     """
 
-    max_flows_per_feature: int = DEFAULT_MAX_FLOWS
+    max_flows_per_feature: int | None = None
 
     def recover(self, feature_map, repo_root: Path) -> tuple[int, int]:
         """In-place mutation. Returns
@@ -222,13 +225,18 @@ class ZeroFlowRecovery:
         flows_added = 0
         now = datetime.now(tz=timezone.utc)
 
+        cap = self.max_flows_per_feature  # may be None = no cap
+
+        def _at_cap(n: int) -> bool:
+            return cap is not None and n >= cap
+
         for feat in feature_map.features:
             if feat.flows:
                 continue  # already has flows
             seen_flow_names: set[str] = set()
             new_flows: list = []
             for rel_path in (feat.paths or []):
-                if len(new_flows) >= self.max_flows_per_feature:
+                if _at_cap(len(new_flows)):
                     break
                 p = repo_root / rel_path
                 if not p.is_file():
@@ -252,8 +260,31 @@ class ZeroFlowRecovery:
                         last_modified=now,
                         health_score=99.0,
                     ))
-                    if len(new_flows) >= self.max_flows_per_feature:
+                    if _at_cap(len(new_flows)):
                         break
+            # Fallback when no callables were extracted: emit ONE
+            # generic "use-<feature-name>-flow" so the dashboard
+            # never displays a feature card with literally zero
+            # flows. Critique-discovered features whose paths are
+            # configs / docs / SQL fall into this bucket.
+            if not new_flows:
+                fallback_name = _humanize_callable(feat.name)
+                if fallback_name and fallback_name not in {fl.name for fl in (feat.flows or [])}:
+                    new_flows.append(Flow(
+                        name=fallback_name,
+                        description=(
+                            f"Recovered: feature surface for {feat.name} "
+                            f"(no public callables matched the heuristic)"
+                        ),
+                        paths=list(feat.paths or [])[:1],
+                        authors=[],
+                        total_commits=0,
+                        bug_fixes=0,
+                        bug_fix_ratio=0.0,
+                        last_modified=now,
+                        health_score=99.0,
+                    ))
+
             if new_flows:
                 feat.flows = new_flows
                 features_recovered += 1
@@ -268,7 +299,6 @@ class ZeroFlowRecovery:
 
 
 __all__ = [
-    "DEFAULT_MAX_FLOWS",
     "ZeroFlowRecovery",
     "_extract_callables_from_file",  # exposed for tests
     "_humanize_callable",

@@ -169,29 +169,30 @@ def _is_redundant_with_feature(flow_name: str, feature_name: str) -> bool:
 
 @dataclass(slots=True)
 class FlowConsolidator:
-    """Per-feature flow consolidator.
+    """Per-feature flow consolidator — DEDUP-ONLY.
 
-    Defaults are tuned on the SaaS corpus baseline (inbox-zero, dub,
-    papermark) to lift flow precision without dropping ground-truth
-    journeys.
+    The consolidator's only job is to merge semantic duplicates
+    (``configure-assistant-settings`` + ``configure-assistant-channel``
+    → one) and drop pure-page / feature-redundant flow names.
+
+    There is NO cap on the resulting count. Per
+    ``memory/rule-no-magic-tuning``, hardcoding a per-feature flow
+    limit (cap=3, cap=5, cap=12 — all tried, all the wrong number on
+    *some* repo in the corpus) is exactly the kind of magic-number
+    tuning we don't do.
+
+    A feature with 17 genuinely distinct CRUD-shaped flows keeps
+    all 17 after dedup. A feature with 30 micro-flows that share
+    verb-noun signatures collapses naturally to its 5-10 unique
+    journeys. Output count = whatever the (verb, noun) signature
+    space yields; that IS the structural truth.
+
+    The ``max_flows_per_feature`` knob is RETAINED as an optional
+    override for ad-hoc CLI workflows, but defaults to ``None``
+    (no cap) for the engine's normal pipeline.
     """
 
-    # Tuned 2026-05-15 from corpus A/B sweep, then re-tuned same
-    # day after the engineering-grain insight (per
-    # memory/rule-engineering-granularity-is-correct):
-    #
-    #   cap=2: P +14pp / R -12pp (too aggressive)
-    #   cap=3: P +12pp / R  -7pp (initial choice; over-collapses
-    #          for engineering audience that wants per-CRUD flows)
-    #   cap=5: P  +6pp / R   0   (sweet spot for engineering grain
-    #          — preserves create/list/get/update/delete shapes)
-    #   cap=8+: marginal precision lift, drift back toward noise
-    #
-    # cap=5 is the post-engineering-grain choice: engineering
-    # audiences typically want all CRUD operations of a feature
-    # represented (5 verbs × 1 noun = 5 flows). Anything tighter
-    # collapses real distinct journeys.
-    max_flows_per_feature: int = 5
+    max_flows_per_feature: int | None = None
 
     def consolidate(self, feature_map) -> tuple[int, int]:
         """Mutate ``feature_map.features[*].flows`` in place. Returns
@@ -237,13 +238,18 @@ class FlowConsolidator:
             group.sort(key=lambda fl: (len(fl.name), fl.name))
             kept.append(group[0])
 
+
         # 4. Add no-sig flows back unchanged.
         kept.extend(no_sig)
 
-        # 5. Cap. Sort by name length for deterministic cap order
-        # (shorter names usually = higher-level journeys).
+        # 5. Sort by name length for deterministic order (shorter
+        # names = higher-level journeys go first). Optional explicit
+        # cap from constructor — None by default per
+        # memory/rule-no-magic-tuning.
         kept.sort(key=lambda fl: (len(fl.name), fl.name))
-        return kept[: self.max_flows_per_feature]
+        if self.max_flows_per_feature is not None:
+            return kept[: self.max_flows_per_feature]
+        return kept
 
 
 __all__ = [
