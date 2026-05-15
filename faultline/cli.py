@@ -1153,6 +1153,58 @@ def analyze(
         # sees "Authentication" rather than "user-authentication".
         _populate_display_names(feature_map)
 
+        # 6a.65 (Sprint 5 2026-05-15): Display-name canonicalizer.
+        # Pass A (always): use author-written nav labels (from the
+        # JSX nav extractor) to override slug-derived display_names.
+        # Free, deterministic. Pass B (FAULTLINE_LLM_CANONICALIZE=1):
+        # one Haiku batched call to suggest Title Case names for
+        # features still left with auto-derived display_names.
+        try:
+            from faultline.aggregators.display_name_canonicalizer import (
+                apply_llm_canonicalization,
+                apply_nav_labels,
+                is_enabled_llm_canonicalize,
+            )
+            from faultline.extractors.jsx_nav import JsxNavExtractor as _JNV
+            _critique_repo_root = (
+                _critique_repo_root if "_critique_repo_root" in locals()
+                else Path(str(repo.working_tree_dir))
+            )
+            _nav_signals = _JNV().extract(_critique_repo_root, files=())
+            _na = apply_nav_labels(feature_map, _nav_signals)
+            if _na:
+                console.print(
+                    f"[dim]Display canonicalizer (nav): updated "
+                    f"{_na} display name(s) from author-written labels[/dim]"
+                )
+            if is_enabled_llm_canonicalize():
+                import os as _os
+                from faultline.llm import recall_critique_runner as _rcr2
+                _llm_repo_root = (
+                    _critique_repo_root if "_critique_repo_root" in locals()
+                    else Path(str(repo.working_tree_dir))
+                )
+                # Reuse the same Anthropic adapter as recall critique.
+                import anthropic as _anth  # noqa: F401
+                _llm_client_cfg_key = api_key or _os.environ.get("ANTHROPIC_API_KEY")
+                if _llm_client_cfg_key:
+                    _sdk = __import__("anthropic").Anthropic(api_key=_llm_client_cfg_key)
+                    _llm = _rcr2._AnthropicLlmClient(
+                        client=_sdk,
+                        model=_rcr2.DEFAULT_MODEL,
+                        tracker=locals().get("_cost_tracker"),
+                    )
+                    _nb = apply_llm_canonicalization(feature_map, _llm)
+                    if _nb:
+                        console.print(
+                            f"[dim]Display canonicalizer (Haiku): updated "
+                            f"{_nb} display name(s)[/dim]"
+                        )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(
+                f"[dim]Display canonicalizer skipped: {_exc}[/dim]"
+            )
+
         # Sprint 16 polish — categorize every feature for dashboard
         # tiering. Pure deterministic, no LLM cost. Sets
         # ``Feature.category`` to one of: product / ui-system / i18n /
