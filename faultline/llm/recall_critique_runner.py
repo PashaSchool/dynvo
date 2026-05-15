@@ -151,12 +151,14 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         NextRouteFileExtractor,
     )
     from faultline.extractors.schema_domain import SchemaDomainExtractor
+    from faultline.extractors.schema_relations import SchemaRelationsExtractor
     from faultline.extractors.server_actions import ServerActionsExtractor
     from faultline.extractors.trpc_router import TrpcRouterExtractor
 
     candidates = [
         PackageAnchorExtractor(),
         SchemaDomainExtractor(),
+        SchemaRelationsExtractor(),
         RailsControllerExtractor(),
         NextRouteFileExtractor(),
         NextPagesRouteFileExtractor(),
