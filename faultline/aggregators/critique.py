@@ -243,6 +243,24 @@ def _category_from_signal(
             else f"route-group:{hint}"
         return display, ev, "heuristic"
 
+    if sig.kind == "schema-cluster":
+        # Connected component of related models from a schema file.
+        # Anchor (most-connected member) is the cluster's
+        # display name. Singleton clusters (no relations) become
+        # one-name categories — useful when a model truly is its
+        # own feature.
+        anchor = p.get("anchor")
+        if not isinstance(anchor, str) or not anchor:
+            return None
+        members = p.get("members", ())
+        size = p.get("size", 0)
+        f = p.get("file", "")
+        ev = (f"schema-cluster:{anchor} ({size} models: "
+              f"{list(members)[:5]}; file: {f})")
+        # Multi-model clusters are stronger evidence than singletons.
+        severity = "should" if size >= 2 else "heuristic"
+        return anchor, ev, severity
+
     if sig.kind == "server-actions-file":
         # One signal per Next.js Server Actions file. The file's
         # parent dir often names the feature (app/billing/actions.ts
