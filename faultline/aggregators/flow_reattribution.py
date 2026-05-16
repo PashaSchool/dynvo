@@ -73,14 +73,16 @@ def _score(feature_name: str, flow_tokens: set[str]) -> int:
 class FlowReattribution:
     """Move flows whose name better matches a different feature.
 
-    Mutates ``feature_map.features[*].flows`` in place. Returns the
-    number of flows moved.
+    Sprint 10a — pure-function. ``reattribute`` returns
+    ``(new_feature_map, n_moved)``. Input is NEVER mutated.
     """
 
-    def reattribute(self, feature_map) -> int:
+    def reattribute(self, feature_map):
+        new_fm = feature_map.model_copy(deep=True)
+        feature_map = new_fm  # operate on copy below
         feature_names = [f.name for f in feature_map.features]
         if len(feature_names) < 2:
-            return 0
+            return new_fm, 0
 
         by_name = {f.name: f for f in feature_map.features}
 
@@ -110,7 +112,7 @@ class FlowReattribution:
                     pending_moves.append((feat.name, flow, best_alt_name))
 
         if not pending_moves:
-            return 0
+            return new_fm, 0
 
         # Apply moves: drop from current owners, append to new owners.
         for current_owner_name, flow, new_owner_name in pending_moves:
@@ -126,7 +128,7 @@ class FlowReattribution:
             "flow-reattribution: moved %d flow(s) to better-matching features",
             len(pending_moves),
         )
-        return len(pending_moves)
+        return new_fm, len(pending_moves)
 
 
 __all__ = ["FlowReattribution", "_tokens", "_score"]

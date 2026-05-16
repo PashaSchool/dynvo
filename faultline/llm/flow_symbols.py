@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-4-5"
-DEFAULT_MAX_TOKENS = 4_096
+DEFAULT_MAX_TOKENS = 32_768
 DEFAULT_CACHE_DIR = Path.home() / ".faultline"
 _CACHE_VERSION = 1
 

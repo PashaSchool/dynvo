@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-flash-latest"
-DEFAULT_MAX_TOKENS = 4_096
+DEFAULT_MAX_TOKENS = 32_768
 
 
 _SYSTEM_PROMPT = """\

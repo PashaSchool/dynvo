@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # to 2 makes drift bounded: at most 2 names change between runs,
 # and locked_names + token-set match catches the rest.
 DEFAULT_MAX_ITEMS = 2
-DEFAULT_MAX_TOKENS = 4_096
+DEFAULT_MAX_TOKENS = 32_768
 DEFAULT_TOOL_BUDGET = 5  # tighter than Sprint 1+3+4 — focused rename
 
 

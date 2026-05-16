@@ -366,7 +366,12 @@ def classify_features(
             messages=[
                 {"role": "user", "content": _format_user_message(candidates)}
             ],
-            max_tokens=8192,
+            # Sprint 9c: bumped from 8K to 32K. cal.com (50+ workspace
+            # packages) hit max_tokens=8192 with 60546-char output that
+            # couldn't be parsed → entire scan died at flow_cluster.
+            # Haiku 4.5 / Sonnet 4.6 both support 64K output; 32K
+            # is a safe-but-roomy cap.
+            max_tokens=32_768,
             **params,
         )
     except Exception as exc:  # noqa: BLE001 — opportunistic

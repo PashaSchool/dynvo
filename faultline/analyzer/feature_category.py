@@ -62,9 +62,38 @@ def tier_for(category: Category) -> str:
 
 
 # Synthetic buckets are pipeline-managed — never re-classify them.
+# Sprint 9b expansion: leftover engine artefacts that escaped the
+# renamer (route groups, mixed-resource buckets, structural folder
+# names) discovered by reviewing 230+ feature names across all
+# Sprint 8/9 candidate scans.
 _SYNTHETIC_NAMES: frozenset[str] = frozenset({
     "shared-infra", "examples", "developer-infrastructure",
+    # Engine artefact buckets — accumulate "leftover" files
+    "mixed-resource-operations", "mixed-resource-operations-2",
+    "mixed-resource-operations-3", "uncategorized", "general",
+    "miscellaneous", "misc",
+    # Structural folder names that escape renamer (when they're
+    # the literal feature name with no extension/suffix)
+    "app", "apps", "packages", "pkg", "src", "lib", "libs",
+    "remix", "trpc", "next", "nextjs", "nuxt", "astro", "vite",
+    "react", "vue", "svelte", "core", "common", "shared",
+    "internal",
+    # Remix flat-routes group buckets
+    "_authenticated+", "_unauthenticated+", "_internal+", "_app",
+    # Authenticated app catch-all (route group → one feature)
+    "authenticated-app", "authenticated-app-routes",
+    "authenticated-app-shell", "authenticated-user-workspace",
+    "unauthenticated-app",
 })
+
+# Substring patterns — when the feature NAME contains any of these
+# tokens AND has no other classification, treat as SYNTHETIC engine
+# bucket. Caught by `_matches_token`.
+_SYNTHETIC_NAME_PATTERNS = (
+    "mixed-resource-operations", "uncategorized",
+    "authenticated-app-routes", "authenticated-app-shell",
+    "authenticated-user-workspace",
+)
 
 # Strong product domain names. When the feature's last name segment
 # matches one of these (or has it as a clear suffix/prefix), we treat
@@ -79,9 +108,25 @@ _STRONG_PRODUCT_NAMES: frozenset[str] = frozenset({
 })
 
 # Names that signal documentation when matched whole or as last segment.
+# Sprint 9b: added blog/marketing/landing/changelog/seo/brand-pages
+# patterns observed in better-auth (`docs/components/blog/...`,
+# `docs/components/landing/...`, `Brand Pages`, `Blog RSS Feed`,
+# `SEO Metadata`).
 _DOC_NAME_PATTERNS = (
     "documentation", "docs", "www", "learn", "marketing",
+    "blog", "landing", "changelog", "release-notes", "guides",
+    "tutorials", "handbook", "wiki",
+    # Folder-shape suffix found across many docs sites
+    "_src", "-src", ".docs", "site",
 )
+
+# Specific name patterns indicating docs-side (not product) when whole-
+# word match: marketing pages, SEO/metadata for docs, brand pages, RSS.
+_DOC_LAST_SEG_EQ = frozenset({
+    "blog-rss-feed", "rss-feed", "rss", "sitemap", "robots",
+    "brand-pages", "brand-page", "seo-metadata", "metadata",
+    "docs-src", "docs_src",
+})
 
 # Names that signal i18n.
 _I18N_NAME_PATTERNS = (
@@ -89,9 +134,13 @@ _I18N_NAME_PATTERNS = (
 )
 
 # Names that signal contracts / types / generated code.
+# Sprint 9b: added openapi-* variants observed in fastapi
+# (``OpenAPI Schema``, ``OpenAPI Documentation``, ``OpenAPI Generation``).
 _CONTRACTS_NAME_PATTERNS = (
     "contracts", "types", "api-types", "schemas", "pg-meta",
-    "openapi", "graphql-codegen",
+    "openapi", "graphql-codegen", "openapi-schema",
+    "openapi-documentation", "openapi-generation", "api-contract",
+    "api-spec",
 )
 
 # Names that signal a UI library / design system.

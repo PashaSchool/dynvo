@@ -91,14 +91,15 @@ def test_moves_flow_to_strictly_better_feature():
         _flow("manage-billing-portal"),
     ])
     fm = _fm([f_org, f_billing])
-    n = FlowReattribution().reattribute(fm)
+    fm, n = FlowReattribution().reattribute(fm)
     assert n == 1
-    org_flows = {fl.name for fl in f_org.flows}
-    billing_flows = {fl.name for fl in f_billing.flows}
+    bn = {f.name: f for f in fm.features}
+    org_flows = {fl.name for fl in bn["organisation-management"].flows}
+    billing_flows = {fl.name for fl in bn["ee/enterprise-billing"].flows}
     assert "enterprise-billing-flow" not in org_flows
     assert "enterprise-billing-flow" in billing_flows
-    assert "invite-org-member" in org_flows  # untouched
-    assert "manage-billing-portal" in billing_flows  # untouched
+    assert "invite-org-member" in org_flows
+    assert "manage-billing-portal" in billing_flows
 
 
 def test_keeps_flow_when_current_owner_wins():
@@ -107,9 +108,9 @@ def test_keeps_flow_when_current_owner_wins():
     ])
     f_org = _feat("organisation-management", flows=[])
     fm = _fm([f_billing, f_org])
-    n = FlowReattribution().reattribute(fm)
+    fm, n = FlowReattribution().reattribute(fm)
     assert n == 0
-    assert len(f_billing.flows) == 1
+    assert len(fm.features[0].flows) == 1
 
 
 def test_keeps_flow_when_no_alt_better_than_current():
@@ -117,11 +118,11 @@ def test_keeps_flow_when_no_alt_better_than_current():
     f_a = _feat("billing", flows=[_flow("billing-action")])
     f_b = _feat("invoices-billing", flows=[])
     fm = _fm([f_a, f_b])
-    n = FlowReattribution().reattribute(fm)
+    fm, n = FlowReattribution().reattribute(fm)
     # `billing-action` tokens = {billing, action}.
     # billing scores 1, invoices-billing scores 1 → tie → keep.
     assert n == 0
-    assert len(f_a.flows) == 1
+    assert len(fm.features[0].flows) == 1
 
 
 def test_skips_flows_with_no_meaningful_tokens():
@@ -129,13 +130,13 @@ def test_skips_flows_with_no_meaningful_tokens():
     f_a = _feat("settings", flows=[_flow("flow-the-flow")])
     f_b = _feat("billing", flows=[])
     fm = _fm([f_a, f_b])
-    n = FlowReattribution().reattribute(fm)
+    fm, n = FlowReattribution().reattribute(fm)
     assert n == 0
 
 
 def test_no_features_or_single_feature_short_circuits():
     fm = _fm([_feat("only", flows=[_flow("create-thing-flow")])])
-    assert FlowReattribution().reattribute(fm) == 0
+    assert FlowReattribution().reattribute(fm)[1] == 0
 
 
 def test_handles_multiple_moves_in_one_pass():
@@ -146,8 +147,9 @@ def test_handles_multiple_moves_in_one_pass():
     f_billing = _feat("billing", flows=[])
     f_email = _feat("email", flows=[])
     fm = _fm([f_settings, f_billing, f_email])
-    n = FlowReattribution().reattribute(fm)
+    fm, n = FlowReattribution().reattribute(fm)
     assert n == 2
-    assert {fl.name for fl in f_billing.flows} == {"create-billing-invoice"}
-    assert {fl.name for fl in f_email.flows} == {"send-email-receipt"}
-    assert f_settings.flows == []
+    bn = {f.name: f for f in fm.features}
+    assert {fl.name for fl in bn["billing"].flows} == {"create-billing-invoice"}
+    assert {fl.name for fl in bn["email"].flows} == {"send-email-receipt"}
+    assert bn["settings"].flows == []

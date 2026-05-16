@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-4-5"
-DEFAULT_MAX_TOKENS = 4_096
+DEFAULT_MAX_TOKENS = 32_768
 MAX_PROMOTE_BATCH = 30   # max entry points sent to Haiku per call
 MAX_CROSS_VAL_BATCH = 20 # max neighbours per feature in cross-val
 PROMOTE_CONFIDENCE_FLOOR = 4

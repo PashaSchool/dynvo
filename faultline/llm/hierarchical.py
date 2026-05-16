@@ -57,7 +57,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
-DEFAULT_MAX_TOKENS = 8_192
+DEFAULT_MAX_TOKENS = 32_768
 
 # Pass 1 target: produce 8-15 buckets. Floor lets small repos stay
 # coherent; ceiling prevents runaway buckets on big monorepos.

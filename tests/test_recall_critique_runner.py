@@ -41,17 +41,40 @@ class _FakeResponse:
     stop_reason: str = "end_turn"
 
 
+class _FakeStreamCtx:
+    def __init__(self, response_text):
+        self._text = response_text
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+    @property
+    def text_stream(self):
+        # Yield text in one chunk for tests; real stream yields many.
+        yield self._text
+    def get_final_message(self):
+        return _FakeResponse(content=[_FakeContentBlock(text=self._text)])
+
+
 @dataclass
 class _FakeMessages:
     response_text: str
     captured: dict = field(default_factory=dict)
 
-    def create(self, *, model, max_tokens, system, messages):
+    def create(self, *, model, max_tokens, system, messages, temperature=None):
         self.captured.update(
             model=model, max_tokens=max_tokens,
-            system=system, messages=messages,
+            system=system, messages=messages, temperature=temperature,
         )
         return _FakeResponse(content=[_FakeContentBlock(text=self.response_text)])
+
+    def stream(self, *, model, max_tokens, system, messages, temperature=None):
+        self.captured.update(
+            model=model, max_tokens=max_tokens,
+            system=system, messages=messages, temperature=temperature,
+            streaming=True,
+        )
+        return _FakeStreamCtx(self.response_text)
 
 
 @dataclass
@@ -183,25 +206,32 @@ def test_run_skipped_when_no_signals(tmp_path):
     assert out is result
 
 
+def _fresh_fm(features=None):
+    """Sprint 10a — pure stages need REAL Pydantic FeatureMap with
+    ``model_copy`` support. The old dataclass stub no longer works.
+    """
+    from datetime import datetime, timezone
+    from faultline.models.types import FeatureMap
+    return FeatureMap(
+        repo_path="/tmp/x",
+        analyzed_at=datetime.now(tz=timezone.utc),
+        total_commits=0, date_range_days=365,
+        features=list(features or []),
+    )
+
+
 def test_apply_critique_to_feature_map_skipped_when_repo_root_none():
-    from dataclasses import dataclass, field as _f
-    @dataclass
-    class FM:
-        features: list = _f(default_factory=list)
-    added = rc.apply_critique_to_feature_map(
-        feature_map=FM(), repo_root=None, api_key="k",
+    fm = _fresh_fm()
+    fm, added = rc.apply_critique_to_feature_map(
+        feature_map=fm, repo_root=None, api_key="k",
     )
     assert added == 0
 
 
 def test_apply_critique_to_feature_map_skipped_when_no_api_key(monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    from dataclasses import dataclass, field as _f
-    @dataclass
-    class FM:
-        features: list = _f(default_factory=list)
-    fm = FM()
-    added = rc.apply_critique_to_feature_map(
+    fm = _fresh_fm()
+    fm, added = rc.apply_critique_to_feature_map(
         feature_map=fm, repo_root=tmp_path, api_key=None,
     )
     assert added == 0
@@ -209,12 +239,8 @@ def test_apply_critique_to_feature_map_skipped_when_no_api_key(monkeypatch, tmp_
 
 
 def test_apply_critique_to_feature_map_skipped_when_no_signals(tmp_path):
-    from dataclasses import dataclass, field as _f
-    @dataclass
-    class FM:
-        features: list = _f(default_factory=list)
-    fm = FM()
-    added = rc.apply_critique_to_feature_map(
+    fm = _fresh_fm()
+    fm, added = rc.apply_critique_to_feature_map(
         feature_map=fm, repo_root=tmp_path, api_key="k",
     )
     assert added == 0
@@ -247,13 +273,9 @@ def test_apply_critique_to_feature_map_appends_features_with_critique_provenance
         last_modified=datetime.now(tz=timezone.utc), health_score=80.0,
     )
 
-    from dataclasses import dataclass, field as _f
-    @dataclass
-    class FM:
-        features: list = _f(default_factory=list)
-    fm = FM(features=[primary])
+    fm = _fresh_fm(features=[primary])
 
-    added = rc.apply_critique_to_feature_map(
+    fm, added = rc.apply_critique_to_feature_map(
         feature_map=fm, repo_root=tmp_path, api_key="dummy",
     )
     assert added == 1

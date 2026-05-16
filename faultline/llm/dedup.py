@@ -36,7 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MAX_TOKENS = 8_192
+DEFAULT_MAX_TOKENS = 32_768
 DEFAULT_MODEL = "claude-sonnet-4-6"
 DEFAULT_SAMPLE_PATHS = 5
 # Hard cap on merges per pass. Prevents the model from collapsing the

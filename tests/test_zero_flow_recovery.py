@@ -175,7 +175,7 @@ def test_recovery_skips_features_that_already_have_flows(tmp_path):
             health_score=99.0,
         ),
     ])])
-    n_feat, n_flow = ZeroFlowRecovery().recover(fm, tmp_path)
+    fm, (n_feat, n_flow) = fm, _ = ZeroFlowRecovery().recover(fm, tmp_path)
     assert n_feat == 0 and n_flow == 0
     assert len(fm.features[0].flows) == 1
     assert fm.features[0].flows[0].name == "existing-flow"
@@ -188,7 +188,7 @@ export async function cancelSubscription() {}
 export const renewSubscription = async () => {};
 ''')
     fm = _fm([_feat("billing", ["src/billing.ts"])])
-    n_feat, n_flow = ZeroFlowRecovery().recover(fm, tmp_path)
+    fm, (n_feat, n_flow) = fm, _ = ZeroFlowRecovery().recover(fm, tmp_path)
     assert n_feat == 1
     assert n_flow == 3
     names = {fl.name for fl in fm.features[0].flows}
@@ -206,7 +206,7 @@ def test_recovery_caps_at_max(tmp_path):
     )
     _w(tmp_path, "src/many.ts", body)
     fm = _fm([_feat("many", ["src/many.ts"])])
-    ZeroFlowRecovery(max_flows_per_feature=4).recover(fm, tmp_path)
+    fm, _ = ZeroFlowRecovery(max_flows_per_feature=4).recover(fm, tmp_path)
     assert len(fm.features[0].flows) == 4
 
 
@@ -214,7 +214,7 @@ def test_recovery_dedupes_callables_across_paths(tmp_path):
     _w(tmp_path, "a.ts", "export function getX() {}")
     _w(tmp_path, "b.ts", "export function getX() {}")  # same name!
     fm = _fm([_feat("x", ["a.ts", "b.ts"])])
-    n_feat, n_flow = ZeroFlowRecovery().recover(fm, tmp_path)
+    fm, (n_feat, n_flow) = fm, _ = ZeroFlowRecovery().recover(fm, tmp_path)
     assert n_feat == 1
     assert n_flow == 1   # dedup'd
 
@@ -233,7 +233,7 @@ class Subscription:
         pass
 ''')
     fm = _fm([_feat("billing", ["mylib/billing.py"])])
-    n_feat, n_flow = ZeroFlowRecovery().recover(fm, tmp_path)
+    fm, (n_feat, n_flow) = fm, _ = ZeroFlowRecovery().recover(fm, tmp_path)
     assert n_feat == 1
     assert n_flow >= 2
     names = {fl.name for fl in fm.features[0].flows}
@@ -252,7 +252,7 @@ def test_recovery_emits_fallback_when_no_callables_extracted(tmp_path):
     flows.
     """
     fm = _fm([_feat("ghost-feature", ["does-not-exist.ts"])])
-    n_feat, n_flow = ZeroFlowRecovery().recover(fm, tmp_path)
+    fm, (n_feat, n_flow) = fm, _ = ZeroFlowRecovery().recover(fm, tmp_path)
     assert n_feat == 1
     assert n_flow == 1
     assert fm.features[0].flows[0].name == "manage-ghost-feature-flow"

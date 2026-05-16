@@ -184,18 +184,24 @@ def merge_sub_features(features: list[Feature]) -> list[Feature]:
     for prefix, group in slash_groups.items():
         if len(group) < 3:
             continue
-        combined = sum(len(f.paths) for f in group)
+        # Sprint 8g: protected sub-features stay top-level. Drop them
+        # from the merge group, but if too few non-protected remain
+        # the cluster is no longer worth synthesising.
+        non_protected = [f for f in group if not f.protected]
+        if len(non_protected) < 3:
+            continue
+        combined = sum(len(f.paths) for f in non_protected)
         if combined >= 500:
             continue
         if prefix in by_name:
             continue
-        biggest = max(group, key=lambda x: len(x.paths))
+        biggest = max(non_protected, key=lambda x: len(x.paths))
         all_paths: list[str] = []
         all_authors: list[str] = []
         all_flows: list[Flow] = []
         total_commits = 0
         bug_fixes = 0
-        for f in group:
+        for f in non_protected:
             all_paths.extend(f.paths)
             all_authors.extend(f.authors)
             all_flows.extend(f.flows)
@@ -248,12 +254,20 @@ def merge_sub_features(features: list[Feature]) -> list[Feature]:
                 merged.append(f)
             continue
 
+        # Sprint 8g: protected sub-features stay top-level, never
+        # collapse into a hyphen-prefix parent.
+        protected_in_group = [f for f in group if f.protected]
+        non_protected = [f for f in group if not f.protected]
+        for pf in protected_in_group:
+            merged.append(pf)
+        if not non_protected:
+            continue
         all_paths: list[str] = []
         all_authors: list[str] = []
         all_flows: list[Flow] = []
         total_commits = 0
         bug_fixes = 0
-        for f in group:
+        for f in non_protected:
             all_paths.extend(f.paths)
             all_authors.extend(f.authors)
             all_flows.extend(f.flows)
@@ -612,6 +626,14 @@ def drop_noise_features(features: list[Feature]) -> tuple[list[Feature], list[tu
             cleaned.append(f)
             continue
 
+        # Sprint 8g — structural protection bypasses noise heuristics
+        # too. A feature anchored to a tRPC subrouter / workspace
+        # package / route folder is a real product capability even
+        # when its owned-paths list is small.
+        if f.protected:
+            cleaned.append(f)
+            continue
+
         # 1. shared-infra / Shared Infra
         if name in _NOISE_NAMES:
             dropped.append((name, "shared-infra/noise", path_count))
@@ -668,10 +690,12 @@ def run(
     feature_map: FeatureMap,
     repo_path: str | None = None,
 ) -> FeatureMap:
-    """Run all post-process stages on a FeatureMap. Returns a new map.
+    """Run all post-process stages. Sprint 10a — pure function:
+    returns a NEW FeatureMap. Input is NEVER mutated.
 
     Idempotent — safe to run multiple times.
     """
+    feature_map = feature_map.model_copy(deep=True)
     features = list(feature_map.features)
 
     features = merge_sub_features(features)

@@ -209,6 +209,17 @@ class Feature(BaseModel):
     # own ground-truth evidence and shouldn't be treated as bucketizer
     # noise.
     discovery_method: str = "primary"
+    # Sprint 8g — merger protection. ``True`` means this feature
+    # originates from a strong structural signal (tRPC subrouter,
+    # workspace package, explicit route folder, API contract,
+    # Prisma schema). Mergers and noise filters skip protected
+    # features. Set by ``aggregators.feature_protection``. Default
+    # False keeps backward-compat for old JSON.
+    protected: bool = False
+    # Sprint 8g — short label for why protection fired. Used for
+    # debugging / surfacing in dashboards (e.g. "trpc-router",
+    # "workspace-package"). Empty when ``protected`` is False.
+    protection_reason: str | None = None
 
 
 class FeatureMap(BaseModel):
