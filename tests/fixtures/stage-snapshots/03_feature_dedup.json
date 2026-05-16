@@ -1,0 +1,142 @@
+{
+  "features": [
+    {
+      "authors": [],
+      "bug_fix_prs": [],
+      "bug_fix_ratio": 0.0,
+      "bug_fixes": 0,
+      "category": "product",
+      "coverage_pct": null,
+      "coverage_source": null,
+      "description": null,
+      "discovery_method": "primary",
+      "display_name": null,
+      "flows": [],
+      "health_score": 99.0,
+      "last_modified": "<timestamp>",
+      "name": "auth-management",
+      "participants": [],
+      "paths": [
+        "packages/auth/server/c.ts"
+      ],
+      "protected": false,
+      "protection_reason": null,
+      "shared_attributions": [],
+      "shared_participants": [],
+      "symbol_health_score": null,
+      "total_commits": 0
+    },
+    {
+      "authors": [],
+      "bug_fix_prs": [],
+      "bug_fix_ratio": 0.0,
+      "bug_fixes": 0,
+      "category": "product",
+      "coverage_pct": null,
+      "coverage_source": null,
+      "description": null,
+      "discovery_method": "primary",
+      "display_name": null,
+      "flows": [],
+      "health_score": 99.0,
+      "last_modified": "<timestamp>",
+      "name": "auth-system",
+      "participants": [],
+      "paths": [
+        "packages/auth/server/b.ts"
+      ],
+      "protected": false,
+      "protection_reason": null,
+      "shared_attributions": [],
+      "shared_participants": [],
+      "symbol_health_score": null,
+      "total_commits": 0
+    },
+    {
+      "authors": [],
+      "bug_fix_prs": [],
+      "bug_fix_ratio": 0.0,
+      "bug_fixes": 0,
+      "category": "product",
+      "coverage_pct": null,
+      "coverage_source": null,
+      "description": null,
+      "discovery_method": "primary",
+      "display_name": null,
+      "flows": [],
+      "health_score": 99.0,
+      "last_modified": "<timestamp>",
+      "name": "authentication",
+      "participants": [],
+      "paths": [
+        "packages/auth/server/a.ts"
+      ],
+      "protected": false,
+      "protection_reason": null,
+      "shared_attributions": [],
+      "shared_participants": [],
+      "symbol_health_score": null,
+      "total_commits": 0
+    },
+    {
+      "authors": [],
+      "bug_fix_prs": [],
+      "bug_fix_ratio": 0.0,
+      "bug_fixes": 0,
+      "category": "product",
+      "coverage_pct": null,
+      "coverage_source": null,
+      "description": null,
+      "discovery_method": "primary",
+      "display_name": null,
+      "flows": [],
+      "health_score": 99.0,
+      "last_modified": "<timestamp>",
+      "name": "billing",
+      "participants": [],
+      "paths": [
+        "packages/billing/index.ts"
+      ],
+      "protected": false,
+      "protection_reason": null,
+      "shared_attributions": [],
+      "shared_participants": [],
+      "symbol_health_score": null,
+      "total_commits": 0
+    },
+    {
+      "authors": [],
+      "bug_fix_prs": [],
+      "bug_fix_ratio": 0.0,
+      "bug_fixes": 0,
+      "category": "product",
+      "coverage_pct": null,
+      "coverage_source": null,
+      "description": null,
+      "discovery_method": "primary",
+      "display_name": null,
+      "flows": [],
+      "health_score": 99.0,
+      "last_modified": "<timestamp>",
+      "name": "templates",
+      "participants": [],
+      "paths": [
+        "packages/templates/index.ts"
+      ],
+      "protected": false,
+      "protection_reason": null,
+      "shared_attributions": [],
+      "shared_participants": [],
+      "symbol_health_score": null,
+      "total_commits": 0
+    }
+  ],
+  "stats": {
+    "clusters_merged": 0,
+    "features_after": 5,
+    "features_before": 5,
+    "pairs_ambiguous": 0,
+    "pairs_high": 0,
+    "pairs_llm_merged": 0
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "features": [
+    {
+      "display_name": "Billing",
+      "flow_count": 15,
+      "name": "authenticated/billing",
+      "path_count": 15,
+      "protected": false
+    },
+    {
+      "display_name": "Misc",
+      "flow_count": 5,
+      "name": "authenticated/misc",
+      "path_count": 5,
+      "protected": false
+    },
+    {
+      "display_name": "Profile",
+      "flow_count": 15,
+      "name": "authenticated/profile",
+      "path_count": 15,
+      "protected": false
+    },
+    {
+      "display_name": "Settings",
+      "flow_count": 15,
+      "name": "authenticated/settings",
+      "path_count": 15,
+      "protected": false
+    }
+  ],
+  "stats": {
+    "features_split": 1,
+    "new_features": 4
+  }
+}

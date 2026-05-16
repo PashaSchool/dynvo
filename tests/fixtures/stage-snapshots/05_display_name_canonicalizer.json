@@ -1,0 +1,18 @@
+{
+  "features": [
+    {
+      "display_name": "Billing",
+      "name": "billing"
+    },
+    {
+      "display_name": "Inbox",
+      "name": "inbox"
+    },
+    {
+      "display_name": "Settings",
+      "name": "settings"
+    }
+  ],
+  "nav_updates": 2,
+  "suffix_updates": 1
+}

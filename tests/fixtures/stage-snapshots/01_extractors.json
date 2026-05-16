@@ -1,0 +1,72 @@
+[
+  {
+    "kind": "go-per-file",
+    "payload": {
+      "file": "middleware/logger.go",
+      "folder": "middleware",
+      "slug": "logger"
+    },
+    "source": "go-per-file-folder"
+  },
+  {
+    "kind": "go-per-file",
+    "payload": {
+      "file": "middleware/recoverer.go",
+      "folder": "middleware",
+      "slug": "recoverer"
+    },
+    "source": "go-per-file-folder"
+  },
+  {
+    "kind": "go-module",
+    "payload": {
+      "file": "mux.go",
+      "slug": "mux"
+    },
+    "source": "go-top-level-file"
+  },
+  {
+    "kind": "python-subpackage",
+    "payload": {
+      "file": "fastapi/security",
+      "module_count": 0,
+      "name": "security",
+      "parent_package": "fastapi",
+      "sample_modules": []
+    },
+    "source": "python-package-subdir-extractor"
+  },
+  {
+    "kind": "route-segment",
+    "payload": {
+      "file": "apps/web/app/routes/_authenticated+/documents._index.tsx",
+      "match_kind": "remix-leaf",
+      "slug": "documents"
+    },
+    "source": "route-segment-extractor"
+  },
+  {
+    "kind": "route-segment",
+    "payload": {
+      "file": "apps/web/app/routes/_authenticated+/inbox.tsx",
+      "match_kind": "remix-leaf",
+      "slug": "inbox"
+    },
+    "source": "route-segment-extractor"
+  },
+  {
+    "kind": "ts-library-index",
+    "payload": {
+      "all_exports": [
+        "auth"
+      ],
+      "export_count": 1,
+      "file": "packages/auth/server/index.ts",
+      "package_dir": "packages/auth",
+      "sample_exports": [
+        "auth"
+      ]
+    },
+    "source": "ts-library-exports-extractor"
+  }
+]
