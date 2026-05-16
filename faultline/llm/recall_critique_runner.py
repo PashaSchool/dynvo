@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # Haiku is enough for the critique JSON output — it's a classification
 # + light extraction task, not architecture reasoning.
 DEFAULT_MODEL = "claude-haiku-4-5"
-DEFAULT_MAX_TOKENS = 2_048
+DEFAULT_MAX_TOKENS = 32_768
 
 
 def is_enabled() -> bool:
@@ -130,7 +130,9 @@ class _AnthropicLlmClient:
 # ── Extractor discovery ───────────────────────────────────────────────
 
 
-def gather_signals(repo_root: Path) -> list[Signal]:
+def gather_signals(
+    repo_root: Path, *, repo_structure=None,
+) -> list[Signal]:
     """Instantiate every known extractor, keep applicable ones, run
     them, and concatenate signals.
 
@@ -139,6 +141,10 @@ def gather_signals(repo_root: Path) -> list[Signal]:
 
     Per-extractor exceptions are swallowed and logged; one broken
     extractor must not poison the critique pass.
+
+    ``repo_structure`` (Sprint 9a): when supplied, passed through to
+    extractors that gate on library-vs-SaaS (currently
+    ``TestFileExtractor``). Existing extractors ignore the kwarg.
     """
     # Import lazily so test envs that don't have the optional
     # dependencies for one extractor still load the runner.
@@ -150,12 +156,20 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         NextPagesRouteFileExtractor,
         NextRouteFileExtractor,
     )
+    from faultline.extractors.route_segment import RouteSegmentExtractor
     from faultline.extractors.schema_domain import SchemaDomainExtractor
     from faultline.extractors.python_package_subdir import (
         PythonPackageSubdirExtractor,
     )
     from faultline.extractors.schema_relations import SchemaRelationsExtractor
     from faultline.extractors.server_actions import ServerActionsExtractor
+    from faultline.extractors.go_module import (
+        GoPerFileFolderExtractor,
+        GoSubpackageExtractor,
+        GoTestFileExtractor,
+        GoTopLevelFileExtractor,
+    )
+    from faultline.extractors.test_file import TestFileExtractor
     from faultline.extractors.trpc_router import TrpcRouterExtractor
     from faultline.extractors.ts_library_exports import (
         TsLibraryExportsExtractor,
@@ -168,12 +182,18 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         RailsControllerExtractor(),
         NextRouteFileExtractor(),
         NextPagesRouteFileExtractor(),
+        RouteSegmentExtractor(),
         PluginModuleExtractor(),
         JsxNavExtractor(),
         ServerActionsExtractor(),
         TrpcRouterExtractor(),
         PythonPackageSubdirExtractor(),
         TsLibraryExportsExtractor(),
+        TestFileExtractor(),
+        GoTopLevelFileExtractor(),
+        GoSubpackageExtractor(),
+        GoTestFileExtractor(),
+        GoPerFileFolderExtractor(),
     ]
 
     out: list[Signal] = []
@@ -181,7 +201,18 @@ def gather_signals(repo_root: Path) -> list[Signal]:
         try:
             if not ext.applicable(repo_root):
                 continue
-            sigs = ext.extract(repo_root, files=())
+            # Pass repo_structure when the extractor accepts it
+            # (TestFileExtractor uses it for the is_library safety
+            # gate). Other extractors don't accept the kwarg, so we
+            # introspect.
+            import inspect as _insp
+            sig = _insp.signature(ext.extract)
+            if "repo_structure" in sig.parameters:
+                sigs = ext.extract(
+                    repo_root, files=(), repo_structure=repo_structure,
+                )
+            else:
+                sigs = ext.extract(repo_root, files=())
         except Exception as exc:  # noqa: BLE001 — opportunistic
             logger.warning(
                 "critique-recall: extractor %s failed (%s) — skipping",
@@ -206,6 +237,7 @@ def run_recall_critique(
     api_key: str | None,
     model: str | None = None,
     tracker: "CostTracker | None" = None,
+    repo_structure=None,
 ) -> "DeepScanResult":
     """Run the Phase 5 recall critique pass. Returns ``result``,
     mutated in place when findings were merged.
@@ -222,13 +254,8 @@ def run_recall_critique(
         logger.info("critique-recall: repo_root=None; skipping")
         return result
 
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        logger.warning("critique-recall: no API key; skipping")
-        return result
-
     try:
-        signals = gather_signals(repo_root)
+        signals = gather_signals(repo_root, repo_structure=repo_structure)
     except Exception as exc:  # noqa: BLE001 — opportunistic
         logger.warning("critique-recall: gather_signals failed (%s)", exc)
         return result
@@ -237,18 +264,12 @@ def run_recall_critique(
         logger.info("critique-recall: no extractor signals; skipping")
         return result
 
+    from faultline.llm.factory import make_client
     try:
-        import anthropic
-    except ImportError:  # pragma: no cover
-        logger.warning("critique-recall: anthropic SDK not available")
+        llm = make_client("critique", tracker=tracker, api_key=api_key)
+    except RuntimeError as exc:
+        logger.warning("critique-recall: %s", exc)
         return result
-
-    sdk_client = anthropic.Anthropic(api_key=key)
-    llm = _AnthropicLlmClient(
-        client=sdk_client,
-        model=model or DEFAULT_MODEL,
-        tracker=tracker,
-    )
 
     try:
         findings = CritiqueAggregator(
@@ -282,52 +303,38 @@ def apply_critique_to_feature_map(
     api_key: str | None,
     model: str | None = None,
     tracker: "CostTracker | None" = None,
-) -> int:
-    """Phase 5 Layer A entry point — runs the critique pass against
+    repo_structure=None,
+):
+    """Sprint 10a — pure-function. Returns ``(new_feature_map,
+    added_count)``. Input ``feature_map`` is NEVER mutated.
+
+    Phase 5 Layer A entry point — runs the critique pass against
     a built ``FeatureMap`` and appends findings as new Feature
     objects with ``discovery_method="critique"``.
-
-    Called from ``cli.py`` AFTER ``build_feature_map`` and the
-    primary noise-drop filter, so critique findings reach the final
-    JSON without being dropped by safety heuristics designed for
-    primary-scan content.
-
-    Returns the number of features actually appended (0 when
-    skipped for any reason — missing API key, no signals, no
-    findings, all findings already-owned, etc.). The function never
-    raises on operational failure; the caller's FeatureMap is left
-    unchanged if anything goes wrong.
     """
+    new_fm = feature_map.model_copy(deep=True)
+    feature_map = new_fm  # operate on the copy below
+
     if repo_root is None:
         logger.info("critique-recall: repo_root=None; skipping")
-        return 0
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        logger.warning("critique-recall: no API key; skipping")
-        return 0
+        return new_fm, 0
 
     try:
-        signals = gather_signals(repo_root)
+        signals = gather_signals(repo_root, repo_structure=repo_structure)
     except Exception as exc:  # noqa: BLE001 — opportunistic
         logger.warning("critique-recall: gather_signals failed (%s)", exc)
-        return 0
+        return new_fm, 0
 
     if not signals:
         logger.info("critique-recall: no extractor signals; skipping")
-        return 0
+        return new_fm, 0
 
+    from faultline.llm.factory import make_client
     try:
-        import anthropic
-    except ImportError:  # pragma: no cover
-        logger.warning("critique-recall: anthropic SDK not available")
-        return 0
-
-    sdk_client = anthropic.Anthropic(api_key=key)
-    llm = _AnthropicLlmClient(
-        client=sdk_client,
-        model=model or DEFAULT_MODEL,
-        tracker=tracker,
-    )
+        llm = make_client("critique", tracker=tracker, api_key=api_key)
+    except RuntimeError as exc:
+        logger.warning("critique-recall: %s", exc)
+        return new_fm, 0
 
     detected = [f.name for f in feature_map.features]
     try:
@@ -341,18 +348,18 @@ def apply_critique_to_feature_map(
         )
     except Exception as exc:  # noqa: BLE001 — opportunistic
         logger.warning("critique-recall: aggregator failed (%s)", exc)
-        return 0
+        return new_fm, 0
 
     if not findings:
         logger.info("critique-recall: no findings produced")
-        return 0
+        return new_fm, 0
 
     added = apply_findings_to_feature_map(feature_map, findings)
     logger.info(
         "critique-recall: appended %d new feature(s) to FeatureMap",
         added,
     )
-    return added
+    return new_fm, added
 
 
 __all__ = [

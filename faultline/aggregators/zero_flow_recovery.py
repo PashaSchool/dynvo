@@ -222,15 +222,18 @@ class ZeroFlowRecovery:
 
     max_flows_per_feature: int | None = None
 
-    def recover(self, feature_map, repo_root: Path) -> tuple[int, int]:
-        """In-place mutation. Returns
-        ``(features_recovered, flows_added)``.
+    def recover(self, feature_map, repo_root: Path):
+        """Sprint 10a — pure-function. Returns ``(new_feature_map,
+        (features_recovered, flows_added))``. Input is NEVER mutated.
 
         A feature is "recovered" iff it had 0 flows AND we added
         at least 1.
         """
         from datetime import datetime, timezone
         from faultline.models.types import Flow
+
+        new_fm = feature_map.model_copy(deep=True)
+        feature_map = new_fm  # operate on copy below
 
         repo_root = Path(repo_root)
         features_recovered = 0
@@ -307,7 +310,7 @@ class ZeroFlowRecovery:
                 "zero-flow-recovery: recovered %d feature(s), %d flow(s)",
                 features_recovered, flows_added,
             )
-        return features_recovered, flows_added
+        return new_fm, (features_recovered, flows_added)
 
 
 __all__ = [

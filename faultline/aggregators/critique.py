@@ -355,6 +355,76 @@ def _category_from_signal(
         ev = f"nav-link:{display!r} → {href} ({f})" if f else f"nav-link:{display!r} → {href}"
         return display, ev, "should"
 
+    if sig.kind == "go-per-file":
+        # Sprint 9c — single .go file inside middleware/handlers/
+        # plugin convention folder. Each file is one capability
+        # (chi: ``middleware/basic_auth.go`` → BasicAuth feature).
+        # Confidence "should" — Go's "one file = one thing"
+        # convention is very consistent in these folders.
+        slug = p.get("slug")
+        folder = p.get("folder", "")
+        if not isinstance(slug, str) or not slug:
+            return None
+        display = " ".join(
+            w.capitalize() for w in re.split(r"[-_]+", slug) if w
+        )
+        ev = f"go-per-file:{folder}/{slug}"
+        return display, ev, "should"
+
+    if sig.kind in ("go-module", "go-subpackage"):
+        # Sprint 9c — Go top-level file or sub-package directory.
+        # Captured slug becomes a candidate feature. ``go-module`` is
+        # one .go file (e.g. ``mux.go`` → ``mux`` for chi);
+        # ``go-subpackage`` is one folder (e.g. ``middleware/logger/``
+        # → ``logger``). Confidence "should" — Go projects organise
+        # one capability per file or per folder very consistently.
+        slug = p.get("slug")
+        if not isinstance(slug, str) or not slug:
+            return None
+        display = " ".join(
+            w.capitalize() for w in re.split(r"[-_]+", slug) if w
+        )
+        loc = p.get("file") or p.get("directory") or ""
+        ev = f"{sig.kind}:{slug!r} ({loc})" if loc else f"{sig.kind}:{slug!r}"
+        return display, ev, "should"
+
+    if sig.kind == "route-segment":
+        # Sprint 9b — leaf segment of a route file. Each leaf
+        # typically corresponds to a discrete page/feature in the
+        # product (Inbox, Documents, Templates, Org Settings, …).
+        # Confidence "should" — leaf segments are explicit author
+        # intent (each file represents a route the user can navigate
+        # to). Critique introduces these as features when the primary
+        # scan collapsed them under a single route-group bucket.
+        slug = p.get("slug")
+        f = p.get("file")
+        if not isinstance(slug, str) or not slug:
+            return None
+        display = " ".join(
+            w.capitalize() for w in re.split(r"[-_]+", slug) if w
+        )
+        ev = f"route-segment:{slug!r} ({f})" if f else f"route-segment:{slug!r}"
+        return display, ev, "should"
+
+    if sig.kind == "test-anchor":
+        # Sprint 9a — library test files often map 1:1 to public
+        # capabilities (``tests/test_security.py`` → Security feature,
+        # ``tests/cancel.test.ts`` → Cancel feature). The extractor is
+        # gated on ``is_library`` so SaaS scans never see this kind.
+        # Confidence "heuristic" — test names sometimes refer to
+        # internal helpers, so the LLM should weigh against repo
+        # signals before introducing a new feature.
+        slug = p.get("slug")
+        f = p.get("file")
+        if not isinstance(slug, str) or not slug:
+            return None
+        # Title-case the slug for display.
+        display = " ".join(
+            w.capitalize() for w in re.split(r"[-_]+", slug) if w
+        )
+        ev = f"test-anchor:{slug!r} ({f})" if f else f"test-anchor:{slug!r}"
+        return display, ev, "heuristic"
+
     if sig.kind == "plugin-system":
         # ONE signal per plugin directory describes the architectural
         # feature ("plugin extensibility", "notification delivery",
@@ -519,6 +589,57 @@ def build_critique_prompt(
 # ── LLM response parsing ─────────────────────────────────────────────
 
 
+def _recover_truncated_critique_json(text: str) -> dict | None:
+    """Recover a valid critique-response dict from JSON truncated by
+    a max_tokens cutoff in the middle of the ``missed`` array.
+
+    Strategy: find the last complete ``}`` that appears INSIDE
+    ``"missed": [`` and re-synthesise the wrapper. Returns None when
+    the prefix isn't structurally repairable.
+    """
+    arr_start = text.find('"missed"')
+    if arr_start < 0:
+        return None
+    bracket_open = text.find("[", arr_start)
+    if bracket_open < 0:
+        return None
+    # Walk through the array body, tracking brace depth on objects,
+    # and remember the index just past the last complete top-level
+    # object inside the array.
+    depth = 0
+    in_string = False
+    escape = False
+    last_complete = -1
+    for i in range(bracket_open + 1, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\" and in_string:
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                last_complete = i + 1
+    if last_complete < 0:
+        # No complete object recovered — entire array body was a
+        # single in-progress object.
+        return {"missed": []}
+    repaired = text[: last_complete] + "]}"
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+
+
 def parse_critique_response(
     raw: str,
     *,
@@ -548,8 +669,20 @@ def parse_critique_response(
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
-        logger.warning("critique: model output was not valid JSON")
-        return []
+        # Sprint 9c P1 fix — recover from a truncated `missed` array
+        # (when LLM output hits max_tokens). Walk back from the end
+        # to the last complete `}` inside the array and synthesise a
+        # valid wrapper around the prefix. Better partial recall than
+        # silently dropping every finding.
+        recovered = _recover_truncated_critique_json(text)
+        if recovered is None:
+            logger.warning("critique: model output was not valid JSON")
+            return []
+        logger.warning(
+            "critique: recovered partial JSON (%d findings before truncation)",
+            len(recovered.get("missed", [])),
+        )
+        parsed = recovered
 
     missed = parsed.get("missed", [])
     if not isinstance(missed, list):
@@ -604,7 +737,12 @@ def parse_critique_response(
 # the top regardless of how many we send. If a pathological repo
 # overflows Haiku's input budget, the LLM transport already
 # raises and is caught by ``run()``'s opportunistic try/except.
-DEFAULT_MAX_TOKENS = 2_048
+# Sprint 9c: bumped 2K → 8K. With Sprint 9c Go extractors emitting
+# 50+ signals on typical libraries (chi: 56), the JSON output for
+# critique findings can exceed 2K tokens and be truncated mid-array,
+# causing "critique: model output was not valid JSON" → 0 features
+# discovered. Anthropic supports up to 64K output; 8K is safe.
+DEFAULT_MAX_TOKENS = 32_768
 
 
 @dataclass(slots=True)

@@ -46,7 +46,7 @@ DEFAULT_TOOL_BUDGET = 15
 # below that with margin. Note: very large packages (>800 files) can
 # still truncate the final JSON because every path lands in the output;
 # Sprint 3 (sub-decomposition) is the real fix for that.
-DEFAULT_MAX_TOKENS = 16_384
+DEFAULT_MAX_TOKENS = 32_768
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
 

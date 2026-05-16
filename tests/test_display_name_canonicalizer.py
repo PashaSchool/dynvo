@@ -234,3 +234,96 @@ def test_llm_pass_caps_batch():
     json_start = payload.index("{")
     parsed = json.loads(payload[json_start:])
     assert len(parsed["features"]) == 3
+
+
+# ── strip_page_suffix (Sprint 5) ─────────────────────────────────────
+
+
+def _strip_fm(features):
+    """Local map factory for strip_page_suffix tests. Sprint 10a —
+    uses REAL ``FeatureMap`` + ``Feature`` so the pure-function
+    ``strip_page_suffix`` can call ``model_copy(deep=True)`` on it.
+    """
+    from datetime import datetime, timezone
+    from faultline.models.types import Feature, FeatureMap
+    real_feats = [
+        Feature(
+            name=f.name,
+            display_name=getattr(f, "display_name", None),
+            paths=[], authors=[], total_commits=0, bug_fixes=0,
+            bug_fix_ratio=0.0,
+            last_modified=datetime.now(tz=timezone.utc),
+            health_score=99.0, flows=[],
+        )
+        for f in features
+    ]
+    return FeatureMap(
+        repo_path="/tmp/x",
+        analyzed_at=datetime.now(tz=timezone.utc),
+        total_commits=0, date_range_days=365,
+        features=real_feats,
+    )
+
+
+def test_strip_page_suffix_removes_trailing_page():
+    from faultline.aggregators.display_name_canonicalizer import strip_page_suffix
+    feat = _Feat(name="documents", display_name="Documents Page")
+    fm = _strip_fm([feat])
+    new_fm, n = strip_page_suffix(fm)
+    assert n == 1
+    assert new_fm.features[0].display_name == "Documents"
+
+
+def test_strip_page_suffix_removes_trailing_pages_plural():
+    from faultline.aggregators.display_name_canonicalizer import strip_page_suffix
+    feat = _Feat(name="auth", display_name="Authentication Pages")
+    fm = _strip_fm([feat])
+    new_fm, n = strip_page_suffix(fm)
+    assert n == 1
+    assert new_fm.features[0].display_name == "Authentication"
+
+
+def test_strip_page_suffix_removes_trailing_screen():
+    from faultline.aggregators.display_name_canonicalizer import strip_page_suffix
+    feat = _Feat(name="settings", display_name="Settings Screen")
+    fm = _strip_fm([feat])
+    new_fm, n = strip_page_suffix(fm)
+    assert n == 1
+    assert new_fm.features[0].display_name == "Settings"
+
+
+def test_strip_page_suffix_removes_trailing_view():
+    from faultline.aggregators.display_name_canonicalizer import strip_page_suffix
+    feat = _Feat(name="inbox", display_name="Inbox View")
+    fm = _strip_fm([feat])
+    new_fm, n = strip_page_suffix(fm)
+    assert n == 1
+    assert new_fm.features[0].display_name == "Inbox"
+
+
+def test_strip_page_suffix_noop_when_no_suffix():
+    from faultline.aggregators.display_name_canonicalizer import strip_page_suffix
+    feat = _Feat(name="billing", display_name="Billing")
+    fm = _strip_fm([feat])
+    new_fm, n = strip_page_suffix(fm)
+    assert n == 0
+    assert new_fm.features[0].display_name == "Billing"
+
+
+def test_strip_page_suffix_noop_when_display_name_none():
+    from faultline.aggregators.display_name_canonicalizer import strip_page_suffix
+    feat = _Feat(name="billing", display_name=None)
+    fm = _strip_fm([feat])
+    new_fm, n = strip_page_suffix(fm)
+    assert n == 0
+    assert new_fm.features[0].display_name is None
+
+
+def test_strip_page_suffix_does_not_strip_mid_word():
+    """``"Page Builder"`` must stay — Page is the noun, not a suffix."""
+    from faultline.aggregators.display_name_canonicalizer import strip_page_suffix
+    feat = _Feat(name="page-builder", display_name="Page Builder")
+    fm = _strip_fm([feat])
+    new_fm, n = strip_page_suffix(fm)
+    assert n == 0
+    assert new_fm.features[0].display_name == "Page Builder"

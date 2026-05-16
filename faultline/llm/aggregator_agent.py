@@ -49,7 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
-DEFAULT_MAX_TOKENS = 16_384
+DEFAULT_MAX_TOKENS = 32_768
 
 # Per-scan tool budget. The agent investigates several features;
 # each can take 3-10 tool calls. 200 is a generous ceiling that

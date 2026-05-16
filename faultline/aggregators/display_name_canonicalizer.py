@@ -48,6 +48,32 @@ logger = logging.getLogger(__name__)
 _AUTO_GEN_MARKERS = re.compile(r"[-_]")
 
 
+# Single-word display names that are never acceptable — they're
+# folder/tech names leaking through from the slug or paths.
+# Generic per rule-no-repo-specific-paths: this is a structural
+# vocabulary list, not a per-repo allowlist.
+_STRUCTURAL_DISPLAY_BLOCKLIST = frozenset({
+    "trpc", "apps", "app", "packages", "package", "remix", "next",
+    "nextjs", "nuxt", "astro", "react", "vue", "svelte", "src",
+    "lib", "libs", "modules", "examples", "scripts", "server",
+    "client", "routes", "routers", "controllers", "models", "views",
+    "tests", "vendor", "dist", "build", "bin", "ee", "ce",
+    "internal", "common", "core", "shared", "utils", "helpers",
+})
+
+
+def _is_structural_display(name: str) -> bool:
+    """True when ``name`` is a single forbidden structural word.
+    Multi-word names that *contain* a structural word are fine —
+    "API Server Infrastructure" stays even though "Server" alone
+    would be rejected.
+    """
+    parts = re.split(r"\s+", name.strip())
+    if len(parts) != 1:
+        return False
+    return parts[0].lower() in _STRUCTURAL_DISPLAY_BLOCKLIST
+
+
 def _looks_engine_generated(display_name: str | None, slug: str) -> bool:
     """A display_name is "engine generated" when it's missing OR it's
     structurally identical to the slug (verbatim or Title-Cased).
@@ -146,6 +172,55 @@ def _match_feature_to_nav(
     return None
 
 
+_PAGE_SUFFIX_RE = re.compile(
+    r"\s+(?:Pages?|Screens?|Views?)\s*$", re.IGNORECASE,
+)
+
+
+def strip_page_suffix(feature_map):
+    """Sprint 10a — pure-function. Returns ``(new_feature_map,
+    changed_count)``. Input ``feature_map`` is NEVER mutated.
+
+    Removes trailing "Page" / "Pages" / "Screen" / "View" from
+    display_name (and feature.name when human-shaped). A page
+    typically contains MULTIPLE product capabilities — naming a
+    feature "Documents Page" hides that.
+    """
+    new_fm = feature_map.model_copy(deep=True)
+    changed = 0
+    for feat in new_fm.features:
+        dn = getattr(feat, "display_name", None)
+        if isinstance(dn, str):
+            new_dn = _PAGE_SUFFIX_RE.sub("", dn).strip()
+            if new_dn and new_dn != dn:
+                feat.display_name = new_dn
+                changed += 1
+        nm = feat.name
+        if " " in nm and not nm.islower():
+            new_nm = _PAGE_SUFFIX_RE.sub("", nm).strip()
+            if new_nm and new_nm != nm:
+                feat.name = new_nm
+    return new_fm, changed
+
+
+def scrub_structural_displays(feature_map):
+    """Sprint 10a — pure-function. Returns ``(new_feature_map,
+    cleared_count)``. Input ``feature_map`` is NEVER mutated.
+
+    Clears ``display_name`` on any feature whose display_name is a
+    single structural folder/tech word (e.g. "Trpc", "Packages",
+    "Apps") — those are LLM hallucinations from path content.
+    """
+    new_fm = feature_map.model_copy(deep=True)
+    cleared = 0
+    for feat in new_fm.features:
+        dn = getattr(feat, "display_name", None)
+        if isinstance(dn, str) and _is_structural_display(dn):
+            feat.display_name = None
+            cleared += 1
+    return new_fm, cleared
+
+
 def apply_nav_labels(
     feature_map, signals: Iterable[Signal],
 ) -> int:
@@ -199,13 +274,34 @@ Rules:
   "Framework", "Module", "Component", "Token", "Certificate"
   (when used as plumbing). These read as "internal code" not
   "product feature".
+- NEVER output a display_name that is just a folder/tech name
+  echoed from the path. Forbidden one-word names: "Trpc", "Apps",
+  "App", "Packages", "Package", "Remix", "Next", "Nextjs", "Nuxt",
+  "Astro", "React", "Vue", "Svelte", "Src", "Lib", "Libs",
+  "Modules", "Examples", "Scripts", "Server", "Client", "Routes",
+  "Routers", "Controllers", "Models", "Views", "Tests", "Vendor",
+  "Dist", "Build", "Bin", "Ee", "Ce", "Internal", "Common",
+  "Core", "Shared", "Utils", "Helpers". If the only name you can
+  justify is one of these, return ``"display_name": null``.
 - PREFER product / outcome words. Good: "Compliance", "Trust",
   "Audit Trail", "Sync", "Workflows", "Insights", "Notifications",
   "Onboarding", "Integrations", "Analytics", "Permissions".
+- ONE concept per name. NEVER combine two concepts with "&" or
+  "and". Each feature represents EXACTLY ONE product capability.
+  Bad: "Compliance & Audit Trail", "Data & Storage", "Sign In &
+  Registration", "Teams & Members". Good: "Compliance",
+  "Storage", "Sign In", "Teams". If the slug genuinely covers
+  two things, pick the dominant one or return null.
+- NEVER use "Page", "Pages", "Screen", "View", "Section" as a
+  suffix. A page typically contains MULTIPLE product capabilities;
+  naming a feature "Documents Page" hides that. Bad:
+  "Documents Page", "Settings Page", "Authentication Pages".
+  Good: "Documents", "Settings", "Authentication". If the slug
+  contains "page", strip it.
 - Translate technical concepts into business language:
-    "Document Certificate & Audit Log" → "Compliance & Audit Trail"
+    "Document Certificate"             → "Compliance"
     "Background Job Queue"             → "Background Tasks"
-    "Prisma Database Layer"            → "Data & Storage"
+    "Prisma Database Layer"            → "Storage"
     "RPC Framework"                    → "API"
     "File Storage Service"             → "File Storage"
     "Transactional Email"              → "Email Notifications"
@@ -298,6 +394,8 @@ def apply_llm_canonicalization(
         sugg_norm = _normalise_token(suggestion)
         if sugg_norm == slug_norm:
             continue
+        if _is_structural_display(suggestion):
+            continue
         feat.display_name = suggestion
         updated += 1
     return updated
@@ -308,4 +406,6 @@ __all__ = [
     "apply_nav_labels",
     "build_nav_label_index",
     "is_enabled_llm_canonicalize",
+    "scrub_structural_displays",
+    "strip_page_suffix",
 ]

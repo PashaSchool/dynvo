@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-4-5"
-DEFAULT_MAX_TOKENS = 8_192
+DEFAULT_MAX_TOKENS = 32_768
 DEFAULT_BATCH_SIZE = 50  # flows per Haiku call
 CONFIDENCE_FLOOR = 4     # only act on verdicts ≥4
 
