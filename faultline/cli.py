@@ -259,6 +259,17 @@ def analyze(
             "--no-post-process for raw scan output."
         ),
     ),
+    replay_self_check: bool = typer.Option(
+        True,
+        "--replay/--no-replay",
+        help=(
+            "After scan completes, deterministically compare current "
+            "logs/<slug>/ artifacts against logs_prev/<slug>/ and "
+            "print a regression summary. When the scan-diagnostician "
+            "agent is invoked next, this gives it a pre-computed "
+            "diff to act on. Default ON; pass --no-replay to skip."
+        ),
+    ),
     line_attribution: bool = typer.Option(
         True,
         "--line-attribution/--no-line-attribution",
@@ -380,6 +391,23 @@ def analyze(
 
         # Strip --src prefix so LLM/heuristic sees clean relative paths (e.g. EDR/... not src/views/EDR/...)
         analysis_files, path_prefix = _strip_src_prefix(files, src)
+
+        # Sprint 9d — initialise per-stage diagnostic artifacts.
+        # Rotate any previous logs to logs_prev/, prepare a fresh
+        # logs/<slug>/. No-op when FAULTLINE_NO_ARTIFACTS=1.
+        try:
+            from faultline.diagnostics import init_scan as _diag_init, get_logger as _diag_logger
+            _scan_slug = Path(str(repo.working_tree_dir)).name
+            _diag_init(repo.working_tree_dir, _scan_slug)
+            _diag = _diag_logger(repo.working_tree_dir, _scan_slug)
+            _diag.stage("scan-init", {
+                "repo": str(repo.working_tree_dir),
+                "files_count": len(files),
+                "src_filter": src,
+            })
+        except Exception as _exc:  # noqa: BLE001
+            console.print(f"[dim]artifacts disabled: {_exc}[/dim]")
+            _diag = None
 
         # Classify repo structure to adapt LLM strategy. ``repo_root`` is
         # required for ``detect_library`` (Day 11 fix) — without it the
@@ -1135,17 +1163,78 @@ def analyze(
         if _rcr.is_enabled():
             _critique_repo_root = Path(str(repo.working_tree_dir))
             _critique_tracker = locals().get("_cost_tracker")
-            _added = _rcr.apply_critique_to_feature_map(
+            _feat_count_before_critique = len(feature_map.features)
+            feature_map, _added = _rcr.apply_critique_to_feature_map(
                 feature_map=feature_map,
                 repo_root=_critique_repo_root,
                 api_key=api_key,
                 tracker=_critique_tracker,
+                repo_structure=locals().get("repo_structure"),
             )
             if _added:
                 console.print(
                     f"[green]✓[/green] Recall critique appended "
                     f"{_added} feature(s)"
                 )
+            if _diag is not None:
+                _added_names = [
+                    f.name for f in feature_map.features
+                    if f.discovery_method == "critique"
+                ]
+                _diag.stage("critique-output", {
+                    "added_feature_names": _added_names,
+                }, counts={
+                    "feature_count_in": _feat_count_before_critique,
+                    "feature_count_out": len(feature_map.features),
+                    "added": _added,
+                })
+
+        # 6a.55 (Sprint 9e): Hybrid feature deduplication.
+        # Primary scan + critique frequently emit multiple features
+        # for the same product capability (3× "Auth" on documenso).
+        # Phase 1: token-Jaccard ≥ 0.6 → deterministic merge.
+        # Phase 2: ambiguous band [0.4, 0.6) → ask LLM yes/no per pair.
+        # Canonical pick: protected > primary > critique > flow-critique;
+        # tie-break path/flow count then display-name length.
+        try:
+            from faultline.aggregators.feature_dedup import dedup_features
+            from faultline.llm.factory import make_client as _make_dedup_llm
+            _dedup_count_in = len(feature_map.features)
+            try:
+                _dedup_llm = _make_dedup_llm(
+                    "canonicalizer",
+                    tracker=locals().get("_cost_tracker"),
+                    api_key=api_key,
+                )
+            except RuntimeError:
+                _dedup_llm = None  # deterministic-only fallback
+            feature_map, _dedup_stats = dedup_features(feature_map, llm=_dedup_llm)
+            if (
+                _dedup_stats.clusters_merged
+                or _dedup_stats.pairs_llm_merged
+            ):
+                console.print(
+                    f"[dim]Feature dedup: "
+                    f"{_dedup_stats.features_before} -> "
+                    f"{_dedup_stats.features_after} features "
+                    f"({_dedup_stats.clusters_merged} clusters; "
+                    f"LLM verified {_dedup_stats.pairs_ambiguous} "
+                    f"pairs, merged {_dedup_stats.pairs_llm_merged})[/dim]"
+                )
+            if _diag is not None:
+                _diag.stage("feature-dedup", {
+                    "features_before": _dedup_stats.features_before,
+                    "features_after": _dedup_stats.features_after,
+                    "clusters_merged": _dedup_stats.clusters_merged,
+                    "pairs_high_threshold": _dedup_stats.pairs_high,
+                    "pairs_ambiguous": _dedup_stats.pairs_ambiguous,
+                    "pairs_llm_merged": _dedup_stats.pairs_llm_merged,
+                }, counts={
+                    "feature_count_in": _dedup_count_in,
+                    "feature_count_out": len(feature_map.features),
+                })
+        except Exception as _exc:  # noqa: BLE001
+            console.print(f"[dim]Feature dedup skipped: {_exc}[/dim]")
 
         # 6a.6: Populate Title Case display_name on every feature +
         # flow. Internal slug-form name stays untouched — it's the
@@ -1165,7 +1254,21 @@ def analyze(
                 apply_llm_canonicalization,
                 apply_nav_labels,
                 is_enabled_llm_canonicalize,
+                scrub_structural_displays,
+                strip_page_suffix,
             )
+            feature_map, _ps = strip_page_suffix(feature_map)
+            if _ps:
+                console.print(
+                    f"[dim]Display canonicalizer: stripped Page/Screen "
+                    f"suffix from {_ps} feature(s)[/dim]"
+                )
+            feature_map, _ns = scrub_structural_displays(feature_map)
+            if _ns:
+                console.print(
+                    f"[dim]Display canonicalizer: scrubbed {_ns} "
+                    f"structural display name(s) (Trpc/Apps/etc)[/dim]"
+                )
             from faultline.extractors.jsx_nav import JsxNavExtractor as _JNV
             _critique_repo_root = (
                 _critique_repo_root if "_critique_repo_root" in locals()
@@ -1179,27 +1282,21 @@ def analyze(
                     f"{_na} display name(s) from author-written labels[/dim]"
                 )
             if is_enabled_llm_canonicalize():
-                import os as _os
-                from faultline.llm import recall_critique_runner as _rcr2
-                _llm_repo_root = (
-                    _critique_repo_root if "_critique_repo_root" in locals()
-                    else Path(str(repo.working_tree_dir))
-                )
-                # Reuse the same Anthropic adapter as recall critique.
-                import anthropic as _anth  # noqa: F401
-                _llm_client_cfg_key = api_key or _os.environ.get("ANTHROPIC_API_KEY")
-                if _llm_client_cfg_key:
-                    _sdk = __import__("anthropic").Anthropic(api_key=_llm_client_cfg_key)
-                    _llm = _rcr2._AnthropicLlmClient(
-                        client=_sdk,
-                        model=_rcr2.DEFAULT_MODEL,
+                from faultline.llm.factory import make_client as _make_llm
+                try:
+                    _llm = _make_llm(
+                        "canonicalizer",
                         tracker=locals().get("_cost_tracker"),
+                        api_key=api_key,
                     )
+                except RuntimeError as _llm_exc:
+                    console.print(f"[dim]Canonicalizer LLM unavailable: {_llm_exc}[/dim]")
+                else:
                     _nb = apply_llm_canonicalization(feature_map, _llm)
                     if _nb:
                         console.print(
-                            f"[dim]Display canonicalizer (Haiku): updated "
-                            f"{_nb} display name(s)[/dim]"
+                            f"[dim]Display canonicalizer ({_llm.name}): "
+                            f"updated {_nb} display name(s)[/dim]"
                         )
         except Exception as _exc:  # noqa: BLE001 — opportunistic
             console.print(
@@ -1221,6 +1318,39 @@ def analyze(
         except Exception as exc:  # noqa: BLE001 — opportunistic
             console.print(
                 f"[dim]feature_category: skipped ({type(exc).__name__}: {exc})[/dim]"
+            )
+
+        # 6a.69 (Sprint 8g): mark structural features as protected
+        # BEFORE post_process so the merger respects them. See
+        # ``aggregators/feature_protection.py``: a feature anchored
+        # to a tRPC subrouter file, a workspace package, an explicit
+        # route folder, an API contract or a Prisma schema gets
+        # ``protected=True`` and is never merged away or dropped as
+        # noise. Without this step, prompt-tightening in the
+        # canonicalizer caused product capabilities (Templates,
+        # Webhooks, Branding, Audit) to be eaten by bigger
+        # neighbours — see ``memory/finding-merge-vs-recall.md``.
+        try:
+            from faultline.aggregators.feature_protection import (
+                mark_protected,
+            )
+            feature_map, _prot = mark_protected(feature_map)
+            if _prot:
+                console.print(
+                    f"[dim]Feature protection: marked {len(_prot)} "
+                    f"feature(s) as structural-anchored[/dim]"
+                )
+            if _diag is not None:
+                _diag.stage("feature-protection", {
+                    "protected_features": _prot,
+                }, counts={
+                    "feature_count_in": len(feature_map.features),
+                    "feature_count_out": len(feature_map.features),
+                    "newly_protected": len(_prot),
+                })
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(
+                f"[dim]Feature protection skipped: {_exc}[/dim]"
             )
 
         # 6a.7: Post-process cleanup. Runs by default (gated by
@@ -1287,7 +1417,7 @@ def analyze(
         # match. Pure deterministic.
         try:
             from faultline.aggregators.flow_reattribution import FlowReattribution
-            _n_moved = FlowReattribution().reattribute(feature_map)
+            feature_map, _n_moved = FlowReattribution().reattribute(feature_map)
             if _n_moved:
                 console.print(
                     f"[dim]Flow reattribution: moved "
@@ -1305,7 +1435,7 @@ def analyze(
         # Pure deterministic, no LLM cost.
         try:
             from faultline.aggregators.zero_flow_recovery import ZeroFlowRecovery
-            _recovered_feats, _recovered_flows = ZeroFlowRecovery().recover(
+            feature_map, (_recovered_feats, _recovered_flows) = ZeroFlowRecovery().recover(
                 feature_map, repo_root=Path(str(repo.working_tree_dir)),
             )
             if _recovered_feats:
@@ -1316,6 +1446,85 @@ def analyze(
                 )
         except Exception as _exc:  # noqa: BLE001 — opportunistic
             console.print(f"[dim]Zero-flow recovery skipped: {_exc}[/dim]")
+
+        # 6a.95 (Sprint 8h 2026-05-15): Flow→feature semantic-attribution
+        # critique. Late-stage LLM pass that asks "for each flow on this
+        # feature, does it semantically belong here?" and either keeps,
+        # moves to a better existing feature, or proposes a NEW feature
+        # the primary scan missed. Fixes the documenso Sprint 8g
+        # Translations-bucket-overflow bug where flow_reattribution's
+        # token-overlap matching dumped 400+ unrelated flows under
+        # "Translations" because the slug was short and matched many
+        # token sets. Opt-in via FAULTLINE_FLOW_CRITIQUE=1; uses the
+        # ``flow_critique`` LLM role (default Haiku 4.5).
+        try:
+            from faultline.aggregators.flow_attribution_critique import (
+                critique_flow_attribution, is_enabled as _flow_critique_enabled,
+            )
+            if _flow_critique_enabled():
+                from faultline.llm.factory import make_client as _make_llm_fc
+                _fc_llm = _make_llm_fc(
+                    "flow_critique",
+                    tracker=locals().get("_cost_tracker"),
+                    api_key=api_key,
+                )
+                _fc_count_in = len(feature_map.features)
+                feature_map, _fc_stats = critique_flow_attribution(feature_map, llm=_fc_llm)
+                if (
+                    _fc_stats.moved
+                    or _fc_stats.new_features_added
+                    or _fc_stats.new_feature_proposals_dropped
+                ):
+                    console.print(
+                        f"[dim]Flow critique ({_fc_llm.name}): "
+                        f"moved {_fc_stats.moved}, "
+                        f"new features {_fc_stats.new_features_added}, "
+                        f"dropped proposals {_fc_stats.new_feature_proposals_dropped}, "
+                        f"kept {_fc_stats.kept}[/dim]"
+                    )
+                if _diag is not None:
+                    _diag.stage("flow-attribution-critique-output", {
+                        "added_feature_names": [
+                            f.name for f in feature_map.features
+                            if f.discovery_method == "flow-critique"
+                        ],
+                        "stats": {
+                            "moved": _fc_stats.moved,
+                            "new_features_added": _fc_stats.new_features_added,
+                            "dropped": _fc_stats.new_feature_proposals_dropped,
+                            "kept": _fc_stats.kept,
+                        },
+                    }, counts={
+                        "feature_count_in": _fc_count_in,
+                        "feature_count_out": len(feature_map.features),
+                    })
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(f"[dim]Flow critique skipped: {_exc}[/dim]")
+
+        # 6a.97 (Sprint 9b): Auto-split oversized features. Backstop
+        # for cases where primary scan grouped many routes/files under
+        # one feature with a common ancestor folder. Splits by next-
+        # level segment when feature has >=40 flows AND >=30 paths AND
+        # at least 3 distinct child segments. Pure structural; no LLM.
+        try:
+            from faultline.aggregators.auto_split import split_oversized_features
+            _as_count_in = len(feature_map.features)
+            feature_map, _as_stats = split_oversized_features(feature_map)
+            if _as_stats.features_split:
+                console.print(
+                    f"[dim]Auto-split: {_as_stats.features_split} feature(s) "
+                    f"-> {_as_stats.new_features} new[/dim]"
+                )
+            if _diag is not None:
+                _diag.stage("auto-split", {
+                    "features_split": _as_stats.features_split,
+                    "new_features": _as_stats.new_features,
+                }, counts={
+                    "feature_count_in": _as_count_in,
+                    "feature_count_out": len(feature_map.features),
+                })
+        except Exception as _exc:  # noqa: BLE001
+            console.print(f"[dim]Auto-split skipped: {_exc}[/dim]")
 
         # 6b. Read coverage data (if available).
         # Sprint 2 Day 9: prefer line-level data so we can scope coverage
@@ -1472,6 +1681,57 @@ def analyze(
         if save:
             saved_path = write_feature_map(feature_map, output)
             console.print(f"[dim]Saved: {saved_path}[/dim]")
+
+        # Sprint 9d — final feature-map artifact (==landing payload)
+        if _diag is not None:
+            try:
+                _diag.final_feature_map(feature_map.model_dump(mode="json"))
+            except Exception as _exc:  # noqa: BLE001
+                _diag.error("final_feature_map dump failed", repr(_exc))
+
+        # Sprint 9h — replay self-check: compare current vs previous
+        # scan artifacts via the standalone compare-artifacts.py
+        # script. Hands the scan-diagnostician agent a pre-computed
+        # diff next time it's invoked.
+        if replay_self_check and _diag is not None:
+            try:
+                from subprocess import run as _sp_run
+                _slug_path = Path(str(repo.working_tree_dir))
+                _slug = _slug_path.name
+                _cur = _slug_path / ".faultline" / "logs" / _slug / "99-feature-map-final.json"
+                _prev = _slug_path / ".faultline" / "logs_prev" / _slug / "99-feature-map-final.json"
+                if _cur.exists() and _prev.exists():
+                    _cmp = _sp_run(
+                        [
+                            "/Users/pkuzina/workspace/faultlines-app/.venv-py/bin/python",
+                            "/Users/pkuzina/workspace/faultlines-app/.claude/scripts/compare-artifacts.py",
+                            str(_prev), str(_cur),
+                        ],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    if _cmp.returncode == 0:
+                        import json as _json_replay
+                        try:
+                            _diff = _json_replay.loads(_cmp.stdout)
+                            _verdict = _diff.get("verdict", "neutral")
+                            _delta = _diff.get("net_feature_delta")
+                            if _verdict == "regression":
+                                console.print(
+                                    f"[yellow]⚠ replay self-check: REGRESSION "
+                                    f"(net feature delta {_delta})[/yellow]"
+                                )
+                            elif _verdict == "improvement":
+                                console.print(
+                                    f"[green]↑ replay self-check: improvement "
+                                    f"(net feature delta {_delta})[/green]"
+                                )
+                            # save diff as artifact too
+                            (_slug_path / ".faultline" / "logs" / _slug /
+                             "_replay-self-check.json").write_text(_cmp.stdout)
+                        except Exception:
+                            pass
+            except Exception as _exc:  # noqa: BLE001
+                _diag.error("replay self-check failed", repr(_exc))
 
         # 8b. Optional: push to SaaS dashboard (alpha — experimental only)
         if push:
@@ -2852,6 +3112,88 @@ def watch_stop(
         console.print("[green]✓ Stopped[/green]")
     else:
         console.print("[yellow]No watcher running[/yellow]")
+
+
+@app.command(name="replay")
+def replay(
+    stage: str = typer.Argument(
+        "", help="Stage name (use --list to see options) OR comma-separated chain",
+    ),
+    input_path: str = typer.Option(
+        "", "--input", "-i", help="Path to FeatureMap artifact JSON",
+    ),
+    output_path: str | None = typer.Option(
+        None, "--output", "-o",
+        help="Where to write the result. Defaults to <input>.replay.json",
+    ),
+    repo_root: str | None = typer.Option(
+        None, "--repo-root",
+        help="Repo path (needed by stages that walk the filesystem)",
+    ),
+    api_key: str | None = typer.Option(
+        None, "--api-key", envvar="ANTHROPIC_API_KEY",
+        help="API key for LLM-using stages",
+    ),
+    list_stages_only: bool = typer.Option(
+        False, "--list", help="List available stages and exit",
+    ),
+):
+    """Re-execute a single pipeline stage (or comma-separated chain)
+    on a cached FeatureMap artifact. Saves ~30-70× of the full scan
+    cost when iterating on one stage.
+
+    Examples:
+
+        faultline replay feature-dedup \\
+            -i .faultline/logs/documenso/04c-stage-critique-output.json
+
+        faultline replay --list
+
+        faultline replay critique,feature-dedup,auto-split \\
+            -i .faultline/logs/documenso/03-stage-feature-protection.json \\
+            --repo-root /path/to/documenso
+    """
+    from faultline.replay import (
+        StageContext, list_stages, load_artifact, run_chain, run_stage,
+        save_artifact,
+    )
+
+    if list_stages_only:
+        for s in list_stages():
+            console.print(f"  - {s}")
+        raise typer.Exit(0)
+
+    if not stage or not input_path:
+        console.print("[red]Both STAGE and --input required (or pass --list)[/red]")
+        raise typer.Exit(2)
+
+    fm = load_artifact(input_path)
+    n_features_before = len(fm.features)
+
+    # Build LLM client if available — best-effort, OK if stage doesn't need it.
+    llm = None
+    if api_key:
+        try:
+            from faultline.llm.factory import make_client
+            llm = make_client("canonicalizer", api_key=api_key)
+        except RuntimeError:
+            llm = None
+
+    ctx = StageContext(
+        repo_root=Path(repo_root) if repo_root else None,
+        llm=llm,
+        api_key=api_key,
+    )
+
+    stages = [s.strip() for s in stage.split(",") if s.strip()]
+    fm = run_chain(stages, fm, ctx=ctx)
+
+    out = output_path or (input_path.rsplit(".", 1)[0] + ".replay.json")
+    save_artifact(fm, out)
+    console.print(
+        f"[green]✓[/green] replay {stages} on {input_path} → {out} "
+        f"({n_features_before} → {len(fm.features)} features)"
+    )
 
 
 @app.command(hidden=True)
