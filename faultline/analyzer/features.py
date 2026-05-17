@@ -933,7 +933,7 @@ _STRUCTURAL_FEATURE_NAMES = frozenset({
     # Source roots
     "app", "src", "lib", "pkg", "internal", "core",
     # Monorepo workspace conventions
-    "apps", "packages", "libs", "modules",
+    "apps", "packages", "libs", "modules", "crates",
     # Frontend structural dirs
     "pages", "api", "actions", "hooks", "providers",
     "components", "layouts", "containers", "views", "screens",
@@ -950,7 +950,7 @@ _STRUCTURAL_FEATURE_NAMES = frozenset({
     # Documentation / examples / vendored code
     "docs", "documentation", "examples", "example", "samples",
     "demo", "demos", "tutorial", "tutorials",
-    "vendor", "vendored", "third_party",
+    "vendor", "vendored", "third_party", "external-crates",
     # Test scaffolding — universal across stacks
     "test", "tests", "spec", "specs", "e2e",
     "playwright", "cypress", "jest",
@@ -967,6 +967,17 @@ _STRUCTURAL_FEATURE_NAMES = frozenset({
     "graphql", "rest",
     # Build / tooling
     "build", "dist", "bin", "scripts",
+    # Rust-ecosystem universal tooling-dir conventions. These are NOT
+    # repo-specific to meilisearch — they are pan-ecosystem norms:
+    # ``xtask`` is the cargo-xtask convention; ``fuzz``/``fuzzers``
+    # the cargo-fuzz convention; ``benches``/``benchmark``/``benchmarks``
+    # the criterion / cargo-bench convention; ``workloads`` the
+    # workspace-runner convention popularised by tokio + meilisearch.
+    # Adding them here matches the spirit of [[rule-no-repo-specific-paths]]:
+    # universal naming convention, NOT a specific repo's path.
+    "xtask", "fuzz", "fuzzers", "fuzzing",
+    "bench", "benches", "benchmark", "benchmarks",
+    "workloads",
     # Infra-ish
     "infra", "infrastructure", "deployment", "deploy", "ops",
 })
@@ -1049,6 +1060,13 @@ def _rename_dynamic_segment_features(features: list) -> int:
 
     def _needs_rename(name: str) -> bool:
         if _is_structural(name):
+            return True
+        # Dedup-suffixed structural names: ``crates-2``,
+        # ``packages-3`` etc. produced when multiple structural
+        # features race to the same fallback. Strip the trailing
+        # ``-\d+`` and re-check.
+        m_suffix = re.match(r"^(.*?)-(\d+)$", name)
+        if m_suffix is not None and _is_structural(m_suffix.group(1)):
             return True
         # Slash-compound feature names (e.g. ``prisma/seed``,
         # ``ee/ee``) where every slash-separated part is structural.
@@ -1156,6 +1174,353 @@ def _rename_dynamic_segment_features(features: list) -> int:
         del features[idx]
 
     return renamed
+
+
+def _drop_internal_cargo_crate_features(
+    features: list,
+    *,
+    repo_root,
+) -> int:
+    """Drop features that correspond to INTERNAL Cargo workspace
+    member crates.
+
+    Runs only when the repo is a Cargo workspace. For every feature
+    whose paths predominantly live under a single ``crates/<X>/`` or
+    top-level workspace-member dir, look up that member's
+    classification (from
+    :mod:`faultline.analyzer.cargo_classifier`) and drop the feature
+    if classified INTERNAL.
+
+    Per [[rule-no-repo-specific-paths]]: classification is derived
+    from each crate's own ``Cargo.toml`` manifest — no hardcoded
+    crate names anywhere. Generalises to any Cargo workspace
+    (axum, foundry, lapce, etc.) not meilisearch alone.
+
+    Per [[rule-no-magic-tuning]]: the "predominantly" check is a
+    ratio (≥ 50% of the feature's paths) and a structural one
+    (single dominant member). No numeric file-count thresholds.
+
+    Returns the count of features dropped.
+    """
+    from collections import Counter
+    from pathlib import Path
+
+    from faultline.analyzer.cargo_classifier import classify_all_members
+    from faultline.analyzer.workspace import _detect_cargo  # type: ignore[attr-defined]
+
+    root = Path(repo_root) if not hasattr(repo_root, "exists") else repo_root
+    if not (root / "Cargo.toml").exists():
+        return 0
+
+    # Enumerate workspace members via the cargo detector directly.
+    # ``detect_workspace`` strips empty packages (using file list as
+    # population signal); we want the full member list regardless
+    # of which files happen to be in this scan window, so call the
+    # underlying detector that just parses the root manifest.
+    info = _detect_cargo(root, [])
+    if info is None or info.manager != "cargo" or not info.packages:
+        return 0
+
+    member_dirs = [root / pkg.path for pkg in info.packages]
+    member_dirs = [d for d in member_dirs if d.is_dir()]
+    classifications = classify_all_members(
+        repo_root=root, member_dirs=member_dirs,
+    )
+    if not classifications:
+        return 0
+
+    # Map each member dir's relative-posix prefix to its
+    # classification. Longest-prefix wins when matching paths
+    # (so ``crates/meilisearch-auth/`` is preferred over
+    # ``crates/meilisearch/``).
+    prefix_to_cls: list[tuple[str, object]] = []
+    for d in member_dirs:
+        rel = d.relative_to(root).as_posix()
+        key_name = classifications.get(d.name.lower())
+        if key_name is None:
+            continue
+        prefix_to_cls.append((rel.rstrip("/") + "/", key_name))
+    # Longest first so longer prefixes win.
+    prefix_to_cls.sort(key=lambda kv: -len(kv[0]))
+
+    def _member_for_path(p: str) -> object | None:
+        norm = p.replace("\\", "/")
+        for prefix, cls in prefix_to_cls:
+            if norm.startswith(prefix):
+                return cls
+        return None
+
+    dropped = 0
+    dropped_indices: list[int] = []
+    for idx, feat in enumerate(features):
+        paths = list(feat.paths or [])
+        if not paths:
+            continue
+        member_hits = [
+            _member_for_path(p) for p in paths
+        ]
+        member_hits = [m for m in member_hits if m is not None]
+        if not member_hits:
+            continue
+        # A feature is a crate-bucket when ≥ 50% of its attributed
+        # paths lie under a SINGLE workspace member directory. We
+        # match by path-set, NOT by feature name: the LLM
+        # bucketizer freely renames features (e.g. ``xtask`` →
+        # ``Instance``), so name correspondence is unreliable. If
+        # the path attribution itself is concentrated under one
+        # internal crate, the feature IS that internal crate's
+        # bucket regardless of what it got named.
+        #
+        # Multi-crate safety: when paths spread across several
+        # crates (no single member ≥ 50%), the feature is a real
+        # cross-cutting product surface and we MUST NOT drop it —
+        # the 50% threshold (a ratio, not a count) is the
+        # structural guard per [[rule-no-magic-tuning]].
+        counts = Counter(id(m) for m in member_hits)
+        top_id, top_count = counts.most_common(1)[0]
+        if top_count / len(paths) < 0.5:
+            continue
+        top_cls = next(m for m in member_hits if id(m) == top_id)
+        if top_cls.public:
+            continue
+        dropped_indices.append(idx)
+        dropped += 1
+
+    for idx in sorted(dropped_indices, reverse=True):
+        del features[idx]
+    return dropped
+
+
+# Repo-root scaffolding files: dotfile configs, lint/format rules,
+# editor configs, VCS metadata. None of these represent a product
+# feature — they're build/dev environment plumbing. A feature whose
+# entire path attribution lies in this set is a phantom by
+# construction (the LLM bucketizer attached a name to scaffolding).
+# Universal across every language ecosystem — see
+# [[rule-no-repo-specific-paths]].
+_SCAFFOLDING_BASENAMES: frozenset[str] = frozenset({
+    ".dockerignore",
+    ".gitignore",
+    ".gitattributes",
+    ".gitmodules",
+    ".editorconfig",
+    ".rustfmt.toml",
+    "rustfmt.toml",
+    ".prettierrc",
+    ".prettierrc.json",
+    ".prettierrc.yaml",
+    ".prettierrc.yml",
+    ".prettierrc.js",
+    ".prettierignore",
+    ".eslintrc",
+    ".eslintrc.json",
+    ".eslintrc.yaml",
+    ".eslintrc.yml",
+    ".eslintrc.js",
+    ".eslintignore",
+    ".npmrc",
+    ".nvmrc",
+    ".python-version",
+    ".ruby-version",
+    ".node-version",
+    ".tool-versions",
+    ".env.example",
+    ".envrc",
+    ".mailmap",
+})
+
+# Top-level directories that are universally build/dev scaffolding
+# (their contents are never a product feature in their own right).
+_SCAFFOLDING_TOP_DIRS: frozenset[str] = frozenset({
+    ".cargo",
+    ".github",
+    ".gitlab",
+    ".vscode",
+    ".idea",
+    ".husky",
+    ".changeset",
+    ".devcontainer",
+    ".circleci",
+})
+
+
+def _is_scaffolding_path(path: str) -> bool:
+    """Universal check: is this path build/dev scaffolding rather
+    than product source?
+    """
+    norm = path.replace("\\", "/")
+    # Strip a single leading "./" but preserve leading dots in
+    # dotfile names (e.g. ".dockerignore", ".cargo/config.toml").
+    if norm.startswith("./"):
+        norm = norm[2:]
+    if not norm:
+        return False
+    head, _, _ = norm.partition("/")
+    if "/" not in norm:
+        # Top-level file. Match by basename.
+        return head in _SCAFFOLDING_BASENAMES
+    # Nested path: only a scaffolding hit if the top dir is one of
+    # the universal dotfile dirs.
+    return head in _SCAFFOLDING_TOP_DIRS
+
+
+# Universal source-code file extensions across the popular ecosystem
+# set. A feature with ZERO paths matching one of these is not a code
+# feature — it's a phantom anchored on docs/config/scaffolding.
+_SOURCE_CODE_EXTS: frozenset[str] = frozenset({
+    ".rs",
+    ".py", ".pyi",
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".go",
+    ".rb",
+    ".java", ".kt", ".kts", ".scala", ".groovy",
+    ".swift",
+    ".cs", ".fs", ".vb",
+    ".php",
+    ".ex", ".exs", ".erl",
+    ".vue", ".svelte", ".astro",
+    ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx",
+    ".m", ".mm",
+    ".dart",
+    ".lua",
+    ".pl", ".pm",
+    ".clj", ".cljs", ".cljc",
+    ".hs",
+    ".ml", ".mli",
+    ".zig",
+    ".nim",
+    ".sql",
+    ".sh", ".bash", ".zsh", ".fish",
+    ".graphql", ".gql",
+    ".prisma",
+})
+
+
+def _looks_like_source_path(path: str) -> bool:
+    norm = path.replace("\\", "/").lower()
+    for ext in _SOURCE_CODE_EXTS:
+        if norm.endswith(ext):
+            return True
+    return False
+
+
+def _is_repo_root_meta_path(path: str) -> bool:
+    """Returns True if ``path`` is a repo-root metadata file —
+    a top-level documentation, license, build manifest, or
+    Dockerfile that universally appears at the root of any repo.
+
+    These files don't represent a product feature on their own;
+    when the LLM bucketizer anchors a feature ENTIRELY on them,
+    that's a phantom (the feature's "code" was inferred from a
+    config or marketing line, not from any source).
+    """
+    norm = path.replace("\\", "/")
+    if norm.startswith("./"):
+        norm = norm[2:]
+    if "/" in norm:
+        return False
+    if not norm:
+        return False
+    upper = norm.upper()
+    # License / readme family: LICENSE, LICENSE-MIT, LICENSE.md,
+    # COPYING, NOTICE, README, README.md, CHANGELOG, CONTRIBUTING,
+    # CODE_OF_CONDUCT, SECURITY, AUTHORS, MAINTAINERS, AGENTS.
+    if upper.startswith((
+        "LICENSE", "LICENCE", "COPYING", "NOTICE",
+        "README", "CHANGELOG", "HISTORY", "CONTRIBUTING",
+        "CODE_OF_CONDUCT", "SECURITY", "AUTHORS", "MAINTAINERS",
+        "GOVERNANCE", "AGENTS", "BENCHMARKS", "PROFILING",
+        "TESTING", "ARCHITECTURE", "ROADMAP",
+    )):
+        return True
+    # Container / build manifests at root.
+    if upper.startswith(("DOCKERFILE", "DOCKER-COMPOSE", "MAKEFILE")):
+        return True
+    # Common top-level manifests + helper scripts.
+    # Any top-level config-shaped file (e.g. ``config.toml``,
+    # ``rome.json``, ``biome.json``). At repo root, these are
+    # configuration metadata, not product source.
+    if "." in norm:
+        lower = norm.lower()
+        for ext in (".toml", ".yaml", ".yml", ".json", ".cfg",
+                    ".ini", ".conf", ".lock"):
+            if lower.endswith(ext):
+                return True
+    if norm in {
+        "Cargo.toml", "Cargo.lock",
+        "package.json", "package-lock.json",
+        "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb",
+        "pnpm-workspace.yaml",
+        "pyproject.toml", "poetry.lock", "Pipfile", "Pipfile.lock",
+        "requirements.txt", "setup.py", "setup.cfg",
+        "go.mod", "go.sum",
+        "Gemfile", "Gemfile.lock",
+        "composer.json", "composer.lock",
+        "build.gradle", "build.gradle.kts", "settings.gradle",
+        "pom.xml",
+        "mix.exs", "mix.lock",
+        "tsconfig.json", "jsconfig.json",
+        "turbo.json", "nx.json", "lerna.json",
+        "vercel.json", "netlify.toml", "fly.toml",
+        "rust-toolchain.toml", "rust-toolchain",
+        "clippy.toml",
+        "download-latest.sh",
+    }:
+        return True
+    return False
+
+
+def _drop_scaffolding_only_features(features: list) -> int:
+    """Drop features whose entire path attribution is repo-root
+    scaffolding / metadata — dotfile configs (.gitignore, .cargo/),
+    docs (README, CHANGELOG), license files, build manifests
+    (Cargo.toml, package.json) — with ZERO actual source-code
+    paths attached.
+
+    This is a phantom by construction: the LLM bucketizer
+    occasionally names a feature after an external dep referenced
+    in config files (e.g. ``reqwest-eventsource`` mentioned in
+    ``.cargo/config.toml``) and attributes it to repo-root meta
+    files. A real feature ALWAYS has at least one source path in
+    its attribution.
+
+    Universal across all stacks; not language-specific. Per
+    [[rule-no-repo-specific-paths]]: the meta-file set is the
+    universal repo-root convention (every Cargo / npm / pip / go
+    project has these files), not a per-repo allowlist.
+
+    Returns count of features dropped.
+    """
+    dropped_indices: list[int] = []
+    for idx, feat in enumerate(features):
+        paths = list(feat.paths or [])
+        if not paths:
+            continue
+        all_meta = True
+        for p in paths:
+            if _is_scaffolding_path(p):
+                continue
+            if _is_repo_root_meta_path(p):
+                continue
+            # Asset directories at top level (grafana dashboards,
+            # static fixtures) — not source code, but tag them as
+            # meta-only when paired with other meta paths. Only
+            # qualifies if path's top dir is ``assets`` and it's
+            # NOT a code file (universal convention).
+            norm = p.replace("\\", "/")
+            if norm.startswith("./"):
+                norm = norm[2:]
+            head, _, rest = norm.partition("/")
+            if head.lower() in {"assets", "static", "public"} and rest:
+                if not _looks_like_source_path(p):
+                    continue
+            all_meta = False
+            break
+        if all_meta:
+            dropped_indices.append(idx)
+    for idx in sorted(dropped_indices, reverse=True):
+        del features[idx]
+    return len(dropped_indices)
 
 
 _TEST_FILE_RE = re.compile(
