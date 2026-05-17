@@ -239,19 +239,32 @@ class TestRenameDynamicSegmentFeatures:
         assert n == 1
         assert feats[0].name == "links"
 
-    def test_keeps_generic_name_when_no_clear_majority(self) -> None:
+    def test_drops_fallback_when_no_clear_majority(self) -> None:
+        """When no parent dominates ≥40%, the feature has no
+        semantic content — drop it rather than emit the
+        ``mixed-resource-operations`` fallback (which is pure
+        precision loss; it matches zero truth features by
+        construction).
+        """
         from faultline.analyzer.features import _rename_dynamic_segment_features
-        # 5 paths each across 3 different parents — no parent ≥40%
-        # → generic placeholder
-        feats = [self._feat("[id]", [
-            "links/[id]/a.ts", "links/[id]/b.ts",
-            "datarooms/[id]/a.ts", "datarooms/[id]/b.ts",
-            "documents/[id]/a.ts", "documents/[id]/b.ts",
-            "teams/[id]/a.ts", "teams/[id]/b.ts",
-        ])]
-        n = _rename_dynamic_segment_features(feats)
-        assert n == 1
-        assert feats[0].name == "mixed-resource-operations"
+        # 2 paths each across 4 different parents — no parent ≥40%.
+        # NOTE: a non-renamable companion is included so we can
+        # verify it survives the sweep.
+        feats = [
+            self._feat("[id]", [
+                "links/[id]/a.ts", "links/[id]/b.ts",
+                "datarooms/[id]/a.ts", "datarooms/[id]/b.ts",
+                "documents/[id]/a.ts", "documents/[id]/b.ts",
+                "teams/[id]/a.ts", "teams/[id]/b.ts",
+            ]),
+            self._feat("billing", ["billing/checkout.ts"]),
+        ]
+        _rename_dynamic_segment_features(feats)
+        # [id] feature dropped; billing survives.
+        names = [f.name for f in feats]
+        assert "billing" in names
+        assert "[id]" not in names
+        assert not any("mixed-resource-operations" in n for n in names)
 
     def test_skips_non_dynamic_features(self) -> None:
         from faultline.analyzer.features import _rename_dynamic_segment_features
@@ -275,15 +288,17 @@ class TestRenameDynamicSegmentFeatures:
         assert n == 1
         assert feats[1].name == "links-2"
 
-    def test_indexed_suffix_walks_when_multiple_collisions(self) -> None:
-        """Multiple structural features collapsing to the same
-        fallback name get -2, -3, -4 suffixes instead of giving up.
+    def test_drops_all_structural_features_with_no_majority(self) -> None:
+        """Multiple structural features that each collapse to the
+        fallback get dropped entirely (not preserved with suffixes).
+        Universal: relies only on the structural-name set, never on
+        repo-specific paths or magic thresholds.
         """
         from faultline.analyzer.features import _rename_dynamic_segment_features
-        # All 4 features map to "mixed-resource-operations" (no
-        # parent dominates ≥40%). They get suffix-2/-3/-4.
+        # All 4 features map to a no-majority fallback (every
+        # parent is uniquely-named so no segment dominates ≥40%).
+        # Under the new contract they are dropped.
         feats = [
-            # All have widely-varied parents → mixed-resource-operations
             self._feat("lib", [
                 f"src/lib/parent{i}/file.ts" for i in range(20)
             ]),
@@ -297,14 +312,69 @@ class TestRenameDynamicSegmentFeatures:
                 f"src/modules/parent{i}/file.ts" for i in range(20)
             ]),
         ]
-        n = _rename_dynamic_segment_features(feats)
-        assert n == 4
-        names = [f.name for f in feats]
-        # All 4 get distinct names with indexed suffixes.
-        assert names[0] == "mixed-resource-operations"
-        assert names[1] == "mixed-resource-operations-2"
-        assert names[2] == "mixed-resource-operations-3"
-        assert names[3] == "mixed-resource-operations-4"
+        _rename_dynamic_segment_features(feats)
+        # All four dropped → empty feature list.
+        assert feats == []
+
+    def test_drops_scaffolding_only_features(self) -> None:
+        """Features whose name AND every path-ancestor are structural
+        carry no semantic content and are dropped. Covers:
+        - API version directories (``v1``, ``v2``, ``v1-2``)
+        - Remix flat-routes scaffold (``_unauthenticated+``)
+        - Compound-structural names (``app-tests``, ``ee/ee``)
+        - Test/seed/migration workspaces under structural roots
+        """
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        feats = [
+            # v1 API directory under packages/api — entire ancestry
+            # is structural (packages, api).
+            self._feat("v1", [
+                "packages/api/v1/contract.ts",
+                "packages/api/v1/implementation.ts",
+            ]),
+            # Remix flat-routes scaffold.
+            self._feat("_unauthenticated+", [
+                "apps/remix/app/routes/_unauthenticated+/layout.tsx",
+                "apps/remix/app/routes/_unauthenticated+/signin.tsx",
+            ]),
+            # Compound-structural ``app-tests`` workspace.
+            self._feat("app-tests", [
+                "packages/app-tests/playwright.config.ts",
+                "packages/app-tests/tsconfig.json",
+            ]),
+            # Slash-compound ``ee/ee`` (every part structural).
+            self._feat("ee/ee", [
+                "packages/ee/index.ts",
+                "packages/ee/package.json",
+            ]),
+            # Real feature — must survive.
+            self._feat("billing", [
+                "packages/lib/billing/stripe.ts",
+                "packages/lib/billing/checkout.ts",
+            ]),
+        ]
+        _rename_dynamic_segment_features(feats)
+        surviving = [f.name for f in feats]
+        assert surviving == ["billing"]
+
+    def test_keeps_leading_underscore_when_not_remix_suffix(self) -> None:
+        """A bare leading underscore is a generic privacy convention
+        (Python private modules, Go ``_examples``) — NOT the Remix
+        flat-routes scaffold. Only ``<name>+`` triggers the scaffold
+        rule. The feature here is not renamable and must survive.
+        """
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        feats = [
+            self._feat("_examples", [
+                "_examples/server.go",
+                "_examples/client.go",
+            ]),
+        ]
+        _rename_dynamic_segment_features(feats)
+        # Survives because ``_examples`` is not structural (no
+        # trailing ``+``, not in the structural set).
+        assert len(feats) == 1
+        assert feats[0].name == "_examples"
 
     def test_handles_remix_and_django_styles(self) -> None:
         from faultline.analyzer.features import _rename_dynamic_segment_features

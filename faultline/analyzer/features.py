@@ -941,10 +941,24 @@ _STRUCTURAL_FEATURE_NAMES = frozenset({
     "helpers", "utils", "types", "schemas", "models",
     "middleware", "config", "constants", "assets", "styles",
     "public", "static", "common", "shared",
+    # Generic UI scaffolding — universal patterns in modern
+    # web/mobile apps (component primitives, design system).
+    "ui", "primitives",
+    # Universal server/client split (Next.js App Router and
+    # similar — these dirs hold code-runtime-axis, not features).
+    "server", "client", "server-only", "client-only",
     # Documentation / examples / vendored code
     "docs", "documentation", "examples", "example", "samples",
     "demo", "demos", "tutorial", "tutorials",
     "vendor", "vendored", "third_party",
+    # Test scaffolding — universal across stacks
+    "test", "tests", "spec", "specs", "e2e",
+    "playwright", "cypress", "jest",
+    # DB / ORM tool dirs and scaffolding — universal across stacks
+    "prisma", "drizzle", "sequelize",
+    "seed", "seeds", "fixtures", "migration", "migrations",
+    # SaaS edition / tiering folder convention
+    "ee", "enterprise",
     # Framework / stack labels — when a top-level dir is named after
     # the framework, it's an organizational marker, not a feature.
     # (e.g. apps/remix/, packages/trpc/, packages/react/).
@@ -956,6 +970,24 @@ _STRUCTURAL_FEATURE_NAMES = frozenset({
     # Infra-ish
     "infra", "infrastructure", "deployment", "deploy", "ops",
 })
+
+
+# Universal API-version directory pattern: v1, v2, v10, plus
+# dedup-suffixed forms like v1-2 produced by ``_rename_dynamic_segment_features``
+# when two structural buckets race to the same fallback name.
+# Pattern is stack-agnostic — REST conventions everywhere.
+_API_VERSION_RE = re.compile(r"^v\d+(?:-\d+)?$", re.IGNORECASE)
+
+
+# Route-group convention specific to Remix flat-routes:
+#   - ``_authenticated+``, ``_unauthenticated+`` (leading underscore + trailing +)
+#   - ``settings+`` (trailing + only)
+# The trailing ``+`` is the distinguishing marker. A bare leading
+# underscore (``_examples``, ``_internal``) is a generic privacy
+# convention used outside of Remix and is NOT scaffolding — leave
+# such names alone. Bare bracketed groups ``(dashboard)`` are
+# already handled by the Next.js route-group check below.
+_ROUTE_GROUP_SCAFFOLD_RE = re.compile(r"^_?[\w-]+\+$")
 
 
 def _rename_dynamic_segment_features(features: list) -> int:
@@ -979,29 +1011,76 @@ def _rename_dynamic_segment_features(features: list) -> int:
     from pathlib import Path
 
     renamed = 0
+    dropped_indices: list[int] = []
     seen_names = {f.name for f in features}
 
-    def _needs_rename(name: str) -> bool:
-        if _is_dynamic_route_segment(name):
+    def _is_atomic_structural(part: str) -> bool:
+        """A single path segment that is structural by any rule:
+        - dynamic-route placeholder ([id], $slug, {path}, <int:id>)
+        - Next.js route-group parens ``(dashboard)``
+        - Remix/SvelteKit flat-routes scaffold ``_authenticated+``
+        - known structural name (case-insensitive)
+        - REST API version directory ``v1``, ``v2``, ``v1-2``
+        """
+        if _is_dynamic_route_segment(part):
             return True
-        if name.lower() in _STRUCTURAL_FEATURE_NAMES:
+        if part.startswith("(") and part.endswith(")"):
+            return True
+        if _ROUTE_GROUP_SCAFFOLD_RE.match(part):
+            return True
+        if part.lower() in _STRUCTURAL_FEATURE_NAMES:
+            return True
+        if _API_VERSION_RE.match(part):
+            return True
+        return False
+
+    def _is_structural(part: str) -> bool:
+        """Atomic-structural OR compound where every hyphen-separated
+        sub-part is atomic-structural. Catches ``app-tests`` ⇒ both
+        parts structural ⇒ scaffolding workspace folder, not a
+        feature. Does NOT mark e.g. ``email-notifications`` because
+        ``notifications`` is not structural."""
+        if _is_atomic_structural(part):
+            return True
+        sub = [s for s in part.split("-") if s]
+        if len(sub) > 1 and all(_is_atomic_structural(s) for s in sub):
+            return True
+        return False
+
+    def _needs_rename(name: str) -> bool:
+        if _is_structural(name):
+            return True
+        # Slash-compound feature names (e.g. ``prisma/seed``,
+        # ``ee/ee``) where every slash-separated part is structural.
+        # The bucketizer emits these when a feature's paths span
+        # multiple structural folders. Treat as scaffolding.
+        sub = [s for s in name.split("/") if s]
+        if len(sub) > 1 and all(_is_structural(s) for s in sub):
             return True
         return False
 
     def _is_skippable_parent(part: str) -> bool:
-        # When walking up the path for a better name, skip both
-        # dynamic segments AND structural scaffolding dirs so we
-        # don't just rename "app" → "api".
-        if _is_dynamic_route_segment(part):
-            return True
-        # Strip Next.js route group parens: (dashboard) → dashboard
-        if part.startswith("(") and part.endswith(")"):
-            return True
-        if part.lower() in _STRUCTURAL_FEATURE_NAMES:
-            return True
-        return False
+        # When walking up the path for a better name, skip dynamic
+        # segments, route-group scaffolds, structural dirs, and
+        # compound-structural dirs (``app-tests``) — so we don't
+        # rename "app-tests" → "app-tests" via its parent.
+        return _is_structural(part)
 
-    for feat in features:
+    # Fallback name produced by previous runs / by this function when
+    # parent-walk has no majority. These features have no semantic
+    # signal — pure noise — so drop them on the next renamer pass.
+    _MIXED_FALLBACK_RE = re.compile(r"^mixed-resource-operations(?:-\d+)?$")
+
+    for idx, feat in enumerate(features):
+        # Drop residual fallback buckets ("mixed-resource-operations",
+        # "mixed-resource-operations-2", ...). These were produced by
+        # an earlier renamer pass with no majority signal — they
+        # carry no semantic content, only structural path artefacts.
+        # Leaving them in the feature list is pure precision loss
+        # (they match zero truth features by construction).
+        if _MIXED_FALLBACK_RE.match(feat.name):
+            dropped_indices.append(idx)
+            continue
         if not _needs_rename(feat.name):
             continue
         # For each path, find the most meaningful non-structural,
@@ -1015,6 +1094,14 @@ def _rename_dynamic_segment_features(features: list) -> int:
                     parents.append(part.lower())
                     break
         if not parents:
+            # The feature's NAME is structural AND every ancestor
+            # directory of every path is also structural. There is
+            # no semantic signal anywhere — this is a scaffolding
+            # bucket (route group, test workspace, API-version
+            # directory, ORM seed folder). Drop it. Universal,
+            # scale-invariant: relies only on the structural-name
+            # set, never on repo-specific paths or magic counts.
+            dropped_indices.append(idx)
             continue
         counts = Counter(parents)
         top, top_count = counts.most_common(1)[0]
@@ -1051,6 +1138,23 @@ def _rename_dynamic_segment_features(features: list) -> int:
         seen_names.discard(old_name)
         seen_names.add(new_name)
         renamed += 1
+
+    # Second-pass sweep: a rename may have produced a still-structural
+    # name (the parent-walk's top vote was itself a structural dir
+    # we didn't recognise OR was a re-emitted fallback). Drop those.
+    # Universal — uses the same structural/fallback predicates.
+    for idx, feat in enumerate(features):
+        if idx in dropped_indices:
+            continue
+        if _MIXED_FALLBACK_RE.match(feat.name) or _needs_rename(feat.name):
+            dropped_indices.append(idx)
+
+    # Apply scaffolding-only drops in reverse so list indices stay
+    # valid. The caller treats the mutated ``features`` list as the
+    # post-rename result.
+    for idx in sorted(set(dropped_indices), reverse=True):
+        del features[idx]
+
     return renamed
 
 
