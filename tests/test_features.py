@@ -357,6 +357,74 @@ class TestRenameDynamicSegmentFeatures:
         surviving = [f.name for f in feats]
         assert surviving == ["billing"]
 
+    def test_drops_saas_ui_section_hubs(self) -> None:
+        """SaaS UI-section hub names (``settings``, ``account``,
+        ``welcome``, ``onboarding``) are universally
+        navigation-section directories, not product features.
+        When a bucket's paths live entirely under
+        ``components/<hub>/`` and ``pages/<hub>/`` (every
+        ancestor structural), drop the hub. The real features
+        co-located inside (Billing, Notifications, Profile,
+        Security) are detected separately by their own bucket
+        names. Universal across Next.js / Remix / SvelteKit /
+        Astro / Nuxt — not stack-specific.
+        """
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        feats = [
+            self._feat("settings", [
+                "components/settings/team-settings.tsx",
+                "pages/settings/billing.tsx",
+                "pages/settings/notifications.tsx",
+            ]),
+            self._feat("account", [
+                "components/account/account-header.tsx",
+                "pages/account/general.tsx",
+                "pages/api/account/index.ts",
+            ]),
+            self._feat("welcome", [
+                "pages/welcome.tsx",
+                "components/welcome/intro.tsx",
+            ]),
+            self._feat("onboarding", [
+                "components/onboarding/step1.tsx",
+                "pages/onboarding.tsx",
+            ]),
+            # Real feature must survive even though its NAME
+            # equals a real product domain that shares a parent
+            # with a structural dir.
+            self._feat("billing", [
+                "components/billing/plan.tsx",
+                "pages/billing/portal.tsx",
+            ]),
+        ]
+        _rename_dynamic_segment_features(feats)
+        surviving = [f.name for f in feats]
+        assert "settings" not in surviving
+        assert "account" not in surviving
+        assert "welcome" not in surviving
+        assert "onboarding" not in surviving
+        assert "billing" in surviving
+
+    def test_drops_singular_view_phantom(self) -> None:
+        """A bucket named ``view`` (singular) emitted by the
+        bucketizer is a structural noun, same as the existing
+        plural ``views``. Most paths under it span unrelated
+        ancestors with no majority → drop via the existing
+        no-majority fallback rule. Catches papermark's 4-path
+        ``view`` phantom (mixed tinybird endpoint + user API +
+        permission-groups API).
+        """
+        from faultline.analyzer.features import _rename_dynamic_segment_features
+        feats = [
+            self._feat("view", [
+                "lib/tinybird/endpoints/x.pipe",
+                "pages/api/user/subscribe.ts",
+                "pages/api/teams/[teamId]/datarooms/[id]/permission-groups/index.ts",
+            ]),
+        ]
+        _rename_dynamic_segment_features(feats)
+        assert feats == []
+
     def test_keeps_leading_underscore_when_not_remix_suffix(self) -> None:
         """A bare leading underscore is a generic privacy convention
         (Python private modules, Go ``_examples``) — NOT the Remix
