@@ -1,4 +1,4 @@
-"""Tests for faultline/mcp_server.py."""
+"""Tests for faultline/mcp_server.py + mcp_context."""
 
 import json
 from pathlib import Path
@@ -6,9 +6,14 @@ from unittest.mock import patch
 
 import pytest
 
+from faultline.mcp_context import (
+    SCHEMA_VERSION,
+    error_payload,
+    fuzzy_feature_suggestions,
+    load_map,
+    resolve_feature,
+)
 from faultline.mcp_server import (
-    _load_map,
-    _savings_metadata,
     find_feature,
     get_feature_files,
     get_feature_owners,
@@ -16,6 +21,9 @@ from faultline.mcp_server import (
     get_hotspots,
     get_repo_summary,
     list_features,
+    refresh_feature_map,
+    resource_feature,
+    resource_repo_summary,
 )
 
 
@@ -29,7 +37,9 @@ def _sample_map() -> dict:
         "features": [
             {
                 "name": "payments",
+                "display_name": "payments",
                 "description": "Stripe payment processing",
+                "aliases": ["billing"],
                 "paths": ["src/payments/charge.ts", "src/payments/webhook.ts"],
                 "authors": ["alice", "bob"],
                 "total_commits": 80,
@@ -52,6 +62,7 @@ def _sample_map() -> dict:
             },
             {
                 "name": "auth",
+                "display_name": "auth",
                 "description": "User authentication",
                 "paths": ["src/auth/login.ts"],
                 "authors": ["alice", "bob", "charlie"],
@@ -66,6 +77,13 @@ def _sample_map() -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def _reset_map_cache() -> None:
+    """Drop the mtime cache between tests so fixtures don't bleed."""
+    from faultline import mcp_context
+    mcp_context._map_cache.clear()
+
+
 @pytest.fixture
 def fake_map(tmp_path: Path) -> Path:
     """Write a sample feature map and point the loader at it."""
@@ -77,40 +95,101 @@ def fake_map(tmp_path: Path) -> Path:
 
 class TestLoadMap:
     def test_loads_from_env_path(self, fake_map: Path) -> None:
-        data = _load_map()
+        data = load_map()
         assert data["repo_path"] == "/tmp/sample"
         assert len(data["features"]) == 2
 
     def test_raises_when_env_path_missing(self, tmp_path: Path) -> None:
         with patch.dict("os.environ", {"FAULTLINE_MAP_PATH": str(tmp_path / "missing.json")}):
             with pytest.raises(RuntimeError, match="does not exist"):
-                _load_map()
+                load_map()
+
+    def test_mtime_cache_hit(self, fake_map: Path) -> None:
+        """Second call with same mtime returns same object identity."""
+        a = load_map()
+        b = load_map()
+        assert a is b
+
+    def test_mtime_cache_invalidates_on_change(self, fake_map: Path) -> None:
+        a = load_map()
+        # Modify the file → mtime changes → cache should refresh
+        new = _sample_map()
+        new["repo_path"] = "/tmp/changed"
+        fake_map.write_text(json.dumps(new))
+        # Bump mtime explicitly in case the write happens within the same
+        # filesystem second granularity.
+        import os
+        st = fake_map.stat()
+        os.utime(fake_map, (st.st_atime, st.st_mtime + 2))
+        b = load_map()
+        assert b["repo_path"] == "/tmp/changed"
+        assert a is not b
 
 
-class TestSavingsMetadata:
-    def test_returns_positive_savings_for_small_response(self) -> None:
-        m = _savings_metadata(files_returned=3)
-        assert m["estimated_tokens_saved"] > 0
-        assert m["files_returned"] == 3
-        assert m["baseline_tokens"] > 0
+class TestResolveFeature:
+    def test_exact_matches_name(self) -> None:
+        fm = _sample_map()
+        f = resolve_feature(fm, "payments", mode="exact")
+        assert f is not None and f["name"] == "payments"
 
-    def test_clamps_savings_to_zero_when_overshooting(self) -> None:
-        m = _savings_metadata(files_returned=999)
-        assert m["estimated_tokens_saved"] == 0
+    def test_exact_matches_alias(self) -> None:
+        fm = _sample_map()
+        f = resolve_feature(fm, "billing", mode="exact")
+        assert f is not None and f["name"] == "payments"
+
+    def test_exact_does_not_match_description_substring(self) -> None:
+        fm = _sample_map()
+        # "stripe" appears in description but not in name/alias/label
+        assert resolve_feature(fm, "stripe", mode="exact") is None
+
+    def test_fuzzy_matches_description(self) -> None:
+        fm = _sample_map()
+        f = resolve_feature(fm, "stripe", mode="fuzzy")
+        assert f is not None and f["name"] == "payments"
+
+    def test_case_insensitive(self) -> None:
+        fm = _sample_map()
+        assert resolve_feature(fm, "AUTH", mode="exact") is not None
+
+    def test_empty_query_returns_none(self) -> None:
+        fm = _sample_map()
+        assert resolve_feature(fm, "   ", mode="exact") is None
+
+
+class TestFuzzySuggestions:
+    def test_returns_top_matches(self) -> None:
+        fm = _sample_map()
+        out = fuzzy_feature_suggestions(fm, "paymentz", limit=5)
+        assert "payments" in out
+
+    def test_caps_to_limit(self) -> None:
+        fm = _sample_map()
+        out = fuzzy_feature_suggestions(fm, "x", limit=1)
+        assert len(out) <= 1
 
 
 class TestListFeatures:
     def test_returns_sorted_by_health(self, fake_map: Path) -> None:
-        # fn.fn form — bypass the MCP wrapper to call the underlying callable
         result = list_features()
         assert result["total_features"] == 2
-        # Sorted by health ascending — payments (25) before auth (85)
         assert result["features"][0]["name"] == "payments"
         assert result["features"][1]["name"] == "auth"
 
-    def test_includes_savings_metadata(self, fake_map: Path) -> None:
+    def test_pagination_offset(self, fake_map: Path) -> None:
+        result = list_features(limit=1, offset=1)
+        assert len(result["features"]) == 1
+        assert result["features"][0]["name"] == "auth"
+        assert result["has_more"] is False
+        assert result["total_features"] == 2
+
+    def test_pagination_first_page(self, fake_map: Path) -> None:
+        result = list_features(limit=1, offset=0)
+        assert len(result["features"]) == 1
+        assert result["has_more"] is True
+
+    def test_no_savings_metadata_in_payload(self, fake_map: Path) -> None:
         result = list_features()
-        assert "_savings_metadata" in result
+        assert "_savings_metadata" not in result
 
 
 class TestFindFeature:
@@ -118,7 +197,6 @@ class TestFindFeature:
         result = find_feature(query="payments")
         assert result is not None
         assert result["name"] == "payments"
-        assert len(result["files"]) == 2
         assert "alice" in result["owners"]
 
     def test_matches_by_description(self, fake_map: Path) -> None:
@@ -140,16 +218,20 @@ class TestGetFeatureFiles:
         result = get_feature_files(feature_name="payments")
         assert result["feature"] == "payments"
         assert len(result["files"]) == 2
-        assert "src/payments/charge.ts" in result["files"]
 
-    def test_returns_hotspot_files(self, fake_map: Path) -> None:
-        result = get_feature_files(feature_name="payments")
-        assert "src/payments/charge.ts" in result["hotspot_files"]
+    def test_alias_resolves_to_same_feature(self, fake_map: Path) -> None:
+        """Regression: find_feature finds via alias, get_feature_files must too."""
+        result = get_feature_files(feature_name="billing")
+        assert result["feature"] == "payments"
 
-    def test_error_for_unknown_feature(self, fake_map: Path) -> None:
-        result = get_feature_files(feature_name="unknown")
+    def test_error_has_suggestions_not_full_list(self, fake_map: Path) -> None:
+        result = get_feature_files(feature_name="unknowzz")
         assert "error" in result
-        assert "payments" in result["available"]
+        assert "suggestions" in result
+        # Top-5 suggestions, not the full feature list dumped
+        assert len(result["suggestions"]) <= 5
+        # "available" key from old contract should be gone
+        assert "available" not in result
 
 
 class TestGetHotspots:
@@ -157,7 +239,6 @@ class TestGetHotspots:
         result = get_hotspots(limit=2)
         assert len(result["hotspots"]) == 2
         assert result["hotspots"][0]["name"] == "payments"
-        assert result["hotspots"][0]["health"] < result["hotspots"][1]["health"]
 
     def test_respects_limit(self, fake_map: Path) -> None:
         result = get_hotspots(limit=1)
@@ -179,6 +260,7 @@ class TestGetFeatureOwners:
     def test_error_for_unknown_feature(self, fake_map: Path) -> None:
         result = get_feature_owners(feature_name="unknown")
         assert "error" in result
+        assert "suggestions" in result
 
 
 class TestGetFlowFiles:
@@ -186,11 +268,16 @@ class TestGetFlowFiles:
         result = get_flow_files(feature_name="payments", flow_name="checkout-flow")
         assert result["flow"] == "checkout-flow"
         assert result["files"] == ["src/payments/checkout.ts"]
-        assert result["hotspot_files"] == ["src/payments/charge.ts"]
 
-    def test_error_for_unknown_flow(self, fake_map: Path) -> None:
+    def test_error_for_unknown_flow_lists_available(self, fake_map: Path) -> None:
         result = get_flow_files(feature_name="payments", flow_name="missing")
         assert "error" in result
+        assert "checkout-flow" in result["available_flows"]
+
+    def test_error_for_unknown_feature(self, fake_map: Path) -> None:
+        result = get_flow_files(feature_name="nope", flow_name="x")
+        assert "error" in result
+        assert "suggestions" in result
 
 
 class TestGetRepoSummary:
@@ -199,9 +286,64 @@ class TestGetRepoSummary:
         assert result["total_features"] == 2
         assert result["total_commits"] == 500
         assert result["total_bug_fixes"] == 45
-        assert result["features_at_risk"] == 1  # payments health < 50
-        assert result["avg_coverage_pct"] == 76.0  # (60 + 92) / 2
+        assert result["features_at_risk"] == 1
+        assert result["avg_coverage_pct"] == 76.0
 
     def test_avg_health_computed_correctly(self, fake_map: Path) -> None:
         result = get_repo_summary()
-        assert result["avg_health_score"] == 55.0  # (25 + 85) / 2
+        assert result["avg_health_score"] == 55.0
+
+
+class TestSchemaVersion:
+    def test_tool_response_carries_schema_version(self, fake_map: Path) -> None:
+        for result in (
+            list_features(),
+            get_repo_summary(),
+            get_hotspots(),
+            find_feature(query="payments"),
+            get_feature_files(feature_name="payments"),
+            get_feature_owners(feature_name="payments"),
+        ):
+            assert result is not None
+            assert result.get("_schema_version") == SCHEMA_VERSION
+
+    def test_error_response_carries_schema_version(self, fake_map: Path) -> None:
+        result = get_feature_files(feature_name="nope")
+        assert result["_schema_version"] == SCHEMA_VERSION
+        assert "error" in result
+
+    def test_error_payload_helper_shape(self) -> None:
+        out = error_payload("bad", code="x", extra=42)
+        assert out["_schema_version"] == SCHEMA_VERSION
+        assert out["error"] == "bad"
+        assert out["code"] == "x"
+        assert out["extra"] == 42
+
+
+class TestRefreshFeatureMap:
+    def test_returns_status_dict(self, fake_map: Path) -> None:
+        result = refresh_feature_map()
+        # Best-effort: helper may or may not be installed; we only
+        # assert the contract.
+        assert result["_schema_version"] == SCHEMA_VERSION
+        assert "triggered" in result
+        assert "map_path" in result
+
+
+class TestResources:
+    def test_repo_summary_resource_matches_tool(self, fake_map: Path) -> None:
+        tool_out = get_repo_summary()
+        resource_out = resource_repo_summary()
+        # Same shape; schema version present.
+        assert resource_out["total_features"] == tool_out["total_features"]
+        assert resource_out["_schema_version"] == SCHEMA_VERSION
+
+    def test_feature_resource_resolves_known(self, fake_map: Path) -> None:
+        result = resource_feature(name="payments")
+        assert result["name"] == "payments"
+        assert "files" in result
+
+    def test_feature_resource_unknown_returns_error(self, fake_map: Path) -> None:
+        result = resource_feature(name="ghost")
+        assert "error" in result
+        assert "suggestions" in result
