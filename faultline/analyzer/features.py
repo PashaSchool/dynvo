@@ -936,11 +936,24 @@ _STRUCTURAL_FEATURE_NAMES = frozenset({
     "apps", "packages", "libs", "modules", "crates",
     # Frontend structural dirs
     "pages", "api", "actions", "hooks", "providers",
-    "components", "layouts", "containers", "views", "screens",
+    "components", "layouts", "containers", "views", "view",
+    "screens",
     "routes", "router", "controllers", "handlers", "services",
     "helpers", "utils", "types", "schemas", "models",
     "middleware", "config", "constants", "assets", "styles",
     "public", "static", "common", "shared",
+    # Universal SaaS UI-section hub names. Every modern web app
+    # has a "settings" hub, an "account" hub, and a "welcome" /
+    # "onboarding" sub-flow scaffold. The bucketizer emits these
+    # as feature candidates when many files cluster under
+    # ``components/settings/`` or ``pages/account/`` — but those
+    # are NAVIGATION-SECTION DIRECTORIES, not product features.
+    # The actual features inside (Billing, Notifications,
+    # Profile, Security) are detected separately by their own
+    # bucket name. Dropping the hub eliminates a double-count
+    # phantom. Universal across Next.js, Remix, SvelteKit,
+    # Astro, Nuxt — not stack-specific.
+    "settings", "account", "welcome", "onboarding",
     # Generic UI scaffolding — universal patterns in modern
     # web/mobile apps (component primitives, design system).
     "ui", "primitives",
