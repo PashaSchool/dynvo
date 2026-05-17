@@ -1148,6 +1148,44 @@ def _rename_dynamic_segment_features(features: list) -> int:
         # "mixed-resource-operations" would have to give up after
         # the first collision.
         if new_name in seen_names:
+            # Sprint B 2026-05-17 — workspace-sibling merge.
+            # When the colliding base name is a workspace member
+            # (e.g. ``image-proxy`` shared across ``apps/image-proxy-*``
+            # AND ``packages/image-proxy/``), the two features are
+            # ONE product capability that the bucketizer split because
+            # they live under different workspace-type roots. Merge
+            # the donor's paths into the existing feature instead of
+            # allocating ``-2``. Universal — no repo-specific paths,
+            # no thresholds. See ``feature_dedup.should_merge_workspace_sibling``.
+            from faultline.aggregators.feature_dedup import (
+                merge_paths_into as _merge_paths_into,
+                should_merge_workspace_sibling as _should_merge_ws,
+            )
+            existing = next(
+                (g for g in features if g.name == new_name and g is not feat),
+                None,
+            )
+            if existing is not None and _should_merge_ws(
+                existing.paths, feat.paths,
+            ):
+                _merge_paths_into(existing, feat.paths)
+                # Union flows by name into the existing feature.
+                _existing_flow_names = {fl.name for fl in existing.flows}
+                for fl in feat.flows:
+                    if fl.name not in _existing_flow_names:
+                        existing.flows.append(fl)
+                        _existing_flow_names.add(fl.name)
+                # Existing inherits protection on either side.
+                if feat.protected and not existing.protected:
+                    existing.protected = True
+                    existing.protection_reason = (
+                        feat.protection_reason or existing.protection_reason
+                    )
+                # Drop the donor — it's been absorbed.
+                dropped_indices.append(idx)
+                seen_names.discard(feat.name)
+                renamed += 1
+                continue
             base = new_name
             attempt = 2
             while f"{base}-{attempt}" in seen_names and attempt < 20:

@@ -367,6 +367,89 @@ def dedup_features(
     return new_fm, stats
 
 
+# ── Workspace-sibling merge predicate (Sprint B 2026-05-17) ─────────
+#
+# Monorepo topologies (Turborepo, pnpm-workspace, lerna, cargo
+# workspaces, go workspaces) routinely place ONE product capability
+# across multiple workspace members — e.g. ``apps/image-proxy-aws/``
+# + ``apps/image-proxy/`` (deployment runtimes) + ``packages/
+# image-proxy/`` (shared library). The bucketizer + renamer can
+# emit these as two separate features, then the second one gets a
+# ``-N`` numeric suffix to avoid name collision. Result: phantom
+# duplicate feature.
+#
+# This predicate detects the situation in a UNIVERSAL way (no
+# repo-specific paths, no magic similarity thresholds):
+#   1. Path-sets MUST be disjoint (no overlap).
+#   2. Both features share a common workspace-member token in their
+#      top-level path (the token that drove the rename collision).
+#
+# When both hold, ``should_merge_workspace_sibling`` returns True
+# and the caller should union paths into the canonical feature
+# instead of creating a numeric-suffixed duplicate.
+
+
+def _top_level_tokens(paths) -> set[str]:
+    """Token-set of the second path segment across all paths.
+
+    In monorepo conventions the FIRST segment is the workspace-type
+    folder (``apps/``, ``packages/``, ``libs/``, ``crates/``, ``cmd/``,
+    ``modules/``) and the SECOND segment is the workspace MEMBER
+    name. The member name is the universal shared anchor when one
+    product capability spans multiple workspace folders.
+
+    Returns the lowercased member names. Empty set when paths are
+    shallow (no second segment) — the caller treats that as "no
+    workspace-sibling signal, do not merge".
+    """
+    out: set[str] = set()
+    for p in paths or []:
+        parts = p.split("/")
+        if len(parts) >= 2 and parts[0] and parts[1]:
+            out.add(parts[1].lower())
+    return out
+
+
+def should_merge_workspace_sibling(existing_paths, new_paths) -> bool:
+    """Return True iff the new feature should MERGE into the existing
+    same-named one instead of receiving a ``-N`` numeric suffix.
+
+    Conditions (all must hold; structural, no thresholds):
+      1. Path-sets are disjoint — same file never appears in both.
+      2. Path-sets share at least one workspace-member token in the
+         second path segment (monorepo member-name overlap).
+
+    Universal across Turborepo, pnpm-workspace, lerna, cargo
+    workspaces, go workspaces. Returns False when either input is
+    empty or the path topology is shallow.
+    """
+    if not existing_paths or not new_paths:
+        return False
+    existing_set = set(existing_paths)
+    new_set = set(new_paths)
+    if existing_set & new_set:
+        return False  # paths overlap — different bug, not ours
+    existing_tokens = _top_level_tokens(existing_paths)
+    new_tokens = _top_level_tokens(new_paths)
+    if not existing_tokens or not new_tokens:
+        return False
+    return bool(existing_tokens & new_tokens)
+
+
+def merge_paths_into(existing_feature, donor_paths) -> int:
+    """Union ``donor_paths`` into ``existing_feature.paths`` preserving
+    order on the existing side. Returns count of paths added.
+    """
+    seen = set(existing_feature.paths)
+    added = 0
+    for p in donor_paths or []:
+        if p not in seen:
+            existing_feature.paths.append(p)
+            seen.add(p)
+            added += 1
+    return added
+
+
 __all__ = [
     "AMBIGUOUS_LOW",
     "DedupStats",
@@ -375,4 +458,6 @@ __all__ = [
     "_tokens",
     "_pick_canonical",
     "dedup_features",
+    "merge_paths_into",
+    "should_merge_workspace_sibling",
 ]
