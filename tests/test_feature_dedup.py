@@ -252,3 +252,84 @@ def test_llm_keeps_separate_when_no_verdict():
     if stats.pairs_ambiguous > 0:
         assert stats.pairs_llm_merged == 0
         assert stats.features_after == 2
+
+
+# ── workspace-sibling merge predicate ────────────────────────────────
+
+
+def test_workspace_sibling_merges_apps_and_packages():
+    """Turborepo `apps/image-proxy/` + `packages/image-proxy/` are
+    ONE product capability split across workspace members. Predicate
+    must return True (merge) when both share the member-name token.
+    """
+    from faultline.aggregators.feature_dedup import (
+        should_merge_workspace_sibling,
+    )
+    existing = [
+        "apps/image-proxy/package.json",
+        "apps/image-proxy/src/index.ts",
+        "apps/image-proxy-aws/src/handler.ts",
+    ]
+    incoming = [
+        "packages/image-proxy/package.json",
+        "packages/image-proxy/src/proxy-service.ts",
+    ]
+    assert should_merge_workspace_sibling(existing, incoming) is True
+
+
+def test_workspace_sibling_rejects_unrelated_utils():
+    """Two ``Utils`` features whose paths live under completely
+    unrelated workspace members must NOT merge — those are two
+    genuinely separate utility clusters.
+    """
+    from faultline.aggregators.feature_dedup import (
+        should_merge_workspace_sibling,
+    )
+    existing = [
+        "packages/auth/src/utils.ts",
+        "packages/auth/src/helpers.ts",
+    ]
+    incoming = [
+        "packages/billing/src/utils.ts",
+        "packages/billing/src/format.ts",
+    ]
+    assert should_merge_workspace_sibling(existing, incoming) is False
+
+
+def test_workspace_sibling_rejects_overlapping_paths():
+    """Path overlap means it's the OTHER bug (Foo + Foo-2 referring
+    to the same files). Predicate must return False.
+    """
+    from faultline.aggregators.feature_dedup import (
+        should_merge_workspace_sibling,
+    )
+    paths = ["apps/image-proxy/src/index.ts"]
+    assert should_merge_workspace_sibling(paths, paths) is False
+
+
+def test_workspace_sibling_rejects_shallow_paths():
+    """Top-level files (no second segment) carry no workspace-member
+    signal. Predicate must return False.
+    """
+    from faultline.aggregators.feature_dedup import (
+        should_merge_workspace_sibling,
+    )
+    existing = ["README.md", "LICENSE"]
+    incoming = ["package.json"]
+    assert should_merge_workspace_sibling(existing, incoming) is False
+
+
+def test_workspace_sibling_merge_paths_into_unions():
+    """``merge_paths_into`` unions donor paths into the existing
+    feature without duplicates and preserves order.
+    """
+    from faultline.aggregators.feature_dedup import merge_paths_into
+
+    class _F:
+        def __init__(self, paths):
+            self.paths = list(paths)
+
+    existing = _F(["a", "b"])
+    added = merge_paths_into(existing, ["b", "c", "d"])
+    assert existing.paths == ["a", "b", "c", "d"]
+    assert added == 2
