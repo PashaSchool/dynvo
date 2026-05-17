@@ -1574,6 +1574,174 @@ def _drop_scaffolding_only_features(features: list) -> int:
     return len(dropped_indices)
 
 
+# ── Sprint C (2026-05-17): structural-folder phantom drop ─────────────
+#
+# Catches features that the LLM bucketizer / dedup pipeline emits with a
+# structural-folder name (Components, Utils, Hooks, Dialogs, Prisma,
+# Scripts, ...) whose ENTIRE path attribution lives under a single
+# structural container. These are not product features — they are the
+# contents of one scaffold folder, named after that folder.
+#
+# Sibling to ``_drop_scaffolding_only_features``: that function drops
+# features anchored only on repo-root metadata; this function drops
+# features anchored only on a single structural sub-tree.
+#
+# Universal & scale-invariant per ``rule-no-magic-tuning`` (the 80%
+# threshold is a PATH-SET RATIO, not a count) and
+# ``rule-no-repo-specific-paths`` (the name set is pan-ecosystem
+# convention, no per-repo allowlist).
+#
+# Drop categories:
+#
+# 1. ``_STRUCTURAL_PHANTOM_NAMES`` member (or hyphen/slash/space-
+#    compound of all phantom parts), with ≥80% of paths sharing a
+#    single structural-container ancestor.
+#
+# 2. ``^Bugfix Batch \d+$`` — commit-clustering artefact.
+#
+# 3. Reverse-DNS package identifiers like ``Admin.dub.co``,
+#    ``Com.example.dub`` — these come from manifest/package strings,
+#    never product features.
+#
+# Hub-style structural names that CAN be real product features
+# (``settings``, ``account``, ``welcome``, ``onboarding``) are
+# deliberately EXCLUDED from the phantom drop set, even though they
+# ARE in ``_STRUCTURAL_FEATURE_NAMES`` for the renamer's purposes.
+# Papermark's "Onboarding Flow" or Linear's "Settings" are legitimate
+# features — the renamer treats their dir as structural for parent-
+# walk, but the dropper must not delete them.
+_STRUCTURAL_PHANTOM_NAMES = frozenset(
+    _STRUCTURAL_FEATURE_NAMES
+    - {"settings", "account", "welcome", "onboarding"}
+    | {
+        # UI-component-folder names that recur across stacks. Each is
+        # a universal convention, not a per-repo name:
+        # ``dialogs/``, ``forms/``, ``tables/``, ``layouts/`` are
+        # standard shadcn / Radix / chakra-ui composition folders.
+        # ``store/`` is the Redux/Zustand state-store convention.
+        # ``mail/`` is the transactional-email-template convention.
+        # ``home/`` is the marketing-landing convention.
+        "dialogs", "forms", "tables", "store", "mail", "home",
+    }
+)
+
+# Workspace-root segment names ("apps", "packages", ...) are too
+# coarse to count as structural anchors on their own: every path in
+# a monorepo lives under one. The anchor must be deeper than these.
+_WORKSPACE_ROOT_SEGMENTS = frozenset({
+    "apps", "packages", "libs", "modules", "crates",
+})
+
+# ``^Bugfix Batch 0139$`` style names — commit-clustering output.
+_BUGFIX_BATCH_RE = re.compile(r"^bugfix batch \d+$", re.IGNORECASE)
+
+# Reverse-DNS detector: at least two dots AND the last segment looks
+# TLD-shaped (2-4 letters, no digits). Catches ``com.example.dub``,
+# ``admin.dub.co``, ``io.acme.cli`` — package-manifest identifiers
+# that occasionally leak through as feature names.
+_REVERSE_DNS_RE = re.compile(
+    r"^[a-z0-9][a-z0-9-]*"
+    r"(?:\.[a-z0-9][a-z0-9-]*){1,}"
+    r"\.[a-z]{2,4}$",
+    re.IGNORECASE,
+)
+
+
+def _is_structural_phantom_name(name: str) -> str | None:
+    """Classify ``name`` as a phantom by NAME ONLY.
+
+    Returns the reason string when phantom, or None.
+    Three reasons in order of precedence:
+      - ``bugfix-batch``
+      - ``reverse-dns``
+      - ``structural-name`` (single token or compound of phantom parts)
+    """
+    if not name:
+        return None
+    raw = name.strip()
+    if _BUGFIX_BATCH_RE.match(raw):
+        return "bugfix-batch"
+    if _REVERSE_DNS_RE.match(raw):
+        return "reverse-dns"
+    # Strip dedup suffixes like " 2" or "-2" before lowercase check.
+    nm = re.sub(r"[-\s]\d+$", "", raw.lower())
+    tokens = [t for t in re.split(r"[-/_\s]+", nm) if t]
+    if not tokens:
+        return None
+    if all(t in _STRUCTURAL_PHANTOM_NAMES for t in tokens):
+        return "structural-name"
+    return None
+
+
+def _structural_ancestor_prefixes(path: str) -> list[str]:
+    """Return every ancestor-directory prefix of ``path`` whose final
+    segment is a structural-folder name (per
+    ``_STRUCTURAL_FEATURE_NAMES``) AND is not a bare workspace-root
+    segment.
+
+    The filename itself is excluded — we only look at directories.
+    """
+    norm = path.replace("\\", "/")
+    if norm.startswith("./"):
+        norm = norm[2:]
+    parts = norm.split("/")
+    dirs = parts[:-1]  # exclude filename
+    out: list[str] = []
+    for i, seg in enumerate(dirs):
+        if seg.lower() not in _STRUCTURAL_FEATURE_NAMES:
+            continue
+        if seg.lower() in _WORKSPACE_ROOT_SEGMENTS:
+            continue
+        out.append("/".join(dirs[: i + 1]))
+    return out
+
+
+def _drop_structural_folder_phantoms(features: list) -> int:
+    """Sprint C (2026-05-17): drop features that are the contents of
+    a single structural folder rather than a product capability.
+
+    Rule (per ``next-sprint-structural-folder-phantoms`` memo):
+      1. Feature name is a phantom (structural-folder convention,
+         ``Bugfix Batch \\d+``, or reverse-DNS).
+      2. If reason is ``bugfix-batch`` or ``reverse-dns``: drop
+         unconditionally — these names are NEVER product features.
+      3. If reason is ``structural-name``: ≥80% of feature paths
+         share a single structural-folder ancestor (excluding bare
+         workspace roots ``apps``/``packages``/...). The 80%
+         threshold is scale-invariant (path-set RATIO) and works
+         from chi (35 paths) to dub (3915 files) without tuning.
+
+    Returns count of features dropped.
+    """
+    from collections import Counter
+
+    drop_indices: list[int] = []
+    for idx, feat in enumerate(features):
+        name = getattr(feat, "display_name", None) or getattr(feat, "name", "")
+        reason = _is_structural_phantom_name(name)
+        if not reason:
+            continue
+        if reason in ("bugfix-batch", "reverse-dns"):
+            drop_indices.append(idx)
+            continue
+        # reason == structural-name: require path-set domination.
+        paths = list(getattr(feat, "paths", None) or [])
+        if not paths:
+            continue
+        anchor_counts: Counter[str] = Counter()
+        for p in paths:
+            for anchor in _structural_ancestor_prefixes(p):
+                anchor_counts[anchor] += 1
+        if not anchor_counts:
+            continue
+        top_anchor, top_n = anchor_counts.most_common(1)[0]
+        if top_n / len(paths) >= 0.80:
+            drop_indices.append(idx)
+    for idx in sorted(drop_indices, reverse=True):
+        del features[idx]
+    return len(drop_indices)
+
+
 _TEST_FILE_RE = re.compile(
     r"\.(test|spec)\.(ts|tsx|js|jsx|py)$"
     r"|/__tests__/"
