@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from faultline.mcp_server import mcp, _load_map, _inject_warning, _savings_metadata
+from faultline.mcp_context import mcp, load_map, inject_warning, record_call
 from faultline.impact.risk import predict_impact
 
 
@@ -32,14 +32,14 @@ def analyze_change_impact(changed_files: list[str], repo_path: str = ".") -> dic
             Example: ["src/payments/stripe.ts", "src/payments/checkout.ts"]
         repo_path: Path to the git repository root. Defaults to current dir.
     """
-    fm = _load_map()
+    fm = load_map()
     result = predict_impact(
         changed_files=changed_files,
         feature_map=fm,
         repo_path=repo_path,
     )
-    result["_savings_metadata"] = _savings_metadata(len(changed_files))
-    return _inject_warning(result, fm)
+    record_call("analyze_change_impact", files_returned=len(changed_files))
+    return inject_warning(result, fm)
 
 
 @mcp.tool()
@@ -53,7 +53,7 @@ def get_regression_risk(changed_files: list[str]) -> dict[str, Any]:
     Args:
         changed_files: Files being changed (relative to repo root).
     """
-    fm = _load_map()
+    fm = load_map()
     features = fm.get("features", [])
     changed_set = set(changed_files)
 
@@ -64,11 +64,11 @@ def get_regression_risk(changed_files: list[str]) -> dict[str, Any]:
             affected.append(f)
 
     if not affected:
-        return _inject_warning({
+        record_call("get_regression_risk", files_returned=0)
+        return inject_warning({
             "regression_probability": 0.0,
             "risk_level": "low",
             "reason": "Changed files don't belong to any tracked feature.",
-            "_savings_metadata": _savings_metadata(0),
         }, fm)
 
     total_weight = 0.0
@@ -89,7 +89,8 @@ def get_regression_risk(changed_files: list[str]) -> dict[str, Any]:
     else:
         risk = "low"
 
-    return _inject_warning({
+    record_call("get_regression_risk", files_returned=len(affected))
+    return inject_warning({
         "regression_probability": prob,
         "risk_level": risk,
         "affected_features": [
@@ -100,5 +101,4 @@ def get_regression_risk(changed_files: list[str]) -> dict[str, Any]:
             f"{round(prob * 100)}% of historical changes to these features "
             f"resulted in bug fixes."
         ),
-        "_savings_metadata": _savings_metadata(len(affected)),
     }, fm)
