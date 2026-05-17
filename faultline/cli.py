@@ -1129,6 +1129,30 @@ def analyze(
         except Exception as _exc:  # noqa: BLE001 — opportunistic
             console.print(f"[dim]Dynamic-segment rename skipped: {_exc}[/dim]")
 
+        # 6a.54b (2026-05-17): Cargo workspace internal-crate drop.
+        # For Rust monorepos, every workspace member crate may have
+        # bucketised into a feature. INTERNAL crates (proc-macros,
+        # fuzz harnesses, benchmark runners, unpublishable helpers)
+        # are not user-visible — drop them. Classification is read
+        # from each crate's own Cargo.toml, never name-based; the
+        # function is a no-op on non-Cargo repos.
+        try:
+            from faultline.analyzer.features import (
+                _drop_internal_cargo_crate_features,
+            )
+            _n_cargo_dropped = _drop_internal_cargo_crate_features(
+                feature_map.features, repo_root=repo_path,
+            )
+            if _n_cargo_dropped:
+                console.print(
+                    f"[dim]Cargo classifier: dropped "
+                    f"{_n_cargo_dropped} internal-crate feature(s)[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(
+                f"[dim]Cargo classifier skipped: {_exc}[/dim]"
+            )
+
         # 6a.55: Commit-aware noise drop (Fix #2 from Fixable-accuracy
         # eval). Folds tiny-and-cold features (<4 files AND <30 commits
         # AND no flows) into shared-infra. The 30-commit escape hatch
@@ -1654,6 +1678,32 @@ def analyze(
                 logger.warning(
                     "test attribution skipped (%s)", exc,
                 )
+
+        # 6b (2026-05-17): Final scaffolding-only feature drop. Runs
+        # AFTER all post-processing (critique, dedup, auto-split,
+        # renamers) because earlier stages occasionally revive a
+        # phantom feature anchored only on repo-root scaffolding
+        # files (LICENSE / README / .gitignore / Cargo.toml). Drops
+        # any surviving feature whose entire path attribution is
+        # repo-root metadata with zero source-code paths. Universal
+        # across all stacks. See
+        # ``faultline.analyzer.features._drop_scaffolding_only_features``.
+        try:
+            from faultline.analyzer.features import (
+                _drop_scaffolding_only_features,
+            )
+            _n_scaffold_dropped = _drop_scaffolding_only_features(
+                feature_map.features,
+            )
+            if _n_scaffold_dropped:
+                console.print(
+                    f"[dim]Scaffolding drop: removed "
+                    f"{_n_scaffold_dropped} repo-root-config-only feature(s)[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(
+                f"[dim]Scaffolding drop skipped: {_exc}[/dim]"
+            )
 
         # 7. Print the report
         print_report(feature_map)
