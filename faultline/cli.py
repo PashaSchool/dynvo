@@ -1705,6 +1705,29 @@ def analyze(
                 f"[dim]Scaffolding drop skipped: {_exc}[/dim]"
             )
 
+        # 6c (Sprint C 2026-05-17): structural-folder phantom drop.
+        # Sibling of 6b — drops features named after universal scaffold
+        # dirs (Components, Utils, Dialogs, Prisma, Bugfix Batch N,
+        # reverse-DNS package identifiers) whose entire path attribution
+        # lives under a single structural container. See
+        # ``faultline.analyzer.features._drop_structural_folder_phantoms``.
+        try:
+            from faultline.analyzer.features import (
+                _drop_structural_folder_phantoms,
+            )
+            _n_phantom_dropped = _drop_structural_folder_phantoms(
+                feature_map.features,
+            )
+            if _n_phantom_dropped:
+                console.print(
+                    f"[dim]Structural-folder phantom drop: removed "
+                    f"{_n_phantom_dropped} feature(s)[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(
+                f"[dim]Structural-folder phantom drop skipped: {_exc}[/dim]"
+            )
+
         # 7. Print the report
         print_report(feature_map)
 
