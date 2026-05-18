@@ -457,6 +457,105 @@ class TestRenameDynamicSegmentFeatures:
 
 
 # ===================================================================
+# _drop_short_token_phantoms (Sprint C+ 2026-05-18)
+# ===================================================================
+
+
+class TestDropShortTokenPhantoms:
+    """Tests for _drop_short_token_phantoms — universal drop pass
+    targeting single-letter and 2-letter junk feature names that
+    survive the structural-folder phantom drop (Go ``c/``, ``x/``
+    subpackages, etc.). Rule is name-length based and therefore
+    repo/stack independent.
+    """
+
+    def _feat(self, name, paths):
+        from datetime import datetime, timezone
+        from faultline.models.types import Feature
+        return Feature(
+            name=name, paths=paths, authors=[],
+            total_commits=10, bug_fixes=0, bug_fix_ratio=0.0,
+            last_modified=datetime.now(tz=timezone.utc),
+            health_score=99.0,
+        )
+
+    def test_drops_single_letter_names(self) -> None:
+        from faultline.analyzer.features import _drop_short_token_phantoms
+        feats = [
+            self._feat("C", ["c/cgo_one.go", "c/cgo_two.go"]),
+            self._feat("X", ["x/exp.go"]),
+            self._feat("billing", ["packages/billing/stripe.ts"]),
+        ]
+        n = _drop_short_token_phantoms(feats)
+        assert n == 2
+        assert [f.name for f in feats] == ["billing"]
+
+    def test_drops_unknown_two_letter_names(self) -> None:
+        from faultline.analyzer.features import _drop_short_token_phantoms
+        feats = [
+            self._feat("aa", ["aa/x.go"]),
+            self._feat("cz", ["cz/y.go"]),
+            self._feat("mn", ["mn/z.go"]),
+        ]
+        n = _drop_short_token_phantoms(feats)
+        assert n == 3
+        assert feats == []
+
+    def test_preserves_whitelisted_acronyms(self) -> None:
+        from faultline.analyzer.features import _drop_short_token_phantoms
+        # Acronyms that genuinely appear as features in the corpus.
+        feats = [
+            self._feat("AI", ["src/ai/agent.ts"]),
+            self._feat("db", ["src/db/schema.ts"]),
+            self._feat("UI", ["src/ui/button.tsx"]),
+            self._feat("OS", ["pkg/os/detect.go"]),
+            self._feat("Go", ["pkg/go/runtime.go"]),
+        ]
+        n = _drop_short_token_phantoms(feats)
+        assert n == 0
+        assert [f.name for f in feats] == ["AI", "db", "UI", "OS", "Go"]
+
+    def test_ignores_three_plus_char_names(self) -> None:
+        from faultline.analyzer.features import _drop_short_token_phantoms
+        feats = [
+            self._feat("Auth", ["src/auth/login.ts"]),
+            self._feat("API", ["src/api/handler.ts"]),
+            self._feat("Convert", ["src/convert/main.go"]),
+        ]
+        n = _drop_short_token_phantoms(feats)
+        assert n == 0
+        assert len(feats) == 3
+
+    def test_ignores_mixed_char_short_names(self) -> None:
+        """2-char names containing digits/punctuation are NOT in this
+        rule's scope — they may be legitimate version tags (``v1``)
+        or are handled by other phantom detectors."""
+        from faultline.analyzer.features import _drop_short_token_phantoms
+        feats = [
+            self._feat("v1", ["api/v1/route.ts"]),
+            self._feat("3D", ["src/3d/render.ts"]),
+        ]
+        n = _drop_short_token_phantoms(feats)
+        assert n == 0
+        assert len(feats) == 2
+
+    def test_case_insensitive_whitelist(self) -> None:
+        from faultline.analyzer.features import _is_short_token_phantom_name
+        # Whitelisted regardless of case.
+        assert not _is_short_token_phantom_name("AI")
+        assert not _is_short_token_phantom_name("ai")
+        assert not _is_short_token_phantom_name("Db")
+        # Single letters always dropped, any case.
+        assert _is_short_token_phantom_name("c")
+        assert _is_short_token_phantom_name("X")
+
+    def test_empty_and_whitespace_names_ignored(self) -> None:
+        from faultline.analyzer.features import _is_short_token_phantom_name
+        assert not _is_short_token_phantom_name("")
+        assert not _is_short_token_phantom_name("   ")
+
+
+# ===================================================================
 # _merge_small_features
 # ===================================================================
 

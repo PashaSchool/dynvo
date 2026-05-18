@@ -1696,6 +1696,80 @@ def _structural_ancestor_prefixes(path: str) -> list[str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Sprint C+ (2026-05-18): short-token phantom drop
+# ---------------------------------------------------------------------------
+# Discovered during ollama scan: features named ``C`` (CGO bindings under
+# ``c/``) and ``X`` (experimental subpackage under ``x/``) survive the
+# structural-folder phantom drop because their paths don't share a
+# *structural* ancestor — Go conventionally names internal submodules with
+# single letters. These names cannot be product features by construction:
+# detection_eval's tokenizer requires ``[A-Za-z][A-Za-z0-9]+`` (≥2 chars),
+# so a single-character feature name can never match any ground-truth.
+#
+# Rule (universal, no magic numbers, no repo-specific paths):
+#   1. Drop features whose display name is exactly 1 ASCII letter.
+#   2. Drop features whose display name is exactly 2 ASCII letters AND
+#      not in a small whitelist of legitimate acronyms.
+#
+# The whitelist captures real acronyms that DO show up as features across
+# the corpus (AI assistants, DB tooling, UI widget systems, OS-detection,
+# Go/JS/TS/Py language tags). Anything else at 2 chars is overwhelmingly
+# noise (``aa``, ``cz``, ``mn``, ...).
+_SHORT_TOKEN_ACRONYM_WHITELIST: frozenset[str] = frozenset({
+    "ai", "ml", "ui", "ux", "db", "id", "gh", "cd", "ci",
+    "vm", "os", "js", "go", "py", "ts", "ko",
+})
+
+
+def _is_short_token_phantom_name(name: str) -> bool:
+    """Returns True iff ``name`` is a 1-char ASCII letter, OR a 2-char
+    ASCII-letter token outside the acronym whitelist.
+
+    Case-insensitive. Whitespace is stripped first. Non-letter chars
+    (digits, punctuation) disqualify the name from this rule — they
+    are handled by other phantom-name detectors.
+    """
+    if not name:
+        return False
+    s = name.strip()
+    if len(s) == 1 and s.isascii() and s.isalpha():
+        return True
+    if (
+        len(s) == 2
+        and s.isascii()
+        and s.isalpha()
+        and s.lower() not in _SHORT_TOKEN_ACRONYM_WHITELIST
+    ):
+        return True
+    return False
+
+
+def _drop_short_token_phantoms(features: list) -> int:
+    """Sprint C+ (2026-05-18): drop features whose name is a single
+    ASCII letter or an unrecognised 2-letter token.
+
+    Universal structural rule per ``rule-no-magic-tuning`` and
+    ``rule-no-repo-specific-paths``: name length is a property of
+    the string itself, independent of repo size, stack, or path
+    layout. Single-character feature names cannot encode product
+    capabilities; 2-char names outside the acronym whitelist are
+    overwhelmingly tokenization noise (Go ``c/``, ``x/``, ``y/``
+    subpackages; Python single-letter modules; one-off scratch
+    dirs).
+
+    Returns count of features dropped.
+    """
+    drop_indices: list[int] = []
+    for idx, feat in enumerate(features):
+        name = getattr(feat, "display_name", None) or getattr(feat, "name", "")
+        if _is_short_token_phantom_name(name):
+            drop_indices.append(idx)
+    for idx in sorted(drop_indices, reverse=True):
+        del features[idx]
+    return len(drop_indices)
+
+
 def _drop_structural_folder_phantoms(features: list) -> int:
     """Sprint C (2026-05-17): drop features that are the contents of
     a single structural folder rather than a product capability.

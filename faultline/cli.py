@@ -1728,6 +1728,28 @@ def analyze(
                 f"[dim]Structural-folder phantom drop skipped: {_exc}[/dim]"
             )
 
+        # 6d (Sprint C+ 2026-05-18): short-token phantom drop.
+        # Sibling of 6c — drops features whose name is a single ASCII
+        # letter (``C``, ``X``, ``Y``...) or an unrecognised 2-letter
+        # token. Universal: name length is repo/stack independent.
+        # See ``faultline.analyzer.features._drop_short_token_phantoms``.
+        try:
+            from faultline.analyzer.features import (
+                _drop_short_token_phantoms,
+            )
+            _n_short_dropped = _drop_short_token_phantoms(
+                feature_map.features,
+            )
+            if _n_short_dropped:
+                console.print(
+                    f"[dim]Short-token phantom drop: removed "
+                    f"{_n_short_dropped} feature(s)[/dim]"
+                )
+        except Exception as _exc:  # noqa: BLE001 — opportunistic
+            console.print(
+                f"[dim]Short-token phantom drop skipped: {_exc}[/dim]"
+            )
+
         # 7. Print the report
         print_report(feature_map)
 
