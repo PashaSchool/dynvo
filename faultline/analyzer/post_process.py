@@ -47,6 +47,17 @@ _VAGUE_NAMES = frozenset({
     "base", "misc", "stuff", "platform", "backend", "frontend", "api", "lib",
 })
 
+# Demo / tutorial / examples package prefixes — these directories ship as
+# illustrative reference code, not user-facing product features. They leak
+# through Go-style top-dir extraction and slash-prefix workspace clustering
+# in monorepos (e.g. trigger.dev's ``references/hello-world``).
+_DEMO_PREFIXES = (
+    "references-", "references/",
+    "examples-", "examples/", "example-",
+    "demo-", "demos-", "demos/",
+    "samples-", "samples/",
+)
+
 _MARKETING_FLOW_PATTERNS = [
     r"book-meeting", r"subscribe-to-newsletter", r"apply-to-",
     r"view-go-page", r"view-pricing", r"sign-up-for-", r"contact-sales",
@@ -593,14 +604,37 @@ def drop_noise_features(features: list[Feature]) -> tuple[list[Feature], list[tu
         name = f.name
         path_count = len(f.paths)
 
+        # 0. empty-name drop (Fix A). An empty name has no semantic
+        # value; protection cannot save it. Runs BEFORE every other
+        # check, including protection bypasses.
+        if not name or not name.strip():
+            dropped.append((name, "empty name", path_count))
+            continue
+
+        # 0b. uncategorized slug-leak (Fix B). The clusterer signalled
+        # "I gave up" with this name. Protection must not preserve a
+        # name the clusterer itself failed at. ``_is_uncategorized``
+        # matches bare ``uncategorized`` and any ``*/uncategorized``
+        # suffix (incl. multi-slash variants like ``web/web/uncategorized``).
+        # TODO: consider re-attributing the orphaned flows to a sibling
+        # feature rather than dropping; out of scope for this sprint.
+        if _is_uncategorized(name):
+            dropped.append((name, "uncategorized catch-all", path_count))
+            continue
+
+        # 0c. demo / references / examples packages (Fix C). Tutorial-
+        # only directories that leak through monorepo workspace
+        # clustering (e.g. trigger.dev's ``references-hello-world``).
+        if any(
+            name == p.rstrip("-/") or name.startswith(p)
+            for p in _DEMO_PREFIXES
+        ):
+            dropped.append((name, "demo/example package", path_count))
+            continue
+
         # 1. shared-infra / Shared Infra
         if name in _NOISE_NAMES:
             dropped.append((name, "shared-infra/noise", path_count))
-            continue
-
-        # 2. uncategorized slug-leak
-        if _is_uncategorized(name):
-            dropped.append((name, "uncategorized catch-all", path_count))
             continue
 
         # 3. vendored
@@ -641,6 +675,67 @@ def drop_noise_features(features: list[Feature]) -> tuple[list[Feature], list[tu
     cleaned = [f for f in cleaned if f.paths]
     cleaned.sort(key=lambda x: -x.total_commits)
     return cleaned, dropped
+
+
+# ── Stage 7: slugify names (final emit normalisation) ───────────────
+
+_SLUG_OK_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_HAS_UPPER_OR_SPACE_RE = re.compile(r"[A-Z]| ")
+
+
+def _slugify_names(
+    features: list[Feature],
+) -> tuple[list[Feature], list[tuple[str, str, int]]]:
+    """Force ``feature.name`` to a stable kebab-slug form.
+
+    Runs LAST so that upstream stages can match on the original names —
+    only the final emit gets the normalized slugs. Preserves human-
+    readable labels in ``display_name`` when the original carried Title
+    Case or whitespace (e.g. ``"Web App Shell & Onboarding"`` →
+    name=``"web-app-shell-onboarding"``, display_name preserved).
+
+    Returns ``(features, dropped)`` where ``dropped`` is a list of
+    ``(name, reason, path_count)`` tuples for any feature whose
+    slugified form was empty (everything was non-alphanumeric).
+    """
+    out: list[Feature] = []
+    dropped: list[tuple[str, str, int]] = []
+    used: set[str] = set()
+
+    for f in features:
+        original = f.name
+        # Already a valid slug — keep, but reserve the name to detect
+        # collisions from later renames.
+        if original and _SLUG_OK_RE.match(original):
+            slug = original
+        else:
+            slug = _NON_ALNUM_RE.sub("-", (original or "").lower()).strip("-")
+
+        if not slug:
+            dropped.append((original, "unslugifiable name", len(f.paths)))
+            continue
+
+        # Collision resolution: append numeric suffix.
+        if slug in used:
+            base = slug
+            i = 2
+            while f"{base}-{i}" in used:
+                i += 1
+            slug = f"{base}-{i}"
+
+        if slug != original:
+            # Preserve the human label when the original carried
+            # Title Case or whitespace — that's a real product label
+            # the LLM emitted.
+            if original and _HAS_UPPER_OR_SPACE_RE.search(original) and not f.display_name:
+                f.display_name = original.strip()
+            f.name = slug
+
+        used.add(slug)
+        out.append(f)
+
+    return out, dropped
 
 
 # ── Public entry point ──────────────────────────────────────────────
@@ -686,6 +781,15 @@ def run(
     features, dropped = drop_noise_features(features)
     for name, reason, n in dropped:
         logger.info("post_process: dropped %s (%s, %d files)", name, reason, n)
+
+    features, slug_drops = _slugify_names(features)
+    if slug_drops:
+        logger.info(
+            "post_process: slugified feature names — dropped %d unrecoverable",
+            len(slug_drops),
+        )
+        for name, reason, n in slug_drops:
+            logger.info("post_process: dropped %r (%s, %d files)", name, reason, n)
 
     feature_map.features = features
     return feature_map
