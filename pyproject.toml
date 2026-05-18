@@ -58,6 +58,18 @@ faultlines = "faultline.cli:app"
 faultlines-mcp = "faultline.mcp_server:main"
 # Keep the old name as alias for backwards compat
 
+# Stage 1 extractor plugin group. The orchestrator at
+# ``faultline.pipeline_v2.stage_1_extractors`` discovers extractors
+# via this group; customers can register their own by adding a
+# module that defines an ``AnchorExtractor``-compatible class and
+# declaring an entry-point in the same group.
+[project.entry-points."faultlines.extractors"]
+route   = "faultline.pipeline_v2.extractors.route:RouteFileExtractor"
+mvc     = "faultline.pipeline_v2.extractors.mvc:MVCControllerExtractor"
+schema  = "faultline.pipeline_v2.extractors.schema:SchemaDomainExtractor"
+package = "faultline.pipeline_v2.extractors.package:PackageAnchorExtractor"
+config  = "faultline.pipeline_v2.extractors.config:ConfigAsProductExtractor"
+
 [tool.hatch.envs.default]
 dependencies = [
     "pytest>=7.4.0",
