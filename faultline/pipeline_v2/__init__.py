@@ -41,6 +41,10 @@ from faultline.pipeline_v2.stage_4_residual import (
     Stage4Result,
     stage_4_residual,
 )
+from faultline.pipeline_v2.stage_5_postprocess import (
+    stage_5_from_stage3_result,
+    stage_5_postprocess,
+)
 
 __all__ = [
     # Stage 0
@@ -63,4 +67,7 @@ __all__ = [
     # Stage 4 residual LLM fallback
     "Stage4Result",
     "stage_4_residual",
+    # Stage 5 post-process (naming discipline)
+    "stage_5_postprocess",
+    "stage_5_from_stage3_result",
 ]
