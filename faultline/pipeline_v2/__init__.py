@@ -10,7 +10,8 @@ Public surface (built up incrementally as stages land on the
     Stage 3 — :func:`stage_3_flows`         (flow detection, Haiku 4.5)
     Stage 4 — :func:`stage_4_residual`      (LLM fallback, residual only)
     Stage 5 — :func:`stage_5_postprocess`   (naming-discipline + slug)
-    Stages 6–7 — TODO
+    Stage 6 — :func:`stage_6_metrics`       (commit + coverage enrichment)
+    Stage 7 — :func:`stage_7_output`        (FeatureMap assembly + writer)
 
 The legacy pipeline at ``faultline.llm.pipeline`` is untouched and
 stays the default until v2 reaches parity.
@@ -45,6 +46,13 @@ from faultline.pipeline_v2.stage_5_postprocess import (
     stage_5_from_stage3_result,
     stage_5_postprocess,
 )
+from faultline.pipeline_v2.stage_6_metrics import stage_6_metrics
+from faultline.pipeline_v2.stage_7_output import (
+    build_feature_map as build_feature_map_v2,
+    stage_7_output,
+    stage_artifact_dir,
+    write_stage_artifact,
+)
 
 __all__ = [
     # Stage 0
@@ -70,4 +78,11 @@ __all__ = [
     # Stage 5 post-process (naming discipline)
     "stage_5_postprocess",
     "stage_5_from_stage3_result",
+    # Stage 6 metrics enrichment
+    "stage_6_metrics",
+    # Stage 7 output assembly
+    "build_feature_map_v2",
+    "stage_7_output",
+    "stage_artifact_dir",
+    "write_stage_artifact",
 ]
