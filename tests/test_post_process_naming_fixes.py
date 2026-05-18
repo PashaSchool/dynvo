@@ -143,6 +143,20 @@ class TestDemoPackageDropped:
         assert "sample-collector" in names
         assert "referenced-data" in names
 
+    def test_bare_references_dropped(self):
+        # Sibling case: LLM emits bare ``references`` (no suffix) for a
+        # monorepo's tutorial-apps directory (e.g. trigger.dev's
+        # ``references/``). Either Fix C's ``rstrip("-/")`` rule or the
+        # ``_NOISE_NAMES`` entry is sufficient to drop it — both are
+        # defense-in-depth and either reason is acceptable.
+        feats = [_f("references"), _f("real-product")]
+        cleaned, dropped = drop_noise_features(feats)
+        names = [f.name for f in cleaned]
+        assert "references" not in names
+        assert "real-product" in names
+        drop_reasons = {reason for _, reason, _ in dropped}
+        assert drop_reasons & {"shared-infra/noise", "demo/example package"}, drop_reasons
+
 
 class TestSlugify:
     def test_title_case_slugified_display_name_preserved(self):
