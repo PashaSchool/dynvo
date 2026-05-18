@@ -37,6 +37,10 @@ from faultline.pipeline_v2.stage_3_flows import (
     Stage3Result,
     stage_3_flows,
 )
+from faultline.pipeline_v2.stage_4_residual import (
+    Stage4Result,
+    stage_4_residual,
+)
 
 __all__ = [
     # Stage 0
@@ -56,4 +60,7 @@ __all__ = [
     "FlowSpec",
     "Stage3Result",
     "stage_3_flows",
+    # Stage 4 residual LLM fallback
+    "Stage4Result",
+    "stage_4_residual",
 ]
