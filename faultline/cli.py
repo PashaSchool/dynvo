@@ -2948,6 +2948,91 @@ def suggest_config(
         console.print(header + rendered, end="")
 
 
+@app.command(name="scan-v2")
+def scan_v2(
+    repo_path: str = typer.Argument(
+        ".",
+        help="Path to the git repository (default: cwd).",
+    ),
+    model: str = typer.Option(
+        "haiku",
+        "--model",
+        help=(
+            "LLM model to use for Stage 3 + Stage 4. Accepts the "
+            "aliases 'haiku' / 'sonnet' or a fully-qualified Anthropic "
+            "model id (e.g. claude-haiku-4-5-20251001)."
+        ),
+    ),
+    llm_reconcile: bool = typer.Option(
+        False,
+        "--llm-reconcile/--no-llm-reconcile",
+        help=(
+            "Ask Haiku to break ties between near-duplicate feature "
+            "names in Stage 2. Off by default — fully deterministic."
+        ),
+    ),
+    days: int = typer.Option(
+        365,
+        "--days",
+        "-d",
+        help="Number of days of git history to load.",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help=(
+            "Output path for the FeatureMap JSON. Default: "
+            "~/.faultline/feature-map-<slug>-<timestamp>.json"
+        ),
+    ),
+):
+    """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
+
+    Pipeline v2 is the new code-grounded scanner introduced 2026-05-18.
+    Stages 0..7 run in order; Stage 3 + Stage 4 are the only LLM calls.
+    Output: a single FeatureMap JSON with developer_features populated
+    and product_features empty (Layer 2 is deferred).
+    """
+    from faultline.pipeline_v2.run import run_pipeline_v2, resolve_model
+
+    repo = Path(repo_path).resolve()
+    if not repo.is_dir():
+        rprint(f"[red]Error:[/red] {repo} is not a directory")
+        raise typer.Exit(code=2)
+
+    resolved_model = resolve_model(model)
+    out_path = Path(output).resolve() if output else None
+
+    rprint(
+        f"[bold blue]faultline scan-v2[/bold blue] {repo} "
+        f"(model={resolved_model}, llm_reconcile={llm_reconcile}, days={days})"
+    )
+
+    try:
+        result = run_pipeline_v2(
+            repo,
+            model=resolved_model,
+            days=days,
+            out_path=out_path,
+            llm_reconcile=llm_reconcile,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
+        rprint(f"[red]Scan failed:[/red] {type(exc).__name__}: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    rprint(
+        f"[green]✓[/green] Wrote {result['path']}  "
+        f"(stack={result['stack']}, "
+        f"cost=${result['cost_usd']:.4f}, "
+        f"calls={result['calls']}, "
+        f"elapsed={result['elapsed_sec']}s)"
+    )
+    if result.get("warnings"):
+        for w in result["warnings"]:
+            rprint(f"  [yellow]⚠[/yellow] {w}")
+
+
 @app.command()
 def version():
     """Shows the faultline version."""
