@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────────────
 
 _VENDOR_PREFIXES = ("external-crates/", "vendor/", "third_party/", "node_modules/")
-_NOISE_NAMES = frozenset({"shared-infra", "Shared Infra", "uncategorized"})
+_NOISE_NAMES = frozenset({"shared-infra", "Shared Infra", "uncategorized", "references"})
 _DOC_PROTECTED = frozenset({"documentation"})
 
 _VAGUE_NAMES = frozenset({
