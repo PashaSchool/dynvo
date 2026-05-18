@@ -1,5 +1,7 @@
-from pydantic import BaseModel
 from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, model_validator
 
 
 class TimelinePoint(BaseModel):
@@ -176,6 +178,17 @@ class Feature(BaseModel):
     # owned-file list for blame / commit-attribution; this list is
     # the additive N:M overlay.
     shared_participants: list[SharedParticipant] = []
+    # Layer 1/2 split (introduced 2026-05-18 on agent/layer1-dev-features-v1):
+    # every Feature is either a developer feature (code-grounded, Layer 1)
+    # or a product feature (marketing/docs-grounded, Layer 2). All
+    # legacy `features[]` entries default to ``"developer"`` so old
+    # scans rehydrate as Layer 1 without loss.
+    layer: Literal["developer", "product"] = "developer"
+    # When this feature is a developer feature that rolls up under a
+    # product feature, this is the parent ``Feature.name`` slug.
+    # ``None`` for product features themselves and for orphan developer
+    # features that have no Layer 2 parent.
+    product_feature_id: str | None = None
 
 
 class FeatureMap(BaseModel):
@@ -184,10 +197,91 @@ class FeatureMap(BaseModel):
     analyzed_at: datetime
     total_commits: int
     date_range_days: int
-    features: list[Feature]
+    # Storage field — kept for backward compatibility with every
+    # downstream consumer (landing app, replay scripts, cloud sync,
+    # incremental loader). Contains BOTH developer and product features.
+    # Use ``developer_features`` / ``product_features`` properties for
+    # the layered view introduced 2026-05-18.
+    features: list[Feature] = []
+    # Layer 1/2 input-side aliases. When a caller constructs a
+    # FeatureMap with ``developer_features=`` / ``product_features=``
+    # (the v2 pipeline does), the validator below folds them into
+    # ``features`` so the on-disk shape stays stable.
+    developer_features: list[Feature] | None = None
+    product_features: list[Feature] | None = None
     last_scanned_sha: str = ""               # git HEAD at scan time — used for incremental refresh
     file_hashes: dict[str, str] = {}         # {rel_path: sha256_of_content} — skip re-parse when file unchanged
     symbol_hashes: dict[str, dict[str, str]] = {}  # {rel_path: {symbol_name: sha256_of_body}} — per-symbol cache for incremental LLM skip
+    # Pipeline telemetry — stage timings, stack/monorepo detection,
+    # signal counts, model versions. Free-form so we can iterate
+    # without schema churn. Always emitted (default empty dict).
+    scan_meta: dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def _merge_layer_inputs(self) -> "FeatureMap":
+        """Fold ``developer_features`` / ``product_features`` inputs
+        into ``features`` and stamp ``layer`` on each entry.
+
+        Semantics:
+            - If ONLY ``features`` is provided (legacy path): leave
+              alone. Existing entries keep their declared ``layer``
+              (default ``"developer"``).
+            - If ``developer_features`` and/or ``product_features``
+              are provided: they are the source of truth. Each entry
+              gets its ``layer`` stamped accordingly, and the combined
+              list replaces ``features``.
+            - Mixing both forms is allowed but the explicit layered
+              inputs win (they overwrite ``features``).
+        """
+        dev = self.developer_features
+        prod = self.product_features
+        if dev is None and prod is None:
+            # Legacy path — nothing to merge. Clear the input-side
+            # aliases so they don't get serialized.
+            self.developer_features = None
+            self.product_features = None
+            return self
+        merged: list[Feature] = []
+        for f in dev or []:
+            f.layer = "developer"
+            merged.append(f)
+        for f in prod or []:
+            f.layer = "product"
+            merged.append(f)
+        self.features = merged
+        # Aliases were inputs only; drop them from serialization.
+        self.developer_features = None
+        self.product_features = None
+        return self
+
+    def get_developer_features(self) -> list[Feature]:
+        """Layer 1 view — code-grounded features."""
+        return [f for f in self.features if f.layer == "developer"]
+
+    def get_product_features(self) -> list[Feature]:
+        """Layer 2 view — marketing/docs-grounded features."""
+        return [f for f in self.features if f.layer == "product"]
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
+        """Override dump to emit ``developer_features`` and
+        ``product_features`` as top-level arrays in the JSON output
+        (in addition to ``features`` for back-compat) so v2 consumers
+        can read the layered shape directly.
+        """
+        data = super().model_dump(**kwargs)
+        # Strip the input-side aliases (always None post-validation).
+        data.pop("developer_features", None)
+        data.pop("product_features", None)
+        # Re-derive the layered views on the dumped dicts so they
+        # reflect any mutation to ``features`` post-construction.
+        features_dump = data.get("features", [])
+        data["developer_features"] = [
+            f for f in features_dump if f.get("layer", "developer") == "developer"
+        ]
+        data["product_features"] = [
+            f for f in features_dump if f.get("layer") == "product"
+        ]
+        return data
 
     def sorted_by_risk(self) -> list[Feature]:
         """Returns features sorted from highest to lowest risk."""
