@@ -322,26 +322,6 @@ candidate as one feature.
 
 A feature = something a user interacts with. Ask: "Can a PM write a user story about this?"
 
-## Feature naming discipline — HARD RULES
-
-1. Feature names are flat kebab-case tokens. ASCII lowercase letters,
-   digits, and single hyphens only. No slashes. No dots. No spaces.
-   No ampersands. No capitals.
-   - INVALID: `web/web/uncategorized`, `space/issues`, `Web App Shell & Onboarding`,
-     `webapp/resources.account.mfa.setup`, `apps/webapp/realtime`.
-   - VALID: `surveys`, `auth`, `billing`, `team-management`, `run-engine`.
-2. Never use a raw file path, route file name, or dotted module path
-   as a feature name. If the only label you can think of is a folder
-   path, derive a semantic name from what the folder DOES, not where it sits.
-3. Monorepo packages are user features ONLY IF they are publishable
-   (no `"private": true` in their `package.json` AND they have an
-   `@scope/<name>` published identifier OR are referenced in the
-   product's docs). Internal-only packages (`utils`, `types`, `config`,
-   `ui-components`, `design-system`, `i18n`, `logger`, `hooks`,
-   `shared-state`, `schema-to-json`, `tsconfig`, `eslint-config`)
-   fold into `shared-infra`. Demo/example packages (`references-*`,
-   `examples/*`) are dropped — never emitted as features.
-
 ## Flow rules — CRITICAL
 
 EVERY feature MUST have flows. No exceptions. A flow = a user action sequence.
@@ -449,15 +429,10 @@ _STACK_GUIDANCE: dict[str, str] = {
         "2. ``packages/<lib>`` shared by multiple apps → keep as ONE "
         "feature named after the library if it has cohesive purpose. "
         "Don't sub-split a UI / utils / auth-helpers package.\n"
-        "3. Check each ``packages/<lib>`` for publishability — if its "
-        "``package.json`` has ``\"private\": true`` OR the package name is "
-        "a non-publishable utility (``ui``, ``design-system``, ``shared``, "
-        "``utils``, ``types``, ``config``, ``eslint-config``, ``tsconfig``, "
-        "``i18n``, ``logger``, ``hooks``, ``shared-state``, "
-        "``schema-to-json``), fold into ``shared-infra``. Published "
-        "packages with their own user-facing concern STAY as features. "
-        "Demo/reference packages (``references-*``, ``examples-*``) are "
-        "dropped entirely.\n"
+        "3. AGGRESSIVELY remove pure-scaffolding packages: "
+        "``ui``, ``design-system``, ``shared``, ``utils``, ``types``, "
+        "``config``, ``eslint-config``, ``tsconfig``. Fold into "
+        "``shared-infra``.\n"
         "4. Top-level config files / Dockerfiles / CI manifests → "
         "``shared-infra``.\n\n"
         "Common over-decomposition trap: producing 50+ features by "
@@ -470,10 +445,7 @@ _STACK_GUIDANCE: dict[str, str] = {
         "are strong feature signals — each route group is typically one "
         "feature surface.\n"
         "2. ``components/<feature>/`` directories often align 1:1 with "
-        "features. Use the folder's SEMANTIC CONCEPT (e.g. ``auth``, "
-        "``billing``) as the feature name — NEVER the raw folder path. "
-        "Names must obey the naming-discipline section: kebab-case only, "
-        "no slashes, no dots.\n"
+        "features. Use folder names as feature names when descriptive.\n"
         "3. ``api/`` routes group by domain — ``api/users/*`` = users "
         "feature flow; ``api/billing/*`` = billing feature.\n"
         "4. Pages directly in ``app/`` root (e.g. ``settings/``, "
