@@ -82,6 +82,7 @@ from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
 from faultline.pipeline_v2.stage_2_reconcile import stage_2_reconcile
 from faultline.pipeline_v2.stage_3_flows import stage_3_flows
 from faultline.pipeline_v2.stage_4_residual import stage_4_residual
+from faultline.pipeline_v2.stage_5_5_bipartite import stage_5_5_bipartite
 from faultline.pipeline_v2.stage_5_postprocess import (
     stage_5_from_stage3_result_with_telemetry,
 )
@@ -435,9 +436,55 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 5.5 — bipartite store + blast-radius (deterministic) ─
+    # Pure in-memory pass over the Stage 5 features. Mutates each
+    # contained Flow in place to populate the new bipartite fields
+    # (id, primary_feature, secondary_features, shared_with_*_count,
+    # cross_cutting), then returns a top-level flows[] projection and
+    # the feature_flow_edges[] list. NO LLM — path-overlap only.
+    with StageLogger(run_dir, 5, "bipartite") as log5_5:
+        bipartite = stage_5_5_bipartite(features, log=log5_5)
+        for w in []:  # placeholder for future warnings
+            log5_5.warn(w)
+        log5_5.info(
+            f"bipartite: flows={bipartite.telemetry['flows_total']} "
+            f"edges_primary={bipartite.telemetry['bipartite_edges_primary']} "
+            f"edges_secondary={bipartite.telemetry['bipartite_edges_secondary']} "
+            f"cross_cutting_flows={bipartite.telemetry['cross_cutting_flows_count']} "
+            f"max_shared_flows={bipartite.telemetry['max_shared_with_flows']} "
+            f"max_shared_features={bipartite.telemetry['max_shared_with_features']}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=5,
+            stage_name="bipartite",
+            payload={
+                "telemetry": bipartite.telemetry,
+                "flows": [
+                    {
+                        "id": f.id,
+                        "name": f.name,
+                        "primary_feature": f.primary_feature,
+                        "secondary_features": list(f.secondary_features),
+                        "shared_with_flows_count": f.shared_with_flows_count,
+                        "shared_with_features_count": f.shared_with_features_count,
+                        "cross_cutting": f.cross_cutting,
+                    }
+                    for f in bipartite.flows
+                ],
+                "edges": [e.model_dump() for e in bipartite.edges],
+            },
+            run_dir=run_dir,
+        )
+
     # ── Stage 6 — metrics enrichment ───────────────────────────────
+    # NOTE: we feed Stage 6 the SAME ``features`` reference (not a
+    # deep-copy) so the bipartite mutations made in Stage 5.5 survive
+    # into the final output. Stage 6's contract is to fill blame /
+    # coverage / commit fields; it MUST NOT mutate Feature.paths or
+    # Flow.paths (which the bipartite IDs were minted from).
     with StageLogger(run_dir, 6, "metrics") as log6:
-        features = stage_6_metrics(_isolate(features), _isolate(ctx))
+        features = stage_6_metrics(features, _isolate(ctx))
         with_commits = sum(1 for f in features if f.total_commits > 0)
         with_coverage = sum(1 for f in features if f.coverage_pct is not None)
         log6.info(
@@ -546,11 +593,18 @@ def run_pipeline_v2(
         "stage_4_cost_cap_hit": stage4.cost_cap_hit,
         "stage_artifact_dir": str(run_dir),
         "llm_reconcile": bool(llm_reconcile),
+        # Sprint B1 — bipartite store telemetry (deterministic).
+        **bipartite.telemetry,
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
     with StageLogger(run_dir, 7, "output") as log7:
-        out = stage_7_output(features, ctx, scan_meta, out_path, days=days)
+        out = stage_7_output(
+            features, ctx, scan_meta, out_path,
+            days=days,
+            flows=bipartite.flows,
+            feature_flow_edges=bipartite.edges,
+        )
         log7.info(f"wrote feature map to {out}", feature=None)
 
     # ── Atomically point `latest` at this run ──────────────────────
