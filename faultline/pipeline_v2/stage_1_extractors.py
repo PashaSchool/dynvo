@@ -91,6 +91,9 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     _try("faultline.pipeline_v2.extractors.go_router",       "GoRouterExtractor")
     _try("faultline.pipeline_v2.extractors.rust_workspace",  "RustWorkspaceExtractor")
     _try("faultline.pipeline_v2.extractors.python_library",  "PythonLibraryExtractor")
+    # Sprint S3.1 — Fastify code-based router. Self-skips unless the
+    # auditor / Stage 0 / a workspace package.json signals fastify.
+    _try("faultline.pipeline_v2.extractors.fastify",         "FastifyRouteExtractor")
 
     return out
 
