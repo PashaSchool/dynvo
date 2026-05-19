@@ -146,6 +146,11 @@ class AuditorVerdict:
         fallback_used: ``True`` when the orchestrator should treat
             this verdict as a Stage-0 echo (because the LLM was
             unavailable, errored, or exceeded the cost cap).
+        corrections: list of structural overrides applied by Sprint
+            S3.1's :func:`correct_auditor_verdict`. Each entry is
+            ``{"original": str, "corrected": str, "reason": str}``.
+            Empty tuple when no correction fired. Surfaced in
+            ``scan_meta.auditor_corrections`` for telemetry.
     """
 
     primary_stack: str
@@ -155,6 +160,7 @@ class AuditorVerdict:
     reasoning: str = ""
     cost_usd: float = 0.0
     fallback_used: bool = False
+    corrections: tuple[dict, ...] = ()
 
 
 # ── Anthropic client protocol (for tests / IoC) ─────────────────────────────
@@ -705,6 +711,255 @@ def _verdict_from_json(
     )
 
 
+# ── Sprint S3.1 — deterministic correction layer ─────────────────────────────
+
+
+# Penalty applied to verdict confidence when a correction fires. The
+# auditor was demonstrably wrong, so downstream consumers should treat
+# the corrected verdict as somewhat less certain than the original LLM
+# self-rating. 0.1 keeps most corrected verdicts above the 0.5 apply
+# threshold (LLM verdicts cluster ~0.9-0.95).
+_CORRECTION_CONFIDENCE_PENALTY: float = 0.1
+
+# Recognised frontend framework dependency tags. Order matters — first
+# match wins. Captures the "auditor said next-app-router but no next dep"
+# correction surface for every common SPA / SSR stack we know about.
+_FRONTEND_FRAMEWORK_DEPS: tuple[tuple[str, str], ...] = (
+    # (package.json dep name, corrected stack tag)
+    ("next", "next-app-router"),
+    ("@remix-run/react", "remix"),
+    ("@remix-run/node", "remix"),
+    ("@sveltejs/kit", "sveltekit"),
+    ("nuxt", "nuxt"),
+    ("astro", "astro"),
+    ("@tanstack/react-router", "tanstack-router"),
+    ("@tanstack/router", "tanstack-router"),
+    ("react-router-dom", "react-spa-router"),
+    ("react-router", "react-spa-router"),
+    ("vite", "vite"),
+    ("vue", "vue-spa"),
+)
+
+
+def _collect_all_package_deps(ctx: "ScanContext") -> set[str]:
+    """Return the union of dep names across the root + every workspace
+    ``package.json``. Read directly from disk (Stage 0 surfaces parsed
+    dicts on ``Workspace.package_json`` already, but the root manifest
+    isn't carried on ``ScanContext`` — read it here).
+    """
+    out: set[str] = set()
+
+    def _harvest(pkg: dict[str, Any] | None) -> None:
+        if not isinstance(pkg, dict):
+            return
+        for key in ("dependencies", "devDependencies", "peerDependencies"):
+            block = pkg.get(key)
+            if isinstance(block, dict):
+                out.update(str(k) for k in block.keys())
+
+    # Root package.json
+    try:
+        root_pkg = ctx.repo_path / "package.json"
+        if root_pkg.is_file():
+            data = json.loads(root_pkg.read_text(encoding="utf-8", errors="ignore"))
+            _harvest(data if isinstance(data, dict) else None)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    for ws in (ctx.workspaces or []):
+        _harvest(ws.package_json)
+
+    return out
+
+
+def _has_any_dep(deps: set[str], names: tuple[str, ...]) -> bool:
+    """True if any of ``names`` is present in ``deps``.
+
+    Direct membership only — we do NOT do prefix matching here because
+    deps like ``@tanstack/react-router`` and ``@tanstack/react-query``
+    share a scope but are different packages.
+    """
+    return any(n in deps for n in names)
+
+
+def _has_app_marker(ctx: "ScanContext") -> bool:
+    """True when the repo has a Next.js App Router marker present.
+
+    Specifically: ``next.config.*`` OR an ``app/`` directory at the
+    repo root or under ``src/``. Mirrors the Stage 0 heuristic.
+    """
+    root = ctx.repo_path
+    for ext in ("js", "mjs", "ts", "cjs"):
+        if (root / f"next.config.{ext}").is_file():
+            return True
+    if (root / "app").is_dir() or (root / "src" / "app").is_dir():
+        return True
+    # Also accept the marker living inside any workspace — common for
+    # monorepos where the Next app is at ``apps/web/``.
+    for ws in (ctx.workspaces or []):
+        ws_root = root / ws.path
+        for ext in ("js", "mjs", "ts", "cjs"):
+            if (ws_root / f"next.config.{ext}").is_file():
+                return True
+        if (ws_root / "app").is_dir() or (ws_root / "src" / "app").is_dir():
+            return True
+    return False
+
+
+def _has_manage_py(ctx: "ScanContext") -> bool:
+    """True when ``manage.py`` is present at the root — Django marker."""
+    return (ctx.repo_path / "manage.py").is_file()
+
+
+def _has_fastapi_call(ctx: "ScanContext") -> bool:
+    """True when a top-level ``.py`` file instantiates ``FastAPI()``.
+
+    Bounded scan: only the first 20 top-level ``.py`` files are
+    inspected (the marker, when present, lives in ``main.py`` /
+    ``app.py`` / a top-level package entry — not in deep submodules).
+    """
+    root = ctx.repo_path
+    checked = 0
+    for entry in sorted(root.iterdir()):
+        if not entry.is_file() or entry.suffix != ".py":
+            continue
+        checked += 1
+        if checked > 20:
+            break
+        try:
+            text = entry.read_text(encoding="utf-8", errors="ignore")[:64_000]
+        except OSError:
+            continue
+        if "FastAPI(" in text:
+            return True
+    return False
+
+
+def correct_auditor_verdict(
+    verdict: AuditorVerdict,
+    ctx: "ScanContext",
+) -> tuple[AuditorVerdict, list[dict[str, str]]]:
+    """Run deterministic post-pass corrections on ``verdict``.
+
+    The auditor LLM is wrong in a small but predictable set of cases.
+    This pass applies structural checks (no LLM, no magic numbers) and
+    overrides the verdict when the structural signal flatly contradicts
+    the LLM's primary stack.
+
+    Returns:
+        A tuple ``(corrected_verdict, corrections)``. ``corrections``
+        is a list of ``{original, corrected, reason}`` dicts — one
+        entry per correction that fired (typically 0 or 1). When no
+        correction fires the original verdict is returned unchanged.
+
+    Rules (all structural, no per-repo paths):
+      1. ``next-app-router`` + no ``next`` dep + ``@tanstack/react-router``
+         dep → corrected to ``tanstack-router``.
+      2. ``next-app-router`` + no ``next`` dep + no App Router marker →
+         corrected to whichever frontend framework dep IS present
+         (vite / remix / astro / sveltekit / nuxt / vue / react-router).
+      3. ``express`` + ``fastify`` dep present → corrected to
+         ``fastify``.
+      4. ``react-spa`` + ``react-router`` dep + ``pages/`` or
+         ``routes/`` dir → corrected to ``react-spa-router``.
+      5. ``python-library`` + ``manage.py`` present → corrected to
+         ``django-app``.
+      6. ``python-library`` + ``FastAPI()`` call in any top-level py
+         file → corrected to ``fastapi-app``.
+    """
+    corrections: list[dict[str, str]] = []
+    primary = verdict.primary_stack.lower()
+    deps = _collect_all_package_deps(ctx)
+
+    def _emit(new_primary: str, reason: str) -> AuditorVerdict:
+        corrections.append({
+            "original": verdict.primary_stack,
+            "corrected": new_primary,
+            "reason": reason,
+        })
+        new_conf = max(0.0, verdict.confidence - _CORRECTION_CONFIDENCE_PENALTY)
+        return AuditorVerdict(
+            primary_stack=new_primary,
+            secondary_stacks=verdict.secondary_stacks,
+            confidence=new_conf,
+            extractor_hints=verdict.extractor_hints,
+            reasoning=verdict.reasoning,
+            cost_usd=verdict.cost_usd,
+            fallback_used=verdict.fallback_used,
+            corrections=tuple(corrections),
+        )
+
+    # Rule 1+2: next-app-router corrections — both fire only when ``next``
+    # is genuinely absent. We check ``next`` itself (not prefix) since
+    # ``@next/*`` scoped packages don't imply the framework on their own.
+    if primary == "next-app-router" and "next" not in deps:
+        # Rule 1: TanStack Router takes precedence over the generic
+        # vite fallback because it is the more specific signal.
+        if _has_any_dep(deps, ("@tanstack/react-router", "@tanstack/router")):
+            return _emit(
+                "tanstack-router",
+                "no `next` dep but @tanstack/react-router dep present",
+            ), corrections
+        # Rule 2: pick any known frontend framework dep present.
+        for dep_name, corrected_tag in _FRONTEND_FRAMEWORK_DEPS:
+            if dep_name == "next":
+                continue
+            if dep_name in deps:
+                return _emit(
+                    corrected_tag,
+                    f"no `next` dep and no App Router marker; "
+                    f"`{dep_name}` dep present",
+                ), corrections
+        # No competing framework dep AND no App Router marker → drop
+        # the next-app-router claim. Fall through to ``vue-spa`` only
+        # if vue is hinted, else degrade to ``unknown``.
+        if not _has_app_marker(ctx):
+            return _emit(
+                "unknown",
+                "no `next` dep, no App Router marker, no other "
+                "frontend framework dep — verdict unsupported",
+            ), corrections
+
+    # Rule 3: express vs fastify — fastify dep wins when both auditor
+    # said express AND fastify is in the manifest.
+    if primary == "express" and "fastify" in deps:
+        return _emit(
+            "fastify",
+            "auditor said express but `fastify` dep present",
+        ), corrections
+
+    # Rule 4: react-spa upgrade when router is wired up.
+    if primary == "react-spa" and _has_any_dep(
+        deps, ("react-router", "react-router-dom"),
+    ):
+        root = ctx.repo_path
+        has_pages = (root / "pages").is_dir() or (root / "src" / "pages").is_dir()
+        has_routes = (root / "routes").is_dir() or (root / "src" / "routes").is_dir()
+        if has_pages or has_routes:
+            return _emit(
+                "react-spa-router",
+                "react-router dep + pages/ or routes/ directory present",
+            ), corrections
+
+    # Rule 5: python-library → django-app when ``manage.py`` present.
+    if primary == "python-library" and _has_manage_py(ctx):
+        return _emit(
+            "django-app",
+            "auditor said python-library but manage.py present",
+        ), corrections
+
+    # Rule 6: python-library → fastapi-app when ``FastAPI()`` call
+    # appears in a top-level py file.
+    if primary == "python-library" and _has_fastapi_call(ctx):
+        return _emit(
+            "fastapi-app",
+            "auditor said python-library but FastAPI() call present "
+            "in a top-level .py file",
+        ), corrections
+
+    return verdict, corrections
+
+
 def _fallback_verdict(
     ctx: "ScanContext",
     *,
@@ -855,13 +1110,32 @@ def run_stack_auditor(
         return verdict
 
     verdict = _verdict_from_json(data, ctx.stack, call_cost)
+
+    # ── Sprint S3.1: deterministic correction post-pass ──
+    # Run structural overrides AFTER the LLM verdict lands, BEFORE the
+    # orchestrator folds it back into ScanContext. Mutates only when a
+    # rule fires; the original verdict is returned otherwise. The
+    # correction list is logged here and re-derived by the orchestrator
+    # (which calls ``correct_auditor_verdict`` on the original verdict
+    # to surface the per-correction telemetry into ``scan_meta``).
+    corrected, corrections = correct_auditor_verdict(verdict, ctx)
+    if corrections and log is not None:
+        for entry in corrections:
+            log.warn(
+                f"auditor_correction: "
+                f"{entry['original']!r} → {entry['corrected']!r} "
+                f"({entry['reason']})",
+            )
+
+    verdict = corrected
     if log is not None:
         log.info(
             f"auditor: primary={verdict.primary_stack} "
             f"secondary={list(verdict.secondary_stacks)} "
             f"confidence={verdict.confidence:.2f} "
             f"hints={len(verdict.extractor_hints)} "
-            f"cost=${verdict.cost_usd:.4f}",
+            f"cost=${verdict.cost_usd:.4f} "
+            f"corrections={len(corrections)}",
         )
     return verdict
 
@@ -869,6 +1143,7 @@ def run_stack_auditor(
 __all__ = [
     "AuditorVerdict",
     "build_auditor_context",
+    "correct_auditor_verdict",
     "read_manifest_excerpts",
     "recent_commit_subjects",
     "recent_modified_paths",
