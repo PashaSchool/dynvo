@@ -106,6 +106,14 @@ class FlowSpec:
     entry_point_file: str | None = None
     entry_point_line: int | None = None
     symbol_names: list[str] = field(default_factory=list)
+    # Sprint C1 — call-graph reach enrichment.
+    # ``reach_paths`` is ALWAYS a superset of ``[entry_point_file]``
+    # when populated (it includes the entry plus BFS-reachable callees,
+    # capped at flow_reach.DEFAULT_MAX_PATHS). Stage 5 prefers this
+    # over the legacy single-path fallback when populated.
+    # ``depth_reached`` records the BFS depth actually walked (1..N).
+    reach_paths: tuple[str, ...] = ()
+    depth_reached: int = 0
 
 
 @dataclass
@@ -129,6 +137,8 @@ class Stage3Result:
     cost_usd: float
     llm_calls: int
     warnings: list[str] = field(default_factory=list)
+    # Sprint C1 — call-graph reach telemetry. Folded into scan_meta.
+    reach_telemetry: dict[str, Any] = field(default_factory=dict)
 
 
 # ── Anthropic client protocol (for tests) ──────────────────────────────────
@@ -519,12 +529,112 @@ def stage_3_flows(
                 ),
             )
 
+    # ── Sprint C1 — deterministic call-graph reach enrichment ──────
+    reach_telemetry = _enrich_flow_reach(ordered, ctx)
+
     return Stage3Result(
         features_with_flows=ordered,
         cost_usd=tracker.total_cost_usd,
         llm_calls=llm_calls,
         warnings=warnings,
+        reach_telemetry=reach_telemetry,
     )
+
+
+# ── Sprint C1 — call-graph reach enrichment ────────────────────────────
+
+
+def _enrich_flow_reach(
+    features_with_flows: list[FeatureWithFlows],
+    ctx: "ScanContext",
+) -> dict[str, Any]:
+    """Populate ``FlowSpec.reach_paths`` + ``depth_reached`` in place.
+
+    Builds a single :class:`ReachContext` for the whole scan, then
+    runs BFS per flow. Pure deterministic (no LLM, no network). Caps:
+    ``max_depth=3``, ``max_paths=8`` — see ``flow_reach.py`` docstring
+    for rationale.
+
+    Returns a telemetry dict with the per-scan reach stats; the
+    orchestrator folds these into ``scan_meta``.
+    """
+    # Local import keeps the legacy callers free of new transitive deps
+    # if they construct Stage3Result manually for tests.
+    from faultline.pipeline_v2.flow_reach import (
+        DEFAULT_MAX_DEPTH,
+        DEFAULT_MAX_PATHS,
+        build_reach_context,
+        compute_flow_reach,
+    )
+
+    flows_to_enrich = [
+        flow
+        for fwf in features_with_flows
+        for flow in fwf.flows
+        if flow.entry_point_file
+    ]
+    if not flows_to_enrich:
+        return {
+            "stage_3_flow_reach_avg_paths": 0.0,
+            "stage_3_flow_reach_max_paths": 0,
+            "stage_3_flow_reach_p50_depth": 0,
+            "stage_3_flow_reach_total_paths": 0,
+            "stage_3_flow_reach_enriched_count": 0,
+        }
+
+    try:
+        rctx = build_reach_context(ctx)
+    except Exception as exc:  # noqa: BLE001 — defensive, never break Stage 3
+        logger.warning("flow_reach: build_reach_context failed: %s", exc)
+        return {
+            "stage_3_flow_reach_avg_paths": 0.0,
+            "stage_3_flow_reach_max_paths": 0,
+            "stage_3_flow_reach_p50_depth": 0,
+            "stage_3_flow_reach_total_paths": 0,
+            "stage_3_flow_reach_enriched_count": 0,
+        }
+
+    path_counts: list[int] = []
+    depths: list[int] = []
+    for flow in flows_to_enrich:
+        # entry_point_file is guaranteed non-None by the filter above.
+        try:
+            reach = compute_flow_reach(
+                rctx,
+                flow.entry_point_file or "",
+                flow.entry_point_line or 1,
+                max_depth=DEFAULT_MAX_DEPTH,
+                max_paths=DEFAULT_MAX_PATHS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "flow_reach: compute failed for %s: %s", flow.name, exc,
+            )
+            # Fallback: single-path reach so downstream still sees something.
+            flow.reach_paths = (flow.entry_point_file or "",)
+            flow.depth_reached = 0
+            path_counts.append(1)
+            depths.append(0)
+            continue
+        flow.reach_paths = reach.reached_paths
+        flow.depth_reached = reach.depth_reached
+        path_counts.append(len(reach.reached_paths))
+        depths.append(reach.depth_reached)
+
+    n = len(path_counts)
+    avg_paths = round(sum(path_counts) / n, 2) if n else 0.0
+    max_paths = max(path_counts) if path_counts else 0
+    depths_sorted = sorted(depths)
+    p50_depth = depths_sorted[n // 2] if n else 0
+    total_paths = sum(path_counts)
+
+    return {
+        "stage_3_flow_reach_avg_paths": avg_paths,
+        "stage_3_flow_reach_max_paths": max_paths,
+        "stage_3_flow_reach_p50_depth": p50_depth,
+        "stage_3_flow_reach_total_paths": total_paths,
+        "stage_3_flow_reach_enriched_count": n,
+    }
 
 
 def _safe_exports(feature: "DeveloperFeature", ctx: "ScanContext") -> list[str]:
