@@ -146,13 +146,13 @@ def test_two_flows_sharing_path_get_shared_count_one():
     assert result.telemetry["max_shared_with_flows"] == 1
 
 
-# ── Case 4 — secondary attribution ignores shared_attributions ──────────
+# ── Case 4 — shared_attributions DO create secondary edges ──────────────
 
 
-def test_shared_attributions_do_not_create_secondary_edges():
-    """Cross-cutting detection only consults Feature.paths (primary
-    attribution); shared_attributions feed other signals and should
-    NOT silently turn every feature into cross-cutting."""
+def test_shared_attributions_create_secondary_edges():
+    """Per spec: a flow whose primary feature owns ALL its paths plus
+    another feature reaching in via shared_attributions still counts
+    as cross-cutting through that other feature."""
     from faultline.models.types import SymbolAttribution
 
     billing = _feat(
@@ -160,9 +160,9 @@ def test_shared_attributions_do_not_create_secondary_edges():
         paths=["app/billing/charge.ts"],
         flows=[_flow("charge-customer-flow", ["app/billing/charge.ts"])],
     )
-    # ``auth`` reaches into billing's path via shared_attributions but
-    # owns no paths of its own that the flow touches. Should NOT
-    # appear as a secondary.
+    # ``auth`` reaches into billing's path via shared_attributions
+    # (symbol-scoped reach into a file it doesn't own). For blast-
+    # radius purposes that's a real cross-cutting attachment.
     auth = _feat("auth", paths=["lib/auth/check.ts"])
     auth.shared_attributions = [
         SymbolAttribution(
@@ -177,8 +177,12 @@ def test_shared_attributions_do_not_create_secondary_edges():
     result = stage_5_5_bipartite([billing, auth])
 
     flow = result.flows[0]
-    assert flow.secondary_features == []
-    assert flow.cross_cutting is False
+    assert flow.secondary_features == ["auth"]
+    assert flow.cross_cutting is True
+    # Edge has the expected reason.
+    sec = next(e for e in result.edges if e.type == "secondary")
+    assert sec.feature == "auth"
+    assert sec.reason == "path-overlap"
 
 
 # ── Invariants ───────────────────────────────────────────────────────────
