@@ -100,7 +100,9 @@ def test_run_pipeline_v2_end_to_end_no_llm(
             cost_usd=0.0,
             llm_calls=0,
             warnings=[],
-            chunks_processed=0,
+            clusters_total=0,
+            clusters_processed=0,
+            saturation_stopped=False,
             rejected_names=[],
         )
 
@@ -219,7 +221,8 @@ def test_run_pipeline_v2_emits_high_fallback_warning(
         return Stage4Result(
             residual_features=residuals,
             cost_usd=0.10, llm_calls=1, warnings=[],
-            chunks_processed=1, rejected_names=[],
+            clusters_total=1, clusters_processed=1,
+            saturation_stopped=False, rejected_names=[],
         )
 
     monkeypatch.setattr(run_module, "stage_3_flows", _fake_stage_3)
