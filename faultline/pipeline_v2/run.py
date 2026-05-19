@@ -413,6 +413,11 @@ def run_pipeline_v2(
                 "singletons_synthesized": stage4.singletons_synthesized,
                 "singletons_skipped": stage4.singletons_skipped,
                 "cost_cap_hit": stage4.cost_cap_hit,
+                # Sprint S2b — structural guard telemetry.
+                "guard_singletons_dropped": stage4.guard_singletons_dropped,
+                "guard_incoherent_clusters_split":
+                    stage4.guard_incoherent_clusters_split,
+                "guard_drops_sample": stage4.guard_drops_sample,
             },
             run_dir=run_dir,
         )
@@ -659,6 +664,11 @@ def run_pipeline_v2(
         "stage_4_singletons_skipped": stage4.singletons_skipped,
         "stage_4_saturation_stopped": stage4.saturation_stopped,
         "stage_4_cost_cap_hit": stage4.cost_cap_hit,
+        # Sprint S2b — structural guard telemetry.
+        "stage_4_singletons_dropped": stage4.guard_singletons_dropped,
+        "stage_4_incoherent_clusters_split":
+            stage4.guard_incoherent_clusters_split,
+        "stage_4_drops_sample": stage4.guard_drops_sample,
         "stage_artifact_dir": str(run_dir),
         "llm_reconcile": bool(llm_reconcile),
         # Sprint B1 — bipartite store telemetry (deterministic).
