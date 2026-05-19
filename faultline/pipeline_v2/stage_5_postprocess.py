@@ -140,12 +140,22 @@ def _flow_spec_to_flow(spec: FlowSpec) -> Flow:
     timeline, bug-fix metrics). For now we emit the minimal shape so
     serialisation roundtrips cleanly.
     """
+    # Sprint C1 — prefer call-graph reach when populated. Falls back
+    # to the entry_point_file single-path shape for backward-compat
+    # with tests that construct FlowSpec without running Stage 3's
+    # reach post-pass.
+    if spec.reach_paths:
+        paths = list(spec.reach_paths)
+    elif spec.entry_point_file:
+        paths = [spec.entry_point_file]
+    else:
+        paths = []
     return Flow(
         name=spec.name,
         description=spec.description or None,
         entry_point_file=spec.entry_point_file,
         entry_point_line=spec.entry_point_line,
-        paths=[spec.entry_point_file] if spec.entry_point_file else [],
+        paths=paths,
         authors=[],
         total_commits=0,
         bug_fixes=0,

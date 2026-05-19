@@ -344,6 +344,16 @@ def run_pipeline_v2(
         log3.info(
             f"cost_usd={stage3.cost_usd:.4f} llm_calls={stage3.llm_calls}",
         )
+        # Sprint C1 — call-graph reach enrichment summary.
+        if stage3.reach_telemetry:
+            log3.info(
+                "reach: avg_paths="
+                f"{stage3.reach_telemetry.get('stage_3_flow_reach_avg_paths', 0)} "
+                f"max_paths={stage3.reach_telemetry.get('stage_3_flow_reach_max_paths', 0)} "
+                f"p50_depth={stage3.reach_telemetry.get('stage_3_flow_reach_p50_depth', 0)} "
+                f"total={stage3.reach_telemetry.get('stage_3_flow_reach_total_paths', 0)} "
+                f"enriched={stage3.reach_telemetry.get('stage_3_flow_reach_enriched_count', 0)}",
+            )
         write_stage_artifact(
             ctx.repo_path,
             stage_index=3,
@@ -356,6 +366,7 @@ def run_pipeline_v2(
                 "cost_usd": stage3.cost_usd,
                 "llm_calls": stage3.llm_calls,
                 "warnings": stage3.warnings,
+                "reach_telemetry": stage3.reach_telemetry,
             },
             run_dir=run_dir,
         )
@@ -595,6 +606,8 @@ def run_pipeline_v2(
         "llm_reconcile": bool(llm_reconcile),
         # Sprint B1 — bipartite store telemetry (deterministic).
         **bipartite.telemetry,
+        # Sprint C1 — call-graph reach telemetry (deterministic).
+        **(stage3.reach_telemetry or {}),
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
