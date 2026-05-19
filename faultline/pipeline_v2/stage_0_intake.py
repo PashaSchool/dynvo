@@ -76,6 +76,16 @@ class ScanContext:
     artifacts. The orchestrator (or a CLI override) assigns them;
     Stage 0 populates them with sensible defaults so tests + ad-hoc
     callers also get isolation without extra plumbing.
+
+    Sprint A3 — Stage 0.5 auditor fields
+    ====================================
+
+    ``audited_stack`` / ``secondary_stacks`` / ``extractor_hints`` /
+    ``auditor_confidence`` are populated by the Stage 0.5 auditor when
+    its confidence ≥ ``MIN_CONFIDENCE_TO_APPLY``. They are *additive*
+    — Stage 0's ``stack`` field is NEVER mutated. Downstream consumers
+    can use ``ctx.audited_stack or ctx.stack`` to pick whichever has
+    been blessed for this run.
     """
 
     repo_path: Path
@@ -93,6 +103,44 @@ class ScanContext:
     # resolved absolute path (cached so stages don't recompute).
     run_id: str | None = None
     run_dir: Path | None = None
+    # Sprint A3 — auditor additions. None / empty until Stage 0.5 runs
+    # and its confidence clears MIN_CONFIDENCE_TO_APPLY (0.5).
+    audited_stack: str | None = None
+    secondary_stacks: tuple[str, ...] = ()
+    extractor_hints: tuple[str, ...] = ()
+    auditor_confidence: float | None = None
+
+    def with_audited_stack(
+        self,
+        *,
+        audited_stack: str,
+        secondary_stacks: tuple[str, ...] = (),
+        extractor_hints: tuple[str, ...] = (),
+        auditor_confidence: float = 1.0,
+    ) -> "ScanContext":
+        """Return a NEW ScanContext with the auditor fields populated.
+
+        Stage 0's original ``stack`` value is preserved on the returned
+        instance — the auditor is purely additive. Implemented as a
+        deep-ish copy so the orchestrator's downstream stages can't
+        retroactively mutate the original ctx.
+        """
+        return ScanContext(
+            repo_path=self.repo_path,
+            stack=self.stack,
+            monorepo=self.monorepo,
+            workspaces=list(self.workspaces) if self.workspaces else self.workspaces,
+            tracked_files=self.tracked_files,
+            commits=self.commits,
+            stack_signals=list(self.stack_signals),
+            workspace_manager=self.workspace_manager,
+            run_id=self.run_id,
+            run_dir=self.run_dir,
+            audited_stack=audited_stack,
+            secondary_stacks=tuple(secondary_stacks),
+            extractor_hints=tuple(extractor_hints),
+            auditor_confidence=auditor_confidence,
+        )
 
 
 # ── Stack detection ─────────────────────────────────────────────────────────
