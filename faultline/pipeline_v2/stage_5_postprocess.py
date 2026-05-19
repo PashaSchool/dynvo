@@ -72,7 +72,7 @@ from faultline.analyzer.post_process import (
     _is_uncategorized,
     _slugify_names,
 )
-from faultline.models.types import Feature, Flow
+from faultline.models.types import Feature, Flow, FlowSymbolAttribution
 from faultline.pipeline_v2.stage_2_reconcile import (
     DeveloperFeature,
     _jaccard,
@@ -150,6 +150,21 @@ def _flow_spec_to_flow(spec: FlowSpec) -> Flow:
         paths = [spec.entry_point_file]
     else:
         paths = []
+    # Sprint C2 — bridge per-flow symbol attributions to the public
+    # ``FlowSymbolAttribution`` pydantic model. ``FlowSpec`` stores
+    # tuples of ``flow_symbols.FlowSymbolAttribution`` (a frozen
+    # dataclass); convert each one. Defensive against legacy callers
+    # that constructed FlowSpec without running the post-pass.
+    flow_attrs: list[FlowSymbolAttribution] = []
+    for attr in (spec.symbol_attributions or ()):
+        # ``attr`` is a frozen dataclass; pull the five fields by name.
+        flow_attrs.append(FlowSymbolAttribution(
+            file=getattr(attr, "file", ""),
+            symbol=getattr(attr, "symbol", "<file>"),
+            line_start=int(getattr(attr, "line_start", 1) or 1),
+            line_end=int(getattr(attr, "line_end", 1) or 1),
+            role=getattr(attr, "role", "support"),
+        ))
     return Flow(
         name=spec.name,
         description=spec.description or None,
@@ -162,6 +177,7 @@ def _flow_spec_to_flow(spec: FlowSpec) -> Flow:
         bug_fix_ratio=0.0,
         last_modified=datetime.now(timezone.utc),
         health_score=80.0,
+        flow_symbol_attributions=flow_attrs,
     )
 
 

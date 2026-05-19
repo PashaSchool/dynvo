@@ -84,6 +84,14 @@ class Flow(BaseModel):
     shared_with_flows_count: int = 0
     shared_with_features_count: int = 0
     cross_cutting: bool = False
+    # Sprint C2 (2026-05-19) — per-flow line-level symbol attribution.
+    # Distinct from the legacy ``symbol_attributions`` field above
+    # (which is per-FILE / per-feature aggregate). This is the flat
+    # per-symbol record-set described by ``flow-feature-concept``.
+    # Populated by Stage 3's deterministic ``flow_symbols`` post-pass;
+    # empty when entry-symbol detection fails (telemetry-flagged in
+    # ``scan_meta.stage_3_entry_detection_failure_rate``).
+    flow_symbol_attributions: list["FlowSymbolAttribution"] = []
 
 
 class SymbolRange(BaseModel):
@@ -154,6 +162,32 @@ class SymbolAttribution(BaseModel):
     # The bug-ratio / coverage credit is NOT split — every flow gets
     # full credit per user spec ("a"). The badge is purely a hint.
     shared_with_flows: list[str] = []
+
+
+class FlowSymbolAttribution(BaseModel):
+    """One line-range attribution for a flow (Sprint C2).
+
+    Distinct from the legacy :class:`SymbolAttribution` (which is a
+    per-file aggregate across multiple symbols, attached to
+    ``Feature.shared_attributions``). This is the FLOW-level surface
+    spec from ``flow-feature-concept``: per file, the exact symbol +
+    line range participating in this specific narrative.
+
+    Three roles:
+      - ``entry``   — the flow's entry function (always exactly one
+                      per flow when entry detection succeeds).
+      - ``called``  — function reached via import + identifier-match
+                      from the entry-symbol body.
+      - ``support`` — file in the C1 reach set without a resolved
+                      symbol; line range covers the whole file
+                      (line_start=1, line_end=file LOC).
+    """
+
+    file: str                  # repo-relative path
+    symbol: str                # exported / local symbol name, or "<file>" for support
+    line_start: int            # 1-indexed, inclusive
+    line_end: int              # 1-indexed, inclusive
+    role: Literal["entry", "called", "support"]
 
 
 class Feature(BaseModel):
