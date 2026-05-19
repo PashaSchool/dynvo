@@ -75,6 +75,9 @@ def test_conversion_stamps_layer_developer(tmp_path: Path) -> None:
 
 
 def test_residual_features_also_stamped(tmp_path: Path) -> None:
+    # Create the file on disk so the A1 filesystem-existence gate passes.
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "widget.ts").write_text("// stub")
     features = stage_5_postprocess(
         deterministic=[],
         residual=[
@@ -210,6 +213,10 @@ def test_fix_d_drops_unslugifiable(tmp_path: Path) -> None:
 
 def test_residual_runs_through_naming_discipline(tmp_path: Path) -> None:
     """Stage 4 features go through the same Fix A/B/C/D filter."""
+    # Create files for fallbacks so A1 filesystem gate passes; the
+    # naming-discipline filter is what's under test here.
+    for fname in ("b.ts", "c.ts", "d.ts"):
+        (tmp_path / fname).write_text("// stub")
     features = stage_5_postprocess(
         deterministic=[_dev("billing", ("a.ts",))],
         residual=[
@@ -268,6 +275,7 @@ def test_stage_3_flows_attach_to_right_feature(tmp_path: Path) -> None:
 
 def test_residual_emits_with_no_flows(tmp_path: Path) -> None:
     """Stage 4 residual features carry no flows."""
+    (tmp_path / "a.ts").write_text("// stub")
     features = stage_5_postprocess(
         deterministic=[],
         residual=[_dev("widget-toolkit", ("a.ts",),
