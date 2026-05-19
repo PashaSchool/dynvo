@@ -1,21 +1,33 @@
 """Stage 4 — residual LLM fallback (Haiku 4.5).
 
 For files NOT attributed to any Stage 2 deterministic feature, group
-them into 1–10 additional ``low``-confidence developer features via a
-trimmed Haiku call. Hard caps protect cost integrity:
+them by STRUCTURAL signature (via
+:func:`residual_clusterer.cluster_residual_paths`) and ask Haiku to
+name the cluster — one call per cluster, NOT one call per fixed-size
+chunk.
 
-  - ≤200 paths per LLM chunk (200, 200, ... over the residual list).
-  - Max 5 chunks per scan.
-  - Max $0.30 total LLM cost (CostTracker.max_cost gate).
-  - Each emitted name must obey the same naming-discipline filter as
-    Stage 5 (kebab, no folder paths, no Title Case, non-empty).
+Sprint A2 — saturation-stop clustering
+=====================================
 
-Stage 4 EMITS EVERY surviving feature; the legacy 30%-of-total share
-cap was a blunt instrument that floored to 0 when deterministic=0 and
-silently zeroed out otherwise-valid scans (Sprint A1 removed it). The
-quality gate now lives downstream in Stage 5 (path-existence,
-anchor-Jaccard dedup, naming discipline). Stage 4 just reports
-``llm_share`` as informational telemetry.
+Pre-A2 Stage 4 chunked the residual into 200-path slices and stopped
+after 5 chunks. That hard cap silently lost the bulk of the residual
+on large repos (infisical 7979 paths, supabase 8584). The fix is two
+parts:
+
+1. **Structural clustering** instead of chunking. Group residual paths
+   by ``(top_level_dir, filename_suffix, extension, depth_bucket)`` —
+   see :mod:`faultline.pipeline_v2.residual_clusterer`. Cost scales
+   with structural diversity, not raw path count.
+
+2. **Saturation stop** instead of fixed cap. After ``SAT_WINDOW``
+   consecutive clusters that emit no NEW feature names, stop. The
+   window length 3 is convention — "three sources of confirmation" —
+   not a tuned threshold; do not change it without a corresponding
+   architectural decision.
+
+There is NO per-cluster size cap. Large clusters are exactly where
+the LLM extracts value — let Haiku read the structural signature +
+the evenly-spaced sample paths and produce a meaningful name.
 
 Stage 4 is intentionally NOT a call to ``sonnet_scanner.deep_scan``:
 that orchestration shell carries every legacy concern (workspace
@@ -34,9 +46,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 from faultline.llm.cost import CostTracker, deterministic_params
+from faultline.pipeline_v2.residual_clusterer import (
+    ResidualCluster,
+    cluster_residual_paths,
+)
 from faultline.pipeline_v2.stage_2_reconcile import DeveloperFeature
 
 if TYPE_CHECKING:
+    from faultline.pipeline_v2.run_logger import StageLogger
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
 logger = logging.getLogger(__name__)
@@ -44,10 +61,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MAX_TOKENS = 4_096
-MAX_PATHS_PER_CHUNK = 200
-MAX_CHUNKS = 5
-DEFAULT_COST_CAP_USD = 0.30
-MAX_FEATURES_PER_CHUNK = 10
+# Convention, not a tuning threshold: three consecutive saturated
+# clusters is the minimum signal needed to declare "we've seen
+# everything the LLM will tell us about this residual". Treat as a
+# fixed shape of the algorithm — changing it would shift the
+# stop-vs-explore trade-off in a way that needs its own design call.
+SAT_WINDOW = 3
+DEFAULT_COST_CAP_USD = 0.80
 
 # Naming-discipline pattern matches the Stage 5 ``_slugify_names`` rule:
 # starts with lowercase alnum, then lowercase alnum + hyphens. No
@@ -80,7 +100,12 @@ class Stage4Result:
         cost_usd: total Haiku spend on this stage.
         llm_calls: number of completed Haiku calls (including no-ops).
         warnings: free-form telemetry for ``scan_meta.warnings``.
-        chunks_processed: how many residual chunks reached the LLM.
+        clusters_total: clusters produced by the path clusterer.
+        clusters_processed: clusters actually sent to Haiku (may be
+            less than ``clusters_total`` if saturation stopped early
+            or the cost cap fired).
+        saturation_stopped: True iff the loop exited because
+            ``SAT_WINDOW`` consecutive empty clusters occurred.
         rejected_names: names the LLM proposed that we filtered out.
     """
 
@@ -88,7 +113,9 @@ class Stage4Result:
     cost_usd: float
     llm_calls: int
     warnings: list[str] = field(default_factory=list)
-    chunks_processed: int = 0
+    clusters_total: int = 0
+    clusters_processed: int = 0
+    saturation_stopped: bool = False
     rejected_names: list[str] = field(default_factory=list)
 
 
@@ -98,9 +125,11 @@ class Stage4Result:
 _SYSTEM_PROMPT = (
     "You are a residual feature scanner. The deterministic extractors "
     "already mapped most files in this repo to features. The paths "
-    "below were NOT claimed by any extractor — they are the residual. "
-    "Group them into 1–10 ADDITIONAL developer features with "
-    "kebab-case slugs.\n\n"
+    "below were NOT claimed by any extractor — they are the residual.\n\n"
+    "You will see ONE structurally-coherent cluster at a time: all "
+    "members share the same top-level directory, filename-suffix, "
+    "extension, and depth-band. Propose 1–5 developer features that "
+    "describe what this cluster is.\n\n"
     "Output STRICT JSON only — no prose, no fences, no markdown. "
     "Schema: {\"features\": [{\"name\": \"<kebab-slug>\", "
     "\"paths\": [\"<rel/path/to/file>\", ...], "
@@ -110,21 +139,26 @@ _SYSTEM_PROMPT = (
     "dots, uppercase, or whitespace. NO single-word folder names like "
     "\"app\", \"src\", \"lib\", \"utils\", \"shared\" — these are "
     "structural, not features.\n"
-    "- Each feature's ``paths`` MUST be a strict subset of the input "
-    "paths. Do NOT invent or hallucinate file paths.\n"
-    "- Group by code-grounded semantics: shared route prefix, shared "
-    "import target, shared filename pattern. Avoid grouping by depth.\n"
-    f"- Return at most {MAX_FEATURES_PER_CHUNK} features per response.\n"
-    "- If no useful grouping exists, return {\"features\": []}."
+    "- Each feature's ``paths`` MUST be a strict subset of the cluster "
+    "members shown to you. Do NOT invent file paths.\n"
+    "- If the cluster is too generic to name (e.g. shared test "
+    "fixtures), return {\"features\": []}."
 )
 
 
-def _build_user_prompt(paths: list[str], chunk_idx: int, total_chunks: int) -> str:
-    header = (
-        f"Residual paths (chunk {chunk_idx + 1} of {total_chunks}, "
-        f"{len(paths)} paths):"
+def _build_user_prompt(cluster: ResidualCluster, idx: int, total: int) -> str:
+    top, suffix, ext, depth = cluster.key
+    key_repr = (
+        f"top_level_dir={top!r}, filename_suffix={suffix!r}, "
+        f"extension={ext!r}, depth_bucket={depth!r}"
     )
-    body = "\n".join(f"  - {p}" for p in paths)
+    header = (
+        f"Cluster {idx + 1} of {total}\n"
+        f"Signature: {key_repr}\n"
+        f"Total members in cluster: {cluster.size}\n"
+        f"Representative sample ({len(cluster.sample_paths)} of {cluster.size}):"
+    )
+    body = "\n".join(f"  - {p}" for p in cluster.sample_paths)
     return f"{header}\n{body}\n\nReturn JSON only."
 
 
@@ -152,7 +186,7 @@ def _call_haiku(
 ) -> tuple[str, int, int]:
     """One Haiku call. Returns ``(text, in_tokens, out_tokens)``.
 
-    Empty string on failure; caller decides whether to skip the chunk.
+    Empty string on failure; caller decides whether to skip the cluster.
     """
     try:
         msg = client.messages.create(
@@ -218,34 +252,34 @@ def _is_acceptable_name(name: str) -> bool:
     return True
 
 
-def _build_developer_features(
+def _build_developer_features_for_cluster(
     raw: list[dict[str, Any]],
     allowed_paths: set[str],
+    already_emitted_names: set[str],
 ) -> tuple[list[DeveloperFeature], list[str]]:
-    """Build :class:`DeveloperFeature` records from raw LLM output.
+    """Build :class:`DeveloperFeature` records from one Haiku response.
 
     Returns ``(accepted, rejected_names)``.
 
     Filters:
       - bad name (naming-discipline)
-      - paths must be a strict subset of ``allowed_paths``
+      - paths must be a strict subset of ``allowed_paths`` (this
+        cluster's members)
+      - name already emitted by an earlier cluster — silently skipped
+        (not surfaced as a rejection because it's not a quality issue)
       - features with no surviving paths after filtering
     """
     accepted: list[DeveloperFeature] = []
     rejected: list[str] = []
-    seen_names: set[str] = set()
+    seen_in_response: set[str] = set()
 
     for entry in raw:
         name_raw = (entry.get("name") or "").strip()
-        # Reject BEFORE lowercasing so Title Case ("Billing") and
-        # camelCase ("billingPortal") fail the kebab rule deterministically.
         if not _is_acceptable_name(name_raw):
             rejected.append(name_raw or "<empty>")
             continue
         name = name_raw
-        if name in seen_names:
-            # Two chunks proposed the same name — let the dedup at the
-            # caller level handle it; here we just skip the dup.
+        if name in already_emitted_names or name in seen_in_response:
             continue
         raw_paths = entry.get("paths") or []
         if not isinstance(raw_paths, list):
@@ -257,7 +291,7 @@ def _build_developer_features(
         if not paths:
             rejected.append(f"{name} (no valid paths)")
             continue
-        seen_names.add(name)
+        seen_in_response.add(name)
         accepted.append(
             DeveloperFeature(
                 name=name,
@@ -279,35 +313,34 @@ def stage_4_residual(
     existing_features: list[DeveloperFeature],
     *,
     model: str = DEFAULT_MODEL,
-    max_chunks: int = MAX_CHUNKS,
-    chunk_size: int = MAX_PATHS_PER_CHUNK,
     cost_cap_usd: float = DEFAULT_COST_CAP_USD,
     cost_tracker: CostTracker | None = None,
     client: Any | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
+    log: "StageLogger | None" = None,
 ) -> Stage4Result:
-    """Run the residual LLM scanner over unattributed files.
+    """Run the cluster-then-saturate residual scanner.
 
     Args:
         unattributed_files: paths NOT claimed by any Stage 2 feature.
         ctx: Stage 0 context (kept for symmetry with sibling stages).
         existing_features: deterministic features from Stage 2 / Stage 3.
-            Used to enforce the 30% LLM-fallback share cap.
+            Retained for signature symmetry — no longer drives a
+            truncation step.
         model: Haiku model id.
-        max_chunks: hard cap on Haiku calls per scan.
-        chunk_size: paths per Haiku call.
-        cost_cap_usd: hard USD budget; aborts further chunks when hit.
+        cost_cap_usd: hard USD budget; aborts further clusters when hit.
         cost_tracker: optional shared tracker. A new one is created
             with ``max_cost=cost_cap_usd`` if None.
         client: pre-built Anthropic client (testing hook).
         _client_factory: injection point for the default builder.
+        log: optional :class:`StageLogger` for per-cluster ``cluster``
+            events. The orchestrator passes one; tests don't have to.
 
     Returns:
         :class:`Stage4Result`.
     """
-    # ctx is currently unused beyond symmetry; consume it for clarity
-    # and to satisfy callers that pass it positionally.
     _ = ctx
+    _ = existing_features
 
     if not unattributed_files:
         return Stage4Result(
@@ -315,7 +348,9 @@ def stage_4_residual(
             cost_usd=0.0,
             llm_calls=0,
             warnings=[],
-            chunks_processed=0,
+            clusters_total=0,
+            clusters_processed=0,
+            saturation_stopped=False,
             rejected_names=[],
         )
 
@@ -329,44 +364,44 @@ def stage_4_residual(
             cost_usd=0.0,
             llm_calls=0,
             warnings=["no Anthropic client; residual scan skipped"],
-            chunks_processed=0,
+            clusters_total=0,
+            clusters_processed=0,
+            saturation_stopped=False,
             rejected_names=[],
         )
 
-    # Chunk the residual list.
-    chunks: list[list[str]] = []
-    for i in range(0, len(unattributed_files), chunk_size):
-        chunks.append(unattributed_files[i : i + chunk_size])
-        if len(chunks) >= max_chunks:
-            break
-
-    truncated = len(unattributed_files) > max_chunks * chunk_size
-    warnings: list[str] = []
-    if truncated:
-        leftover = len(unattributed_files) - max_chunks * chunk_size
-        warnings.append(
-            f"stage_4_residual: {leftover} residual paths skipped after "
-            f"the {max_chunks}-chunk cap"
+    clusters = cluster_residual_paths(unattributed_files)
+    if log is not None:
+        log.info(
+            f"clustered {len(unattributed_files)} residual paths into "
+            f"{len(clusters)} clusters",
         )
 
-    allowed_paths_set = set(unattributed_files)
-
-    raw_features_all: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    emitted_features: list[DeveloperFeature] = []
+    rejected_names: list[str] = []
+    emitted_names: set[str] = set()
+    sat_counter = 0
     llm_calls = 0
-    chunks_processed = 0
+    clusters_processed = 0
     cost_aborted = False
-    for chunk_idx, chunk_paths in enumerate(chunks):
-        # Budget guard BEFORE calling — if the next call would exceed
-        # we still attempt it once and rely on CostTracker to surface
-        # the overage, but if we've already exceeded we stop hard.
-        if tracker.max_cost is not None and tracker.total_cost_usd >= tracker.max_cost:
+    saturation_stopped = False
+
+    for i, cluster in enumerate(clusters):
+        # Budget guard: stop if we've already spent past the cap.
+        if (
+            tracker.max_cost is not None
+            and tracker.total_cost_usd >= tracker.max_cost
+        ):
             cost_aborted = True
             warnings.append(
                 f"stage_4_residual: cost cap ${tracker.max_cost:.2f} hit "
-                f"after {chunks_processed} chunks; remaining skipped"
+                f"after {clusters_processed} clusters; "
+                f"{len(clusters) - clusters_processed} clusters skipped",
             )
             break
-        prompt = _build_user_prompt(chunk_paths, chunk_idx, len(chunks))
+
+        prompt = _build_user_prompt(cluster, i, len(clusters))
         text, in_t, out_t = _call_haiku(
             client,
             model=model,
@@ -383,36 +418,59 @@ def stage_4_residual(
                 output_tokens=out_t,
                 label="stage-4-residual",
             )
-        chunks_processed += 1
-        if text:
-            raw_features_all.extend(_parse_response(text))
+        clusters_processed += 1
 
-    accepted, rejected = _build_developer_features(
-        raw_features_all, allowed_paths_set,
-    )
+        raw = _parse_response(text) if text else []
+        cluster_member_set = set(cluster.paths)
+        accepted, rejected = _build_developer_features_for_cluster(
+            raw, cluster_member_set, emitted_names,
+        )
+        rejected_names.extend(rejected)
+        new_names = [f.name for f in accepted]
+        for f in accepted:
+            emitted_names.add(f.name)
+        emitted_features.extend(accepted)
 
-    # Sprint A1: NO share cap. Stage 4 emits every surviving fallback
-    # feature; downstream quality gates (filesystem-existence +
-    # anchor-Jaccard dedup) live in Stage 5. ``existing_features`` is
-    # retained in the signature for orchestrator symmetry / future use
-    # but no longer drives a truncation step.
-    _ = existing_features
+        if log is not None:
+            log.cluster(
+                reason=(
+                    f"cluster {i + 1}/{len(clusters)} key={cluster.key} "
+                    f"size={cluster.size} emit={len(accepted)} "
+                    f"new={len(new_names)}"
+                ),
+            )
 
-    if cost_aborted:
-        # already logged above; nothing more to do
-        pass
+        if not new_names:
+            sat_counter += 1
+            if sat_counter >= SAT_WINDOW:
+                saturation_stopped = True
+                if log is not None:
+                    log.info(
+                        f"saturation: {SAT_WINDOW} consecutive clusters "
+                        f"without new features → stopping after "
+                        f"{clusters_processed}/{len(clusters)} clusters",
+                    )
+                break
+        else:
+            sat_counter = 0
+
+    if cost_aborted and log is not None:
+        log.warn(warnings[-1])
 
     return Stage4Result(
-        residual_features=accepted,
+        residual_features=emitted_features,
         cost_usd=tracker.total_cost_usd,
         llm_calls=llm_calls,
         warnings=warnings,
-        chunks_processed=chunks_processed,
-        rejected_names=rejected,
+        clusters_total=len(clusters),
+        clusters_processed=clusters_processed,
+        saturation_stopped=saturation_stopped,
+        rejected_names=rejected_names,
     )
 
 
 __all__ = [
+    "SAT_WINDOW",
     "Stage4Result",
     "stage_4_residual",
 ]

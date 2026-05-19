@@ -72,7 +72,9 @@ def _patch_llm_stages(monkeypatch: pytest.MonkeyPatch) -> None:
             cost_usd=0.0,
             llm_calls=0,
             warnings=[],
-            chunks_processed=0,
+            clusters_total=0,
+            clusters_processed=0,
+            saturation_stopped=False,
             rejected_names=[],
         )
 
