@@ -125,17 +125,41 @@ _GENERIC_FILE_STEMS: frozenset[str] = frozenset({
 })
 
 # Slug tokens that carry no discriminative weight when used as the
-# pivot for "does this singleton overlap an anchor?". Mirrors
-# `_REJECTED_GENERIC_NAMES` in stage_4_residual but cast as TOKENS
-# (kept small + universal).
+# pivot for "does this singleton overlap an anchor?". This is the
+# TOKEN-level twin of :data:`_GENERIC_FILE_STEMS` — anything that
+# qualifies as boilerplate at the path-leaf level also qualifies as
+# anchor-pool noise (e.g. ``env`` in ``env-example`` should NOT count
+# as an anchor overlap just because the repo has an ``env`` route).
+# Kept UNIVERSAL: do NOT add stack-specific tokens.
 _GENERIC_SLUG_TOKENS: frozenset[str] = frozenset({
+    # Universal path-layout vocabulary
     "app", "apps", "src", "lib", "libs", "core", "base", "main",
     "index", "root", "common", "shared", "util", "utils",
     "components", "pages", "routes", "api", "server", "client",
-    "frontend", "backend", "config", "configs", "test", "tests",
-    "docs", "doc", "scripts", "build", "dist",
-    # Path-noise that appears in many synth singletons
+    "frontend", "backend", "config", "configs", "settings",
+    "test", "tests", "docs", "doc", "scripts", "build", "dist",
     "internal", "packages", "package", "module", "modules",
+    # Boilerplate-marker tokens (same vocabulary as _GENERIC_FILE_STEMS).
+    # An ``env-example`` synth name should not anchor-overlap a real
+    # ``env`` feature — both tokens are generic markers, not nouns.
+    "env", "example", "examples", "readme", "license", "licence",
+    "changelog", "notes", "todo", "claude", "gitignore",
+    "dockerignore", "editorconfig", "eslintrc", "prettierrc",
+    "stylelintrc", "browserslistrc",
+    # Tool-config marker tokens.
+    "jest", "vitest", "playwright", "cypress", "karma", "mocha",
+    "prettier", "eslint", "stylelint", "babel", "webpack", "rollup",
+    "vite", "tsup", "swc", "tsc", "esbuild", "postcss", "tailwind",
+    "changeset", "lerna", "nx", "turbo", "rush", "pnpm",
+    "docker", "compose", "kubernetes", "helm", "ci", "cd",
+    "dockerfile", "containerfile", "makefile", "rakefile", "gulpfile",
+    "gemfile", "procfile",
+    # Universal helper-bundle markers.
+    "helper", "helpers", "type", "types", "constant", "constants",
+    "enum", "enums", "interface", "interfaces", "model", "models",
+    "schema", "schemas", "global", "globals",
+    "setup", "init", "bootstrap", "entry",
+    "manifest", "lock", "diagram",
 })
 
 
@@ -351,6 +375,7 @@ def apply_stage_4_guards(
     existing_features: list["DeveloperFeature"],
     *,
     drop_sample_cap: int = 5,
+    split_incoherent: bool = False,
 ) -> GuardResult:
     """Apply Guard A + Guard B to Stage 4's residual feature list.
 
@@ -362,6 +387,15 @@ def apply_stage_4_guards(
         drop_sample_cap: how many drop events to retain in
             ``GuardResult.drops`` (telemetry). Matches the sprint
             target of 5 sample entries in ``scan_meta``.
+        split_incoherent: when ``True``, an incoherent multi-path
+            cluster is exploded into per-path singletons and each is
+            re-checked through Guard A (admits any spawn that has a
+            distinct product noun in its leaf). When ``False`` (the
+            shipped default), the entire incoherent cluster is dropped.
+            Splitting empirically added more spawned singletons than it
+            removed phantom clusters on the validation corpus
+            (``papermark`` 118 -> 166, +40%); ``split_incoherent=True``
+            is retained as an opt-in for future deepening of Guard B.
 
     Returns:
         :class:`GuardResult` with the surviving features in their
@@ -404,13 +438,21 @@ def apply_stage_4_guards(
             running_token_pool |= _slug_tokens(feat.name)
             continue
 
-        # Incoherent: split + re-apply Guard A per spawned singleton.
+        # Incoherent multi-path cluster.
         clusters_split += 1
         _maybe_record_drop(
             name=feat.name,
-            reason="incoherent_cluster_split",
+            reason="incoherent_cluster_split"
+                   if split_incoherent
+                   else "incoherent_cluster_dropped",
             path=feat.paths[0],
         )
+        if not split_incoherent:
+            # Conservative default: drop the whole incoherent cluster.
+            # Spawned-singleton re-admission emitted more net features
+            # than it suppressed on the S2b validation corpus.
+            continue
+        # Opt-in spawn path (kept for telemetry experiments).
         for spawn in _split_into_singletons(feat):
             if _is_admissible_singleton(
                 spawn, frozenset(running_token_pool),
