@@ -101,6 +101,23 @@ class FlowSymbolAttribution:
 
 DEFAULT_MAX_SYMBOLS_PER_FLOW = 12
 
+# Keywords that should NEVER be treated as function/method names.
+# The regex patterns are intentionally permissive (a class method
+# matcher would otherwise need to know about every control-flow
+# keyword); we filter post-match. Identical set for every language —
+# names like ``if``, ``for``, ``while``, ``switch`` never sensibly
+# appear as function definitions and would be false positives.
+_KEYWORD_BLOCKLIST: frozenset[str] = frozenset({
+    "if", "else", "for", "while", "switch", "do", "try", "catch",
+    "finally", "return", "throw", "yield", "await", "break",
+    "continue", "case", "default", "new", "typeof", "delete", "void",
+    "in", "of", "as", "with", "function", "class", "interface",
+    "type", "enum", "import", "export", "from", "match", "where",
+    "let", "var", "const", "use", "pub", "fn", "impl", "mod", "ref",
+    "self", "super", "this", "true", "false", "null", "undefined",
+    "and", "or", "not", "is",
+})
+
 # Maximum line range scan for a single function body. Pathological
 # files (massive 10k-line minified bundles) shouldn't blow up the
 # linear walk. 5000 is generous — real source files almost never have
@@ -162,6 +179,23 @@ _TS_ARROW_OR_EXPR = re.compile(
     r"(?:\([^)]*\)\s*=>|function\b|\([^)]*\)\s*:)",
     re.MULTILINE,
 )
+# Generic ``export const NAME = expr(...)`` — catches schema / config
+# declarations whose value is a factory call (Drizzle ``sqliteTable``,
+# Zod schemas, tRPC routers, etc.). The body span is computed by
+# balanced-paren counting at the call site so we capture multi-line
+# table definitions correctly. Lower priority than the arrow/function
+# pattern (added AFTER it) so explicit handlers win.
+_TS_CONST_CALL = re.compile(
+    r"^(?P<indent>\s*)"
+    r"(?:export\s+(?:default\s+)?)?"
+    r"(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*"
+    r"(?::\s*[^=]+)?"
+    r"=\s*"
+    r"(?:new\s+)?"
+    r"[A-Za-z_$][\w$.]*\s*"
+    r"[(<]",
+    re.MULTILINE,
+)
 # Next.js / generic route-handler export: ``export async function GET(req)``.
 _TS_ROUTE_EXPORT = re.compile(
     r"^(?P<indent>\s*)"
@@ -182,11 +216,24 @@ _TS_CLASS_METHOD = re.compile(
     r"(?::\s*[^{=]+)?\s*\{",
     re.MULTILINE,
 )
+# TS class / interface / type declarations: ``export class Foo``,
+# ``export interface Foo``, ``export type Foo``. Used as fallback
+# entry attributions when Stage 3 grounded a flow on a type symbol.
+_TS_TYPE_DECL = re.compile(
+    r"^(?P<indent>\s*)"
+    r"(?:export\s+(?:default\s+)?)?"
+    r"(?:abstract\s+)?"
+    r"(?:class|interface|type|enum)\s+(?P<name>[A-Za-z_$][\w$]*)\b",
+    re.MULTILINE,
+)
+
 _TS_PATTERNS: tuple[re.Pattern[str], ...] = (
     _TS_ROUTE_EXPORT,
     _TS_NAMED_FN,
     _TS_ARROW_OR_EXPR,
     _TS_CLASS_METHOD,
+    _TS_TYPE_DECL,
+    _TS_CONST_CALL,
 )
 
 # Python — ``def NAME`` / ``async def NAME``. Match indent so class
@@ -210,7 +257,14 @@ _GO_FN = re.compile(
     r"\(",
     re.MULTILINE,
 )
-_GO_PATTERNS: tuple[re.Pattern[str], ...] = (_GO_FN,)
+# Go type declarations: ``type Foo struct { ... }`` / ``type Foo interface {``.
+_GO_TYPE = re.compile(
+    r"^(?P<indent>\s*)"
+    r"type\s+(?P<name>[A-Za-z_][\w]*)\s+"
+    r"(?:struct|interface|=\s*\S)",
+    re.MULTILINE,
+)
+_GO_PATTERNS: tuple[re.Pattern[str], ...] = (_GO_FN, _GO_TYPE)
 
 # Rust — ``pub fn NAME``, ``fn NAME``, ``pub async fn NAME``.
 _RUST_FN = re.compile(
@@ -224,7 +278,29 @@ _RUST_FN = re.compile(
     r"\(",
     re.MULTILINE,
 )
-_RUST_PATTERNS: tuple[re.Pattern[str], ...] = (_RUST_FN,)
+# Rust types: ``pub struct NAME``, ``pub enum NAME``, ``pub trait NAME``.
+# Stage 3 often grounds flows on struct definitions in Rust (each
+# struct is the "entry point" to its impl block). Capturing the struct
+# definition gives us an entry attribution covering the struct body.
+_RUST_TYPE = re.compile(
+    r"^(?P<indent>\s*)"
+    r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:struct|enum|trait|union)\s+(?P<name>[A-Za-z_][\w]*)\b",
+    re.MULTILINE,
+)
+# Rust impl blocks: ``impl<'c, C> Chat<'c, C> { ... }`` — captures
+# Chat as the symbol name; the body extends over the whole impl block.
+_RUST_IMPL = re.compile(
+    r"^(?P<indent>\s*)"
+    r"impl\s*"
+    r"(?:<[^>]*>)?\s*"
+    r"(?:[A-Za-z_][\w:]*\s+for\s+)?"
+    r"(?P<name>[A-Za-z_][\w]*)\b",
+    re.MULTILINE,
+)
+_RUST_PATTERNS: tuple[re.Pattern[str], ...] = (
+    _RUST_FN, _RUST_TYPE, _RUST_IMPL,
+)
 
 
 def _patterns_for(lang: str) -> tuple[re.Pattern[str], ...]:
@@ -434,8 +510,11 @@ def _enumerate_functions(
             line_start = _offset_to_line(name_start, line_starts)
             if line_start in seen_starts:
                 continue
-            seen_starts.add(line_start)
             name = m.group("name")
+            # Drop control-flow keywords matched by permissive patterns.
+            if name in _KEYWORD_BLOCKLIST:
+                continue
+            seen_starts.add(line_start)
             indent_str = m.group("indent") or ""
             indent_n = len(indent_str)
 
@@ -646,6 +725,10 @@ def _extract_py_imports(source: str) -> dict[str, str]:
 
 
 _IDENTIFIER_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\(")
+# Pulls every bare identifier (not preceded by a ``.``) — used to
+# catch namespace access like ``prisma.user.findMany()`` where the
+# CALL is on ``findMany`` but the import-resolution key is ``prisma``.
+_BARE_IDENTIFIER_RE = re.compile(r"(?<![.\w$])([A-Za-z_$][\w$]*)\b")
 
 
 def _identifiers_called_in(
@@ -655,12 +738,29 @@ def _identifiers_called_in(
 
     Returns in first-occurrence order without duplicates. Cheap regex
     — false positives (e.g. ``if (cond)`` matches ``if``) are filtered
-    downstream by looking up the name in the import table; ``if`` isn't
-    in any import table so it gets dropped.
+    downstream by the keyword blocklist and by import-table lookup.
     """
     seen: set[str] = set()
     out: list[str] = []
     for m in _IDENTIFIER_RE.finditer(body_text):
+        name = m.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _bare_identifiers_in(body_text: str) -> list[str]:
+    """Pull every BARE identifier (not after a dot or word char).
+
+    Catches namespace usage: ``prisma.user.findMany()`` → ``prisma``.
+    Used as a secondary lookup against the import table to attribute
+    files reached via namespace methods rather than direct calls.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _BARE_IDENTIFIER_RE.finditer(body_text):
         name = m.group(1)
         if name in seen:
             continue
@@ -800,8 +900,8 @@ def compute_flow_symbols(
         ))
         seen_files_with_symbol.add(entry_file)
 
-    # ── Step 2 — imports/calls (TS + Py only; Go/Rust use support) ─
-    if entry_fn is not None and entry_text is not None and entry_lang in ("ts", "py"):
+    # ── Step 2 — imports/calls + reach-file symbol promotion ─────
+    if entry_fn is not None and entry_text is not None:
         # Slice the entry symbol body text by character offsets for
         # accurate identifier extraction (avoids matching tokens
         # outside the function).
@@ -812,15 +912,23 @@ def compute_flow_symbols(
             if entry_fn.line_end < len(line_starts) else len(entry_text)
         ]
         # Build the import name → specifier map ONCE per entry file.
+        # Empty for Go/Rust (no TS/Py-style local-name imports);
+        # the reach-file fallback below still promotes their calls.
+        imports: dict[str, str] = {}
         if entry_lang == "ts":
             imports = _extract_ts_imports(entry_text)
-        else:  # py
+        elif entry_lang == "py":
             imports = _extract_py_imports(entry_text)
+
         candidate_names = _identifiers_called_in(body_text)
-        # Cap the per-flow call walk so a 500-line function with 200
-        # call sites doesn't blow past max_symbols.
+        candidate_set = set(candidate_names)
+
+        # 2a — Resolve via import specifier (TS/Py only).
+        resolved_via_import: set[str] = set()
         for name in candidate_names:
             if len(out) >= max_symbols_per_flow:
+                break
+            if entry_lang not in ("ts", "py"):
                 break
             specifier = imports.get(name)
             if specifier is None:
@@ -832,7 +940,6 @@ def compute_flow_symbols(
                 target = _resolve_py_module(rctx, entry_file, specifier)
             if not target or target == entry_file:
                 continue
-            # Find the exported function NAME in target.
             target_text = _read_text(rctx.repo_path, target)
             target_lang = _language_for(target)
             if target_text is None or target_lang is None:
@@ -849,6 +956,109 @@ def compute_flow_symbols(
                 role="called",
             ))
             seen_files_with_symbol.add(target)
+            resolved_via_import.add(name)
+
+        # 2b — Same-file calls (universal — applies to every language).
+        # Identifiers in the body that match another function defined
+        # IN THE SAME entry file get promoted to ``called`` so the
+        # attribution covers helper functions co-located with the
+        # entry handler (common in Go middleware, Rust handlers).
+        same_file_fns = _enumerate_functions(entry_text, entry_lang) \
+            if entry_lang else []
+        for fn in same_file_fns:
+            if len(out) >= max_symbols_per_flow:
+                break
+            if fn.name == entry_fn.name:
+                continue
+            if fn.name not in candidate_set:
+                continue
+            out.append(FlowSymbolAttribution(
+                file=entry_file,
+                symbol=fn.name,
+                line_start=fn.line_start,
+                line_end=fn.line_end,
+                role="called",
+            ))
+            # Keep entry file in seen — already added by entry step.
+
+        # 2c — Reach-file symbol promotion (universal). Any reach
+        # file that contains a function definition matching a call
+        # identifier in the body gets a ``called`` attribution
+        # instead of the whole-file ``support`` fallback. This gives
+        # Go/Rust flows symbol-grained attribution even though we
+        # don't parse their imports.
+        for p in reached_paths:
+            if len(out) >= max_symbols_per_flow:
+                break
+            if p == entry_file or p in seen_files_with_symbol:
+                continue
+            text = _read_text(rctx.repo_path, p)
+            lang = _language_for(p)
+            if text is None or lang is None:
+                continue
+            fns = _enumerate_functions(text, lang)
+            # Pick the first function in the file whose name appears
+            # in the body's call set AND wasn't already resolved via
+            # an import (TS/Py only — guards against double-attribution).
+            match = next(
+                (f for f in fns
+                 if f.name in candidate_set
+                 and f.name not in resolved_via_import),
+                None,
+            )
+            if match is None:
+                continue
+            out.append(FlowSymbolAttribution(
+                file=p,
+                symbol=match.name,
+                line_start=match.line_start,
+                line_end=match.line_end,
+                role="called",
+            ))
+            seen_files_with_symbol.add(p)
+
+        # 2d — Namespace import resolution (TS/Py). A body reference
+        # like ``prisma.user.findMany()`` won't appear in the call
+        # candidate set (the call is on ``findMany``), but ``prisma``
+        # is an imported NAMESPACE; the imported file is part of this
+        # flow's narrative. Emit a whole-file ``support`` attribution
+        # for the resolved target so namespace-style flows aren't
+        # under-attributed.
+        if entry_lang in ("ts", "py") and imports:
+            bare_names = _bare_identifiers_in(body_text)
+            for name in bare_names:
+                if len(out) >= max_symbols_per_flow:
+                    break
+                if name in candidate_set:
+                    # Already handled by step 2a (direct call) or 2b/2c.
+                    continue
+                specifier = imports.get(name)
+                if specifier is None:
+                    continue
+                if entry_lang == "ts":
+                    target = _resolve_ts_specifier(
+                        rctx, entry_file, specifier,
+                    )
+                else:
+                    target = _resolve_py_module(
+                        rctx, entry_file, specifier,
+                    )
+                if not target or target == entry_file:
+                    continue
+                if target in seen_files_with_symbol:
+                    continue
+                text = _read_text(rctx.repo_path, target)
+                if text is None:
+                    continue
+                loc = _file_loc(text)
+                out.append(FlowSymbolAttribution(
+                    file=target,
+                    symbol=name,
+                    line_start=1,
+                    line_end=max(loc, 1),
+                    role="support",
+                ))
+                seen_files_with_symbol.add(target)
 
     # ── Step 3 — support roles for unresolved reach files ─────────
     for p in reached_paths:
