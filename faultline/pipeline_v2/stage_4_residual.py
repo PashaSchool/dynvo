@@ -128,6 +128,9 @@ class Stage4Result:
             and were split into per-path singletons — Sprint S2b.
         guard_drops_sample: up to 5 ``{name, reason, path}`` records
             for telemetry / diagnostics.
+        guard_noise_path_drops: subset of guard drops attributed to
+            the Sprint S2c noise-path-segment predicate (singleton
+            mid-path noise + cohesive multi-path noise-only clusters).
     """
 
     residual_features: list[DeveloperFeature]
@@ -145,6 +148,9 @@ class Stage4Result:
     guard_singletons_dropped: int = 0
     guard_incoherent_clusters_split: int = 0
     guard_drops_sample: list[dict[str, str]] = field(default_factory=list)
+    # Sprint S2c — noise-path-segment drop counter (subset of
+    # guard_singletons_dropped).
+    guard_noise_path_drops: int = 0
 
 
 # ── Prompt builders ────────────────────────────────────────────────────────
@@ -486,6 +492,7 @@ def stage_4_residual(
                 {"name": d.name, "reason": d.reason, "path": d.path}
                 for d in guarded.drops
             ],
+            guard_noise_path_drops=guarded.noise_path_drops,
         )
 
     if client is None:
@@ -510,6 +517,7 @@ def stage_4_residual(
                 {"name": d.name, "reason": d.reason, "path": d.path}
                 for d in guarded.drops
             ],
+            guard_noise_path_drops=guarded.noise_path_drops,
         )
 
     # ── Pass 2: non-singleton clusters → LLM with saturation stop ──
@@ -636,6 +644,7 @@ def stage_4_residual(
             {"name": d.name, "reason": d.reason, "path": d.path}
             for d in guarded.drops
         ],
+        guard_noise_path_drops=guarded.noise_path_drops,
     )
 
 

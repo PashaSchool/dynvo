@@ -418,6 +418,8 @@ def run_pipeline_v2(
                 "guard_incoherent_clusters_split":
                     stage4.guard_incoherent_clusters_split,
                 "guard_drops_sample": stage4.guard_drops_sample,
+                # Sprint S2c — noise-path-segment drop counter.
+                "guard_noise_path_drops": stage4.guard_noise_path_drops,
             },
             run_dir=run_dir,
         )
@@ -669,6 +671,8 @@ def run_pipeline_v2(
         "stage_4_incoherent_clusters_split":
             stage4.guard_incoherent_clusters_split,
         "stage_4_drops_sample": stage4.guard_drops_sample,
+        # Sprint S2c — noise-path-segment drop counter.
+        "stage_4_noise_path_drops": stage4.guard_noise_path_drops,
         "stage_artifact_dir": str(run_dir),
         "llm_reconcile": bool(llm_reconcile),
         # Sprint B1 — bipartite store telemetry (deterministic).
