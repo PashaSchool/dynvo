@@ -266,33 +266,54 @@ def _apply_workspace_rule(
             ws = _workspace_for_path(p)
             if ws is not None:
                 per_ws[ws] += 1
-        if not per_ws:
-            continue
-        # Pick the dominant workspace; require concentration ≥ threshold.
-        ws_name, ws_count = max(per_ws.items(), key=lambda kv: kv[1])
-        share = ws_count / len(paths)
-        if share < _WORKSPACE_CONCENTRATION_MIN:
-            continue
 
-        # Sprint B3.1 — attempt domain-noun refinement.
-        workspace_prefix = _workspace_prefix_for(paths, ws_name)
-        noun = extract_domain_noun(paths, workspace_prefix=workspace_prefix)
+        # Sprint B3.1 — branch by monorepo vs flat layout.
+        # Both branches require domain-noun signal at >= 0.70 (route-group
+        # or first-non-generic-dir). The 0.50 filename-stem fallback is
+        # too noisy in production — it fires on randomly-named test
+        # files and creates garbage labels like "Useinputstreamsend"
+        # observed during validation. Per no-magic-tuning rule the
+        # threshold is universal, not per-repo.
+        _DOMAIN_NOUN_MIN_CONF = 0.70
+        if per_ws:
+            # ── Monorepo branch — workspace prefix detected ──
+            ws_name, ws_count = max(per_ws.items(), key=lambda kv: kv[1])
+            share = ws_count / len(paths)
+            if share < _WORKSPACE_CONCENTRATION_MIN:
+                continue
+            workspace_prefix = _workspace_prefix_for(paths, ws_name)
+            noun = extract_domain_noun(paths, workspace_prefix=workspace_prefix)
+            fallback_label = _titleize(ws_name)
+            anchor_workspace = f"workspace:{ws_name}"
+            weight = share
+        else:
+            # ── Flat-layout branch — no apps/<X>/, run domain-noun from root.
+            # We can't manufacture a fallback workspace label for flat
+            # repos (the workspace IS the repo root), so we ONLY emit
+            # a vote when domain-noun fires.
+            noun = extract_domain_noun(paths, workspace_prefix="")
+            if noun is None or noun.confidence < _DOMAIN_NOUN_MIN_CONF:
+                continue
+            fallback_label = None
+            anchor_workspace = "workspace:root"
+            weight = 1.0
 
-        if noun is not None and noun.confidence >= 0.5:
+        if noun is not None and noun.confidence >= _DOMAIN_NOUN_MIN_CONF:
             label = noun.label
             rule = "workspace+domain"
             # Vote confidence reflects domain-noun strength; floor at 0.6 so
             # workspace+domain is never WEAKER than the bare workspace vote.
             confidence = max(_CONF_WORKSPACE, noun.confidence)
-            anchor_signal = (
-                f"workspace:{ws_name}+domain:{noun.token}"
-            )
+            anchor_signal = f"{anchor_workspace}+domain:{noun.token}"
             domain_votes += 1
         else:
-            label = _titleize(ws_name)
+            # Only reachable in monorepo branch (flat branch already
+            # continued when noun is None).
+            assert fallback_label is not None
+            label = fallback_label
             rule = "workspace"
             confidence = _CONF_WORKSPACE
-            anchor_signal = f"workspace:{ws_name}"
+            anchor_signal = anchor_workspace
 
         state.votes[f.name].append(
             _Vote(
@@ -300,7 +321,7 @@ def _apply_workspace_rule(
                 rule=rule,
                 confidence=confidence,
                 anchor_signal=anchor_signal,
-                weight=share,
+                weight=weight,
             ),
         )
         votes_cast += 1
