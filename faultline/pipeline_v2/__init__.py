@@ -49,6 +49,11 @@ from faultline.pipeline_v2.stage_4_residual import (
     Stage4Result,
     stage_4_residual,
 )
+from faultline.pipeline_v2.stage_5_3_sibling_collapse import (
+    CollapseGroup,
+    Stage53Result,
+    collapse_sibling_routes,
+)
 from faultline.pipeline_v2.stage_5_postprocess import (
     stage_5_from_stage3_result,
     stage_5_postprocess,
@@ -85,6 +90,10 @@ __all__ = [
     # Stage 5 post-process (naming discipline)
     "stage_5_postprocess",
     "stage_5_from_stage3_result",
+    # Stage 5.3 sibling-router collapse (Sprint S4)
+    "CollapseGroup",
+    "Stage53Result",
+    "collapse_sibling_routes",
     # Stage 6 metrics enrichment
     "stage_6_metrics",
     # Stage 7 output assembly
