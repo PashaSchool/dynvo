@@ -1,0 +1,158 @@
+# Layer 2 product clusterer — dependency → product label map.
+#
+# Single source of truth for Sprint B3's Rule 2 (dependency anchor
+# clustering). Each entry maps a category slug to:
+#   - deps: list of npm/pip/cargo dependency name patterns (exact match
+#     OR token-prefix; see _dep_matches in faultline.pipeline_v2.extractors.package
+#     for the same matching algorithm)
+#   - product_label: customer-facing TitleCase label that becomes the
+#     product feature name when any developer feature's paths import
+#     one of these deps
+#
+# Stack-agnostic: a Python repo importing `stripe` and a Node repo
+# importing `stripe` both produce a "Billing" product feature.
+#
+# Adding a new product label = add an entry here, no Python change.
+# Per the hard rule: dep → product mappings live in YAML, never in
+# Python.
+
+billing:
+  deps:
+    - stripe
+    - "@stripe/*"
+    - paddle
+    - "@paddle/*"
+    - paddle-sdk
+    - lemonsqueezy.js
+    - "@lemonsqueezy/*"
+    - polar
+    - "@polar-sh/*"
+  product_label: Billing
+
+auth:
+  deps:
+    - next-auth
+    - "@auth/*"
+    - better-auth
+    - lucia
+    - lucia-auth
+    - clerk
+    - "@clerk/*"
+    - "@workos-inc/*"
+    - "@kinde-oss/*"
+    - "@supabase/auth-js"
+    - "@supabase/auth-helpers-nextjs"
+    - django-allauth
+    - authlib
+    - python-jose
+  product_label: Auth
+
+email:
+  deps:
+    - resend
+    - "@sendgrid/mail"
+    - nodemailer
+    - postmark
+    - mailgun
+    - "@aws-sdk/client-ses"
+    - sendgrid
+  product_label: Email
+
+background-jobs:
+  deps:
+    - inngest
+    - bullmq
+    - bull
+    - trigger.dev
+    - "@trigger.dev/*"
+    - "@upstash/qstash"
+    - agenda
+    - celery
+    - rq
+    - dramatiq
+  product_label: Background Jobs
+
+cache:
+  deps:
+    - "@upstash/redis"
+    - ioredis
+    - redis
+    - "@vercel/kv"
+  product_label: Cache
+
+database:
+  deps:
+    - "@prisma/client"
+    - drizzle-orm
+    - kysely
+    - knex
+    - "@supabase/supabase-js"
+    - sequelize
+    - typeorm
+    - mongoose
+  product_label: Database
+
+analytics:
+  deps:
+    - posthog-node
+    - posthog-js
+    - mixpanel
+    - "@segment/analytics-node"
+    - "@segment/*"
+  product_label: Analytics
+
+error-monitoring:
+  deps:
+    - "@sentry/*"
+    - "@datadog/*"
+    - bugsnag
+    - rollbar
+  product_label: Error Monitoring
+
+file-storage:
+  deps:
+    - "@vercel/blob"
+    - "@aws-sdk/client-s3"
+    - "@google-cloud/storage"
+    - uploadthing
+    - "@uploadthing/*"
+    - boto3
+  product_label: File Storage
+
+search:
+  deps:
+    - meilisearch
+    - "@elastic/elasticsearch"
+    - typesense
+    - algoliasearch
+  product_label: Search
+
+realtime:
+  deps:
+    - pusher
+    - "@pusher/*"
+    - ably
+    - socket.io
+    - ws
+  product_label: Realtime
+
+ai:
+  deps:
+    - "@anthropic-ai/sdk"
+    - anthropic
+    - openai
+    - "@ai-sdk/openai"
+    - "@ai-sdk/anthropic"
+    - "@google/generative-ai"
+    - langchain
+    - llamaindex
+    - ai
+  product_label: AI
+
+i18n:
+  deps:
+    - next-i18next
+    - i18next
+    - react-i18next
+    - "@lingui/*"
+  product_label: Internationalization
