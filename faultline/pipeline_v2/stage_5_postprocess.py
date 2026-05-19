@@ -61,9 +61,10 @@ Idempotent on identical input.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from faultline.analyzer.post_process import (
@@ -116,6 +117,22 @@ class Stage5Drops:
 
 
 @dataclass
+class DedupMerge:
+    """One sibling-workspace merge event for telemetry / diagnostics."""
+
+    merged_name: str
+    from_names: list[str]
+    from_paths_sample: list[str]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "merged_name": self.merged_name,
+            "from": list(self.from_names),
+            "paths_sample": list(self.from_paths_sample),
+        }
+
+
+@dataclass
 class Stage5Result:
     """Output of :func:`stage_5_postprocess`.
 
@@ -123,11 +140,13 @@ class Stage5Result:
         features: surviving public Feature records (Layer 1).
         validation_drops: per-reason counters for telemetry.
         drop_log: list of ``(name, reason)`` tuples for the StageLogger.
+        dedup_merges: sibling-workspace merge events (Sprint S1).
     """
 
     features: list[Feature]
     validation_drops: Stage5Drops = field(default_factory=Stage5Drops)
     drop_log: list[tuple[str, str]] = field(default_factory=list)
+    dedup_merges: list[DedupMerge] = field(default_factory=list)
 
 
 # ── DeveloperFeature → public Feature conversion ──────────────────────────
@@ -353,6 +372,270 @@ def _apply_naming_discipline(
     return cleaned, dropped
 
 
+# ── Sprint S1 — sibling-workspace duplicate merge ─────────────────────────
+#
+# Bug being fixed: ``bug-duplicate-feature-emission``.
+#
+# Symptom: Turborepo / pnpm-workspace / Cargo-workspace monorepos that
+# host the same logical capability across MULTIPLE workspace dirs
+# (``apps/image-proxy/``, ``apps/image-proxy-aws/``, ``packages/image-proxy/``)
+# emit it as TWO features named ``image-proxy`` and ``image-proxy-2``.
+#
+# Why Stage 2 doesn't catch this:
+#   1. Stage 2 merges by slug Jaccard ≥ 0.7 across deterministic anchors.
+#      Two anchors with name == ``image-proxy`` *do* merge there.
+#   2. The duplicate emission happens when one feature comes from a
+#      deterministic source (Stage 2 → ``image-proxy``) and the other
+#      comes from Stage 4 residual fallback. Stage 5's anchor-Jaccard
+#      gate (threshold 0.7) catches *exact* slug-token overlap, but
+#      misses pairs like ``image-proxy`` vs ``image-proxy-package``
+#      (Jaccard 2/3 = 0.67) or pairs that emerge identical-then-collide
+#      AFTER Fix D's ``_slugify_names`` suffixes the second one to
+#      ``image-proxy-2``.
+#
+# Fix shape (structural, universal — no thresholds, no per-repo paths):
+#   After naming discipline runs, scan the post-slugify feature list for
+#   pairs (a, b) where:
+#     - ``b.name == f"{a.name}-{N}"`` for some integer ``N >= 2``
+#       (i.e. ``b`` is the slugify-collision-suffix of ``a``)
+#     - ``a.paths`` and ``b.paths`` are disjoint (no overlap)
+#     - The base token ``a.name`` (or each of its kebab tokens) appears
+#       as a path component in BOTH ``a`` and ``b`` paths
+#       (proves they refer to the same logical workspace member,
+#       not unrelated features that happened to slug-collide)
+#   When all three hold → MERGE: union paths, keep ``a``'s name and
+#   display_name, prefer the longer description, sum total_commits,
+#   union authors, take max health_score.
+#
+# Memory: ``bug-duplicate-feature-emission`` documents the symptom on
+# inbox-zero (``Image Proxy`` + ``image-proxy-2``). The fix lives here
+# because Stage 5 is the LAST point where slug collisions can be
+# observed — earlier stages emit at different granularity.
+
+_SUFFIX_RE = re.compile(r"^(?P<base>.+?)-(?P<n>\d+)$")
+
+
+def _path_components(paths: list[str]) -> set[str]:
+    """Return the set of all path components across ``paths``.
+
+    Components are kebab-normalised (lowercase, underscores → dashes)
+    so a folder named ``image_proxy`` matches the slug ``image-proxy``.
+    """
+    out: set[str] = set()
+    for p in paths:
+        if not p:
+            continue
+        for part in PurePosixPath(p).parts:
+            if not part or part == ".":
+                continue
+            normalised = part.lower().replace("_", "-")
+            out.add(normalised)
+    return out
+
+
+def _shares_workspace_token(
+    base_slug: str,
+    a_paths: list[str],
+    b_paths: list[str],
+) -> bool:
+    """``True`` if the base slug (or one of its kebab tokens) appears as
+    a path component in BOTH ``a_paths`` and ``b_paths``.
+
+    Structural rule from the bug-memory: this proves both features live
+    in workspace dirs that share the same member token (``apps/X/...``
+    + ``packages/X/...``), not unrelated features that happened to
+    suffix-collide.
+    """
+    a_components = _path_components(a_paths)
+    b_components = _path_components(b_paths)
+    if not a_components or not b_components:
+        return False
+    # Try the whole base slug first (handles ``image-proxy`` directly
+    # if a workspace dir is named that), then each kebab token.
+    candidates: list[str] = [base_slug]
+    candidates.extend(t for t in base_slug.split("-") if t)
+    for token in candidates:
+        if not token:
+            continue
+        a_match = any(token in c for c in a_components)
+        b_match = any(token in c for c in b_components)
+        if a_match and b_match:
+            return True
+    return False
+
+
+def _merge_two_features(primary: Feature, sibling: Feature) -> Feature:
+    """Fold ``sibling`` into ``primary``, returning the merged Feature.
+
+    Path-union preserves order from ``primary`` then appends new paths
+    from ``sibling`` (deterministic). Display_name + description from
+    ``primary`` win; ``sibling`` values fall back only if ``primary``
+    is empty. Numerics combine additively (commits, bug_fixes) and
+    by max (health_score). Authors union. Flows concatenated (Stage 5.5
+    bipartite store will re-key them).
+    """
+    seen_paths: set[str] = set(primary.paths)
+    combined_paths: list[str] = list(primary.paths)
+    for p in sibling.paths:
+        if p not in seen_paths:
+            combined_paths.append(p)
+            seen_paths.add(p)
+
+    combined_authors: list[str] = list(primary.authors)
+    seen_authors: set[str] = set(primary.authors)
+    for a in sibling.authors:
+        if a not in seen_authors:
+            combined_authors.append(a)
+            seen_authors.add(a)
+
+    total_commits = (primary.total_commits or 0) + (sibling.total_commits or 0)
+    bug_fixes = (primary.bug_fixes or 0) + (sibling.bug_fixes or 0)
+    bug_fix_ratio = (bug_fixes / total_commits) if total_commits > 0 else 0.0
+    last_modified = max(primary.last_modified, sibling.last_modified)
+    health_score = max(primary.health_score or 0.0, sibling.health_score or 0.0)
+
+    return Feature(
+        name=primary.name,
+        display_name=primary.display_name or sibling.display_name,
+        description=primary.description or sibling.description,
+        paths=combined_paths,
+        authors=combined_authors,
+        total_commits=total_commits,
+        bug_fixes=bug_fixes,
+        bug_fix_ratio=round(bug_fix_ratio, 4),
+        last_modified=last_modified,
+        health_score=health_score,
+        flows=list(primary.flows) + list(sibling.flows),
+        bug_fix_prs=list(primary.bug_fix_prs) + list(sibling.bug_fix_prs),
+        coverage_pct=(
+            primary.coverage_pct if primary.coverage_pct is not None
+            else sibling.coverage_pct
+        ),
+        shared_attributions=(
+            list(primary.shared_attributions)
+            + list(sibling.shared_attributions)
+        ),
+        participants=list(primary.participants) + list(sibling.participants),
+        symbol_health_score=(
+            primary.symbol_health_score
+            if primary.symbol_health_score is not None
+            else sibling.symbol_health_score
+        ),
+        shared_participants=(
+            list(primary.shared_participants)
+            + list(sibling.shared_participants)
+        ),
+        layer=primary.layer,
+        product_feature_id=(
+            primary.product_feature_id or sibling.product_feature_id
+        ),
+    )
+
+
+def _merge_sibling_workspace_duplicates(
+    features: list[Feature],
+) -> tuple[list[Feature], list[DedupMerge]]:
+    """Merge sibling-workspace duplicates introduced by slug suffixing.
+
+    Runs AFTER :func:`_apply_naming_discipline`. For each suffixed
+    feature ``X-N`` (N integer ≥ 2), checks whether the un-suffixed
+    base ``X`` is also present AND the two features satisfy the
+    structural guard (disjoint paths + shared workspace-member token).
+    When both hold, the suffixed feature is folded into the base.
+
+    Returns ``(survivors, merges)``. ``merges`` is a list of
+    :class:`DedupMerge` records suitable for ``scan_meta`` telemetry.
+
+    Edge cases handled:
+      - Multiple suffixes of the same base (``X``, ``X-2``, ``X-3``)
+        all collapse into ``X`` in one pass.
+      - The base ``X`` may itself not be present (``X-2`` and ``X-3``
+        but no ``X``) — in that case we leave them alone; the dedup
+        only fires when the un-suffixed base anchor exists.
+      - Order-independent: surviving features keep their original
+        position in the input list.
+    """
+    if not features:
+        return [], []
+
+    by_name: dict[str, Feature] = {f.name: f for f in features}
+    # ``base_slug -> list of (suffix_int, feature)``
+    suffix_groups: dict[str, list[tuple[int, Feature]]] = {}
+    for f in features:
+        m = _SUFFIX_RE.match(f.name)
+        if not m:
+            continue
+        base = m.group("base")
+        try:
+            n = int(m.group("n"))
+        except ValueError:
+            continue
+        if n < 2:
+            continue
+        # Only consider suffixed siblings if the un-suffixed base
+        # actually exists in this feature list. Otherwise the suffix
+        # might be intentional (e.g. ``v2``, ``http2``) rather than a
+        # collision-resolver artefact.
+        if base not in by_name:
+            continue
+        suffix_groups.setdefault(base, []).append((n, f))
+
+    if not suffix_groups:
+        return list(features), []
+
+    # Plan merges: for each base, attempt to absorb each suffixed
+    # sibling IFF it passes the structural guard.
+    absorbed_names: set[str] = set()
+    merges: list[DedupMerge] = []
+    # Track running merged feature per base so consecutive absorptions
+    # combine cleanly (paths union grows across multiple siblings).
+    merged_by_base: dict[str, Feature] = {}
+
+    for base, suffixed in suffix_groups.items():
+        primary = by_name[base]
+        running = primary
+        absorbed_for_base: list[str] = []
+        # Process in suffix-order for determinism (-2 before -3).
+        for _, sibling in sorted(suffixed, key=lambda t: t[0]):
+            if not _shares_workspace_token(
+                base, list(running.paths), list(sibling.paths),
+            ):
+                continue
+            # Strict disjoint-paths guard: if the two features share any
+            # path the cross-feature attribution pass in Stage 2 should
+            # have already handled them — skip to avoid double-counting.
+            running_paths = set(running.paths)
+            if running_paths & set(sibling.paths):
+                continue
+            running = _merge_two_features(running, sibling)
+            absorbed_names.add(sibling.name)
+            absorbed_for_base.append(sibling.name)
+
+        if absorbed_for_base:
+            merged_by_base[base] = running
+            sample_paths = list(running.paths)[:6]
+            merges.append(
+                DedupMerge(
+                    merged_name=base,
+                    from_names=[base, *absorbed_for_base],
+                    from_paths_sample=sample_paths,
+                ),
+            )
+
+    if not absorbed_names:
+        return list(features), []
+
+    survivors: list[Feature] = []
+    for f in features:
+        if f.name in absorbed_names:
+            continue
+        if f.name in merged_by_base:
+            survivors.append(merged_by_base[f.name])
+        else:
+            survivors.append(f)
+    return survivors, merges
+
+
 # ── Public entry point ────────────────────────────────────────────────────
 
 
@@ -459,8 +742,22 @@ def stage_5_postprocess_with_telemetry(
             drops.junk_name += 1
             drop_log.append((name, f"junk_name:{reason}"))
 
+    # ── Step 4 — sibling-workspace duplicate merge (Sprint S1) ──────
+    cleaned, dedup_merges = _merge_sibling_workspace_duplicates(cleaned)
+    for m in dedup_merges:
+        logger.info(
+            "stage_5_postprocess: dedup-merged %s ← %s",
+            m.merged_name, m.from_names,
+        )
+        drop_log.append(
+            (m.merged_name, f"dedup_merged_from:{','.join(m.from_names[1:])}"),
+        )
+
     return Stage5Result(
-        features=cleaned, validation_drops=drops, drop_log=drop_log,
+        features=cleaned,
+        validation_drops=drops,
+        drop_log=drop_log,
+        dedup_merges=dedup_merges,
     )
 
 
@@ -511,6 +808,7 @@ def stage_5_from_stage3_result_with_telemetry(
 
 
 __all__ = [
+    "DedupMerge",
     "Stage5Drops",
     "Stage5Result",
     "stage_5_postprocess",
