@@ -126,19 +126,33 @@ def _flow_id(primary: str, flow_name: str) -> str:
 
 
 def _build_path_to_features(features: Iterable[Feature]) -> dict[str, set[str]]:
-    """Reverse-index ``Feature.paths`` so we can ask "who owns path P?".
+    """Reverse-index ``Feature.paths`` + ``Feature.shared_attributions``
+    so we can ask "who reaches into path P?".
 
-    A path that appears under N features (rare — Stage 2 attributes
-    each path to one feature, but Stage 5 may slug-collide names) maps
-    to a set of size N. ``shared_attributions`` are intentionally NOT
-    consulted here: per spec, primary path attribution is the source
-    of truth for cross-cutting detection. Shared attributions feed
-    other signals (health, coverage) but would muddy the blast-radius
-    score by counting every UI primitive as cross-cutting.
+    Two sources are consulted:
+
+      * ``Feature.paths`` — primary path attribution (Stage 2). Every
+        tracked file is owned by exactly one feature here.
+      * ``Feature.shared_attributions[*].file_path`` — a feature that
+        symbol-attributes into a file it doesn't own is still
+        considered a reacher for blast-radius purposes. Per the
+        Sprint B1 spec: "A flow whose primary feature owns ALL its
+        paths plus another feature reaching in via shared_attributions
+        → still counts as secondary."
+
+    Without this second source, cross-feature flow attribution is
+    structurally zero on the v2 pipeline because every flow's
+    ``Flow.paths`` is its single ``entry_point_file`` (which by
+    construction lives under exactly one feature's ``paths``).
     """
     out: dict[str, set[str]] = {}
     for feat in features:
         for path in feat.paths:
+            if not path:
+                continue
+            out.setdefault(path, set()).add(feat.name)
+        for attr in getattr(feat, "shared_attributions", None) or []:
+            path = getattr(attr, "file_path", None)
             if not path:
                 continue
             out.setdefault(path, set()).add(feat.name)
