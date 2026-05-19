@@ -107,7 +107,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -406,6 +406,41 @@ def _merge_features(
     )
 
 
+def _disambiguate_label(parent_dir: str, base_label: str) -> str:
+    """When two parents synthesize to the same ``base_label``, prepend
+    the FIRST distinguishing upstream segment.
+
+    Examples:
+      base ``v1-routes`` from ``backend/src/server/routes/v1`` →
+        ``server-v1-routes``
+      base ``v1-routes`` from ``backend/src/ee/routes/v1`` →
+        ``ee-v1-routes``
+
+    The chosen segment is the one immediately above the lowest
+    container suffix (if any), else the last segment before what's
+    already in ``base_label``.
+    """
+    segments = [s.lower().replace("_", "-")
+                for s in parent_dir.split("/") if s]
+    # Find rightmost container suffix and grab the segment above it.
+    for i in range(len(segments) - 1, -1, -1):
+        if segments[i] in _CONTAINER_SUFFIXES:
+            if i > 0:
+                prefix = segments[i - 1]
+                return f"{prefix}-{base_label}"
+            break
+    # Fallback: prepend the upstream segment if it adds info.
+    base_tokens = set(base_label.split("-"))
+    for seg in reversed(segments):
+        if seg not in base_tokens:
+            return f"{seg}-{base_label}"
+    # Last resort — pathological case where every segment is already
+    # in the base label; append a hash-like suffix derived from the
+    # full parent path so output stays unique.
+    suffix = str(abs(hash(parent_dir)) % 9000 + 1000)
+    return f"{base_label}-{suffix}"
+
+
 def _display_label(synth_label: str) -> str:
     """Title-case a kebab label for the display field.
 
@@ -417,10 +452,37 @@ def _display_label(synth_label: str) -> str:
 # ── Public entry point ────────────────────────────────────────────────────
 
 
+_ROUTE_ONLY_SOURCES = frozenset({
+    # Source slugs that emit features at URL-slug granularity. A feature
+    # whose source set is a subset of these is treated as collapsible
+    # regardless of confidence — these extractors are inherently
+    # over-granular for backend monoliths (one router file == one
+    # feature, even though the file is just one resource in a much
+    # larger product surface).
+    #
+    # The list is universal: any extractor whose unit-of-emission is
+    # "one route file" belongs here. Extractors that emit at the
+    # domain grain (package, schema, config, mvc) are NOT here — their
+    # features represent real product anchors and must be preserved.
+    "route",
+    "route-fastify",
+})
+
+
+def _is_route_only_source(sources: set[str] | frozenset[str]) -> bool:
+    """``True`` if every source in ``sources`` is a known route-only
+    emitter. Empty / unknown sources return ``False`` (be conservative
+    and preserve)."""
+    if not sources:
+        return False
+    return sources.issubset(_ROUTE_ONLY_SOURCES)
+
+
 def collapse_sibling_routes(
     features: list[Feature],
     *,
     confidence_by_name: dict[str, str] | None = None,
+    sources_by_name: dict[str, list[str]] | None = None,
     log: "StageLogger | None" = None,
     min_siblings: int = MIN_SIBLINGS,
     min_parent_depth: int = MIN_PARENT_DEPTH,
@@ -430,11 +492,20 @@ def collapse_sibling_routes(
     Args:
         features: Stage 5 output (post naming-discipline + S1 dedup).
         confidence_by_name: optional ``{feature_name: confidence}`` map
-            from Stage 2 (``"high"`` / ``"medium"`` / ``"low"``). When
-            present, ``"high"`` and ``"medium"`` features are preserved
-            even when they fall under a collapsing parent dir.
-            When ``None``, the anchor-preservation guard is disabled —
-            every route-shaped sibling collapses.
+            from Stage 2 (``"high"`` / ``"medium"`` / ``"low"``).
+        sources_by_name: optional ``{feature_name: [source, ...]}`` map
+            from Stage 2. The PREFERRED preservation signal: when
+            present, a feature is collapsible iff EVERY source is in
+            ``_ROUTE_ONLY_SOURCES`` (i.e. it's a pure URL-slug
+            singleton with no package/schema/config/mvc anchor). When
+            absent, falls back to confidence-only: ``"low"`` collapses,
+            ``"high"`` / ``"medium"`` are preserved.
+            Rationale: the S3.1 Fastify extractor emits one feature per
+            URL slug with medium confidence; preserving on confidence
+            alone would block the collapse the sprint was designed for.
+            Source-based preservation cleanly separates "domain anchor"
+            (Resend → email feature, sourced from ``package``) from
+            "route singleton" (one Fastify ``email-router.ts`` file).
         log: optional :class:`StageLogger` for stage-5 telemetry.
         min_siblings: structural threshold; below this, no collapse.
         min_parent_depth: minimum ``parent_dir`` segment count.
@@ -449,6 +520,7 @@ def collapse_sibling_routes(
         return Stage53Result(features=[])
 
     confidence_by_name = confidence_by_name or {}
+    sources_by_name = sources_by_name or {}
 
     # Index features by parent_dir of their primary (min) path.
     by_parent: dict[str, list[Feature]] = defaultdict(list)
@@ -469,16 +541,31 @@ def collapse_sibling_routes(
     collapsed_features: list[Feature] = []
     groups: list[CollapseGroup] = []
 
+    # Pre-compute base labels so we can detect collisions across
+    # parents that synthesize to the same name (e.g.
+    # ``backend/src/server/routes/v1`` and ``backend/src/ee/routes/v1``
+    # both produce ``v1-routes``).
+    base_labels: dict[str, str] = {
+        parent: _synthesize_parent_label(parent)
+        for parent in by_parent
+    }
+    label_collisions: Counter[str] = Counter(base_labels.values())
+
     # Process parents in deterministic (sorted) order for reproducibility.
     for parent in sorted(by_parent.keys()):
         siblings = by_parent[parent]
         if len(siblings) < min_siblings:
             continue
 
-        # Build the synthesized parent label up-front so we can detect
-        # the anchor-overlap case (a member already happens to be
-        # named after the parent).
-        synth_label = _synthesize_parent_label(parent)
+        # Build the synthesized parent label. If the base label
+        # collides with another parent, prepend the first
+        # distinguishing upstream segment so each collapsed feature
+        # has a unique name.
+        base_label = base_labels[parent]
+        if label_collisions[base_label] > 1:
+            synth_label = _disambiguate_label(parent, base_label)
+        else:
+            synth_label = base_label
 
         # Partition siblings into:
         #   - collapsible: route-shaped AND (low-confidence OR no-conf-map
@@ -491,19 +578,29 @@ def collapse_sibling_routes(
             if not _is_route_shaped(f):
                 preserved.append(f)
                 continue
-            conf = confidence_by_name.get(f.name)
             if f.name == synth_label:
                 # The collapsed feature already exists — absorb into
-                # it regardless of confidence.
+                # it regardless of confidence/source.
                 anchor_match = f
                 collapsible.append(f)
                 continue
+            # PREFERRED preservation signal: source set.
+            sources = frozenset(sources_by_name.get(f.name, []))
+            if sources:
+                if _is_route_only_source(sources):
+                    # Pure URL-slug singleton — collapsible.
+                    collapsible.append(f)
+                else:
+                    # Has at least one non-route source (package /
+                    # schema / config / mvc / etc.) — true product
+                    # anchor; preserve.
+                    preserved.append(f)
+                continue
+            # FALLBACK: no source info → use confidence.
+            conf = confidence_by_name.get(f.name)
             if conf in ("high", "medium"):
-                # Stage 2 anchor — preserve. Anchor names ARE
-                # first-class per the sprint spec.
                 preserved.append(f)
                 continue
-            # Either Stage 4 fallback (low) or no confidence map given.
             collapsible.append(f)
 
         if len(collapsible) < min_siblings:

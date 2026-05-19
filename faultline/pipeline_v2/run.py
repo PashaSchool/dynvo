@@ -540,16 +540,23 @@ def run_pipeline_v2(
     # alongside their collapsed peers. Stage 4 low-confidence fallback
     # features collapse freely. Pure-Python, no LLM, no I/O.
     confidence_by_name: dict[str, str] = {}
+    sources_by_name: dict[str, list[str]] = {}
     for f in deterministic_features:
         # Stage 2 produces "high" / "medium"; Stage 4 features map to
         # "low" via the residual feature loop below.
         confidence_by_name[f.name] = f.confidence
+        sources_by_name[f.name] = list(f.sources)
     for f in residual_features:
         confidence_by_name.setdefault(f.name, "low")
+        # Stage 4 fallback features carry no sources entry → empty
+        # list means "no anchor signal"; the collapser falls back to
+        # confidence and treats them as collapsible.
+        sources_by_name.setdefault(f.name, [])
     with StageLogger(run_dir, 5, "sibling_collapse") as log5_3:
         s53 = collapse_sibling_routes(
             features,
             confidence_by_name=confidence_by_name,
+            sources_by_name=sources_by_name,
             log=log5_3,
         )
         s53_features_pre = len(features)
