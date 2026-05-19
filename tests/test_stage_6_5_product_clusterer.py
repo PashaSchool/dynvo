@@ -279,6 +279,63 @@ def test_orphan_dev_features_show_in_telemetry(tmp_path: Path) -> None:
     assert telemetry["developer_features_orphan_count"] == 1
 
 
+# ── Sprint B3.1 — domain-noun refinement ─────────────────────────────────
+
+
+def test_domain_noun_refines_workspace_label(tmp_path: Path) -> None:
+    """Workspace cluster gains a domain-noun label and bumps telemetry.
+
+    When the feature's paths sit under ``apps/web/(documents)/`` the
+    product feature is labelled "Documents" (not "Web"), and the
+    ``workspace+domain`` rule key fires in source_breakdown.
+    """
+    repo = tmp_path
+    for p in (
+        "apps/web/(documents)/page.tsx",
+        "apps/web/(documents)/upload/page.tsx",
+        "apps/web/(documents)/share/page.tsx",
+        "apps/web/(documents)/[id]/page.tsx",
+    ):
+        _write(repo, p, "// empty")
+
+    feat = _feat("documents-ui", paths=[
+        "apps/web/(documents)/page.tsx",
+        "apps/web/(documents)/upload/page.tsx",
+        "apps/web/(documents)/share/page.tsx",
+        "apps/web/(documents)/[id]/page.tsx",
+    ])
+
+    products, mapping, telemetry = run_product_clusterer(_ctx(repo), [feat])
+
+    # Domain-noun wins -> label is "Documents", not "Web".
+    assert mapping["documents-ui"] == ("Documents",)
+    assert products[0].name == "Documents"
+    breakdown = telemetry["product_clusterer_source_breakdown"]
+    assert breakdown.get("rule:workspace+domain") == 1
+    assert telemetry["domain_noun_extraction_rate"] == 1.0
+    assert telemetry["product_clusterer_votes_cast"]["workspace+domain"] == 1
+
+
+def test_domain_noun_beats_dep_anchor_when_higher_confidence(tmp_path: Path) -> None:
+    """Spec special case: domain-noun conf 0.85 beats dep-anchor conf 0.75."""
+    repo = tmp_path
+    files = [
+        "apps/web/(data-room)/page.tsx",
+        "apps/web/(data-room)/upload.ts",
+        "apps/web/(data-room)/share.ts",
+    ]
+    for p in files:
+        _write(repo, p, 'import Stripe from "stripe";\n')
+
+    feat = _feat("data-room-ui", paths=list(files))
+    products, mapping, telemetry = run_product_clusterer(_ctx(repo), [feat])
+
+    # Domain-noun (0.85) wins over dep-anchor (0.75).
+    assert mapping["data-room-ui"][0] == "Data Room"
+    # Combined bucket fires because two rules contributed.
+    assert telemetry["product_clusterer_source_breakdown"].get("combined") == 1
+
+
 # ── Smoke: ProductFeature dataclass is frozen / hashable ────────────────
 
 
