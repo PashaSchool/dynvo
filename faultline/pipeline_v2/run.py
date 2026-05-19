@@ -312,12 +312,12 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
-    # ── Stage 4 — residual LLM fallback ────────────────────────────
+    # ── Stage 4 — residual LLM fallback (cluster + saturation) ─────
     with StageLogger(run_dir, 4, "residual") as log4:
         stage4 = stage_4_residual(
             _isolate(unattributed), _isolate(ctx),
             _isolate(deterministic_features),
-            model=model_id, cost_tracker=tracker,
+            model=model_id, cost_tracker=tracker, log=log4,
         )
         residual_features = stage4.residual_features
         for f in residual_features:
@@ -331,7 +331,9 @@ def run_pipeline_v2(
             log4.warn(w)
         log4.info(
             f"cost_usd={stage4.cost_usd:.4f} llm_calls={stage4.llm_calls} "
-            f"chunks={stage4.chunks_processed}",
+            f"clusters_processed={stage4.clusters_processed}/"
+            f"{stage4.clusters_total} "
+            f"saturation_stopped={stage4.saturation_stopped}",
         )
         write_stage_artifact(
             ctx.repo_path,
@@ -342,7 +344,9 @@ def run_pipeline_v2(
                 "cost_usd": stage4.cost_usd,
                 "llm_calls": stage4.llm_calls,
                 "warnings": stage4.warnings,
-                "chunks_processed": stage4.chunks_processed,
+                "clusters_total": stage4.clusters_total,
+                "clusters_processed": stage4.clusters_processed,
+                "saturation_stopped": stage4.saturation_stopped,
                 "rejected_names": stage4.rejected_names,
             },
             run_dir=run_dir,
@@ -473,6 +477,9 @@ def run_pipeline_v2(
         "calls": llm_calls,
         "stage3_cost_usd": round(stage3.cost_usd, 4),
         "stage4_cost_usd": round(stage4.cost_usd, 4),
+        "stage_4_clusters_total": stage4.clusters_total,
+        "stage_4_clusters_processed": stage4.clusters_processed,
+        "stage_4_saturation_stopped": stage4.saturation_stopped,
         "stage_artifact_dir": str(run_dir),
         "llm_reconcile": bool(llm_reconcile),
     }
