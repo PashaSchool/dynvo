@@ -52,6 +52,10 @@ from faultline.pipeline_v2.residual_clusterer import (
     synthesize_singleton_feature,
 )
 from faultline.pipeline_v2.stage_2_reconcile import DeveloperFeature
+from faultline.pipeline_v2.stage_4_guards import (
+    DropEvent,
+    apply_stage_4_guards,
+)
 
 if TYPE_CHECKING:
     from faultline.pipeline_v2.run_logger import StageLogger
@@ -117,6 +121,13 @@ class Stage4Result:
             (only relevant when the shared CostTracker had
             ``max_cost=None``; otherwise the tracker's own cap fires
             first).
+        guard_singletons_dropped: features dropped by Guard A
+            (single-path phantoms with no product signal) — Sprint S2b.
+        guard_incoherent_clusters_split: multi-path features that
+            failed cohesion (mixed parent dirs AND top-2 segments)
+            and were split into per-path singletons — Sprint S2b.
+        guard_drops_sample: up to 5 ``{name, reason, path}`` records
+            for telemetry / diagnostics.
     """
 
     residual_features: list[DeveloperFeature]
@@ -130,6 +141,10 @@ class Stage4Result:
     singletons_synthesized: int = 0
     singletons_skipped: int = 0
     cost_cap_hit: bool = False
+    # Sprint S2b — structural guard telemetry.
+    guard_singletons_dropped: int = 0
+    guard_incoherent_clusters_split: int = 0
+    guard_drops_sample: list[dict[str, str]] = field(default_factory=list)
 
 
 # ── Prompt builders ────────────────────────────────────────────────────────
@@ -355,7 +370,9 @@ def stage_4_residual(
     Returns:
         :class:`Stage4Result`.
     """
-    _ = existing_features
+    # Sprint S2b — ``existing_features`` is now consumed by the structural
+    # guards to compute the anchor-token overlap pool used by Guard A's
+    # prong 2 (singleton-anchored admission).
 
     if not unattributed_files:
         return Stage4Result(
@@ -442,8 +459,17 @@ def stage_4_residual(
     cost_cap_hit = False
 
     if not llm_clusters:
+        guarded = apply_stage_4_guards(emitted_features, existing_features)
+        if log is not None and (
+            guarded.singletons_dropped or guarded.incoherent_clusters_split
+        ):
+            log.info(
+                f"guards: dropped={guarded.singletons_dropped} "
+                f"split={guarded.incoherent_clusters_split} "
+                f"(of {len(emitted_features)} residual features)",
+            )
         return Stage4Result(
-            residual_features=emitted_features,
+            residual_features=guarded.kept,
             cost_usd=tracker.total_cost_usd,
             llm_calls=0,
             warnings=warnings,
@@ -454,13 +480,20 @@ def stage_4_residual(
             singletons_synthesized=singletons_synth,
             singletons_skipped=singletons_skipped,
             cost_cap_hit=False,
+            guard_singletons_dropped=guarded.singletons_dropped,
+            guard_incoherent_clusters_split=guarded.incoherent_clusters_split,
+            guard_drops_sample=[
+                {"name": d.name, "reason": d.reason, "path": d.path}
+                for d in guarded.drops
+            ],
         )
 
     if client is None:
         client = _client_factory()
     if client is None:
+        guarded = apply_stage_4_guards(emitted_features, existing_features)
         return Stage4Result(
-            residual_features=emitted_features,
+            residual_features=guarded.kept,
             cost_usd=tracker.total_cost_usd,
             llm_calls=0,
             warnings=["no Anthropic client; residual scan skipped"],
@@ -471,6 +504,12 @@ def stage_4_residual(
             singletons_synthesized=singletons_synth,
             singletons_skipped=singletons_skipped,
             cost_cap_hit=False,
+            guard_singletons_dropped=guarded.singletons_dropped,
+            guard_incoherent_clusters_split=guarded.incoherent_clusters_split,
+            guard_drops_sample=[
+                {"name": d.name, "reason": d.reason, "path": d.path}
+                for d in guarded.drops
+            ],
         )
 
     # ── Pass 2: non-singleton clusters → LLM with saturation stop ──
@@ -564,8 +603,23 @@ def stage_4_residual(
         else:
             sat_counter = 0
 
+    # Sprint S2b — structural admission guards on the assembled
+    # residual list (singleton-synth + LLM clusters together).
+    guarded = apply_stage_4_guards(emitted_features, existing_features)
+    if log is not None and (
+        guarded.singletons_dropped or guarded.incoherent_clusters_split
+    ):
+        log.info(
+            f"guards: dropped={guarded.singletons_dropped} "
+            f"split={guarded.incoherent_clusters_split} "
+            f"(of {len(emitted_features)} residual features)",
+        )
+    for d in guarded.drops:
+        if log is not None:
+            log.drop(d.name, f"{d.reason}:{d.path}")
+
     return Stage4Result(
-        residual_features=emitted_features,
+        residual_features=guarded.kept,
         cost_usd=tracker.total_cost_usd,
         llm_calls=llm_calls,
         warnings=warnings,
@@ -576,6 +630,12 @@ def stage_4_residual(
         singletons_synthesized=singletons_synth,
         singletons_skipped=singletons_skipped,
         cost_cap_hit=cost_cap_hit,
+        guard_singletons_dropped=guarded.singletons_dropped,
+        guard_incoherent_clusters_split=guarded.incoherent_clusters_split,
+        guard_drops_sample=[
+            {"name": d.name, "reason": d.reason, "path": d.path}
+            for d in guarded.drops
+        ],
     )
 
 
