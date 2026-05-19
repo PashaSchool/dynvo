@@ -85,6 +85,12 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     _try("faultline.pipeline_v2.extractors.schema",  "SchemaDomainExtractor")
     _try("faultline.pipeline_v2.extractors.package", "PackageAnchorExtractor")
     _try("faultline.pipeline_v2.extractors.config",  "ConfigAsProductExtractor")
+    # Sprint A4 — stack-gated extractors. Each self-skips when its
+    # activation gate (Go / Rust workspace / Python library) fails,
+    # so registering them unconditionally is safe + cheap.
+    _try("faultline.pipeline_v2.extractors.go_router",       "GoRouterExtractor")
+    _try("faultline.pipeline_v2.extractors.rust_workspace",  "RustWorkspaceExtractor")
+    _try("faultline.pipeline_v2.extractors.python_library",  "PythonLibraryExtractor")
 
     return out
 
