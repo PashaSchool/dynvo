@@ -348,6 +348,9 @@ def run_pipeline_v2(
                 "clusters_processed": stage4.clusters_processed,
                 "saturation_stopped": stage4.saturation_stopped,
                 "rejected_names": stage4.rejected_names,
+                "singletons_synthesized": stage4.singletons_synthesized,
+                "singletons_skipped": stage4.singletons_skipped,
+                "cost_cap_hit": stage4.cost_cap_hit,
             },
             run_dir=run_dir,
         )
@@ -479,7 +482,10 @@ def run_pipeline_v2(
         "stage4_cost_usd": round(stage4.cost_usd, 4),
         "stage_4_clusters_total": stage4.clusters_total,
         "stage_4_clusters_processed": stage4.clusters_processed,
+        "stage_4_singletons_synthesized": stage4.singletons_synthesized,
+        "stage_4_singletons_skipped": stage4.singletons_skipped,
         "stage_4_saturation_stopped": stage4.saturation_stopped,
+        "stage_4_cost_cap_hit": stage4.cost_cap_hit,
         "stage_artifact_dir": str(run_dir),
         "llm_reconcile": bool(llm_reconcile),
     }
