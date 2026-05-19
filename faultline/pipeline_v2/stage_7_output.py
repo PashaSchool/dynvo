@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from faultline.models.types import Feature, FeatureMap
+from faultline.models.types import Feature, FeatureFlowEdge, FeatureMap, Flow
 from faultline.output.writer import write_feature_map
 
 if TYPE_CHECKING:
@@ -126,6 +126,8 @@ def build_feature_map(
     scan_meta: dict[str, Any],
     *,
     days: int = 365,
+    flows: list[Flow] | None = None,
+    feature_flow_edges: list[FeatureFlowEdge] | None = None,
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
 
@@ -135,6 +137,11 @@ def build_feature_map(
     ``features`` is fed as ``developer_features`` so the model
     validator stamps ``layer="developer"`` consistently and ``features``
     (the legacy back-compat field) gets the same list as a side effect.
+
+    ``flows`` / ``feature_flow_edges`` (Sprint B1) are the top-level
+    bipartite store. The per-feature ``Feature.flows[]`` list stays
+    populated as the containment projection so the landing app keeps
+    working without modification.
     """
     return FeatureMap(
         repo_path=str(ctx.repo_path),
@@ -145,6 +152,8 @@ def build_feature_map(
         developer_features=list(features),
         product_features=[],
         scan_meta=dict(scan_meta),
+        flows=list(flows or []),
+        feature_flow_edges=list(feature_flow_edges or []),
     )
 
 
@@ -158,6 +167,8 @@ def stage_7_output(
     out_path: Path | None = None,
     *,
     days: int = 365,
+    flows: list[Flow] | None = None,
+    feature_flow_edges: list[FeatureFlowEdge] | None = None,
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -173,7 +184,10 @@ def stage_7_output(
     Returns:
         The :class:`Path` the feature map was written to.
     """
-    fm = build_feature_map(features, ctx, scan_meta, days=days)
+    fm = build_feature_map(
+        features, ctx, scan_meta,
+        days=days, flows=flows, feature_flow_edges=feature_flow_edges,
+    )
 
     # Snapshot Stage 7's input for replay before we hand off to the writer.
     write_stage_artifact(
@@ -183,6 +197,8 @@ def stage_7_output(
         payload={
             "feature_count": len(features),
             "feature_names": [f.name for f in features],
+            "flows_total": len(flows or []),
+            "feature_flow_edges_total": len(feature_flow_edges or []),
             "scan_meta": scan_meta,
         },
         run_dir=ctx.run_dir,

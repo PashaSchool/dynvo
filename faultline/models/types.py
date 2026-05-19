@@ -72,6 +72,18 @@ class Flow(BaseModel):
     # also belongs to. Dashboards render this as a "shared with: X, Y"
     # badge. Empty list = single-feature flow (most common case).
     secondary_features: list[str] = []
+    # Sprint B1 (2026-05-19) — bipartite blast-radius surface.
+    # ``id`` is a stable global identifier of the form
+    # "{primary_feature}::{slug}". ``primary_feature`` is the canonical
+    # owner used in the containment view (Feature.flows). The counts
+    # below summarise the bipartite store so consumers don't need to
+    # re-walk feature_flow_edges. ``cross_cutting`` is just shorthand
+    # for ``shared_with_features_count > 0``.
+    id: str | None = None
+    primary_feature: str | None = None
+    shared_with_flows_count: int = 0
+    shared_with_features_count: int = 0
+    cross_cutting: bool = False
 
 
 class SymbolRange(BaseModel):
@@ -191,6 +203,24 @@ class Feature(BaseModel):
     product_feature_id: str | None = None
 
 
+class FeatureFlowEdge(BaseModel):
+    """One edge in the bipartite feature ↔ flow graph (Sprint B1).
+
+    Each flow has exactly ONE ``primary`` edge (mirroring
+    ``Flow.primary_feature``) and zero-or-more ``secondary`` edges
+    (cross-cutting attachments derived from path overlap).
+
+    ``feature`` is a ``Feature.name`` slug; ``flow_id`` is the global
+    ``Flow.id`` (``"{primary_feature}::{slug}"``). ``reason`` is
+    informational for secondary edges and ``None`` for primary edges.
+    """
+
+    feature: str
+    flow_id: str
+    type: Literal["primary", "secondary"]
+    reason: str | None = None
+
+
 class FeatureMap(BaseModel):
     repo_path: str
     remote_url: str = ""      # GitHub base URL, e.g. https://github.com/org/repo
@@ -216,6 +246,13 @@ class FeatureMap(BaseModel):
     # signal counts, model versions. Free-form so we can iterate
     # without schema churn. Always emitted (default empty dict).
     scan_meta: dict[str, Any] = {}
+    # Sprint B1 (2026-05-19) — top-level bipartite storage. The
+    # per-feature ``Feature.flows[]`` list is kept as the canonical
+    # containment view (every flow appears under its PRIMARY feature);
+    # the lists below expose the bipartite graph as the source of
+    # truth. Default empty for callers building pre-B1 maps.
+    flows: list[Flow] = []
+    feature_flow_edges: list[FeatureFlowEdge] = []
 
     @model_validator(mode="after")
     def _merge_layer_inputs(self) -> "FeatureMap":
