@@ -218,6 +218,115 @@ def test_detect_stack_empty_dir_returns_none(tmp_path: Path) -> None:
     assert stack is None
 
 
+# ─────────────── Sprint S3.1 — recursive glob expansion ────────────────
+
+
+def test_pnpm_workspace_double_star_recurses(tmp_path: Path) -> None:
+    """pnpm-workspace.yaml `packages/**` must enumerate nested packages.
+
+    Regression for S3.1 fix (a): the previous ``iterdir()``-only impl
+    silently dropped nested packages like ``packages/db/src/schema``.
+    """
+    _write(tmp_path / "pnpm-workspace.yaml", 'packages:\n  - "packages/**"\n')
+    _write_json(tmp_path / "package.json", {"name": "root", "private": True})
+
+    # Three levels of nesting under packages/ — only dirs WITH manifests
+    # should become workspaces; bare source dirs should not.
+    _write_json(tmp_path / "packages" / "auth" / "package.json", {"name": "auth"})
+    _write(tmp_path / "packages" / "auth" / "src" / "index.ts", "export {};")
+
+    _write_json(
+        tmp_path / "packages" / "db" / "schema" / "package.json",
+        {"name": "db-schema"},
+    )
+    _write(
+        tmp_path / "packages" / "db" / "schema" / "users.ts",
+        "export type User = {};",
+    )
+
+    _write_json(
+        tmp_path / "packages" / "ui" / "primitives" / "buttons" / "package.json",
+        {"name": "buttons"},
+    )
+    _write(
+        tmp_path / "packages" / "ui" / "primitives" / "buttons" / "Button.tsx",
+        "export const Button = () => null;",
+    )
+
+    # A bare source dir without a manifest must NOT be a workspace.
+    _write(
+        tmp_path / "packages" / "ui" / "primitives" / "icons" / "Icon.tsx",
+        "export const Icon = () => null;",
+    )
+
+    ctx = stage_0_intake(tmp_path, skip_git=True)
+    assert ctx.monorepo is True
+    assert ctx.workspaces is not None
+    names = {w.name for w in ctx.workspaces}
+    # All three nested manifest dirs should appear; the manifest-less
+    # ``icons`` source dir should not.
+    assert "auth" in names
+    assert "db-schema" in names
+    assert "buttons" in names
+    paths = {w.path for w in ctx.workspaces}
+    assert "packages/ui/primitives/icons" not in paths
+
+
+def test_pnpm_workspace_single_star_unchanged(tmp_path: Path) -> None:
+    """``packages/*`` (no ``**``) only enumerates immediate children.
+
+    Preserves back-compat for the existing single-level glob shape.
+    """
+    _write(tmp_path / "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n')
+    _write_json(tmp_path / "package.json", {"name": "root", "private": True})
+
+    _write_json(tmp_path / "packages" / "auth" / "package.json", {"name": "auth"})
+    _write(tmp_path / "packages" / "auth" / "src" / "index.ts", "export {};")
+
+    # Nested package — must NOT be picked up by single-level glob.
+    _write_json(
+        tmp_path / "packages" / "db" / "schema" / "package.json",
+        {"name": "db-schema"},
+    )
+    _write(tmp_path / "packages" / "db" / "schema" / "x.ts", "export {};")
+
+    ctx = stage_0_intake(tmp_path, skip_git=True)
+    assert ctx.workspaces is not None
+    names = {w.name for w in ctx.workspaces}
+    assert "auth" in names
+    # ``packages/db`` has no manifest at the immediate level so it does
+    # not become a workspace; the nested ``packages/db/schema`` must be
+    # ignored under the single-star pattern.
+    assert "db-schema" not in names
+
+
+def test_glob_expansion_skips_node_modules(tmp_path: Path) -> None:
+    """Recursive ``**`` expansion must not descend into ``node_modules/``.
+
+    A package.json in a vendored sub-tree must never fabricate a
+    workspace; the noise-dir skiplist is enforced at every level.
+    """
+    _write(tmp_path / "pnpm-workspace.yaml", 'packages:\n  - "packages/**"\n')
+    _write_json(tmp_path / "package.json", {"name": "root", "private": True})
+
+    # Real package
+    _write_json(tmp_path / "packages" / "auth" / "package.json", {"name": "auth"})
+    _write(tmp_path / "packages" / "auth" / "src" / "index.ts", "export {};")
+
+    # Vendored package — must be ignored
+    _write_json(
+        tmp_path / "packages" / "auth" / "node_modules" / "lodash"
+        / "package.json",
+        {"name": "lodash"},
+    )
+
+    ctx = stage_0_intake(tmp_path, skip_git=True)
+    assert ctx.workspaces is not None
+    names = {w.name for w in ctx.workspaces}
+    assert "auth" in names
+    assert "lodash" not in names
+
+
 # ─────────────── Error handling ────────────────
 
 
