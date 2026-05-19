@@ -1,0 +1,506 @@
+"""Stage 1 — per-workspace extractor dispatch (S3).
+
+Polyglot monorepos (NestJS backend + Next/Vite frontend + Rust WASM,
+etc.) historically tripped over Stage 1: the global extractor pass
+saw a top-level ``stack="js-generic"`` (or worse, "unknown") and
+emitted zero deterministic anchors. Stage 4's LLM fallback then
+synthesised 100% of features, blowing past the 50% warn threshold
+and producing 0 deterministic flows.
+
+This module wraps the existing Stage 1 extractors with a per-workspace
+dispatcher that:
+
+  1. Activates ONLY when the repo is a polyglot monorepo
+     (audited_stack == "monorepo-polyglot" OR ctx.monorepo with ≥2
+     workspaces whose ``stack`` slugs differ).
+  2. For each workspace, builds a scoped ``ScanContext`` where
+     ``tracked_files`` is the subset of files under that workspace's
+     path, ``stack`` is the workspace's own inferred stack, and
+     ``monorepo`` is False (so the extractors don't try to fan out
+     further).
+  3. Runs the registered extractors against each scoped context.
+  4. Merges anchors across workspaces — when two workspaces emit the
+     same slug, we keep them separate ONLY if their paths are fully
+     disjoint AND each has ≥3 paths (signalling distinct features).
+     Otherwise we coalesce, mirroring Stage 2's normal behaviour.
+
+Workspace synthesis fallback
+============================
+
+Some polyglot repos (infisical, supabase) don't declare workspaces in
+any package manager manifest — they just have ``backend/`` and
+``frontend/`` directories side-by-side. Stage 0's
+``detect_workspace`` returns ``detected=False`` for these. When the
+auditor *does* identify the repo as polyglot, we synthesise
+workspaces from a conservative set of conventional top-level directory
+names (``backend``, ``frontend``, ``server``, ``client``, ``api``,
+``web``, ``app``, ``apps``, ``packages``, ``services``, ``cli``,
+``wasm``, ``ee``) — each one that contains a manifest file
+(``package.json`` / ``Cargo.toml`` / ``pyproject.toml`` / ``go.mod``)
+becomes a synthetic ``Workspace`` with its own per-package stack
+detection. NO HEURISTIC NAMES — we always require a manifest as proof
+the directory is actually its own package.
+
+This module does NOT touch the global Stage 1 implementation. When it
+activates the orchestrator skips the global pass; otherwise the global
+pass runs as before.
+
+No LLM calls. No network calls.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from faultline.pipeline_v2.extractors.base import (
+    AnchorCandidate,
+    AnchorExtractor,
+)
+from faultline.pipeline_v2.stage_0_intake import (
+    ScanContext,
+    Workspace,
+    _read_json,  # type: ignore[attr-defined]
+    detect_stack,
+)
+from faultline.pipeline_v2.stage_1_extractors import (
+    _discover_extractors,
+    _safe_extract,
+)
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+
+# Conservative whitelist of directory names we consider candidates for
+# a synthetic workspace when the repo has no declared workspaces.
+# ORDER doesn't matter — each candidate must additionally have a
+# manifest file at its root to be promoted.
+_SYNTHETIC_WORKSPACE_DIRS: tuple[str, ...] = (
+    "backend",
+    "frontend",
+    "server",
+    "client",
+    "api",
+    "web",
+    "app",
+    "apps",
+    "packages",
+    "services",
+    "cli",
+    "wasm",
+    "ee",
+    "core",
+    "admin",
+    "worker",
+    "workers",
+    "platform",
+    "gateway",
+    "sdk",
+    "sdks",
+)
+
+# Manifest filenames that prove a directory is its own package.
+_MANIFEST_FILENAMES: tuple[str, ...] = (
+    "package.json",
+    "Cargo.toml",
+    "pyproject.toml",
+    "go.mod",
+    "Gemfile",
+    "composer.json",
+    "pom.xml",
+    "build.gradle",
+)
+
+
+# ── Public data types ─────────────────────────────────────────────────────
+
+
+@dataclass
+class WorkspaceExtractionReport:
+    """Telemetry for one workspace's per-workspace extractor pass."""
+
+    name: str
+    path: str
+    inferred_stack: str | None
+    extractors_fired: list[str]
+    anchors_emitted: int
+
+
+# ── Activation ────────────────────────────────────────────────────────────
+
+
+def should_activate_per_workspace(ctx: ScanContext) -> bool:
+    """Return True when per-workspace dispatch should replace global Stage 1.
+
+    Conditions (any one):
+      1. Auditor flagged the repo as ``monorepo-polyglot``.
+      2. ``ctx.monorepo`` is True AND ``ctx.workspaces`` contains ≥2
+         workspaces with DIFFERENT non-empty stack slugs (proper
+         polyglot monorepo even without auditor verdict).
+    """
+    audited = (ctx.audited_stack or "").lower()
+    if audited == "monorepo-polyglot":
+        return True
+
+    if not ctx.monorepo or not ctx.workspaces:
+        return False
+
+    stacks = {
+        (w.stack or "").lower()
+        for w in ctx.workspaces
+        if (w.stack or "").strip()
+    }
+    # Filter out the noise stacks that don't change extractor activation.
+    interesting = stacks - {"js-generic", "python-lib", "ruby", "unknown", ""}
+    return len(interesting) >= 2
+
+
+# ── Workspace synthesis fallback ──────────────────────────────────────────
+
+
+def _has_manifest(dir_path: Path) -> str | None:
+    """Return the first manifest filename present at ``dir_path``, or None."""
+    for fname in _MANIFEST_FILENAMES:
+        if (dir_path / fname).is_file():
+            return fname
+    return None
+
+
+def synthesise_workspaces(ctx: ScanContext) -> list[Workspace]:
+    """Build a list of synthetic workspaces from conventional dir names.
+
+    Walks the immediate children of ``ctx.repo_path`` whose name is in
+    ``_SYNTHETIC_WORKSPACE_DIRS`` AND which contain a manifest file.
+    For ``apps/`` and ``packages/`` (and ``services/``) we recurse one
+    level deeper since those are container directories — each immediate
+    child is treated as a workspace.
+
+    Returns an empty list when nothing qualifies. Caller is responsible
+    for deciding whether the synthesised list is preferable to the
+    existing (possibly empty) ``ctx.workspaces``.
+    """
+    out: list[Workspace] = []
+    seen_paths: set[str] = set()
+
+    def _emit(rel_path: str, ws_root: Path) -> None:
+        if rel_path in seen_paths:
+            return
+        seen_paths.add(rel_path)
+        ws_files = [
+            f for f in ctx.tracked_files
+            if f == rel_path or f.startswith(rel_path + "/")
+        ]
+        if not ws_files:
+            return
+        pkg_json = _read_json(ws_root / "package.json")
+        stack, _signals = detect_stack(ws_root, [
+            # detect_stack expects workspace-relative paths
+            f[len(rel_path) + 1:] if f.startswith(rel_path + "/") else f
+            for f in ws_files
+        ])
+        out.append(
+            Workspace(
+                name=ws_root.name,
+                path=rel_path,
+                package_json=pkg_json,
+                stack=stack,
+                files=ws_files,
+            ),
+        )
+
+    for child in sorted(ctx.repo_path.iterdir()):
+        if not child.is_dir():
+            continue
+        name = child.name
+        if name not in _SYNTHETIC_WORKSPACE_DIRS:
+            continue
+
+        # Container directories: treat each subchild as its own workspace.
+        if name in ("apps", "packages", "services", "sdks", "workers"):
+            for sub in sorted(child.iterdir()):
+                if not sub.is_dir():
+                    continue
+                if _has_manifest(sub) is None:
+                    continue
+                rel = f"{name}/{sub.name}"
+                _emit(rel, sub)
+            continue
+
+        # Direct workspace candidates.
+        if _has_manifest(child) is None:
+            continue
+        _emit(name, child)
+
+    return out
+
+
+# ── Scoped ScanContext construction ───────────────────────────────────────
+
+
+def _scoped_ctx(ctx: ScanContext, ws: Workspace) -> ScanContext:
+    """Build a ScanContext narrowed to a single workspace's files.
+
+    The scoped context tells the extractors:
+      - ``stack`` is the workspace's own inferred stack
+      - ``monorepo`` is False (don't try to recurse)
+      - ``workspaces`` is None
+      - ``tracked_files`` is the subset under the workspace path
+      - ``audited_stack`` is cleared (the workspace's stack is its
+        own authority; we don't want auditor hints from the monorepo
+        level — e.g. "monorepo-polyglot" — bleeding into per-extractor
+        activation checks)
+    """
+    files = list(ws.files) if ws.files else [
+        f for f in ctx.tracked_files
+        if f == ws.path or f.startswith(ws.path.rstrip("/") + "/")
+    ]
+    return ScanContext(
+        repo_path=ctx.repo_path,
+        stack=ws.stack,
+        monorepo=False,
+        workspaces=None,
+        tracked_files=files,
+        commits=ctx.commits,
+        stack_signals=[f"workspace={ws.name} stack={ws.stack}"],
+        workspace_manager=None,
+        run_id=ctx.run_id,
+        run_dir=ctx.run_dir,
+        audited_stack=ws.stack,  # treat workspace stack as primary
+        secondary_stacks=(),
+        extractor_hints=(),
+        auditor_confidence=None,
+    )
+
+
+# ── Anchor merging across workspaces ──────────────────────────────────────
+
+
+def _paths_disjoint(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
+    return not (set(a) & set(b))
+
+
+def _merge_anchors_across_workspaces(
+    per_ws_results: list[tuple[str, dict[str, list[AnchorCandidate]]]],
+) -> dict[str, list[AnchorCandidate]]:
+    """Merge per-workspace extractor outputs into a single Stage-1 dict.
+
+    Args:
+        per_ws_results: list of ``(workspace_name, stage1_out_dict)``.
+
+    Returns:
+        A dict matching the global ``stage_1_extractors`` shape —
+        keyed by extractor name (``route`` / ``mvc`` / ...) with a
+        list of ``AnchorCandidate``.
+
+    Coalescing rule per (source, slug):
+      - If only one workspace emitted it → keep as-is.
+      - If multiple workspaces emitted it AND paths are pairwise
+        disjoint AND every emission has ≥3 paths → keep all (rename
+        to ``<workspace>-<slug>`` to avoid Stage 2 collapsing them).
+      - Otherwise → merge into one candidate whose paths are the union
+        of all contributing paths, summing confidence (capped at 0.95).
+    """
+    # (source, slug) -> list[(ws_name, candidate)]
+    grouped: dict[tuple[str, str], list[tuple[str, AnchorCandidate]]] = defaultdict(list)
+    errors: dict[str, str] = {}
+
+    for ws_name, stage1_out in per_ws_results:
+        for ext_errs in [stage1_out.get("_errors") or {}]:
+            for k, v in ext_errs.items():
+                errors[f"{ws_name}:{k}"] = v
+        for source, candidates in stage1_out.items():
+            if source == "_errors":
+                continue
+            for cand in candidates:
+                grouped[(source, cand.name)].append((ws_name, cand))
+
+    merged: dict[str, list[AnchorCandidate]] = defaultdict(list)
+
+    for (source, slug), items in grouped.items():
+        if len(items) == 1:
+            merged[source].append(items[0][1])
+            continue
+
+        # Check disjoint + chunky enough to keep separate.
+        paths_lists = [c.paths for _, c in items]
+        all_pairwise_disjoint = all(
+            _paths_disjoint(paths_lists[i], paths_lists[j])
+            for i in range(len(paths_lists))
+            for j in range(i + 1, len(paths_lists))
+        )
+        all_chunky = all(len(p) >= 3 for p in paths_lists)
+
+        if all_pairwise_disjoint and all_chunky:
+            for ws_name, cand in items:
+                renamed = AnchorCandidate(
+                    name=f"{ws_name}-{cand.name}",
+                    paths=cand.paths,
+                    source=cand.source,
+                    confidence_self=cand.confidence_self,
+                    display_name=cand.display_name,
+                    rationale=(
+                        f"{cand.rationale} [workspace={ws_name}]"
+                    ),
+                )
+                merged[source].append(renamed)
+        else:
+            # Coalesce — union paths, average-cap confidence.
+            paths_union: list[str] = []
+            seen: set[str] = set()
+            for c in (c for _, c in items):
+                for p in c.paths:
+                    if p not in seen:
+                        seen.add(p)
+                        paths_union.append(p)
+            conf = min(
+                max((c.confidence_self for _, c in items), default=0.5) + 0.05,
+                0.95,
+            )
+            contributing_wss = sorted({ws for ws, _ in items})
+            merged[source].append(
+                AnchorCandidate(
+                    name=slug,
+                    paths=tuple(paths_union),
+                    source=source,
+                    confidence_self=conf,
+                    rationale=(
+                        f"per-workspace merged from "
+                        f"workspaces={contributing_wss}"
+                    ),
+                ),
+            )
+
+    # Ensure all source keys appear (even if empty) for telemetry.
+    for ws_name, stage1_out in per_ws_results:
+        for source in stage1_out.keys():
+            if source == "_errors":
+                continue
+            merged.setdefault(source, [])
+
+    out: dict[str, list[AnchorCandidate]] = dict(merged)
+    if errors:
+        out["_errors"] = errors  # type: ignore[assignment]
+    return out
+
+
+# ── Public orchestration entry point ──────────────────────────────────────
+
+
+@dataclass
+class PerWorkspaceResult:
+    stage1_out: dict[str, list[AnchorCandidate]]
+    workspaces_processed: list[WorkspaceExtractionReport]
+    workspaces_used: list[Workspace]
+    synthesised_workspaces: bool
+
+
+def run_stage_1_per_workspace(
+    ctx: ScanContext,
+    extractors: list[AnchorExtractor] | None = None,
+) -> PerWorkspaceResult:
+    """Run Stage 1 extractors per workspace and merge.
+
+    Args:
+        ctx: Stage 0 output (post-auditor).
+        extractors: optional explicit registry. ``None`` → discover.
+
+    Returns:
+        ``PerWorkspaceResult`` containing the merged Stage-1 dict
+        (matches ``stage_1_extractors`` shape) plus per-workspace
+        telemetry. Caller decides whether to use ``stage1_out`` or
+        ignore the per-workspace pass entirely (e.g. if no workspaces
+        materialised).
+
+    Raises nothing — failure of an individual extractor on one
+    workspace is captured in ``stage1_out["_errors"]`` (namespaced
+    ``<workspace>:<extractor>``) and does not kill the pass.
+    """
+    if extractors is None:
+        extractors = _discover_extractors()
+
+    # Source the workspace list — declared first, synthesised second.
+    workspaces = list(ctx.workspaces or [])
+    synthesised = False
+    if not workspaces:
+        workspaces = synthesise_workspaces(ctx)
+        synthesised = bool(workspaces)
+
+    if not workspaces:
+        # No workspaces at all — return an empty result so caller can
+        # fall back to global Stage 1.
+        return PerWorkspaceResult(
+            stage1_out={},
+            workspaces_processed=[],
+            workspaces_used=[],
+            synthesised_workspaces=False,
+        )
+
+    per_ws_results: list[tuple[str, dict[str, list[AnchorCandidate]]]] = []
+    reports: list[WorkspaceExtractionReport] = []
+
+    for ws in workspaces:
+        scoped = _scoped_ctx(ctx, ws)
+        if not scoped.tracked_files:
+            reports.append(
+                WorkspaceExtractionReport(
+                    name=ws.name,
+                    path=ws.path,
+                    inferred_stack=ws.stack,
+                    extractors_fired=[],
+                    anchors_emitted=0,
+                ),
+            )
+            continue
+
+        ws_out: dict[str, list[AnchorCandidate]] = {}
+        errors: dict[str, str] = {}
+        fired: list[str] = []
+        total_anchors = 0
+        for ext in extractors:
+            name, candidates, error = _safe_extract(ext, scoped)
+            if error is not None:
+                errors[name] = error
+                ws_out[name] = []
+                continue
+            assert candidates is not None
+            ws_out[name] = candidates
+            if candidates:
+                fired.append(name)
+                total_anchors += len(candidates)
+        if errors:
+            ws_out["_errors"] = errors  # type: ignore[assignment]
+
+        per_ws_results.append((ws.name, ws_out))
+        reports.append(
+            WorkspaceExtractionReport(
+                name=ws.name,
+                path=ws.path,
+                inferred_stack=ws.stack,
+                extractors_fired=fired,
+                anchors_emitted=total_anchors,
+            ),
+        )
+
+    merged = _merge_anchors_across_workspaces(per_ws_results)
+
+    return PerWorkspaceResult(
+        stage1_out=merged,
+        workspaces_processed=reports,
+        workspaces_used=workspaces,
+        synthesised_workspaces=synthesised,
+    )
+
+
+__all__ = [
+    "PerWorkspaceResult",
+    "WorkspaceExtractionReport",
+    "run_stage_1_per_workspace",
+    "should_activate_per_workspace",
+    "synthesise_workspaces",
+]
