@@ -87,6 +87,9 @@ from faultline.pipeline_v2.stage_5_postprocess import (
     stage_5_from_stage3_result_with_telemetry,
 )
 from faultline.pipeline_v2.stage_6_metrics import stage_6_metrics
+from faultline.pipeline_v2.stage_6_5_product_clusterer import (
+    run_product_clusterer,
+)
 from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
@@ -514,6 +517,46 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 6.5 — Layer 2 product clusterer (deterministic) ──────
+    # Pure rule-based clustering — workspace concentration + dep-anchor
+    # imports + optional ``faultlines.yaml`` override. NO LLM. Folds
+    # Stage 6 dev features into customer-facing product features.
+    with StageLogger(run_dir, 6, "product_clusterer") as log6_5:
+        product_features, dev_to_product_map, product_telemetry = (
+            run_product_clusterer(_isolate(ctx), features, log=log6_5)
+        )
+        # Stamp the FIRST product label onto each dev feature as the
+        # legacy single-valued ``product_feature_id`` for back-compat
+        # with consumers that read the Layer-1 ↔ Layer-2 pointer
+        # before the bipartite extension lands in their stack. The
+        # full multi-label set lives in the orchestrator's mapping
+        # dict and is preserved in the scan_meta telemetry below.
+        for f in features:
+            labels = dev_to_product_map.get(f.name)
+            if labels:
+                f.product_feature_id = labels[0]
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="product_clusterer",
+            payload={
+                "product_features": [
+                    {
+                        "name": pf.name,
+                        "developer_feature_count": len(pf.paths),
+                        "paths_total": len(pf.paths),
+                        "health_score": pf.health_score,
+                    }
+                    for pf in product_features
+                ],
+                "telemetry": product_telemetry,
+                "dev_to_product_map": {
+                    k: list(v) for k, v in dev_to_product_map.items()
+                },
+            },
+            run_dir=run_dir,
+        )
+
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
     # residual list (stage5 stripped FS-missing + anchor-dup before naming
@@ -608,6 +651,8 @@ def run_pipeline_v2(
         **bipartite.telemetry,
         # Sprint C1 — call-graph reach telemetry (deterministic).
         **(stage3.reach_telemetry or {}),
+        # Sprint B3 — Layer 2 product clusterer telemetry (deterministic).
+        **product_telemetry,
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
@@ -617,6 +662,7 @@ def run_pipeline_v2(
             days=days,
             flows=bipartite.flows,
             feature_flow_edges=bipartite.edges,
+            product_features=product_features,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
 
