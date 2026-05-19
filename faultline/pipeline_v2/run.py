@@ -73,6 +73,10 @@ from typing import Any, TypeVar
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.run_dir import update_latest_symlink
 from faultline.pipeline_v2.run_logger import StageLogger
+from faultline.pipeline_v2.stack_auditor import (
+    MIN_CONFIDENCE_TO_APPLY,
+    run_stack_auditor,
+)
 from faultline.pipeline_v2.stage_0_intake import stage_0_intake
 from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
 from faultline.pipeline_v2.stage_2_reconcile import stage_2_reconcile
@@ -219,6 +223,49 @@ def run_pipeline_v2(
                     {"name": w.name, "path": w.path, "stack": w.stack}
                     for w in (ctx.workspaces or [])
                 ],
+            },
+            run_dir=run_dir,
+        )
+
+    # ── Stage 0.5 — stack auditor (Haiku, additive) ────────────────
+    # One LLM call between heuristic Stage 0 and deterministic Stage 1.
+    # Read-only against ``ctx``; produces an :class:`AuditorVerdict`
+    # that we fold into ``ctx`` ONLY when confidence ≥ 0.5. Stage 0's
+    # ``stack`` field is never mutated — the verdict is surfaced via
+    # ``ctx.audited_stack`` so downstream code can prefer either.
+    with StageLogger(run_dir, 0, "auditor") as log_aud:
+        verdict = run_stack_auditor(
+            _isolate(ctx),
+            model=model_id,
+            cost_tracker=tracker,
+            log=log_aud,
+        )
+        if verdict.confidence >= MIN_CONFIDENCE_TO_APPLY:
+            ctx = ctx.with_audited_stack(
+                audited_stack=verdict.primary_stack,
+                secondary_stacks=verdict.secondary_stacks,
+                extractor_hints=verdict.extractor_hints,
+                auditor_confidence=verdict.confidence,
+            )
+        else:
+            log_aud.warn(
+                f"auditor_low_confidence: {verdict.confidence:.2f} — "
+                f"falling back to Stage 0 heuristic stack={ctx.stack}",
+            )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=0,
+            stage_name="auditor",
+            payload={
+                "primary_stack": verdict.primary_stack,
+                "secondary_stacks": list(verdict.secondary_stacks),
+                "confidence": verdict.confidence,
+                "extractor_hints": list(verdict.extractor_hints),
+                "reasoning": verdict.reasoning,
+                "cost_usd": verdict.cost_usd,
+                "fallback_used": verdict.fallback_used,
+                "applied": verdict.confidence >= MIN_CONFIDENCE_TO_APPLY,
+                "stage_0_stack": ctx.stack,
             },
             run_dir=run_dir,
         )
@@ -464,6 +511,17 @@ def run_pipeline_v2(
         "monorepo": ctx.monorepo,
         "workspace_manager": ctx.workspace_manager,
         "stack_signals": ctx.stack_signals,
+        # Sprint A3 — Stage 0.5 auditor surface.
+        # Always emitted so consumers can detect a fallback by
+        # `auditor_fallback_used: True` rather than absent keys.
+        "audited_stack": verdict.primary_stack if not verdict.fallback_used
+                         else None,
+        "secondary_stacks": list(verdict.secondary_stacks),
+        "auditor_confidence": round(verdict.confidence, 3),
+        "auditor_hints": list(verdict.extractor_hints),
+        "auditor_cost_usd": round(verdict.cost_usd, 6),
+        "auditor_fallback_used": verdict.fallback_used,
+        "auditor_reasoning": verdict.reasoning,
         "model": model_id,
         "extractor_hits": extractor_hits,
         "extractor_coverage_pct": round(extractor_coverage_pct, 3),
