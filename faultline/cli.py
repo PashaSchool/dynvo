@@ -2986,6 +2986,16 @@ def scan_v2(
             "~/.faultline/feature-map-<slug>-<timestamp>.json"
         ),
     ),
+    run_id: Optional[str] = typer.Option(
+        None,
+        "--run-id",
+        help=(
+            "Override the auto-generated run id (default: "
+            "<utc-ts>-<sha8>). Useful for labelling A/B experiment "
+            "runs — e.g. --run-id baseline then --run-id with-clustering. "
+            "Run artifacts land under ~/.faultline/logs/<slug>/<run-id>/."
+        ),
+    ),
 ):
     """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
 
@@ -3016,6 +3026,7 @@ def scan_v2(
             days=days,
             out_path=out_path,
             llm_reconcile=llm_reconcile,
+            run_id=run_id,
         )
     except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
         rprint(f"[red]Scan failed:[/red] {type(exc).__name__}: {exc}")
@@ -3023,7 +3034,8 @@ def scan_v2(
 
     rprint(
         f"[green]✓[/green] Wrote {result['path']}  "
-        f"(stack={result['stack']}, "
+        f"(run_id={result.get('run_id')}, "
+        f"stack={result['stack']}, "
         f"cost=${result['cost_usd']:.4f}, "
         f"calls={result['calls']}, "
         f"elapsed={result['elapsed_sec']}s)"
