@@ -41,6 +41,28 @@ Two guards
 
   Otherwise: drop. The drop event is reported via ``DropEvent``.
 
+  **Sprint S2c additional predicate — noise path segments.** Before
+  the three prongs above run, a singleton is short-circuit-dropped
+  when its path contains any segment from a universal
+  ``_NOISE_PATH_SEGMENTS`` set (``__tests__``, ``fixtures``,
+  ``snapshots``, ``migrations``, ``docker``, ``docs``, ``examples``,
+  ``fuzz``, ``benchmarks``, ``scripts``, ``vendor``, ...). Two
+  exemptions keep recall safe:
+
+    * **First-segment exemption.** When the noise word is the FIRST
+      non-``app``/``apps``/``src`` path segment, it likely names a
+      workspace or product surface (``docs/``, ``examples/`` as a
+      top-level Astro/Docusaurus product), so the predicate skips
+      it. Only mid- / last-segment noise counts.
+    * **Anchor-overlap precedence.** Prong 2 still wins — a
+      noise-pathed singleton whose name overlaps a Stage 2 anchor
+      (e.g. ``auth-test-helpers`` when ``auth`` is an anchor)
+      survives.
+
+  The same predicate is also evaluated for multi-path features that
+  survive Guard B — when ALL paths contain noise segments and no
+  prong-2 anchor overlap rescues the feature, the feature is dropped.
+
 * **Guard B — cluster cohesion.** A feature with ≥2 paths is admitted
   unchanged iff ALL paths share either:
 
@@ -87,6 +109,42 @@ if TYPE_CHECKING:
 # ``config-as-product-extractor``-shaped surfaces that escaped Stage 1.
 _PRODUCT_CONFIG_EXTS: frozenset[str] = frozenset({
     ".json", ".yaml", ".yml", ".toml",
+})
+
+
+# Sprint S2c — universal noise path segments. Any path segment matching
+# this set marks the file as test/build/docs/tooling scaffolding rather
+# than product code. The predicate considers MIDDLE and LAST segments
+# only — the first non-workspace segment is exempted so a top-level
+# ``docs/`` workspace (Astro/Docusaurus product surface) still survives.
+# Kept UNIVERSAL: do NOT add stack-specific tokens (per
+# memory/rule-no-magic-tuning).
+_NOISE_PATH_SEGMENTS: frozenset[str] = frozenset({
+    # Test scaffolding.
+    "fixtures", "snapshots", "test", "tests", "__tests__", "__snapshots__",
+    "spec", "specs",
+    # Schema migrations.
+    "migrations", "migration",
+    # Template snippets / Helm/k8s templates.
+    "templates", "template",
+    # Container / orchestration tooling.
+    "docker", "k8s", "kubernetes",
+    # In-repo documentation / examples / demos.
+    "docs", "documentation",
+    "examples", "example", "demos", "demo", "samples",
+    # Performance / fuzz scaffolding.
+    "fuzz", "benchmark", "benchmarks", "bench",
+    # Repo-tooling and vendored deps.
+    "scripts", "tools", "tooling",
+    "vendor", "third_party", "node_modules",
+})
+
+# Workspace-style first-segment prefixes that should be skipped when
+# applying the "first non-workspace segment" exemption — these wrap
+# real workspace dirs and don't carry product meaning themselves.
+_WORKSPACE_PREFIX_SEGMENTS: frozenset[str] = frozenset({
+    "app", "apps", "src", "packages", "package",
+    "internal", "internal-packages",
 })
 
 # Universal generic file stems — files whose leaf carries no product
@@ -181,8 +239,12 @@ class GuardResult:
 
     kept: list["DeveloperFeature"]
     drops: list[DropEvent]
-    singletons_dropped: int            # Guard A drops
+    singletons_dropped: int            # Guard A drops (any reason)
     incoherent_clusters_split: int     # Guard B splits
+    # Sprint S2c — count of drops attributed specifically to the
+    # noise-path-segment predicate (subset of all drops). Counts both
+    # singleton and multi-path noise drops.
+    noise_path_drops: int = 0
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -237,6 +299,51 @@ def _leaf_stem(path: str) -> str:
     return "".join(out_chars)
 
 
+def _has_noise_segment(path: str) -> bool:
+    """``True`` iff any MID/LAST path segment is in ``_NOISE_PATH_SEGMENTS``.
+
+    The FIRST non-workspace segment is exempt — a top-level ``docs/``,
+    ``examples/`` or ``tools/`` directory often names a real workspace
+    or product surface (Astro/Docusaurus ``docs`` site, an
+    ``examples`` package in a monorepo). The exemption skips known
+    workspace-wrapper prefixes (``app``, ``apps``, ``src``,
+    ``packages``) before applying the "first segment" test, so e.g.
+    ``apps/docs/foo`` treats ``docs`` as a real workspace name.
+
+    Behaviour:
+        * ``docs/index.md`` -> False (``docs`` is the first segment).
+        * ``apps/docs/page.tsx`` -> False (``docs`` is the first
+          non-workspace segment).
+        * ``apps/api/docs/blog/post.tsx`` -> True (``docs`` is mid).
+        * ``apps/api/__tests__/foo.test.ts`` -> True (``__tests__``
+          is mid).
+    """
+    parts = _path_parts(path)
+    if len(parts) <= 1:
+        # Root-level files: no mid-path segments to inspect. They are
+        # owned by other prongs (root-product-config / leaf-stem).
+        return False
+    # Identify the "first non-workspace segment" index. Walk past
+    # known workspace-wrapper prefixes so ``apps/docs/...`` treats
+    # ``docs`` as the first real segment (and therefore exempt).
+    first_real_idx = 0
+    while (
+        first_real_idx < len(parts)
+        and parts[first_real_idx].lower() in _WORKSPACE_PREFIX_SEGMENTS
+    ):
+        first_real_idx += 1
+    # Inspect mid segments — strictly AFTER the first real segment
+    # AND strictly BEFORE the filename. For a 2-part path like
+    # ``docs/index.md`` (first_real_idx=0) the slice is empty so the
+    # first-segment exemption kicks in.
+    candidate_segments = parts[first_real_idx + 1: len(parts) - 1]
+    if not candidate_segments:
+        return False
+    return any(
+        seg.lower() in _NOISE_PATH_SEGMENTS for seg in candidate_segments
+    )
+
+
 def _is_root_product_config(path: str) -> bool:
     """``True`` for a depth-1 file with a declarative-config extension."""
     parts = _path_parts(path)
@@ -286,24 +393,56 @@ def _is_distinct_product_noun(path: str) -> bool:
 def _is_admissible_singleton(
     feature: "DeveloperFeature",
     anchor_token_pool: frozenset[str],
-) -> bool:
-    """Apply Guard A's three-prong admission test to a 1-path feature.
+) -> tuple[bool, str | None]:
+    """Apply Guard A's admission test to a 1-path feature.
 
-    The feature is admitted if ANY prong passes.
+    Returns ``(admitted, reason_when_dropped)``. ``reason_when_dropped``
+    is a stable tag for telemetry: ``noise_path_segment`` when the
+    singleton was rejected by the Sprint S2c noise-segment predicate,
+    otherwise ``singleton_no_signal``.
+
+    The feature is admitted if ANY prong passes. Prong 2 (anchor-token
+    overlap) is evaluated BEFORE the S2c noise-segment short-circuit
+    drop so the architect-style ``auth-test-helpers`` feature survives
+    when an ``auth`` anchor exists.
     """
     if not feature.paths:
-        return False
+        return False, "singleton_no_signal"
     path = feature.paths[0]
+    # Prong 2 (early): anchor-token overlap wins over the S2c
+    # noise-segment short-circuit per the sprint caveat. A
+    # noise-pathed singleton whose name shares a token with a real
+    # Stage 2 anchor is a legitimate adjacent surface.
+    if _overlaps_anchor_tokens(feature.name, anchor_token_pool):
+        return True, None
+    # Sprint S2c — short-circuit drop on noise mid-path segments.
+    if _has_noise_segment(path):
+        return False, "noise_path_segment"
     # Prong 1: root-level declarative product-config file.
     if _is_root_product_config(path):
-        return True
-    # Prong 2: name token overlaps a Stage 2 anchor token.
-    if _overlaps_anchor_tokens(feature.name, anchor_token_pool):
-        return True
+        return True, None
     # Prong 3: leaf stem is a distinct product noun (not boilerplate).
     if _is_distinct_product_noun(path):
-        return True
-    return False
+        return True, None
+    return False, "singleton_no_signal"
+
+
+def _multi_path_noise_only(
+    feature: "DeveloperFeature",
+    anchor_token_pool: frozenset[str],
+) -> bool:
+    """``True`` iff a multi-path feature is noise-only and not anchored.
+
+    Sprint S2c — extends the noise-segment predicate to cohesive
+    multi-path clusters that survive Guard B. The cluster is dropped
+    when ALL its paths contain a mid-path noise segment AND the
+    feature name shares no token with a Stage 2 anchor.
+    """
+    if len(feature.paths) < 2:
+        return False
+    if _overlaps_anchor_tokens(feature.name, anchor_token_pool):
+        return False
+    return all(_has_noise_segment(p) for p in feature.paths)
 
 
 def _is_cohesive_cluster(paths: tuple[str, ...]) -> bool:
@@ -410,6 +549,7 @@ def apply_stage_4_guards(
     drops: list[DropEvent] = []
     singletons_dropped = 0
     clusters_split = 0
+    noise_path_drops = 0
 
     def _maybe_record_drop(name: str, reason: str, path: str) -> None:
         if len(drops) < drop_sample_cap:
@@ -418,22 +558,38 @@ def apply_stage_4_guards(
     for feat in residual:
         if len(feat.paths) <= 1:
             # ── Guard A path ──
-            if _is_admissible_singleton(
+            admitted, reason = _is_admissible_singleton(
                 feat, frozenset(running_token_pool),
-            ):
+            )
+            if admitted:
                 kept.append(feat)
                 running_token_pool |= _slug_tokens(feat.name)
             else:
                 singletons_dropped += 1
+                if reason == "noise_path_segment":
+                    noise_path_drops += 1
                 _maybe_record_drop(
                     name=feat.name,
-                    reason="singleton_no_signal",
+                    reason=reason or "singleton_no_signal",
                     path=feat.paths[0] if feat.paths else "",
                 )
             continue
 
         # ── Guard B path ──
         if _is_cohesive_cluster(feat.paths):
+            # Sprint S2c — even cohesive clusters drop when every
+            # path is mid-path noise and no anchor overlap exists.
+            if _multi_path_noise_only(
+                feat, frozenset(running_token_pool),
+            ):
+                noise_path_drops += 1
+                singletons_dropped += 1  # accounted under generic drops
+                _maybe_record_drop(
+                    name=feat.name,
+                    reason="noise_path_segment",
+                    path=feat.paths[0],
+                )
+                continue
             kept.append(feat)
             running_token_pool |= _slug_tokens(feat.name)
             continue
@@ -454,13 +610,16 @@ def apply_stage_4_guards(
             continue
         # Opt-in spawn path (kept for telemetry experiments).
         for spawn in _split_into_singletons(feat):
-            if _is_admissible_singleton(
+            admitted, reason = _is_admissible_singleton(
                 spawn, frozenset(running_token_pool),
-            ):
+            )
+            if admitted:
                 kept.append(spawn)
                 running_token_pool |= _slug_tokens(spawn.name)
             else:
                 singletons_dropped += 1
+                if reason == "noise_path_segment":
+                    noise_path_drops += 1
                 # Don't double-count this in the sample — the parent
                 # split is already recorded.
 
@@ -469,6 +628,7 @@ def apply_stage_4_guards(
         drops=drops,
         singletons_dropped=singletons_dropped,
         incoherent_clusters_split=clusters_split,
+        noise_path_drops=noise_path_drops,
     )
 
 
@@ -476,4 +636,5 @@ __all__ = [
     "DropEvent",
     "GuardResult",
     "apply_stage_4_guards",
+    "_has_noise_segment",
 ]
