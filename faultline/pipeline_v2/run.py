@@ -274,6 +274,8 @@ def run_pipeline_v2(
                 "fallback_used": verdict.fallback_used,
                 "applied": verdict.confidence >= MIN_CONFIDENCE_TO_APPLY,
                 "stage_0_stack": ctx.stack,
+                # Sprint S3.1 — structural correction telemetry.
+                "corrections": list(verdict.corrections),
             },
             run_dir=run_dir,
         )
@@ -701,6 +703,9 @@ def run_pipeline_v2(
         "auditor_cost_usd": round(verdict.cost_usd, 6),
         "auditor_fallback_used": verdict.fallback_used,
         "auditor_reasoning": verdict.reasoning,
+        # Sprint S3.1 — deterministic correction overrides applied
+        # AFTER the LLM verdict. Empty list when no rule fired.
+        "auditor_corrections": list(verdict.corrections),
         "model": model_id,
         "extractor_hits": extractor_hits,
         "extractor_coverage_pct": round(extractor_coverage_pct, 3),
