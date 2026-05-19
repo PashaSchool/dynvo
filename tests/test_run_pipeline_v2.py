@@ -174,7 +174,12 @@ def test_run_pipeline_v2_end_to_end_no_llm(
 def test_run_pipeline_v2_emits_high_fallback_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When LLM-fallback > 30% of features, warnings carries the nudge."""
+    """Sprint A1: when llm_share > 0.5, warnings carry the nudge.
+
+    Replaces the legacy 30%-share cap behaviour — we no longer truncate
+    Stage 4 output, but we DO surface a warning so the operator knows
+    they should write an extractor for this stack.
+    """
     fake_home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
 
@@ -222,6 +227,12 @@ def test_run_pipeline_v2_emits_high_fallback_warning(
 
     out_path = tmp_path / "fm.json"
     result = run_pipeline_v2(repo, model="haiku", out_path=out_path)
-    # 5 residual + 0 deterministic → 100% fallback share
+    # 5 residual + 0 deterministic → 100% fallback share.
+    # Sprint A1: the 30% cap was REMOVED — all 5 survive.
     assert result["llm_fallback_pct"] == 1.0
-    assert any("LLM-fallback handled" in w for w in result["warnings"])
+    assert result["llm_share"] == 1.0
+    assert result["residual_feature_count"] == 5
+    assert any(
+        "llm_share" in w and "fallback exceeds half" in w
+        for w in result["warnings"]
+    )

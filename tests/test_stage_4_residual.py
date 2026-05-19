@@ -26,9 +26,7 @@ from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2 import ScanContext
 from faultline.pipeline_v2.stage_2_reconcile import DeveloperFeature
 from faultline.pipeline_v2.stage_4_residual import (
-    LLM_FALLBACK_SHARE_CAP,
     Stage4Result,
-    _enforce_share_cap,
     _is_acceptable_name,
     stage_4_residual,
 )
@@ -121,41 +119,28 @@ def test_is_acceptable_name_rules() -> None:
     assert not _is_acceptable_name("   ")
 
 
-def test_share_cap_below_cap_passes_through() -> None:
-    existing_n = 10
-    residual = [_feat(f"x-{i}", (f"r{i}.ts",)) for i in range(3)]  # 3/(10+3) ≈ 23%
-    kept, warn = _enforce_share_cap(residual, existing_n)
-    assert kept == residual
-    assert warn is None
+# Sprint A1: the 30%-share cap was removed; Stage 4 now emits every
+# surviving fallback feature. Downstream quality gates live in Stage 5.
+# These tests are retained to LOCK that no cap is re-introduced.
 
 
-def test_share_cap_trims_oversize_set() -> None:
-    """deterministic=2, residual=10 → 10/12 = 83% → cap to 30% (k ≤ 0.857)."""
-    existing_n = 2
-    residual = [
-        _feat(f"resid-{i}", tuple(f"r{i}.ts" for _ in range(i + 1)))
-        for i in range(10)
-    ]
-    kept, warn = _enforce_share_cap(residual, existing_n)
-    # cap = 0.3 * 2 / 0.7 ≈ 0.857 → max_k = 0
-    assert kept == []
-    assert warn is not None
-    assert "30%" in warn
-
-
-def test_share_cap_keeps_densest_features() -> None:
-    """When trimming, the most-paths features survive."""
-    existing_n = 7  # cap_k = floor(0.3*7/0.7) = floor(3) = 3
-    residual = [
-        _feat("a", ("a1.ts", "a2.ts", "a3.ts")),
-        _feat("b", ("b1.ts",)),
-        _feat("c", ("c1.ts", "c2.ts")),
-        _feat("d", ("d1.ts", "d2.ts", "d3.ts", "d4.ts")),
-        _feat("e", ("e1.ts",)),
-    ]
-    kept, _warn = _enforce_share_cap(residual, existing_n)
-    names = sorted(f.name for f in kept)
-    assert names == ["a", "c", "d"]  # densest 3
+def test_stage_4_no_longer_truncates_by_share_ratio(tmp_path: Path) -> None:
+    """Even with deterministic=0 and 10 LLM features, all survive."""
+    residual = [f"r{i}.ts" for i in range(10)]
+    ctx = _ctx(tmp_path, files=residual)
+    canned = json.dumps({
+        "features": [
+            {"name": f"resid-{i}", "paths": [f"r{i}.ts"]} for i in range(10)
+        ],
+    })
+    client = _FakeAnthropic(responses=[canned])
+    result = stage_4_residual(
+        residual, ctx, existing_features=[], client=client,
+    )
+    # PRE-A1 this returned 0 (floored cap). Post-A1 it returns all 10.
+    assert len(result.residual_features) == 10
+    # No warning about share-cap drops anymore.
+    assert not any("share" in w.lower() for w in result.warnings)
 
 
 # ── Orchestrator: zero residual ────────────────────────────────────────────
@@ -204,7 +189,7 @@ def test_happy_path_emits_low_confidence_features(tmp_path: Path) -> None:
     })
     client = _FakeAnthropic(responses=[canned])
 
-    # 5 deterministic features so the 30% cap allows ≥2 residuals.
+    # A1: cap removed. ``existing_features`` retained for symmetry only.
     existing = [_feat(f"det-{i}", (f"det{i}.ts",)) for i in range(5)]
 
     result = stage_4_residual(
@@ -274,29 +259,6 @@ def test_bad_names_rejected(tmp_path: Path) -> None:
     assert any("app" in r for r in rejected)
     assert any("billing" in r.lower() for r in rejected)
     assert any("y" in r for r in rejected)
-
-
-# ── 30% share cap end-to-end ──────────────────────────────────────────────
-
-
-def test_share_cap_end_to_end(tmp_path: Path) -> None:
-    """deterministic=2, residual proposes 10 → trimmed to 0."""
-    residual = [f"r{i}.ts" for i in range(10)]
-    ctx = _ctx(tmp_path, files=residual)
-    canned = json.dumps({
-        "features": [
-            {"name": f"resid-{i}", "paths": [f"r{i}.ts"]}
-            for i in range(10)
-        ],
-    })
-    client = _FakeAnthropic(responses=[canned])
-    existing = [_feat(f"d{i}", (f"d{i}.ts",)) for i in range(2)]
-    result = stage_4_residual(
-        residual, ctx, existing_features=existing, client=client,
-    )
-    # 10 / (2 + 10) = 83% → trimmed to 0
-    assert len(result.residual_features) == 0
-    assert any("30%" in w for w in result.warnings)
 
 
 # ── LLM failure handling ──────────────────────────────────────────────────
