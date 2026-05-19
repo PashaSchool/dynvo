@@ -438,6 +438,12 @@ def run_pipeline_v2(
                 f"anchor_duplicate={validation_drops.anchor_duplicate} "
                 f"junk_name={validation_drops.junk_name}",
             )
+        # Sprint S1 — sibling-workspace dedup telemetry.
+        if stage5_result.dedup_merges:
+            log5.info(
+                f"dedup_merges: {len(stage5_result.dedup_merges)} "
+                f"sibling-workspace duplicate(s) merged",
+            )
         write_stage_artifact(
             ctx.repo_path,
             stage_index=5,
@@ -446,6 +452,7 @@ def run_pipeline_v2(
                 "feature_count": len(features),
                 "feature_names": [f.name for f in features],
                 "validation_drops": validation_drops.as_dict(),
+                "dedup_merges": [m.as_dict() for m in stage5_result.dedup_merges],
             },
             run_dir=run_dir,
         )
@@ -631,6 +638,13 @@ def run_pipeline_v2(
         "llm_fallback_pct": round(llm_share, 3),
         "llm_share": round(llm_share, 3),
         "validation_drops": validation_drops.as_dict(),
+        # Sprint S1 — sibling-workspace dedup telemetry. ``count`` is the
+        # number of merge events; ``sample`` is up to 3 events for
+        # diagnostics ({merged_name, from[], paths_sample[]}).
+        "dedup_merges_count": len(stage5_result.dedup_merges),
+        "dedup_merges_sample": [
+            m.as_dict() for m in stage5_result.dedup_merges[:3]
+        ],
         "deterministic_feature_count": deterministic_count,
         "residual_feature_count": fallback_count,
         "warnings": warnings,
