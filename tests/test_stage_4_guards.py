@@ -161,35 +161,37 @@ def test_cohesive_cluster_admitted_unchanged() -> None:
     assert result.kept[0].name == "billing"
 
 
-def test_incoherent_cluster_split_and_rechecked() -> None:
-    """Case 5 — mixed-parents cluster splits, generic spawns drop."""
+def test_incoherent_cluster_dropped_by_default() -> None:
+    """Case 5 (default) — mixed-parents cluster is dropped whole.
+
+    The conservative default (split_incoherent=False) drops the
+    cluster outright because spawning singletons admits net-new
+    features the LLM never proposed individually, which inflates the
+    feature count more than it removes phantoms.
+    """
     feat = _feat("container-configuration", (
         "apps/coordinator/Containerfile",
         "apps/docker-provider/Containerfile",
         "apps/supervisor/Containerfile",
     ))
     result = apply_stage_4_guards([feat], existing_features=[])
-
     assert result.incoherent_clusters_split == 1
-    # The split produces three singletons whose leaf stem is the
-    # universal generic ``dockerfile`` — Guard A re-rejects each one.
-    assert result.singletons_dropped == 3
+    assert result.singletons_dropped == 0  # cluster dropped, not split
     assert result.kept == []
+    assert result.drops[0].reason == "incoherent_cluster_dropped"
 
 
-def test_incoherent_cluster_split_keeps_distinct_spawns() -> None:
-    """A split where the spawned singletons carry distinct product
-    nouns survives — proves the re-check is real."""
+def test_incoherent_cluster_split_admits_distinct_spawns_when_opted_in() -> None:
+    """Opt-in split mode admits per-path singletons with distinct nouns."""
     feat = _feat("misc-handlers", (
         "apps/api/billing.ts",
         "apps/api/checkout.ts",
         "tooling/scripts/webhook.ts",
     ))
-    # Last path crosses top-2 boundaries → incoherent.
-    result = apply_stage_4_guards([feat], existing_features=[])
+    result = apply_stage_4_guards(
+        [feat], existing_features=[], split_incoherent=True,
+    )
     assert result.incoherent_clusters_split == 1
-    # All three spawned singletons have distinct product-noun stems
-    # (``billing``, ``checkout``, ``webhook``) → all admitted via prong 3.
     assert result.singletons_dropped == 0
     kept_paths = {f.paths[0] for f in result.kept}
     assert kept_paths == {
@@ -197,6 +199,23 @@ def test_incoherent_cluster_split_keeps_distinct_spawns() -> None:
         "apps/api/checkout.ts",
         "tooling/scripts/webhook.ts",
     }
+
+
+def test_incoherent_cluster_split_rejects_generic_spawns() -> None:
+    """Opt-in split mode still rejects spawns with generic stems."""
+    feat = _feat("container-configuration", (
+        "apps/coordinator/Containerfile",
+        "apps/docker-provider/Containerfile",
+        "apps/supervisor/Containerfile",
+    ))
+    result = apply_stage_4_guards(
+        [feat], existing_features=[], split_incoherent=True,
+    )
+    assert result.incoherent_clusters_split == 1
+    # All three Containerfile spawns have the universal generic stem
+    # ``dockerfile`` → Guard A rejects each one.
+    assert result.singletons_dropped == 3
+    assert result.kept == []
 
 
 # ── Case 6 — telemetry counts match drop events ────────────────────
@@ -221,9 +240,9 @@ def test_telemetry_counts_and_drop_sample_align() -> None:
     ]
     result = apply_stage_4_guards(features, existing_features=[])
 
-    # Two top-level singleton drops + three spawned singleton drops
-    # from the split = 5 total drops counted.
-    assert result.singletons_dropped == 5
+    # Two top-level singleton drops; the incoherent cluster is dropped
+    # whole (no spawned drops counted) under the default policy.
+    assert result.singletons_dropped == 2
     assert result.incoherent_clusters_split == 1
     # ``vercel-config`` survives — root product-config admission.
     assert len(result.kept) == 1
@@ -233,7 +252,11 @@ def test_telemetry_counts_and_drop_sample_align() -> None:
     # ``name`` / ``reason`` / ``path`` triple.
     assert 1 <= len(result.drops) <= 5
     reasons = {d.reason for d in result.drops}
-    assert reasons <= {"singleton_no_signal", "incoherent_cluster_split"}
+    assert reasons <= {
+        "singleton_no_signal",
+        "incoherent_cluster_dropped",
+        "incoherent_cluster_split",
+    }
     for d in result.drops:
         assert isinstance(d, DropEvent)
         assert d.name  # non-empty
