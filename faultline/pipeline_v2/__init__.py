@@ -21,6 +21,13 @@ from faultline.pipeline_v2.extractors import (
     AnchorCandidate,
     AnchorExtractor,
 )
+from faultline.pipeline_v2.run_dir import (
+    generate_run_id,
+    run_artifact_dir,
+    slug_log_dir,
+    update_latest_symlink,
+)
+from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stage_0_intake import (
     ScanContext,
     Workspace,
@@ -85,4 +92,10 @@ __all__ = [
     "stage_7_output",
     "stage_artifact_dir",
     "write_stage_artifact",
+    # Run isolation + structured logging (Sprint A0)
+    "StageLogger",
+    "generate_run_id",
+    "run_artifact_dir",
+    "slug_log_dir",
+    "update_latest_symlink",
 ]

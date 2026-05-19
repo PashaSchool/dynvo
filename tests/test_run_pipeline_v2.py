@@ -133,9 +133,16 @@ def test_run_pipeline_v2_end_to_end_no_llm(
     assert data["scan_meta"]["pipeline_version"] == "v2"
     assert data["scan_meta"]["stack"] == "next-app-router"
 
-    # Stage artifacts were written for stages 0..7.
-    artifact_dir = fake_home / ".faultline" / "logs" / "demo-app"
-    assert artifact_dir.is_dir()
+    # Stage artifacts were written for stages 0..7 under the run dir.
+    # Sprint A0: per-run isolation puts artifacts under
+    # ~/.faultline/logs/<slug>/<run_id>/, with a `latest` symlink at
+    # the slug-dir level for stable replay paths.
+    slug_dir = fake_home / ".faultline" / "logs" / "demo-app"
+    assert slug_dir.is_dir()
+    assert result["run_id"], "scan_meta.run_id must be populated"
+    run_dir = slug_dir / result["run_id"]
+    assert run_dir.is_dir(), f"run dir missing: {run_dir}"
+
     expected = {
         "00-stage-intake.json",
         "01-stage-extractors.json",
@@ -146,8 +153,22 @@ def test_run_pipeline_v2_end_to_end_no_llm(
         "06-stage-metrics.json",
         "07-stage-output.json",
     }
-    found = {p.name for p in artifact_dir.iterdir()}
+    found = {p.name for p in run_dir.iterdir()}
     assert expected.issubset(found), f"missing: {expected - found}"
+
+    # `latest` symlink resolves to the run dir.
+    latest = slug_dir / "latest"
+    assert latest.is_symlink(), "latest symlink must exist"
+    assert (latest / "00-stage-intake.json").is_file()
+
+    # Per-stage structured logs land next to the JSON artifacts.
+    for stage_num, stage_name in (
+        (0, "intake"), (1, "extractors"), (2, "reconcile"),
+        (3, "flows"), (4, "residual"), (5, "postprocess"),
+        (6, "metrics"), (7, "output"),
+    ):
+        log_path = run_dir / f"{stage_num:02d}-stage-{stage_name}.log"
+        assert log_path.is_file(), f"missing stage log: {log_path}"
 
 
 def test_run_pipeline_v2_emits_high_fallback_warning(

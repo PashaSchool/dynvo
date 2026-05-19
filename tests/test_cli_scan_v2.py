@@ -27,6 +27,7 @@ def test_scan_v2_help_lists_flags() -> None:
     assert "--llm-reconcile" in out
     assert "--days" in out
     assert "--output" in out
+    assert "--run-id" in out
 
 
 def test_scan_v2_nonexistent_dir_exits_with_2(tmp_path: Path) -> None:
@@ -47,7 +48,7 @@ def test_scan_v2_invokes_orchestrator_with_resolved_model(
 
     captured: dict[str, object] = {}
 
-    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile):
+    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile, run_id=None):
         captured["model"] = model
         captured["days"] = days
         captured["llm_reconcile"] = llm_reconcile
@@ -84,7 +85,7 @@ def test_scan_v2_propagates_warnings(
     repo = tmp_path / "demo"
     repo.mkdir()
 
-    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile):
+    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile, run_id=None):
         return {
             "path": str(tmp_path / "fm.json"),
             "stack": "fastapi",
@@ -111,7 +112,7 @@ def test_scan_v2_explicit_output_path_resolved(
 
     captured: dict[str, object] = {}
 
-    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile):
+    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile, run_id=None):
         captured["out_path"] = out_path
         return {
             "path": str(target),
@@ -128,3 +129,37 @@ def test_scan_v2_explicit_output_path_resolved(
     result = runner.invoke(app, ["scan-v2", str(repo), "--output", str(target)])
     assert result.exit_code == 0
     assert captured["out_path"] == target.resolve()
+
+
+def test_scan_v2_run_id_flag_passed_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--run-id baseline`` is forwarded to the orchestrator verbatim."""
+    repo = tmp_path / "demo"
+    repo.mkdir()
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(
+        repo_path, *, model, days, out_path, llm_reconcile, run_id=None,
+    ):
+        captured["run_id"] = run_id
+        return {
+            "path": str(tmp_path / "fm.json"),
+            "run_id": run_id,
+            "stack": None,
+            "cost_usd": 0.0,
+            "calls": 0,
+            "elapsed_sec": 0.0,
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        "faultline.pipeline_v2.run.run_pipeline_v2", _fake_run,
+    )
+    result = runner.invoke(
+        app, ["scan-v2", str(repo), "--run-id", "baseline"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["run_id"] == "baseline"
+    assert "baseline" in result.stdout
