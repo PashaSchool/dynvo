@@ -70,6 +70,12 @@ class ScanContext:
     filesystem or re-reading git. Workspaces is populated only when
     ``monorepo`` is True; single-app repos get ``workspaces=None``
     and ``stack`` on the context itself.
+
+    ``run_id`` and ``run_dir`` isolate every scan run on disk so
+    consecutive runs of the same repo don't overwrite each other's
+    artifacts. The orchestrator (or a CLI override) assigns them;
+    Stage 0 populates them with sensible defaults so tests + ad-hoc
+    callers also get isolation without extra plumbing.
     """
 
     repo_path: Path
@@ -82,6 +88,11 @@ class ScanContext:
     # so we can debug stack misdetections without re-running.
     stack_signals: list[str] = field(default_factory=list)
     workspace_manager: str | None = None  # "pnpm" / "turbo" / "cargo" / etc.
+    # Per-run isolation. ``run_id`` is the directory name under
+    # ``~/.faultline/logs/<slug>/<run_id>/``; ``run_dir`` is the
+    # resolved absolute path (cached so stages don't recompute).
+    run_id: str | None = None
+    run_dir: Path | None = None
 
 
 # ── Stack detection ─────────────────────────────────────────────────────────
@@ -381,6 +392,7 @@ def stage_0_intake(
     *,
     days: int = 365,
     skip_git: bool = False,
+    run_id: str | None = None,
 ) -> ScanContext:
     """Run Stage 0 against ``repo_path`` and return a ``ScanContext``.
 
@@ -391,6 +403,10 @@ def stage_0_intake(
         skip_git: When True, skip ``load_repo`` / ``get_commits`` /
             ``get_tracked_files`` and walk the filesystem instead.
             Used by tests that build fixture repos without ``git init``.
+        run_id: Override the auto-generated run id. When ``None``,
+            Stage 0 generates ``<utc-ts>-<sha8>`` and creates
+            ``~/.faultline/logs/<slug>/<run_id>/``. CLI users pass
+            ``--run-id baseline`` to label A/B experiment runs.
     """
     repo_path = Path(repo_path).resolve()
     if not repo_path.is_dir():
@@ -403,6 +419,20 @@ def stage_0_intake(
         repo = load_repo(str(repo_path))
         tracked_files = get_tracked_files(repo)
         commits = get_commits(repo, days=days)
+
+    # Run-id assignment lives here (Stage 0 is the only place that
+    # owns "this run started"). Import lazily to keep the stage's
+    # legacy callers free of a new transitive dep.
+    from faultline.pipeline_v2.run_dir import (
+        generate_run_id,
+        run_artifact_dir,
+        sanitize_run_id,
+    )
+
+    resolved_run_id = (
+        sanitize_run_id(run_id) if run_id else generate_run_id(repo_path)
+    )
+    resolved_run_dir = run_artifact_dir(repo_path, resolved_run_id)
 
     # Detect monorepo + enumerate workspaces (reuses analyzer/workspace).
     ws_info = detect_workspace(str(repo_path), tracked_files)
@@ -422,6 +452,8 @@ def stage_0_intake(
             commits=commits,
             stack_signals=root_signals,
             workspace_manager=ws_info.manager,
+            run_id=resolved_run_id,
+            run_dir=resolved_run_dir,
         )
 
     stack, signals = detect_stack(repo_path, tracked_files)
@@ -434,6 +466,8 @@ def stage_0_intake(
         commits=commits,
         stack_signals=signals,
         workspace_manager=None,
+        run_id=resolved_run_id,
+        run_dir=resolved_run_dir,
     )
 
 

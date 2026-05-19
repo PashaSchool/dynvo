@@ -55,7 +55,14 @@ def _repo_slug(repo_path: Path | str) -> str:
 
 
 def stage_artifact_dir(repo_path: Path | str) -> Path:
-    """Return the per-slug artifact directory, creating it if needed."""
+    """Return the per-slug artifact directory, creating it if needed.
+
+    This is the *parent* of all per-run directories — i.e.
+    ``~/.faultline/logs/<slug>/``. Callers writing stage artifacts
+    for a specific run should pass ``ctx.run_dir`` (or call
+    ``write_stage_artifact(..., run_dir=ctx.run_dir)``) so the
+    snapshot lands under the run-id subdir.
+    """
     slug = _repo_slug(repo_path)
     target = Path.home() / ".faultline" / "logs" / slug
     target.mkdir(parents=True, exist_ok=True)
@@ -67,21 +74,29 @@ def write_stage_artifact(
     stage_index: int,
     stage_name: str,
     payload: dict[str, Any],
+    *,
+    run_dir: Path | None = None,
 ) -> Path:
     """Write a single stage's output snapshot to disk for replay/debug.
 
     Args:
-        repo_path: scan target — used for the slug directory.
+        repo_path: scan target — used for the slug directory when
+            ``run_dir`` is not provided.
         stage_index: 0..7, matches the pipeline stage number.
         stage_name: short kebab slug ("intake", "extractors", ...).
         payload: a JSON-serialisable dict. Datetimes are stringified
             via the default callable.
+        run_dir: when provided, the artifact lives under this dir
+            (typically ``ctx.run_dir`` — i.e.
+            ``~/.faultline/logs/<slug>/<run_id>/``). When ``None``
+            we fall back to the legacy flat layout for back-compat.
 
     Returns:
         The full path the artifact was written to. Errors are caught
         and logged (debug-only logging should never break a scan).
     """
-    target_dir = stage_artifact_dir(repo_path)
+    target_dir = Path(run_dir) if run_dir is not None else stage_artifact_dir(repo_path)
+    target_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{stage_index:02d}-stage-{stage_name}.json"
     path = target_dir / fname
     try:
@@ -170,6 +185,7 @@ def stage_7_output(
             "feature_names": [f.name for f in features],
             "scan_meta": scan_meta,
         },
+        run_dir=ctx.run_dir,
     )
 
     written = write_feature_map(fm, str(out_path) if out_path else None)
