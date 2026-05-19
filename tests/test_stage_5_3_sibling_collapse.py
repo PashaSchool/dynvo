@@ -296,6 +296,34 @@ def test_anchor_name_matches_synth_label_absorbs_rest() -> None:
 # ── Disjoint dirs don't cross-collapse ────────────────────────────────────
 
 
+def test_label_collision_across_parents_is_disambiguated() -> None:
+    """Two parents that synthesize to the same base label (e.g.
+    ``backend/src/server/routes/v1`` and ``backend/src/ee/routes/v1``
+    both → ``v1-routes``) must produce two DISTINCT collapsed
+    feature names (``server-v1-routes`` and ``ee-v1-routes``)."""
+    features = [
+        # Parent A: backend/src/server/routes/v1
+        _feat("email", ["backend/src/server/routes/v1/email-router.ts"]),
+        _feat("auth", ["backend/src/server/routes/v1/auth-router.ts"]),
+        _feat("secrets", ["backend/src/server/routes/v1/secrets-router.ts"]),
+        # Parent B: backend/src/ee/routes/v1
+        _feat("billing", ["backend/src/ee/routes/v1/billing-router.ts"]),
+        _feat("oauth", ["backend/src/ee/routes/v1/oauth-router.ts"]),
+        _feat("revoke", ["backend/src/ee/routes/v1/revoke-router.ts"]),
+    ]
+    result = collapse_sibling_routes(features)
+    assert len(result.collapse_groups) == 2
+    labels = {g.parent_label for g in result.collapse_groups}
+    # Both labels are unique — collision disambiguated by prepending
+    # the upstream-of-container segment (server / ee).
+    assert len(labels) == 2
+    assert "server-v1-routes" in labels
+    assert "ee-v1-routes" in labels
+    # And no duplicate-named features in survivors.
+    names = [f.name for f in result.features]
+    assert len(names) == len(set(names))
+
+
 def test_two_separate_dirs_each_collapse_independently() -> None:
     features = [
         # Dir 1: backend/routes/v1
@@ -361,6 +389,60 @@ def test_merged_feature_unions_paths_and_authors() -> None:
 
 
 # ── Determinism ───────────────────────────────────────────────────────────
+
+
+def test_sources_route_only_collapses_even_when_medium_confidence() -> None:
+    """Source-based guard: features whose only source is ``route`` /
+    ``route-fastify`` collapse regardless of confidence. This is the
+    infisical-shape case — S3.1's Fastify extractor emits 400+
+    medium-confidence URL-slug singletons; preserving on confidence
+    alone would block the collapse this stage was designed for."""
+    features = [
+        _feat("email", ["backend/server/routes/v1/email-router.ts"]),
+        _feat("secret", ["backend/server/routes/v1/secret-router.ts"]),
+        _feat("identity", ["backend/server/routes/v1/identity-router.ts"]),
+        _feat("audit", ["backend/server/routes/v1/audit-router.ts"]),
+    ]
+    confidence = {n: "medium" for n in ("email", "secret", "identity", "audit")}
+    sources = {n: ["route-fastify"] for n in ("email", "secret", "identity", "audit")}
+    result = collapse_sibling_routes(
+        features,
+        confidence_by_name=confidence,
+        sources_by_name=sources,
+    )
+    assert len(result.collapse_groups) == 1
+    assert result.collapse_groups[0].member_count == 4
+    assert {f.name for f in result.features} == {"v1-routes"}
+
+
+def test_sources_package_anchor_preserved_among_route_singletons() -> None:
+    """A feature sourced from ``package`` (e.g. Resend → ``email``) is
+    a true product anchor and must be preserved even when it lives
+    alongside N route singletons in the same dir."""
+    features = [
+        _feat("email", ["backend/server/routes/v1/email-router.ts"]),
+        _feat("secret", ["backend/server/routes/v1/secret-router.ts"]),
+        _feat("identity", ["backend/server/routes/v1/identity-router.ts"]),
+        _feat("audit", ["backend/server/routes/v1/audit-router.ts"]),
+    ]
+    confidence = {n: "medium" for n in ("email", "secret", "identity", "audit")}
+    # email has BOTH package AND route source — a real anchor.
+    sources = {
+        "email": ["package", "route-fastify"],
+        "secret": ["route-fastify"],
+        "identity": ["route-fastify"],
+        "audit": ["route-fastify"],
+    }
+    result = collapse_sibling_routes(
+        features,
+        confidence_by_name=confidence,
+        sources_by_name=sources,
+    )
+    assert len(result.collapse_groups) == 1
+    assert result.collapse_groups[0].member_count == 3  # email preserved
+    names = {f.name for f in result.features}
+    assert "email" in names
+    assert "v1-routes" in names
 
 
 def test_idempotent_on_collapsed_input() -> None:
