@@ -316,6 +316,33 @@ def test_domain_noun_refines_workspace_label(tmp_path: Path) -> None:
     assert telemetry["product_clusterer_votes_cast"]["workspace+domain"] == 1
 
 
+def test_domain_noun_fires_on_flat_repo_layout(tmp_path: Path) -> None:
+    """Non-monorepo repos still get domain-noun labelling.
+
+    Papermark-shape: no ``apps/<X>/`` workspace prefix. The flat-layout
+    branch runs domain-noun from the repo root with prefix="" and emits
+    a workspace+domain vote when a route group or first-non-generic
+    dir token wins.
+    """
+    repo = tmp_path
+    for p in (
+        "app/(documents)/page.tsx",
+        "app/(documents)/upload/page.tsx",
+        "app/(documents)/share/page.tsx",
+    ):
+        _write(repo, p, "// empty")
+
+    feat = _feat("documents-ui", paths=[
+        "app/(documents)/page.tsx",
+        "app/(documents)/upload/page.tsx",
+        "app/(documents)/share/page.tsx",
+    ])
+
+    products, mapping, telemetry = run_product_clusterer(_ctx(repo), [feat])
+    assert mapping["documents-ui"] == ("Documents",)
+    assert telemetry["product_clusterer_votes_cast"]["workspace+domain"] == 1
+
+
 def test_domain_noun_beats_dep_anchor_when_higher_confidence(tmp_path: Path) -> None:
     """Spec special case: domain-noun conf 0.85 beats dep-anchor conf 0.75."""
     repo = tmp_path
