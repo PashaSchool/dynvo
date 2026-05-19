@@ -265,13 +265,16 @@ def stage_5_5_bipartite(
                 ),
             )
             if log is not None:
+                # ``reason`` is the first positional param of
+                # StageLogger.info — pass the structured edge-reason
+                # under a different key so it lands in ``**extra``.
                 log.info(
                     f"edge secondary feature={sec} flow_id={flow.id} "
                     f"reason=path-overlap",
                     feature=sec,
                     flow_id=flow.id,
                     edge_type="secondary",
-                    reason="path-overlap",
+                    edge_reason="path-overlap",
                 )
 
         if log is not None:
