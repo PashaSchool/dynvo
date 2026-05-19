@@ -285,6 +285,85 @@ def test_merge_small_emissions_coalesce_even_if_disjoint() -> None:
     assert schemas[0].name == "user"
 
 
+def test_leftover_pass_picks_up_uncovered_packages(tmp_path: Path) -> None:
+    """Files outside any declared workspace should still get extracted.
+
+    Simulates the pnpm-workspace glob-expansion gap where Stage 0
+    only enumerated ``apps/*`` workspaces; here we manually construct
+    a ctx with declared workspaces that DON'T include the schema
+    files, then assert the leftover pass picks them up.
+    """
+    # Layout: apps/web/ is declared; packages/db/ exists with
+    # drizzle schema but is NOT declared as a workspace.
+    apps_web = tmp_path / "apps" / "web"
+    apps_web.mkdir(parents=True)
+    (apps_web / "package.json").write_text(json.dumps({
+        "name": "web",
+        "dependencies": {"next": "^14"},
+    }))
+    (apps_web / "app").mkdir()
+    (apps_web / "app" / "page.tsx").write_text("export default function P(){}")
+
+    db = tmp_path / "packages" / "db"
+    db.mkdir(parents=True)
+    (db / "package.json").write_text(json.dumps({
+        "name": "db",
+        "dependencies": {"drizzle-orm": "^0.30.0"},
+    }))
+    schema_dir = db / "src" / "schema"
+    schema_dir.mkdir(parents=True)
+    (schema_dir / "users.ts").write_text(
+        "export const users = pgTable('users', {});\n"
+    )
+    (schema_dir / "orders.ts").write_text(
+        "export const orders = pgTable('orders', {});\n"
+    )
+
+    # Construct a ctx with ONLY apps/web declared (mirrors the
+    # Stage-0-bug-on-openstatus state).
+    tracked = [
+        "apps/web/package.json",
+        "apps/web/app/page.tsx",
+        "packages/db/package.json",
+        "packages/db/src/schema/users.ts",
+        "packages/db/src/schema/orders.ts",
+    ]
+    ws_files = ["apps/web/package.json", "apps/web/app/page.tsx"]
+    ctx = ScanContext(
+        repo_path=tmp_path,
+        stack="js-generic",
+        monorepo=True,
+        workspaces=[
+            Workspace(
+                name="web", path="apps/web",
+                package_json=json.loads((apps_web / "package.json").read_text()),
+                stack="next-app-router",
+                files=ws_files,
+            ),
+        ],
+        tracked_files=tracked,
+        commits=[],
+        workspace_manager="pnpm",
+        audited_stack="monorepo-polyglot",
+        secondary_stacks=("next-app-router",),
+        auditor_confidence=0.9,
+    )
+    result = run_stage_1_per_workspace(ctx)
+    assert result.leftover_files_scanned > 0, (
+        "expected leftover files for packages/db/* not covered by web workspace"
+    )
+    # The schema extractor should have found the drizzle tables in
+    # the leftover pass.
+    schema_anchors = result.stage1_out.get("schema", [])
+    schema_names = {a.name for a in schema_anchors}
+    assert "users" in schema_names or "orders" in schema_names, (
+        f"expected drizzle anchors from leftover pass, got {schema_names}"
+    )
+    # And the leftover scope should appear in the reports.
+    report_names = {r.name for r in result.workspaces_processed}
+    assert "__leftover__" in report_names
+
+
 def test_telemetry_reports_per_workspace_breakdown(tmp_path: Path) -> None:
     _make_polyglot_repo(tmp_path)
     ctx = stage_0_intake(tmp_path, skip_git=True)
