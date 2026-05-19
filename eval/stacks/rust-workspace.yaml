@@ -1,0 +1,37 @@
+stack: rust-workspace
+display_name: Cargo Workspace (multi-crate)
+
+# Activation: fires when Stage 0.5 auditor classified the repo as
+# rust-workspace, OR when Stage 0 saw a Rust repo AND the root
+# Cargo.toml contains a [workspace] section. Single-crate Rust
+# projects (no [workspace]) get no anchors from this extractor.
+detection:
+  any:
+    - audited_stack_equals: "rust-workspace"
+    - stack_equals: "rust"  # qualified at runtime by checking for [workspace]
+
+root_manifest: "Cargo.toml"
+workspace_section: "workspace"
+members_key: "members"
+member_manifest: "{member_dir}/Cargo.toml"
+member_name_key: "name"   # under [package]
+
+# When a member entry is a glob (e.g. ``crates/*``), expand against
+# the tracked filesystem.
+glob_expansion: true
+
+# Confidence — Cargo workspace membership is authoritative.
+confidence:
+  manifest_member: 0.95
+
+# Path globs collected per crate. We claim every source file under
+# the crate dir; Stage 2 reconciliation handles overlap with other
+# extractors via the standard priority rule.
+source_file_suffixes:
+  - ".rs"
+  - ".toml"
+
+# Excludes within a crate — never claim build output or test fixtures.
+excludes:
+  - "target/"
+  - "tests/fixtures/"

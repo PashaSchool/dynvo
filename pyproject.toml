@@ -34,6 +34,10 @@ dependencies = [
     "rich>=13.7.0",
     "pydantic>=2.5.0",
     "anthropic>=0.25.0",
+    # Stack pattern YAML loader — used by Stage 1 stack-gated extractors
+    # (go_router, rust_workspace, python_library) to read patterns
+    # from eval/stacks/*.yaml.
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -64,11 +68,15 @@ faultlines-mcp = "faultline.mcp_server:main"
 # module that defines an ``AnchorExtractor``-compatible class and
 # declaring an entry-point in the same group.
 [project.entry-points."faultlines.extractors"]
-route   = "faultline.pipeline_v2.extractors.route:RouteFileExtractor"
-mvc     = "faultline.pipeline_v2.extractors.mvc:MVCControllerExtractor"
-schema  = "faultline.pipeline_v2.extractors.schema:SchemaDomainExtractor"
-package = "faultline.pipeline_v2.extractors.package:PackageAnchorExtractor"
-config  = "faultline.pipeline_v2.extractors.config:ConfigAsProductExtractor"
+route          = "faultline.pipeline_v2.extractors.route:RouteFileExtractor"
+mvc            = "faultline.pipeline_v2.extractors.mvc:MVCControllerExtractor"
+schema         = "faultline.pipeline_v2.extractors.schema:SchemaDomainExtractor"
+package        = "faultline.pipeline_v2.extractors.package:PackageAnchorExtractor"
+config         = "faultline.pipeline_v2.extractors.config:ConfigAsProductExtractor"
+# Sprint A4 — stack-gated extractors.
+go-router      = "faultline.pipeline_v2.extractors.go_router:GoRouterExtractor"
+rust-workspace = "faultline.pipeline_v2.extractors.rust_workspace:RustWorkspaceExtractor"
+python-library = "faultline.pipeline_v2.extractors.python_library:PythonLibraryExtractor"
 
 [tool.hatch.envs.default]
 dependencies = [
