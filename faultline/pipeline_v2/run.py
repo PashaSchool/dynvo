@@ -78,7 +78,9 @@ from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
 from faultline.pipeline_v2.stage_2_reconcile import stage_2_reconcile
 from faultline.pipeline_v2.stage_3_flows import stage_3_flows
 from faultline.pipeline_v2.stage_4_residual import stage_4_residual
-from faultline.pipeline_v2.stage_5_postprocess import stage_5_from_stage3_result
+from faultline.pipeline_v2.stage_5_postprocess import (
+    stage_5_from_stage3_result_with_telemetry,
+)
 from faultline.pipeline_v2.stage_6_metrics import stage_6_metrics
 from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
@@ -100,7 +102,10 @@ MODEL_ALIASES: dict[str, str] = {
 }
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-LLM_FALLBACK_WARN_THRESHOLD = 0.30
+# Sprint A1: the warn threshold is HALF, not the old 30% cap. We do
+# NOT truncate when this trips — we just nudge "you may want an
+# extractor for stack X". Quality is enforced downstream in Stage 5.
+LLM_FALLBACK_WARN_THRESHOLD = 0.50
 
 
 def resolve_model(name: str) -> str:
@@ -343,16 +348,27 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
-    # ── Stage 5 — post-process (naming discipline) ─────────────────
+    # ── Stage 5 — post-process (naming discipline + A1 validation) ─
     with StageLogger(run_dir, 5, "postprocess") as log5:
-        features = stage_5_from_stage3_result(
+        stage5_result = stage_5_from_stage3_result_with_telemetry(
             deterministic=_isolate(deterministic_features),
             stage3_features_with_flows=_isolate(stage3.features_with_flows),
             residual=_isolate(residual_features),
             ctx=_isolate(ctx),
         )
+        features = stage5_result.features
+        validation_drops = stage5_result.validation_drops
+        for name, reason in stage5_result.drop_log:
+            log5.drop(name, reason)
         for f in features:
             log5.emit(f.name, "survived naming discipline")
+        if any(v > 0 for v in validation_drops.as_dict().values()):
+            log5.info(
+                f"validation drops: filesystem_missing="
+                f"{validation_drops.filesystem_missing} "
+                f"anchor_duplicate={validation_drops.anchor_duplicate} "
+                f"junk_name={validation_drops.junk_name}",
+            )
         write_stage_artifact(
             ctx.repo_path,
             stage_index=5,
@@ -360,6 +376,7 @@ def run_pipeline_v2(
             payload={
                 "feature_count": len(features),
                 "feature_names": [f.name for f in features],
+                "validation_drops": validation_drops.as_dict(),
             },
             run_dir=run_dir,
         )
@@ -386,12 +403,31 @@ def run_pipeline_v2(
         )
 
     # ── Scan meta assembly ─────────────────────────────────────────
+    # Count fallback survivors by NAME match against the post-A1-validation
+    # residual list (stage5 stripped FS-missing + anchor-dup before naming
+    # discipline; some may still have been dropped by Fix A/B/C/D).
+    pre_naming_fallback_names = {
+        name for (name, reason) in stage5_result.drop_log
+        if reason.startswith("junk_name:")
+    }
+    # Fallback features that BOTH survived A1 validation AND naming discipline.
+    survived_fallback_names = (
+        {f.name for f in residual_features}
+        - pre_naming_fallback_names
+        # Also subtract any A1-validation drops:
+        - {
+            name for (name, reason) in stage5_result.drop_log
+            if not reason.startswith("junk_name:")
+        }
+    )
+    final_feature_names = {f.name for f in features}
+    fallback_count = len(survived_fallback_names & final_feature_names)
     total_features = len(features)
-    fallback_count = len(residual_features)
-    llm_fallback_pct = (
+    deterministic_count = max(total_features - fallback_count, 0)
+
+    llm_share = (
         fallback_count / total_features if total_features > 0 else 0.0
     )
-    deterministic_count = max(total_features - fallback_count, 0)
     extractor_coverage_pct = (
         deterministic_count / total_features if total_features > 0 else 0.0
     )
@@ -399,10 +435,15 @@ def run_pipeline_v2(
     warnings: list[str] = []
     warnings.extend(stage3.warnings)
     warnings.extend(stage4.warnings)
-    if llm_fallback_pct > LLM_FALLBACK_WARN_THRESHOLD:
+    if llm_share > LLM_FALLBACK_WARN_THRESHOLD:
+        # Sprint A1: informational nudge only. The old 30%-share cap
+        # was REMOVED; we no longer truncate Stage 4 output. This
+        # warning tells the operator "you're heavily relying on the
+        # LLM for this stack — write an extractor".
         warnings.append(
-            f"LLM-fallback handled {llm_fallback_pct * 100:.0f}% of features; "
-            f"consider adding a custom extractor for stack {ctx.stack}."
+            f"scan_meta.llm_share = {llm_share:.2f} — fallback exceeds "
+            f"half of features; consider adding extractor for stack="
+            f"{ctx.stack}."
         )
 
     elapsed = round(time.monotonic() - t0, 2)
@@ -419,7 +460,11 @@ def run_pipeline_v2(
         "model": model_id,
         "extractor_hits": extractor_hits,
         "extractor_coverage_pct": round(extractor_coverage_pct, 3),
-        "llm_fallback_pct": round(llm_fallback_pct, 3),
+        # ``llm_fallback_pct`` kept for backwards-compat with existing
+        # dashboards. ``llm_share`` is the Sprint A1 canonical name.
+        "llm_fallback_pct": round(llm_share, 3),
+        "llm_share": round(llm_share, 3),
+        "validation_drops": validation_drops.as_dict(),
         "deterministic_feature_count": deterministic_count,
         "residual_feature_count": fallback_count,
         "warnings": warnings,

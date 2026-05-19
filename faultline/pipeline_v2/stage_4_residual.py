@@ -2,16 +2,20 @@
 
 For files NOT attributed to any Stage 2 deterministic feature, group
 them into 1–10 additional ``low``-confidence developer features via a
-trimmed Haiku call. Hard caps protect cost and recall integrity:
+trimmed Haiku call. Hard caps protect cost integrity:
 
   - ≤200 paths per LLM chunk (200, 200, ... over the residual list).
   - Max 5 chunks per scan.
   - Max $0.30 total LLM cost (CostTracker.max_cost gate).
-  - After concatenation, residual features must not exceed 30% of the
-    total feature count; over-cap, we keep the highest-confidence
-    subset and emit a warning.
   - Each emitted name must obey the same naming-discipline filter as
     Stage 5 (kebab, no folder paths, no Title Case, non-empty).
+
+Stage 4 EMITS EVERY surviving feature; the legacy 30%-of-total share
+cap was a blunt instrument that floored to 0 when deterministic=0 and
+silently zeroed out otherwise-valid scans (Sprint A1 removed it). The
+quality gate now lives downstream in Stage 5 (path-existence,
+anchor-Jaccard dedup, naming discipline). Stage 4 just reports
+``llm_share`` as informational telemetry.
 
 Stage 4 is intentionally NOT a call to ``sonnet_scanner.deep_scan``:
 that orchestration shell carries every legacy concern (workspace
@@ -44,7 +48,6 @@ MAX_PATHS_PER_CHUNK = 200
 MAX_CHUNKS = 5
 DEFAULT_COST_CAP_USD = 0.30
 MAX_FEATURES_PER_CHUNK = 10
-LLM_FALLBACK_SHARE_CAP = 0.30  # ≤30% of total features may come from Stage 4
 
 # Naming-discipline pattern matches the Stage 5 ``_slugify_names`` rule:
 # starts with lowercase alnum, then lowercase alnum + hyphens. No
@@ -267,54 +270,6 @@ def _build_developer_features(
     return accepted, rejected
 
 
-# ── 30% LLM-fallback share cap ─────────────────────────────────────────────
-
-
-def _enforce_share_cap(
-    residual: list[DeveloperFeature],
-    deterministic_count: int,
-    *,
-    cap_ratio: float = LLM_FALLBACK_SHARE_CAP,
-) -> tuple[list[DeveloperFeature], str | None]:
-    """If residual features would exceed ``cap_ratio`` of the total set,
-    keep only the largest-by-path-count subset that fits.
-
-    Returns ``(kept, warning_or_None)``.
-    """
-    if not residual:
-        return residual, None
-    total_with = deterministic_count + len(residual)
-    if total_with == 0:
-        return residual, None
-    current_share = len(residual) / total_with
-    if current_share <= cap_ratio:
-        return residual, None
-
-    # Solve for max_k: k / (deterministic + k) ≤ cap_ratio
-    # ⟹ k ≤ cap_ratio * deterministic / (1 - cap_ratio)
-    if cap_ratio >= 1.0:
-        return residual, None
-    max_k = int(cap_ratio * deterministic_count / (1.0 - cap_ratio))
-    max_k = max(max_k, 0)
-    if max_k >= len(residual):
-        return residual, None
-
-    # Rank by paths-count descending so the densest fallback features
-    # survive; tie-break alphabetically for determinism.
-    ranked = sorted(
-        residual,
-        key=lambda f: (-len(f.paths), f.name),
-    )
-    kept = ranked[:max_k]
-    dropped = len(residual) - len(kept)
-    warning = (
-        f"stage_4_residual: dropped {dropped} fallback features to keep "
-        f"share ≤ {int(cap_ratio * 100)}% "
-        f"({deterministic_count} deterministic + {len(kept)} fallback)"
-    )
-    return kept, warning
-
-
 # ── Public entry point ────────────────────────────────────────────────────
 
 
@@ -436,18 +391,19 @@ def stage_4_residual(
         raw_features_all, allowed_paths_set,
     )
 
-    # Enforce 30% LLM-fallback share cap against deterministic features.
-    deterministic_count = len(existing_features)
-    capped, cap_warning = _enforce_share_cap(accepted, deterministic_count)
-    if cap_warning:
-        warnings.append(cap_warning)
+    # Sprint A1: NO share cap. Stage 4 emits every surviving fallback
+    # feature; downstream quality gates (filesystem-existence +
+    # anchor-Jaccard dedup) live in Stage 5. ``existing_features`` is
+    # retained in the signature for orchestrator symmetry / future use
+    # but no longer drives a truncation step.
+    _ = existing_features
 
     if cost_aborted:
         # already logged above; nothing more to do
         pass
 
     return Stage4Result(
-        residual_features=capped,
+        residual_features=accepted,
         cost_usd=tracker.total_cost_usd,
         llm_calls=llm_calls,
         warnings=warnings,
