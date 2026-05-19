@@ -248,27 +248,40 @@ def _scoped_ctx(ctx: ScanContext, ws: Workspace) -> ScanContext:
 
     The scoped context tells the extractors:
       - ``stack`` is the workspace's own inferred stack
-      - ``monorepo`` is False (don't try to recurse)
-      - ``workspaces`` is None
-      - ``tracked_files`` is the subset under the workspace path
-      - ``audited_stack`` is cleared (the workspace's stack is its
-        own authority; we don't want auditor hints from the monorepo
-        level — e.g. "monorepo-polyglot" — bleeding into per-extractor
-        activation checks)
+      - ``monorepo`` is True with a SINGLE-workspace list so
+        existing extractors that branch on ``ctx.monorepo and
+        ctx.workspaces`` (route, package) read THIS workspace's
+        manifest + files, not the root.
+      - ``tracked_files`` is the subset under the workspace path —
+        also populated on the singleton Workspace.files so
+        per-workspace extractors that iterate ctx.workspaces see
+        consistent file scope.
+      - ``audited_stack`` carries the workspace's own stack so
+        gate-by-audited-stack extractors (rust-workspace,
+        python-library, go-router) activate when appropriate.
     """
     files = list(ws.files) if ws.files else [
         f for f in ctx.tracked_files
         if f == ws.path or f.startswith(ws.path.rstrip("/") + "/")
     ]
+    # Ensure workspace carries the file list for downstream extractors.
+    if not ws.files:
+        ws = Workspace(
+            name=ws.name,
+            path=ws.path,
+            package_json=ws.package_json,
+            stack=ws.stack,
+            files=files,
+        )
     return ScanContext(
         repo_path=ctx.repo_path,
         stack=ws.stack,
-        monorepo=False,
-        workspaces=None,
+        monorepo=True,
+        workspaces=[ws],
         tracked_files=files,
         commits=ctx.commits,
         stack_signals=[f"workspace={ws.name} stack={ws.stack}"],
-        workspace_manager=None,
+        workspace_manager=ctx.workspace_manager,
         run_id=ctx.run_id,
         run_dir=ctx.run_dir,
         audited_stack=ws.stack,  # treat workspace stack as primary
@@ -398,6 +411,7 @@ class PerWorkspaceResult:
     workspaces_processed: list[WorkspaceExtractionReport]
     workspaces_used: list[Workspace]
     synthesised_workspaces: bool
+    leftover_files_scanned: int = 0
 
 
 def run_stage_1_per_workspace(
@@ -440,6 +454,20 @@ def run_stage_1_per_workspace(
             workspaces_used=[],
             synthesised_workspaces=False,
         )
+
+    # Compute LEFTOVER files — tracked_files not under any workspace.
+    # These need a separate pass so we don't lose anchors for code
+    # that lives outside the declared workspace tree (e.g.
+    # ``packages/db/`` when the workspace list only enumerated
+    # ``apps/*`` because pnpm-workspace.yaml's ``packages/**/*`` glob
+    # wasn't fully expanded by Stage 0).
+    ws_prefixes = tuple(
+        (w.path.rstrip("/") + "/") for w in workspaces if w.path
+    )
+    leftover_files = [
+        f for f in ctx.tracked_files
+        if not any(f == p[:-1] or f.startswith(p) for p in ws_prefixes)
+    ]
 
     per_ws_results: list[tuple[str, dict[str, list[AnchorCandidate]]]] = []
     reports: list[WorkspaceExtractionReport] = []
@@ -487,6 +515,58 @@ def run_stage_1_per_workspace(
             ),
         )
 
+    # ── LEFTOVER pass: files outside any workspace ──
+    # Run extractors against a ScanContext whose tracked_files is the
+    # leftover set, with ``stack`` cleared and ``monorepo=False``.
+    # We treat the leftover scope as a synthetic ``__leftover__``
+    # workspace so its emissions go through the same merge logic
+    # (potential name collisions with workspace-emitted anchors are
+    # coalesced).
+    if leftover_files:
+        leftover_ctx = ScanContext(
+            repo_path=ctx.repo_path,
+            stack=ctx.stack,
+            monorepo=False,
+            workspaces=None,
+            tracked_files=leftover_files,
+            commits=ctx.commits,
+            stack_signals=["leftover scope"],
+            workspace_manager=None,
+            run_id=ctx.run_id,
+            run_dir=ctx.run_dir,
+            audited_stack=None,
+            secondary_stacks=(),
+            extractor_hints=(),
+            auditor_confidence=None,
+        )
+        leftover_out: dict[str, list[AnchorCandidate]] = {}
+        leftover_errors: dict[str, str] = {}
+        leftover_fired: list[str] = []
+        leftover_total = 0
+        for ext in extractors:
+            name, candidates, error = _safe_extract(ext, leftover_ctx)
+            if error is not None:
+                leftover_errors[name] = error
+                leftover_out[name] = []
+                continue
+            assert candidates is not None
+            leftover_out[name] = candidates
+            if candidates:
+                leftover_fired.append(name)
+                leftover_total += len(candidates)
+        if leftover_errors:
+            leftover_out["_errors"] = leftover_errors  # type: ignore[assignment]
+        per_ws_results.append(("__leftover__", leftover_out))
+        reports.append(
+            WorkspaceExtractionReport(
+                name="__leftover__",
+                path="(uncovered files)",
+                inferred_stack=None,
+                extractors_fired=leftover_fired,
+                anchors_emitted=leftover_total,
+            ),
+        )
+
     merged = _merge_anchors_across_workspaces(per_ws_results)
 
     return PerWorkspaceResult(
@@ -494,6 +574,7 @@ def run_stage_1_per_workspace(
         workspaces_processed=reports,
         workspaces_used=workspaces,
         synthesised_workspaces=synthesised,
+        leftover_files_scanned=len(leftover_files),
     )
 
 

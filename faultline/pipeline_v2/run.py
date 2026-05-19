@@ -327,6 +327,9 @@ def run_pipeline_v2(
                     r.anchors_emitted for r in pw_result.workspaces_processed
                 )
                 per_ws_telemetry["stage_1_per_workspace_skipped_global_stage_1"] = True
+                per_ws_telemetry["stage_1_per_workspace_leftover_files"] = (
+                    pw_result.leftover_files_scanned
+                )
                 log1.info(
                     f"per-workspace active: workspaces="
                     f"{len(pw_result.workspaces_used)} "

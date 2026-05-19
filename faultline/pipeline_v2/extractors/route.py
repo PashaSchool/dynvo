@@ -79,6 +79,18 @@ _STACK_ROUTING: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
                                             "+server.js", "+page.ts")),
     # Nuxt — pages/**/*.vue (Nuxt 3)
     "nuxt":            (("pages/", "src/pages/"), (".vue",)),
+    # TanStack Router — file-based routes at src/routes/**, AND many
+    # apps use src/pages/** alongside an explicit route config. Match
+    # both so polyglot frontends like infisical's TanStack+Vite app
+    # produce anchor candidates.
+    "tanstack-router": (("src/routes/", "src/pages/"),
+                        (".tsx", ".jsx", ".ts", ".js")),
+    # Generic Vite SPA — most Vite apps mount a router (TanStack /
+    # react-router) over src/pages/** or src/routes/**. We use the
+    # same convention as TanStack since the file shape is what we
+    # actually grep on.
+    "vite":            (("src/pages/", "src/routes/"),
+                        (".tsx", ".jsx", ".ts", ".js")),
 }
 
 
