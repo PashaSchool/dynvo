@@ -79,6 +79,10 @@ from faultline.pipeline_v2.stack_auditor import (
 )
 from faultline.pipeline_v2.stage_0_intake import stage_0_intake
 from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
+from faultline.pipeline_v2.stage_1_per_workspace import (
+    run_stage_1_per_workspace,
+    should_activate_per_workspace,
+)
 from faultline.pipeline_v2.stage_2_reconcile import stage_2_reconcile
 from faultline.pipeline_v2.stage_3_flows import stage_3_flows
 from faultline.pipeline_v2.stage_4_residual import stage_4_residual
@@ -275,8 +279,64 @@ def run_pipeline_v2(
         )
 
     # ── Stage 1 — extractors ────────────────────────────────────────
+    # Sprint S3 — per-workspace dispatch for polyglot monorepos.
+    # When the auditor (or per-workspace stack diversity) flags the
+    # repo as polyglot, we replace the global Stage 1 with a per-
+    # workspace pass that scopes ``tracked_files`` + ``stack`` to one
+    # workspace at a time. This unblocks NestJS+Next, Fastify+Vite,
+    # Rust-WASM+Next, etc. — repos where a single-stack global pass
+    # emits zero anchors and Stage 4 LLM-fallback synthesises 100%.
+    per_ws_active = should_activate_per_workspace(ctx)
+    per_ws_telemetry: dict[str, Any] = {
+        "stage_1_per_workspace_active": False,
+        "stage_1_per_workspace_workspaces_synthesised": False,
+        "stage_1_per_workspace_workspaces_processed": [],
+        "stage_1_per_workspace_anchors_total": 0,
+        "stage_1_per_workspace_skipped_global_stage_1": False,
+    }
     with StageLogger(run_dir, 1, "extractors") as log1:
-        stage1_out = stage_1_extractors(_isolate(ctx))
+        if per_ws_active:
+            pw_result = run_stage_1_per_workspace(_isolate(ctx))
+            if not pw_result.workspaces_used:
+                # Activation passed but no workspaces materialised
+                # (synthesis returned empty + no declared list).
+                # Fall back to the global pass so we don't lose
+                # signals altogether.
+                log1.warn(
+                    "per-workspace dispatch activated but no workspaces "
+                    "found — falling back to global Stage 1",
+                )
+                stage1_out = stage_1_extractors(_isolate(ctx))
+            else:
+                stage1_out = pw_result.stage1_out
+                per_ws_telemetry["stage_1_per_workspace_active"] = True
+                per_ws_telemetry["stage_1_per_workspace_workspaces_synthesised"] = (
+                    pw_result.synthesised_workspaces
+                )
+                per_ws_telemetry["stage_1_per_workspace_workspaces_processed"] = [
+                    {
+                        "name": r.name,
+                        "path": r.path,
+                        "inferred_stack": r.inferred_stack,
+                        "extractors_fired": list(r.extractors_fired),
+                        "anchors_emitted": r.anchors_emitted,
+                    }
+                    for r in pw_result.workspaces_processed
+                ]
+                per_ws_telemetry["stage_1_per_workspace_anchors_total"] = sum(
+                    r.anchors_emitted for r in pw_result.workspaces_processed
+                )
+                per_ws_telemetry["stage_1_per_workspace_skipped_global_stage_1"] = True
+                log1.info(
+                    f"per-workspace active: workspaces="
+                    f"{len(pw_result.workspaces_used)} "
+                    f"synthesised={pw_result.synthesised_workspaces} "
+                    f"anchors_total="
+                    f"{per_ws_telemetry['stage_1_per_workspace_anchors_total']}",
+                )
+        else:
+            stage1_out = stage_1_extractors(_isolate(ctx))
+
         extractor_hits = _extractor_hits(stage1_out)
         for name, count in extractor_hits.items():
             log1.info(f"{name}: {count} candidates", feature=None)
@@ -289,6 +349,7 @@ def run_pipeline_v2(
             payload={
                 "extractor_hits": extractor_hits,
                 "errors": stage1_out.get("_errors", {}),
+                "per_workspace": per_ws_telemetry,
             },
             run_dir=run_dir,
         )
@@ -681,6 +742,8 @@ def run_pipeline_v2(
         **(stage3.reach_telemetry or {}),
         # Sprint B3 — Layer 2 product clusterer telemetry (deterministic).
         **product_telemetry,
+        # Sprint S3 — per-workspace Stage 1 dispatch telemetry.
+        **per_ws_telemetry,
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
