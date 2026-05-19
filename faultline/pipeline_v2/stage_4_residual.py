@@ -49,6 +49,7 @@ from faultline.llm.cost import CostTracker, deterministic_params
 from faultline.pipeline_v2.residual_clusterer import (
     ResidualCluster,
     cluster_residual_paths,
+    synthesize_singleton_feature,
 )
 from faultline.pipeline_v2.stage_2_reconcile import DeveloperFeature
 
@@ -101,12 +102,21 @@ class Stage4Result:
         llm_calls: number of completed Haiku calls (including no-ops).
         warnings: free-form telemetry for ``scan_meta.warnings``.
         clusters_total: clusters produced by the path clusterer.
-        clusters_processed: clusters actually sent to Haiku (may be
-            less than ``clusters_total`` if saturation stopped early
-            or the cost cap fired).
+        clusters_processed: NON-SINGLETON clusters actually sent to
+            Haiku (singletons are handled deterministically and don't
+            count here). May be less than the count of non-singleton
+            clusters if saturation stopped early or the cost cap fired.
         saturation_stopped: True iff the loop exited because
             ``SAT_WINDOW`` consecutive empty clusters occurred.
         rejected_names: names the LLM proposed that we filtered out.
+        singletons_synthesized: size-1 clusters that synthesized a
+            deterministic feature (NOT an LLM call).
+        singletons_skipped: size-1 clusters whose path was scaffolding
+            (root dot-file, known manifest) — emitted no feature.
+        cost_cap_hit: True iff Stage 4's local cost-cap fallback fired
+            (only relevant when the shared CostTracker had
+            ``max_cost=None``; otherwise the tracker's own cap fires
+            first).
     """
 
     residual_features: list[DeveloperFeature]
@@ -117,6 +127,9 @@ class Stage4Result:
     clusters_processed: int = 0
     saturation_stopped: bool = False
     rejected_names: list[str] = field(default_factory=list)
+    singletons_synthesized: int = 0
+    singletons_skipped: int = 0
+    cost_cap_hit: bool = False
 
 
 # ── Prompt builders ────────────────────────────────────────────────────────
@@ -127,9 +140,9 @@ _SYSTEM_PROMPT = (
     "already mapped most files in this repo to features. The paths "
     "below were NOT claimed by any extractor — they are the residual.\n\n"
     "You will see ONE structurally-coherent cluster at a time: all "
-    "members share the same top-level directory, filename-suffix, "
-    "extension, and depth-band. Propose 1–5 developer features that "
-    "describe what this cluster is.\n\n"
+    "members share the same top-level directory, file extension, and "
+    "depth-band. Propose 1–5 developer features that describe what "
+    "this cluster is.\n\n"
     "Output STRICT JSON only — no prose, no fences, no markdown. "
     "Schema: {\"features\": [{\"name\": \"<kebab-slug>\", "
     "\"paths\": [\"<rel/path/to/file>\", ...], "
@@ -147,10 +160,13 @@ _SYSTEM_PROMPT = (
 
 
 def _build_user_prompt(cluster: ResidualCluster, idx: int, total: int) -> str:
-    top, suffix, ext, depth = cluster.key
+    # A2b: cluster key is a 3-tuple ``(top_level_dir, extension,
+    # depth_bucket)``. ``filename_suffix`` was removed — it caused
+    # cardinality explosion on JS monorepos. See clusterer docstring.
+    top, ext, depth = cluster.key
     key_repr = (
-        f"top_level_dir={top!r}, filename_suffix={suffix!r}, "
-        f"extension={ext!r}, depth_bucket={depth!r}"
+        f"top_level_dir={top!r}, extension={ext!r}, "
+        f"depth_bucket={depth!r}"
     )
     header = (
         f"Cluster {idx + 1} of {total}\n"
@@ -339,7 +355,6 @@ def stage_4_residual(
     Returns:
         :class:`Stage4Result`.
     """
-    _ = ctx
     _ = existing_features
 
     if not unattributed_files:
@@ -352,23 +367,12 @@ def stage_4_residual(
             clusters_processed=0,
             saturation_stopped=False,
             rejected_names=[],
+            singletons_synthesized=0,
+            singletons_skipped=0,
+            cost_cap_hit=False,
         )
 
     tracker = cost_tracker or CostTracker(max_cost=cost_cap_usd)
-
-    if client is None:
-        client = _client_factory()
-    if client is None:
-        return Stage4Result(
-            residual_features=[],
-            cost_usd=0.0,
-            llm_calls=0,
-            warnings=["no Anthropic client; residual scan skipped"],
-            clusters_total=0,
-            clusters_processed=0,
-            saturation_stopped=False,
-            rejected_names=[],
-        )
 
     clusters = cluster_residual_paths(unattributed_files)
     if log is not None:
@@ -377,31 +381,137 @@ def stage_4_residual(
             f"{len(clusters)} clusters",
         )
 
-    warnings: list[str] = []
+    # ── Pass 1: singletons → deterministic, no LLM ──────────────────
+    # A2b: size-1 clusters are handled by ``synthesize_singleton_feature``.
+    # This drops 30+ root configs on a typical monorepo and avoids
+    # wasteful per-file Haiku calls. Non-singletons go to Pass 2.
     emitted_features: list[DeveloperFeature] = []
-    rejected_names: list[str] = []
     emitted_names: set[str] = set()
+    singletons_synth = 0
+    singletons_skipped = 0
+    llm_clusters: list[ResidualCluster] = []
+
+    for cluster in clusters:
+        if cluster.size == 1:
+            path = cluster.paths[0]
+            feat = synthesize_singleton_feature(path, ctx.repo_path)
+            if feat is None:
+                singletons_skipped += 1
+                if log is not None:
+                    log.drop(
+                        feature=None,
+                        reason=f"singleton_skipped:{path}",
+                    )
+                continue
+            if feat.name in emitted_names:
+                # Two synthesizable singletons collided on the same
+                # synthesized name; the first wins, second drops.
+                singletons_skipped += 1
+                if log is not None:
+                    log.drop(
+                        feature=feat.name,
+                        reason=f"singleton_dup:{path}",
+                    )
+                continue
+            singletons_synth += 1
+            emitted_features.append(feat)
+            emitted_names.add(feat.name)
+            if log is not None:
+                log.emit(
+                    feature=feat.name,
+                    reason=f"singleton_synthesized:{path}",
+                )
+        else:
+            llm_clusters.append(cluster)
+
+    if log is not None:
+        log.info(
+            f"singletons: {singletons_synth} synthesized, "
+            f"{singletons_skipped} skipped → {len(llm_clusters)} "
+            f"clusters going to LLM",
+        )
+
+    # If no LLM-bound clusters remain (e.g. all-singleton residual),
+    # skip the client setup entirely.
+    warnings: list[str] = []
+    rejected_names: list[str] = []
     sat_counter = 0
     llm_calls = 0
     clusters_processed = 0
-    cost_aborted = False
     saturation_stopped = False
+    cost_cap_hit = False
 
-    for i, cluster in enumerate(clusters):
-        # Budget guard: stop if we've already spent past the cap.
+    if not llm_clusters:
+        return Stage4Result(
+            residual_features=emitted_features,
+            cost_usd=tracker.total_cost_usd,
+            llm_calls=0,
+            warnings=warnings,
+            clusters_total=len(clusters),
+            clusters_processed=0,
+            saturation_stopped=False,
+            rejected_names=[],
+            singletons_synthesized=singletons_synth,
+            singletons_skipped=singletons_skipped,
+            cost_cap_hit=False,
+        )
+
+    if client is None:
+        client = _client_factory()
+    if client is None:
+        return Stage4Result(
+            residual_features=emitted_features,
+            cost_usd=tracker.total_cost_usd,
+            llm_calls=0,
+            warnings=["no Anthropic client; residual scan skipped"],
+            clusters_total=len(clusters),
+            clusters_processed=0,
+            saturation_stopped=False,
+            rejected_names=[],
+            singletons_synthesized=singletons_synth,
+            singletons_skipped=singletons_skipped,
+            cost_cap_hit=False,
+        )
+
+    # ── Pass 2: non-singleton clusters → LLM with saturation stop ──
+    # ``stage4_cost_at_loop_start`` captures the tracker's cumulative
+    # cost BEFORE Stage 4's LLM loop, so the fallback cap below
+    # measures THIS stage's spend rather than the whole-scan total
+    # (Stage 3's cost is already on the shared tracker).
+    stage4_cost_at_loop_start = tracker.total_cost_usd
+
+    for i, cluster in enumerate(llm_clusters):
+        # Budget guard 1: shared tracker has its own cap → respect it.
         if (
             tracker.max_cost is not None
             and tracker.total_cost_usd >= tracker.max_cost
         ):
-            cost_aborted = True
+            cost_cap_hit = True
             warnings.append(
-                f"stage_4_residual: cost cap ${tracker.max_cost:.2f} hit "
-                f"after {clusters_processed} clusters; "
-                f"{len(clusters) - clusters_processed} clusters skipped",
+                f"stage_4_residual: shared cost cap "
+                f"${tracker.max_cost:.2f} hit after {clusters_processed} "
+                f"LLM clusters; {len(llm_clusters) - clusters_processed} "
+                f"skipped",
             )
             break
 
-        prompt = _build_user_prompt(cluster, i, len(clusters))
+        # Budget guard 2: when the shared tracker has no cap (the
+        # orchestrator's default), fall back to Stage 4's local cap
+        # so adversarial monorepos can't blow the budget.
+        if tracker.max_cost is None:
+            stage4_spend = tracker.total_cost_usd - stage4_cost_at_loop_start
+            if stage4_spend >= cost_cap_usd:
+                cost_cap_hit = True
+                warnings.append(
+                    f"stage_4_cost_cap_hit: ${stage4_spend:.2f} > "
+                    f"${cost_cap_usd:.2f}; stopping after cluster "
+                    f"{clusters_processed}/{len(llm_clusters)}",
+                )
+                if log is not None:
+                    log.warn(warnings[-1])
+                break
+
+        prompt = _build_user_prompt(cluster, i, len(llm_clusters))
         text, in_t, out_t = _call_haiku(
             client,
             model=model,
@@ -434,7 +544,7 @@ def stage_4_residual(
         if log is not None:
             log.cluster(
                 reason=(
-                    f"cluster {i + 1}/{len(clusters)} key={cluster.key} "
+                    f"cluster {i + 1}/{len(llm_clusters)} key={cluster.key} "
                     f"size={cluster.size} emit={len(accepted)} "
                     f"new={len(new_names)}"
                 ),
@@ -448,14 +558,11 @@ def stage_4_residual(
                     log.info(
                         f"saturation: {SAT_WINDOW} consecutive clusters "
                         f"without new features → stopping after "
-                        f"{clusters_processed}/{len(clusters)} clusters",
+                        f"{clusters_processed}/{len(llm_clusters)} clusters",
                     )
                 break
         else:
             sat_counter = 0
-
-    if cost_aborted and log is not None:
-        log.warn(warnings[-1])
 
     return Stage4Result(
         residual_features=emitted_features,
@@ -466,6 +573,9 @@ def stage_4_residual(
         clusters_processed=clusters_processed,
         saturation_stopped=saturation_stopped,
         rejected_names=rejected_names,
+        singletons_synthesized=singletons_synth,
+        singletons_skipped=singletons_skipped,
+        cost_cap_hit=cost_cap_hit,
     )
 
 
