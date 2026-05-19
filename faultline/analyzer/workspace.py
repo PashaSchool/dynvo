@@ -93,24 +93,135 @@ def _assign_files_to_packages(info: WorkspaceInfo, files: list[str]) -> None:
     info.packages = [p for p in info.packages if p.files]
 
 
+# Directory names that are never workspace candidates. Walked at every
+# nesting level when expanding ``**`` globs so a runaway descent into
+# ``node_modules/`` or ``target/`` can't fabricate hundreds of phantom
+# workspaces. Mirrors the exclusion list used by Stage 0's filesystem
+# walker (``_walk_tracked_files``) and the auditor.
+_GLOB_SKIP_DIRS: frozenset[str] = frozenset({
+    "node_modules", ".git", "vendor", "target", "dist", "build", "out",
+    ".next", ".turbo", "__pycache__", ".venv", "venv", ".pytest_cache",
+    ".mypy_cache",
+})
+
+# Cap recursive glob descent. 6 directory segments below the literal
+# prefix is enough for `packages/db/src/schema/<x>/<y>` and similar
+# real-world layouts without risking a runaway walk on weird repos.
+_GLOB_MAX_DEPTH: int = 6
+
+# Manifests that prove a directory is a real package (and therefore a
+# legitimate workspace). When ``**`` expands we only emit dirs that
+# contain one of these — bare source dirs don't become workspaces.
+_WORKSPACE_MANIFEST_FILENAMES: tuple[str, ...] = (
+    "package.json",
+    "Cargo.toml",
+)
+
+
+def _expand_double_star(
+    root: Path,
+    pattern: str,
+    seen: set[str],
+) -> list[WorkspacePackage]:
+    """Recursively expand a workspace glob containing ``**``.
+
+    A ``packages/**`` or ``packages/**/*`` pattern from pnpm-workspace.yaml
+    is supposed to enumerate EVERY descendant directory that hosts a
+    package — not just immediate children. The previous single-level
+    ``iterdir()`` implementation missed nested layouts like
+    ``packages/db/src/schema/users/``.
+
+    We walk the prefix dir (the path segments before the first ``*``),
+    then descend up to :data:`_GLOB_MAX_DEPTH` levels, emitting one
+    workspace per directory that:
+
+      - matches the glob via :func:`fnmatch`
+      - contains one of the :data:`_WORKSPACE_MANIFEST_FILENAMES`
+        (so source-only directories don't fabricate workspaces)
+      - is not under a noise dir (``node_modules/``, ``target/``, …)
+    """
+    out: list[WorkspacePackage] = []
+    # The literal prefix is everything before the first ``*``/``?``.
+    # e.g. ``packages/**`` → prefix ``packages``, ``a/b/**/c`` → ``a/b``.
+    prefix = pattern.split("*")[0].rstrip("/")
+    base = root / prefix if prefix else root
+    if not base.is_dir():
+        return out
+
+    # Depth is measured from ``base`` so a 6-deep cap genuinely means
+    # 6 directory segments below the prefix root.
+    base_depth = len(base.parts)
+
+    for dirpath, dirnames, _filenames in __import__("os").walk(base):
+        # Prune noise dirs in-place so os.walk skips them.
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _GLOB_SKIP_DIRS and not d.startswith(".")
+        ]
+        cur = Path(dirpath)
+        depth = len(cur.parts) - base_depth
+        if depth > _GLOB_MAX_DEPTH:
+            # Don't recurse further; clearing dirnames stops descent.
+            dirnames[:] = []
+            continue
+
+        try:
+            rel = str(cur.relative_to(root))
+        except ValueError:
+            continue
+        if not rel or rel in seen:
+            continue
+        if not fnmatch(rel, pattern):
+            continue
+        # Require a manifest — otherwise it's a source dir, not a pkg.
+        if not any((cur / m).is_file() for m in _WORKSPACE_MANIFEST_FILENAMES):
+            continue
+        name = _package_name(cur)
+        out.append(WorkspacePackage(name=name, path=rel))
+        seen.add(rel)
+
+    return out
+
+
 def _resolve_globs(root: Path, patterns: list[str]) -> list[WorkspacePackage]:
-    """Resolve workspace glob patterns to actual directories."""
+    """Resolve workspace glob patterns to actual directories.
+
+    Handles three glob shapes:
+      1. ``**`` patterns (``packages/**`` or ``packages/**/*``) →
+         recursive expansion via :func:`_expand_double_star` with a
+         depth cap and noise-dir skiplist. Requires each emitted dir
+         to contain a package manifest.
+      2. Single-level globs (``packages/*``) → ``iterdir()`` of the
+         prefix dir, original behaviour preserved.
+      3. Exact paths → checked for existence and emitted as-is.
+    """
     packages: list[WorkspacePackage] = []
     seen: set[str] = set()
 
     for pattern in patterns:
         pattern = pattern.rstrip("/")
 
+        if "**" in pattern:
+            # Recursive expansion path. Handles ``packages/**`` and
+            # ``packages/**/*`` uniformly — the trailing ``/*`` is
+            # equivalent to the bare ``**`` for our purposes since we
+            # filter by manifest presence anyway.
+            packages.extend(_expand_double_star(root, pattern, seen))
+            continue
+
         if "*" in pattern or "?" in pattern:
-            # Glob pattern like "packages/*" or "apps/**"
+            # Single-level glob like "packages/*" — preserve original
+            # behaviour (no manifest requirement here so we don't break
+            # back-compat for the many repos that rely on it).
             parent = pattern.split("*")[0].rstrip("/")
             parent_path = root / parent
             if not parent_path.is_dir():
                 continue
 
-            # Single level glob
             for child in sorted(parent_path.iterdir()):
                 if child.is_dir() and not child.name.startswith("."):
+                    if child.name in _GLOB_SKIP_DIRS:
+                        continue
                     rel = str(child.relative_to(root))
                     if fnmatch(rel, pattern) and rel not in seen:
                         name = _package_name(child)
