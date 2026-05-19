@@ -128,15 +128,18 @@ def build_feature_map(
     days: int = 365,
     flows: list[Flow] | None = None,
     feature_flow_edges: list[FeatureFlowEdge] | None = None,
+    product_features: list[Feature] | None = None,
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
-
-    The Layer 2 product feature list is intentionally empty — pipeline
-    v2 stops at Layer 1.
 
     ``features`` is fed as ``developer_features`` so the model
     validator stamps ``layer="developer"`` consistently and ``features``
     (the legacy back-compat field) gets the same list as a side effect.
+
+    ``product_features`` (Sprint B3) is the Layer 2 cluster output —
+    typically the result of Stage 6.5's deterministic product
+    clusterer. Defaults to ``[]`` for back-compat with Layer-1-only
+    callers and tests.
 
     ``flows`` / ``feature_flow_edges`` (Sprint B1) are the top-level
     bipartite store. The per-feature ``Feature.flows[]`` list stays
@@ -150,7 +153,7 @@ def build_feature_map(
         total_commits=len(ctx.commits),
         date_range_days=days,
         developer_features=list(features),
-        product_features=[],
+        product_features=list(product_features or []),
         scan_meta=dict(scan_meta),
         flows=list(flows or []),
         feature_flow_edges=list(feature_flow_edges or []),
@@ -169,6 +172,7 @@ def stage_7_output(
     days: int = 365,
     flows: list[Flow] | None = None,
     feature_flow_edges: list[FeatureFlowEdge] | None = None,
+    product_features: list[Feature] | None = None,
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -187,6 +191,7 @@ def stage_7_output(
     fm = build_feature_map(
         features, ctx, scan_meta,
         days=days, flows=flows, feature_flow_edges=feature_flow_edges,
+        product_features=product_features,
     )
 
     # Snapshot Stage 7's input for replay before we hand off to the writer.
