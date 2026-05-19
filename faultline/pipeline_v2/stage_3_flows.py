@@ -114,6 +114,11 @@ class FlowSpec:
     # ``depth_reached`` records the BFS depth actually walked (1..N).
     reach_paths: tuple[str, ...] = ()
     depth_reached: int = 0
+    # Sprint C2 — per-flow line-range symbol attribution. Built by
+    # ``_enrich_flow_symbols`` post-pass after reach is populated.
+    # ``entry_detection_failed`` propagates upward into telemetry.
+    symbol_attributions: tuple[Any, ...] = ()  # tuple[FlowSymbolAttribution, ...]
+    entry_detection_failed: bool = False
 
 
 @dataclass
@@ -530,7 +535,13 @@ def stage_3_flows(
             )
 
     # ── Sprint C1 — deterministic call-graph reach enrichment ──────
-    reach_telemetry = _enrich_flow_reach(ordered, ctx)
+    reach_telemetry, rctx = _enrich_flow_reach(ordered, ctx)
+    # ── Sprint C2 — per-flow line-range symbol attribution ─────────
+    symbol_telemetry = _enrich_flow_symbols(ordered, rctx)
+    if symbol_telemetry:
+        # Merge into reach_telemetry so a single dict carries the
+        # Stage-3-deterministic enrichment surface.
+        reach_telemetry = {**reach_telemetry, **symbol_telemetry}
 
     return Stage3Result(
         features_with_flows=ordered,
@@ -547,7 +558,7 @@ def stage_3_flows(
 def _enrich_flow_reach(
     features_with_flows: list[FeatureWithFlows],
     ctx: "ScanContext",
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], Any]:
     """Populate ``FlowSpec.reach_paths`` + ``depth_reached`` in place.
 
     Builds a single :class:`ReachContext` for the whole scan, then
@@ -555,8 +566,9 @@ def _enrich_flow_reach(
     ``max_depth=3``, ``max_paths=8`` — see ``flow_reach.py`` docstring
     for rationale.
 
-    Returns a telemetry dict with the per-scan reach stats; the
-    orchestrator folds these into ``scan_meta``.
+    Returns ``(telemetry_dict, reach_context)``. The reach_context is
+    re-used by the Sprint C2 symbol-attribution post-pass; it may be
+    ``None`` when construction fails or there are no flows.
     """
     # Local import keeps the legacy callers free of new transitive deps
     # if they construct Stage3Result manually for tests.
@@ -574,25 +586,25 @@ def _enrich_flow_reach(
         if flow.entry_point_file
     ]
     if not flows_to_enrich:
-        return {
+        return ({
             "stage_3_flow_reach_avg_paths": 0.0,
             "stage_3_flow_reach_max_paths": 0,
             "stage_3_flow_reach_p50_depth": 0,
             "stage_3_flow_reach_total_paths": 0,
             "stage_3_flow_reach_enriched_count": 0,
-        }
+        }, None)
 
     try:
         rctx = build_reach_context(ctx)
     except Exception as exc:  # noqa: BLE001 — defensive, never break Stage 3
         logger.warning("flow_reach: build_reach_context failed: %s", exc)
-        return {
+        return ({
             "stage_3_flow_reach_avg_paths": 0.0,
             "stage_3_flow_reach_max_paths": 0,
             "stage_3_flow_reach_p50_depth": 0,
             "stage_3_flow_reach_total_paths": 0,
             "stage_3_flow_reach_enriched_count": 0,
-        }
+        }, None)
 
     path_counts: list[int] = []
     depths: list[int] = []
@@ -628,12 +640,110 @@ def _enrich_flow_reach(
     p50_depth = depths_sorted[n // 2] if n else 0
     total_paths = sum(path_counts)
 
-    return {
+    return ({
         "stage_3_flow_reach_avg_paths": avg_paths,
         "stage_3_flow_reach_max_paths": max_paths,
         "stage_3_flow_reach_p50_depth": p50_depth,
         "stage_3_flow_reach_total_paths": total_paths,
         "stage_3_flow_reach_enriched_count": n,
+    }, rctx)
+
+
+# ── Sprint C2 — per-flow line-range symbol attribution ────────────────
+
+
+def _enrich_flow_symbols(
+    features_with_flows: list[FeatureWithFlows],
+    rctx: Any | None,
+) -> dict[str, Any]:
+    """Populate ``FlowSpec.symbol_attributions`` in place.
+
+    Reuses the :class:`ReachContext` built by :func:`_enrich_flow_reach`
+    so we don't walk every file's signatures twice. When ``rctx`` is
+    ``None`` (no flows OR reach context build failed earlier), returns
+    an empty telemetry surface that the orchestrator treats as
+    "feature disabled this scan".
+
+    Telemetry shape — surfaced into ``scan_meta``:
+
+      - ``stage_3_symbol_attributions_total``
+      - ``stage_3_avg_symbols_per_flow``  — total / flows_enriched
+      - ``stage_3_entry_detection_failure_rate``
+      - ``stage_3_symbol_role_breakdown`` — ``{"entry": N, "called": N, "support": N}``
+    """
+    if rctx is None:
+        return {
+            "stage_3_symbol_attributions_total": 0,
+            "stage_3_avg_symbols_per_flow": 0.0,
+            "stage_3_entry_detection_failure_rate": 0.0,
+            "stage_3_symbol_role_breakdown": {
+                "entry": 0, "called": 0, "support": 0,
+            },
+        }
+
+    # Local import so the test-suite stub-construction path (which
+    # never hits run.py) doesn't pull in flow_symbols transitively.
+    from faultline.pipeline_v2.flow_symbols import (
+        DEFAULT_MAX_SYMBOLS_PER_FLOW,
+        compute_flow_symbols,
+    )
+
+    flows_to_enrich = [
+        flow
+        for fwf in features_with_flows
+        for flow in fwf.flows
+        if flow.entry_point_file
+    ]
+    if not flows_to_enrich:
+        return {
+            "stage_3_symbol_attributions_total": 0,
+            "stage_3_avg_symbols_per_flow": 0.0,
+            "stage_3_entry_detection_failure_rate": 0.0,
+            "stage_3_symbol_role_breakdown": {
+                "entry": 0, "called": 0, "support": 0,
+            },
+        }
+
+    role_counts = {"entry": 0, "called": 0, "support": 0}
+    failure_count = 0
+    total_attributions = 0
+
+    for flow in flows_to_enrich:
+        try:
+            result = compute_flow_symbols(
+                rctx,
+                flow.entry_point_file or "",
+                flow.entry_point_line or 1,
+                tuple(flow.reach_paths),
+                max_symbols_per_flow=DEFAULT_MAX_SYMBOLS_PER_FLOW,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break Stage 3
+            logger.debug(
+                "flow_symbols: compute failed for %s: %s", flow.name, exc,
+            )
+            # Empty attribution; flag detection failure so telemetry
+            # reflects reality.
+            flow.symbol_attributions = ()
+            flow.entry_detection_failed = True
+            failure_count += 1
+            continue
+        flow.symbol_attributions = result.attributions
+        flow.entry_detection_failed = result.entry_detection_failed
+        total_attributions += len(result.attributions)
+        if result.entry_detection_failed:
+            failure_count += 1
+        for attr in result.attributions:
+            role_counts[attr.role] = role_counts.get(attr.role, 0) + 1
+
+    n = len(flows_to_enrich)
+    avg_symbols = round(total_attributions / n, 2) if n else 0.0
+    failure_rate = round(failure_count / n, 4) if n else 0.0
+
+    return {
+        "stage_3_symbol_attributions_total": total_attributions,
+        "stage_3_avg_symbols_per_flow": avg_symbols,
+        "stage_3_entry_detection_failure_rate": failure_rate,
+        "stage_3_symbol_role_breakdown": role_counts,
     }
 
 
