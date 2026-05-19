@@ -471,7 +471,20 @@ def test_verdict_coerces_missing_fields(tmp_path: Path) -> None:
                 return _FakeMsg(text=response_json, in_tokens=10, out_tokens=5)
         messages = _Messages()
 
-    ctx = _make_ctx(tmp_path, stack="next")
+    # Provide structural ``next`` signal so Sprint S3.1's correction
+    # post-pass leaves the verdict alone (the corrector would otherwise
+    # downgrade the verdict because no ``next`` dep is in the manifest).
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "app",
+                "dependencies": {"next": "^15.0.0"},
+            }),
+            "next.config.mjs": "export default {}",
+        },
+        stack="next",
+    )
     verdict = run_stack_auditor(ctx, client=_Client())
     assert verdict.primary_stack == "next-app-router"
     assert verdict.secondary_stacks == ()
@@ -499,3 +512,143 @@ def test_verdict_strips_markdown_fences(tmp_path: Path) -> None:
     verdict = run_stack_auditor(ctx, client=_Client())
     assert verdict.primary_stack == "fastapi"
     assert verdict.fallback_used is False
+
+
+# ─────────────── Sprint S3.1 — correction layer ────────────────
+
+
+from faultline.pipeline_v2.stack_auditor import correct_auditor_verdict
+
+
+def _verdict(primary: str, confidence: float = 0.95) -> AuditorVerdict:
+    return AuditorVerdict(
+        primary_stack=primary,
+        secondary_stacks=(),
+        confidence=confidence,
+        extractor_hints=(),
+        reasoning="",
+        cost_usd=0.0,
+        fallback_used=False,
+    )
+
+
+def test_correct_next_to_tanstack_router(tmp_path: Path) -> None:
+    """next-app-router + no `next` dep + @tanstack/react-router → tanstack-router."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "frontend",
+                "dependencies": {
+                    "@tanstack/react-router": "^1.95.1",
+                    "react": "^19.0.0",
+                },
+            }),
+        },
+        stack="next-app-router",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("next-app-router"), ctx,
+    )
+    assert corrected.primary_stack == "tanstack-router"
+    assert len(corrections) == 1
+    assert corrections[0]["original"] == "next-app-router"
+    assert corrections[0]["corrected"] == "tanstack-router"
+    # Confidence reduced after correction.
+    assert corrected.confidence < 0.95
+    # corrections also surfaced on the verdict object itself.
+    assert tuple(corrected.corrections) == tuple(corrections)
+
+
+def test_correct_next_to_vite(tmp_path: Path) -> None:
+    """next-app-router + no `next` dep + vite dep → vite."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "spa",
+                "dependencies": {"react": "^19.0.0"},
+                "devDependencies": {"vite": "^6.0.0"},
+            }),
+        },
+        stack="next-app-router",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("next-app-router"), ctx,
+    )
+    assert corrected.primary_stack == "vite"
+    assert len(corrections) == 1
+
+
+def test_correct_express_to_fastify(tmp_path: Path) -> None:
+    """express + fastify dep present → fastify."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "api",
+                "dependencies": {"fastify": "^4.29.1"},
+            }),
+        },
+        stack="express",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("express"), ctx,
+    )
+    assert corrected.primary_stack == "fastify"
+    assert len(corrections) == 1
+
+
+def test_correct_python_library_to_django(tmp_path: Path) -> None:
+    """python-library + manage.py present → django-app."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "manage.py": "import django\n",
+            "pyproject.toml": "[project]\nname = \"site\"\n",
+        },
+        stack="django",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("python-library"), ctx,
+    )
+    assert corrected.primary_stack == "django-app"
+    assert len(corrections) == 1
+    assert "manage.py" in corrections[0]["reason"]
+
+
+def test_correct_python_library_to_fastapi(tmp_path: Path) -> None:
+    """python-library + FastAPI() call in top-level py → fastapi-app."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "main.py": "from fastapi import FastAPI\napp = FastAPI()\n",
+            "pyproject.toml": "[project]\nname = \"api\"\n",
+        },
+        stack="fastapi",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("python-library"), ctx,
+    )
+    assert corrected.primary_stack == "fastapi-app"
+    assert len(corrections) == 1
+
+
+def test_correction_noop_when_signals_match(tmp_path: Path) -> None:
+    """Verdict matches structural signals → no correction, returns unchanged."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "app",
+                "dependencies": {"next": "^15.0.0", "react": "^19.0.0"},
+            }),
+            "next.config.mjs": "export default {}",
+            "app/page.tsx": "export default () => null;",
+        },
+        stack="next-app-router",
+    )
+    original = _verdict("next-app-router")
+    corrected, corrections = correct_auditor_verdict(original, ctx)
+    assert corrected is original  # untouched
+    assert corrections == []
