@@ -58,6 +58,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from faultline.pipeline_v2.domain_noun import extract_domain_noun
+
 if TYPE_CHECKING:
     from faultline.models.types import Feature
     from faultline.pipeline_v2.run_logger import StageLogger
@@ -239,13 +241,22 @@ def _titleize(slug: str) -> str:
 def _apply_workspace_rule(
     developer_features: list["Feature"],
     state: _ClustererState,
-) -> int:
+) -> tuple[int, int]:
     """Cast a vote for any dev feature whose paths concentrate ≥70%
     under a single ``apps/<X>/`` or ``packages/<X>/`` workspace.
 
-    Returns the number of votes cast (for telemetry).
+    Sprint B3.1 — after identifying the workspace prefix, attempt
+    deterministic domain-noun extraction. When a noun wins the
+    structural vote, the cluster is labelled with the DOMAIN noun
+    ("Documents", "Data Room") and the vote is tagged
+    ``rule="workspace+domain"`` at the noun's own confidence (0.50–0.85).
+    Otherwise the legacy workspace label is used (rule=``"workspace"``,
+    confidence 0.6) so we never regress prior behaviour.
+
+    Returns ``(total_votes, domain_refined_votes)`` for telemetry.
     """
     votes_cast = 0
+    domain_votes = 0
     for f in developer_features:
         paths = list(f.paths or [])
         if not paths:
@@ -262,18 +273,56 @@ def _apply_workspace_rule(
         share = ws_count / len(paths)
         if share < _WORKSPACE_CONCENTRATION_MIN:
             continue
-        label = _titleize(ws_name)
+
+        # Sprint B3.1 — attempt domain-noun refinement.
+        workspace_prefix = _workspace_prefix_for(paths, ws_name)
+        noun = extract_domain_noun(paths, workspace_prefix=workspace_prefix)
+
+        if noun is not None and noun.confidence >= 0.5:
+            label = noun.label
+            rule = "workspace+domain"
+            # Vote confidence reflects domain-noun strength; floor at 0.6 so
+            # workspace+domain is never WEAKER than the bare workspace vote.
+            confidence = max(_CONF_WORKSPACE, noun.confidence)
+            anchor_signal = (
+                f"workspace:{ws_name}+domain:{noun.token}"
+            )
+            domain_votes += 1
+        else:
+            label = _titleize(ws_name)
+            rule = "workspace"
+            confidence = _CONF_WORKSPACE
+            anchor_signal = f"workspace:{ws_name}"
+
         state.votes[f.name].append(
             _Vote(
                 product_label=label,
-                rule="workspace",
-                confidence=_CONF_WORKSPACE,
-                anchor_signal=f"workspace:{ws_name}",
+                rule=rule,
+                confidence=confidence,
+                anchor_signal=anchor_signal,
                 weight=share,
             ),
         )
         votes_cast += 1
-    return votes_cast
+    return votes_cast, domain_votes
+
+
+def _workspace_prefix_for(paths: list[str], ws_name: str) -> str:
+    """Return the actual prefix that matched (e.g. ``apps/web`` vs
+    ``packages/web``) so the domain-noun extractor can strip it.
+
+    We inspect the first path that sits under the dominant workspace
+    name and return its monorepo prefix + workspace name.
+    """
+    for p in paths:
+        norm = p.replace("\\", "/").lstrip("./").lstrip("/")
+        m = _WORKSPACE_PREFIX_RE.match(norm)
+        if m and m.group(1) == ws_name:
+            # Reconstruct the full prefix from the regex match.
+            return norm[:m.end()].rstrip("/")
+    # Fallback — shouldn't hit since caller already confirmed the
+    # workspace appeared in per_ws.
+    return ws_name
 
 
 # ── Rule 2 — dependency anchor cluster ──────────────────────────────────
@@ -563,7 +612,9 @@ def run_product_clusterer(
     state = _ClustererState()
 
     # ── Rule 1 — workspace (low confidence baseline) ──
-    workspace_votes = _apply_workspace_rule(developer_features, state)
+    workspace_votes, domain_refined_votes = _apply_workspace_rule(
+        developer_features, state,
+    )
 
     # ── Rule 2 — dep-anchor (higher confidence) ──
     dep_votes = _apply_dep_anchor_rule(ctx, developer_features, state)
@@ -690,6 +741,13 @@ def run_product_clusterer(
         else:
             source_breakdown["combined"] += 1
 
+    # Fraction of workspace votes that got domain-noun refinement.
+    # Caps at 1.0; equals 0.0 when no workspace votes fired at all.
+    domain_rate = (
+        round(domain_refined_votes / workspace_votes, 3)
+        if workspace_votes else 0.0
+    )
+
     telemetry: dict[str, Any] = {
         "product_features_count": len(product_features_out),
         "developer_features_total": total,
@@ -699,9 +757,11 @@ def run_product_clusterer(
         "product_clusterer_source_breakdown": dict(source_breakdown),
         "product_clusterer_votes_cast": {
             "workspace": workspace_votes,
+            "workspace+domain": domain_refined_votes,
             "dep-anchor": dep_votes,
             "customer-yaml": customer_votes,
         },
+        "domain_noun_extraction_rate": domain_rate,
     }
 
     if log is not None:
