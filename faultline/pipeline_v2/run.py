@@ -86,6 +86,9 @@ from faultline.pipeline_v2.stage_1_per_workspace import (
 from faultline.pipeline_v2.stage_2_reconcile import stage_2_reconcile
 from faultline.pipeline_v2.stage_3_flows import stage_3_flows
 from faultline.pipeline_v2.stage_4_residual import stage_4_residual
+from faultline.pipeline_v2.stage_5_3_sibling_collapse import (
+    collapse_sibling_routes,
+)
 from faultline.pipeline_v2.stage_5_5_bipartite import stage_5_5_bipartite
 from faultline.pipeline_v2.stage_5_postprocess import (
     stage_5_from_stage3_result_with_telemetry,
@@ -530,6 +533,43 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 5.3 — sibling-router collapse (Sprint S4, deterministic) ─
+    # Folds N≥3 route-shaped sibling features under a common parent
+    # directory into ONE feature labelled after the parent. Anchor
+    # preservation: Stage 2 high/medium-confidence features are kept
+    # alongside their collapsed peers. Stage 4 low-confidence fallback
+    # features collapse freely. Pure-Python, no LLM, no I/O.
+    confidence_by_name: dict[str, str] = {}
+    for f in deterministic_features:
+        # Stage 2 produces "high" / "medium"; Stage 4 features map to
+        # "low" via the residual feature loop below.
+        confidence_by_name[f.name] = f.confidence
+    for f in residual_features:
+        confidence_by_name.setdefault(f.name, "low")
+    with StageLogger(run_dir, 5, "sibling_collapse") as log5_3:
+        s53 = collapse_sibling_routes(
+            features,
+            confidence_by_name=confidence_by_name,
+            log=log5_3,
+        )
+        s53_features_pre = len(features)
+        features = s53.features
+        s53_features_post = len(features)
+        s53_collapse_sample = [g.as_dict() for g in s53.collapse_groups[:5]]
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=5,
+            stage_name="sibling_collapse",
+            payload={
+                "collapse_groups_count": len(s53.collapse_groups),
+                "features_collapsed": s53.features_collapsed,
+                "features_pre": s53_features_pre,
+                "features_post": s53_features_post,
+                "collapse_sample": s53_collapse_sample,
+            },
+            run_dir=run_dir,
+        )
+
     # ── Stage 5.5 — bipartite store + blast-radius (deterministic) ─
     # Pure in-memory pass over the Stage 5 features. Mutates each
     # contained Flow in place to populate the new bipartite fields
@@ -721,6 +761,12 @@ def run_pipeline_v2(
         "dedup_merges_sample": [
             m.as_dict() for m in stage5_result.dedup_merges[:3]
         ],
+        # Sprint S4 — Stage 5.3 sibling-router collapse telemetry.
+        "stage_5_3_collapse_groups_count": len(s53.collapse_groups),
+        "stage_5_3_features_collapsed": s53.features_collapsed,
+        "stage_5_3_features_pre": s53_features_pre,
+        "stage_5_3_features_post": s53_features_post,
+        "stage_5_3_collapse_sample": s53_collapse_sample,
         "deterministic_feature_count": deterministic_count,
         "residual_feature_count": fallback_count,
         "warnings": warnings,
