@@ -114,6 +114,10 @@ from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
 )
+from faultline.pipeline_v2.stage_8_marketing_clusterer import (
+    _default_client_factory as _stage_8_default_client_factory,
+    run_stage_8,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -884,6 +888,65 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 8 — marketing-grounded Layer 2 clusterer (Sprint E1) ──
+    # Refines Stage 6.5's deterministic ``product_features`` using the
+    # maintainer's PUBLIC marketing taxonomy + a single Haiku call.
+    # Cascade: customer-yaml (passthrough) → marketing+haiku → fallback
+    # to Stage 6.5 result. Marketing fetch + Haiku call only fire when
+    # the Anthropic SDK is configured (ANTHROPIC_API_KEY set). NO
+    # README reads — homepage discovery is package.json#homepage only.
+    stage_8_telemetry: dict[str, Any] = {
+        "source": "deterministic-only",
+        "haiku_called": False,
+    }
+    with StageLogger(run_dir, 8, "marketing_clusterer") as log8:
+        s8_client = _stage_8_default_client_factory()
+        # Source-breakdown was already computed by Stage 6.5 and stamped
+        # onto ``product_telemetry``; re-key for Stage 8's input.
+        s8_pre_breakdown: dict[str, int] = product_telemetry.get(
+            "product_clusterer_source_breakdown", {},
+        )
+        stage_8_result = run_stage_8(
+            ctx,
+            features,
+            product_features,
+            dev_to_product_map_pre=dev_to_product_map,
+            source_breakdown_pre=s8_pre_breakdown,
+            log=log8,
+            client=s8_client,
+            model=model_id,
+            cost_tracker=tracker,
+        )
+        # Apply Stage 8 overrides — replace product_features and the
+        # legacy single-valued ``product_feature_id`` stamp.
+        product_features = stage_8_result.product_features
+        dev_to_product_map = stage_8_result.dev_to_product_map
+        for f in features:
+            labels = dev_to_product_map.get(f.name)
+            f.product_feature_id = labels[0] if labels else None
+        stage_8_telemetry = stage_8_result.telemetry
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="marketing_clusterer",
+            payload={
+                "telemetry": stage_8_telemetry,
+                "product_features": [
+                    {
+                        "name": pf.name,
+                        "developer_feature_count": len(pf.paths),
+                        "paths_total": len(pf.paths),
+                        "health_score": pf.health_score,
+                    }
+                    for pf in product_features
+                ],
+                "dev_to_product_map": {
+                    k: list(v) for k, v in dev_to_product_map.items()
+                },
+            },
+            run_dir=run_dir,
+        )
+
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
     # residual list (stage5 stripped FS-missing + anchor-dup before naming
@@ -1083,6 +1146,13 @@ def run_pipeline_v2(
         # with a ``reason`` when tree-sitter is not installed (graceful
         # degrade); the rest of the pipeline is unaffected.
         "stage_6_6": dict(branch_slicer_telemetry),
+        # Sprint E1 — Stage 8 marketing-grounded Layer 2 clusterer.
+        # ``source`` is one of "customer-yaml" / "marketing+haiku" /
+        # "deterministic-only". When "marketing+haiku", taxonomy_size +
+        # marketing_url surface the maintainer page that grounded the
+        # Haiku mapping. ``haiku_call_cost_usd`` is included in the
+        # top-level ``cost_usd`` total via the shared CostTracker.
+        "stage_8": dict(stage_8_telemetry),
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
