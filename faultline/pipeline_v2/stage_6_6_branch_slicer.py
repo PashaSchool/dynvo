@@ -584,12 +584,22 @@ def slice_branches(
 
 
 def _tree_sitter_version() -> str:
+    """Best-effort version string. ``tree-sitter`` >=0.23 doesn't expose
+    ``__version__`` on the module so we fall back to importlib metadata."""
     if not TREE_SITTER_AVAILABLE:
         return ""
     try:
         import tree_sitter as _ts
 
-        return getattr(_ts, "__version__", "")
+        v = getattr(_ts, "__version__", "")
+        if v:
+            return v
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import importlib.metadata as _md
+
+        return _md.version("tree-sitter")
     except Exception:  # noqa: BLE001
         return ""
 
@@ -598,16 +608,123 @@ def _key_for(attr: FlowSymbolAttribution) -> tuple[str, str, int, int]:
     return (attr.file, attr.symbol, attr.line_start, attr.line_end)
 
 
+def _slice_attribution_list(
+    ctx: "ScanContext",
+    attrs: list[FlowSymbolAttribution],
+    *,
+    owner_label: str,
+    result: StageResult,
+    log: "StageLogger",
+    sample_target: int,
+) -> list[FlowSymbolAttribution]:
+    """Slice every eligible attribution in ``attrs``; return the **new**
+    branch-role attributions to append.
+
+    Args:
+        ctx: scan context.
+        attrs: snapshot of the owner's existing attribution list.
+        owner_label: free-form label used for the sample-slices payload
+            (``feature:<name>`` or ``flow:<feature>/<flow>``) so
+            downstream replay debuggers can tell where the slice came
+            from.
+        result: shared accumulator (updated in place).
+        log: stage logger.
+        sample_target: max number of sample slices in telemetry.
+
+    Returns:
+        New :class:`FlowSymbolAttribution` records (deduped against the
+        existing keys passed in via ``attrs``). Caller appends to its
+        own list.
+    """
+    if not attrs:
+        return []
+    existing_keys: set[tuple[str, str, int, int]] = {
+        _key_for(a) for a in attrs
+    }
+    new_attrs: list[FlowSymbolAttribution] = []
+
+    for attr in attrs:
+        if attr.role not in _SLICEABLE_ROLES:
+            continue
+        if (attr.line_end - attr.line_start + 1) < _MIN_BRANCH_LINES:
+            continue
+        ext = _ext_of(attr.file)
+        if ext not in _LANG_BY_EXT:
+            continue
+        lang_name = _LANG_BY_EXT[ext]
+        result.languages_seen[lang_name] = (
+            result.languages_seen.get(lang_name, 0) + 1
+        )
+        result.symbols_analyzed += 1
+
+        try:
+            slices = slice_branches(
+                ctx,
+                file_path=attr.file,
+                parent_symbol=attr.symbol,
+                parent_line_start=attr.line_start,
+                parent_line_end=attr.line_end,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Tree-sitter parse failures must never break a scan.
+            result.parse_failures += 1
+            log.warn(
+                f"slice_branches raised on {attr.file}:{attr.symbol}: "
+                f"{type(exc).__name__}: {exc}",
+                feature=owner_label,
+            )
+            logger.debug(
+                "stage_6_6.slice_branches raised", exc_info=True,
+            )
+            continue
+
+        if len(slices) >= _MAX_BRANCHES_PER_SYMBOL:
+            result.capped_symbols += 1
+
+        for idx, sl in enumerate(slices):
+            new_attr = sl.as_attribution(index=idx)
+            key = _key_for(new_attr)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            new_attrs.append(new_attr)
+            result.branches_emitted += 1
+            result.branch_kinds[sl.branch_kind] = (
+                result.branch_kinds.get(sl.branch_kind, 0) + 1
+            )
+            if len(result.sample_slices) < sample_target:
+                result.sample_slices.append({
+                    "file": sl.file,
+                    "parent_symbol": sl.parent_symbol,
+                    "branch_kind": sl.branch_kind,
+                    "condition_text": sl.condition_text,
+                    "line_start": sl.line_start,
+                    "line_end": sl.line_end,
+                    "owner": owner_label,
+                })
+
+    return new_attrs
+
+
 def run_stage_6_6(
     ctx: "ScanContext",
     features: list["Feature"],
     log: "StageLogger",
 ) -> StageResult:
-    """Walk every (feature × eligible symbol_attribution) and emit
-    intra-symbol branch slices.
+    """Walk every (feature × eligible symbol_attribution) AND every
+    (flow × eligible flow_symbol_attribution) and emit intra-symbol
+    branch slices.
 
-    Mutates ``feature.symbol_attributions`` in place. Skips silently
-    + records ``active=False`` when tree-sitter is unavailable.
+    Both surfaces are sliced because:
+      * JS/TS stacks populate ``feature.symbol_attributions`` via the
+        Stage 6.3 import tree.
+      * Non-JS stacks (Go, Python lib, Rust) populate ``flow.flow_symbol_attributions``
+        via Stage 3 entry detection but leave the feature-level surface
+        empty. Skipping flow-level would leave non-JS scans without any
+        branch enrichment.
+
+    Mutates the relevant attribution lists in place. Skips silently +
+    records ``active=False`` when tree-sitter is unavailable.
     """
     t0 = time.monotonic()
 
@@ -625,80 +742,34 @@ def run_stage_6_6(
         active=True,
         tree_sitter_version=_tree_sitter_version(),
     )
-    sample_target = 5  # carry up to 5 sample slices into telemetry
+    sample_target = 5
 
     for feature in features:
-        # Snapshot existing attributions (we'll grow the list).
-        existing = list(feature.symbol_attributions or [])
-        if not existing:
-            continue
-        existing_keys: set[tuple[str, str, int, int]] = {
-            _key_for(a) for a in existing
-        }
-        new_attrs: list[FlowSymbolAttribution] = []
-
-        for attr in existing:
-            if attr.role not in _SLICEABLE_ROLES:
-                continue
-            if (attr.line_end - attr.line_start + 1) < _MIN_BRANCH_LINES:
-                continue
-            ext = _ext_of(attr.file)
-            if ext not in _LANG_BY_EXT:
-                continue
-            lang_name = _LANG_BY_EXT[ext]
-            result.languages_seen[lang_name] = (
-                result.languages_seen.get(lang_name, 0) + 1
+        # ── Feature-level attributions (JS/TS-shaped) ─────────────
+        feat_existing = list(feature.symbol_attributions or [])
+        if feat_existing:
+            feat_new = _slice_attribution_list(
+                ctx, feat_existing,
+                owner_label=f"feature:{feature.name}",
+                result=result, log=log, sample_target=sample_target,
             )
-            result.symbols_analyzed += 1
+            if feat_new:
+                feature.symbol_attributions = feat_existing + feat_new
 
-            try:
-                slices = slice_branches(
-                    ctx,
-                    file_path=attr.file,
-                    parent_symbol=attr.symbol,
-                    parent_line_start=attr.line_start,
-                    parent_line_end=attr.line_end,
-                )
-            except Exception as exc:  # noqa: BLE001
-                # Tree-sitter parse failures must never break a scan.
-                result.parse_failures += 1
-                log.warn(
-                    f"slice_branches raised on {attr.file}:{attr.symbol}: "
-                    f"{type(exc).__name__}: {exc}",
-                    feature=feature.name,
-                )
-                logger.debug(
-                    "stage_6_6.slice_branches raised", exc_info=True,
-                )
+        # ── Flow-level attributions (Go / Python-lib / Rust shape) ─
+        for flow in feature.flows or []:
+            flow_existing = list(
+                getattr(flow, "flow_symbol_attributions", []) or []
+            )
+            if not flow_existing:
                 continue
-
-            if len(slices) >= _MAX_BRANCHES_PER_SYMBOL:
-                result.capped_symbols += 1
-
-            for idx, sl in enumerate(slices):
-                new_attr = sl.as_attribution(index=idx)
-                key = _key_for(new_attr)
-                if key in existing_keys:
-                    continue
-                existing_keys.add(key)
-                new_attrs.append(new_attr)
-                result.branches_emitted += 1
-                result.branch_kinds[sl.branch_kind] = (
-                    result.branch_kinds.get(sl.branch_kind, 0) + 1
-                )
-                if len(result.sample_slices) < sample_target:
-                    result.sample_slices.append({
-                        "file": sl.file,
-                        "parent_symbol": sl.parent_symbol,
-                        "branch_kind": sl.branch_kind,
-                        "condition_text": sl.condition_text,
-                        "line_start": sl.line_start,
-                        "line_end": sl.line_end,
-                        "feature": feature.name,
-                    })
-
-        if new_attrs:
-            feature.symbol_attributions = existing + new_attrs
+            flow_new = _slice_attribution_list(
+                ctx, flow_existing,
+                owner_label=f"flow:{feature.name}/{flow.name}",
+                result=result, log=log, sample_target=sample_target,
+            )
+            if flow_new:
+                flow.flow_symbol_attributions = flow_existing + flow_new
 
     result.elapsed_sec = round(time.monotonic() - t0, 3)
     log.info(

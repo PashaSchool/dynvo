@@ -547,6 +547,48 @@ def test_run_stage_6_6_skips_support_role_attributions(tmp_path):
 
 
 @requires_ts
+def test_run_stage_6_6_slices_flow_symbol_attributions(tmp_path):
+    """Stages 3/C1 attach attributions to ``flow.flow_symbol_attributions``
+    for non-JS stacks (Go/Python-lib/Rust). The slicer MUST also walk
+    those — otherwise non-JS scans get no branch enrichment."""
+    from faultline.models.types import Flow
+
+    rel, loc = _write(tmp_path, "x.go", GO_SWITCH)
+    feature = _new_feature("svc", paths=[rel])
+    flow = Flow(
+        name="handle-x",
+        display_name="Handle X",
+        description="",
+        paths=[rel],
+        authors=[],
+        total_commits=0, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=datetime.now(timezone.utc),
+        health_score=80.0,
+        entry_point_file=rel,
+        entry_point_line=2,
+        flow_symbol_attributions=[FlowSymbolAttribution(
+            file=rel, symbol="g", line_start=1, line_end=loc, role="entry",
+        )],
+    )
+    feature.flows = [flow]
+
+    with _log(tmp_path) as log:
+        result = run_stage_6_6(_ctx(tmp_path), [feature], log)
+
+    assert result.active is True
+    assert result.symbols_analyzed >= 1
+    branch_attrs = [
+        a for a in flow.flow_symbol_attributions if a.role == "branch"
+    ]
+    assert len(branch_attrs) >= 2  # at least if + switch_case
+    # feature-level attributions list is untouched (no eligible entries).
+    feat_branch_attrs = [
+        a for a in feature.symbol_attributions if a.role == "branch"
+    ]
+    assert feat_branch_attrs == []
+
+
+@requires_ts
 def test_run_stage_6_6_telemetry_shape(tmp_path):
     rel, loc = _write(tmp_path, "page.tsx", TS_IF_ELSE_IF_ELSE)
     feature = _new_feature(
