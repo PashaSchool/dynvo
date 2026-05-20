@@ -198,6 +198,17 @@ class FlowSymbolAttribution(BaseModel):
                                ``framework-link:<kind>:<target-symbol>``
                                so consumers can route on link kind
                                without growing the role enum further.
+      - ``branch``           — (D2) intra-symbol conditional region
+                               extracted via tree-sitter AST. The
+                               ``symbol`` field encodes
+                               ``branch:<kind>:<parent-symbol>__b<i>``
+                               where ``kind`` ∈ ``{if, else, ternary,
+                               switch_case, switch_default, try, catch,
+                               finally, match_arm}``. The conditioning
+                               text (e.g. ``role === 'admin'``) is
+                               appended after the symbol via
+                               ``::<condition>`` so consumers can route
+                               on it without growing the schema.
     """
 
     file: str                  # repo-relative path
@@ -207,7 +218,7 @@ class FlowSymbolAttribution(BaseModel):
     role: Literal[
         "entry", "called", "support",
         "anchor-consumer", "schema-consumer", "structural",
-        "framework-link",
+        "framework-link", "branch",
     ]
 
 

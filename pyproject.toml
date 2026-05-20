@@ -58,6 +58,24 @@ trace = [
     "tree-sitter-typescript>=0.23.0",
     "tree-sitter-javascript>=0.23.0",
 ]
+# Sprint D2 — Stage 6.6 Branch Slicer requires tree-sitter parsers for
+# every language we want to extract intra-symbol conditional ranges
+# from (if/ternary/switch/try/catch/match-arm). Optional: when the
+# extras are not installed, Stage 6.6 reports active=False and the
+# rest of the pipeline runs unchanged. Install via:
+#
+#     pip install -e '.[ast]'         (from the repo root)
+#     pip install 'faultlines[ast]'   (from a published wheel)
+#
+# Bundles the `trace` languages (ts/tsx/js) plus python/go/rust.
+ast = [
+    "tree-sitter>=0.23.0",
+    "tree-sitter-typescript>=0.23.0",
+    "tree-sitter-javascript>=0.23.0",
+    "tree-sitter-python>=0.23.0",
+    "tree-sitter-go>=0.23.0",
+    "tree-sitter-rust>=0.23.0",
+]
 
 [project.urls]
 Homepage = "https://faultlines.dev"
