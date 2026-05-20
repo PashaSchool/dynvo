@@ -97,6 +97,13 @@ from faultline.pipeline_v2.stage_6_metrics import stage_6_metrics
 from faultline.pipeline_v2.stage_6_5_product_clusterer import (
     run_product_clusterer,
 )
+from faultline.pipeline_v2.stage_6_3_import_tree import (
+    DEFAULT_MAX_DEPTH as _IMPORT_TREE_MAX_DEPTH,
+    DEFAULT_MAX_FILES_PER_FEATURE as _IMPORT_TREE_MAX_FILES,
+    DEFAULT_MAX_SYMBOLS_PER_FEATURE as _IMPORT_TREE_MAX_SYMBOLS,
+    build_artifact_payload as _import_tree_artifact,
+    enrich_with_import_tree,
+)
 from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
@@ -692,6 +699,49 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 6.3 — whole-import-tree enrichment (deterministic) ───
+    # Sprint C3 (2026-05-20). Closes two gaps the user identified:
+    #   * Forward flow trees stayed depth-0 because the legacy
+    #     tsconfig loader picked the root config (no paths) and
+    #     missed per-workspace alias maps.
+    #   * Reverse package-anchor / schema-source features had no
+    #     consumer expansion at all (Billing showed paths=1).
+    # The stage runs AFTER 6.5 so the deterministic product
+    # clusterer (which uses paths[0] as a workspace heuristic) is
+    # unaffected by path explosion. NO LLM.
+    with StageLogger(run_dir, 6, "import_tree") as log6_3:
+        enrichment = enrich_with_import_tree(
+            ctx, features, log=log6_3,
+            max_depth=_IMPORT_TREE_MAX_DEPTH,
+            max_files_per_feature=_IMPORT_TREE_MAX_FILES,
+            max_symbols_per_feature=_IMPORT_TREE_MAX_SYMBOLS,
+        )
+        features = list(enrichment.enriched_features)
+        artifact_payload = _import_tree_artifact(
+            enrichment,
+            max_depth=_IMPORT_TREE_MAX_DEPTH,
+            max_files_per_feature=_IMPORT_TREE_MAX_FILES,
+            max_symbols_per_feature=_IMPORT_TREE_MAX_SYMBOLS,
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="import_tree",
+            payload=artifact_payload,
+            run_dir=run_dir,
+        )
+        log6_3.info(
+            "import-tree summary: "
+            f"total_seeds={enrichment.total_seeds} "
+            f"files_reached={enrichment.total_files_reached} "
+            f"symbols_emitted={enrichment.total_symbols_emitted} "
+            f"cycles={enrichment.cycles_detected} "
+            f"depth_capped={enrichment.depth_capped_events} "
+            f"external_skipped={enrichment.external_skipped} "
+            f"cache_hits={enrichment.cache_hits} "
+            f"elapsed={enrichment.elapsed_sec}s",
+        )
+
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
     # residual list (stage5 stripped FS-missing + anchor-dup before naming
@@ -822,6 +872,17 @@ def run_pipeline_v2(
         **product_telemetry,
         # Sprint S3 — per-workspace Stage 1 dispatch telemetry.
         **per_ws_telemetry,
+        # Sprint C3 — Stage 6.3 whole-import-tree enrichment telemetry.
+        "stage_6_3_alias_map_size": len(enrichment.alias_map),
+        "stage_6_3_total_seeds": enrichment.total_seeds,
+        "stage_6_3_total_files_reached": enrichment.total_files_reached,
+        "stage_6_3_total_symbols_emitted":
+            enrichment.total_symbols_emitted,
+        "stage_6_3_cycles_detected": enrichment.cycles_detected,
+        "stage_6_3_depth_capped_events": enrichment.depth_capped_events,
+        "stage_6_3_external_skipped": enrichment.external_skipped,
+        "stage_6_3_cache_hits": enrichment.cache_hits,
+        "stage_6_3_elapsed_sec": enrichment.elapsed_sec,
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
