@@ -2996,6 +2996,16 @@ def scan_v2(
             "Run artifacts land under ~/.faultline/logs/<slug>/<run-id>/."
         ),
     ),
+    max_tree_depth: int = typer.Option(
+        8,
+        "--max-tree-depth",
+        help=(
+            "Maximum BFS depth for Stage 6.3 import-tree enrichment. "
+            "Default 8 covers page → component → hook → service → util "
+            "→ primitives chain. Raise to 10-12 for enterprise monoliths "
+            "with deeper layering; lower to 4-5 for quick scans."
+        ),
+    ),
 ):
     """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
 
@@ -3016,7 +3026,8 @@ def scan_v2(
 
     rprint(
         f"[bold blue]faultline scan-v2[/bold blue] {repo} "
-        f"(model={resolved_model}, llm_reconcile={llm_reconcile}, days={days})"
+        f"(model={resolved_model}, llm_reconcile={llm_reconcile}, "
+        f"days={days}, max_tree_depth={max_tree_depth})"
     )
 
     try:
@@ -3027,6 +3038,7 @@ def scan_v2(
             out_path=out_path,
             llm_reconcile=llm_reconcile,
             run_id=run_id,
+            max_tree_depth=max_tree_depth,
         )
     except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
         rprint(f"[red]Scan failed:[/red] {type(exc).__name__}: {exc}")
