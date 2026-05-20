@@ -1485,10 +1485,19 @@ def enrich_with_import_tree(
                 ): index
                 for index, feature in enumerate(features)
             }
+            from concurrent.futures import CancelledError
+
             for fut in as_completed(future_to_index):
                 index = future_to_index[fut]
                 try:
                     result_by_index[index] = fut.result()
+                except CancelledError:
+                    # Future was cancelled by the budget-exhausted
+                    # branch below; treat as a budget skip, NOT an
+                    # error. The apply phase recognises a None entry
+                    # in result_by_index as ``budget_skipped`` so we
+                    # leave this index unset and continue.
+                    continue
                 except Exception as exc:  # noqa: BLE001 — defensive
                     # A worker exception should never break Stage 6.3.
                     # Record a no-op enrichment for the feature so the
