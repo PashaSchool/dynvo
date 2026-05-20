@@ -148,6 +148,29 @@ def test_extract_product_taxonomy_includes_sidebar_li_links() -> None:
     assert "Log In" not in candidates
 
 
+def test_discover_marketing_site_falls_back_to_nested_workspace_package(
+    tmp_path: Path,
+) -> None:
+    # Root package.json has no homepage, but apps/web/package.json does.
+    _write_pkg_json(tmp_path, {"name": "monorepo-root"})
+    (tmp_path / "apps" / "web").mkdir(parents=True)
+    (tmp_path / "apps" / "web" / "package.json").write_text(
+        json.dumps({"name": "web", "homepage": "https://customer-facing.dev"}),
+        encoding="utf-8",
+    )
+    assert discover_marketing_site(tmp_path) == "https://customer-facing.dev"
+
+
+def test_discover_marketing_site_scans_packages_dir(tmp_path: Path) -> None:
+    _write_pkg_json(tmp_path, {"name": "monorepo-root"})
+    (tmp_path / "packages" / "core").mkdir(parents=True)
+    (tmp_path / "packages" / "core" / "package.json").write_text(
+        json.dumps({"name": "core", "homepage": "https://product.io"}),
+        encoding="utf-8",
+    )
+    assert discover_marketing_site(tmp_path) == "https://product.io"
+
+
 def test_extract_product_taxonomy_rejects_all_caps_marketing() -> None:
     html = "<h2>BUY NOW LIMITED OFFER</h2><h2>Survey Templates</h2>"
     candidates, _conf = extract_product_taxonomy(html)

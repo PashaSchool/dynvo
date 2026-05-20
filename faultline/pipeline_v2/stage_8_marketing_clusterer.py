@@ -164,6 +164,42 @@ def _write_cache(taxonomy: MarketingTaxonomy) -> None:
 # ── Marketing fetch (cached) ────────────────────────────────────────────
 
 
+def _candidate_urls(primary: str) -> list[str]:
+    """Given a primary marketing URL, derive sensible fallbacks.
+
+    Marketing pages are often JS-rendered SPAs that serve empty HTML
+    shells; the docs subdomain or ``/features`` route is usually a
+    static page with real headings. Tries (in order):
+
+        1. ``<primary>``
+        2. ``<primary>/features``
+        3. ``<primary>/pricing``
+        4. ``https://docs.<host>``  (only when host doesn't already
+                                     start with ``docs.``)
+    """
+    out: list[str] = [primary]
+    base = primary.rstrip("/")
+    out.append(f"{base}/features")
+    out.append(f"{base}/pricing")
+    # docs.<host> fallback
+    import urllib.parse as _urlparse
+    parsed = _urlparse.urlparse(primary)
+    host = parsed.netloc
+    if host and not host.startswith("docs."):
+        # strip "www." if present so we don't try docs.www.x.com
+        host_clean = host.removeprefix("www.")
+        out.append(f"{parsed.scheme}://docs.{host_clean}")
+    # Dedupe preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for u in out:
+        if u in seen:
+            continue
+        seen.add(u)
+        deduped.append(u)
+    return deduped
+
+
 def fetch_marketing_taxonomy(
     repo_path: Path,
     repo_slug: str,
@@ -176,31 +212,46 @@ def fetch_marketing_taxonomy(
     Returns ``None`` when no marketing surface is reachable (private
     repo / no homepage / network failure / 404). Callers must handle
     that gracefully (fall back to Stage 6.5 deterministic result).
+
+    SPA-aware: when the primary marketing URL yields zero taxonomy
+    candidates (JS-rendered shell, no static headings), we try a small
+    fixed set of fallback URLs (``/features``, ``/pricing``, and
+    ``docs.<host>``). First one to yield ≥3 candidates wins.
     """
     if use_cache:
         cached = _load_cached_taxonomy(repo_slug)
         if cached is not None:
             return cached
 
-    url = discover_marketing_site(repo_path)
-    if not url:
+    primary = discover_marketing_site(repo_path)
+    if not primary:
         return None
 
-    html = fetch_page_text(url)
-    if not html:
+    best: tuple[str, list[str], float] | None = None
+    for url in _candidate_urls(primary):
+        html = fetch_page_text(url)
+        if not html:
+            continue
+        candidates, conf = extract_product_taxonomy(html)
+        if len(candidates) >= _MIN_TAXONOMY_SIZE:
+            best = (url, candidates, conf)
+            break
+        # Remember the largest-so-far even if it's below threshold so
+        # we can still surface useful telemetry if every URL is small.
+        if best is None or len(candidates) > len(best[1]):
+            best = (url, candidates, conf)
+
+    if best is None or not best[1]:
         return None
 
-    candidates, conf = extract_product_taxonomy(html)
-    if not candidates:
-        return None
-
+    chosen_url, candidates, conf = best
     taxonomy = MarketingTaxonomy(
         repo_slug=repo_slug,
-        source_url=url,
+        source_url=chosen_url,
         fetched_at=datetime.now(timezone.utc).isoformat(),
         product_features=tuple(candidates),
         confidence=conf,
-        notes=f"extracted {len(candidates)} candidates from {url}",
+        notes=f"extracted {len(candidates)} candidates from {chosen_url}",
     )
     if use_cache:
         _write_cache(taxonomy)
