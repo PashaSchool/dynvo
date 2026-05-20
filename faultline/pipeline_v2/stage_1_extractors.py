@@ -94,6 +94,10 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     # Sprint S3.1 — Fastify code-based router. Self-skips unless the
     # auditor / Stage 0 / a workspace package.json signals fastify.
     _try("faultline.pipeline_v2.extractors.fastify",         "FastifyRouteExtractor")
+    # Sprint H — JS/TS library extractor. Mirrors python-library: reads
+    # package.json#exports + lib/ submodule layout. Self-skips for app-
+    # shaped repos (next/express/fastify/etc. in direct deps).
+    _try("faultline.pipeline_v2.extractors.js_library",      "JsLibraryExtractor")
 
     return out
 
