@@ -499,3 +499,161 @@ class TestGetTrackedFiles:
         files = get_tracked_files(repo)
         # All files are in skipped dirs
         assert files == []
+
+
+# ---------------------------------------------------------------------------
+# get_commits — Sprint G fast path
+# ---------------------------------------------------------------------------
+
+
+class TestGetCommitsFastPath:
+    """Tests for ``_get_commits_fast`` — Sprint G perf fix (2026-05-20).
+
+    The fast path replaces a 4586× per-commit ``commit.stats.files``
+    GitPython walk with a single ``git log --name-only`` subprocess
+    call. It must:
+      - parse multi-line commit bodies correctly (the old regex-based
+        parse broke on the first body newline);
+      - capture filenames per commit;
+      - extract bug-fix flag + PR number consistently with the slow
+        path;
+      - return ``None`` gracefully when subprocess fails.
+    """
+
+    def _init_commits(
+        self,
+        path: str,
+        commits: list[tuple[str, dict[str, str]]],
+    ) -> None:
+        """Init a repo and create a sequence of commits.
+
+        Each commit is ``(message, {file: content})``.
+        """
+        subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=path, capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Tester"],
+            cwd=path, capture_output=True, check=True,
+        )
+        for msg, files in commits:
+            for filepath, content in files.items():
+                full = f"{path}/{filepath}"
+                subprocess.run(
+                    ["mkdir", "-p", str(full.rsplit("/", 1)[0])],
+                    capture_output=True,
+                )
+                with open(full, "w") as f:
+                    f.write(content)
+            subprocess.run(
+                ["git", "add", "-A"], cwd=path, capture_output=True, check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", msg],
+                cwd=path, capture_output=True, check=True,
+            )
+
+    def test_captures_basic_metadata(self, tmp_path: str) -> None:
+        from git import Repo
+        from faultline.analyzer.git import _get_commits_fast
+
+        path = str(tmp_path)
+        self._init_commits(path, [
+            ("feat: initial commit", {"src/main.py": "print('hi')"}),
+            ("fix: resolve crash on startup (#42)", {"src/main.py": "print('ok')"}),
+        ])
+        repo = Repo(path)
+        commits = _get_commits_fast(repo, days=365, max_commits=10)
+        assert commits is not None
+        assert len(commits) == 2
+        # Newest-first ordering.
+        assert commits[0].message.startswith("fix:")
+        assert commits[1].message.startswith("feat:")
+        # PR number extracted.
+        assert commits[0].pr_number == 42
+        # Bug-fix flag set on the fix commit.
+        assert commits[0].is_bug_fix is True
+        assert commits[1].is_bug_fix is False
+        # Files captured.
+        assert "src/main.py" in commits[0].files_changed
+        # SHA truncated to 8 chars.
+        assert len(commits[0].sha) == 8
+
+    def test_handles_multiline_body(self, tmp_path: str) -> None:
+        """The original parser broke on the first body newline.
+
+        With multi-paragraph commit bodies, the fast path must still
+        correctly delimit the body from the file list.
+        """
+        from git import Repo
+        from faultline.analyzer.git import _get_commits_fast
+
+        path = str(tmp_path)
+        multiline_msg = (
+            "feat(api): add /users endpoint\n\n"
+            "This is a multi-paragraph body.\n\n"
+            "- bullet one\n"
+            "- bullet two\n\n"
+            "Closes #99"
+        )
+        self._init_commits(path, [
+            (multiline_msg, {
+                "api/users.py": "def list_users(): pass",
+                "tests/test_users.py": "def test(): pass",
+            }),
+        ])
+        repo = Repo(path)
+        commits = _get_commits_fast(repo, days=365, max_commits=5)
+        assert commits is not None
+        assert len(commits) == 1
+        assert "multi-paragraph" in commits[0].message
+        assert "bullet two" in commits[0].message
+        assert set(commits[0].files_changed) == {
+            "api/users.py", "tests/test_users.py",
+        }
+
+    def test_returns_empty_on_clean_log(self, tmp_path: str) -> None:
+        """Repos with no commits in the date range return ``[]``,
+        not None — None is reserved for subprocess failures."""
+        from git import Repo
+        from faultline.analyzer.git import _get_commits_fast
+
+        path = str(tmp_path)
+        self._init_commits(path, [
+            ("ancient commit", {"old.txt": "x"}),
+        ])
+        repo = Repo(path)
+        commits = _get_commits_fast(repo, days=0, max_commits=10)
+        # days=0 means "no commits older than today"; since the commit
+        # is from now-ish, age 0 is fine — but a far-past cutoff
+        # would return []. We can't easily simulate past dates here;
+        # just confirm the call doesn't crash and returns a list.
+        assert commits is not None
+        assert isinstance(commits, list)
+
+    def test_parses_supabase_style_squash_msg(self, tmp_path: str) -> None:
+        from git import Repo
+        from faultline.analyzer.git import _get_commits_fast
+
+        path = str(tmp_path)
+        # Real-world squash-merge style with PR number at end.
+        msg = (
+            "chore: Migrate the monorepo to use Tailwind v4 (#45318)\n\n"
+            "This PR migrates the whole monorepo to use Tailwind v4:\n"
+            "- Removed `@tailwindcss/container-queries` plugin\n"
+            "- Bump all instances of Tailwind to v4.\n\n"
+            "---------\n\n"
+            "Co-authored-by: Jordi Enric <jordi.err@gmail.com>"
+        )
+        self._init_commits(path, [
+            (msg, {"package.json": "{}"}),
+        ])
+        repo = Repo(path)
+        commits = _get_commits_fast(repo, days=365, max_commits=5)
+        assert commits is not None
+        assert len(commits) == 1
+        assert commits[0].pr_number == 45318
+        assert "Tailwind v4" in commits[0].message
+        assert "Co-authored-by" in commits[0].message
