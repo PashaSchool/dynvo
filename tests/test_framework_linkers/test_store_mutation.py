@@ -198,6 +198,21 @@ def test_redux_slice_parsed() -> None:
 # ── Jotai registry ─────────────────────────────────────────────────────────
 
 
+def test_jotai_read_only_atom_with_ts_generic_parsed() -> None:
+    """Real-world Jotai atoms often use `atom<Type>(...)` with the type
+    spanning multiple lines — the regex must tolerate both."""
+    text = (
+        'import { atom } from "jotai"\n'
+        'export const refetchEmailListAtom = atom<\n'
+        '  { refetch: (options?: { ids?: string[] }) => void } | undefined\n'
+        '>(undefined);\n'
+    )
+    mutators, fields = _detect_jotai_atoms("store/email.ts", text)
+    field_names = {f.store_name for f in fields}
+    assert "refetchEmailListAtom" in field_names
+    assert mutators == []
+
+
 def test_jotai_writable_atom_parsed() -> None:
     text = (
         'import { atom } from "jotai"\n'
