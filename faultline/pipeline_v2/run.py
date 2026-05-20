@@ -182,6 +182,7 @@ def run_pipeline_v2(
     out_path: Path | None = None,
     llm_reconcile: bool = False,
     run_id: str | None = None,
+    max_tree_depth: int | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -208,6 +209,16 @@ def run_pipeline_v2(
     repo_path = Path(repo_path).resolve()
     model_id = resolve_model(model)
     t0 = time.monotonic()
+
+    # Sprint C3b — caller-overridable Stage 6.3 BFS depth.
+    # Defaults to the module-level :data:`_IMPORT_TREE_MAX_DEPTH`
+    # (=8) when not supplied so legacy callers / library users
+    # unaware of the new knob keep the new ceiling.
+    effective_max_tree_depth = (
+        int(max_tree_depth)
+        if max_tree_depth is not None
+        else _IMPORT_TREE_MAX_DEPTH
+    )
 
     # One shared CostTracker across Stage 3 + Stage 4 so the reported
     # cost is the FULL LLM bill for this scan.
@@ -712,14 +723,14 @@ def run_pipeline_v2(
     with StageLogger(run_dir, 6, "import_tree") as log6_3:
         enrichment = enrich_with_import_tree(
             ctx, features, log=log6_3,
-            max_depth=_IMPORT_TREE_MAX_DEPTH,
+            max_depth=effective_max_tree_depth,
             max_files_per_feature=_IMPORT_TREE_MAX_FILES,
             max_symbols_per_feature=_IMPORT_TREE_MAX_SYMBOLS,
         )
         features = list(enrichment.enriched_features)
         artifact_payload = _import_tree_artifact(
             enrichment,
-            max_depth=_IMPORT_TREE_MAX_DEPTH,
+            max_depth=effective_max_tree_depth,
             max_files_per_feature=_IMPORT_TREE_MAX_FILES,
             max_symbols_per_feature=_IMPORT_TREE_MAX_SYMBOLS,
         )
@@ -883,6 +894,21 @@ def run_pipeline_v2(
         "stage_6_3_external_skipped": enrichment.external_skipped,
         "stage_6_3_cache_hits": enrichment.cache_hits,
         "stage_6_3_elapsed_sec": enrichment.elapsed_sec,
+        # Sprint C3b — nested config namespace so external tools can
+        # introspect the depth / cap configuration without scraping
+        # flat keys. ``max_depth_configured`` reflects the EFFECTIVE
+        # value used by this scan (CLI override OR default 8).
+        "stage_6_3": {
+            "max_depth_configured": effective_max_tree_depth,
+            "max_files_per_feature": _IMPORT_TREE_MAX_FILES,
+            "max_symbols_per_feature": _IMPORT_TREE_MAX_SYMBOLS,
+            "alias_map_size": len(enrichment.alias_map),
+            "total_seeds": enrichment.total_seeds,
+            "total_files_reached": enrichment.total_files_reached,
+            "total_symbols_emitted": enrichment.total_symbols_emitted,
+            "depth_capped_events": enrichment.depth_capped_events,
+            "elapsed_sec": enrichment.elapsed_sec,
+        },
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
