@@ -102,40 +102,155 @@ def discover_marketing_site(repo_path: Path) -> str | None:
     """Find the canonical marketing URL for the repo at ``repo_path``.
 
     Priority:
-      1. ``package.json#homepage``
-      2. ``package.json#repository.url`` → strip ``.git``, only
-         accepted if it does NOT point at github/gitlab/bitbucket
-         (those would point at the source-host page, not the marketing
-         site).
+      1. Root ``package.json#homepage``
+      2. Root ``package.json#repository.url`` (only if NOT a code host)
+      3. Nested workspace ``package.json#homepage`` — many monorepos
+         leave the root manifest minimal and put the customer-facing
+         URL on each published package. Scans ``apps/*``, ``packages/*``,
+         ``services/*``, ``libs/*`` up to two levels deep.
+      4. Git remote ``origin`` → GitHub REST API
+         ``/repos/<owner>/<repo>#homepage`` (the "About" sidebar URL
+         maintainers configure on GitHub). This is EXTERNAL structured
+         metadata, not in-repo prose, so the README rule does not apply.
 
     Returns ``None`` when no usable signal exists.
     """
     pj = _read_package_json(repo_path)
-    if not pj:
-        return None
 
-    # 1. homepage
-    homepage = pj.get("homepage")
-    url = _normalise_url(homepage) if isinstance(homepage, str) else None
-    if url:
-        return url
-
-    # 2. repository.url (only if it isn't a code host)
-    repo = pj.get("repository")
-    if isinstance(repo, dict):
-        repo_url = repo.get("url")
-        if isinstance(repo_url, str):
-            cleaned = repo_url.removeprefix("git+").removesuffix(".git")
-            url = _normalise_url(cleaned)
-            if url:
-                return url
-    elif isinstance(repo, str):
-        cleaned = repo.removeprefix("git+").removesuffix(".git")
-        url = _normalise_url(cleaned)
+    # 1. Root homepage
+    if pj:
+        homepage = pj.get("homepage")
+        url = _normalise_url(homepage) if isinstance(homepage, str) else None
         if url:
             return url
 
+        # 2. Root repository.url (only if it isn't a code host)
+        repo = pj.get("repository")
+        if isinstance(repo, dict):
+            repo_url = repo.get("url")
+            if isinstance(repo_url, str):
+                cleaned = repo_url.removeprefix("git+").removesuffix(".git")
+                url = _normalise_url(cleaned)
+                if url:
+                    return url
+        elif isinstance(repo, str):
+            cleaned = repo.removeprefix("git+").removesuffix(".git")
+            url = _normalise_url(cleaned)
+            if url:
+                return url
+
+    # 3. Nested workspace package.json
+    nested = _discover_from_nested_packages(repo_path)
+    if nested:
+        return nested
+
+    # 4. GitHub API (.git/config remote → REST homepage field)
+    gh = _discover_from_github_metadata(repo_path)
+    if gh:
+        return gh
+
     return None
+
+
+# ── Nested workspace package.json scan ──────────────────────────────────
+
+
+_WORKSPACE_PARENTS = ("apps", "packages", "services", "libs")
+
+
+def _discover_from_nested_packages(repo_path: Path) -> str | None:
+    """Walk apps/*/ packages/*/ services/*/ libs/*/ and look at each
+    package.json for a homepage field. First match wins.
+
+    Capped at the first level under each workspace parent dir for speed
+    — going deeper would risk picking up a vendored sub-package URL.
+    """
+    for parent in _WORKSPACE_PARENTS:
+        parent_dir = repo_path / parent
+        if not parent_dir.is_dir():
+            continue
+        try:
+            children = sorted(parent_dir.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            pj_path = child / "package.json"
+            if not pj_path.is_file():
+                continue
+            try:
+                data = json.loads(pj_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            homepage = data.get("homepage")
+            url = _normalise_url(homepage) if isinstance(homepage, str) else None
+            if url:
+                return url
+    return None
+
+
+# ── GitHub remote-based discovery ───────────────────────────────────────
+
+
+def _read_git_remote_origin(repo_path: Path) -> str | None:
+    """Read .git/config and extract ``remote "origin"`` url, no shell-out."""
+    cfg = repo_path / ".git" / "config"
+    if not cfg.is_file():
+        return None
+    try:
+        text = cfg.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    in_origin = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("[remote") and '"origin"' in s:
+            in_origin = True
+            continue
+        if s.startswith("[") and in_origin:
+            in_origin = False
+        if in_origin and s.startswith("url"):
+            _, _, val = s.partition("=")
+            return val.strip()
+    return None
+
+
+def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
+    """Return ``(owner, repo)`` for a github remote URL, else None."""
+    m = _GITHUB_REPO_RE.search(remote_url)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _discover_from_github_metadata(repo_path: Path) -> str | None:
+    """Fetch the GitHub repository's About URL via the public REST API.
+
+    This is EXTERNAL structured metadata (a single field maintainers
+    configure on their GitHub repo settings), NOT in-repo prose. The
+    "no README" rule applies to repo-internal documents, not to data
+    the maintainer has explicitly published as their product URL.
+
+    Returns ``None`` on any error so callers fall back gracefully.
+    """
+    remote = _read_git_remote_origin(repo_path)
+    if not remote:
+        return None
+    owner_repo = _parse_github_owner_repo(remote)
+    if not owner_repo:
+        return None
+    owner, repo = owner_repo
+    api_url = f"https://api.github.com/repos/{owner}/{repo}"
+    text = fetch_page_text(api_url, timeout_s=10)
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    homepage = data.get("homepage") if isinstance(data, dict) else None
+    return _normalise_url(homepage) if isinstance(homepage, str) else None
 
 
 # ── Fetch ───────────────────────────────────────────────────────────────
@@ -226,10 +341,19 @@ def _strip_html(text: str) -> str:
 
 
 def _is_acceptable_label(label: str) -> bool:
-    """Filter generic nav chrome and obviously non-feature strings."""
+    """Filter generic nav chrome and obviously non-feature strings.
+
+    Product taxonomy entries are short noun-phrases ("HTTP Uptime
+    Monitoring", "Status Page Builder"). Marketing-page H2s often
+    contain full pitch sentences ("Close deals faster with secure
+    data rooms.") that look superficially like headings but make
+    terrible cluster labels. We reject anything that resembles a
+    sentence rather than a phrase.
+    """
     if not label:
         return False
-    if len(label) < 4 or len(label) > 80:
+    # Slightly tighter upper bound — real product labels are short.
+    if len(label) < 4 or len(label) > 60:
         return False
     lowered = label.lower()
     if lowered in _GENERIC_NAV_WORDS:
@@ -238,11 +362,9 @@ def _is_acceptable_label(label: str) -> bool:
     word_chars = sum(c.isalpha() for c in label)
     if word_chars < 4:
         return False
-    # At least 2 word tokens (single-word labels like "Auth" are
-    # usually nav chrome; multi-word labels like "Multi-Region Probing"
-    # carry product-grain meaning).
+    # Token count cap: phrases are 2-6 words. More than 6 = sentence.
     tokens = [t for t in re.split(r"[\s\-/]+", label) if t]
-    if len(tokens) < 2:
+    if len(tokens) < 2 or len(tokens) > 6:
         return False
     # Filter all-caps shouty marketing strings (often CTAs).
     if label.isupper():
@@ -250,6 +372,20 @@ def _is_acceptable_label(label: str) -> bool:
     # Drop URLs and emails that slip through.
     if "://" in label or "@" in label:
         return False
+    # Sentence-shape detectors — punctuation that doesn't appear in
+    # a product label.
+    if label.rstrip().endswith((".", "!", "?")):
+        return False
+    if "," in label or ";" in label or ":" in label:
+        return False
+    # Conjunctions in the middle of the string almost always indicate
+    # a marketing pitch ("X and Y in seconds") rather than a feature
+    # label ("Status Pages").
+    lowered_padded = f" {lowered} "
+    for conj in (" and ", " or ", " with ", " for ", " in ", " to ",
+                 " from ", " your ", " our ", " the "):
+        if conj in lowered_padded:
+            return False
     return True
 
 
