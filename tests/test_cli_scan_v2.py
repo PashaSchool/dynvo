@@ -48,7 +48,10 @@ def test_scan_v2_invokes_orchestrator_with_resolved_model(
 
     captured: dict[str, object] = {}
 
-    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile, run_id=None):
+    def _fake_run(
+        repo_path, *, model, days, out_path, llm_reconcile,
+        run_id=None, max_tree_depth=None,
+    ):
         captured["model"] = model
         captured["days"] = days
         captured["llm_reconcile"] = llm_reconcile
@@ -85,7 +88,10 @@ def test_scan_v2_propagates_warnings(
     repo = tmp_path / "demo"
     repo.mkdir()
 
-    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile, run_id=None):
+    def _fake_run(
+        repo_path, *, model, days, out_path, llm_reconcile,
+        run_id=None, max_tree_depth=None,
+    ):
         return {
             "path": str(tmp_path / "fm.json"),
             "stack": "fastapi",
@@ -112,7 +118,10 @@ def test_scan_v2_explicit_output_path_resolved(
 
     captured: dict[str, object] = {}
 
-    def _fake_run(repo_path, *, model, days, out_path, llm_reconcile, run_id=None):
+    def _fake_run(
+        repo_path, *, model, days, out_path, llm_reconcile,
+        run_id=None, max_tree_depth=None,
+    ):
         captured["out_path"] = out_path
         return {
             "path": str(target),
@@ -141,7 +150,8 @@ def test_scan_v2_run_id_flag_passed_through(
     captured: dict[str, object] = {}
 
     def _fake_run(
-        repo_path, *, model, days, out_path, llm_reconcile, run_id=None,
+        repo_path, *, model, days, out_path, llm_reconcile,
+        run_id=None, max_tree_depth=None,
     ):
         captured["run_id"] = run_id
         return {
@@ -163,3 +173,44 @@ def test_scan_v2_run_id_flag_passed_through(
     assert result.exit_code == 0, result.stdout
     assert captured["run_id"] == "baseline"
     assert "baseline" in result.stdout
+
+
+def test_scan_v2_max_tree_depth_flag_passed_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sprint C3b — ``--max-tree-depth N`` reaches run_pipeline_v2."""
+    repo = tmp_path / "demo"
+    repo.mkdir()
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(
+        repo_path, *, model, days, out_path, llm_reconcile,
+        run_id=None, max_tree_depth=None,
+    ):
+        captured["max_tree_depth"] = max_tree_depth
+        return {
+            "path": str(tmp_path / "fm.json"),
+            "stack": None,
+            "cost_usd": 0.0,
+            "calls": 0,
+            "elapsed_sec": 0.0,
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        "faultline.pipeline_v2.run.run_pipeline_v2", _fake_run,
+    )
+    # Explicit override → captured value matches.
+    result = runner.invoke(
+        app, ["scan-v2", str(repo), "--max-tree-depth", "4"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["max_tree_depth"] == 4
+    assert "max_tree_depth=4" in result.stdout
+
+    # Default (no flag) → 8.
+    captured.clear()
+    result = runner.invoke(app, ["scan-v2", str(repo)])
+    assert result.exit_code == 0, result.stdout
+    assert captured["max_tree_depth"] == 8
