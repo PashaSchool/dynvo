@@ -150,10 +150,54 @@ def _parse_jsonc(text: str) -> dict | None:
         pass
 
     # Stdlib fallback — strip comments + trailing commas then parse.
+    # Sprint C3b regression fix: the original regex stripped `//...`
+    # and `/*...*/` blindly, which corrupted paths-block strings such
+    # as `"@/*": ["./*"]` (the `/*` inside the JSON value was treated
+    # as a block-comment opener). Walk char-by-char with awareness of
+    # string-literal state so comments inside strings are preserved.
     import json as _json
     import re as _re
-    stripped = _re.sub(r"//[^\n]*", "", text)
-    stripped = _re.sub(r"/\*.*?\*/", "", stripped, flags=_re.DOTALL)
+
+    def _strip_jsonc(src: str) -> str:
+        out: list[str] = []
+        i = 0
+        n = len(src)
+        in_str: str | None = None
+        while i < n:
+            ch = src[i]
+            nxt = src[i + 1] if i + 1 < n else ""
+            if in_str is not None:
+                out.append(ch)
+                if ch == "\\" and i + 1 < n:
+                    out.append(nxt)
+                    i += 2
+                    continue
+                if ch == in_str:
+                    in_str = None
+                i += 1
+                continue
+            if ch in ('"', "'"):
+                in_str = ch
+                out.append(ch)
+                i += 1
+                continue
+            if ch == "/" and nxt == "/":
+                # Line comment — skip to newline.
+                while i < n and src[i] != "\n":
+                    i += 1
+                continue
+            if ch == "/" and nxt == "*":
+                # Block comment — skip to closing */.
+                i += 2
+                while i < n - 1 and not (src[i] == "*" and src[i + 1] == "/"):
+                    i += 1
+                i += 2
+                continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+    stripped = _strip_jsonc(text)
     stripped = _re.sub(r",\s*([}\]])", r"\1", stripped)
     try:
         return _json.loads(stripped)
