@@ -84,15 +84,19 @@ _JS_EXTENSIONS: tuple[str, ...] = (
 
 # Zustand: `create<T>()((set, get) => ({ ... }))` or
 #          `create((set) => ({ ... }))` or
-#          `createStore((set, get) => ({ ... }))`.
-# We require `set` to be inside the parameter list because that's the
-# canonical Zustand signature; without it we'd false-positive on every
-# `create(` factory in the codebase.
+#          `createStore((set, get) => ({ ... }))` (the `zustand/vanilla`
+# entrypoint export). We require an arrow-function whose first param is
+# `set` to appear within ~200 chars of the `create(` token — this avoids
+# false-positives on Jotai's `createStore()` (no `set` arg) and on
+# generic factory helpers.
 _ZUSTAND_CREATE = re.compile(
-    r"""\b(?:create|createStore)\s*(?:<[^>]*>\s*)?\(\s*
-        \(?\s*\(?\s*(?:set|_set)\b   # first param is 'set'
-    """,
+    r"""\b(?:create|createStore)\b(?:\s*<[^>]*(?:>[^>]*)?>)?\s*\(""",
     re.VERBOSE,
+)
+# Validation regex applied to the window AFTER the create token —
+# must contain an arrow whose first parameter is `set`.
+_ZUSTAND_SET_PARAM = re.compile(
+    r"""\(\s*\(?\s*(?:set|_set)\b""",
 )
 
 # Export of a store hook from a Zustand-style file:
@@ -119,16 +123,20 @@ _RTK_REDUCERS_BLOCK = re.compile(
 # arg is a function — that's the mutator surface.
 _JOTAI_WRITABLE_ATOM = re.compile(
     r"""\b(?:export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?
-        atom\s*\(\s*
-        (?:[^,)]+|\([^)]*\)|\{[^}]*\})\s*,\s*   # read arg
+        atom\b(?:\s*<[^>]*(?:>[^>]*)?>)?\s*\(\s*
+        (?:[^,()]+|\([^)]*\)|\{[^}]*\})\s*,\s*   # read arg
         (?:async\s+)?(?:\(|function\b)            # write arg starts
     """,
-    re.VERBOSE,
+    re.VERBOSE | re.DOTALL,
 )
 # Basic read-only atom — emits a "read"-able target so reads can link.
+# We allow an optional TS generic argument `atom<Type>(...)` AND a newline
+# between `atom<` and the opening paren (real-world code wraps long type
+# annotations across multiple lines).
 _JOTAI_READ_ATOM = re.compile(
-    r"""^\s*export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*atom\s*\(""",
-    re.MULTILINE,
+    r"""^\s*export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*
+        atom\b(?:\s*<[^>]*(?:>[^>]*)?>)?\s*\(""",
+    re.MULTILINE | re.VERBOSE | re.DOTALL,
 )
 
 # Valtio: `proxy({ ... })` exported from a module.
@@ -312,28 +320,44 @@ def _detect_libraries(ctx: "ScanContext") -> set[str]:
                     found.add(lib_name)
                     break
 
-    # Also try the repo root package.json (mono-app projects with no
-    # workspaces still expose deps there). Stage 0 records this on the
-    # context via tracked_files — we re-read directly.
+    # Fallback: scan ALL tracked `package.json` files. This catches two
+    # important shapes:
+    #   * mono-app repos where Stage 0 didn't declare workspaces
+    #     (e.g. infisical with `frontend/package.json`).
+    #   * monorepos whose Stage-0 workspace enumeration missed a package
+    #     for any reason.
     repo_path = getattr(ctx, "repo_path", None)
+    tracked = getattr(ctx, "tracked_files", None) or ()
     if repo_path is not None:
-        root_pkg_path = str(repo_path / "package.json")
-        text = _read_text_cached(root_pkg_path)
-        if text is not None:
+        import json as _json
+        for rel in tracked:
+            posix = str(rel).replace("\\", "/")
+            if not posix.endswith("package.json"):
+                continue
+            if "/node_modules/" in "/" + posix:
+                continue
+            text = _read_text_cached(str(repo_path / posix))
+            if text is None:
+                continue
             try:
-                import json
-                pkg = json.loads(text)
-                if isinstance(pkg, dict):
-                    deps = _collect_deps(pkg)
-                    for lib_name, needles in _STORE_LIBRARIES.items():
-                        if lib_name in found:
-                            continue
-                        for dep_name in deps:
-                            if isinstance(dep_name, str) and dep_name in needles:
-                                found.add(lib_name)
-                                break
+                pkg = _json.loads(text)
             except (ValueError, TypeError):
-                pass
+                continue
+            if not isinstance(pkg, dict):
+                continue
+            deps = _collect_deps(pkg)
+            if not deps:
+                continue
+            for lib_name, needles in _STORE_LIBRARIES.items():
+                if lib_name in found:
+                    continue
+                for dep_name in deps:
+                    if isinstance(dep_name, str) and dep_name in needles:
+                        found.add(lib_name)
+                        break
+            # Short-circuit when we've found every known lib.
+            if len(found) == len(_STORE_LIBRARIES):
+                break
 
     return found
 
@@ -347,7 +371,17 @@ def _detect_zustand_store(rel: str, text: str) -> tuple[list[_StoreMutator], lis
 
     Returns ([] , []) when the file is not a Zustand store.
     """
-    if not _ZUSTAND_CREATE.search(text):
+    # Cheap pre-filter: must mention `create(` AND have a `(set`/`set,`
+    # within the next ~200 chars — otherwise we'd false-positive on every
+    # factory helper or on Jotai's `createStore()` (no `set` arg).
+    create_m = _ZUSTAND_CREATE.search(text)
+    if not create_m:
+        return [], []
+    # Look at the window starting at the create token. We use search (not
+    # match) because the matched text already includes the opening paren
+    # and possibly an arrow signature like `create<T>()((set,...) => ...`.
+    window = text[create_m.start():create_m.start() + 400]
+    if not _ZUSTAND_SET_PARAM.search(window):
         return [], []
 
     exports = list(_ZUSTAND_EXPORT.finditer(text))
