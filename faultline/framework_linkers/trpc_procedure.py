@@ -85,9 +85,24 @@ _TRPC_CLIENT_IDENTIFIERS: tuple[str, ...] = ("trpc", "api", "client", "t")
 
 # Verbs that conclusively mark a tRPC call site (vs an arbitrary
 # `something.X.Y()`).
+#
+# Includes both the classic tRPC-v10 hook surface (`useQuery`,
+# `useMutation`, ...) AND the tRPC-v11 + TanStack-Query integration
+# surface (`queryOptions`, `mutationOptions`, ...). Real-world repos
+# like openstatus use ONLY the v11 surface — without these verbs we
+# emit zero links.
 _TRPC_VERBS: tuple[str, ...] = (
+    # tRPC v10 React/Next hooks
     "useQuery", "useMutation", "useSubscription", "useInfiniteQuery",
+    # tRPC v11 TanStack-Query helpers (most common in 2025+ codebases)
+    "queryOptions", "mutationOptions", "infiniteQueryOptions",
+    "subscriptionOptions",
+    # Vanilla client / SSR helpers
     "query", "mutate", "subscribe", "fetch", "prefetch", "invalidate",
+    # tRPC utils namespace
+    "fetchQuery", "prefetchQuery", "fetchInfiniteQuery",
+    "prefetchInfiniteQuery", "getData", "setData", "ensureData",
+    "cancel", "reset", "refetch",
 )
 
 

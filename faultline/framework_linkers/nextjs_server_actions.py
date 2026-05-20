@@ -57,6 +57,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from faultline.analyzer.tsconfig_paths import (
+    AliasEntry,
+    build_path_alias_map,
+    resolve_ts_import,
+)
 from faultline.framework_linkers.base import FrameworkLink
 
 if TYPE_CHECKING:
@@ -226,44 +231,22 @@ def _file_loc(text: str) -> int:
 def _module_specifier_to_repo_path(
     specifier: str,
     caller_file: str,
-    repo_root: Path,
-    tracked: set[str],
+    alias_map: list[AliasEntry],
+    tracked: frozenset[str],
 ) -> str | None:
     """Resolve a JS/TS import specifier to a repo-relative file path.
 
-    Conservative: only resolves RELATIVE (./, ../) imports. Path-alias
-    resolution (@/...) is intentionally out of scope here — C3 already
-    handles that; we trust C3's symbol_attributions to surface the
-    caller-side awareness and we look up the action file via the
-    module-level cache of action files.
+    Delegates to the shared :func:`resolve_ts_import` (used by C3) so
+    BOTH relative imports (``./foo``) AND path-aliased imports
+    (``@/utils/actions/x``) resolve consistently. Bare imports (npm
+    packages) return ``None``.
     """
-    if not specifier.startswith("."):
-        return None
-
-    caller_dir = Path(caller_file).parent
-    candidate = (caller_dir / specifier).as_posix()
-    # Normalise (collapse ./, ../)
-    parts: list[str] = []
-    for part in candidate.split("/"):
-        if part in ("", "."):
-            continue
-        if part == "..":
-            if parts:
-                parts.pop()
-            continue
-        parts.append(part)
-    base = "/".join(parts)
-    # Try common extensions + index files.
-    for ext in (".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"):
-        if (base + ext) in tracked:
-            return base + ext
-    for ext in (".ts", ".tsx", ".js", ".jsx"):
-        idx = f"{base}/index{ext}"
-        if idx in tracked:
-            return idx
-    if base in tracked:
-        return base
-    return None
+    return resolve_ts_import(
+        importer_file=caller_file,
+        import_spec=specifier,
+        alias_map=alias_map,
+        tracked_files=tracked,
+    )
 
 
 # ── Linker class ────────────────────────────────────────────────────────────
@@ -280,7 +263,8 @@ class NextjsServerActionsLinker:
     def __init__(self) -> None:
         # action_file -> list of exported symbols with line ranges
         self._action_modules: dict[str, list[_ActionExport]] | None = None
-        self._tracked_set: set[str] | None = None
+        self._tracked_set: frozenset[str] | None = None
+        self._alias_map: list[AliasEntry] | None = None
         self._repo_root: Path | None = None
         self.telemetry: _LinkerTelemetry = _LinkerTelemetry()
 
@@ -321,7 +305,8 @@ class NextjsServerActionsLinker:
             return self._action_modules
 
         self._repo_root = ctx.repo_path
-        self._tracked_set = set(ctx.tracked_files)
+        self._tracked_set = frozenset(ctx.tracked_files)
+        self._alias_map = build_path_alias_map(ctx.repo_path)
 
         action_modules: dict[str, list[_ActionExport]] = {}
         for rel in ctx.tracked_files:
@@ -379,7 +364,8 @@ class NextjsServerActionsLinker:
         # the top-level directive — we still need to scan them.
         action_modules = self._ensure_action_map(ctx)
         self.telemetry.features_processed += 1
-        tracked = self._tracked_set or set(ctx.tracked_files)
+        tracked = self._tracked_set or frozenset(ctx.tracked_files)
+        alias_map = self._alias_map or []
 
         caller_files = self._caller_files(feature)
         if not caller_files:
@@ -397,7 +383,7 @@ class NextjsServerActionsLinker:
                 continue
             self.telemetry.files_scanned += 1
             file_links = self._scan_file(
-                rel, text, action_modules, tracked, ctx, log,
+                rel, text, action_modules, tracked, alias_map, ctx, log,
                 feature_name=feature.name,
             )
             links.extend(file_links)
@@ -433,7 +419,8 @@ class NextjsServerActionsLinker:
         rel: str,
         text: str,
         action_modules: dict[str, list[_ActionExport]],
-        tracked: set[str],
+        tracked: frozenset[str],
+        alias_map: list[AliasEntry],
         ctx: "ScanContext",
         log: "StageLogger",
         *,
@@ -450,7 +437,7 @@ class NextjsServerActionsLinker:
             block = m.group(1)
             spec = m.group(2)
             target = _module_specifier_to_repo_path(
-                spec, rel, self._repo_root, tracked,
+                spec, rel, alias_map, tracked,
             )
             if target is None or target not in action_modules:
                 continue
@@ -477,7 +464,7 @@ class NextjsServerActionsLinker:
             local = m.group(1)
             spec = m.group(2)
             target = _module_specifier_to_repo_path(
-                spec, rel, self._repo_root, tracked,
+                spec, rel, alias_map, tracked,
             )
             if target is None or target not in action_modules:
                 continue
