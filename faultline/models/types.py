@@ -165,29 +165,40 @@ class SymbolAttribution(BaseModel):
 
 
 class FlowSymbolAttribution(BaseModel):
-    """One line-range attribution for a flow (Sprint C2).
+    """One line-range attribution for a flow (Sprint C2) or feature
+    (Sprint C3b — feature-level ``Feature.symbol_attributions``).
 
     Distinct from the legacy :class:`SymbolAttribution` (which is a
     per-file aggregate across multiple symbols, attached to
-    ``Feature.shared_attributions``). This is the FLOW-level surface
+    ``Feature.shared_attributions``). This is the per-symbol surface
     spec from ``flow-feature-concept``: per file, the exact symbol +
     line range participating in this specific narrative.
 
-    Three roles:
-      - ``entry``   — the flow's entry function (always exactly one
-                      per flow when entry detection succeeds).
-      - ``called``  — function reached via import + identifier-match
-                      from the entry-symbol body.
-      - ``support`` — file in the C1 reach set without a resolved
-                      symbol; line range covers the whole file
-                      (line_start=1, line_end=file LOC).
+    Roles:
+      - ``entry``            — the flow's entry function (exactly one
+                               per flow when entry detection succeeds).
+      - ``called``           — function reached via import + identifier-
+                               match from the entry-symbol body.
+      - ``support``          — file in the C1 reach set without a
+                               resolved symbol; line range covers the
+                               whole file (line_start=1, line_end=LOC).
+      - ``anchor-consumer``  — (C3b) reverse-import seed for a
+                               package-anchor feature.
+      - ``schema-consumer``  — (C3b) reverse-import seed for a
+                               schema-source feature.
+      - ``structural``       — (C3b) dominant-symbol fallback seed
+                               for a feature with no flows and no
+                               reverse-anchor rationale.
     """
 
     file: str                  # repo-relative path
     symbol: str                # exported / local symbol name, or "<file>" for support
     line_start: int            # 1-indexed, inclusive
     line_end: int              # 1-indexed, inclusive
-    role: Literal["entry", "called", "support"]
+    role: Literal[
+        "entry", "called", "support",
+        "anchor-consumer", "schema-consumer", "structural",
+    ]
 
 
 class Feature(BaseModel):
@@ -208,6 +219,20 @@ class Feature(BaseModel):
     bug_fix_prs: list[PullRequest] = []
     coverage_pct: float | None = None  # avg line coverage % across source files; None if unavailable
     shared_attributions: list[SymbolAttribution] = []  # symbol-scoped data for shared files
+    # Sprint C3b (2026-05-20) — feature-level per-symbol attributions.
+    # Stage 6.3's whole-import-tree enrichment surface, populated as
+    # the union of every reached (file, symbol) pair for THIS feature
+    # (whether the feature has flows or not). For flow-bearing features
+    # this is the union of flow.flow_symbol_attributions + the
+    # feature's own seed-based attributions; for flow-less features
+    # (e.g. package-anchor Billing) this is the ONLY surface that
+    # carries the enrichment payload — ``flows[*].flow_symbol_attributions``
+    # is empty in that case. Per-symbol shape matches the existing
+    # flow-level :class:`FlowSymbolAttribution` consumed by the
+    # landing app (file / symbol / line_start / line_end / role).
+    # ``shared_attributions`` (legacy per-file aggregate schema)
+    # remains populated for back-compat.
+    symbol_attributions: list["FlowSymbolAttribution"] = []
     # Refactor Day 1: participants — every file (with line ranges and
     # role) imported transitively from any of this feature's source
     # files. Built by analyzer.feature_participants.build_feature_participants
