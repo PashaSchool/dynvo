@@ -189,6 +189,15 @@ class FlowSymbolAttribution(BaseModel):
       - ``structural``       — (C3b) dominant-symbol fallback seed
                                for a feature with no flows and no
                                reverse-anchor rationale.
+      - ``framework-link``   — (C4) deterministic cross-file edge
+                               emitted by a Stage 6.4
+                               :class:`framework_linkers.FrameworkLinker`
+                               (Next.js fetch URL → route.ts handler,
+                               Server Action call → ``"use server"``
+                               file, etc.). The ``symbol`` field encodes
+                               ``framework-link:<kind>:<target-symbol>``
+                               so consumers can route on link kind
+                               without growing the role enum further.
     """
 
     file: str                  # repo-relative path
@@ -198,6 +207,7 @@ class FlowSymbolAttribution(BaseModel):
     role: Literal[
         "entry", "called", "support",
         "anchor-consumer", "schema-consumer", "structural",
+        "framework-link",
     ]
 
 
