@@ -85,6 +85,15 @@ go-router      = "faultline.pipeline_v2.extractors.go_router:GoRouterExtractor"
 rust-workspace = "faultline.pipeline_v2.extractors.rust_workspace:RustWorkspaceExtractor"
 python-library = "faultline.pipeline_v2.extractors.python_library:PythonLibraryExtractor"
 
+# Sprint C4 — Stage 6.4 framework-aware linker plugin group. The
+# orchestrator at ``faultline.pipeline_v2.stage_6_4_framework_enrich``
+# discovers linkers via this group; customers can register additional
+# linkers (Server Actions, tRPC, Zustand, ...) by adding a module that
+# defines a ``FrameworkLinker``-compatible class and declaring an
+# entry-point in the same group.
+[project.entry-points."faultlines.framework_linkers"]
+nextjs-http-route = "faultline.framework_linkers.nextjs_http_route:NextjsHttpRouteLinker"
+
 [tool.hatch.envs.default]
 dependencies = [
     "pytest>=7.4.0",
