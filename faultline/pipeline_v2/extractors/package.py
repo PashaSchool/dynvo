@@ -1,23 +1,47 @@
 """PackageAnchorExtractor — dependency manifest → feature anchor.
 
-Per the ``package-anchor-extractor`` skill, certain dependencies are
-strong, near-binary signals for product capability:
+Two emission modes (both deterministic, no LLM):
 
-  - ``stripe`` / ``@stripe/...``     → ``billing``
-  - ``next-auth``, ``@auth/core``,
-    ``better-auth``, ``lucia``       → ``auth``
-  - ``resend``, ``@sendgrid/mail``,
-    ``postmark``, ``nodemailer``     → ``email``
-  - ``inngest``, ``bullmq``,
-    ``trigger.dev``                  → ``background-jobs``
-  - ``@uploadthing/react``,
-    ``@aws-sdk/client-s3``           → ``file-uploads``
-  - ``posthog-node``, ``mixpanel``,
-    ``segment``                      → ``analytics``
-  - ``socket.io``, ``ws``, ``pusher`` → ``realtime``
-  - ``openai``, ``anthropic``,
-    ``@google/generative-ai``, ``ai`` (Vercel) → ``ai``
-  - ``next-i18next``, ``i18next``    → ``i18n``
+1) **Dependency-category anchors** (the historical mode). Certain
+   dependencies are strong, near-binary signals for product capability:
+
+   - ``stripe`` / ``@stripe/...``     → ``billing``
+   - ``next-auth``, ``@auth/core``,
+     ``better-auth``, ``lucia``       → ``auth``
+   - ``resend``, ``@sendgrid/mail``,
+     ``postmark``, ``nodemailer``     → ``email``
+   - ``inngest``, ``bullmq``,
+     ``trigger.dev``                  → ``background-jobs``
+   - ``@uploadthing/react``,
+     ``@aws-sdk/client-s3``           → ``file-uploads``
+   - ``posthog-node``, ``mixpanel``,
+     ``segment``                      → ``analytics``
+   - ``socket.io``, ``ws``, ``pusher`` → ``realtime``
+   - ``openai``, ``anthropic``,
+     ``@google/generative-ai``, ``ai`` (Vercel) → ``ai``
+   - ``next-i18next``, ``i18next``    → ``i18n``
+
+2) **Workspace-package anchors** (Sprint D3, 2026-05-20). Each
+   declared monorepo workspace IS its own feature surface — the
+   maintainer literally created a package boundary around it. We
+   emit one anchor per ``ctx.workspaces[*]`` whose slug is the
+   ``package.json#name`` last segment (scope stripped) or the
+   workspace directory name as fallback. The anchor's ``paths`` are
+   the workspace's full file list, so Stage 2's path attribution
+   binds every file inside the workspace to the feature.
+
+   This emission is what made generic-named packages
+   (``packages/ui``, ``packages/types``, ``packages/utils``,
+   ``packages/services``, ``packages/logger``, etc.) silently
+   disappear from Stage 1 output across every monorepo we scanned —
+   none of them imported a ``stripe``-class dependency, so mode 1
+   produced zero anchors and the workspace boundary itself was
+   never recorded.
+
+   Workspace anchors do NOT depend on the dependency-token table.
+   They are universal across stacks: any manifest-declared workspace
+   (``package.json``, ``Cargo.toml``, ``pyproject.toml``,
+   ``go.mod``, ``Gemfile``, ``composer.json``) qualifies.
 
 For monorepos we read the per-workspace ``package.json`` (already in
 ``ctx.workspaces[*].package_json``) plus the root manifest.
@@ -40,11 +64,12 @@ from typing import TYPE_CHECKING
 from faultline.pipeline_v2.extractors._util import (
     posix,
     read_text,
+    slugify,
 )
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
 
 if TYPE_CHECKING:
-    from faultline.pipeline_v2.stage_0_intake import ScanContext
+    from faultline.pipeline_v2.stage_0_intake import ScanContext, Workspace
 
 
 # (match_predicate, anchor_slug, rationale_template). The predicate
@@ -199,6 +224,67 @@ def _match_anchors(
     return hits
 
 
+# ── Sprint D3 — workspace package anchor helpers ──────────────────────────
+
+
+def _slug_from_package_name(pkg_name: object) -> str | None:
+    """Return the slug derived from a ``package.json#name`` value.
+
+    Handles scoped names like ``@plane/ui`` → ``ui`` (last path
+    segment after stripping the ``@scope/`` prefix). Returns ``None``
+    for missing / empty / non-string values.
+    """
+    if not isinstance(pkg_name, str):
+        return None
+    raw = pkg_name.strip()
+    if not raw:
+        return None
+    # Strip a single leading scope token, e.g. ``@plane/ui`` →
+    # ``ui``. Multi-segment names without scopes (very rare for
+    # JS packages) keep their tail segment.
+    if raw.startswith("@") and "/" in raw:
+        raw = raw.split("/", 1)[1]
+    # If the value still contains a slash (e.g. weird custom Cargo
+    # convention), take the final segment.
+    if "/" in raw:
+        raw = raw.rsplit("/", 1)[1]
+    slug = slugify(raw)
+    return slug or None
+
+
+def _slug_from_workspace_path(path: str) -> str | None:
+    """Fallback slug source — last segment of the workspace path.
+
+    ``packages/ui`` → ``ui``. ``apps/web`` → ``web``. The result is
+    slugified to match the kebab-case convention.
+    """
+    if not path:
+        return None
+    tail = posix(path).rstrip("/").rsplit("/", 1)[-1]
+    slug = slugify(tail)
+    return slug or None
+
+
+def _workspace_slug(ws: "Workspace") -> str | None:
+    """Pick the best slug for a workspace anchor.
+
+    Priority:
+      1. ``package.json#name`` last segment — the maintainer's
+         explicit name for the package (most stable signal).
+      2. Workspace directory name — present on every workspace.
+
+    Returns ``None`` only when both produce empty strings, which
+    in practice means the workspace has no manifest AND its path
+    is empty / root — never happens for declared workspaces.
+    """
+    pkg = ws.package_json
+    if isinstance(pkg, dict):
+        from_name = _slug_from_package_name(pkg.get("name"))
+        if from_name:
+            return from_name
+    return _slug_from_workspace_path(ws.path)
+
+
 class PackageAnchorExtractor:
     """Dependency manifest → feature-category anchor."""
 
@@ -259,6 +345,46 @@ class PackageAnchorExtractor:
                               f"from deps {deps_list!r}",
                 ),
             )
+
+        # ── Sprint D3 — workspace package anchors ──
+        # Every declared workspace is its own deterministic feature.
+        # We emit one anchor per workspace whose paths are the full
+        # file list under that workspace. Stage 2's source priority
+        # (``package`` > ``route``) means workspace anchors win
+        # cross-feature path attribution, but Stage 2's zero-path
+        # protection keeps per-route slugs alive (they end up sharing
+        # ownership). The net effect is: every workspace becomes a
+        # feature AND every per-route slug stays detectable.
+        if ctx.monorepo and ctx.workspaces:
+            seen_workspace_slugs: set[str] = set()
+            for ws in ctx.workspaces:
+                slug = _workspace_slug(ws)
+                if not slug:
+                    continue
+                if slug in seen_workspace_slugs:
+                    # Two workspaces with the same slug — keep only the
+                    # first. Stage 2 would merge them anyway, but
+                    # skipping here keeps Stage 1 telemetry honest
+                    # (extractor_hits["package"] == real anchor count).
+                    continue
+                seen_workspace_slugs.add(slug)
+                ws_paths = tuple(ws.files) if ws.files else (ws.path,)
+                rationale = (
+                    f"workspace anchor {slug!r} from monorepo "
+                    f"package {ws.path!r}"
+                )
+                if isinstance(ws.package_json, dict) and ws.package_json.get("name"):
+                    rationale += f" (package.json name={ws.package_json['name']!r})"
+                out.append(
+                    AnchorCandidate(
+                        name=slug,
+                        paths=ws_paths,
+                        source=self.name,
+                        confidence_self=0.95,
+                        rationale=rationale,
+                    ),
+                )
+
         return out
 
 

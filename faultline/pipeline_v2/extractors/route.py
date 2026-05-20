@@ -194,13 +194,35 @@ def _emit_for_fs_routing(
             "+page", "+server", "_app", "_document",
         }
 
+        # Capture original (pre-strip) segments so we can recover a
+        # slug from a leaf route-group like ``(home)`` when nothing
+        # else survives stripping. Next.js route groups are
+        # organisational but their NAME is meaningful — ``(home)``
+        # exists precisely so the maintainer can label the top-level
+        # home page tree. Without this fallback the root-level route
+        # group's ``page.tsx`` would never produce a feature anchor.
+        original_segments = list(dir_segments)
         # Strip route groups from the directory segments.
         dir_segments = _strip_route_groups(dir_segments)
 
         if stem_is_marker:
             first = _first_meaningful_segment(dir_segments)
             if first is None:
-                continue
+                # Sprint D3 — try recovering a slug from a route-group
+                # segment when stripping removed everything. The group
+                # token has the form ``(name)``; we use the inner name.
+                for seg in original_segments:
+                    if (
+                        seg.startswith("(")
+                        and seg.endswith(")")
+                        and len(seg) > 2
+                    ):
+                        candidate = slugify(seg[1:-1])
+                        if candidate and not is_noise(candidate):
+                            first = candidate
+                            break
+                if first is None:
+                    continue
             slug = slugify(first)
         else:
             # Pages Router top-level file: stem is the slug source.
