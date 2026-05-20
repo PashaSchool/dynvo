@@ -52,12 +52,22 @@ def _load_default_linkers() -> list[FrameworkLinker]:
                 import_path, class_name, exc,
             )
 
-    # v1 ships only the Next.js HTTP route linker. To add a new linker
-    # later: append one _try(...) call below AND one line under
-    # [project.entry-points."faultlines.framework_linkers"] in pyproject.toml.
+    # Sprint C4 (v1): Next.js HTTP route linker.
+    # Sprint D1 (C5+C7): Next.js Server Actions + tRPC procedure linkers.
+    # To add a new linker later: append one _try(...) call below AND one
+    # line under [project.entry-points."faultlines.framework_linkers"]
+    # in pyproject.toml.
     _try(
         "faultline.framework_linkers.nextjs_http_route",
         "NextjsHttpRouteLinker",
+    )
+    _try(
+        "faultline.framework_linkers.nextjs_server_actions",
+        "NextjsServerActionsLinker",
+    )
+    _try(
+        "faultline.framework_linkers.trpc_procedure",
+        "TrpcProcedureLinker",
     )
 
     return out
