@@ -38,6 +38,13 @@ dependencies = [
     # (go_router, rust_workspace, python_library) to read patterns
     # from eval/stacks/*.yaml.
     "pyyaml>=6.0",
+    # JSON5 parser — Stage 6.3 reads tsconfig.json files that legally
+    # carry comments + trailing commas (JSONC) and occasionally the
+    # full JSON5 superset (unquoted keys, single quotes). The
+    # regex-strip-then-json.loads approach used in
+    # analyzer/import_graph.py is brittle and silently returns {} on
+    # parse failure, masking missing path aliases.
+    "json5>=0.9",
 ]
 
 [project.optional-dependencies]
