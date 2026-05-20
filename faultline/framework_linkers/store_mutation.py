@@ -120,9 +120,10 @@ _RTK_REDUCERS_BLOCK = re.compile(
 
 # Jotai: `atom(...)` definitions. We're conservative and only treat as
 # "store" the writable-atom form `atom(read, write)` where the second
-# arg is a function — that's the mutator surface.
+# arg is a function — that's the mutator surface. Also recognises
+# `atomWithReducer` whose action-arg makes it inherently a mutator.
 _JOTAI_WRITABLE_ATOM = re.compile(
-    r"""\b(?:export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?
+    r"""\b(?:(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?
         atom\b(?:\s*<[^>]*(?:>[^>]*)?>)?\s*\(\s*
         (?:[^,()]+|\([^)]*\)|\{[^}]*\})\s*,\s*   # read arg
         (?:async\s+)?(?:\(|function\b)            # write arg starts
@@ -132,10 +133,14 @@ _JOTAI_WRITABLE_ATOM = re.compile(
 # Basic read-only atom — emits a "read"-able target so reads can link.
 # We allow an optional TS generic argument `atom<Type>(...)` AND a newline
 # between `atom<` and the opening paren (real-world code wraps long type
-# annotations across multiple lines).
+# annotations across multiple lines). We DON'T require `export` — module-
+# private atoms (`const aiQueueAtom = atom(...)`) are still valid link
+# targets when accessed from the same file. We also accept the common
+# `atomWithStorage` / `atomFamily` factories from `jotai/utils`.
 _JOTAI_READ_ATOM = re.compile(
-    r"""^\s*export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*
-        atom\b(?:\s*<[^>]*(?:>[^>]*)?>)?\s*\(""",
+    r"""^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*
+        (?:atom|atomWithStorage|atomWithReducer|atomFamily|atomWithDefault)\b
+        (?:\s*<[^>]*(?:>[^>]*)?>)?\s*\(""",
     re.MULTILINE | re.VERBOSE | re.DOTALL,
 )
 
