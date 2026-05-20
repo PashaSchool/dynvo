@@ -102,6 +102,7 @@ config         = "faultline.pipeline_v2.extractors.config:ConfigAsProductExtract
 go-router      = "faultline.pipeline_v2.extractors.go_router:GoRouterExtractor"
 rust-workspace = "faultline.pipeline_v2.extractors.rust_workspace:RustWorkspaceExtractor"
 python-library = "faultline.pipeline_v2.extractors.python_library:PythonLibraryExtractor"
+js-library     = "faultline.pipeline_v2.extractors.js_library:JsLibraryExtractor"
 
 # Sprint C4 — Stage 6.4 framework-aware linker plugin group. The
 # orchestrator at ``faultline.pipeline_v2.stage_6_4_framework_enrich``
