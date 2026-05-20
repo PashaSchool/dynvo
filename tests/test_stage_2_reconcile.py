@@ -254,3 +254,118 @@ def test_llm_reconcile_returns_none_falls_back_to_priority(tmp_path: Path) -> No
     )
     # priority rule → package
     assert any(f.name == "user-account" for f in result.features)
+
+
+# ── Sprint S4b — URL-ghost purge ──────────────────────────────────────────
+
+
+def test_s4b_shared_route_file_zero_path_protection(tmp_path: Path) -> None:
+    """Three Fastify routes share one source file (the real-world
+    pattern from infisical's ``secret-scanner-v2.ts`` declaring
+    ``/bitbucket`` + ``/gitlab`` + ``/github``).
+
+    Without the Sprint S4b zero-path protection, two slugs would lose
+    the contested file and end up with empty paths → "URL ghost"
+    features. With the fix all three keep the file so each remains
+    attributable downstream.
+    """
+    shared_file = "backend/src/server/plugins/secret-scanner-v2.ts"
+    cands = {
+        "route-fastify": [
+            _cand("bitbucket", "route-fastify", (shared_file,)),
+            _cand("gitlab", "route-fastify", (shared_file,)),
+            _cand("github", "route-fastify", (shared_file,)),
+        ],
+    }
+    ctx = _ctx(tmp_path, files=[shared_file])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    by_name = {f.name: f for f in result.features}
+    # All three survive (no zero-path drops).
+    assert set(by_name) == {"bitbucket", "gitlab", "github"}
+    # Each shares the file rather than one stealing it. Provenance
+    # preserved for every slug.
+    for name in ("bitbucket", "gitlab", "github"):
+        assert shared_file in by_name[name].paths, (
+            f"{name} lost its shared file"
+        )
+    assert result.zero_path_drops_count == 0
+    assert result.zero_path_drops_sample == []
+
+
+def test_s4b_path_contention_winner_still_wins_when_loser_has_other_paths(
+    tmp_path: Path,
+) -> None:
+    """Zero-path protection must NOT regress the existing "loser
+    drops contested path" semantics when the loser has fallback paths.
+
+    Replays
+    ``test_file_claimed_by_two_features_goes_to_higher_priority`` to
+    verify the new pass-2 only fires when the loser would be orphaned.
+    """
+    cands = {
+        "route":   [_cand(
+            "billing", "route",
+            ("app/billing/handler.ts", "app/billing/page.tsx"),
+        )],
+        "package": [_cand(
+            "payments", "package",
+            ("app/billing/handler.ts",),
+        )],
+    }
+    ctx = _ctx(
+        tmp_path,
+        files=["app/billing/handler.ts", "app/billing/page.tsx"],
+    )
+
+    result = stage_2_reconcile(cands, ctx)
+
+    by_name = {f.name: f for f in result.features}
+    assert set(by_name) == {"billing", "payments"}
+    # payments wins outright — the loser ('billing') has another path
+    # to fall back on, so the strip applies normally.
+    assert "app/billing/handler.ts" in by_name["payments"].paths
+    assert "app/billing/handler.ts" not in by_name["billing"].paths
+    assert "app/billing/page.tsx" in by_name["billing"].paths
+
+
+def test_s4b_zero_path_features_dropped_with_telemetry(tmp_path: Path) -> None:
+    """Defensive backstop: a candidate that somehow arrives with no
+    paths gets dropped after reconciliation and surfaces in telemetry.
+
+    Constructs a candidate with empty paths directly — simulating any
+    future extractor that emits a name but loses path attribution.
+    """
+    cands = {
+        "config": [_cand("phantom-feature", "config", ())],
+        "route":  [_cand("billing", "route", ("app/billing.tsx",))],
+    }
+    ctx = _ctx(tmp_path, files=["app/billing.tsx"])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    # billing survives; phantom-feature dropped.
+    names = {f.name for f in result.features}
+    assert names == {"billing"}
+    assert result.zero_path_drops_count == 1
+    assert "phantom-feature" in result.zero_path_drops_sample
+    # Note logged for downstream telemetry consumers.
+    assert any("zero-path" in n for n in result.notes)
+
+
+def test_s4b_no_zero_path_drops_in_normal_case(tmp_path: Path) -> None:
+    """Sanity: a healthy reconciliation reports zero-path-drops = 0."""
+    cands = {
+        "route":   [_cand("billing", "route", ("app/billing/page.tsx",))],
+        "package": [_cand("payments", "package", (".",))],
+    }
+    ctx = _ctx(
+        tmp_path,
+        files=["app/billing/page.tsx", "package.json"],
+    )
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert result.zero_path_drops_count == 0
+    assert result.zero_path_drops_sample == []
