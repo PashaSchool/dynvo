@@ -107,6 +107,9 @@ from faultline.pipeline_v2.stage_6_3_import_tree import (
 from faultline.pipeline_v2.stage_6_4_framework_enrich import (
     run_stage_6_4,
 )
+from faultline.pipeline_v2.stage_6_6_branch_slicer import (
+    run_stage_6_6,
+)
 from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
@@ -783,6 +786,25 @@ def run_pipeline_v2(
             f"elapsed={enrich_result.elapsed_sec}s",
         )
 
+    # ── Stage 6.6 — branch slicer (Sprint D2, deterministic) ───────
+    # Tree-sitter walks each (feature × symbol_attribution) and emits
+    # intra-symbol conditional regions (if / else / ternary /
+    # switch_case / try / catch / match_arm) as role=``branch``
+    # attributions. Optional dependency: when tree-sitter is not
+    # installed, stage is a no-op and the rest of the pipeline runs
+    # unchanged. NO LLM. NO network. See
+    # `faultline/pipeline_v2/stage_6_6_branch_slicer.py` docstring.
+    with StageLogger(run_dir, 6, "branch_slicer") as log6_6:
+        branch_result = run_stage_6_6(ctx, features, log6_6)
+        branch_slicer_telemetry = branch_result.telemetry()
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="branch_slicer",
+            payload=branch_slicer_telemetry,
+            run_dir=run_dir,
+        )
+
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
     # residual list (stage5 stripped FS-missing + anchor-dup before naming
@@ -950,6 +972,13 @@ def run_pipeline_v2(
             "links_emitted_total": framework_enrich_telemetry["links_emitted_total"],
             "elapsed_sec": framework_enrich_telemetry["elapsed_sec"],
         },
+        # Sprint D2 — Stage 6.6 branch-slicer telemetry. Optional
+        # tree-sitter pass that emits intra-symbol conditional ranges
+        # (if/else/ternary/switch_case/try/catch/match_arm) as new
+        # role=``branch`` attributions on each feature. ``active=false``
+        # with a ``reason`` when tree-sitter is not installed (graceful
+        # degrade); the rest of the pipeline is unaffected.
+        "stage_6_6": dict(branch_slicer_telemetry),
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────
