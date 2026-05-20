@@ -416,3 +416,103 @@ export async function POST(req: Request) {
     # Structural seed should have picked POST and expanded to handler.ts.
     assert res.total_seeds >= 1
     assert "lib/handler.ts" in feature.paths
+
+
+def test_default_max_depth_is_8_sprint_c3b() -> None:
+    """Sprint C3b raised the default BFS ceiling from 6 to 8."""
+    assert DEFAULT_MAX_DEPTH == 8
+
+
+def test_feature_symbol_attributions_populated_for_package_anchor(
+    tmp_path: Path,
+) -> None:
+    """Sprint C3b — package-anchor feature with no flows must surface
+    its enrichment on ``feature.symbol_attributions`` (per-symbol),
+    not only on the legacy ``shared_attributions`` per-file aggregate.
+
+    This is the Billing-on-inbox-zero regression the sprint targets:
+    paths went 1→32 in C3 but feature-level per-symbol records were
+    empty because flow-level was the only path the landing app could
+    read.
+    """
+    _w(tmp_path / "apps/web/billing.ts", """\
+import Stripe from "stripe";
+
+export function chargeCustomer(amount: number) {
+  const s = new Stripe("key");
+  return s.charges.create({amount});
+}
+""")
+    _w(tmp_path / "apps/web/checkout.ts", """\
+import { loadStripe } from "stripe";
+
+export async function startCheckout() {
+  const s = await loadStripe("pk");
+  return s;
+}
+""")
+    ctx = _ctx(tmp_path)
+    feature = _new_feature(
+        "billing",
+        ["apps/web"],
+        description="[package] package anchor 'billing' from deps ['stripe']",
+    )
+    enrich_with_import_tree(ctx, [feature])
+    # New C3b surface — feature-level per-symbol records.
+    assert len(feature.symbol_attributions) >= 2
+    files = {a.file for a in feature.symbol_attributions}
+    assert "apps/web/billing.ts" in files
+    assert "apps/web/checkout.ts" in files
+    # Every record has all five spec fields populated.
+    for a in feature.symbol_attributions:
+        assert isinstance(a.file, str) and a.file
+        assert isinstance(a.symbol, str) and a.symbol
+        assert a.line_start >= 1
+        assert a.line_end >= a.line_start
+        assert a.role in {
+            "entry", "called", "support",
+            "anchor-consumer", "schema-consumer", "structural",
+        }
+    # At least one record carries the reverse-import role from the
+    # anchor seed phase.
+    assert any(a.role == "anchor-consumer" for a in feature.symbol_attributions)
+    # Legacy per-file aggregate stays populated for back-compat.
+    legacy_files = {a.file_path for a in feature.shared_attributions}
+    assert "apps/web/billing.ts" in legacy_files
+
+
+def test_feature_symbol_attributions_unions_flow_records(
+    tmp_path: Path,
+) -> None:
+    """Sprint C3b — for flow-bearing features, feature.symbol_attributions
+    should contain both the feature's own seed records AND the flow's
+    called-symbol chain (de-duplicated by (file, symbol))."""
+    _w(tmp_path / "tsconfig.json", json.dumps({
+        "compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./*"]}},
+    }))
+    _w(tmp_path / "apps/web/page.tsx", """\
+import {Widget} from "@/components/Widget";
+
+export default function Page() {
+  return <Widget/>;
+}
+""")
+    _w(tmp_path / "components/Widget.tsx", """\
+export function Widget() {
+  return <div>hi</div>;
+}
+""")
+    ctx = _ctx(tmp_path)
+    flow = _new_flow("render-page", "apps/web/page.tsx", entry_line=3)
+    feature = _new_feature("home", ["apps/web/page.tsx"], flows=[flow])
+    enrich_with_import_tree(ctx, [feature])
+    # Feature-level records cover both the entry and the called widget.
+    files = {a.file for a in feature.symbol_attributions}
+    assert "apps/web/page.tsx" in files
+    assert "components/Widget.tsx" in files
+    # De-duplication: no two records share (file, symbol).
+    seen: set[tuple[str, str]] = set()
+    for a in feature.symbol_attributions:
+        key = (a.file, a.symbol)
+        assert key not in seen, f"duplicate (file, symbol) in feature.symbol_attributions: {key}"
+        seen.add(key)
