@@ -917,6 +917,27 @@ def run_pipeline_v2(
     warnings: list[str] = []
     warnings.extend(stage3.warnings)
     warnings.extend(stage4.warnings)
+    # Sprint F (2026-05-20) — surface budget-exceeded events into
+    # scan_meta so dashboards / replay tooling can see them without
+    # opening the per-stage artifact.
+    if enrichment.budget_exceeded:
+        warnings.append(
+            f"stage_6_3_budget_exceeded budget_sec={enrichment.budget_sec} "
+            f"features_skipped={enrichment.features_budget_skipped} "
+            f"elapsed_sec={enrichment.elapsed_sec}"
+        )
+    if enrich_result.budget_exceeded:
+        warnings.append(
+            f"stage_6_4_budget_exceeded budget_sec={enrich_result.budget_sec} "
+            f"features_skipped={enrich_result.features_budget_skipped} "
+            f"elapsed_sec={enrich_result.elapsed_sec}"
+        )
+    if getattr(branch_result, "budget_exceeded", False):
+        warnings.append(
+            f"stage_6_6_budget_exceeded budget_sec={branch_result.budget_sec} "
+            f"features_skipped={branch_result.features_budget_skipped} "
+            f"elapsed_sec={branch_result.elapsed_sec}"
+        )
     if llm_share > LLM_FALLBACK_WARN_THRESHOLD:
         # Sprint A1: informational nudge only. The old 30%-share cap
         # was REMOVED; we no longer truncate Stage 4 output. This
