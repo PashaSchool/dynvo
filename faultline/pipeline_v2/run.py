@@ -377,6 +377,11 @@ def run_pipeline_v2(
                 f"(confidence={f.confidence}, sources={','.join(f.sources)})",
             )
         log2.info(f"unattributed: {len(unattributed)} paths")
+        if stage2.zero_path_drops_count:
+            log2.info(
+                f"zero_path_drops: {stage2.zero_path_drops_count} "
+                f"sample={stage2.zero_path_drops_sample}",
+            )
         for note in stage2.notes:
             log2.info(note)
         write_stage_artifact(
@@ -396,6 +401,9 @@ def run_pipeline_v2(
                     for f in deterministic_features
                 ],
                 "notes": stage2.notes,
+                # Sprint S4b — zero-path defensive drop telemetry.
+                "zero_path_drops_count": stage2.zero_path_drops_count,
+                "zero_path_drops_sample": stage2.zero_path_drops_sample,
             },
             run_dir=run_dir,
         )
@@ -768,6 +776,15 @@ def run_pipeline_v2(
         "dedup_merges_sample": [
             m.as_dict() for m in stage5_result.dedup_merges[:3]
         ],
+        # Sprint S4b — Stage 2 defensive zero-path drop telemetry.
+        # Surfaces URL-ghost / shared-anchor-orphan features that were
+        # evicted after attribution so downstream stages don't carry
+        # them as developer features. Non-zero means an extractor
+        # over-emitted slugs against the same source file and even
+        # the zero-path-protection inside _attribute_paths couldn't
+        # rescue them — usually a hint to tighten that extractor.
+        "stage_2_zero_path_drops_count": stage2.zero_path_drops_count,
+        "stage_2_zero_path_drops_sample": stage2.zero_path_drops_sample,
         # Sprint S4 — Stage 5.3 sibling-router collapse telemetry.
         "stage_5_3_collapse_groups_count": len(s53.collapse_groups),
         "stage_5_3_features_collapsed": s53.features_collapsed,
