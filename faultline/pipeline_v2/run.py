@@ -177,6 +177,69 @@ def _extractor_hits(stage1_out: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _workspace_anchor_telemetry(
+    ctx: Any,
+    stage1_out: dict[str, Any],
+) -> dict[str, Any]:
+    """Count how many declared workspaces produced a package-source anchor.
+
+    Sprint D3 — surfaces silent drops of workspace packages so we can
+    diagnose ``Stage 1 skipped my package`` regressions without
+    re-reading the per-workspace report.
+
+    Returns a dict with:
+      - ``workspace_packages_detected`` — workspaces declared in ctx.
+      - ``workspace_packages_anchored`` — workspaces whose slug appears
+        in a package-source anchor.
+      - ``workspace_packages_dropped`` — declared but no anchor.
+      - ``drop_reasons`` — list of ``{name, path, reason}`` for the
+        dropped workspaces (helps repo-owners audit silent skips).
+    """
+    workspaces = list(getattr(ctx, "workspaces", None) or [])
+    detected = len(workspaces)
+    if detected == 0:
+        return {
+            "workspace_packages_detected": 0,
+            "workspace_packages_anchored": 0,
+            "workspace_packages_dropped": 0,
+            "drop_reasons": [],
+        }
+
+    package_anchors = stage1_out.get("package") or []
+    anchored_slugs = {a.name for a in package_anchors if hasattr(a, "name")}
+
+    # Mirror the workspace-slug derivation used by the package
+    # extractor (single source of truth — both call the same helper).
+    from faultline.pipeline_v2.extractors.package import _workspace_slug
+
+    anchored = 0
+    drop_reasons: list[dict[str, str]] = []
+    for ws in workspaces:
+        slug = _workspace_slug(ws)
+        if slug and slug in anchored_slugs:
+            anchored += 1
+            continue
+        # Diagnose: empty slug, or anchor was eaten by another
+        # extractor's higher priority (very rare — the anchor stays
+        # in stage1_out["package"]; only Stage 2 reconciliation
+        # would later merge it).
+        reason = (
+            "empty slug (no package.json#name and no workspace path)"
+            if not slug
+            else f"slug {slug!r} not present in package-source anchors"
+        )
+        drop_reasons.append(
+            {"name": ws.name, "path": ws.path, "reason": reason},
+        )
+
+    return {
+        "workspace_packages_detected": detected,
+        "workspace_packages_anchored": anchored,
+        "workspace_packages_dropped": len(drop_reasons),
+        "drop_reasons": drop_reasons[:20],
+    }
+
+
 # ── Public entry point ──────────────────────────────────────────────────
 
 
@@ -374,6 +437,21 @@ def run_pipeline_v2(
             log1.info(f"{name}: {count} candidates", feature=None)
         for name, err in (stage1_out.get("_errors") or {}).items():
             log1.warn(f"extractor {name} errored: {err}")
+
+        # Sprint D3 — workspace package detection telemetry.
+        # Counts how many declared workspaces produced a package-source
+        # anchor with the workspace's slug. Helps catch regressions in
+        # generic-named packages (``packages/ui``, ``packages/utils``)
+        # that historically went undetected.
+        workspace_telemetry = _workspace_anchor_telemetry(ctx, stage1_out)
+        if workspace_telemetry["workspace_packages_detected"]:
+            log1.info(
+                f"workspace_packages: detected="
+                f"{workspace_telemetry['workspace_packages_detected']} "
+                f"anchored={workspace_telemetry['workspace_packages_anchored']} "
+                f"dropped={workspace_telemetry['workspace_packages_dropped']}",
+            )
+
         write_stage_artifact(
             ctx.repo_path,
             stage_index=1,
@@ -382,6 +460,7 @@ def run_pipeline_v2(
                 "extractor_hits": extractor_hits,
                 "errors": stage1_out.get("_errors", {}),
                 "per_workspace": per_ws_telemetry,
+                "workspace_packages": workspace_telemetry,
             },
             run_dir=run_dir,
         )
@@ -876,6 +955,10 @@ def run_pipeline_v2(
         "auditor_corrections": list(verdict.corrections),
         "model": model_id,
         "extractor_hits": extractor_hits,
+        # Sprint D3 — workspace package telemetry. Exposed at top of
+        # scan_meta so dashboards can flag silent skips without
+        # parsing the per-stage artifact.
+        "workspace_packages": workspace_telemetry,
         "extractor_coverage_pct": round(extractor_coverage_pct, 3),
         # ``llm_fallback_pct`` kept for backwards-compat with existing
         # dashboards. ``llm_share`` is the Sprint A1 canonical name.
