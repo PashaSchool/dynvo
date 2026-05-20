@@ -69,6 +69,11 @@ def _load_default_linkers() -> list[FrameworkLinker]:
         "faultline.framework_linkers.trpc_procedure",
         "TrpcProcedureLinker",
     )
+    # Sprint C6: store-mutation linker (Zustand / Redux / Jotai / Valtio / Nanostores).
+    _try(
+        "faultline.framework_linkers.store_mutation",
+        "StoreMutationLinker",
+    )
 
     return out
 

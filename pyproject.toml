@@ -113,6 +113,7 @@ python-library = "faultline.pipeline_v2.extractors.python_library:PythonLibraryE
 nextjs-http-route = "faultline.framework_linkers.nextjs_http_route:NextjsHttpRouteLinker"
 nextjs-server-actions = "faultline.framework_linkers.nextjs_server_actions:NextjsServerActionsLinker"
 trpc-procedure = "faultline.framework_linkers.trpc_procedure:TrpcProcedureLinker"
+store-mutation = "faultline.framework_linkers.store_mutation:StoreMutationLinker"
 
 [tool.hatch.envs.default]
 dependencies = [
