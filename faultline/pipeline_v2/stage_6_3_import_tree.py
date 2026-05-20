@@ -75,9 +75,12 @@ NO LLM. NO network. Pure structural parsing.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -115,6 +118,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DEPTH = 8
 DEFAULT_MAX_FILES_PER_FEATURE = 100
 DEFAULT_MAX_SYMBOLS_PER_FEATURE = 500
+
+# Sprint F (2026-05-20) — large-repo concurrency + graceful degradation.
+#
+# Each feature's BFS is independent (its only shared state is the
+# read-mostly ``_SourceCache``). A modest ``ThreadPoolExecutor`` keeps
+# the GIL-bound regex / file-IO work busy without overwhelming a laptop.
+# The wall-clock budget caps how long the stage may run; when exceeded
+# we stop submitting new features, drain in-flight work, mark the
+# remainder as ``budget_skipped`` in telemetry, and emit a warning so
+# the operator can react. Scale-invariant: bounded by wall-time, not by
+# feature count or repo size (per ``rule-no-magic-tuning``).
+DEFAULT_MAX_WORKERS = 4
+DEFAULT_WALL_BUDGET_SEC = 180.0
 
 # Extensions we attempt to slice into symbol bodies. Files outside
 # this set are still attributed as ``support`` (whole-file ranges)
@@ -209,6 +225,11 @@ class EnrichmentResult:
     cache_hits: int
     alias_map: list[AliasEntry]
     elapsed_sec: float
+    # Sprint F (2026-05-20) — graceful degradation telemetry.
+    budget_exceeded: bool = False
+    budget_sec: float = 0.0
+    features_budget_skipped: int = 0
+    max_workers: int = 1
 
 
 # ── Filter helpers ───────────────────────────────────────────────────────
@@ -1248,6 +1269,105 @@ def _extend_flow_attributions(
 # ── Public entry point ───────────────────────────────────────────────────
 
 
+# ── Sprint F: per-feature worker (parallelism unit) ─────────────────────
+
+
+@dataclass
+class _PerFeatureResult:
+    """Computed enrichment for ONE feature. Apply step still runs on the
+    main thread so all feature-list and shared-cache mutations stay
+    serial (the BFS itself is the heavy part).
+    """
+
+    feature_index: int
+    feature_name: str
+    source_kind: str
+    anchor_deps: list[str]
+    seeds: list[ImportTreeSeed]
+    attributions: list[SymbolAttributionRecord]
+    depth_dist: dict[int, int]
+    cycles: int
+    depth_capped: int
+    external_skipped: int
+    paths_pre: int
+    symbols_pre: int
+    elapsed_ms: int
+
+
+def _compute_one_feature(
+    feature: "Feature",
+    feature_index: int,
+    *,
+    ctx: "ScanContext",
+    cache: _SourceCache,
+    alias_map: list[AliasEntry],
+    tracked_files: frozenset[str],
+    max_depth: int,
+    max_files_per_feature: int,
+    max_symbols_per_feature: int,
+    log: "StageLogger | None",
+) -> _PerFeatureResult:
+    """Pure-compute step: determine seeds + traverse for ONE feature.
+
+    Does NOT mutate the feature (mutation is deferred to the main
+    thread via :func:`_apply_to_feature`). Safe to call from a worker
+    thread because the only shared state is the read-mostly
+    :class:`_SourceCache` (dict get-or-fill — racy writes are fine,
+    the second writer just overwrites with identical content) and the
+    immutable ``alias_map`` / ``tracked_files``.
+    """
+    feat_t0 = time.monotonic()
+    paths_pre = len(feature.paths)
+    symbols_pre = sum(
+        len(a.symbols) for a in feature.shared_attributions
+    )
+    seeds, source_kind, anchor_deps = _determine_seeds(
+        feature, ctx, cache, tracked_files, log=log,
+    )
+    if not seeds:
+        return _PerFeatureResult(
+            feature_index=feature_index,
+            feature_name=feature.name,
+            source_kind=source_kind,
+            anchor_deps=anchor_deps,
+            seeds=[],
+            attributions=[],
+            depth_dist={},
+            cycles=0,
+            depth_capped=0,
+            external_skipped=0,
+            paths_pre=paths_pre,
+            symbols_pre=symbols_pre,
+            elapsed_ms=int((time.monotonic() - feat_t0) * 1000),
+        )
+
+    attributions, depth_dist, fc, dc, es = _traverse(
+        seeds,
+        cache=cache, alias_map=alias_map,
+        tracked_files=tracked_files,
+        max_depth=max_depth,
+        max_files=max_files_per_feature,
+        max_symbols=max_symbols_per_feature,
+        log=log,
+        feature_name=feature.name,
+    )
+    return _PerFeatureResult(
+        feature_index=feature_index,
+        feature_name=feature.name,
+        source_kind=source_kind,
+        anchor_deps=anchor_deps,
+        seeds=seeds,
+        attributions=attributions,
+        depth_dist=depth_dist,
+        cycles=fc,
+        depth_capped=dc,
+        external_skipped=es,
+        paths_pre=paths_pre,
+        symbols_pre=symbols_pre,
+        elapsed_ms=int((time.monotonic() - feat_t0) * 1000),
+    )
+
+
 def enrich_with_import_tree(
     ctx: "ScanContext",
     features: list["Feature"],
@@ -1256,12 +1376,27 @@ def enrich_with_import_tree(
     max_depth: int = DEFAULT_MAX_DEPTH,
     max_files_per_feature: int = DEFAULT_MAX_FILES_PER_FEATURE,
     max_symbols_per_feature: int = DEFAULT_MAX_SYMBOLS_PER_FEATURE,
+    max_workers: int | None = None,
+    wall_budget_sec: float | None = None,
 ) -> EnrichmentResult:
     """Run Stage 6.3 over ``features``.
 
     Mutates each feature in place; also returns the enriched list for
     callers that prefer pure-functional pipelines. Telemetry is
     captured in :class:`EnrichmentResult` for the artifact writer.
+
+    Sprint F (2026-05-20) parallelism + budget:
+      - ``max_workers``: thread-pool size for per-feature BFS. ``None``
+        resolves to :data:`DEFAULT_MAX_WORKERS` (=4). Set to 1 to force
+        the legacy serial path (used by unit tests that assert ordering).
+      - ``wall_budget_sec``: graceful-degradation budget. When the
+        stage exceeds this wall time, in-flight features finish but no
+        new features are submitted; remaining features are recorded
+        with ``source_kind='budget_skipped'`` so the artifact captures
+        what was deferred. ``None`` resolves to
+        :data:`DEFAULT_WALL_BUDGET_SEC`. Set to 0 to disable the budget
+        (legacy behaviour — useful when an external runner already
+        enforces a higher ceiling).
     """
     t0 = time.monotonic()
     repo_path = Path(ctx.repo_path)
@@ -1274,6 +1409,134 @@ def enrich_with_import_tree(
             f"sample={[a.prefix for a in alias_map[:5]]}",
         )
 
+    if max_workers is None:
+        # Honour FAULTLINE_STAGE_6_3_WORKERS for ad-hoc overrides.
+        env_workers = os.environ.get("FAULTLINE_STAGE_6_3_WORKERS")
+        try:
+            max_workers = (
+                max(1, int(env_workers)) if env_workers
+                else DEFAULT_MAX_WORKERS
+            )
+        except ValueError:
+            max_workers = DEFAULT_MAX_WORKERS
+    if wall_budget_sec is None:
+        env_budget = os.environ.get("FAULTLINE_STAGE_6_3_BUDGET_SEC")
+        try:
+            wall_budget_sec = (
+                float(env_budget) if env_budget else DEFAULT_WALL_BUDGET_SEC
+            )
+        except ValueError:
+            wall_budget_sec = DEFAULT_WALL_BUDGET_SEC
+
+    if log:
+        log.info(
+            f"concurrency: max_workers={max_workers} "
+            f"wall_budget_sec={wall_budget_sec}",
+        )
+
+    # Result map keyed by feature index so we can reassemble per_feature
+    # in the original order, regardless of thread completion order.
+    result_by_index: dict[int, _PerFeatureResult] = {}
+    budget_skipped_indices: list[int] = []
+    budget_exceeded = False
+
+    def _budget_exhausted() -> bool:
+        if wall_budget_sec is None or wall_budget_sec <= 0:
+            return False
+        return (time.monotonic() - t0) >= wall_budget_sec
+
+    if max_workers <= 1:
+        # Legacy serial path — preserves exact behaviour for tests that
+        # rely on deterministic ordering of log emit events.
+        for index, feature in enumerate(features):
+            if _budget_exhausted():
+                budget_exceeded = True
+                budget_skipped_indices.append(index)
+                continue
+            result_by_index[index] = _compute_one_feature(
+                feature, index,
+                ctx=ctx, cache=cache, alias_map=alias_map,
+                tracked_files=tracked_files,
+                max_depth=max_depth,
+                max_files_per_feature=max_files_per_feature,
+                max_symbols_per_feature=max_symbols_per_feature,
+                log=log,
+            )
+    else:
+        # Parallel path — submit all features up front; check the
+        # budget on each completion. Once exhausted, mark every still-
+        # pending feature as ``budget_skipped`` (we cannot cancel an
+        # in-flight thread but the ``Future.cancel`` call will succeed
+        # for any task the executor has not yet started).
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="stage6_3",
+        ) as pool:
+            future_to_index = {
+                pool.submit(
+                    _compute_one_feature,
+                    feature, index,
+                    ctx=ctx, cache=cache, alias_map=alias_map,
+                    tracked_files=tracked_files,
+                    max_depth=max_depth,
+                    max_files_per_feature=max_files_per_feature,
+                    max_symbols_per_feature=max_symbols_per_feature,
+                    log=log,
+                ): index
+                for index, feature in enumerate(features)
+            }
+            for fut in as_completed(future_to_index):
+                index = future_to_index[fut]
+                try:
+                    result_by_index[index] = fut.result()
+                except Exception as exc:  # noqa: BLE001 — defensive
+                    # A worker exception should never break Stage 6.3.
+                    # Record a no-op enrichment for the feature so the
+                    # rest of the pipeline keeps moving.
+                    feature = features[index]
+                    result_by_index[index] = _PerFeatureResult(
+                        feature_index=index,
+                        feature_name=feature.name,
+                        source_kind="error",
+                        anchor_deps=[],
+                        seeds=[],
+                        attributions=[],
+                        depth_dist={},
+                        cycles=0,
+                        depth_capped=0,
+                        external_skipped=0,
+                        paths_pre=len(feature.paths),
+                        symbols_pre=sum(
+                            len(a.symbols) for a in feature.shared_attributions
+                        ),
+                        elapsed_ms=0,
+                    )
+                    if log:
+                        log.warn(
+                            f"feature-worker-error name={feature.name} "
+                            f"{type(exc).__name__}: {exc}",
+                        )
+                    logger.warning(
+                        "stage_6_3 worker raised", exc_info=True,
+                    )
+                if not budget_exceeded and _budget_exhausted():
+                    budget_exceeded = True
+                    # Cancel everything not yet running.
+                    for pending_fut, pending_idx in future_to_index.items():
+                        if (
+                            pending_idx not in result_by_index
+                            and not pending_fut.done()
+                        ):
+                            if pending_fut.cancel():
+                                budget_skipped_indices.append(pending_idx)
+            # After the with-block exits, any remaining future MUST be
+            # complete; if it isn't (e.g. cancel returned False), we
+            # already have a result. Index gaps remain only for
+            # cancelled ones, which were appended above.
+
+    # ── Apply phase (single-threaded) ────────────────────────────────
+    # Iterate in original feature order so per_feature telemetry stays
+    # stable + log emits stay ordered.
     per_feature: list[FeatureEnrichment] = []
     total_seeds = 0
     total_files_reached = 0
@@ -1282,80 +1545,95 @@ def enrich_with_import_tree(
     depth_capped = 0
     external_skipped = 0
 
-    for feature in features:
-        feat_t0 = time.monotonic()
-        paths_pre = len(feature.paths)
-        symbols_pre = sum(
-            len(a.symbols) for a in feature.shared_attributions
-        )
-        seeds, source_kind, anchor_deps = _determine_seeds(
-            feature, ctx, cache, tracked_files, log=log,
-        )
-        if not seeds:
+    for index, feature in enumerate(features):
+        result = result_by_index.get(index)
+        if result is None:
+            # Budget-skipped feature — record a placeholder.
             per_feature.append(FeatureEnrichment(
                 feature_name=feature.name,
-                source_kind=source_kind,
-                anchor_deps=anchor_deps,
+                source_kind="budget_skipped",
+                anchor_deps=[],
                 seeds_count=0,
-                paths_pre=paths_pre,
-                paths_post=paths_pre,
-                symbols_pre=symbols_pre,
-                symbols_post=symbols_pre,
-                elapsed_ms=int((time.monotonic() - feat_t0) * 1000),
+                paths_pre=len(feature.paths),
+                paths_post=len(feature.paths),
+                symbols_pre=sum(
+                    len(a.symbols) for a in feature.shared_attributions
+                ),
+                symbols_post=sum(
+                    len(a.symbols) for a in feature.shared_attributions
+                ),
+                elapsed_ms=0,
+            ))
+            if log:
+                log.warn(
+                    f"feature-budget-skipped name={feature.name} "
+                    f"budget_sec={wall_budget_sec}",
+                )
+            continue
+
+        if not result.seeds:
+            per_feature.append(FeatureEnrichment(
+                feature_name=feature.name,
+                source_kind=result.source_kind,
+                anchor_deps=result.anchor_deps,
+                seeds_count=0,
+                paths_pre=result.paths_pre,
+                paths_post=result.paths_pre,
+                symbols_pre=result.symbols_pre,
+                symbols_post=result.symbols_pre,
+                elapsed_ms=result.elapsed_ms,
             ))
             if log:
                 log.info(
                     f"feature-skip name={feature.name} "
-                    f"source_kind={source_kind} no-seeds",
+                    f"source_kind={result.source_kind} no-seeds",
                 )
             continue
 
-        attributions, depth_dist, fc, dc, es = _traverse(
-            seeds,
-            cache=cache, alias_map=alias_map,
-            tracked_files=tracked_files,
-            max_depth=max_depth,
-            max_files=max_files_per_feature,
-            max_symbols=max_symbols_per_feature,
-            log=log,
-            feature_name=feature.name,
-        )
-        cycles += fc
-        depth_capped += dc
-        external_skipped += es
+        cycles += result.cycles
+        depth_capped += result.depth_capped
+        external_skipped += result.external_skipped
 
         paths_post, symbols_post = _apply_to_feature(
-            feature, attributions, seeds=seeds,
+            feature, result.attributions, seeds=result.seeds,
         )
 
         seeds_sample = [
             {"file": s.file, "symbol": s.symbol, "role": s.role}
-            for s in seeds[:5]
+            for s in result.seeds[:5]
         ]
         per_feature.append(FeatureEnrichment(
             feature_name=feature.name,
-            source_kind=source_kind,
-            anchor_deps=anchor_deps,
-            seeds_count=len(seeds),
+            source_kind=result.source_kind,
+            anchor_deps=result.anchor_deps,
+            seeds_count=len(result.seeds),
             seeds_sample=seeds_sample,
-            paths_pre=paths_pre,
+            paths_pre=result.paths_pre,
             paths_post=paths_post,
-            symbols_pre=symbols_pre,
+            symbols_pre=result.symbols_pre,
             symbols_post=symbols_post,
-            depth_distribution=depth_dist,
-            elapsed_ms=int((time.monotonic() - feat_t0) * 1000),
+            depth_distribution=result.depth_dist,
+            elapsed_ms=result.elapsed_ms,
         ))
-        total_seeds += len(seeds)
-        total_files_reached += paths_post - paths_pre
-        total_symbols_emitted += len(attributions)
+        total_seeds += len(result.seeds)
+        total_files_reached += paths_post - result.paths_pre
+        total_symbols_emitted += len(result.attributions)
         if log:
             log.info(
-                f"feature-end name={feature.name} source_kind={source_kind} "
-                f"seeds={len(seeds)} symbols_emitted={len(attributions)} "
-                f"paths={paths_pre}→{paths_post}",
+                f"feature-end name={feature.name} "
+                f"source_kind={result.source_kind} "
+                f"seeds={len(result.seeds)} "
+                f"symbols_emitted={len(result.attributions)} "
+                f"paths={result.paths_pre}→{paths_post}",
             )
 
     elapsed = round(time.monotonic() - t0, 3)
+    if budget_exceeded and log:
+        log.warn(
+            f"stage_6_3_budget_exceeded budget_sec={wall_budget_sec} "
+            f"elapsed_sec={elapsed} features_skipped="
+            f"{len(budget_skipped_indices)}",
+        )
     return EnrichmentResult(
         enriched_features=features,
         per_feature=per_feature,
@@ -1368,6 +1646,10 @@ def enrich_with_import_tree(
         cache_hits=cache.hits,
         alias_map=alias_map,
         elapsed_sec=elapsed,
+        budget_exceeded=budget_exceeded,
+        budget_sec=wall_budget_sec or 0.0,
+        features_budget_skipped=len(budget_skipped_indices),
+        max_workers=max_workers,
     )
 
 
@@ -1425,6 +1707,13 @@ def build_artifact_payload(
             "external_skipped": result.external_skipped,
             "cache_hits": result.cache_hits,
         },
+        # Sprint F (2026-05-20) — concurrency + budget telemetry.
+        "concurrency": {
+            "max_workers": result.max_workers,
+            "budget_sec": result.budget_sec,
+            "budget_exceeded": result.budget_exceeded,
+            "features_budget_skipped": result.features_budget_skipped,
+        },
     }
 
 
@@ -1438,4 +1727,6 @@ __all__ = [
     "DEFAULT_MAX_DEPTH",
     "DEFAULT_MAX_FILES_PER_FEATURE",
     "DEFAULT_MAX_SYMBOLS_PER_FEATURE",
+    "DEFAULT_MAX_WORKERS",
+    "DEFAULT_WALL_BUDGET_SEC",
 ]

@@ -76,7 +76,10 @@ payload plus per-feature counts for replay debugging.
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -265,21 +268,42 @@ _SLICEABLE_ROLES: frozenset[str] = frozenset({"entry", "called"})
 
 
 # ── Parser + parse-tree caches (process-scoped) ────────────────────────────
+#
+# Sprint F (2026-05-20): tree-sitter ``Parser`` instances are NOT
+# thread-safe — concurrent ``parser.parse()`` calls on a shared parser
+# can corrupt its internal state. We therefore keep a thread-local
+# parser cache so each worker gets its OWN parser per language. The
+# parse-tree cache stays process-wide (the cached ``Tree`` object IS
+# thread-safe for read-only walks) and is protected by a lock around
+# the dict mutation (Python dict assignment is atomic, but the
+# read-then-write pattern in :func:`_parse_file` needs serialisation
+# under concurrent first-fills of the same key).
 
-_PARSERS: dict[str, Any] = {}
+_PARSERS_TLS = threading.local()
 _TREE_CACHE: dict[tuple[str, int], Any] = {}
 _SOURCE_CACHE: dict[tuple[str, int], bytes] = {}
+_CACHE_LOCK = threading.Lock()
 
 
 def _get_parser(lang_name: str) -> Any | None:
-    """Lazy parser cache."""
+    """Return a thread-local :class:`tree_sitter.Parser` for ``lang_name``.
+
+    Each thread (including the main thread) caches its own parser so
+    concurrent slicing on multiple features does not corrupt parser
+    state. ``Parser`` construction is cheap (microseconds) so per-
+    thread duplication is acceptable.
+    """
     if not TREE_SITTER_AVAILABLE:
         return None
-    if lang_name in _PARSERS:
-        return _PARSERS[lang_name]
+    parsers: dict[str, Any] | None = getattr(_PARSERS_TLS, "parsers", None)
+    if parsers is None:
+        parsers = {}
+        _PARSERS_TLS.parsers = parsers
+    if lang_name in parsers:
+        return parsers[lang_name]
     lang = _probe_language(lang_name)
     if lang is None:
-        _PARSERS[lang_name] = None
+        parsers[lang_name] = None
         return None
     try:
         parser = Parser(lang)
@@ -287,9 +311,9 @@ def _get_parser(lang_name: str) -> Any | None:
         logger.warning(
             "stage_6_6: failed to construct Parser for %s: %s", lang_name, exc,
         )
-        _PARSERS[lang_name] = None
+        parsers[lang_name] = None
         return None
-    _PARSERS[lang_name] = parser
+    parsers[lang_name] = parser
     return parser
 
 
@@ -306,8 +330,12 @@ def _parse_file(path: Path, lang_name: str) -> tuple[Any | None, bytes | None]:
     except OSError:
         return None, None
     cache_key = (str(path), int(st.st_mtime))
-    if cache_key in _TREE_CACHE:
-        return _TREE_CACHE[cache_key], _SOURCE_CACHE[cache_key]
+    # Quick lock-free read — the cache hit path is the hot one.
+    cached_tree = _TREE_CACHE.get(cache_key)
+    if cached_tree is not None:
+        cached_src = _SOURCE_CACHE.get(cache_key)
+        if cached_src is not None:
+            return cached_tree, cached_src
     try:
         src = path.read_bytes()
     except OSError as exc:
@@ -320,16 +348,21 @@ def _parse_file(path: Path, lang_name: str) -> tuple[Any | None, bytes | None]:
     except Exception as exc:  # noqa: BLE001 — non-fatal
         logger.debug("stage_6_6: parse failed for %s: %s", path, exc)
         return None, None
-    _TREE_CACHE[cache_key] = tree
-    _SOURCE_CACHE[cache_key] = src
+    with _CACHE_LOCK:
+        _TREE_CACHE[cache_key] = tree
+        _SOURCE_CACHE[cache_key] = src
     return tree, src
 
 
 def reset_caches() -> None:
     """Clear parser + parse-tree caches (test helper)."""
-    _PARSERS.clear()
-    _TREE_CACHE.clear()
-    _SOURCE_CACHE.clear()
+    # Clear the calling thread's parser cache; other threads (if any)
+    # will GC theirs when they exit.
+    if hasattr(_PARSERS_TLS, "parsers"):
+        _PARSERS_TLS.parsers.clear()
+    with _CACHE_LOCK:
+        _TREE_CACHE.clear()
+        _SOURCE_CACHE.clear()
     _LANG_PROBES.clear()
 
 
@@ -386,6 +419,11 @@ class StageResult:
     parse_failures: int = 0
     sample_slices: list[dict[str, Any]] = field(default_factory=list)
     elapsed_sec: float = 0.0
+    # Sprint F (2026-05-20) — concurrency + graceful degradation.
+    budget_exceeded: bool = False
+    budget_sec: float = 0.0
+    features_budget_skipped: int = 0
+    max_workers: int = 1
 
     def telemetry(self) -> dict[str, Any]:
         if not self.active:
@@ -407,7 +445,22 @@ class StageResult:
             "parse_failures": self.parse_failures,
             "sample_slices": list(self.sample_slices),
             "elapsed_sec": round(self.elapsed_sec, 3),
+            "concurrency": {
+                "max_workers": self.max_workers,
+                "budget_sec": self.budget_sec,
+                "budget_exceeded": self.budget_exceeded,
+                "features_budget_skipped": self.features_budget_skipped,
+            },
         }
+
+
+# ── Sprint F: concurrency tunables ─────────────────────────────────────────
+#
+# tree-sitter slicing per feature is independent (each thread parses
+# files via a thread-local parser + writes only to its own feature).
+# Modest parallelism shortens wall time on monorepos.
+DEFAULT_MAX_WORKERS = 4
+DEFAULT_WALL_BUDGET_SEC = 90.0
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
@@ -706,10 +759,108 @@ def _slice_attribution_list(
     return new_attrs
 
 
+@dataclass
+class _PerFeatureBranchResult:
+    """Per-feature output of the branch slicer worker (Sprint F).
+
+    Carries the new attributions plus the per-feature counter snapshot
+    so the main thread can sum into the global :class:`StageResult`
+    without races.
+    """
+
+    feature_index: int
+    feat_new: list[FlowSymbolAttribution]
+    # Flow-level: list of (flow_index, new_attrs).
+    flow_new: list[tuple[int, list[FlowSymbolAttribution]]]
+    symbols_analyzed: int = 0
+    branches_emitted: int = 0
+    branch_kinds: dict[str, int] = field(default_factory=dict)
+    languages_seen: dict[str, int] = field(default_factory=dict)
+    capped_symbols: int = 0
+    parse_failures: int = 0
+    sample_slices: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _slice_for_feature(
+    feature: "Feature",
+    feature_index: int,
+    *,
+    ctx: "ScanContext",
+    log: "StageLogger",
+    sample_target: int,
+) -> _PerFeatureBranchResult:
+    """Compute branch slices for ONE feature into a thread-local result.
+
+    No global state is touched — the caller merges the returned
+    :class:`_PerFeatureBranchResult` into the orchestrator's
+    :class:`StageResult`.
+    """
+    local_result = StageResult(active=True)
+    feat_new: list[FlowSymbolAttribution] = []
+    flow_new: list[tuple[int, list[FlowSymbolAttribution]]] = []
+
+    feat_existing = list(feature.symbol_attributions or [])
+    if feat_existing:
+        feat_new = _slice_attribution_list(
+            ctx, feat_existing,
+            owner_label=f"feature:{feature.name}",
+            result=local_result, log=log, sample_target=sample_target,
+        )
+
+    for flow_index, flow in enumerate(feature.flows or []):
+        flow_existing = list(
+            getattr(flow, "flow_symbol_attributions", []) or []
+        )
+        if not flow_existing:
+            continue
+        new_attrs = _slice_attribution_list(
+            ctx, flow_existing,
+            owner_label=f"flow:{feature.name}/{flow.name}",
+            result=local_result, log=log, sample_target=sample_target,
+        )
+        if new_attrs:
+            flow_new.append((flow_index, new_attrs))
+
+    return _PerFeatureBranchResult(
+        feature_index=feature_index,
+        feat_new=feat_new,
+        flow_new=flow_new,
+        symbols_analyzed=local_result.symbols_analyzed,
+        branches_emitted=local_result.branches_emitted,
+        branch_kinds=dict(local_result.branch_kinds),
+        languages_seen=dict(local_result.languages_seen),
+        capped_symbols=local_result.capped_symbols,
+        parse_failures=local_result.parse_failures,
+        sample_slices=list(local_result.sample_slices),
+    )
+
+
+def _merge_per_feature(
+    result: StageResult,
+    sub: _PerFeatureBranchResult,
+    sample_target: int,
+) -> None:
+    """Fold ``sub`` into the orchestrator-owned ``result`` (main thread)."""
+    result.symbols_analyzed += sub.symbols_analyzed
+    result.branches_emitted += sub.branches_emitted
+    for kind, count in sub.branch_kinds.items():
+        result.branch_kinds[kind] = result.branch_kinds.get(kind, 0) + count
+    for lang, count in sub.languages_seen.items():
+        result.languages_seen[lang] = result.languages_seen.get(lang, 0) + count
+    result.capped_symbols += sub.capped_symbols
+    result.parse_failures += sub.parse_failures
+    remaining = max(sample_target - len(result.sample_slices), 0)
+    if remaining and sub.sample_slices:
+        result.sample_slices.extend(sub.sample_slices[:remaining])
+
+
 def run_stage_6_6(
     ctx: "ScanContext",
     features: list["Feature"],
     log: "StageLogger",
+    *,
+    max_workers: int | None = None,
+    wall_budget_sec: float | None = None,
 ) -> StageResult:
     """Walk every (feature × eligible symbol_attribution) AND every
     (flow × eligible flow_symbol_attribution) and emit intra-symbol
@@ -725,6 +876,15 @@ def run_stage_6_6(
 
     Mutates the relevant attribution lists in place. Skips silently +
     records ``active=False`` when tree-sitter is unavailable.
+
+    Sprint F (2026-05-20):
+      - Per-feature work runs in a :class:`ThreadPoolExecutor` of size
+        ``max_workers`` (default :data:`DEFAULT_MAX_WORKERS` = 4). The
+        tree-sitter parser cache is thread-local so concurrent
+        ``parser.parse`` calls do not race.
+      - ``wall_budget_sec`` caps stage wall time. When exceeded,
+        remaining features are marked ``budget_skipped`` and a warning
+        is emitted; the scan continues to the next stage.
     """
     t0 = time.monotonic()
 
@@ -738,40 +898,114 @@ def run_stage_6_6(
         return StageResult(active=False, reason=reason,
                            elapsed_sec=round(time.monotonic() - t0, 3))
 
+    if max_workers is None:
+        raw = os.environ.get("FAULTLINE_STAGE_6_6_WORKERS")
+        try:
+            max_workers = max(1, int(raw)) if raw else DEFAULT_MAX_WORKERS
+        except ValueError:
+            max_workers = DEFAULT_MAX_WORKERS
+    if wall_budget_sec is None:
+        raw = os.environ.get("FAULTLINE_STAGE_6_6_BUDGET_SEC")
+        try:
+            wall_budget_sec = float(raw) if raw else DEFAULT_WALL_BUDGET_SEC
+        except ValueError:
+            wall_budget_sec = DEFAULT_WALL_BUDGET_SEC
+
     result = StageResult(
         active=True,
         tree_sitter_version=_tree_sitter_version(),
+        budget_sec=wall_budget_sec or 0.0,
+        max_workers=max_workers,
     )
     sample_target = 5
 
-    for feature in features:
-        # ── Feature-level attributions (JS/TS-shaped) ─────────────
-        feat_existing = list(feature.symbol_attributions or [])
-        if feat_existing:
-            feat_new = _slice_attribution_list(
-                ctx, feat_existing,
-                owner_label=f"feature:{feature.name}",
-                result=result, log=log, sample_target=sample_target,
-            )
-            if feat_new:
-                feature.symbol_attributions = feat_existing + feat_new
+    def _budget_exhausted() -> bool:
+        if wall_budget_sec is None or wall_budget_sec <= 0:
+            return False
+        return (time.monotonic() - t0) >= wall_budget_sec
 
-        # ── Flow-level attributions (Go / Python-lib / Rust shape) ─
-        for flow in feature.flows or []:
-            flow_existing = list(
-                getattr(flow, "flow_symbol_attributions", []) or []
-            )
-            if not flow_existing:
+    sub_results: dict[int, _PerFeatureBranchResult] = {}
+    budget_skipped_indices: list[int] = []
+
+    if max_workers <= 1:
+        # Serial path.
+        for index, feature in enumerate(features):
+            if _budget_exhausted():
+                result.budget_exceeded = True
+                budget_skipped_indices.append(index)
                 continue
-            flow_new = _slice_attribution_list(
-                ctx, flow_existing,
-                owner_label=f"flow:{feature.name}/{flow.name}",
-                result=result, log=log, sample_target=sample_target,
-            )
-            if flow_new:
-                flow.flow_symbol_attributions = flow_existing + flow_new
+            try:
+                sub_results[index] = _slice_for_feature(
+                    feature, index, ctx=ctx, log=log,
+                    sample_target=sample_target,
+                )
+            except Exception as exc:  # noqa: BLE001 — defensive
+                log.warn(
+                    f"feature-worker-error name={feature.name} "
+                    f"{type(exc).__name__}: {exc}",
+                )
+                logger.warning("stage_6_6 worker raised", exc_info=True)
+    else:
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="stage6_6",
+        ) as pool:
+            future_to_index = {
+                pool.submit(
+                    _slice_for_feature,
+                    feature, index, ctx=ctx, log=log,
+                    sample_target=sample_target,
+                ): index
+                for index, feature in enumerate(features)
+            }
+            for fut in as_completed(future_to_index):
+                index = future_to_index[fut]
+                try:
+                    sub_results[index] = fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    log.warn(
+                        f"feature-worker-error name={features[index].name} "
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    logger.warning("stage_6_6 worker raised", exc_info=True)
+                if not result.budget_exceeded and _budget_exhausted():
+                    result.budget_exceeded = True
+                    for pending_fut, pending_idx in future_to_index.items():
+                        if (
+                            pending_idx not in sub_results
+                            and not pending_fut.done()
+                        ):
+                            if pending_fut.cancel():
+                                budget_skipped_indices.append(pending_idx)
 
+    # Apply phase — main thread mutates feature attribution lists and
+    # accumulates the global result in original feature order.
+    for index, feature in enumerate(features):
+        sub = sub_results.get(index)
+        if sub is None:
+            continue
+        if sub.feat_new:
+            feature.symbol_attributions = (
+                list(feature.symbol_attributions or []) + sub.feat_new
+            )
+        for flow_index, new_attrs in sub.flow_new:
+            if flow_index >= len(feature.flows or []):
+                continue
+            flow = feature.flows[flow_index]
+            flow.flow_symbol_attributions = (
+                list(getattr(flow, "flow_symbol_attributions", []) or [])
+                + new_attrs
+            )
+        _merge_per_feature(result, sub, sample_target)
+
+    result.features_budget_skipped = len(budget_skipped_indices)
     result.elapsed_sec = round(time.monotonic() - t0, 3)
+    if result.budget_exceeded:
+        log.warn(
+            f"stage_6_6_budget_exceeded budget_sec={wall_budget_sec} "
+            f"elapsed_sec={result.elapsed_sec} "
+            f"features_skipped={result.features_budget_skipped}",
+        )
     log.info(
         "branch-slicer summary: "
         f"symbols_analyzed={result.symbols_analyzed} "
@@ -779,7 +1013,8 @@ def run_stage_6_6(
         f"kinds={dict(result.branch_kinds)} "
         f"capped_symbols={result.capped_symbols} "
         f"parse_failures={result.parse_failures} "
-        f"elapsed={result.elapsed_sec}s",
+        f"elapsed={result.elapsed_sec}s "
+        f"max_workers={result.max_workers}",
     )
     return result
 

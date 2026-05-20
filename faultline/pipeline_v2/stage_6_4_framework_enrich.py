@@ -56,7 +56,9 @@ with the reason ("is_active returned False"). The orchestrator surfaces
 from __future__ import annotations
 
 import logging
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -73,6 +75,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ── Sprint F (2026-05-20) — concurrency + budget tunables ───────────────────
+#
+# Per (linker × feature) link emission is independent file IO + regex,
+# so a small thread pool reclaims wall time on monorepos with hundreds
+# of features. The wall budget guards against pathological linkers (one
+# that opens every TS file per feature).
+DEFAULT_MAX_WORKERS = 4
+DEFAULT_WALL_BUDGET_SEC = 90.0
+
+
 # ── Result types ────────────────────────────────────────────────────────────
 
 
@@ -86,6 +98,11 @@ class EnrichmentResult:
     per_linker: dict[str, dict[str, Any]]
     links_emitted_total: int
     elapsed_sec: float
+    # Sprint F (2026-05-20) — graceful degradation telemetry.
+    budget_exceeded: bool = False
+    budget_sec: float = 0.0
+    features_budget_skipped: int = 0
+    max_workers: int = 1
 
     def telemetry(self) -> dict[str, Any]:
         return {
@@ -95,6 +112,12 @@ class EnrichmentResult:
             "skipped_linkers": list(self.skipped_linkers),
             "per_linker": dict(self.per_linker),
             "links_emitted_total": self.links_emitted_total,
+            "concurrency": {
+                "max_workers": self.max_workers,
+                "budget_sec": self.budget_sec,
+                "budget_exceeded": self.budget_exceeded,
+                "features_budget_skipped": self.features_budget_skipped,
+            },
         }
 
 
@@ -154,12 +177,54 @@ def _attach_links_to_feature(
 # ── Public entry point ─────────────────────────────────────────────────────
 
 
+def _resolve_int_env(env_name: str, default: int) -> int:
+    """Read ``env_name`` from the environment, coerce to int, clamp to ≥1."""
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _resolve_float_env(env_name: str, default: float) -> float:
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _compute_links_for_feature(
+    linker: FrameworkLinker,
+    feature: "Feature",
+    ctx: "ScanContext",
+    log: "StageLogger",
+) -> tuple[list[FrameworkLink], str | None]:
+    """Worker function: call linker for ONE feature, catching exceptions.
+
+    Returns ``(links, error_msg_or_None)``. Pure-compute: does not
+    mutate ``feature``. The main thread is responsible for the
+    subsequent :func:`_attach_links_to_feature` call so attribution
+    lists are mutated under serial ordering.
+    """
+    try:
+        return linker.link_for_feature(feature, ctx, log), None
+    except Exception as exc:  # noqa: BLE001 — non-fatal
+        return [], f"{type(exc).__name__}: {exc}"
+
+
 def run_stage_6_4(
     ctx: "ScanContext",
     features: list["Feature"],
     log: "StageLogger",
     *,
     linkers: list[FrameworkLinker] | None = None,
+    max_workers: int | None = None,
+    wall_budget_sec: float | None = None,
 ) -> EnrichmentResult:
     """Run Stage 6.4 framework-aware enrichment.
 
@@ -170,11 +235,27 @@ def run_stage_6_4(
         log: stage logger (orchestrator-owned).
         linkers: optional override (tests pass canned linkers). When
             ``None`` we discover via entry-points / built-in registry.
+        max_workers: thread-pool size for per-feature link computation.
+            Defaults to :data:`DEFAULT_MAX_WORKERS` (=4). Set to 1 for
+            the legacy serial path (used in tests asserting log order).
+        wall_budget_sec: graceful-degradation wall clock budget per
+            linker. When exceeded, remaining features for that linker
+            are recorded as ``budget_skipped``. Defaults to
+            :data:`DEFAULT_WALL_BUDGET_SEC`. Set to 0 to disable.
 
     Returns:
         :class:`EnrichmentResult` with per-linker telemetry.
     """
     t0 = time.monotonic()
+
+    if max_workers is None:
+        max_workers = _resolve_int_env(
+            "FAULTLINE_STAGE_6_4_WORKERS", DEFAULT_MAX_WORKERS,
+        )
+    if wall_budget_sec is None:
+        wall_budget_sec = _resolve_float_env(
+            "FAULTLINE_STAGE_6_4_BUDGET_SEC", DEFAULT_WALL_BUDGET_SEC,
+        )
 
     available = linkers if linkers is not None else discover_linkers()
     if not available:
@@ -186,6 +267,8 @@ def run_stage_6_4(
             per_linker={},
             links_emitted_total=0,
             elapsed_sec=round(time.monotonic() - t0, 3),
+            budget_sec=wall_budget_sec,
+            max_workers=max_workers,
         )
 
     active: list[FrameworkLinker] = []
@@ -208,27 +291,109 @@ def run_stage_6_4(
 
     per_linker: dict[str, dict[str, Any]] = {}
     links_total = 0
+    budget_exceeded = False
+    total_budget_skipped = 0
+
     for linker in active:
+        if budget_exceeded:
+            # Once the wall budget is busted, skip the remaining
+            # linkers wholesale. Telemetry captures how many.
+            per_linker[linker.name] = {
+                "links_emitted": 0,
+                "links_attached_to_features": 0,
+                "budget_skipped": len(features),
+            }
+            total_budget_skipped += len(features)
+            log.warn(
+                f"linker-budget-skipped: {linker.name} "
+                f"budget_sec={wall_budget_sec}",
+                linker=linker.name,
+            )
+            continue
+
         linker_total = 0
-        for feature in features:
-            try:
-                links = linker.link_for_feature(feature, ctx, log)
-            except Exception as exc:  # noqa: BLE001 — non-fatal
-                log.warn(
-                    f"linker {linker.name} raised on feature "
-                    f"{feature.name}: {exc}",
-                    linker=linker.name, feature=feature.name,
+        per_linker_skipped = 0
+
+        def _budget_exhausted() -> bool:
+            if wall_budget_sec is None or wall_budget_sec <= 0:
+                return False
+            return (time.monotonic() - t0) >= wall_budget_sec
+
+        if max_workers <= 1:
+            # Serial path.
+            for feature in features:
+                if _budget_exhausted():
+                    budget_exceeded = True
+                    per_linker_skipped += 1
+                    continue
+                links, err = _compute_links_for_feature(
+                    linker, feature, ctx, log,
                 )
-                logger.warning(
-                    "framework linker raised on feature %s",
-                    feature.name, exc_info=True,
-                )
-                continue
-            if not links:
-                continue
-            added = _attach_links_to_feature(feature, links)
-            linker_total += added
+                if err is not None:
+                    log.warn(
+                        f"linker {linker.name} raised on feature "
+                        f"{feature.name}: {err}",
+                        linker=linker.name, feature=feature.name,
+                    )
+                    continue
+                if not links:
+                    continue
+                added = _attach_links_to_feature(feature, links)
+                linker_total += added
+        else:
+            # Parallel path.
+            with ThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix=f"stage6_4_{linker.name}",
+            ) as pool:
+                future_to_index: dict[Any, int] = {
+                    pool.submit(
+                        _compute_links_for_feature,
+                        linker, feature, ctx, log,
+                    ): index
+                    for index, feature in enumerate(features)
+                }
+                # Collect results, then apply serially in original order
+                # so attribution dedup is deterministic.
+                links_by_index: dict[int, list[FrameworkLink]] = {}
+                for fut in as_completed(future_to_index):
+                    idx = future_to_index[fut]
+                    try:
+                        links, err = fut.result()
+                    except Exception as exc:  # noqa: BLE001
+                        err = f"{type(exc).__name__}: {exc}"
+                        links = []
+                    if err is not None:
+                        log.warn(
+                            f"linker {linker.name} raised on feature "
+                            f"{features[idx].name}: {err}",
+                            linker=linker.name,
+                            feature=features[idx].name,
+                        )
+                    links_by_index[idx] = links
+                    if not budget_exceeded and _budget_exhausted():
+                        budget_exceeded = True
+                        # Cancel anything not yet started.
+                        for pending_fut, pending_idx in future_to_index.items():
+                            if (
+                                pending_idx not in links_by_index
+                                and not pending_fut.done()
+                            ):
+                                if pending_fut.cancel():
+                                    per_linker_skipped += 1
+                                    # Mark as empty so we don't apply
+                                    # anything for that feature.
+                                    links_by_index[pending_idx] = []
+
+                for index, feature in enumerate(features):
+                    links = links_by_index.get(index)
+                    if not links:
+                        continue
+                    added = _attach_links_to_feature(feature, links)
+                    linker_total += added
+
         links_total += linker_total
+        total_budget_skipped += per_linker_skipped
 
         # Pull rich telemetry from the linker if it exposes a ``telemetry``
         # attribute (the v1 linker does); otherwise emit a minimal summary.
@@ -244,6 +409,15 @@ def run_stage_6_4(
         # captures the actual attributions added (vs the linker's own
         # raw emit count, which may exceed it after dedup).
         per_linker[linker.name]["links_attached_to_features"] = linker_total
+        if per_linker_skipped:
+            per_linker[linker.name]["budget_skipped"] = per_linker_skipped
+
+    if budget_exceeded:
+        log.warn(
+            f"stage_6_4_budget_exceeded budget_sec={wall_budget_sec} "
+            f"elapsed_sec={round(time.monotonic() - t0, 3)} "
+            f"features_skipped={total_budget_skipped}",
+        )
 
     return EnrichmentResult(
         enriched_features=features,
@@ -252,6 +426,10 @@ def run_stage_6_4(
         per_linker=per_linker,
         links_emitted_total=links_total,
         elapsed_sec=round(time.monotonic() - t0, 3),
+        budget_exceeded=budget_exceeded,
+        budget_sec=wall_budget_sec or 0.0,
+        features_budget_skipped=total_budget_skipped,
+        max_workers=max_workers,
     )
 
 
