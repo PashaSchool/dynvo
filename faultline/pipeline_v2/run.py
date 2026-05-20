@@ -104,6 +104,9 @@ from faultline.pipeline_v2.stage_6_3_import_tree import (
     build_artifact_payload as _import_tree_artifact,
     enrich_with_import_tree,
 )
+from faultline.pipeline_v2.stage_6_4_framework_enrich import (
+    run_stage_6_4,
+)
 from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
@@ -753,6 +756,33 @@ def run_pipeline_v2(
             f"elapsed={enrichment.elapsed_sec}s",
         )
 
+    # ── Stage 6.4 — framework-aware enrichment (deterministic) ─────
+    # Sprint C4 (2026-05-20). Closes the gap C3's import-tree cannot
+    # bridge: HTTP route handlers reached via fetch URL strings, Server
+    # Actions across the network boundary, store mutations dispatched
+    # by string action type, tRPC procedures referenced by namespace
+    # string. v1 ships ONE linker — Next.js HTTP route. Future linkers
+    # plug in via Python entry-points without modifying Stage 6.4 core.
+    # NO LLM, NO network — pure file IO + regex.
+    with StageLogger(run_dir, 6, "framework_enrich") as log6_4:
+        enrich_result = run_stage_6_4(ctx, features, log6_4)
+        features = list(enrich_result.enriched_features)
+        framework_enrich_telemetry = enrich_result.telemetry()
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="framework_enrich",
+            payload=framework_enrich_telemetry,
+            run_dir=run_dir,
+        )
+        log6_4.info(
+            "framework-enrich summary: "
+            f"active_linkers={enrich_result.active_linkers} "
+            f"skipped_linkers={[s['name'] for s in enrich_result.skipped_linkers]} "
+            f"links_emitted_total={enrich_result.links_emitted_total} "
+            f"elapsed={enrich_result.elapsed_sec}s",
+        )
+
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
     # residual list (stage5 stripped FS-missing + anchor-dup before naming
@@ -908,6 +938,17 @@ def run_pipeline_v2(
             "total_symbols_emitted": enrichment.total_symbols_emitted,
             "depth_capped_events": enrichment.depth_capped_events,
             "elapsed_sec": enrichment.elapsed_sec,
+        },
+        # Sprint C4 — Stage 6.4 framework-aware enrichment telemetry.
+        # Pluggable linker registry; v1 ships nextjs-http-route. Skipped
+        # linkers (e.g. non-Next stacks) appear in ``skipped_linkers``
+        # with a reason so coverage gaps are observable from the artifact.
+        "stage_6_4": {
+            "active_linkers": framework_enrich_telemetry["active_linkers"],
+            "skipped_linkers": framework_enrich_telemetry["skipped_linkers"],
+            "per_linker": framework_enrich_telemetry["per_linker"],
+            "links_emitted_total": framework_enrich_telemetry["links_emitted_total"],
+            "elapsed_sec": framework_enrich_telemetry["elapsed_sec"],
         },
     }
 
