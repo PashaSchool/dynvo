@@ -247,6 +247,30 @@ def test_unknown_call_site_unmatched(tmp_path: Path) -> None:
     assert "foo.bar" in linker.telemetry.unmatched_paths_sample
 
 
+def test_call_site_queryOptions_v11_verb(tmp_path: Path) -> None:
+    """tRPC v11 + TanStack: `trpc.X.Y.queryOptions()` must resolve."""
+    repo = tmp_path
+    _w(repo / "package.json", json.dumps({"dependencies": {"@trpc/server": "11"}}))
+    _w(repo / "server/router.ts",
+       'export const appRouter = createTRPCRouter({\n'
+       '  page: createTRPCRouter({\n'
+       '    list: publicProcedure.query(()=>[]),\n'
+       '  }),\n'
+       '})\n')
+    _w(repo / "src/Layout.tsx",
+       'import { trpc } from "@/lib/trpc"\n'
+       'export async function Layout() {\n'
+       '  await queryClient.prefetchQuery(trpc.page.list.queryOptions())\n'
+       '  return null\n'
+       '}\n')
+    ctx = _ctx(repo)
+    linker = TrpcProcedureLinker()
+    feature = _new_feature("layout", ["src/Layout.tsx", "server/router.ts"])
+    links = linker.link_for_feature(feature, ctx, _log(tmp_path))
+    assert any(l.target_symbol == "page.list" for l in links), \
+        "queryOptions() must be recognised as a tRPC verb"
+
+
 def test_telemetry_router_map_size(tmp_path: Path) -> None:
     repo = tmp_path
     _w(repo / "package.json", json.dumps({"dependencies": {"@trpc/server": "11"}}))
