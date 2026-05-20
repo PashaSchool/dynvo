@@ -109,12 +109,21 @@ class Stage2Result:
     ``features`` is the primary output. ``unattributed`` lists the
     tracked files NOT claimed by any anchor — Stage 4 (LLM fallback)
     runs only over these.
+
+    ``zero_path_drops_count`` (Sprint S4b) records the number of
+    features that ended reconciliation with no path attribution and
+    were dropped by the defensive zero-path filter. A non-zero count
+    is a signal to inspect either Stage 1 (extractor emitted bad
+    anchor) or the attribution rule (a path-sharing pattern that
+    even the Fix-A zero-path-protection couldn't rescue).
     """
 
     features: list[DeveloperFeature]
     unattributed: list[str]
     # Free-form telemetry; Stage 7 reads this for ``scan_meta``.
     notes: list[str] = field(default_factory=list)
+    zero_path_drops_count: int = 0
+    zero_path_drops_sample: list[str] = field(default_factory=list)
 
 
 # ── Similarity ─────────────────────────────────────────────────────────────
@@ -337,7 +346,7 @@ def _build_feature_from_group(
 def _attribute_paths(
     features: list[DeveloperFeature],
 ) -> list[DeveloperFeature]:
-    """Each file gets ONE owner.
+    """Each file gets ONE owner — UNLESS that would orphan a feature.
 
     Conflicts (file appears in 2+ feature ``paths``) resolve by:
 
@@ -347,6 +356,22 @@ def _attribute_paths(
       4. lexicographic name (final deterministic fallback)
 
     Losers drop the contested path; they keep their other paths.
+
+    Sprint S4b — zero-path-protection: when stripping a contested path
+    would leave the loser feature with ZERO remaining paths, we KEEP
+    the contested path on the loser. This is the structural fix for
+    the "URL ghost" bug where multiple route slugs legitimately share
+    one source file (e.g. a single Fastify plugin file declaring
+    routes for ``/bitbucket`` + ``/gitlab`` + ``/github``). Without
+    this guard, two of the three slugs end up as zero-path "ghost"
+    features that downstream stages cannot attribute coverage, blame,
+    or flows to. Keeping the path on the loser preserves provenance
+    and matches the real-world co-location pattern.
+
+    The winner always retains the path, so the canonical owner is
+    still single-valued for downstream consumers that care about
+    primary attribution. Path-sharing here only widens the loser's
+    visibility window; it never reassigns winnership.
     """
     # Build an index ``path → list of feature indices that claim it``.
     claims: dict[str, list[int]] = {}
@@ -357,9 +382,8 @@ def _attribute_paths(
     if not claims:
         return features
 
-    # For each contested path, pick the winner; loser feature indices
-    # get the path stripped.
-    strip: dict[int, set[str]] = {}
+    # Pass 1 — provisional strip set, ranking-only.
+    proposed_strip: dict[int, set[str]] = {}
     for path, idx_list in claims.items():
         if len(idx_list) == 1:
             continue
@@ -371,9 +395,27 @@ def _attribute_paths(
             return (-best_src_prio, -conf_rank, -len(f.paths), f.name)
 
         ranked = sorted(idx_list, key=_rank_key)
-        winner = ranked[0]
         for loser in ranked[1:]:
-            strip.setdefault(loser, set()).add(path)
+            proposed_strip.setdefault(loser, set()).add(path)
+
+    if not proposed_strip:
+        return features
+
+    # Pass 2 — zero-path protection: cancel strips that would orphan
+    # the loser. A "loser" feature that would end with len(paths)==0
+    # keeps ALL its contested paths so it stays attributable. We
+    # process in a deterministic order (sorted feature index) so the
+    # outcome is reproducible across runs.
+    strip: dict[int, set[str]] = {}
+    for idx in sorted(proposed_strip):
+        f = features[idx]
+        contested = proposed_strip[idx]
+        survivors = tuple(p for p in f.paths if p not in contested)
+        if not survivors:
+            # Stripping would orphan this feature; keep the contested
+            # paths instead. Loser shares ownership with winner(s).
+            continue
+        strip[idx] = contested
 
     if not strip:
         return features
@@ -384,9 +426,6 @@ def _attribute_paths(
             rebuilt.append(f)
             continue
         new_paths = tuple(p for p in f.paths if p not in strip[idx])
-        # If a feature lost ALL of its paths, keep it but warn — Stage 5
-        # may decide to drop it. We don't drop here so that the feature
-        # set is reasoning-preserving (callers can inspect).
         rebuilt.append(
             DeveloperFeature(
                 name=f.name,
@@ -468,7 +507,25 @@ def stage_2_reconcile(
     # 3) Resolve cross-feature file conflicts.
     features = _attribute_paths(features)
 
-    # 4) Compute unattributed residual.
+    # 4) Sprint S4b — defensive zero-path drop. Any feature that
+    #    ended reconciliation with NO paths cannot be attributed to
+    #    files in the working tree, so downstream stages (Stage 5
+    #    naming discipline, Stage 6 commit/coverage enrichment,
+    #    Stage 5.3 sibling-collapse, Stage 5.5 bipartite) all have
+    #    nothing to operate on. We drop them here and record the
+    #    sample for telemetry. Pure structural — no thresholds.
+    zero_path = [f for f in features if not f.paths]
+    if zero_path:
+        zero_path_names = [f.name for f in zero_path]
+        features = [f for f in features if f.paths]
+        notes.append(
+            f"dropped {len(zero_path_names)} zero-path feature(s) "
+            f"after attribution: {zero_path_names[:10]}",
+        )
+    zero_path_drops_count = len(zero_path)
+    zero_path_drops_sample = [f.name for f in zero_path[:10]]
+
+    # 5) Compute unattributed residual.
     attributed = {p for f in features for p in f.paths}
     unattributed = [p for p in ctx.tracked_files if p not in attributed]
 
@@ -476,6 +533,8 @@ def stage_2_reconcile(
         features=features,
         unattributed=unattributed,
         notes=notes,
+        zero_path_drops_count=zero_path_drops_count,
+        zero_path_drops_sample=zero_path_drops_sample,
     )
 
 
