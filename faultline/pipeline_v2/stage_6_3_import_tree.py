@@ -56,8 +56,12 @@ union of original + newly-reached files.
 Caps + safety
 =============
 
-  - ``max_depth = 6``                   — page → component → hook →
-                                          util → type chain + headroom.
+  - ``max_depth = 8``                   — page → component → hook →
+                                          service → util → primitives
+                                          chain + headroom (raised from
+                                          6 in Sprint C3b after
+                                          telemetry showed depth >= 4
+                                          reached on real monorepos).
   - ``max_files_per_feature = 100``     — bounded payload size.
   - ``max_symbols_per_feature = 500``   — defensive ceiling.
   - Scale-invariant: identical bounds for every repo (per
@@ -108,7 +112,7 @@ logger = logging.getLogger(__name__)
 
 # ── Tunables (scale-invariant) ───────────────────────────────────────────
 
-DEFAULT_MAX_DEPTH = 6
+DEFAULT_MAX_DEPTH = 8
 DEFAULT_MAX_FILES_PER_FEATURE = 100
 DEFAULT_MAX_SYMBOLS_PER_FEATURE = 500
 
@@ -1094,6 +1098,7 @@ def _apply_to_feature(
     length of ``feature.paths`` AFTER union with reached files.
     """
     from faultline.models.types import (
+        FlowSymbolAttribution as PydanticFlowSymbolAttribution,
         SymbolAttribution as PydanticSymbolAttribution,
     )
 
@@ -1139,11 +1144,44 @@ def _apply_to_feature(
             feature.shared_attributions.append(a)
             existing_files.add(a.file_path)
 
+    # Sprint C3b — feature-level per-symbol attributions.
+    # The legacy ``shared_attributions`` is a per-file aggregate; the
+    # landing app needs per-symbol records (file / symbol / line span /
+    # role) at the FEATURE level too, not just per-flow. We emit one
+    # ``FlowSymbolAttribution`` per BFS record. For flow-bearing
+    # features we ALSO union flow-level called-records (added by
+    # :func:`_extend_flow_attributions` below) so a single read of
+    # ``feature.symbol_attributions`` yields the complete narrative.
+    existing_keys = {
+        (a.file, a.symbol) for a in feature.symbol_attributions
+    }
+    for rec in attributions:
+        key = (rec.file, rec.symbol)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        feature.symbol_attributions.append(PydanticFlowSymbolAttribution(
+            file=rec.file,
+            symbol=rec.symbol,
+            line_start=rec.line_start,
+            line_end=rec.line_end,
+            role=rec.role,
+        ))
+
     # Flow-level extension — when a flow's entry seeded this BFS,
     # extend that flow's paths / flow_symbol_attributions with the
     # called-symbol chain that touches its entry file's subtree.
     if feature.flows:
         _extend_flow_attributions(feature, seeds, attributions)
+        # Union flow-level entries back up to the feature surface so
+        # downstream consumers don't have to walk both surfaces.
+        for flow in feature.flows:
+            for fattr in flow.flow_symbol_attributions:
+                key = (fattr.file, fattr.symbol)
+                if key in existing_keys:
+                    continue
+                existing_keys.add(key)
+                feature.symbol_attributions.append(fattr)
 
     return (len(feature.paths), len(attributions))
 
