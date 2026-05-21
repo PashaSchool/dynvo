@@ -520,5 +520,182 @@ def test_run_stage_8_marks_cache_hit_in_telemetry(
     assert result.telemetry["source"] == "marketing+haiku"
 
 
+# ── M2 — dedupe Stage-6.5 PFs whose devs are all Haiku-mapped ──────────
+
+
+def test_m2_drops_singleton_pre_pfs_fully_covered_by_haiku(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Stage-6.5 PF whose only dev member is now mapped by Haiku to
+    a different marketing label must be dropped (it is a duplicate).
+
+    Before M2 this PF was preserved (creating singleton workspace+domain
+    duplicates of every Haiku-mapped feature — 84% of corpus
+    over-emission)."""
+    feats = [
+        _feat("checker", ["apps/web/lib/checker.ts"]),
+        _feat("regions", ["apps/web/lib/regions.ts"]),
+    ]
+    # Stage 6.5 placed each dev feature under a workspace+domain
+    # singleton PF.
+    pre_products = [
+        _product("Checker", ["apps/web/lib/checker.ts"]),
+        _product("Regions", ["apps/web/lib/regions.ts"]),
+    ]
+    pre_map: dict[str, tuple[str, ...]] = {
+        "checker": ("Checker",),
+        "regions": ("Regions",),
+    }
+    fake_taxonomy = MarketingTaxonomy(
+        repo_slug="openstatus",
+        source_url="https://openstatus.dev",
+        fetched_at="2026-05-20T00:00:00+00:00",
+        product_features=(
+            "HTTP Uptime Monitoring",
+            "Multi-Region Probing",
+            "Status Page Builder",
+        ),
+        confidence=0.9,
+        notes="",
+    )
+    monkeypatch.setattr(
+        "faultline.pipeline_v2.stage_8_marketing_clusterer."
+        "fetch_marketing_taxonomy",
+        lambda repo_path, slug: fake_taxonomy,
+    )
+    client = _FakeClient(response_text=json.dumps({"mappings": [
+        {"developer": "checker", "product": "HTTP Uptime Monitoring"},
+        {"developer": "regions", "product": "Multi-Region Probing"},
+    ]}))
+
+    result = run_stage_8(
+        _ctx(tmp_path),
+        feats,
+        pre_products,
+        dev_to_product_map_pre=pre_map,
+        source_breakdown_pre={},
+        client=client,
+    )
+
+    names = {pf.name for pf in result.product_features}
+    # Haiku PFs present
+    assert "HTTP Uptime Monitoring" in names
+    assert "Multi-Region Probing" in names
+    # Stage 6.5 duplicates dropped (every dev member is Haiku-mapped)
+    assert "Checker" not in names
+    assert "Regions" not in names
+
+
+def test_m2_keeps_pre_pfs_when_haiku_leaves_dev_unmapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If Haiku doesn't map a dev feature, its Stage-6.5 PF must be
+    preserved to avoid recall regression."""
+    feats = [
+        _feat("checker", ["apps/web/lib/checker.ts"]),
+        _feat("misc_util", ["apps/web/lib/misc.ts"]),
+    ]
+    pre_products = [
+        _product("Checker", ["apps/web/lib/checker.ts"]),
+        _product("Misc Util", ["apps/web/lib/misc.ts"]),
+    ]
+    pre_map: dict[str, tuple[str, ...]] = {
+        "checker": ("Checker",),
+        "misc_util": ("Misc Util",),
+    }
+    fake_taxonomy = MarketingTaxonomy(
+        repo_slug="openstatus",
+        source_url="https://openstatus.dev",
+        fetched_at="2026-05-20T00:00:00+00:00",
+        product_features=(
+            "HTTP Uptime Monitoring",
+            "Multi-Region Probing",
+            "Status Page Builder",
+        ),
+        confidence=0.9,
+        notes="",
+    )
+    monkeypatch.setattr(
+        "faultline.pipeline_v2.stage_8_marketing_clusterer."
+        "fetch_marketing_taxonomy",
+        lambda repo_path, slug: fake_taxonomy,
+    )
+    # Haiku maps only `checker`, returns null for `misc_util`.
+    client = _FakeClient(response_text=json.dumps({"mappings": [
+        {"developer": "checker", "product": "HTTP Uptime Monitoring"},
+        {"developer": "misc_util", "product": None},
+    ]}))
+
+    result = run_stage_8(
+        _ctx(tmp_path),
+        feats,
+        pre_products,
+        dev_to_product_map_pre=pre_map,
+        source_breakdown_pre={},
+        client=client,
+    )
+
+    names = {pf.name for pf in result.product_features}
+    assert "HTTP Uptime Monitoring" in names
+    # Checker PF dropped (dev is Haiku-mapped)
+    assert "Checker" not in names
+    # Misc Util PF preserved (its dev is unmapped — recall protection)
+    assert "Misc Util" in names
+
+
+def test_m2_drops_pre_pf_with_partial_haiku_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a Stage-6.5 PF carries 2 dev members and both are
+    Haiku-mapped (even to DIFFERENT marketing labels), the PF is
+    redundant — drop it."""
+    feats = [
+        _feat("checker", ["apps/web/lib/checker.ts"]),
+        _feat("regions", ["apps/web/lib/regions.ts"]),
+    ]
+    pre_products = [
+        _product("Infra", ["apps/web/lib/checker.ts", "apps/web/lib/regions.ts"]),
+    ]
+    pre_map: dict[str, tuple[str, ...]] = {
+        "checker": ("Infra",),
+        "regions": ("Infra",),
+    }
+    fake_taxonomy = MarketingTaxonomy(
+        repo_slug="openstatus",
+        source_url="https://openstatus.dev",
+        fetched_at="2026-05-20T00:00:00+00:00",
+        product_features=(
+            "HTTP Uptime Monitoring",
+            "Multi-Region Probing",
+            "Status Page Builder",
+        ),
+        confidence=0.9,
+        notes="",
+    )
+    monkeypatch.setattr(
+        "faultline.pipeline_v2.stage_8_marketing_clusterer."
+        "fetch_marketing_taxonomy",
+        lambda repo_path, slug: fake_taxonomy,
+    )
+    client = _FakeClient(response_text=json.dumps({"mappings": [
+        {"developer": "checker", "product": "HTTP Uptime Monitoring"},
+        {"developer": "regions", "product": "Multi-Region Probing"},
+    ]}))
+
+    result = run_stage_8(
+        _ctx(tmp_path),
+        feats,
+        pre_products,
+        dev_to_product_map_pre=pre_map,
+        source_breakdown_pre={},
+        client=client,
+    )
+
+    names = {pf.name for pf in result.product_features}
+    assert "Infra" not in names  # both members rehoused → drop
+    assert "HTTP Uptime Monitoring" in names
+    assert "Multi-Region Probing" in names
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

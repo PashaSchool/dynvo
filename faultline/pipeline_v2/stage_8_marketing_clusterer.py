@@ -685,16 +685,41 @@ def run_stage_8(
             for dev, labels in base_map.items():
                 new_dev_map.setdefault(dev, labels)
 
-            # Anything Stage 6.5 mapped but Haiku didn't — keep the
-            # deterministic product feature so we don't lose recall.
-            keep_pre = [
-                pf for pf in product_features_pre
-                if pf.name not in {x.name for x in product_features}
-                and any(
-                    pf.name in labels
-                    for labels in (base_map.values())
-                )
-            ]
+            # M2 — when Haiku has placed a developer feature into a
+            # marketing+haiku PF, the older Stage 6.5 PF that contained
+            # the SAME developer feature is a duplicate and must be
+            # dropped. Previously we kept those PFs (creating singleton
+            # workspace+domain duplicates of every Haiku-mapped feature
+            # — 84% of Layer 2 over-emission across the corpus).
+            #
+            # Universal rule: only retain a Stage-6.5 PF when at least
+            # one of its developer-feature members is NOT now mapped
+            # to a marketing+haiku PF.
+            haiku_emitted_names = {x.name for x in product_features}
+            haiku_mapped_devs = set(mapping.keys())
+
+            keep_pre = []
+            for pf in product_features_pre:
+                if pf.name in haiku_emitted_names:
+                    # Same name already exists in the Haiku output —
+                    # always drop the duplicate.
+                    continue
+                # Identify which developer features this Stage-6.5 PF
+                # claims by looking up its label in base_map.
+                pf_devs = {
+                    dev for dev, labels in base_map.items()
+                    if pf.name in labels
+                }
+                if not pf_devs:
+                    # No devs map back — anomalous; preserve to be safe.
+                    keep_pre.append(pf)
+                    continue
+                # Drop ONLY if every dev member is now in a Haiku PF.
+                # If at least one dev is unmapped by Haiku, the
+                # deterministic PF still earns its keep.
+                if pf_devs.issubset(haiku_mapped_devs):
+                    continue
+                keep_pre.append(pf)
             product_features.extend(keep_pre)
 
             telemetry = {
