@@ -25,6 +25,7 @@ _TS_JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _PYTHON_EXTENSIONS = {".py"}
 _GO_EXTENSIONS = {".go"}
 _RUST_EXTENSIONS = {".rs"}
+_RUBY_EXTENSIONS = {".rb", ".rake"}
 
 # Named function/class/const exports
 _RE_NAMED_EXPORT = re.compile(
@@ -80,6 +81,30 @@ _RE_RUST_PUB = re.compile(
     r"^\s*pub(?:\([^)]+\))?\s+(?:async\s+)?(?:unsafe\s+)?"
     r"(?:fn|struct|enum|trait|type|const|static|mod)\s+([a-zA-Z_]\w*)",
     re.MULTILINE,
+)
+
+# Ruby patterns. Stage 3 only needs symbol *names* (not semantics), so a
+# regex parser mirroring _parse_python_file is sufficient — no tree-sitter
+# dependency. Without these, every .rb file returns 0 exports and Rails
+# repos hit the Stage 3 short-circuit at MIN_EXPORTS_FOR_FLOW_DETECTION=3
+# → zero flows emitted (verified on maybe corpus repo).
+_RE_RUBY_CLASS = re.compile(r"^\s*class\s+([A-Z]\w*)", re.MULTILINE)
+_RE_RUBY_MODULE = re.compile(r"^\s*module\s+([A-Z]\w*)", re.MULTILINE)
+_RE_RUBY_DEF = re.compile(
+    r"^\s*def\s+(?:self\.)?([a-z_][\w?!=]*)", re.MULTILINE,
+)
+_RE_RUBY_CONST = re.compile(r"^\s*([A-Z][A-Z0-9_]+)\s*=", re.MULTILINE)
+# ActiveRecord / Rails domain declarations — surface as "exports" so
+# Stage 3 sees enough symbols and the LLM has Rails-shaped vocabulary.
+_RE_RUBY_AR_ASSOC = re.compile(
+    r"^\s*(?:has_many|has_one|belongs_to|has_and_belongs_to_many)\s+:(\w+)",
+    re.MULTILINE,
+)
+_RE_RUBY_AR_SCOPE = re.compile(r"^\s*scope\s+:(\w+)", re.MULTILINE)
+# Rails routes.rb DSL — get '/path' => 'controller#action' etc.
+_RE_RUBY_ROUTE = re.compile(
+    r"^\s*(get|post|put|patch|delete)\s+['\"]([^'\"]+)['\"]",
+    re.MULTILINE | re.IGNORECASE,
 )
 
 
@@ -147,6 +172,7 @@ def extract_signatures(
             and suffix not in _PYTHON_EXTENSIONS
             and suffix not in _GO_EXTENSIONS
             and suffix not in _RUST_EXTENSIONS
+            and suffix not in _RUBY_EXTENSIONS
         ):
             continue
         abs_path = root / rel_path
@@ -161,6 +187,8 @@ def extract_signatures(
             sig = _parse_go_file(rel_path, source)
         elif suffix in _RUST_EXTENSIONS:
             sig = _parse_rust_file(rel_path, source)
+        elif suffix in _RUBY_EXTENSIONS:
+            sig = _parse_ruby_file(rel_path, source)
         else:
             sig = _parse_file(rel_path, source)
             sig.symbol_ranges = extract_symbol_ranges(source)
@@ -372,6 +400,87 @@ def _parse_python_file(rel_path: str, source: str) -> FileSignature:
     return sig
 
 
+def _parse_ruby_file(rel_path: str, source: str) -> FileSignature:
+    """Extract exports + symbol ranges from a Ruby source file.
+
+    Treats classes, modules, top-level methods, and uppercase constants
+    as "exports" — enough for Stage 3's MIN_EXPORTS_FOR_FLOW_DETECTION
+    gate. Also surfaces ActiveRecord associations (``has_many :foos``)
+    and scopes (``scope :recent``) as exports because in a Rails domain
+    these ARE the user-visible vocabulary; surfacing them gives the
+    flow-detection LLM richer ground to name flows.
+
+    Routes (``get '/path' => 'controller#action'`` in config/routes.rb)
+    populate ``sig.routes``.
+    """
+    sig = FileSignature(path=rel_path)
+    seen: set[str] = set()
+    raw_symbols: list[tuple[int, str, str]] = []
+
+    for match in _RE_RUBY_CLASS.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+            line = source.count("\n", 0, match.start()) + 1
+            raw_symbols.append((line, name, "class"))
+
+    for match in _RE_RUBY_MODULE.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+            line = source.count("\n", 0, match.start()) + 1
+            raw_symbols.append((line, name, "module"))
+
+    for match in _RE_RUBY_DEF.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+            line = source.count("\n", 0, match.start()) + 1
+            raw_symbols.append((line, name, "method"))
+
+    for match in _RE_RUBY_CONST.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+            line = source.count("\n", 0, match.start()) + 1
+            raw_symbols.append((line, name, "constant"))
+
+    for match in _RE_RUBY_AR_ASSOC.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+
+    for match in _RE_RUBY_AR_SCOPE.finditer(source):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            sig.exports.append(name)
+
+    for match in _RE_RUBY_ROUTE.finditer(source):
+        method = match.group(1).upper()
+        path = match.group(2)
+        sig.routes.append(f"{method} {path}")
+
+    raw_symbols.sort(key=lambda x: x[0])
+    total_lines = source.count("\n") + 1
+    for i, (start, name, kind) in enumerate(raw_symbols):
+        end = (
+            raw_symbols[i + 1][0] - 1
+            if i + 1 < len(raw_symbols) else total_lines
+        )
+        sig.symbol_ranges.append(SymbolRange(
+            name=name, start_line=start, end_line=max(start, end),
+            kind=kind,
+        ))
+
+    return sig
+
+
 def _infer_nextjs_route_path(rel_path: str) -> str:
     """
     Infers the Next.js API route path from the file's relative path.
@@ -510,6 +619,9 @@ def get_symbol_range(
     if ext == ".py":
         sig = _parse_python_file(rel_path, source)
         ranges = sig.symbol_ranges
+    elif ext in _RUBY_EXTENSIONS:
+        sig = _parse_ruby_file(rel_path, source)
+        ranges = sig.symbol_ranges
     elif ext in {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}:
         ranges = extract_symbol_ranges(source)
     else:
@@ -534,6 +646,8 @@ def list_exported_symbols(rel_path: str, source: str) -> list[SymbolRange]:
         ext = rel_path[dot:].lower()
     if ext == ".py":
         return _parse_python_file(rel_path, source).symbol_ranges
+    if ext in _RUBY_EXTENSIONS:
+        return _parse_ruby_file(rel_path, source).symbol_ranges
     if ext in {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}:
         return extract_symbol_ranges(source)
     return []
