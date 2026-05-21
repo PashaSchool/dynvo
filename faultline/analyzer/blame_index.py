@@ -12,6 +12,35 @@ file's HEAD commit has changed since last index.
 Graceful degradation: every public method returns success/failure
 (or ``None``) instead of raising. Callers tier-down to file-level
 scoring when blame data is unavailable.
+
+Sprint G2 (2026-05-21) — per-file ``git log -n 1`` subprocess
+elimination
+==========================================================
+
+Originally :meth:`BlameIndex.index_files` looked up the per-file HEAD
+SHA by spawning one ``git log -n 1 --format=%H -- <path>`` subprocess
+per file. On cal-com (7580 unique paths from the legacy
+``analyze`` path) that loop alone took ~5-7 minutes wall-clock — pure
+fork/exec overhead, near-zero CPU.
+
+The fix mirrors the Sprint G ``_get_commits_fast`` pattern:
+
+  * Callers that already have the bulk commit cache (Stage 0 /
+    legacy ``cli.analyze`` path) pass ``commits=`` into the
+    constructor. The index pre-computes ``{path → newest_sha}`` from
+    the cache in O(n) Python.
+  * The expensive subprocess is only used as a fall-back when no
+    cache is provided, OR when a file isn't present in the cache
+    (deep history outside the ``days`` window, dot-files we filtered
+    out at intake, etc.).
+
+Behaviour preservation: the per-file SHA computed from the cache is
+``hexsha[:8]`` matching the Sprint G ``Commit`` model. The cache
+stores the resulting SHA in the SQLite ``file_state`` table, so the
+"is this file already indexed at this revision" check stays
+consistent. We DELIBERATELY widen ``_is_up_to_date`` to also accept
+the legacy 40-char SHA stored by previous runs — see the prefix
+match in that method.
 """
 
 from __future__ import annotations
@@ -19,9 +48,14 @@ from __future__ import annotations
 import logging
 import sqlite3
 import subprocess
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Iterable
+
+if TYPE_CHECKING:
+    from faultline.models.types import Commit
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +94,20 @@ class BlameIndex:
         self,
         repo_root: Path,
         cache_dir: Path | None = None,
+        commits: "Iterable[Commit] | None" = None,
     ) -> None:
+        """Open / create the persistent blame cache.
+
+        Args:
+            repo_root: Repository working tree.
+            cache_dir: Optional override for the SQLite location.
+            commits: Optional pre-loaded commit list (newest-first).
+                When provided, :meth:`_git_head_for_file` resolves
+                each file's HEAD SHA from the in-memory cache instead
+                of spawning a ``git log`` subprocess per file. This
+                is the Sprint G2 fast path — callers that already
+                paid Stage 0's bulk-load cost should pass it through.
+        """
         self.repo_root = Path(repo_root).resolve()
         self.cache_dir = (
             cache_dir
@@ -72,6 +119,22 @@ class BlameIndex:
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema()
+
+        # Sprint G2 — derive {path → newest_sha} once from the
+        # commit cache. Newest-first iteration order means the first
+        # commit that mentions ``path`` is the HEAD-touching one. We
+        # store the 8-char short sha to match the Sprint G Commit
+        # model; the schema-store still records whichever sha we
+        # decide on per file (see ``_is_up_to_date``).
+        self._head_sha_cache: dict[str, str] = {}
+        if commits is not None:
+            for commit in commits:
+                files = getattr(commit, "files_changed", None) or []
+                sha = getattr(commit, "sha", "") or ""
+                if not sha:
+                    continue
+                for fp in files:
+                    self._head_sha_cache.setdefault(fp, sha)
 
     def close(self) -> None:
         self._conn.close()
@@ -203,9 +266,33 @@ class BlameIndex:
             "SELECT head_sha FROM file_state WHERE file_path = ?",
             (rel_path,),
         ).fetchone()
-        return row is not None and row[0] == head_sha
+        if row is None:
+            return False
+        stored = row[0] or ""
+        # Sprint G2 — the cache may now resolve to an 8-char short
+        # sha while previous runs stored a 40-char full sha (the
+        # legacy subprocess returned ``%H``). Treat one as a prefix
+        # of the other so cache hits stay correct across versions.
+        if stored == head_sha:
+            return True
+        if len(stored) >= len(head_sha):
+            return stored.startswith(head_sha)
+        return head_sha.startswith(stored)
 
     def _git_head_for_file(self, rel_path: str) -> str | None:
+        """Return the SHA of the most recent commit that touches ``rel_path``.
+
+        Sprint G2 (2026-05-21) fast path: when the index was built
+        with a ``commits=`` cache, this is a dict lookup — no
+        subprocess. Falls back to the per-file ``git log`` call when
+        the path isn't in the cache (rare: files outside the
+        ``days=`` history window, or callers that didn't pass
+        commits in).
+        """
+        cached = self._head_sha_cache.get(rel_path)
+        if cached:
+            return cached
+
         try:
             r = subprocess.run(
                 ["git", "-C", str(self.repo_root), "log", "-n", "1",
