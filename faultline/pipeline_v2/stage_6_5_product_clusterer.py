@@ -95,6 +95,79 @@ _CONF_CUSTOMER_YAML = 1.0
 _AMBIGUOUS_LEAD_THRESHOLD = 2.0
 
 
+# ── Phantom-cluster name filter (Sprint E2) ─────────────────────────────
+#
+# Workspace folders whose Title-Cased names are NEVER legitimate
+# customer-facing product features. Sourced from observed junk
+# emissions across 15 repos in sprint-director-v3-results.md.
+#
+# Universal — these names denote infrastructure, build tooling,
+# universal folder layout, or top-level catch-alls. They are NOT
+# tuned to any single repo (per ``rule-no-magic-tuning`` and
+# ``rule-no-repo-specific-paths``).
+#
+# This filter applies ONLY to the workspace rule (Rule 1). The
+# dep-anchor rule (Rule 2) and customer-yaml rule (Rule 3) are NOT
+# affected: a repo that imports a Database dep still gets a
+# legitimate "Database" product feature via Rule 2 even though
+# "Database" is in this set — what gets filtered is naming a
+# product after the FOLDER ``apps/database/``, which is structural
+# infrastructure rather than a customer-facing surface.
+#
+# Conservative — only names that are universally junk (folder,
+# build, infra, catch-all). When in doubt, OMIT (false negatives
+# are cheaper than false positives that suppress real surfaces).
+#
+# IMPORTANT — name forms must match exactly what ``_titleize`` produces
+# for the corresponding folder slug. ``_titleize`` uses ``str.capitalize``
+# on each whitespace-separated token, so ``apps/ai/`` → ``"Ai"`` (NOT
+# ``"AI"``), ``packages/tsconfig/`` → ``"Tsconfig"``, and
+# ``packages/config-eslint/`` → ``"Config Eslint"``. The handoff
+# diagnostic lists prose-Title-Cased forms ("AI") which correspond to
+# dep-anchor product_labels in ``eval/dependency-anchors.yaml`` —
+# those are NOT filtered here. This set contains ONLY the
+# workspace-rule emission forms.
+_PHANTOM_CLUSTER_NAMES: frozenset[str] = frozenset({
+    # Pure infrastructure — workspace folders that name plumbing,
+    # not product surfaces. Dep-anchor still fires on imports.
+    "Ai",
+    "Realtime",
+    "Database",
+    "Cache",
+    "Docker",
+    "Hosting",
+    "File Storage",
+    # Universal folder names — every monorepo has these structural
+    # buckets and they are never themselves a product surface.
+    "Packages",
+    "Docs",
+    "Apps",
+    "Internal Packages",
+    "Routes",
+    "Internationalization",
+    "Frontend",
+    "Backend",
+    # Build tooling — config-only workspaces.
+    "Tsconfig",
+    "Prettier Config",
+    "Config Prettier",
+    "Config Eslint",
+    "Config Typescript",
+    "Tailwind",
+    "Vite Plugins",
+    "Codemods",
+    "Docker Swarm",
+    "Cloudformation",
+    "Helm Charts",
+    "Wasm",
+    # Top-level catch-alls — generic non-product names.
+    "All",
+    "Ee",
+    "Tmp",
+    "Bin",
+})
+
+
 # ── Public types ────────────────────────────────────────────────────────
 
 
@@ -314,6 +387,14 @@ def _apply_workspace_rule(
             rule = "workspace"
             confidence = _CONF_WORKSPACE
             anchor_signal = anchor_workspace
+
+        # ── Sprint E2 — phantom-cluster filter ──
+        # Skip emission when the candidate label is a universally
+        # junk name (infrastructure, folder-layout, build tooling, or
+        # catch-all). Dep-anchor (Rule 2) is unaffected and can still
+        # emit a legitimately-named cluster for the same dev feature.
+        if label in _PHANTOM_CLUSTER_NAMES:
+            continue
 
         state.votes[f.name].append(
             _Vote(
