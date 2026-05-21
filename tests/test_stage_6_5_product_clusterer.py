@@ -379,3 +379,123 @@ def test_product_feature_dataclass_frozen() -> None:
     )
     with pytest.raises(Exception):
         pf.name = "Something Else"  # type: ignore[misc]
+
+
+# ── Sprint E2 — phantom-cluster filter ──────────────────────────────────
+
+
+def test_phantom_workspace_cluster_is_dropped(tmp_path: Path) -> None:
+    """A workspace named ``packages/tsconfig/`` (Title-Cased to
+    ``"Tsconfig"``) is a known phantom and must NOT emit a Layer 2
+    product feature via Rule 1.
+
+    Uses ``packages/tsconfig/`` rather than ``apps/ai/`` because the
+    domain-noun extractor produces a more interesting label for the
+    latter; ``Tsconfig`` is unambiguous structural junk that ONLY
+    fires through the workspace fallback.
+    """
+    repo = tmp_path
+    paths = [
+        "packages/tsconfig/base.json",
+        "packages/tsconfig/nextjs.json",
+        "packages/tsconfig/package.json",
+        "packages/tsconfig/react.json",
+        "packages/tsconfig/node.json",
+    ]
+    for p in paths:
+        _write(repo, p, "{}")
+
+    feat = _feat("tsconfig", paths=paths)
+
+    products, mapping, telemetry = run_product_clusterer(_ctx(repo), [feat])
+
+    assert mapping == {}, (
+        "phantom workspace label 'Tsconfig' must not produce a product "
+        "feature via the workspace rule"
+    )
+    assert products == []
+    assert telemetry["product_features_count"] == 0
+    assert telemetry["developer_features_orphan_count"] == 1
+
+
+def test_legitimate_workspace_cluster_still_emits(tmp_path: Path) -> None:
+    """A workspace named ``apps/settings/`` (Title-Cased to "Settings")
+    is NOT in the phantom set and must still emit.
+    """
+    repo = tmp_path
+    paths = [
+        "apps/settings/page.tsx",
+        "apps/settings/team.tsx",
+        "apps/settings/profile.tsx",
+        "apps/settings/billing.tsx",
+        "apps/settings/api.tsx",
+    ]
+    for p in paths:
+        _write(repo, p, "// empty")
+
+    feat = _feat("settings", paths=paths)
+
+    products, mapping, telemetry = run_product_clusterer(_ctx(repo), [feat])
+
+    assert "settings" in mapping, "non-phantom labels must still cluster"
+    # Settings is the workspace fallback; domain-noun may or may not
+    # promote the label depending on the path layout. Either name is
+    # acceptable as long as a cluster fires.
+    assert len(products) >= 1
+    assert telemetry["product_features_count"] >= 1
+
+
+def test_phantom_filter_uses_frozenset_as_sole_source_of_truth() -> None:
+    """The phantom skip-list lives in ``_PHANTOM_CLUSTER_NAMES`` and is
+    used by NO other path (no duplicate hard-coded checks elsewhere in
+    the module). Verifying via direct module attribute import — if a
+    future contributor adds an inline ``if label == "AI": continue``
+    branch this test catches the duplication only by inspection, but
+    we at least pin the contract that the constant exists and is a
+    frozenset (so callers can't mutate it).
+    """
+    from faultline.pipeline_v2 import stage_6_5_product_clusterer as mod
+
+    assert hasattr(mod, "_PHANTOM_CLUSTER_NAMES")
+    assert isinstance(mod._PHANTOM_CLUSTER_NAMES, frozenset)
+    # Sanity: must contain at least the four reference categories.
+    for sample in ("Ai", "Packages", "Tsconfig", "All"):
+        assert sample in mod._PHANTOM_CLUSTER_NAMES, (
+            f"expected {sample!r} in _PHANTOM_CLUSTER_NAMES; "
+            "the constant is the only source of truth for the skip-list"
+        )
+    # Sanity: must NOT contain plausible legitimate product names.
+    for sample in ("Settings", "Billing", "Auth", "Email", "Admin"):
+        assert sample not in mod._PHANTOM_CLUSTER_NAMES, (
+            f"{sample!r} is a legitimate product feature name; "
+            "adding it to the phantom set would suppress real surfaces"
+        )
+
+
+def test_phantom_workspace_does_not_block_dep_anchor_fallback(tmp_path: Path) -> None:
+    """When a dev feature both lives under a phantom workspace AND
+    imports a known dep, the dep-anchor rule must still emit a
+    legitimate cluster — the phantom filter applies ONLY to Rule 1.
+    """
+    repo = tmp_path
+    # 5 paths under packages/tsconfig/ (phantom workspace) but ALL
+    # importing stripe. Synthetic, but it exercises the rescue path.
+    paths = [
+        "packages/tsconfig/charge.ts",
+        "packages/tsconfig/invoice.ts",
+        "packages/tsconfig/refund.ts",
+        "packages/tsconfig/subscription.ts",
+        "packages/tsconfig/webhook.ts",
+    ]
+    for p in paths:
+        _write(repo, p, 'import Stripe from "stripe";\nconst s = new Stripe();\n')
+
+    feat = _feat("billing-engine", paths=paths)
+
+    products, mapping, _ = run_product_clusterer(_ctx(repo), [feat])
+
+    # Workspace label "Tsconfig" was suppressed by the phantom filter;
+    # the dep-anchor rule still mapped the feature to "Billing".
+    assert mapping.get("billing-engine") == ("Billing",)
+    assert any(pf.name == "Billing" for pf in products)
+    assert not any(pf.name == "Tsconfig" for pf in products)
