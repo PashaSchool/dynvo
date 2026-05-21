@@ -399,6 +399,40 @@ def _titleize(slug: str) -> str:
     return " ".join(w.capitalize() for w in cleaned.split() if w)
 
 
+# Sprint E5 — name-specificity penalty for vote resolution.
+#
+# Generic single-word product labels (``AI``, ``Auth``, ``Billing``,
+# ``Realtime``, ``Cache``) lose to multi-word specific labels
+# (``AI Email Assistant``, ``Magic Link Sign-In``) when both apply to
+# the same developer feature. Specificity is computed as the count of
+# non-stopword tokens in the label after splitting on whitespace —
+# scale-invariant, no per-repo tuning (``rule-no-magic-tuning``).
+#
+# Applied as a tertiary tiebreaker AFTER (confidence, weight) so it
+# can never overturn a higher-confidence rule. Stays purely additive:
+# scoring sort goes (conf, weight, specificity) — labels tied on the
+# first two now lose to the more-specific name instead of falling
+# through to dict-order.
+
+_LABEL_STOPWORDS = frozenset({
+    "the", "a", "an", "of", "for", "and", "or", "with", "to", "in",
+    "on", "by", "as", "is", "it", "via",
+})
+
+
+def _label_specificity(label: str) -> int:
+    """Count non-stopword tokens in a Title-Cased product label.
+
+    "AI" → 1, "AI Email Assistant" → 3, "The Database" → 1
+    (the+stopword=0, database=1). Used as a tertiary tiebreaker in
+    :func:`_resolve_votes`.
+    """
+    if not label:
+        return 0
+    tokens = [t.lower() for t in re.findall(r"[A-Za-z][A-Za-z0-9]*", label)]
+    return sum(1 for t in tokens if t not in _LABEL_STOPWORDS)
+
+
 # ── Rule 1 — workspace cluster ──────────────────────────────────────────
 
 
@@ -728,13 +762,18 @@ def _resolve_votes(
     for v in votes:
         by_label[v.product_label].append(v)
 
-    def _label_score(label: str) -> tuple[float, float]:
+    def _label_score(label: str) -> tuple[float, float, int]:
         vs = by_label[label]
-        # Score primary on confidence (highest rule wins) then on
-        # accumulated weight as a tiebreaker.
+        # Score primary on confidence (highest rule wins), then on
+        # accumulated weight, then on name specificity (Sprint E5).
+        # Specificity is a TIEBREAKER ONLY — it never overturns a
+        # higher-confidence rule, only resolves ties where generic
+        # one-word labels (``AI``, ``Auth``) compete with specific
+        # multi-word labels (``AI Email Assistant``).
         return (
             max(v.confidence for v in vs),
             sum(v.weight for v in vs),
+            _label_specificity(label),
         )
 
     ranked = sorted(by_label.keys(), key=_label_score, reverse=True)
