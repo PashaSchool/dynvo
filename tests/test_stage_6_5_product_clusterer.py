@@ -465,11 +465,42 @@ def test_phantom_filter_uses_frozenset_as_sole_source_of_truth() -> None:
             "the constant is the only source of truth for the skip-list"
         )
     # Sanity: must NOT contain plausible legitimate product names.
-    for sample in ("Settings", "Billing", "Auth", "Email", "Admin"):
+    # "Api" and "Web" are explicitly excluded — they often appear as
+    # workspace folders that DO name real product surfaces (Dub API,
+    # Web Analytics) and dropping them would suppress recall.
+    for sample in ("Settings", "Billing", "Auth", "Email", "Admin", "Api", "Web"):
         assert sample not in mod._PHANTOM_CLUSTER_NAMES, (
             f"{sample!r} is a legitimate product feature name; "
             "adding it to the phantom set would suppress real surfaces"
         )
+
+
+def test_phantom_set_contains_e2_v2_corpus_additions() -> None:
+    """Sprint E2 v2 extended the phantom set with 21 corpus-evidence
+    names harvested from a 17-repo audit. Pin the contract that all
+    additions remain in the frozenset so a future contributor can't
+    silently drop one. Names are grouped by the 4 existing category
+    comments (infra / folder / build / catchall).
+    """
+    from faultline.pipeline_v2 import stage_6_5_product_clusterer as mod
+
+    e2_v2_additions = {
+        # infra
+        "Logs", "Storage",
+        # universal folders
+        "Examples", "Templates", "Template", "Mocks", "Fixtures",
+        "Demo", "Documentation", "Constants", "Hooks", "Schema",
+        "Assets", "Configs",
+        # build/CI
+        "Builds", "Github", "Yarn", "Procfile",
+        # catchalls
+        "V1", "Sandbox", "Browser", "Old", "Defaults",
+    }
+    missing = e2_v2_additions - mod._PHANTOM_CLUSTER_NAMES
+    assert not missing, (
+        f"Sprint E2 v2 corpus-evidence additions missing from "
+        f"_PHANTOM_CLUSTER_NAMES: {sorted(missing)}"
+    )
 
 
 def test_phantom_workspace_does_not_block_dep_anchor_fallback(tmp_path: Path) -> None:

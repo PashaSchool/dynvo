@@ -137,6 +137,9 @@ _PHANTOM_CLUSTER_NAMES: frozenset[str] = frozenset({
     "Docker",
     "Hosting",
     "File Storage",
+    # E2 audit additions (corpus-evidence: multi-repo or universal):
+    "Logs",  # dub (singleton, but "logs/" folder is universal infra)
+    "Storage",  # maybe (singleton, but storage/ folder is universal infra)
     # Universal folder names — every monorepo has these structural
     # buckets and they are never themselves a product surface.
     "Packages",
@@ -147,6 +150,19 @@ _PHANTOM_CLUSTER_NAMES: frozenset[str] = frozenset({
     "Internationalization",
     "Frontend",
     "Backend",
+    # E2 audit additions (corpus-evidence: universal scaffolding dirs):
+    "Examples",  # cal-com, chi, ollama, supabase (4 repos)
+    "Templates",  # cal-com (singleton, but templates/ is universal)
+    "Template",  # ollama (singleton; same logic, singular form)
+    "Mocks",  # cal-com (universal test-scaffold folder)
+    "Fixtures",  # maybe (universal test-scaffold folder)
+    "Demo",  # better-auth (universal example folder)
+    "Documentation",  # meilisearch (synonym of "Docs")
+    "Constants",  # cal-com (universal code-organisation folder)
+    "Hooks",  # plane (universal React folder; not a product surface)
+    "Schema",  # dub (universal DB-layout folder; dep-anchor still fires)
+    "Assets",  # documenso (universal static-asset folder)
+    "Configs",  # trigger.dev (plural of universal config folder)
     # Build tooling — config-only workspaces.
     "Tsconfig",
     "Prettier Config",
@@ -160,11 +176,27 @@ _PHANTOM_CLUSTER_NAMES: frozenset[str] = frozenset({
     "Cloudformation",
     "Helm Charts",
     "Wasm",
+    # E2 audit additions (corpus-evidence: build/CI scaffolding):
+    "Builds",  # maybe (build-output folder)
+    "Github",  # documenso (the .github/ folder, CI config)
+    "Yarn",  # cal-com (.yarn/ folder)
+    "Procfile",  # cal-com (Heroku deploy descriptor — single file, not a feature)
     # Top-level catch-alls — generic non-product names.
     "All",
     "Ee",
     "Tmp",
     "Bin",
+    # E2 audit additions (corpus-evidence: generic catch-all labels):
+    "V1",  # cal-com, inbox-zero (version folder; never a product surface)
+    "Sandbox",  # axios (test-sandbox folder; was previously excluded
+    #            conservatively — corpus evidence confirms it's junk in
+    #            this corpus. If future Vercel-Sandbox-style products
+    #            appear, they will route via dep-anchor (Rule 2), not
+    #            the workspace rule that this set guards.)
+    "Browser",  # axios (browser/ folder; conservative exclusion lifted
+    #            on same logic as Sandbox)
+    "Old",  # dub (legacy-code folder)
+    "Defaults",  # axios (defaults/ folder; never a product surface)
 })
 
 
