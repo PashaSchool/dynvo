@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, TypeVar
@@ -117,6 +118,10 @@ from faultline.pipeline_v2.stage_7_output import (
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     _default_client_factory as _stage_8_default_client_factory,
     run_stage_8,
+)
+from faultline.pipeline_v2.stage_8_analyst import (
+    DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
+    run_stage_8_analyst,
 )
 
 logger = logging.getLogger(__name__)
@@ -906,17 +911,40 @@ def run_pipeline_v2(
         s8_pre_breakdown: dict[str, int] = product_telemetry.get(
             "product_clusterer_source_breakdown", {},
         )
-        stage_8_result = run_stage_8(
-            ctx,
-            features,
-            product_features,
-            dev_to_product_map_pre=dev_to_product_map,
-            source_breakdown_pre=s8_pre_breakdown,
-            log=log8,
-            client=s8_client,
-            model=model_id,
-            cost_tracker=tracker,
-        )
+        # Sprint M4 dispatcher — ``FAULTLINE_STAGE_8_MODE`` selects
+        # between the legacy Haiku label-mapper ("haiku-clusterer",
+        # default) and the Sonnet analyst ("analyst"). Both modules
+        # expose ``run_stage_8*`` with identical signatures so the
+        # rest of this stage is identical.
+        s8_mode = os.environ.get(
+            "FAULTLINE_STAGE_8_MODE", "haiku-clusterer",
+        ).strip().lower() or "haiku-clusterer"
+        if s8_mode == "analyst":
+            log8.info(f"mode=analyst model={_STAGE_8_ANALYST_MODEL}")
+            stage_8_result = run_stage_8_analyst(
+                ctx,
+                features,
+                product_features,
+                dev_to_product_map_pre=dev_to_product_map,
+                source_breakdown_pre=s8_pre_breakdown,
+                log=log8,
+                client=s8_client,
+                model=_STAGE_8_ANALYST_MODEL,
+                cost_tracker=tracker,
+            )
+        else:
+            log8.info(f"mode=haiku-clusterer model={model_id}")
+            stage_8_result = run_stage_8(
+                ctx,
+                features,
+                product_features,
+                dev_to_product_map_pre=dev_to_product_map,
+                source_breakdown_pre=s8_pre_breakdown,
+                log=log8,
+                client=s8_client,
+                model=model_id,
+                cost_tracker=tracker,
+            )
         # Apply Stage 8 overrides — replace product_features and the
         # legacy single-valued ``product_feature_id`` stamp.
         product_features = stage_8_result.product_features
