@@ -98,6 +98,16 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     # package.json#exports + lib/ submodule layout. Self-skips for app-
     # shaped repos (next/express/fastify/etc. in direct deps).
     _try("faultline.pipeline_v2.extractors.js_library",      "JsLibraryExtractor")
+    # Sprint Rails — five Rails-app extractors covering routes, models,
+    # views, jobs, Stimulus controllers. Each self-skips unless the
+    # Stage 0.5 auditor labelled the repo ``rails-app`` (or a secondary
+    # stack equals ``rails-app``), so registering them unconditionally
+    # costs only the activation gate on non-Rails repos.
+    _try("faultline.pipeline_v2.extractors.rails_routes",    "RailsRoutesExtractor")
+    _try("faultline.pipeline_v2.extractors.rails_models",    "RailsModelsExtractor")
+    _try("faultline.pipeline_v2.extractors.rails_views",     "RailsViewsExtractor")
+    _try("faultline.pipeline_v2.extractors.rails_jobs",      "RailsJobsExtractor")
+    _try("faultline.pipeline_v2.extractors.rails_stimulus",  "RailsStimulusExtractor")
 
     return out
 
