@@ -109,6 +109,30 @@ def _read_package_json(repo_path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _effective_manifest(ctx: "ScanContext") -> tuple[dict, str]:
+    """Pick the package.json that this extractor should reason about.
+
+    Returns ``(pkg_dict, source_root_prefix)`` where ``source_root_prefix``
+    is "" for repo-root mode and ``"<workspace_path>/"`` for per-workspace
+    mode. Per-workspace dispatch (see stage_1_per_workspace) passes a
+    single-workspace scoped ctx with the parsed manifest already on
+    ``ctx.workspaces[0].package_json`` — using that lets a monorepo
+    library (e.g. better-auth's packages/better-auth/) activate as a
+    library even when the root package.json is private/empty.
+    """
+    if (
+        ctx.monorepo
+        and ctx.workspaces
+        and len(ctx.workspaces) == 1
+        and isinstance(ctx.workspaces[0].package_json, dict)
+    ):
+        ws = ctx.workspaces[0]
+        ws_path = (ws.path or "").rstrip("/")
+        prefix = f"{ws_path}/" if ws_path else ""
+        return ws.package_json, prefix  # type: ignore[return-value]
+    return _read_package_json(ctx.repo_path), ""
+
+
 def _has_app_framework_dep(pkg: dict) -> bool:
     """``True`` when any direct dep / peerDep / devDep is an app framework.
 
@@ -130,10 +154,10 @@ def _has_app_framework_dep(pkg: dict) -> bool:
 def _is_js_library(ctx: "ScanContext") -> bool:
     """``True`` when the repo should be treated as a JS/TS library."""
     audited = (ctx.audited_stack or "").lower()
+    pkg, _prefix = _effective_manifest(ctx)
     if audited in _LIBRARY_STACK_TAGS:
         # Strong signal from Stack Auditor. Honour it but still
         # disqualify on direct app-framework deps to be safe.
-        pkg = _read_package_json(ctx.repo_path)
         if _has_app_framework_dep(pkg):
             return False
         return True
@@ -151,7 +175,6 @@ def _is_js_library(ctx: "ScanContext") -> bool:
     if not is_jsish:
         return False
 
-    pkg = _read_package_json(ctx.repo_path)
     if not pkg:
         return False
     if _has_app_framework_dep(pkg):
@@ -206,8 +229,22 @@ def _resolve_exports_to_paths(
         if isinstance(v, str):
             return v
         if isinstance(v, dict):
-            # Prefer source paths over bundled CJS.
-            for cond in ("default", "import", "module", "node", "browser", "require", "types"):
+            # Prefer source paths over bundled CJS/ESM. ``dev-source`` and
+            # ``source`` are emerging conventions (tsdown, tsup, custom)
+            # that point at the actual TS/JS source file; without them
+            # ``default`` points at ``dist/*`` which is gitignored and
+            # therefore never tracked — collapsing all anchors silently.
+            for cond in (
+                "dev-source",
+                "source",
+                "default",
+                "import",
+                "module",
+                "node",
+                "browser",
+                "require",
+                "types",
+            ):
                 if cond in v:
                     nested = _resolve_value(v[cond])
                     if nested:
@@ -254,6 +291,36 @@ _IMPORT_DEFAULT = re.compile(
     r"^import\s+(\w+)\s+from\s*['\"](\.[^'\"]+)['\"]",
     re.MULTILINE,
 )
+
+
+def _parse_entry_star_reexports(text: str) -> list[str]:
+    """Return relative paths re-exported via ``export * from "./X"``.
+
+    These are submodule signals — when an entry file does ``export *
+    from "./plugins/admin"`` we treat ``plugins/admin`` (or its closest
+    directory) as a public-API submodule of the library, regardless of
+    whether the named symbols are listed individually.
+
+    Returns the raw relative target string (without the leading ``./``).
+    Caller normalises against the source root.
+    """
+    out: list[str] = []
+    if not text:
+        return out
+    for m in _REEXPORT_STAR.finditer(text):
+        target = (m.group(1) or "").strip()
+        if not target:
+            continue
+        # Drop leading "./" and trailing extensions; keep the relative
+        # subpath. We do NOT resolve "../" parents — those reach into
+        # sibling source dirs which are handled by the source-root walk.
+        if target.startswith("../"):
+            continue
+        cleaned = target.lstrip("./")
+        cleaned = re.sub(r"\.(m?[jt]s|cts|cjs|d\.ts)$", "", cleaned)
+        if cleaned:
+            out.append(cleaned)
+    return out
 
 
 def _parse_entry_reexports(text: str) -> set[str]:
@@ -323,14 +390,21 @@ class JsLibraryExtractor:
         def _excluded(p: str) -> bool:
             return any(p.startswith(ex) or f"/{ex}" in f"/{p}" for ex in excludes)
 
-        # 1) Discover source root.
+        # Pick the effective manifest. ``ws_prefix`` is "" for repo-root
+        # mode and "<workspace_path>/" for per-workspace dispatch — used
+        # to scope source-root discovery + path joins so monorepo
+        # libraries (better-auth / sst / others) actually fire.
+        pkg, ws_prefix = _effective_manifest(ctx)
+
+        # 1) Discover source root. In workspace mode look under
+        # ``<workspace_path>/``; in repo-root mode look at the root.
         source_root_candidates = self._config.get("source_root_candidates") or [
             "lib", "src", "source",
         ]
-        source_root = _pick_source_root(repo, source_root_candidates)
+        ws_base = repo / ws_prefix.rstrip("/") if ws_prefix else repo
+        source_root = _pick_source_root(ws_base, source_root_candidates)
 
         # 2) Parse package.json#exports for explicit public-API subpaths.
-        pkg = _read_package_json(repo)
         exports_map = _resolve_exports_to_paths(pkg.get("exports"))
 
         confidence = self._config.get("confidence") or {}
@@ -356,19 +430,31 @@ class JsLibraryExtractor:
                 continue
             # Only emit if the target file is tracked + not excluded.
             target_norm = target.lstrip("./")
-            if target_norm not in tracked_set:
+            # Workspace-scoped manifests reference paths relative to the
+            # workspace root — re-anchor against the repo for tracked
+            # lookup. We also keep the bare form as a fallback because
+            # some monorepos symlink packages and tracked_files may carry
+            # the un-prefixed path.
+            candidate_paths: list[str] = []
+            if ws_prefix:
+                candidate_paths.append(f"{ws_prefix}{target_norm}")
+            candidate_paths.append(target_norm)
+            tracked_path = next(
+                (p for p in candidate_paths if p in tracked_set), None,
+            )
+            if tracked_path is None:
                 continue
-            if _excluded(target_norm):
+            if _excluded(tracked_path):
                 continue
             anchors.append(
                 AnchorCandidate(
                     name=slug,
-                    paths=(target_norm,),
+                    paths=(tracked_path,),
                     source=self.name,
                     confidence_self=export_conf,
                     rationale=(
                         f"js-library package.json exports {subpath!r} → "
-                        f"{target_norm!r}"
+                        f"{tracked_path!r}"
                     ),
                 ),
             )
@@ -381,7 +467,11 @@ class JsLibraryExtractor:
         if source_root:
             sub_dirs: dict[str, list[str]] = {}
             sub_files: dict[str, str] = {}
-            prefix = f"{source_root}/"
+            # Full path prefix in tracked-file terms. In workspace mode
+            # tracked_files carry the workspace-relative paths
+            # (e.g. ``packages/better-auth/src/...``); in root mode just
+            # ``src/...``.
+            prefix = f"{ws_prefix}{source_root}/"
             for t in tracked:
                 if not t.startswith(prefix):
                     continue
@@ -422,7 +512,7 @@ class JsLibraryExtractor:
             entry_candidates = self._config.get("entry_file_candidates") or [
                 "index.js", "index.ts", "index.mjs", "src/index.ts", "src/index.js",
             ]
-            entry_file = _find_entry_file(repo, entry_candidates)
+            entry_file = _find_entry_file(ws_base, entry_candidates)
             reexported = _parse_entry_reexports(read_text(entry_file) or "") if entry_file else set()
             for name, file_path in sorted(sub_files.items()):
                 if name in reexported or name.lower() in {s.lower() for s in reexported}:
@@ -443,12 +533,92 @@ class JsLibraryExtractor:
                     )
                     emitted_slugs.add(slug)
 
+        # 3a) ``export * from "./X"`` submodule anchors — including
+        # plugin barrels like ``src/plugins/index.ts``. Library authors
+        # use this pattern when a directory hosts many sibling
+        # capabilities (auth providers, plugins) that the entry file
+        # re-exposes wholesale. Each star-reexport target becomes its
+        # own feature anchor when the target directory or file is
+        # tracked. We harvest from ANY entry file under the workspace's
+        # source root (not just the package root entry), so a nested
+        # ``plugins/index.ts`` barrel contributes anchors too.
+        if source_root:
+            # Scan-tracked barrel files (any ``index.{ts,js,mjs}`` under
+            # the source root) for star re-exports — these are the
+            # documented sub-API surfaces.
+            barrel_files: list[str] = []
+            for t in tracked:
+                if not t.startswith(prefix):
+                    continue
+                if _excluded(t):
+                    continue
+                if re.search(r"(?:^|/)index\.(?:m?[jt]s|cts|cjs)$", t):
+                    barrel_files.append(t)
+
+            for barrel_rel in barrel_files:
+                barrel_text = read_text(repo / barrel_rel) or ""
+                star_targets = _parse_entry_star_reexports(barrel_text)
+                if not star_targets:
+                    continue
+                # Directory of the barrel file (relative to repo).
+                barrel_dir = barrel_rel.rsplit("/", 1)[0] if "/" in barrel_rel else ""
+                for target in star_targets:
+                    # Resolve target relative to the barrel file's dir.
+                    if barrel_dir:
+                        resolved_dir = f"{barrel_dir}/{target}"
+                    else:
+                        resolved_dir = target
+                    # Confirm the target exists as a tracked dir or file.
+                    dir_prefix = f"{resolved_dir}/"
+                    file_candidates = (
+                        f"{resolved_dir}.ts",
+                        f"{resolved_dir}.tsx",
+                        f"{resolved_dir}.mjs",
+                        f"{resolved_dir}.js",
+                        f"{resolved_dir}/index.ts",
+                        f"{resolved_dir}/index.tsx",
+                        f"{resolved_dir}/index.mjs",
+                        f"{resolved_dir}/index.js",
+                    )
+                    matched_paths: list[str] = []
+                    if any(t.startswith(dir_prefix) for t in tracked):
+                        matched_paths = [
+                            t for t in tracked
+                            if t.startswith(dir_prefix) and not _excluded(t)
+                        ]
+                    else:
+                        for f in file_candidates:
+                            if f in tracked_set and not _excluded(f):
+                                matched_paths = [f]
+                                break
+                    if not matched_paths:
+                        continue
+                    # Use the LAST path component of the target as the
+                    # feature name (``plugins/admin`` → ``admin``).
+                    leaf = target.rstrip("/").split("/")[-1]
+                    slug = slugify(leaf)
+                    if not slug or is_noise(slug) or slug in emitted_slugs:
+                        continue
+                    anchors.append(
+                        AnchorCandidate(
+                            name=slug,
+                            paths=tuple(sorted(matched_paths)),
+                            source=self.name,
+                            confidence_self=sub_conf,
+                            rationale=(
+                                f"js-library star re-export {target!r} "
+                                f"from {barrel_rel!r}"
+                            ),
+                        ),
+                    )
+                    emitted_slugs.add(slug)
+
         # 4) Symbol-only anchors from entry-file re-exports. Low
         # confidence; Stage 2 may merge into the right submodule.
         entry_candidates = self._config.get("entry_file_candidates") or [
             "index.js", "index.ts", "index.mjs", "src/index.ts", "src/index.js",
         ]
-        entry_file = _find_entry_file(repo, entry_candidates)
+        entry_file = _find_entry_file(ws_base, entry_candidates)
         if entry_file:
             entry_text = read_text(entry_file) or ""
             reexported = _parse_entry_reexports(entry_text)

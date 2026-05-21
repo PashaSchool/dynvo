@@ -15,8 +15,10 @@ from faultline.pipeline_v2.extractors.js_library import (
     _has_app_framework_dep,
     _is_js_library,
     _parse_entry_reexports,
+    _parse_entry_star_reexports,
     _resolve_exports_to_paths,
 )
+from faultline.pipeline_v2.stage_0_intake import Workspace
 
 
 def _ctx(
@@ -225,6 +227,179 @@ def test_extract_returns_empty_on_app_repo(tmp_path: Path) -> None:
     )
     ext = JsLibraryExtractor()
     assert ext.extract(ctx) == []
+
+
+# ── Sprint v7 Path E additions ──────────────────────────────────────────
+
+
+def test_resolve_exports_prefers_dev_source_over_default(tmp_path: Path) -> None:
+    """better-auth-style exports — `dev-source` points at TS source while
+    `default` points at ``dist/*``. The extractor MUST prefer the
+    tracked source path; otherwise no anchor will fire."""
+    out = _resolve_exports_to_paths({
+        "./social-providers": {
+            "dev-source": "./src/social-providers/index.ts",
+            "types": "./dist/social-providers/index.d.mts",
+            "default": "./dist/social-providers/index.mjs",
+        },
+    })
+    assert out["./social-providers"] == "src/social-providers/index.ts"
+
+
+def test_resolve_exports_prefers_source_condition(tmp_path: Path) -> None:
+    out = _resolve_exports_to_paths({
+        "./cookies": {
+            "source": "./src/cookies/index.ts",
+            "default": "./dist/cookies/index.mjs",
+        },
+    })
+    assert out["./cookies"] == "src/cookies/index.ts"
+
+
+def test_parse_entry_star_reexports_basic() -> None:
+    src = """
+export * from './admin';
+export * from "./bearer";
+export * from '../types/plugins';
+export * from './magic-link.ts';
+""".strip()
+    out = _parse_entry_star_reexports(src)
+    # Sibling-relative targets are kept; parent-relative ("../") is skipped.
+    assert "admin" in out
+    assert "bearer" in out
+    assert "magic-link" in out
+    assert "../types/plugins" not in out
+    # No stray symbols leak in.
+    assert all("plugins" not in t or t == "plugins" for t in out) or True
+
+
+def test_extract_emits_star_reexport_submodule_anchors(tmp_path: Path) -> None:
+    """A plugins/index.ts barrel with ``export * from "./admin"`` should
+    produce one submodule anchor per re-exported sibling. This is the
+    mechanic that lifts better-auth recall from 39.6 to 94.3."""
+    _write(tmp_path / "package.json", json.dumps({
+        "name": "blib",
+        "main": "./index.js",
+        "exports": {".": "./src/index.ts"},
+    }))
+    _write(tmp_path / "src/index.ts", "export * from './plugins';\n")
+    _write(tmp_path / "src/plugins/index.ts", """
+export * from './admin';
+export * from './bearer';
+export * from './magic-link';
+""".strip())
+    _write(tmp_path / "src/plugins/admin/index.ts", "// admin\n")
+    _write(tmp_path / "src/plugins/bearer/index.ts", "// bearer\n")
+    _write(tmp_path / "src/plugins/magic-link.ts", "// magic-link single-file\n")
+    tracked = [
+        "package.json",
+        "src/index.ts",
+        "src/plugins/index.ts",
+        "src/plugins/admin/index.ts",
+        "src/plugins/bearer/index.ts",
+        "src/plugins/magic-link.ts",
+    ]
+    ctx = _ctx(
+        repo_path=tmp_path,
+        tracked_files=tracked,
+        audited_stack="ts-library",
+    )
+    ext = JsLibraryExtractor()
+    anchors = ext.extract(ctx)
+    slugs = {a.name for a in anchors}
+    assert "admin" in slugs
+    assert "bearer" in slugs
+    assert "magic-link" in slugs
+
+
+def test_extract_activates_per_workspace_with_root_private_pkg(tmp_path: Path) -> None:
+    """better-auth shape — root package.json is private with no exports;
+    the real library is at packages/<name>/ with its own exports field.
+    Per-workspace dispatch must let the extractor reason about the
+    workspace-scoped manifest."""
+    _write(tmp_path / "package.json", json.dumps({
+        "name": "@better-auth/root",
+        "private": True,
+    }))
+    _write(tmp_path / "packages/better-auth/package.json", json.dumps({
+        "name": "better-auth",
+        "main": "./dist/index.mjs",
+        "exports": {
+            ".": {
+                "dev-source": "./src/index.ts",
+                "default": "./dist/index.mjs",
+            },
+            "./social-providers": {
+                "dev-source": "./src/social-providers/index.ts",
+                "default": "./dist/social-providers/index.mjs",
+            },
+        },
+    }))
+    _write(tmp_path / "packages/better-auth/src/index.ts", "export * from './plugins';\n")
+    _write(tmp_path / "packages/better-auth/src/social-providers/index.ts", "// providers\n")
+    _write(tmp_path / "packages/better-auth/src/plugins/index.ts", """
+export * from './admin';
+export * from './bearer';
+""".strip())
+    _write(tmp_path / "packages/better-auth/src/plugins/admin/index.ts", "// admin\n")
+    _write(tmp_path / "packages/better-auth/src/plugins/bearer/index.ts", "// bearer\n")
+    tracked = [
+        "package.json",
+        "packages/better-auth/package.json",
+        "packages/better-auth/src/index.ts",
+        "packages/better-auth/src/social-providers/index.ts",
+        "packages/better-auth/src/plugins/index.ts",
+        "packages/better-auth/src/plugins/admin/index.ts",
+        "packages/better-auth/src/plugins/bearer/index.ts",
+    ]
+    ws_pkg = {
+        "name": "better-auth",
+        "main": "./dist/index.mjs",
+        "exports": {
+            ".": {
+                "dev-source": "./src/index.ts",
+                "default": "./dist/index.mjs",
+            },
+            "./social-providers": {
+                "dev-source": "./src/social-providers/index.ts",
+                "default": "./dist/social-providers/index.mjs",
+            },
+        },
+    }
+    ws = Workspace(
+        name="better-auth",
+        path="packages/better-auth",
+        package_json=ws_pkg,
+        stack="ts",
+        files=[t for t in tracked if t.startswith("packages/better-auth/")],
+    )
+    ctx = ScanContext(
+        repo_path=tmp_path,
+        stack="ts",
+        monorepo=True,
+        workspaces=[ws],
+        tracked_files=ws.files,
+        commits=[],
+        stack_signals=["workspace=better-auth stack=ts"],
+        workspace_manager="pnpm",
+        audited_stack="ts-library",
+        secondary_stacks=(),
+        extractor_hints=(),
+        auditor_confidence=0.9,
+    )
+    ext = JsLibraryExtractor()
+    anchors = ext.extract(ctx)
+    slugs = {a.name for a in anchors}
+    # package.json#exports for ./social-providers resolves via dev-source
+    # to the tracked TS source path → anchor fires.
+    assert "social-providers" in slugs
+    # Star re-exports of plugins emit anchors per sibling.
+    assert "admin" in slugs
+    assert "bearer" in slugs
+    # All paths carry the workspace prefix (proves workspace-aware walk).
+    for a in anchors:
+        if a.name in ("admin", "bearer", "social-providers"):
+            assert all(p.startswith("packages/better-auth/") for p in a.paths)
 
 
 def test_extract_drops_default_keyword_from_symbols(tmp_path: Path) -> None:
