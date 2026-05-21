@@ -57,6 +57,8 @@ from faultline.analyzer.marketing_fetcher import (
     discover_marketing_site,
     extract_product_taxonomy,
     fetch_page_text,
+    fetch_sitemap_urls,
+    rank_sitemap_urls_by_product_likelihood,
 )
 from faultline.llm.cost import CostTracker, deterministic_params
 
@@ -167,20 +169,33 @@ def _write_cache(taxonomy: MarketingTaxonomy) -> None:
 def _candidate_urls(primary: str) -> list[str]:
     """Given a primary marketing URL, derive sensible fallbacks.
 
-    Marketing pages are often JS-rendered SPAs that serve empty HTML
-    shells; the docs subdomain or ``/features`` route is usually a
-    static page with real headings. Tries (in order):
+    M1 expansion — the fallback chain now covers more conventional
+    product-page slugs and the docs subdomain. We harvest the union of
+    labels across ALL these pages rather than first-to-clear (some
+    SPAs serve identical HTML on every route, but real product
+    sub-pages like ``/platform``, ``/use-cases`` carry distinct
+    headings).
 
-        1. ``<primary>``
-        2. ``<primary>/features``
-        3. ``<primary>/pricing``
-        4. ``https://docs.<host>``  (only when host doesn't already
-                                     start with ``docs.``)
+    Order:
+        1. ``<primary>``               # homepage
+        2. ``<primary>/features``      # explicit features page
+        3. ``<primary>/pricing``       # tiers usually list capabilities
+        4. ``<primary>/docs``          # in-site docs landing
+        5. ``<primary>/product``       # alt product overview slug
+        6. ``<primary>/platform``      # alt product overview slug
+        7. ``<primary>/solutions``     # vertical-specific landing
+        8. ``<primary>/use-cases``     # capability-by-scenario page
+        9. ``https://docs.<host>``     # docs subdomain (sidebar nav)
     """
     out: list[str] = [primary]
     base = primary.rstrip("/")
     out.append(f"{base}/features")
     out.append(f"{base}/pricing")
+    out.append(f"{base}/docs")
+    out.append(f"{base}/product")
+    out.append(f"{base}/platform")
+    out.append(f"{base}/solutions")
+    out.append(f"{base}/use-cases")
     # docs.<host> fallback
     import urllib.parse as _urlparse
     parsed = _urlparse.urlparse(primary)
@@ -200,6 +215,15 @@ def _candidate_urls(primary: str) -> list[str]:
     return deduped
 
 
+# Maximum pages we harvest in one call. Direct candidates burn most of
+# this budget; sitemap-driven enrichment fills the rest.
+_MAX_HARVEST_PAGES = 18
+
+# Cap union taxonomy at this size. Mirrors ``extract_product_taxonomy``
+# per-page cap so the Haiku prompt stays bounded.
+_TAXONOMY_UNION_CAP = 30
+
+
 def fetch_marketing_taxonomy(
     repo_path: Path,
     repo_slug: str,
@@ -209,14 +233,24 @@ def fetch_marketing_taxonomy(
 ) -> MarketingTaxonomy | None:
     """Top-level entry — discover + fetch + parse, with caching.
 
-    Returns ``None`` when no marketing surface is reachable (private
-    repo / no homepage / network failure / 404). Callers must handle
-    that gracefully (fall back to Stage 6.5 deterministic result).
+    M1 algorithm — multi-page UNION harvest with sitemap.xml fallback:
 
-    SPA-aware: when the primary marketing URL yields zero taxonomy
-    candidates (JS-rendered shell, no static headings), we try a small
-    fixed set of fallback URLs (``/features``, ``/pricing``, and
-    ``docs.<host>``). First one to yield ≥3 candidates wins.
+      1. Discover canonical URL (``discover_marketing_site``).
+      2. Visit each direct candidate URL (homepage, /features,
+         /pricing, /docs, /product, /platform, /solutions,
+         /use-cases, docs.<host>). UNION all acceptable labels.
+      3. If union is already strong (≥6 labels), return.
+      4. Otherwise fetch ``<primary>/sitemap.xml`` and rank its URLs
+         by product-likelihood. Harvest the top 8-10.
+      5. Return the union (capped at 30).
+
+    Returns ``None`` when no marketing surface is reachable. Callers
+    must handle that gracefully (fall back to Stage 6.5 deterministic
+    result).
+
+    Pitch-sentence labels are filtered upstream by
+    ``_is_acceptable_label`` (which now drops verb-prefix imperatives
+    like "Turn X into Y").
     """
     if use_cache:
         cached = _load_cached_taxonomy(repo_slug)
@@ -227,31 +261,72 @@ def fetch_marketing_taxonomy(
     if not primary:
         return None
 
-    best: tuple[str, list[str], float] | None = None
-    for url in _candidate_urls(primary):
+    union: list[str] = []
+    seen: set[str] = set()
+    urls_visited: list[str] = []
+    best_url = primary  # remembered for telemetry / source_url
+
+    def _harvest(url: str) -> int:
+        if url in urls_visited or len(urls_visited) >= _MAX_HARVEST_PAGES:
+            return 0
+        urls_visited.append(url)
         html = fetch_page_text(url)
         if not html:
-            continue
-        candidates, conf = extract_product_taxonomy(html)
-        if len(candidates) >= _MIN_TAXONOMY_SIZE:
-            best = (url, candidates, conf)
-            break
-        # Remember the largest-so-far even if it's below threshold so
-        # we can still surface useful telemetry if every URL is small.
-        if best is None or len(candidates) > len(best[1]):
-            best = (url, candidates, conf)
+            return 0
+        candidates, _conf = extract_product_taxonomy(html)
+        added = 0
+        for c in candidates:
+            k = c.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            union.append(c)
+            added += 1
+        return added
 
-    if best is None or not best[1]:
+    # Step 1: direct candidates
+    for url in _candidate_urls(primary):
+        added = _harvest(url)
+        if added > 0:
+            # Track the FIRST URL that contributed labels — used as
+            # ``source_url`` since it's the most-likely real surface.
+            if best_url == primary and url != primary:
+                best_url = url
+
+    # Step 2: sitemap-driven enrichment if union still weak
+    if len(union) < 6:
+        sitemap_urls = fetch_sitemap_urls(primary)
+        if sitemap_urls:
+            ranked = rank_sitemap_urls_by_product_likelihood(sitemap_urls)
+            for url in ranked[:10]:
+                _harvest(url)
+                if len(union) >= 8:
+                    break
+
+    if not union:
         return None
 
-    chosen_url, candidates, conf = best
+    # Cap union size; assign confidence per the existing ladder.
+    capped = union[:_TAXONOMY_UNION_CAP]
+    if len(capped) >= 6:
+        conf = 0.9
+    elif len(capped) >= 3:
+        conf = 0.75
+    elif len(capped) >= 1:
+        conf = 0.5
+    else:
+        conf = 0.0
+
     taxonomy = MarketingTaxonomy(
         repo_slug=repo_slug,
-        source_url=chosen_url,
+        source_url=best_url,
         fetched_at=datetime.now(timezone.utc).isoformat(),
-        product_features=tuple(candidates),
+        product_features=tuple(capped),
         confidence=conf,
-        notes=f"extracted {len(candidates)} candidates from {chosen_url}",
+        notes=(
+            f"harvested {len(capped)} labels across {len(urls_visited)} "
+            f"pages (M1 union)"
+        ),
     )
     if use_cache:
         _write_cache(taxonomy)

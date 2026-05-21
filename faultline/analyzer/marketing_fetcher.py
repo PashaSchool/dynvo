@@ -53,12 +53,23 @@ class MarketingTaxonomy:
 # ── Discovery ───────────────────────────────────────────────────────────
 
 
+# Repo name may contain dots (cal.com, trigger.dev). Old regex used
+# ``[^/.]`` which silently rejected such repos. M1 fix: accept dots.
 _GITHUB_REPO_RE = re.compile(
-    r"github\.com[/:]([^/]+)/([^/.]+?)(?:\.git)?/?$",
+    r"github\.com[/:]([^/]+)/([A-Za-z0-9._\-]+?)(?:\.git)?/?$",
     re.IGNORECASE,
 )
 
 _VALID_HOST_RE = re.compile(r"^https?://[A-Za-z0-9.\-_]+(?:/.*)?$")
+
+# Repo names that themselves look like a TLD-bearing domain
+# (cal.com / trigger.dev / plane.so) — the maintainer almost always
+# owns ``https://<repo-name>/`` as the canonical product site, even
+# when GitHub's homepage field points elsewhere (e.g. cal.com → cal.diy
+# fork). M1 preflight: try the domain-shaped guess BEFORE GH API.
+_DOMAIN_LIKE_REPO_RE = re.compile(
+    r"^[a-z0-9][a-z0-9-]*\.[a-z]{2,}$", re.IGNORECASE,
+)
 
 
 def _read_package_json(repo_path: Path) -> dict | None:
@@ -227,6 +238,13 @@ def _parse_github_owner_repo(remote_url: str) -> tuple[str, str] | None:
 def _discover_from_github_metadata(repo_path: Path) -> str | None:
     """Fetch the GitHub repository's About URL via the public REST API.
 
+    M1 preflight: if the repo name itself parses as a domain
+    (``cal.com``, ``trigger.dev``, ``plane.so``), try
+    ``https://<repo-name>/`` FIRST. Maintainers nearly always own the
+    URL their repo is named after; the GH "homepage" field can point
+    at a fork (cal.com → cal.diy) or be unset, so prefer the
+    domain-shaped guess when it returns usable HTML (≥4KB).
+
     This is EXTERNAL structured metadata (a single field maintainers
     configure on their GitHub repo settings), NOT in-repo prose. The
     "no README" rule applies to repo-internal documents, not to data
@@ -241,6 +259,19 @@ def _discover_from_github_metadata(repo_path: Path) -> str | None:
     if not owner_repo:
         return None
     owner, repo = owner_repo
+
+    # Domain-shape preflight: cal.com → https://cal.com/, trigger.dev →
+    # https://trigger.dev/. Validated by fetching once to confirm the
+    # host actually serves HTML.
+    repo_lower = repo.lower()
+    if _DOMAIN_LIKE_REPO_RE.match(repo_lower):
+        guess = f"https://{repo_lower}"
+        probe = fetch_page_text(guess, timeout_s=10)
+        if probe and len(probe) >= 4000:
+            normalised = _normalise_url(guess)
+            if normalised:
+                return normalised
+
     api_url = f"https://api.github.com/repos/{owner}/{repo}"
     text = fetch_page_text(api_url, timeout_s=10)
     if not text:
@@ -386,7 +417,29 @@ def _is_acceptable_label(label: str) -> bool:
                  " from ", " your ", " our ", " the "):
         if conj in lowered_padded:
             return False
+    # M1 — universal pitch-verb-prefix detector. Marketing H1s very
+    # often open with an imperative verb ("Turn X into Y", "Wrangle
+    # chaos", "Build faster"). Real product labels don't start with
+    # these. Universal — these are common-English verb roots, not
+    # repo-specific strings.
+    first_token = tokens[0].lower() if tokens else ""
+    if first_token in _PITCH_VERB_PREFIXES:
+        return False
     return True
+
+
+# Verb roots that overwhelmingly start a marketing pitch sentence
+# (imperative form) rather than a product label. Universal list —
+# no repo-specific strings.
+_PITCH_VERB_PREFIXES = frozenset({
+    "turn", "wrangle", "make", "build", "run", "see", "try",
+    "find", "discover", "create", "enable", "start", "stop",
+    "save", "ship", "scale", "transform", "deliver", "boost",
+    "unlock", "automate", "streamline", "simplify", "accelerate",
+    "avoid", "eliminate", "reduce", "increase", "close", "open",
+    "join", "let", "watch", "listen", "read", "learn", "explore",
+    "meet", "skip", "experience",
+})
 
 
 def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
@@ -443,9 +496,114 @@ def extract_product_taxonomy(html: str) -> tuple[list[str], float]:
     return capped, confidence
 
 
+# ── Sitemap-driven URL discovery (M1) ───────────────────────────────────
+
+
+_SITEMAP_LOC_RE = re.compile(r"<loc>([^<]+)</loc>", re.IGNORECASE)
+
+# URL substrings that signal "not a product page" — blog posts,
+# changelog entries, legal pages, asset files. Used to filter
+# sitemap.xml entries before we try to fetch each one.
+_SITEMAP_NOISE = (
+    "/blog/", "/changelog/", "/news/", "/.well-known/", "/static/",
+    "/assets/", "/api/", "/feed", "/rss", ".xml", ".js", ".css",
+    ".png", ".jpg", ".svg", "/cdn-cgi/", "/legal", "/privacy",
+    "/terms", "/cookie", "/_next/", "/wp-content/",
+)
+
+# Keywords in a URL path that suggest the page describes a product
+# capability. Used to rank sitemap URLs so we fetch the most
+# promising 8-10 first.
+_PRODUCT_PATH_KEYWORDS = (
+    "feature", "product", "capabilit", "pricing", "platform",
+    "solutions", "use-case", "tour",
+)
+
+
+def fetch_sitemap_urls(
+    primary: str,
+    *,
+    max_urls: int = 60,
+) -> list[str]:
+    """Return same-host product-page URLs harvested from sitemap.xml.
+
+    Looks at ``<primary>/sitemap.xml``, ``/sitemap_index.xml``, and
+    ``/sitemap-0.xml`` (covers Next.js, Hugo, Gatsby, Astro, Wordpress,
+    custom). If the first URL is an index pointing at nested sitemaps,
+    expand ONE level (avoids fan-out cost). Returns sitemap entries
+    that match the primary host (or ``docs.<host>``) and don't contain
+    obvious noise paths.
+
+    Empty list on any failure.
+    """
+    if not _VALID_HOST_RE.match(primary):
+        return []
+    base = primary.rstrip("/")
+    parsed_primary = primary.split("://", 1)[1]
+    primary_host = parsed_primary.split("/", 1)[0].removeprefix("www.")
+
+    sm_urls_to_try = [
+        f"{base}/sitemap.xml",
+        f"{base}/sitemap_index.xml",
+        f"{base}/sitemap-0.xml",
+    ]
+    locs: list[str] = []
+    for sm_url in sm_urls_to_try:
+        text = fetch_page_text(sm_url, timeout_s=10)
+        if not text:
+            continue
+        locs.extend(_SITEMAP_LOC_RE.findall(text))
+        if locs:
+            break
+    if not locs:
+        return []
+
+    # Sitemap-index style: first <loc> entries point at nested
+    # sitemaps. Expand the first one only.
+    if all(u.endswith(".xml") for u in locs[:3]):
+        text = fetch_page_text(locs[0], timeout_s=10)
+        if text:
+            locs = _SITEMAP_LOC_RE.findall(text)
+
+    same_host: list[str] = []
+    for u in locs:
+        if "://" not in u:
+            continue
+        try:
+            u_host = u.split("://", 1)[1].split("/", 1)[0].removeprefix("www.")
+        except (IndexError, ValueError):
+            continue
+        if u_host != primary_host and u_host != f"docs.{primary_host}":
+            continue
+        lo = u.lower()
+        if any(n in lo for n in _SITEMAP_NOISE):
+            continue
+        same_host.append(u)
+
+    return same_host[:max_urls]
+
+
+def rank_sitemap_urls_by_product_likelihood(urls: list[str]) -> list[str]:
+    """Sort sitemap URLs so likely product pages come first.
+
+    Universal heuristic: URLs whose path contains a product keyword
+    (``/features``, ``/pricing``, ``/platform`` …) outrank others; ties
+    broken by shorter paths (top-of-site pages are usually overviews).
+    """
+    def sort_key(u: str) -> tuple[int, int]:
+        lo = u.lower()
+        keyword_hit = 0 if any(k in lo for k in _PRODUCT_PATH_KEYWORDS) else 1
+        depth = len(u.split("?", 1)[0].split("/")) - 3  # subtract scheme + host
+        return (keyword_hit, max(depth, 0))
+
+    return sorted(urls, key=sort_key)
+
+
 __all__ = [
     "MarketingTaxonomy",
     "discover_marketing_site",
     "fetch_page_text",
     "extract_product_taxonomy",
+    "fetch_sitemap_urls",
+    "rank_sitemap_urls_by_product_likelihood",
 ]

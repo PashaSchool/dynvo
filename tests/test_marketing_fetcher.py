@@ -178,5 +178,180 @@ def test_extract_product_taxonomy_rejects_all_caps_marketing() -> None:
     assert "Survey Templates" in candidates
 
 
+# ── M1 — additional coverage ────────────────────────────────────────────
+
+
+def test_github_regex_allows_dots_in_repo_name() -> None:
+    """Repo names with dots (cal.com, trigger.dev) must parse."""
+    from faultline.analyzer.marketing_fetcher import _parse_github_owner_repo
+
+    assert _parse_github_owner_repo(
+        "https://github.com/calcom/cal.com.git"
+    ) == ("calcom", "cal.com")
+    assert _parse_github_owner_repo(
+        "https://github.com/triggerdotdev/trigger.dev"
+    ) == ("triggerdotdev", "trigger.dev")
+    # Sanity — non-dotted names still work
+    assert _parse_github_owner_repo(
+        "https://github.com/go-chi/chi.git"
+    ) == ("go-chi", "chi")
+
+
+def test_discover_uses_domain_shape_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """For a repo named ``cal.com``, ``https://cal.com/`` should be
+    preferred over the GH API homepage when it serves usable HTML."""
+    # Simulate a repo with no package.json, only a git remote.
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = https://github.com/calcom/cal.com.git\n',
+        encoding="utf-8",
+    )
+
+    fetched_urls: list[str] = []
+
+    def fake_fetch(url: str, *, timeout_s: int = 15) -> str | None:
+        fetched_urls.append(url)
+        if url == "https://cal.com":
+            # 5KB of body — passes the ≥4KB usable-HTML threshold
+            return "<html><body>" + "x" * 5000 + "</body></html>"
+        if url.startswith("https://api.github.com"):
+            return '{"homepage": "https://cal.diy"}'
+        return None
+
+    monkeypatch.setattr(
+        "faultline.analyzer.marketing_fetcher.fetch_page_text", fake_fetch,
+    )
+    result = discover_marketing_site(tmp_path)
+    assert result == "https://cal.com"
+    # Domain-shape preflight should fire BEFORE the GH API call.
+    assert fetched_urls[0] == "https://cal.com"
+
+
+def test_discover_falls_back_to_github_homepage_when_domain_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = https://github.com/owner/notadomain.git\n',
+        encoding="utf-8",
+    )
+
+    def fake_fetch(url: str, *, timeout_s: int = 15) -> str | None:
+        if url.startswith("https://api.github.com"):
+            return '{"homepage": "https://product.io"}'
+        return None
+
+    monkeypatch.setattr(
+        "faultline.analyzer.marketing_fetcher.fetch_page_text", fake_fetch,
+    )
+    # ``notadomain`` is not a domain-shape so preflight is skipped.
+    assert discover_marketing_site(tmp_path) == "https://product.io"
+
+
+def test_extract_taxonomy_rejects_pitch_verb_prefix() -> None:
+    """Imperative-verb-prefixed H2s are pitch sentences, not labels."""
+    html = (
+        "<h2>Turn Slack conversations into trackable work</h2>"
+        "<h2>Wrangle product chaos</h2>"
+        "<h2>Survey Templates</h2>"
+    )
+    candidates, _conf = extract_product_taxonomy(html)
+    assert "Survey Templates" in candidates
+    assert all("Turn" not in c for c in candidates)
+    assert all("Wrangle" not in c for c in candidates)
+
+
+def test_fetch_sitemap_urls_parses_loc_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from faultline.analyzer.marketing_fetcher import fetch_sitemap_urls
+
+    sitemap_xml = (
+        '<?xml version="1.0"?>'
+        '<urlset>'
+        '<url><loc>https://example.com/</loc></url>'
+        '<url><loc>https://example.com/features</loc></url>'
+        '<url><loc>https://example.com/pricing</loc></url>'
+        '<url><loc>https://example.com/blog/post-1</loc></url>'
+        '<url><loc>https://other-host.com/spam</loc></url>'
+        '</urlset>'
+    )
+
+    def fake_fetch(url: str, *, timeout_s: int = 10) -> str | None:
+        if url == "https://example.com/sitemap.xml":
+            return sitemap_xml
+        return None
+
+    monkeypatch.setattr(
+        "faultline.analyzer.marketing_fetcher.fetch_page_text", fake_fetch,
+    )
+    urls = fetch_sitemap_urls("https://example.com")
+    # Includes same-host entries, excludes blog noise + cross-host
+    assert "https://example.com/" in urls
+    assert "https://example.com/features" in urls
+    assert "https://example.com/pricing" in urls
+    assert all("/blog/" not in u for u in urls)
+    assert all("other-host.com" not in u for u in urls)
+
+
+def test_rank_sitemap_urls_prefers_product_keywords() -> None:
+    from faultline.analyzer.marketing_fetcher import (
+        rank_sitemap_urls_by_product_likelihood,
+    )
+
+    urls = [
+        "https://example.com/about",
+        "https://example.com/features",
+        "https://example.com/pricing",
+        "https://example.com/team",
+    ]
+    ranked = rank_sitemap_urls_by_product_likelihood(urls)
+    # /features and /pricing must come before /about and /team
+    assert ranked[0] in {
+        "https://example.com/features",
+        "https://example.com/pricing",
+    }
+    assert ranked[1] in {
+        "https://example.com/features",
+        "https://example.com/pricing",
+    }
+
+
+def test_sitemap_index_expanded_one_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sitemap-index style — first <loc>s point at nested sitemaps."""
+    from faultline.analyzer.marketing_fetcher import fetch_sitemap_urls
+
+    index_xml = (
+        '<sitemapindex>'
+        '<sitemap><loc>https://example.com/sitemap-pages.xml</loc></sitemap>'
+        '<sitemap><loc>https://example.com/sitemap-blog.xml</loc></sitemap>'
+        '</sitemapindex>'
+    )
+    nested_xml = (
+        '<urlset>'
+        '<url><loc>https://example.com/features</loc></url>'
+        '<url><loc>https://example.com/docs</loc></url>'
+        '</urlset>'
+    )
+
+    def fake_fetch(url: str, *, timeout_s: int = 10) -> str | None:
+        if url == "https://example.com/sitemap.xml":
+            return index_xml
+        if url == "https://example.com/sitemap-pages.xml":
+            return nested_xml
+        return None
+
+    monkeypatch.setattr(
+        "faultline.analyzer.marketing_fetcher.fetch_page_text", fake_fetch,
+    )
+    urls = fetch_sitemap_urls("https://example.com")
+    assert "https://example.com/features" in urls
+    assert "https://example.com/docs" in urls
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
