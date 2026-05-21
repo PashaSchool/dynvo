@@ -1032,7 +1032,14 @@ def analyze(
                 for p in parts:
                     files_to_index.add(p.path)
             if files_to_index:
-                blame_index = BlameIndex(repo.working_tree_dir)
+                # Sprint G2 — pass the Stage 0 commit cache so the
+                # blame index can resolve per-file HEAD SHAs from
+                # memory instead of spawning ``git log`` per file
+                # (cal-com 7580 paths → ~5-7 min wall clock dropped).
+                blame_index = BlameIndex(
+                    repo.working_tree_dir,
+                    commits=commits,
+                )
                 stats = blame_index.index_files(sorted(files_to_index))
                 console.print(
                     f"[dim]Blame index: {stats.indexed} indexed + "
