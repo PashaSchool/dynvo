@@ -55,9 +55,12 @@ from typing import TYPE_CHECKING, Any
 from faultline.analyzer.marketing_fetcher import (
     MarketingTaxonomy,
     discover_marketing_site,
+    extract_docs_sidebar_taxonomy,
     extract_product_taxonomy,
+    fetch_llms_txt_urls,
     fetch_page_text,
     fetch_sitemap_urls,
+    parse_llms_txt,
     rank_sitemap_urls_by_product_likelihood,
 )
 from faultline.llm.cost import CostTracker, deterministic_params
@@ -266,6 +269,14 @@ def fetch_marketing_taxonomy(
     urls_visited: list[str] = []
     best_url = primary  # remembered for telemetry / source_url
 
+    def _add(c: str) -> bool:
+        k = c.lower()
+        if k in seen:
+            return False
+        seen.add(k)
+        union.append(c)
+        return True
+
     def _harvest(url: str) -> int:
         if url in urls_visited or len(urls_visited) >= _MAX_HARVEST_PAGES:
             return 0
@@ -273,16 +284,51 @@ def fetch_marketing_taxonomy(
         html = fetch_page_text(url)
         if not html:
             return 0
-        candidates, _conf = extract_product_taxonomy(html)
+
         added = 0
+        # Sprint v7-A: on /docs and docs.<host> pages prefer the
+        # sidebar parser (with section-header rollup) before falling
+        # back to the generic H1/H3 + <li><a> harvester. The sidebar
+        # carries the maintainer's curated taxonomy and naturally
+        # groups sub-features under their section.
+        if "/docs" in url or "://docs." in url:
+            sidebar, _scf = extract_docs_sidebar_taxonomy(html)
+            for c in sidebar:
+                if _add(c):
+                    added += 1
+
+        # Always run the generic harvester too — it catches feature
+        # callouts on marketing pages that aren't strictly sidebars.
+        candidates, _conf = extract_product_taxonomy(html)
         for c in candidates:
-            k = c.lower()
-            if k in seen:
-                continue
-            seen.add(k)
-            union.append(c)
-            added += 1
+            if _add(c):
+                added += 1
         return added
+
+    # Sprint v7-A: Step 0 — try llms.txt / llms-full.txt first.
+    # llms.txt is the maintainer's curated product taxonomy explicitly
+    # designed for LLM consumption. When present it carries far higher
+    # signal than scraped HTML and naturally rolls 35 OAuth providers
+    # under "OAuth Providers" via the ## section-header convention.
+    llms_added_any = False
+    for llms_url in fetch_llms_txt_urls(primary):
+        if len(urls_visited) >= _MAX_HARVEST_PAGES:
+            break
+        urls_visited.append(llms_url)
+        text = fetch_page_text(llms_url, timeout_s=10)
+        if not text:
+            continue
+        labels, _lconf = parse_llms_txt(text)
+        if not labels:
+            continue
+        for label in labels:
+            if _add(label):
+                llms_added_any = True
+        if llms_added_any:
+            best_url = llms_url
+        # llms.txt is authoritative; one good file is enough.
+        if len(union) >= 6:
+            break
 
     # Step 1: direct candidates
     for url in _candidate_urls(primary):
