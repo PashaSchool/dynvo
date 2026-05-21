@@ -242,18 +242,25 @@ class _ClustererState:
 _DEP_ANCHORS_CACHE: list[tuple[tuple[str, ...], str]] | None = None
 """Cached ``[(dep_patterns, product_label), …]`` after first successful load."""
 
+# Sprint Rails H3 — alias map for semantic-name fallthrough guard.
+_DEP_ALIASES_CACHE: dict[str, tuple[str, ...]] | None = None
+
 
 def _load_dep_anchors() -> list[tuple[tuple[str, ...], str]]:
     """Read ``eval/dependency-anchors.yaml`` once, return the parsed map.
 
     Returns ``[]`` on any parse / file error — the clusterer degrades
     gracefully to Rule 1 + Rule 3 only.
+
+    Side effect: populates ``_DEP_ALIASES_CACHE`` with per-label name
+    alias substrings for the Sprint Rails H3 semantic-name guard.
     """
-    global _DEP_ANCHORS_CACHE
+    global _DEP_ANCHORS_CACHE, _DEP_ALIASES_CACHE
     if _DEP_ANCHORS_CACHE is not None:
         return _DEP_ANCHORS_CACHE
 
     out: list[tuple[tuple[str, ...], str]] = []
+    aliases: dict[str, tuple[str, ...]] = {}
     try:
         text = _ANCHOR_YAML_PATH.read_text(encoding="utf-8")
         raw = yaml.safe_load(text) or {}
@@ -264,10 +271,12 @@ def _load_dep_anchors() -> list[tuple[tuple[str, ...], str]]:
             _ANCHOR_YAML_PATH, exc,
         )
         _DEP_ANCHORS_CACHE = out
+        _DEP_ALIASES_CACHE = aliases
         return out
 
     if not isinstance(raw, dict):
         _DEP_ANCHORS_CACHE = out
+        _DEP_ALIASES_CACHE = aliases
         return out
 
     for _slug, entry in raw.items():
@@ -280,10 +289,60 @@ def _load_dep_anchors() -> list[tuple[tuple[str, ...], str]]:
         clean = tuple(str(d).strip() for d in deps if isinstance(d, str))
         if not clean:
             continue
-        out.append((clean, label.strip()))
+        label_clean = label.strip()
+        out.append((clean, label_clean))
+
+        # name_aliases — Sprint Rails H3. Optional in YAML.
+        name_aliases_raw = entry.get("name_aliases") or []
+        if isinstance(name_aliases_raw, list):
+            clean_aliases = tuple(
+                str(a).strip().lower()
+                for a in name_aliases_raw
+                if isinstance(a, str) and a.strip()
+            )
+            if clean_aliases:
+                aliases[label_clean] = clean_aliases
 
     _DEP_ANCHORS_CACHE = out
+    _DEP_ALIASES_CACHE = aliases
     return out
+
+
+def _get_dep_aliases() -> dict[str, tuple[str, ...]]:
+    """Return cached ``label → alias substrings``. Lazy-loads if needed."""
+    if _DEP_ALIASES_CACHE is None:
+        _load_dep_anchors()
+    return _DEP_ALIASES_CACHE or {}
+
+
+def _feature_matches_aliases(
+    feature_name: str,
+    feature_paths: list[str],
+    aliases: tuple[str, ...],
+) -> bool:
+    """Sprint Rails H3 — semantic name match guard for dep-anchor.
+
+    Return True when at least one alias substring appears in:
+      - the feature slug (case-insensitive), OR
+      - any file basename in ``feature_paths`` (case-insensitive)
+
+    Empty alias tuple → permissive (True). Labels in
+    ``dependency-anchors.yaml`` without an ``name_aliases`` block keep
+    the legacy (pre-H3) fallthrough behaviour — opt-in by adding
+    aliases to the YAML.
+    """
+    if not aliases:
+        return True
+    name_lower = (feature_name or "").lower()
+    for alias in aliases:
+        if alias in name_lower:
+            return True
+    for p in feature_paths:
+        base = p.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        for alias in aliases:
+            if alias in base:
+                return True
+    return False
 
 
 def _dep_pattern_matches(dep_name: str, pattern: str) -> bool:
@@ -532,6 +591,7 @@ def _apply_dep_anchor_rule(
     if not anchors:
         return 0
     patterns_by_label: dict[str, tuple[str, ...]] = {label: pats for pats, label in anchors}
+    aliases_by_label = _get_dep_aliases()
 
     votes_cast = 0
     for f in developer_features:
@@ -543,6 +603,16 @@ def _apply_dep_anchor_rule(
             continue
         total = sum(label_hits.values()) or 1
         for label, hits in label_hits.items():
+            # Sprint Rails H3 — semantic name match guard. The dep
+            # import alone is no longer sufficient: the feature's
+            # name or one of its file basenames must carry at least
+            # one of the label's name-alias substrings. Stops an
+            # unrelated feature ("Addresses") from being claimed by
+            # a category ("Realtime", "Billing") just because the
+            # category's dependency happens to be in the project.
+            aliases = aliases_by_label.get(label, ())
+            if not _feature_matches_aliases(f.name, paths, aliases):
+                continue
             # Record the dep name(s) that fired for human-readable provenance.
             dep_signal = f"dep:{label.lower()}"
             state.votes[f.name].append(

@@ -344,7 +344,15 @@ def test_domain_noun_fires_on_flat_repo_layout(tmp_path: Path) -> None:
 
 
 def test_domain_noun_beats_dep_anchor_when_higher_confidence(tmp_path: Path) -> None:
-    """Spec special case: domain-noun conf 0.85 beats dep-anchor conf 0.75."""
+    """Spec: domain-noun conf 0.85 beats dep-anchor conf 0.75.
+
+    Sprint Rails H3 amends this: the dep-anchor only fires when the
+    feature name/path basenames match the dep category's name aliases.
+    A ``data-room-ui`` feature carries no billing/payment alias even
+    though it imports stripe, so dep-anchor (Billing) does NOT vote.
+    Domain-noun (Data Room) wins uncontested, but the source breakdown
+    is now ``rule:workspace+domain`` rather than ``combined``.
+    """
     repo = tmp_path
     files = [
         "apps/web/(data-room)/page.tsx",
@@ -357,10 +365,12 @@ def test_domain_noun_beats_dep_anchor_when_higher_confidence(tmp_path: Path) -> 
     feat = _feat("data-room-ui", paths=list(files))
     products, mapping, telemetry = run_product_clusterer(_ctx(repo), [feat])
 
-    # Domain-noun (0.85) wins over dep-anchor (0.75).
+    # Domain-noun wins.
     assert mapping["data-room-ui"][0] == "Data Room"
-    # Combined bucket fires because two rules contributed.
-    assert telemetry["product_clusterer_source_breakdown"].get("combined") == 1
+    # Only the workspace+domain rule cast a vote (H3 blocked Billing).
+    breakdown = telemetry["product_clusterer_source_breakdown"]
+    assert breakdown.get("rule:workspace+domain") == 1
+    assert breakdown.get("combined", 0) == 0
 
 
 # ── Smoke: ProductFeature dataclass is frozen / hashable ────────────────
