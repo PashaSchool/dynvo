@@ -13,7 +13,10 @@ import pytest
 
 from faultline.analyzer.marketing_fetcher import (
     discover_marketing_site,
+    extract_docs_sidebar_taxonomy,
     extract_product_taxonomy,
+    fetch_llms_txt_urls,
+    parse_llms_txt,
 )
 
 
@@ -351,6 +354,151 @@ def test_sitemap_index_expanded_one_level(
     urls = fetch_sitemap_urls("https://example.com")
     assert "https://example.com/features" in urls
     assert "https://example.com/docs" in urls
+
+
+# ── Sprint v7-A additions ───────────────────────────────────────────────
+
+
+def test_fetch_llms_txt_urls_emits_canonical_order() -> None:
+    urls = fetch_llms_txt_urls("https://better-auth.com")
+    # llms-full.txt comes first — it's the comprehensive expansion.
+    assert urls[0] == "https://better-auth.com/llms-full.txt"
+    assert urls[1] == "https://better-auth.com/llms.txt"
+    # docs.<host> variants follow the primary host.
+    assert "https://docs.better-auth.com/llms.txt" in urls
+    assert "https://docs.better-auth.com/llms-full.txt" in urls
+    # No duplicates.
+    assert len(urls) == len(set(urls))
+
+
+def test_fetch_llms_txt_urls_skips_docs_when_already_docs_host() -> None:
+    urls = fetch_llms_txt_urls("https://docs.example.com")
+    # Should NOT generate docs.docs.example.com
+    assert all("docs.docs." not in u for u in urls)
+
+
+def test_fetch_llms_txt_urls_returns_empty_on_invalid() -> None:
+    assert fetch_llms_txt_urls("") == []
+    assert fetch_llms_txt_urls("not-a-url") == []
+
+
+def test_parse_llms_txt_rollup_collapses_many_siblings() -> None:
+    """35-OAuth-providers shape — many sibling bullets under one section
+    means the section name IS the user-facing capability."""
+    text = """
+# Better Auth
+
+The most comprehensive auth framework.
+
+## OAuth Providers
+
+- Apple
+- Atlassian
+- Discord
+- Dropbox
+- Facebook
+- GitHub
+- GitLab
+- Google
+- Kakao
+- LinkedIn
+
+## Database Adapters
+
+- Drizzle Adapter
+- Kysely Adapter
+""".strip()
+    labels, conf = parse_llms_txt(text)
+    # Section with many bullets → only header emits.
+    assert "OAuth Providers" in labels
+    # Individual provider names get rolled up (NOT emitted).
+    assert "Apple" not in labels
+    assert "Google" not in labels
+    # Section with few bullets → leaves come through.
+    assert "Database Adapters" in labels or "Drizzle Adapter" in labels
+    assert conf >= 0.6
+
+
+def test_parse_llms_txt_emits_leaves_when_section_sparse() -> None:
+    text = """
+## Plugins
+
+- Magic Link
+- Two Factor
+
+## Other Section
+
+- Email OTP
+""".strip()
+    labels, _conf = parse_llms_txt(text)
+    # ≤3 bullets per section → leaves come through.
+    assert "Magic Link" in labels
+    assert "Two Factor" in labels
+    assert "Email OTP" in labels
+
+
+def test_parse_llms_txt_returns_empty_on_blank() -> None:
+    labels, conf = parse_llms_txt("")
+    assert labels == []
+    assert conf == 0.0
+
+
+def test_parse_llms_txt_accepts_inline_links() -> None:
+    text = """
+## API Endpoints
+
+- [User Management](/docs/api/users)
+- [Session Tracking](/docs/api/sessions)
+- [Organization Auth](/docs/api/orgs)
+- [Two-Factor Auth](/docs/api/2fa)
+""".strip()
+    labels, _conf = parse_llms_txt(text)
+    # 4+ bullets → rolls up to section.
+    assert "API Endpoints" in labels
+
+
+def test_extract_docs_sidebar_taxonomy_collapses_many_siblings() -> None:
+    html = """
+<aside class="sidebar">
+  <h3>OAuth Providers</h3>
+  <a href="/p/apple">Apple</a>
+  <a href="/p/atlassian">Atlassian</a>
+  <a href="/p/discord">Discord</a>
+  <a href="/p/dropbox">Dropbox</a>
+  <a href="/p/facebook">Facebook</a>
+  <a href="/p/github">GitHub</a>
+  <a href="/p/google">Google</a>
+  <h3>Quick Links</h3>
+  <a href="/q/getting-started">Getting Started</a>
+  <a href="/q/installation">Installation</a>
+</aside>
+"""
+    labels, conf = extract_docs_sidebar_taxonomy(html)
+    assert "OAuth Providers" in labels
+    # Sparse section bullets come through; provider names roll up.
+    assert "Apple" not in labels
+    assert conf >= 0.5
+
+
+def test_extract_docs_sidebar_taxonomy_handles_nextra_nav() -> None:
+    """Nextra-style sidebar uses <nav> with class containing 'nav'."""
+    html = """
+<nav class="nx-docs-nav">
+  <h4>Authentication</h4>
+  <a href="/a/email">Email Auth</a>
+  <a href="/a/oauth">OAuth Auth</a>
+</nav>
+"""
+    labels, _conf = extract_docs_sidebar_taxonomy(html)
+    # Sparse (2 anchors) → leaves come through.
+    assert "Authentication" in labels or "Email Auth" in labels
+
+
+def test_extract_docs_sidebar_taxonomy_returns_empty_on_no_sidebar() -> None:
+    html = "<html><body><h1>Some Page</h1><p>No sidebar at all.</p></body></html>"
+    labels, conf = extract_docs_sidebar_taxonomy(html)
+    assert labels == []
+    assert conf == 0.0
 
 
 if __name__ == "__main__":

@@ -442,6 +442,41 @@ _PITCH_VERB_PREFIXES = frozenset({
 })
 
 
+def _accept_single_word_section_header(header: str) -> bool:
+    """Relaxed acceptance for section headers that are SINGLE words.
+
+    Used only when the section has ≥``_SECTION_ROLLUP_MIN`` children —
+    the structural cardinality proves the header is a real capability
+    grouping. The default :func:`_is_acceptable_label` requires ≥2
+    tokens which rejects perfectly good labels like ``Authentication``,
+    ``Plugins``, ``Adapters``.
+
+    Still rejects: obviously generic nav words ("Home", "Features"),
+    overly long strings, all-caps, anything with punctuation.
+    """
+    if not header:
+        return False
+    if len(header) < 4 or len(header) > 40:
+        return False
+    lowered = header.lower()
+    if lowered in _GENERIC_NAV_WORDS:
+        return False
+    # Single token must be alphabetic — no urls, no numbers.
+    tokens = [t for t in re.split(r"[\s\-/]+", header) if t]
+    if len(tokens) > 2:  # Caller already handled the ≥2 case via _is_acceptable_label
+        return False
+    if header.isupper():
+        return False
+    if "://" in header or "@" in header:
+        return False
+    if header.rstrip().endswith((".", "!", "?")):
+        return False
+    if "," in header or ";" in header or ":" in header:
+        return False
+    word_chars = sum(c.isalpha() for c in header)
+    return word_chars >= 4
+
+
 def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -606,4 +641,286 @@ __all__ = [
     "extract_product_taxonomy",
     "fetch_sitemap_urls",
     "rank_sitemap_urls_by_product_likelihood",
+    "fetch_llms_txt_urls",
+    "parse_llms_txt",
+    "extract_docs_sidebar_taxonomy",
 ]
+
+
+# ── llms.txt / llms-full.txt discovery (Sprint v7-A) ────────────────────
+
+
+# Minimum bullets under a section header before we collapse them to the
+# header. ≥4 sibling bullets is a strong signal that the section IS the
+# user-facing capability and the bullets are mere sub-options
+# (e.g. "OAuth Providers" → discord/github/google/... → emit only the
+# header). Structural, scale-invariant — no magic-number tuning.
+_SECTION_ROLLUP_MIN = 4
+
+
+def fetch_llms_txt_urls(primary: str) -> list[str]:
+    """Return candidate llms.txt / llms-full.txt URLs to try.
+
+    The llms.txt convention (https://llmstxt.org) puts a curated
+    product taxonomy at predictable paths. Many docs sites
+    (Anthropic, Vercel, Mintlify, Trigger) publish one; the file is
+    plain markdown with ``## Section`` headers + bullets, which is
+    the ideal shape for our Layer 2 grounding (no HTML parsing,
+    sections naturally roll up).
+
+    Order:
+        1. ``<primary>/llms.txt``
+        2. ``<primary>/llms-full.txt``
+        3. ``https://docs.<host>/llms.txt``
+        4. ``https://docs.<host>/llms-full.txt``
+    """
+    if not primary or not _VALID_HOST_RE.match(primary):
+        return []
+    base = primary.rstrip("/")
+    # Prefer ``llms-full.txt`` over ``llms.txt`` when both exist —
+    # llms-full.txt is the comprehensive expansion (full content) while
+    # llms.txt is often a short summary or TOC. Spec calls for either,
+    # but trigger.dev / Anthropic publish a 2KB summary at llms.txt and
+    # the rich taxonomy is in llms-full.txt; better-auth's llms.txt IS
+    # already comprehensive so either works there.
+    out = [
+        f"{base}/llms-full.txt",
+        f"{base}/llms.txt",
+    ]
+    import urllib.parse as _urlparse
+    parsed = _urlparse.urlparse(primary)
+    host = parsed.netloc
+    if host and not host.startswith("docs."):
+        host_clean = host.removeprefix("www.")
+        out.append(f"{parsed.scheme}://docs.{host_clean}/llms-full.txt")
+        out.append(f"{parsed.scheme}://docs.{host_clean}/llms.txt")
+    # Dedupe preserving order.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for u in out:
+        if u in seen:
+            continue
+        seen.add(u)
+        deduped.append(u)
+    return deduped
+
+
+# Markdown section header (## / ### only — # is usually the page title
+# which is too generic to be a product feature).
+_MD_SECTION_RE = re.compile(r"^(#{2,3})\s+(.+?)\s*$", re.MULTILINE)
+# Markdown bullet — captures the link-text when bullet has [text](url)
+# shape; otherwise the entire bullet body. Designed to be tolerant of
+# trailing description text after the link (``- [Apple](/p): provider``).
+_MD_BULLET_LINK_RE = re.compile(
+    r"^\s*[-*+]\s+\[([^\]]+)\]\([^)]+\)",
+    re.MULTILINE,
+)
+_MD_BULLET_PLAIN_RE = re.compile(
+    r"^\s*[-*+]\s+(?!\[)([^\n]+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def parse_llms_txt(text: str) -> tuple[list[str], float]:
+    """Extract product-feature labels from llms.txt markdown content.
+
+    Algorithm (universal, no per-repo tuning):
+      1. Walk top-level sections (## / ###). Each section's body is
+         scanned for bullet items.
+      2. If a section has ≥ ``_SECTION_ROLLUP_MIN`` bullets, EMIT only
+         the section header — the bullets are sub-options under one
+         capability (the "35 OAuth providers" pattern).
+      3. Otherwise emit the section header AND each acceptable
+         bullet — the section is sparse so its leaves are themselves
+         features.
+      4. Bullet labels are passed through ``_is_acceptable_label``
+         (re-used from the HTML harvester for filter symmetry).
+
+    Returns ``(labels, confidence)``. Confidence uses the same ladder
+    as ``extract_product_taxonomy``.
+    """
+    if not text:
+        return [], 0.0
+
+    # Split into section blocks. Use the regex to find each ## / ###
+    # boundary plus the body between this match and the next.
+    matches = list(_MD_SECTION_RE.finditer(text))
+    if not matches:
+        return [], 0.0
+
+    raw_labels: list[str] = []
+
+    for i, m in enumerate(matches):
+        header = _strip_html(m.group(2)).strip()
+        if not header:
+            continue
+        # Section body = text from end of this header to start of next
+        # header (or end of text).
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[start:end]
+
+        # Count ALL well-formed bullets (link or plain) so the rollup
+        # decision is based on actual sibling cardinality, not on
+        # whether each bullet's label looks like a 2-6-word phrase.
+        # The label-acceptability filter only applies when EMITTING
+        # leaves; counting uses raw structure.
+        link_labels = [
+            _strip_html(m.group(1)).strip()
+            for m in _MD_BULLET_LINK_RE.finditer(body)
+            if m.group(1)
+        ]
+        plain_labels = [
+            _strip_html(m.group(1)).strip()
+            for m in _MD_BULLET_PLAIN_RE.finditer(body)
+            if m.group(1)
+        ]
+        bullet_count = len(link_labels) + len(plain_labels)
+        emittable_leaves = [
+            lbl for lbl in (link_labels + plain_labels)
+            if lbl and _is_acceptable_label(lbl)
+        ]
+
+        # Rollup logic.
+        if bullet_count >= _SECTION_ROLLUP_MIN:
+            # Many siblings → emit the header only (per Sprint v7-A
+            # spec — collapses 35 OAuth providers into one anchor).
+            # Force-accept the header if the count is strong even when
+            # the section name itself fails the acceptable-label gate
+            # (it's a single word like "Authentication"), because the
+            # structural signal is unambiguous.
+            if _is_acceptable_label(header):
+                raw_labels.append(header)
+            elif _accept_single_word_section_header(header):
+                raw_labels.append(header)
+        else:
+            # Sparse → emit each leaf (bullets carry the meaning) plus
+            # the header when it's acceptable AND not already a bullet.
+            if _is_acceptable_label(header):
+                raw_labels.append(header)
+            raw_labels.extend(emittable_leaves)
+
+    unique = _dedupe_preserve_order(raw_labels)
+    capped = unique[:30]
+    if len(capped) >= 6:
+        confidence = 0.95  # llms.txt is the maintainer's curated list
+    elif len(capped) >= 3:
+        confidence = 0.85
+    elif len(capped) >= 1:
+        confidence = 0.6
+    else:
+        confidence = 0.0
+
+    return capped, confidence
+
+
+# ── /docs HTML sidebar parser (Sprint v7-A) ─────────────────────────────
+
+
+# Match navigation anchors regardless of <li> wrapping — Mintlify and
+# Nextra commonly render sidebar items as flat <a> nodes inside
+# <nav>/<aside>. We bound search to a sidebar / navigation block so we
+# don't pick up footer links.
+_SIDEBAR_BLOCK_RE = re.compile(
+    r'<(?:nav|aside)[^>]*?(?:class|id)\s*=\s*["\'][^"\']*'
+    r'(?:sidebar|nav|menu|toc|side|docs-nav|navigation)[^"\']*["\'][^>]*>'
+    r'(.*?)</(?:nav|aside)>',
+    re.IGNORECASE | re.DOTALL,
+)
+# A div with sidebar-ish class — Docusaurus uses this shape.
+_SIDEBAR_DIV_RE = re.compile(
+    r'<div[^>]*?class\s*=\s*["\'][^"\']*'
+    r'(?:theme-doc-sidebar|sidebar|nav-tree|menu__list|docs-sidebar)'
+    r'[^"\']*["\'][^>]*>(.*?)</div>',
+    re.IGNORECASE | re.DOTALL,
+)
+# Sidebar section group — captures the section title (in <h2>/<h3> /
+# <summary> / <button>) and the body that follows. Used to group child
+# anchors under a parent header for the rollup decision.
+_SIDEBAR_SECTION_RE = re.compile(
+    r'<(?:h2|h3|h4|summary|button)[^>]*>(.*?)</(?:h2|h3|h4|summary|button)>'
+    r'(.*?)(?=<(?:h2|h3|h4|summary|button)[^>]*>|$)',
+    re.IGNORECASE | re.DOTALL,
+)
+_ANY_A_TEXT_RE = re.compile(r'<a[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+
+
+def _harvest_sidebar_blocks(html: str) -> list[str]:
+    """Return the textual content of every sidebar-ish block found."""
+    blocks: list[str] = []
+    blocks.extend(_SIDEBAR_BLOCK_RE.findall(html))
+    blocks.extend(_SIDEBAR_DIV_RE.findall(html))
+    return blocks
+
+
+def extract_docs_sidebar_taxonomy(html: str) -> tuple[list[str], float]:
+    """Extract product-feature labels from a docs page's sidebar nav.
+
+    Algorithm:
+      1. Locate ALL sidebar blocks (nav/aside/sidebar-class divs).
+      2. Within each block, split into sections by their header
+         element (h2/h3/h4/summary/button) → list of (header, body).
+      3. Apply the SAME rollup rule as ``parse_llms_txt``: section
+         with ≥ ``_SECTION_ROLLUP_MIN`` anchors → emit only the
+         section header; otherwise emit each anchor + the header.
+      4. Labels run through ``_is_acceptable_label``.
+
+    Returns ``(labels, confidence)``. Sparse pages (where the regex
+    finds no sidebar block) return ``([], 0.0)`` and the caller falls
+    back to the generic ``extract_product_taxonomy``.
+    """
+    if not html:
+        return [], 0.0
+
+    blocks = _harvest_sidebar_blocks(html)
+    if not blocks:
+        return [], 0.0
+
+    raw_labels: list[str] = []
+
+    for block in blocks:
+        sections = _SIDEBAR_SECTION_RE.findall(block)
+        if not sections:
+            # No headers — treat the whole block as one section without
+            # a name; just emit all anchors (capped by _is_acceptable_label).
+            for m in _ANY_A_TEXT_RE.findall(block):
+                label = _strip_html(m)
+                if _is_acceptable_label(label):
+                    raw_labels.append(label)
+            continue
+
+        for header_raw, body in sections:
+            header = _strip_html(header_raw).strip()
+            anchor_count = 0
+            emittable_anchors: list[str] = []
+            for m in _ANY_A_TEXT_RE.findall(body):
+                label = _strip_html(m).strip()
+                if not label:
+                    continue
+                anchor_count += 1
+                if _is_acceptable_label(label):
+                    emittable_anchors.append(label)
+
+            if anchor_count >= _SECTION_ROLLUP_MIN:
+                if _is_acceptable_label(header):
+                    raw_labels.append(header)
+                elif _accept_single_word_section_header(header):
+                    raw_labels.append(header)
+            else:
+                if _is_acceptable_label(header):
+                    raw_labels.append(header)
+                raw_labels.extend(emittable_anchors)
+
+    unique = _dedupe_preserve_order(raw_labels)
+    capped = unique[:30]
+    if len(capped) >= 6:
+        confidence = 0.9
+    elif len(capped) >= 3:
+        confidence = 0.75
+    elif len(capped) >= 1:
+        confidence = 0.5
+    else:
+        confidence = 0.0
+
+    return capped, confidence
+
