@@ -8,6 +8,15 @@
 #   - product_label: customer-facing TitleCase label that becomes the
 #     product feature name when any developer feature's paths import
 #     one of these deps
+#   - name_aliases: (Sprint Rails H3) list of substrings that, when
+#     present in the developer feature's slug (kebab-case) OR in any
+#     of its file-path basenames, authorise this cluster to claim
+#     that feature. Without this guard, a Rails app with a Stripe
+#     gem would fold every unanchored model (Address, Property, …)
+#     into "Billing" purely because the dep exists somewhere in the
+#     repo. The guard requires the feature's NAME to actually carry
+#     a semantic signal of the category before the dep-anchor claims
+#     it. Aliases are case-insensitive substrings.
 #
 # Stack-agnostic: a Python repo importing `stripe` and a Node repo
 # importing `stripe` both produce a "Billing" product feature.
@@ -28,6 +37,18 @@ billing:
     - polar
     - "@polar-sh/*"
   product_label: Billing
+  name_aliases:
+    - billing
+    - payment
+    - subscription
+    - invoice
+    - checkout
+    - charge
+    - plan
+    - stripe
+    - paddle
+    - polar
+    - price
 
 auth:
   deps:
@@ -45,7 +66,28 @@ auth:
     - django-allauth
     - authlib
     - python-jose
+    - devise
+    - doorkeeper
   product_label: Auth
+  name_aliases:
+    - auth
+    - session
+    - login
+    - signin
+    - sign-in
+    - signup
+    - sign-up
+    - password
+    - oauth
+    - sso
+    - mfa
+    - 2fa
+    - account
+    - user
+    - identity
+    - token
+    - permission
+    - role
 
 email:
   deps:
@@ -56,7 +98,17 @@ email:
     - mailgun
     - "@aws-sdk/client-ses"
     - sendgrid
+    - mailer
   product_label: Email
+  name_aliases:
+    - email
+    - mail
+    - mailer
+    - notification
+    - send
+    - inbox
+    - reply
+    - resend
 
 background-jobs:
   deps:
@@ -70,7 +122,17 @@ background-jobs:
     - celery
     - rq
     - dramatiq
+    - sidekiq
   product_label: Background Jobs
+  name_aliases:
+    - job
+    - jobs
+    - worker
+    - queue
+    - task
+    - schedule
+    - cron
+    - background
 
 cache:
   deps:
@@ -79,6 +141,10 @@ cache:
     - redis
     - "@vercel/kv"
   product_label: Cache
+  name_aliases:
+    - cache
+    - redis
+    - kv
 
 database:
   deps:
@@ -91,6 +157,12 @@ database:
     - typeorm
     - mongoose
   product_label: Database
+  name_aliases:
+    - database
+    - db
+    - migration
+    - schema
+    - query
 
 analytics:
   deps:
@@ -100,6 +172,16 @@ analytics:
     - "@segment/analytics-node"
     - "@segment/*"
   product_label: Analytics
+  name_aliases:
+    - analytics
+    - tracking
+    - event
+    - metric
+    - telemetry
+    - report
+    - posthog
+    - segment
+    - mixpanel
 
 error-monitoring:
   deps:
@@ -108,6 +190,15 @@ error-monitoring:
     - bugsnag
     - rollbar
   product_label: Error Monitoring
+  name_aliases:
+    - error
+    - monitor
+    - monitoring
+    - alert
+    - sentry
+    - exception
+    - log
+    - logs
 
 file-storage:
   deps:
@@ -118,6 +209,17 @@ file-storage:
     - "@uploadthing/*"
     - boto3
   product_label: File Storage
+  name_aliases:
+    - file
+    - upload
+    - storage
+    - asset
+    - attachment
+    - blob
+    - s3
+    - bucket
+    - media
+    - document
 
 search:
   deps:
@@ -126,6 +228,16 @@ search:
     - typesense
     - algoliasearch
   product_label: Search
+  name_aliases:
+    - search
+    - query
+    - index
+    - autocomplete
+    - find
+    - filter
+    - meilisearch
+    - elastic
+    - algolia
 
 realtime:
   deps:
@@ -134,7 +246,20 @@ realtime:
     - ably
     - socket.io
     - ws
+    - actioncable
+    - "@rails/actioncable"
   product_label: Realtime
+  name_aliases:
+    - realtime
+    - websocket
+    - channel
+    - stream
+    - subscription
+    - presence
+    - broadcast
+    - pusher
+    - ably
+    - socket
 
 ai:
   deps:
@@ -148,6 +273,19 @@ ai:
     - llamaindex
     - ai
   product_label: AI
+  name_aliases:
+    - ai
+    - llm
+    - chat
+    - completion
+    - prompt
+    - assistant
+    - openai
+    - anthropic
+    - claude
+    - gpt
+    - model
+    - embedding
 
 i18n:
   deps:
@@ -156,3 +294,10 @@ i18n:
     - react-i18next
     - "@lingui/*"
   product_label: Internationalization
+  name_aliases:
+    - i18n
+    - locale
+    - translation
+    - language
+    - intl
+    - lang
