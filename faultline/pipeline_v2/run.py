@@ -912,13 +912,15 @@ def run_pipeline_v2(
             "product_clusterer_source_breakdown", {},
         )
         # Sprint M4 dispatcher — ``FAULTLINE_STAGE_8_MODE`` selects
-        # between the legacy Haiku label-mapper ("haiku-clusterer",
-        # default) and the Sonnet analyst ("analyst"). Both modules
-        # expose ``run_stage_8*`` with identical signatures so the
-        # rest of this stage is identical.
+        # between the Sonnet analyst ("analyst", default since
+        # 2026-05-21 corpus validation: avg L2 P 40.8 → 87.9, R 43.9 →
+        # 85.7) and the legacy Haiku label-mapper ("haiku-clusterer",
+        # retained as cheap fallback + automatic recovery when Sonnet
+        # errors). Both modules expose ``run_stage_8*`` with identical
+        # signatures so the rest of this stage is identical.
         s8_mode = os.environ.get(
-            "FAULTLINE_STAGE_8_MODE", "haiku-clusterer",
-        ).strip().lower() or "haiku-clusterer"
+            "FAULTLINE_STAGE_8_MODE", "analyst",
+        ).strip().lower() or "analyst"
         if s8_mode == "analyst":
             log8.info(f"mode=analyst model={_STAGE_8_ANALYST_MODEL}")
             stage_8_result = run_stage_8_analyst(
