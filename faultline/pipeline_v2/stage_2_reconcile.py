@@ -51,11 +51,23 @@ logger = logging.getLogger(__name__)
 # weight than the others.
 
 _SOURCE_PRIORITY: dict[str, int] = {
-    "package": 5,
-    "route":   4,
-    "mvc":     3,
-    "schema":  2,
-    "config":  1,
+    "package":         5,
+    "route":           4,
+    # Rails routes are the same shape as ``route`` (file-system /
+    # declared HTTP entry points) — match its priority.
+    "rails-routes":    4,
+    "mvc":             3,
+    # Rails models name the domain resource and are higher-precision
+    # than the schema (which only has table names without methods).
+    "rails-models":    3,
+    "schema":          2,
+    # Views / jobs / Stimulus are supporting evidence for a resource
+    # noun already named by routes / models — schema-tier priority so
+    # they merge into route/model anchors without overriding them.
+    "rails-views":     2,
+    "rails-jobs":      2,
+    "rails-stimulus":  2,
+    "config":          1,
 }
 """Stage 2 priority used when:
 
@@ -153,6 +165,37 @@ def _should_merge(a: str, b: str, *, threshold: float = 0.7) -> bool:
     return _jaccard(ta, tb) >= threshold
 
 
+# ── Rails cross-extractor merger (H2) ──────────────────────────────────────
+#
+# When the Stage 0.5 auditor declared ``rails-app``, we add a second
+# union pass that collapses anchors whose Rails canonical noun
+# (singular form with ``-controller``/``-job`` suffixes stripped) is
+# identical. Without this, "address" (rails-models) and "addresses"
+# (rails-views + rails-routes) live as 3 separate features because
+# their token sets share zero elements.
+
+
+def _rails_should_merge(a: str, b: str) -> bool:
+    """``True`` when two slugs map to the same Rails canonical noun.
+
+    Lazy import keeps the dependency local — Stage 2 must still import
+    cleanly for non-Rails repos where ``_rails`` may not exist.
+    """
+    try:
+        from faultline.pipeline_v2.extractors._rails import (
+            rails_canonical_noun,
+        )
+    except ImportError:  # pragma: no cover — defensive
+        return False
+    if not a or not b or a == b:
+        return a == b
+    ca = rails_canonical_noun(a)
+    cb = rails_canonical_noun(b)
+    if not ca or not cb:
+        return False
+    return ca == cb
+
+
 # ── Union-find for merging candidates by name ──────────────────────────────
 
 
@@ -176,8 +219,17 @@ def _build_merge_groups(
     candidates: list[AnchorCandidate],
     *,
     jaccard_threshold: float = 0.7,
+    rails_merge: bool = False,
 ) -> list[list[int]]:
-    """Return list of index lists; each inner list is one merge group."""
+    """Return list of index lists; each inner list is one merge group.
+
+    Args:
+        rails_merge: when True, add a second union pass that collapses
+            anchors whose Rails canonical noun is identical (handles
+            singular ↔ plural mismatches between models / views / routes
+            / controllers). Off by default; the orchestrator turns it
+            on when ``ctx.audited_stack == "rails-app"``.
+    """
     n = len(candidates)
     uf = _UnionFind(n)
     for i in range(n):
@@ -186,6 +238,10 @@ def _build_merge_groups(
                 candidates[i].name,
                 candidates[j].name,
                 threshold=jaccard_threshold,
+            ):
+                uf.union(i, j)
+            elif rails_merge and _rails_should_merge(
+                candidates[i].name, candidates[j].name,
             ):
                 uf.union(i, j)
     groups: dict[int, list[int]] = {}
@@ -280,6 +336,28 @@ def _pick_canonical_name(
         key=lambda c: (-_priority(c.source), -c.confidence_self, c.name),
     )
     leader = ranked[0]
+
+    # Rails canonical-noun preference. When the group mixes Rails
+    # sources (rails-models / rails-routes / rails-views / etc.), we
+    # prefer the singular form of the canonical noun as the slug so
+    # the resulting feature name is "address" (the model) rather than
+    # "addresses" (the views/routes directory).
+    sources_in_group = {c.source for c in group}
+    if any(s.startswith("rails-") for s in sources_in_group):
+        try:
+            from faultline.pipeline_v2.extractors._rails import (
+                rails_canonical_noun,
+            )
+            canon = rails_canonical_noun(leader.name)
+            if canon:
+                # Pick whichever candidate's slug ALREADY equals the
+                # canonical (singular) form, else fall back to canon.
+                for c in ranked:
+                    if c.name == canon:
+                        return canon, None
+                return canon, None
+        except ImportError:  # pragma: no cover — defensive
+            pass
 
     # LLM 2nd-opinion gating: only when llm_reconcile=True AND the
     # leader vs runner-up Jaccard is "ambiguous" (0.3..0.6).
@@ -488,7 +566,15 @@ def stage_2_reconcile(
         )
 
     # 1) Merge candidates by name similarity.
-    groups = _build_merge_groups(flat, jaccard_threshold=jaccard_threshold)
+    #    Rails: also unify singular ↔ plural via canonical-noun pass.
+    rails_merge = (ctx.audited_stack or "").lower() == "rails-app" or (
+        "rails-app" in tuple(s.lower() for s in (ctx.secondary_stacks or ()))
+    )
+    groups = _build_merge_groups(
+        flat,
+        jaccard_threshold=jaccard_threshold,
+        rails_merge=rails_merge,
+    )
 
     # 2) Per group: choose canonical name + assemble DeveloperFeature.
     features: list[DeveloperFeature] = []
