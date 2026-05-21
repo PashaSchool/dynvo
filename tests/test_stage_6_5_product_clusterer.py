@@ -540,3 +540,94 @@ def test_phantom_workspace_does_not_block_dep_anchor_fallback(tmp_path: Path) ->
     assert mapping.get("billing-engine") == ("Billing",)
     assert any(pf.name == "Billing" for pf in products)
     assert not any(pf.name == "Tsconfig" for pf in products)
+
+
+# ── Sprint E5 — name-specificity tiebreaker ─────────────────────────────
+
+
+def test_label_specificity_counts_non_stopword_tokens() -> None:
+    """Sprint E5: specificity helper drops stopwords + counts the rest."""
+    from faultline.pipeline_v2.stage_6_5_product_clusterer import _label_specificity
+
+    assert _label_specificity("AI") == 1
+    assert _label_specificity("AI Email Assistant") == 3
+    assert _label_specificity("The Database") == 1   # 'the' is a stopword
+    assert _label_specificity("Magic Link Sign-In") == 3
+    assert _label_specificity("Billing & Subscriptions") == 2
+    assert _label_specificity("") == 0
+
+
+def test_label_specificity_tiebreaks_equal_confidence_and_weight() -> None:
+    """Sprint E5: when two labels tie on (confidence, weight), the more
+    specific multi-word label wins. Generic 'AI' loses to specific
+    'AI Email Assistant'."""
+    from faultline.pipeline_v2.stage_6_5_product_clusterer import (
+        _resolve_votes,
+        _Vote,
+    )
+
+    # Two votes for the same dev feature, both confidence=0.6, weight=1.0.
+    # Without specificity tiebreaker, dict-iteration order decides
+    # (unstable across Python versions). With E5, "AI Email Assistant"
+    # (specificity=3) beats "AI" (specificity=1).
+    votes = [
+        _Vote(product_label="AI", rule="workspace",
+              confidence=0.6, anchor_signal="apps/ai", weight=1.0),
+        _Vote(product_label="AI Email Assistant", rule="workspace",
+              confidence=0.6, anchor_signal="apps/ai-email-assistant", weight=1.0),
+    ]
+    winners, _ = _resolve_votes(votes)
+    # Specificity must put the more-specific label first. (When
+    # weights are exactly tied, ambiguous-lead may also surface the
+    # generic one as a secondary — that's acceptable as long as the
+    # specific label is the primary winner.)
+    assert winners[0] == "AI Email Assistant"
+
+
+def test_label_specificity_breaks_ties_when_weight_clear() -> None:
+    """Sprint E5: when ONE label has a clear weight lead (≥2x), the
+    other doesn't get surfaced — even if it's more specific.
+    Specificity is a TIEBREAKER on equal (conf, weight), not an
+    override on weight."""
+    from faultline.pipeline_v2.stage_6_5_product_clusterer import (
+        _resolve_votes,
+        _Vote,
+    )
+
+    votes = [
+        # Generic "AI" with 3x weight share — clear winner on weight alone.
+        _Vote(product_label="AI", rule="workspace",
+              confidence=0.6, anchor_signal="apps/ai/a", weight=1.0),
+        _Vote(product_label="AI", rule="workspace",
+              confidence=0.6, anchor_signal="apps/ai/b", weight=1.0),
+        _Vote(product_label="AI", rule="workspace",
+              confidence=0.6, anchor_signal="apps/ai/c", weight=1.0),
+        # Specific "AI Email Assistant" with weight 1.0 — would lose
+        # on the dominant weight even though it's more specific.
+        _Vote(product_label="AI Email Assistant", rule="workspace",
+              confidence=0.6, anchor_signal="apps/ai-email-assistant", weight=1.0),
+    ]
+    winners, _ = _resolve_votes(votes)
+    assert winners == ["AI"]  # weight lead 3:1, no ambiguity, AI alone
+
+
+def test_label_specificity_does_not_overturn_higher_confidence() -> None:
+    """Sprint E5: specificity is a TIEBREAKER only — it never beats
+    a higher-confidence rule. A specific workspace label still loses
+    to a less-specific dep-anchor label when confidence differs."""
+    from faultline.pipeline_v2.stage_6_5_product_clusterer import (
+        _resolve_votes,
+        _Vote,
+    )
+
+    votes = [
+        # Generic dep-anchor label, higher confidence (0.8)
+        _Vote(product_label="AI", rule="dep-anchor",
+              confidence=0.8, anchor_signal="dep:openai", weight=0.5),
+        # Specific workspace label, lower confidence (0.6)
+        _Vote(product_label="AI Email Assistant Module", rule="workspace",
+              confidence=0.6, anchor_signal="apps/ai-email-assistant", weight=1.0),
+    ]
+    winners, _ = _resolve_votes(votes)
+    # dep-anchor wins on confidence regardless of specificity.
+    assert winners[0] == "AI"
