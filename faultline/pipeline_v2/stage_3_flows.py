@@ -292,9 +292,23 @@ def _validate_and_attach_lines(
     """Filter naming-discipline violations + attach line ranges.
 
     Returns ``(valid_flows, drop_notes)``.
+
+    Sprint S7-B — Stage 3 entry-point dedup
+    ----------------------------------------
+    After name validation we collapse flows that share the SAME
+    ``(entry_point_file, entry_point_line)``. The LLM occasionally
+    hallucinates 5–9 distinct flow names from a single endpoint (e.g.
+    one ``route.ts`` exporting ``GET`` → "Configure SAML",
+    "Manage Invites", "Manage Billing", "View Invoices", ...). These
+    are the same flow under different names and confuse downstream
+    rollup + landing UI. The first surviving flow per entry-key wins
+    (most-specific symbol-list first because the LLM tends to emit the
+    primary flow first).
     """
     out: list[FlowSpec] = []
     notes: list[str] = []
+    seen_entries: set[tuple[str, int]] = set()
+    dup_count = 0
     for raw in raw_flows:
         name = (raw.get("name") or "").strip().lower()
         if not name:
@@ -318,6 +332,17 @@ def _validate_and_attach_lines(
         if symbols:
             entry_file, entry_line = symbol_to_loc[symbols[0]]
 
+        # Sprint S7-B: collapse duplicates at same entry-point. Only
+        # dedups when BOTH entry_file AND entry_line are populated —
+        # flows without an entry-point are kept as-is (they have no
+        # collision key).
+        if entry_file is not None and entry_line is not None:
+            key = (entry_file, entry_line)
+            if key in seen_entries:
+                dup_count += 1
+                continue
+            seen_entries.add(key)
+
         out.append(
             FlowSpec(
                 name=name,
@@ -329,6 +354,11 @@ def _validate_and_attach_lines(
         )
         if len(out) >= MAX_FLOWS_PER_FEATURE:
             break
+    if dup_count:
+        notes.append(
+            f"deduped {dup_count} flow(s) sharing entry-point with a "
+            "previously kept flow"
+        )
     return out, notes
 
 
