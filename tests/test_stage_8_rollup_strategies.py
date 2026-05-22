@@ -123,7 +123,8 @@ class TestTurborepoMonorepoStrategy:
         assert pfs[0].flows[0].name == "billing-flow"
         assert result.total_attachments == 1
         rationale = result.per_pf_rationale["billing"][0]
-        assert rationale[1] == "workspace-match:apps/web"
+        # Sprint S6.3: attach reason now stamped as combined gate.
+        assert rationale[1] == "entry-point-in-paths+workspace:apps/web"
 
     def test_no_workspace_match_unattributed(self):
         ws = [Workspace(name="admin", path="apps/admin")]
@@ -135,11 +136,18 @@ class TestTurborepoMonorepoStrategy:
         assert "other-flow" in result.unattributed_flows
 
     def test_multi_pf_attachment(self):
+        """When the flow's entry-point lives in MULTIPLE PFs' paths AND
+        all those PFs own the workspace, attach to each — this is the
+        legitimate "shared file" case, distinct from the spam-attach
+        pattern that S6.3 closes (where a flow attached to PFs that
+        merely shared a workspace prefix but didn't carry the file).
+        """
         ws = [Workspace(name="ui", path="packages/ui")]
         ctx = _ctx(workspaces=ws)
         pfs = [
             _pf("design-system", ["packages/ui/button.tsx"]),
-            _pf("docs", ["packages/ui/menu.tsx"]),
+            # Same entry-point listed in two PFs — both should attach.
+            _pf("docs", ["packages/ui/button.tsx", "packages/ui/menu.tsx"]),
         ]
         flows = [_flow("ui-flow", "packages/ui/button.tsx")]
         result = self.strategy.rollup(pfs, flows, ctx)
