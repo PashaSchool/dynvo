@@ -243,34 +243,66 @@ def _emit_for_fs_routing(
 def _emit_for_python_routing(files: list[str]) -> dict[str, list[str]]:
     """Marker-file routing pass.
 
-    For Python stacks the route table lives in ``urls.py`` / ``router*.py``.
-    Each directory containing one of those markers becomes one anchor;
-    the slug is the directory name (or the parent if the marker sits
-    directly under ``src/`` / project root).
+    For Python stacks the route table lives in ``urls.py`` / ``router*.py``,
+    OR in any ``.py`` file under a directory literally named ``routers/``
+    (the dominant FastAPI convention — see Sprint S7-A).
+
+    Each routing module becomes one anchor:
+      - Marker files (``urls.py`` / ``router(s).py`` / ``routes.py``):
+        slug is the enclosing directory name (e.g. ``api/v1/urls.py`` →
+        ``v1``).
+      - ``routers/<resource>.py``: slug is the file STEM (the resource
+        name itself, e.g. ``routers/findings.py`` → ``findings``). This
+        mirrors how FastAPI projects organise: each file = one
+        sub-router = one user-facing surface.
     """
     buckets: dict[str, list[str]] = defaultdict(list)
 
     for raw in files:
         p = posix(raw)
+        # Skip non-Python files cheaply.
+        if not p.endswith(".py"):
+            continue
         fname = p.rsplit("/", 1)[-1]
-        if fname not in _PYTHON_ROUTING_MARKERS:
-            continue
         parent = p.rsplit("/", 1)[0] if "/" in p else ""
-        if not parent:
+
+        if fname in _PYTHON_ROUTING_MARKERS:
+            if not parent:
+                continue
+            # walk up until we hit a non-noise segment
+            segments = parent.split("/")
+            slug_source = None
+            for seg in reversed(segments):
+                if seg and not is_noise(seg):
+                    slug_source = seg
+                    break
+            if slug_source is None:
+                continue
+            slug = slugify(slug_source)
+            if not slug:
+                continue
+            buckets[slug].append(p)
             continue
-        # walk up until we hit a non-noise segment
-        segments = parent.split("/")
-        slug_source = None
-        for seg in reversed(segments):
-            if seg and not is_noise(seg):
-                slug_source = seg
-                break
-        if slug_source is None:
-            continue
-        slug = slugify(slug_source)
-        if not slug:
-            continue
-        buckets[slug].append(p)
+
+        # Sprint S7-A — FastAPI ``routers/<resource>.py`` convention.
+        # Universal across FastAPI tutorials, FastAPI Best Practices repo,
+        # and most production FastAPI projects (verified on Soc0/backend
+        # where 17 router files under ``routers/`` produced 0 anchors
+        # because none were named literally ``router.py``).
+        #
+        # We accept BOTH ``routers/`` and ``api/routers/`` etc. (any
+        # path containing a ``routers/`` directory segment). The file
+        # stem becomes the slug.
+        if "/routers/" in p or p.startswith("routers/"):
+            if fname == "__init__.py":
+                continue
+            stem = fname[:-3]  # strip .py
+            if not stem or is_noise(stem):
+                continue
+            slug = slugify(stem)
+            if not slug:
+                continue
+            buckets[slug].append(p)
 
     return buckets
 
