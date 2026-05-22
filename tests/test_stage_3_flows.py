@@ -389,3 +389,40 @@ def test_empty_feature_list_returns_empty_result(tmp_path: Path) -> None:
     )
     assert result.features_with_flows == []
     assert result.llm_calls == 0
+
+
+# ── Sprint S11: dynamic wall-time cap ────────────────────────────────────
+
+
+def test_wall_timeout_floor_for_small_repos() -> None:
+    """Small repos (≤floor/PER_CALL) get the MIN_WALL_TIMEOUT_S floor."""
+    from faultline.pipeline_v2.stage_3_flows import (
+        _compute_wall_timeout,
+        MIN_WALL_TIMEOUT_S,
+        PER_CALL_BUDGET_S,
+    )
+    # Below the floor: N × 15s / 8 < 300 → floor wins.
+    assert _compute_wall_timeout(0, 8) == MIN_WALL_TIMEOUT_S
+    assert _compute_wall_timeout(50, 8) == MIN_WALL_TIMEOUT_S
+    assert _compute_wall_timeout(160, 8) == MIN_WALL_TIMEOUT_S
+
+
+def test_wall_timeout_scales_with_feature_count() -> None:
+    """Above the floor, timeout scales linearly with feature count."""
+    from faultline.pipeline_v2.stage_3_flows import _compute_wall_timeout
+
+    # chatwoot regression case: 330 features × 15s / 8 workers = 619s
+    assert _compute_wall_timeout(330, 8) == 619
+    # directus regression case: 242 × 15 / 8 = 454s
+    assert _compute_wall_timeout(242, 8) == 454
+    # Bigger repos get bigger budget; doubling workers halves needed timeout.
+    assert _compute_wall_timeout(330, 16) == 310  # floor takes over when small
+
+
+def test_wall_timeout_handles_zero_workers() -> None:
+    """Defensive: 0 workers shouldn't divide by zero."""
+    from faultline.pipeline_v2.stage_3_flows import (
+        _compute_wall_timeout,
+        MIN_WALL_TIMEOUT_S,
+    )
+    assert _compute_wall_timeout(100, 0) == MIN_WALL_TIMEOUT_S
