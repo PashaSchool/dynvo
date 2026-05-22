@@ -92,6 +92,7 @@ def _make_signals(**overrides) -> ShapeSignals:
         package_json_has_vue_dep=False,
         package_json_has_vite_dep=False,
         has_src_pages_or_routes_dir=False,
+        parent_shape="",  # Sprint S10
     )
     defaults.update(overrides)
     return ShapeSignals(**defaults)
@@ -1107,3 +1108,173 @@ class TestClassifyRepoShapePure:
         assert ctx2.shape_confidence == 0.9
         assert ctx2.shape_rationale == "rationale"
         assert ctx.repo_shape is None  # original untouched
+
+
+# ── Sprint S10 — SubdirOfMonorepoClassifier + parent_shape ───────────
+
+
+class TestS10DetectParentShape:
+    """Cheap structural probes against parent git roots."""
+
+    def test_detects_turborepo_parent(self, tmp_path):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        (tmp_path / "turbo.json").write_text("{}")
+        assert _detect_parent_shape(tmp_path) == "turborepo-monorepo"
+
+    def test_detects_pnpm_workspace_as_turborepo(self, tmp_path):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        (tmp_path / "pnpm-workspace.yaml").write_text("packages: ['apps/*']")
+        assert _detect_parent_shape(tmp_path) == "turborepo-monorepo"
+
+    def test_detects_split_fullstack(self, tmp_path):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        (tmp_path / "frontend").mkdir()
+        (tmp_path / "backend").mkdir()
+        assert _detect_parent_shape(tmp_path) == "split-fullstack"
+
+    def test_detects_cargo_workspace(self, tmp_path):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        (tmp_path / "Cargo.toml").write_text(
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )
+        assert _detect_parent_shape(tmp_path) == "cargo-workspace"
+
+    def test_detects_go_multi_module(self, tmp_path):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        (tmp_path / "go.work").write_text("go 1.21\nuse (./a ./b)\n")
+        assert _detect_parent_shape(tmp_path) == "go-multi-module"
+
+    def test_detects_rails_monolith(self, tmp_path):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        (tmp_path / "config").mkdir()
+        (tmp_path / "config" / "routes.rb").write_text("Rails.routes.draw {}")
+        (tmp_path / "app" / "controllers").mkdir(parents=True)
+        assert _detect_parent_shape(tmp_path) == "rails-monolith"
+
+    def test_returns_empty_when_no_recognisable_shape(self, tmp_path):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        # Just a normal repo, nothing structural at root
+        (tmp_path / "README.md").write_text("hi")
+        assert _detect_parent_shape(tmp_path) == ""
+
+    def test_returns_empty_for_none_root(self):
+        from faultline.pipeline_v2.stage_0_6_shape import _detect_parent_shape
+        assert _detect_parent_shape(None) == ""
+
+
+class TestS10ShapeSignalsParentShape:
+    """ShapeSignals.collect populates parent_shape only for subdir scans."""
+
+    def test_parent_shape_empty_for_root_scan(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "package.json").write_text("{}")
+        ctx = ScanContext(
+            repo_path=tmp_path, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.parent_shape == ""
+
+    def test_parent_shape_populated_for_subdir_scan(self, tmp_path):
+        # Build a parent with split-fullstack and scan the subdir.
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "frontend").mkdir()
+        (tmp_path / "backend").mkdir()
+        # Need a tracked-files marker on the subdir so collection runs.
+        sub = tmp_path / "frontend"
+        (sub / "package.json").write_text(json.dumps({"name": "fe"}))
+        ctx = ScanContext(
+            repo_path=sub, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.is_subdir_scan is True
+        assert sig.parent_shape == "split-fullstack"
+
+
+class TestSubdirOfMonorepoClassifier:
+    """Sprint S10 — parent-inherited fallback classifier."""
+
+    def test_does_not_fire_on_root_scan(self):
+        from faultline.pipeline_v2.stage_0_6_shape import SubdirOfMonorepoClassifier
+        clf = SubdirOfMonorepoClassifier()
+        sig = _make_signals(is_subdir_scan=False, parent_shape="turborepo-monorepo")
+        ctx = _make_ctx()
+        assert clf.classify(ctx, sig) is None
+
+    def test_does_not_fire_when_parent_unknown(self):
+        from faultline.pipeline_v2.stage_0_6_shape import SubdirOfMonorepoClassifier
+        clf = SubdirOfMonorepoClassifier()
+        sig = _make_signals(is_subdir_scan=True, parent_shape="")
+        ctx = _make_ctx()
+        assert clf.classify(ctx, sig) is None
+
+    def test_fires_with_child_of_prefix_at_070(self):
+        from faultline.pipeline_v2.stage_0_6_shape import SubdirOfMonorepoClassifier
+        clf = SubdirOfMonorepoClassifier()
+        sig = _make_signals(
+            is_subdir_scan=True,
+            parent_shape="split-fullstack",
+            parent_git_root="/repos/parent",
+        )
+        ctx = _make_ctx()
+        r = clf.classify(ctx, sig)
+        assert r is not None
+        assert r.shape == "child-of-split-fullstack"
+        assert r.confidence == 0.70
+        assert "is_subdir_scan" in r.matched_signals
+        assert "parent_shape" in r.matched_signals
+
+    def test_priority_below_single_saas(self):
+        """The S10 classifier must run AFTER SingleSaasRouted so a
+        recognisable SPA still wins; but BEFORE residual fallback."""
+        from faultline.pipeline_v2.stage_0_6_shape import (
+            SingleSaasRoutedClassifier,
+            SubdirOfMonorepoClassifier,
+            UniversalResidualClassifier,
+        )
+        sub = SubdirOfMonorepoClassifier()
+        saas = SingleSaasRoutedClassifier()
+        resid = UniversalResidualClassifier()
+        assert saas.priority < sub.priority < resid.priority
+
+    def test_dispatcher_picks_child_when_no_specific_match(self, tmp_path):
+        """End-to-end: subdir with no SPA markers but a turborepo parent
+        → ``child-of-turborepo-monorepo``."""
+        parent = tmp_path / "monorepo"
+        parent.mkdir()
+        (parent / ".git").mkdir()
+        (parent / "turbo.json").write_text("{}")
+        # Subdir is empty — nothing else can fire.
+        sub = parent / "apps" / "obscure"
+        sub.mkdir(parents=True)
+        ctx = ScanContext(
+            repo_path=sub, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        r = classify_repo_shape(ctx)
+        assert r.shape == "child-of-turborepo-monorepo"
+        assert r.confidence == 0.70
+
+    def test_dispatcher_prefers_single_saas_when_specific(self, tmp_path):
+        """A subdir Vite SPA with all canonical markers should win as
+        single-saas-routed, NOT child-of-split-fullstack."""
+        parent = tmp_path / "monorepo"
+        parent.mkdir()
+        (parent / ".git").mkdir()
+        (parent / "frontend").mkdir()
+        (parent / "backend").mkdir()
+        sub = parent / "frontend"
+        (sub / "package.json").write_text(json.dumps({
+            "name": "fe",
+            "dependencies": {"react": "18", "react-dom": "18"},
+            "devDependencies": {"vite": "5"},
+        }))
+        (sub / "src" / "pages").mkdir(parents=True)
+        ctx = ScanContext(
+            repo_path=sub, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        r = classify_repo_shape(ctx)
+        # SPA matcher fires first (priority 60 vs 65).
+        assert r.shape == "single-saas-routed"

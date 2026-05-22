@@ -140,6 +140,14 @@ class ShapeSignals:
     package_json_has_vite_dep: bool
     has_src_pages_or_routes_dir: bool
 
+    # ── Sprint S10 — parent-shape inheritance ─────────────────────────
+    # Populated only when ``is_subdir_scan`` AND ``parent_git_root``
+    # are set. Detects whether the parent repo is a known monorepo
+    # / split-fullstack shape via cheap structural probes (turbo.json,
+    # pnpm-workspace.yaml, frontend+backend siblings). Empty string
+    # when no recognisable parent shape applies.
+    parent_shape: str = ""
+
     @classmethod
     def collect(cls, ctx: "ScanContext") -> "ShapeSignals":
         """Build a :class:`ShapeSignals` snapshot from ``ctx``.
@@ -343,6 +351,11 @@ class ShapeSignals:
             package_json_has_vue_dep=pkg_has_vue,
             package_json_has_vite_dep=pkg_has_vite,
             has_src_pages_or_routes_dir=has_src_pages_or_routes,
+            parent_shape=(
+                _detect_parent_shape(parent_git)
+                if (is_subdir and parent_git)
+                else ""
+            ),
         )
 
 
@@ -1028,6 +1041,12 @@ class UniversalResidualClassifier:
         )
 
 
+# Note: ``SubdirOfMonorepoClassifier`` is defined later in the module
+# (after the helper functions) and inserted into ``_DEFAULT_CLASSIFIERS``
+# at the end of module load. The tuple here is the canonical ordering
+# WITHOUT the S10 classifier; the bottom of the file rebuilds the
+# tuple to include it. This preserves the existing public symbol while
+# keeping the class definition next to its helper.
 _DEFAULT_CLASSIFIERS: tuple[ShapeClassifier, ...] = (
     TurborepoMonorepoClassifier(),
     GoServerClassifier(),
@@ -1418,6 +1437,137 @@ def _detect_framework_deps(
     return (has_react, has_vue, has_vite)
 
 
+# ── Sprint S10 — parent-shape detection ────────────────────────────────
+
+
+def _detect_parent_shape(parent_root: Path | None) -> str:
+    """Sprint S10: classify the parent git repo of a subdir scan.
+
+    When ``classify_repo_shape`` runs on a subdir (e.g. user ran
+    ``faultline scan-v2 Soc0/frontend`` and the git root is ``Soc0/``)
+    we want to know whether the PARENT itself is a known monorepo /
+    split-fullstack shape so the subdir classifier can pick a more
+    informed shape.
+
+    Uses cheap structural probes only (no recursive ScanContext build,
+    no LLM, no manifest parsing beyond existence checks). Returns the
+    matched shape tag or ``""`` when nothing recognisable matched.
+
+    Recognised parent shapes (in priority order):
+      - ``turborepo-monorepo``  : turbo.json OR pnpm-workspace.yaml at parent root
+      - ``split-fullstack``     : frontend/ + backend/ siblings (e.g. Soc0)
+      - ``cargo-workspace``     : Cargo.toml with [workspace] members
+      - ``go-multi-module``     : go.work file present
+      - ``rails-monolith``      : config/routes.rb + app/controllers/ at root
+
+    This is intentionally narrower than the full classifier set —
+    only "this parent has a layout that makes the subdir scan a
+    workspace-of-something" cases qualify.
+    """
+    if parent_root is None:
+        return ""
+    try:
+        # 1. Turborepo / pnpm workspaces
+        if (parent_root / "turbo.json").exists() or (parent_root / "turbo.jsonc").exists():
+            return "turborepo-monorepo"
+        if (parent_root / "pnpm-workspace.yaml").exists():
+            return "turborepo-monorepo"
+        # 2. Split-fullstack — frontend + backend siblings.
+        if (
+            (parent_root / "frontend").is_dir()
+            and (parent_root / "backend").is_dir()
+        ):
+            return "split-fullstack"
+        # 3. Cargo workspace
+        cargo = parent_root / "Cargo.toml"
+        if cargo.is_file():
+            try:
+                text = cargo.read_text(encoding="utf-8", errors="ignore")
+                if "[workspace]" in text:
+                    return "cargo-workspace"
+            except OSError:
+                pass
+        # 4. Go multi-module
+        if (parent_root / "go.work").is_file():
+            return "go-multi-module"
+        # 5. Rails monolith at parent
+        if (
+            (parent_root / "config" / "routes.rb").is_file()
+            and (parent_root / "app" / "controllers").is_dir()
+        ):
+            return "rails-monolith"
+    except OSError:
+        return ""
+    return ""
+
+
+class SubdirOfMonorepoClassifier:
+    """Sprint S10: when scanning a subdir of a known monorepo / split-
+    fullstack repo and no more-specific classifier fires, label the
+    subdir as ``child-of-<parent_shape>`` at confidence 0.70.
+
+    This sits BELOW the framework / single-saas-routed classifiers so
+    a clear app shape always wins; it only fires when the subdir
+    itself is too ambiguous to claim a specific shape, but its
+    parent's known structure is informative enough that the subdir's
+    rollup strategy can borrow the parent's expectations.
+
+    Examples:
+      - ``Soc0/frontend`` (Vite SPA inside split-fullstack parent) →
+        ``child-of-split-fullstack`` when none of the SPA matchers
+        fire (e.g. when the subdir doesn't have ``src/pages``).
+      - ``apps/web`` of a Turborepo scanned independently →
+        ``child-of-turborepo-monorepo`` as a permissive fallback.
+
+    The downstream rollup registry can map ``child-of-*`` to the
+    SingleSaasRouted strategy (most child workspaces are app-shaped).
+    Tagging it distinctly preserves the parent-shape information for
+    telemetry and any future per-parent-shape strategies.
+    """
+
+    name: str = "subdir-of-monorepo"
+    # Priority 65: AFTER SingleSaasRoutedClassifier (60) so the
+    # SPA / Vite / FastAPI matchers there get first pick, but BEFORE
+    # UniversalResidualClassifier (999) so a recognisable parent
+    # always beats the residual fallback.
+    priority: int = 65
+
+    def classify(
+        self,
+        ctx: "ScanContext",
+        signals: ShapeSignals,
+    ) -> ClassificationResult | None:
+        if not signals.is_subdir_scan:
+            return None
+        if not signals.parent_shape:
+            return None
+        return ClassificationResult(
+            shape=f"child-of-{signals.parent_shape}",
+            confidence=0.70,
+            rationale=(
+                f"Subdir scan whose parent at "
+                f"``{signals.parent_git_root}`` classifies as "
+                f"``{signals.parent_shape}``; no more-specific shape "
+                "matched, inheriting parent context."
+            ),
+            matched_signals=(
+                "is_subdir_scan",
+                "parent_shape",
+            ),
+        )
+
+
+# Sprint S10 — rebuild _DEFAULT_CLASSIFIERS to include the new
+# SubdirOfMonorepoClassifier (defined just above) at its priority
+# slot (65), keeping deterministic ordering.
+_DEFAULT_CLASSIFIERS = tuple(
+    sorted(
+        (*_DEFAULT_CLASSIFIERS, SubdirOfMonorepoClassifier()),
+        key=lambda c: (c.priority, c.name),
+    )
+)
+
+
 __all__ = [
     "MIN_CONFIDENCE",
     "FALLBACK_CONFIDENCE",
@@ -1430,6 +1580,7 @@ __all__ = [
     "CliToolClassifier",
     "FrameworkRepoClassifier",
     "SingleSaasRoutedClassifier",
+    "SubdirOfMonorepoClassifier",
     "UniversalResidualClassifier",
     "GoServerClassifier",
     "GoLibraryClassifier",
