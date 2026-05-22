@@ -294,7 +294,7 @@ def test_emit_product_features_skips_invented_dev_features() -> None:
             },
         ]
     }
-    out, dev_map, aux = _emit_product_features_from_analyst(parsed, feats)
+    out, dev_map, member_flows_map, aux = _emit_product_features_from_analyst(parsed, feats)
     names = {pf.name for pf in out}
     assert names == {"authentication", "billing"}
     # Phantom dropped (no real members)

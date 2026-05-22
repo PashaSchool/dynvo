@@ -949,6 +949,10 @@ def run_pipeline_v2(
                 product_features,
                 dev_to_product_map_pre=dev_to_product_map,
                 source_breakdown_pre=s8_pre_breakdown,
+                # Sprint S6.3 — surface flows to the analyst so it can
+                # populate ``member_flows`` per PF (consumed by Stage 8
+                # rollup for oss-library / framework-repo shapes).
+                top_flows=list(bipartite.flows),
                 log=log8,
                 client=s8_client,
                 model=_STAGE_8_ANALYST_MODEL,
@@ -1007,16 +1011,18 @@ def run_pipeline_v2(
     #   oss-library        → sonnet member_flows map ONLY (no path fb)
     #   framework-repo     → sonnet member_flows + EP fallback
     #   universal-residual → 2-pass entry-point + 50% overlap
-    # ``sonnet_member_flows_map`` is currently None — a follow-up sprint
-    # will extend the analyst response shape to surface it; until then
-    # oss-library / framework-repo gracefully degrade (no attachments,
-    # logged warning).
+    # ``sonnet_member_flows_map`` is sourced from Stage 8's analyst
+    # response (Sprint S6.3). Empty dict when Haiku fallback fired
+    # or when ``FAULTLINE_STAGE_8_MODE=haiku-clusterer`` — oss-library
+    # / framework-repo strategies still degrade gracefully (no
+    # attachments, logged warning) in that case.
+    s8_member_flows_map = getattr(stage_8_result, "member_flows_map", {}) or {}
     with StageLogger(run_dir, 8, "rollup") as log8_rollup:
         rollup_result = stage_8_rollup_flows(
             product_features,
             list(bipartite.flows),
             ctx,
-            sonnet_member_flows_map=None,
+            sonnet_member_flows_map=s8_member_flows_map or None,
         )
         write_rollup_artifact(ctx, product_features, rollup_result)
         log8_rollup.info(

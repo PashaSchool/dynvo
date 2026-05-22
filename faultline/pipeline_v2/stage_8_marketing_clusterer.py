@@ -47,7 +47,7 @@ import os
 import re
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -106,11 +106,20 @@ _CONF_MARKETING_HAIKU = 0.85
 
 @dataclass
 class Stage8Result:
-    """Outcome of Stage 8 — telemetry + new product feature list."""
+    """Outcome of Stage 8 — telemetry + new product feature list.
+
+    ``member_flows_map`` (added Sprint S6.3) maps PF slug → list of
+    flow names the Sonnet analyst attributed to that PF. Consumed by
+    ``stage_8_rollup_flows`` for the OssLibrary / FrameworkRepo
+    strategies (which refuse to use path overlap). Empty dict means
+    no map was produced — strategies degrade gracefully (oss-library
+    attaches nothing; framework-repo falls back to entry-point-in-paths).
+    """
 
     product_features: list[Any]  # list[Feature] but TYPE_CHECKING import
     dev_to_product_map: dict[str, tuple[str, ...]]
     telemetry: dict[str, Any]
+    member_flows_map: dict[str, list[str]] = field(default_factory=dict)
 
 
 # ── Cache helpers ───────────────────────────────────────────────────────
