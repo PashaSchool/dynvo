@@ -554,7 +554,8 @@ class TestStage8Dispatcher:
         stage_8_rollup_flows(pfs, many_flows, ctx)
         assert len(pfs[0].flows) == MAX_FLOWS_IN_PAYLOAD
 
-    def test_registry_has_all_seven_shapes(self):
+    def test_registry_has_all_shapes(self):
+        """S6.2: registry covers the original 7 shapes plus Go/Rust aliases."""
         expected = {
             "turborepo-monorepo",
             "single-saas-routed",
@@ -563,8 +564,24 @@ class TestStage8Dispatcher:
             "cli-tool",
             "framework-repo",
             "universal-residual",
+            # Sprint S6.2 — Go / Rust shape aliases.
+            "go-server",
+            "go-library",
+            "rust-workspace",
         }
         assert set(SHAPE_ROLLUPS.keys()) == expected
+
+    def test_go_server_routes_through_single_saas_routed(self):
+        """S6.2: go-server reuses SingleSaasRoutedStrategy."""
+        assert SHAPE_ROLLUPS["go-server"] is SHAPE_ROLLUPS["single-saas-routed"]
+
+    def test_go_library_routes_through_oss_library(self):
+        """S6.2: go-library reuses OssLibraryStrategy."""
+        assert SHAPE_ROLLUPS["go-library"] is SHAPE_ROLLUPS["oss-library"]
+
+    def test_rust_workspace_routes_through_oss_library(self):
+        """S6.2: rust-workspace reuses OssLibraryStrategy."""
+        assert SHAPE_ROLLUPS["rust-workspace"] is SHAPE_ROLLUPS["oss-library"]
 
     def test_custom_registry_used(self):
         class FakeStrategy:
