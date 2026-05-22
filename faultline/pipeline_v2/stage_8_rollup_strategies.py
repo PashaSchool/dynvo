@@ -494,6 +494,135 @@ class BackendMonolithStrategy:
         )
 
 
+class GoServerStrategy:
+    """Sprint S8 — dedicated rollup for Go server / CLI app shapes.
+
+    ollama and caddy both classify as ``go-server`` but their product
+    features cluster by content (``cuda``, ``metal``, ``vulkan``
+    backends; ``automatic-https``, ``reverse-proxy``) while their flow
+    entry-points live in dedicated route files (``server/routes.go``,
+    ``cmd/caddy/main.go``). With the inherited ``SingleSaasRouted``
+    strategy that requires ``entry_point_file in pf.paths`` exactly,
+    zero attachments fire on both.
+
+    This strategy tries three Go-shaped lookups in order of strength
+    so we get partial credit when the content-oriented PFs and the
+    route-oriented flows do happen to share a directory:
+
+      1. ``entry_point_file in pf.paths`` (strongest — same as
+         SingleSaasRouted).
+      2. ``entry_point_directory`` (one level up) overlaps with any
+         path in ``pf.paths`` at the same directory level. Picks up
+         the case where a PF lists ``server/handlers/users.go`` and a
+         flow's entry-point is ``server/handlers/admin.go`` — same
+         handler module.
+      3. ``cmd/<name>/...`` slug match: when the entry-point lives
+         under ``cmd/<name>/``, look for a PF whose name contains
+         ``<name>`` (case-insensitive, kebab-normalized).
+
+    No path-prefix fallback (e.g. shared root segment) — that's how
+    SingleSaasRouted over-attached on caddy (4× ratio in S6.3 sim).
+    When all three lookups miss, the flow is unattributed and the
+    strategy records the gap in diagnostics for telemetry. This is
+    correct behaviour: ollama's content-shaped PFs (``cuda-*``,
+    ``metal-*``) genuinely don't overlap with its HTTP routes, and a
+    forced attachment would be a lie.
+    """
+
+    shape: str = "go-server"
+
+    def rollup(
+        self,
+        product_features: list["Feature"],
+        top_flows: list["Flow"],
+        ctx: "ScanContext",
+        *,
+        sonnet_member_flows_map: dict[str, list[str]] | None = None,
+    ) -> RollupResult:
+        per_pf_rationale: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        unattributed: list[str] = []
+        attachments = 0
+        pf_path_sets: dict[str, set[str]] = {
+            pf.name: set(pf.paths or []) for pf in product_features
+        }
+        # Precompute per-PF directory sets (one level up from each path).
+        pf_dir_sets: dict[str, set[str]] = {}
+        for pf in product_features:
+            dirs: set[str] = set()
+            for p in pf.paths or []:
+                if "/" in p:
+                    dirs.add(p.rsplit("/", 1)[0])
+            pf_dir_sets[pf.name] = dirs
+
+        # Telemetry counters per match pass.
+        by_pass: dict[str, int] = defaultdict(int)
+
+        for flow in top_flows:
+            ep = flow.entry_point_file
+            if not ep:
+                unattributed.append(flow.name)
+                continue
+            matched = False
+
+            # Pass 1 — exact entry-point in PF.paths.
+            for pf in product_features:
+                if ep in pf_path_sets[pf.name]:
+                    _attach(pf, flow)
+                    per_pf_rationale[pf.name].append(
+                        (flow.name, f"entry-point-in-paths:{ep}"),
+                    )
+                    attachments += 1
+                    by_pass["entry_in_paths"] += 1
+                    matched = True
+
+            if not matched:
+                # Pass 2 — entry-point directory overlaps with any
+                # PF directory. Single-level — we don't walk up the
+                # tree to avoid the same kind of over-attach the
+                # universal-residual fallback was guilty of.
+                ep_dir = ep.rsplit("/", 1)[0] if "/" in ep else ""
+                if ep_dir:
+                    for pf in product_features:
+                        if ep_dir in pf_dir_sets[pf.name]:
+                            _attach(pf, flow)
+                            per_pf_rationale[pf.name].append(
+                                (flow.name, f"entry-dir-overlap:{ep_dir}"),
+                            )
+                            attachments += 1
+                            by_pass["entry_dir_overlap"] += 1
+                            matched = True
+
+            if not matched:
+                # Pass 3 — cmd/<name> slug match.
+                cmd = _command_name(flow)
+                if cmd:
+                    for pf in product_features:
+                        if _slug_substr(cmd, pf.name):
+                            _attach(pf, flow)
+                            per_pf_rationale[pf.name].append(
+                                (flow.name, f"cmd-slug-match:{cmd}"),
+                            )
+                            attachments += 1
+                            by_pass["cmd_slug_match"] += 1
+                            matched = True
+
+            if not matched:
+                unattributed.append(flow.name)
+
+        diagnostics = {
+            "go_server_pass_counts": dict(by_pass),
+            "unattributed_count": len(unattributed),
+        }
+        return RollupResult(
+            strategy_used=self.shape,
+            pfs_attributed_count=sum(1 for pf in product_features if pf.flows),
+            total_attachments=attachments,
+            per_pf_rationale=dict(per_pf_rationale),
+            unattributed_flows=unattributed,
+            diagnostics=diagnostics,
+        )
+
+
 class CliToolStrategy:
     """Map flow → PF via CLI command name or entry-point-in-paths."""
 
@@ -709,12 +838,16 @@ SHAPE_ROLLUPS: dict[str, FlowRollupStrategy] = {
     "cli-tool": CliToolStrategy(),
     "framework-repo": FrameworkRepoStrategy(),
     "universal-residual": UniversalResidualStrategy(),
-    # Sprint S6.2 — Go / Rust shape aliases.
-    # ``go-server``: route handlers via ``entry_point_file in PF.paths``
-    #   works for Go too (Gin/chi/Echo register handlers by file path).
+    # Sprint S8 — dedicated GoServerStrategy (replaces the S6.2 alias
+    # to SingleSaasRouted which delivered 0/1081 attachments on ollama
+    # and 0/156 on caddy because their content-shaped PFs don't
+    # path-overlap with HTTP route handlers). The new strategy adds
+    # entry-point-DIRECTORY overlap and cmd/<name> slug-match passes
+    # while still refusing the loose path-prefix fallback that caused
+    # caddy's prior 4× over-attach.
+    "go-server": GoServerStrategy(),
     # ``go-library`` and ``rust-workspace``: usage-pattern shaped, not
-    #   route-shaped — defer to Sonnet ``member_flows`` semantics.
-    "go-server": _SINGLE_SAAS_ROUTED_STRATEGY,
+    # route-shaped — defer to Sonnet ``member_flows`` semantics.
     "go-library": _OSS_LIBRARY_STRATEGY,
     "rust-workspace": _OSS_LIBRARY_STRATEGY,
 }
