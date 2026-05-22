@@ -216,9 +216,21 @@ def _slug_substr(needle: str, haystack: str) -> bool:
 
 
 class TurborepoMonorepoStrategy:
-    """Attach flow → PF when their workspaces match.
+    """Attach flow → PF when the flow's entry-point lives inside the PF
+    AND the PF owns the flow's workspace.
 
-    In a Turborepo, the workspace boundary IS the product boundary.
+    In a Turborepo, the workspace boundary IS the product boundary —
+    but the Sonnet analyst routinely merges paths from multiple
+    workspaces into one PF (apps/web + packages/ui + packages/utils
+    cluster into a single product). Attaching by workspace overlap
+    alone produced 20-30× attach-per-flow on dub / cal-com / plane
+    (Sprint S6.3 corpus replay). Tightened to require BOTH:
+
+      1. ``flow.entry_point_file in pf.paths`` (entry-point grounding,
+         same primary rule as ``SingleSaasRoutedStrategy``), AND
+      2. The entry-point's workspace prefix lives in the PF's workspace
+         set (sanity gate — prevents accidental cross-workspace attach
+         when paths happen to share a filename).
     """
 
     shape: str = "turborepo-monorepo"
@@ -236,22 +248,34 @@ class TurborepoMonorepoStrategy:
         pf_ws_map: dict[str, set[str]] = {
             pf.name: _pf_workspaces(pf, ctx) for pf in product_features
         }
+        pf_path_sets: dict[str, set[str]] = {
+            pf.name: set(pf.paths or []) for pf in product_features
+        }
 
         attachments = 0
         for flow in top_flows:
-            ws = _workspace_prefix(flow.entry_point_file or "", ctx)
+            ep = flow.entry_point_file
+            if not ep:
+                unattributed.append(flow.name)
+                continue
+            ws = _workspace_prefix(ep, ctx)
             if ws is None:
                 unattributed.append(flow.name)
                 continue
             matched = False
             for pf in product_features:
-                if ws in pf_ws_map[pf.name]:
-                    _attach(pf, flow)
-                    per_pf_rationale[pf.name].append(
-                        (flow.name, f"workspace-match:{ws}"),
-                    )
-                    attachments += 1
-                    matched = True
+                # Primary gate: entry-point must live in PF paths.
+                if ep not in pf_path_sets[pf.name]:
+                    continue
+                # Sanity gate: PF must own the entry-point's workspace.
+                if ws not in pf_ws_map[pf.name]:
+                    continue
+                _attach(pf, flow)
+                per_pf_rationale[pf.name].append(
+                    (flow.name, f"entry-point-in-paths+workspace:{ws}"),
+                )
+                attachments += 1
+                matched = True
             if not matched:
                 unattributed.append(flow.name)
 

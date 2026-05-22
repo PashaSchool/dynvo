@@ -76,7 +76,7 @@ from faultline.pipeline_v2.stage_8_marketing_clusterer import (
 )
 
 if TYPE_CHECKING:
-    from faultline.models.types import Feature
+    from faultline.models.types import Feature, Flow
     from faultline.pipeline_v2.run_logger import StageLogger
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
@@ -106,6 +106,15 @@ _MAX_DESCRIPTION_CHARS = 240
 # Maximum workspace packages enumerated in the payload.
 _MAX_WORKSPACE_PACKAGES = 60
 
+# Top flows (by participant count) included in the analyst payload.
+# Cap chosen to keep prompt bounded on cal-com-scale repos (2073 flows
+# pre-cap); the analyst doesn't need every flow to attribute most of
+# them, and undersized payloads matter less than over-spend.
+_MAX_FLOWS_IN_PAYLOAD = 120
+
+# Maximum description length per flow shown to the analyst.
+_MAX_FLOW_DESCRIPTION_CHARS = 160
+
 # Marketing context size cap (chars). Matches the experimenter
 # prototype which truncated at 30 KB.
 _MAX_MARKETING_CONTEXT_CHARS = 30_000
@@ -132,9 +141,10 @@ Rules:
 1. Be specific. "AI Email Assistant" not "AI". "OAuth Provider with 35+ social logins" not "Auth".
 2. Each product feature MUST be grounded: include `grounded_in` listing which inputs (workspace package names, marketing surface names, developer feature names) justify it.
 3. Map developer features into product features under `member_dev_features` (list of dev feature names that compose this product feature). It's OK for a dev feature to belong to multiple product features.
-4. Aim for 20-50 product features total. Quality over quantity. If a developer feature is purely structural/internal (build tooling, test fixtures, CI), do NOT promote it to a product feature.
-5. confidence must be 0-1 reflecting how grounded the feature is.
-6. NEVER invent features that have no code or marketing evidence.
+4. When a FLOWS section is provided in the payload, ALSO map flows into product features under `member_flows` (list of flow names that belong to this product feature). Use ONLY flow names verbatim from the FLOWS section — never invent. Omit `member_flows` entirely (or use `[]`) when no flows fit.
+5. Aim for 20-50 product features total. Quality over quantity. If a developer feature is purely structural/internal (build tooling, test fixtures, CI), do NOT promote it to a product feature.
+6. confidence must be 0-1 reflecting how grounded the feature is.
+7. NEVER invent features that have no code or marketing evidence.
 
 Output ONLY valid JSON of this exact shape (no markdown, no commentary):
 {
@@ -143,6 +153,7 @@ Output ONLY valid JSON of this exact shape (no markdown, no commentary):
       "name": "Email and Password Authentication",
       "description": "Built-in credential auth with sessions, email verification, password reset.",
       "member_dev_features": ["email-password-auth", "session-management"],
+      "member_flows": ["sign-up-flow", "password-reset-flow"],
       "confidence": 0.95,
       "grounded_in": ["packages/core", "marketing:/docs/concepts/email-password", "dev_feature:email-password-auth"]
     }
@@ -231,6 +242,34 @@ def _compact_dev_features(
     ]
 
 
+def _compact_flows(
+    top_flows: list["Flow"] | None,
+) -> list[dict[str, Any]]:
+    """Project the top-N flows into a lean payload shape.
+
+    Sorted by participant count descending — the most-cross-cutting
+    flows are the ones most likely to belong to a customer-facing
+    product feature. Returns ``[]`` when no flows are supplied.
+    """
+    if not top_flows:
+        return []
+    sorted_flows = sorted(
+        top_flows, key=lambda f: -len(getattr(f, "participants", []) or []),
+    )[:_MAX_FLOWS_IN_PAYLOAD]
+    out: list[dict[str, Any]] = []
+    for f in sorted_flows:
+        out.append({
+            "name": f.name,
+            "display_name": getattr(f, "display_name", None) or f.name,
+            "description": (getattr(f, "description", "") or "")[
+                :_MAX_FLOW_DESCRIPTION_CHARS
+            ],
+            "entry_point_file": getattr(f, "entry_point_file", None),
+            "n_participants": len(getattr(f, "participants", []) or []),
+        })
+    return out
+
+
 def _harvest_marketing_text(
     repo_path: Path,
     repo_slug: str,
@@ -312,11 +351,18 @@ def _harvest_marketing_text(
 def build_analyst_payload(
     ctx: "ScanContext",
     developer_features: list["Feature"],
+    top_flows: list["Flow"] | None = None,
 ) -> dict[str, Any]:
     """Assemble the full analyst payload from prior pipeline stages.
 
     Exposed (not underscored) so tests can assert on it and so an
     out-of-band replay tool can re-emit the prompt deterministically.
+
+    ``top_flows`` (Sprint S6.3) — when provided, the top-N flows by
+    participant count are projected into the payload so the analyst
+    can return ``member_flows`` per product feature. Back-compatible:
+    when ``None`` or empty, the payload omits the flows section and
+    the analyst's ``member_flows`` is treated as empty downstream.
     """
     slug = ctx.repo_path.name
     workspace_packages = _workspace_packages_from_paths(developer_features)
@@ -333,6 +379,7 @@ def build_analyst_payload(
         "auditor_hints": list(ctx.extractor_hints or ()),
         "workspace_packages": workspace_packages,
         "developer_features": _compact_dev_features(developer_features),
+        "flows": _compact_flows(top_flows),
         "marketing_text": marketing_text,
         "marketing_url": marketing_url,
         "taxonomy_size": taxonomy_size,
@@ -343,8 +390,19 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
     """Render the analyst user-message body from a payload dict.
 
     Identical shape to the experimenter prototype that validated the
-    lift — DO NOT silently restructure without re-validating.
+    lift — DO NOT silently restructure without re-validating. Sprint
+    S6.3 added an optional FLOWS section (only when ``payload['flows']``
+    is non-empty) so the analyst can populate ``member_flows`` per
+    product feature.
     """
+    flows = payload.get("flows") or []
+    flows_section = ""
+    if flows:
+        flows_section = (
+            "FLOWS (top by participant count — use names verbatim when "
+            "filling member_flows):\n"
+            + json.dumps(flows, indent=2) + "\n\n"
+        )
     return (
         "REPO SLUG: " + payload["slug"] + "\n"
         "STACK (audited): " + payload["audited_stack"] + "\n"
@@ -357,7 +415,8 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
         + json.dumps(payload["workspace_packages"], indent=2) + "\n\n"
         "DEVELOPER FEATURES (top by path count, deterministic Layer 1):\n"
         + json.dumps(payload["developer_features"], indent=2) + "\n\n"
-        "MARKETING SURFACES (fetched from public web; NOT repo README):\n"
+        + flows_section
+        + "MARKETING SURFACES (fetched from public web; NOT repo README):\n"
         + payload["marketing_text"] + "\n\n"
         "Now emit the Layer 2 product_features JSON per the system prompt rules."
     )
@@ -441,10 +500,17 @@ def _call_sonnet(
 def _emit_product_features_from_analyst(
     parsed: dict[str, Any],
     developer_features: list["Feature"],
-) -> tuple[list["Feature"], dict[str, tuple[str, ...]], dict[str, Any]]:
+    top_flows: list["Flow"] | None = None,
+) -> tuple[
+    list["Feature"],
+    dict[str, tuple[str, ...]],
+    dict[str, list[str]],
+    dict[str, Any],
+]:
     """Translate Sonnet's product_features array into ``Feature`` objects.
 
-    Returns ``(product_features, dev_to_product_map, telemetry_aux)``.
+    Returns ``(product_features, dev_to_product_map, member_flows_map,
+    telemetry_aux)``.
 
     Path/author/commit aggregation mirrors the Haiku clusterer's
     ``_emit_product_features`` — sum total commits + bug fixes, union
@@ -452,15 +518,27 @@ def _emit_product_features_from_analyst(
 
     Unknown ``member_dev_features`` entries (Sonnet hallucinated a name)
     are silently skipped — we never invent dev features.
+
+    Sprint S6.3: ``member_flows`` per PF is consumed when ``top_flows``
+    is supplied. Each name is validated against the actual flow-name
+    set; invented flow names are dropped + counted in telemetry. The
+    resulting map is keyed by emitted PF slug (matching the rest of
+    the pipeline's ``pf.name`` convention) so the rollup strategies
+    can attach flows by slug lookup.
     """
     from faultline.models.types import Feature
 
     by_name: dict[str, "Feature"] = {f.name: f for f in developer_features}
+    valid_flow_names: set[str] = (
+        {f.name for f in top_flows} if top_flows else set()
+    )
     pf_specs = parsed.get("product_features") or []
 
     out: list[Feature] = []
     dev_to_product: dict[str, list[str]] = defaultdict(list)
+    member_flows_map: dict[str, list[str]] = {}
     invented_dev_features = 0
+    invented_flows_skipped = 0
     accepted = 0
     skipped_empty = 0
 
@@ -546,6 +624,30 @@ def _emit_product_features_from_analyst(
         for c in contrib:
             dev_to_product[c.name].append(slug)
 
+        # Sprint S6.3 — collect validated member_flows per PF slug.
+        raw_flows = spec.get("member_flows") or []
+        if isinstance(raw_flows, list):
+            validated: list[str] = []
+            seen_flow: set[str] = set()
+            for fn in raw_flows:
+                if not isinstance(fn, str):
+                    continue
+                if valid_flow_names and fn not in valid_flow_names:
+                    invented_flows_skipped += 1
+                    continue
+                if not valid_flow_names:
+                    # No flows were passed to the analyst — treat any
+                    # ``member_flows`` value as invented to keep the
+                    # rollup contract honest.
+                    invented_flows_skipped += 1
+                    continue
+                if fn in seen_flow:
+                    continue
+                validated.append(fn)
+                seen_flow.add(fn)
+            if validated:
+                member_flows_map[slug] = validated
+
     # Freeze tuples on the map.
     dev_map: dict[str, tuple[str, ...]] = {
         k: tuple(v) for k, v in dev_to_product.items()
@@ -554,8 +656,10 @@ def _emit_product_features_from_analyst(
         "product_features_emitted": accepted,
         "product_features_skipped_no_members": skipped_empty,
         "invented_dev_features_skipped": invented_dev_features,
+        "invented_flows_skipped": invented_flows_skipped,
+        "pfs_with_member_flows": len(member_flows_map),
     }
-    return out, dev_map, aux
+    return out, dev_map, member_flows_map, aux
 
 
 # ── Public entry point ──────────────────────────────────────────────────
@@ -568,6 +672,7 @@ def run_stage_8_analyst(
     *,
     dev_to_product_map_pre: dict[str, tuple[str, ...]] | None = None,
     source_breakdown_pre: dict[str, int] | None = None,
+    top_flows: list["Flow"] | None = None,
     log: "StageLogger | None" = None,
     client: Any | None = None,
     model: str = DEFAULT_ANALYST_MODEL,
@@ -634,10 +739,11 @@ def run_stage_8_analyst(
             fallback_reason="no-client",
         )
 
-    payload = build_analyst_payload(ctx, developer_features)
+    payload = build_analyst_payload(ctx, developer_features, top_flows)
     if log is not None:
         log.info(
             f"analyst-payload-built dev_features={len(payload['developer_features'])} "
+            f"flows={len(payload['flows'])} "
             f"workspace_packages={len(payload['workspace_packages'])} "
             f"taxonomy_size={payload['taxonomy_size']}",
         )
@@ -705,8 +811,13 @@ def run_stage_8_analyst(
             },
         )
 
-    product_features, dev_map, aux = _emit_product_features_from_analyst(
-        parsed, developer_features,
+    (
+        product_features,
+        dev_map,
+        member_flows_map,
+        aux,
+    ) = _emit_product_features_from_analyst(
+        parsed, developer_features, top_flows,
     )
 
     if not product_features:
@@ -746,6 +857,7 @@ def run_stage_8_analyst(
         "taxonomy_size": payload["taxonomy_size"],
         "workspace_package_count": len(payload["workspace_packages"]),
         "dev_features_in_payload": len(payload["developer_features"]),
+        "flows_in_payload": len(payload["flows"]),
         "analyst_cost_usd": round(cost, 6),
         "prompt_input_tokens": in_t,
         "prompt_output_tokens": out_t,
@@ -773,6 +885,7 @@ def run_stage_8_analyst(
         product_features=product_features,
         dev_to_product_map=dev_map,
         telemetry=telemetry,
+        member_flows_map=member_flows_map,
     )
 
 
