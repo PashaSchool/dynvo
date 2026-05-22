@@ -423,6 +423,37 @@ class TestGoServerStrategy:
         assert pfs[0].flows == []
         assert "no-entry-flow" in result.unattributed_flows
 
+    def test_pass_2_first_match_wins(self):
+        """S8 calibration: pass-2 (dir-overlap) attaches to the FIRST
+        matching PF only — avoids the 4.29× over-attach observed on
+        caddy when every PF claimed every flow via loose dir overlap."""
+        ctx = _ctx(repo_shape="go-server")
+        # Two PFs both own files in the SAME dir (``server/``) but
+        # neither lists the flow's exact entry-point.
+        pfs = [
+            _pf("pf-a", ["server/users.go"]),
+            _pf("pf-b", ["server/admin.go"]),
+        ]
+        flows = [_flow("list-flow", "server/list.go")]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        # Only one of the PFs gets the flow (pass-2 breaks after first).
+        attached = sum(1 for pf in pfs if pf.flows)
+        assert attached == 1
+        assert result.total_attachments == 1
+
+    def test_pass_3_first_match_wins(self):
+        """S8 calibration: pass-3 (cmd-slug) also first-match-wins."""
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [
+            _pf("serve-command", ["docs/serve.md"]),
+            _pf("serve-helper-utils", ["docs/help.md"]),
+        ]
+        flows = [_flow("start-serve-flow", "cmd/serve/main.go")]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        attached = sum(1 for pf in pfs if pf.flows)
+        assert attached == 1
+        assert result.total_attachments == 1
+
     def test_diagnostics_recorded(self):
         """The pass-count + unattributed-count diagnostics must always
         be populated so the rollup artifact carries telemetry."""

@@ -580,6 +580,14 @@ class GoServerStrategy:
                 # PF directory. Single-level — we don't walk up the
                 # tree to avoid the same kind of over-attach the
                 # universal-residual fallback was guilty of.
+                #
+                # CRITICAL: attach to the FIRST matching PF only and
+                # stop. Without this break the 4.29× attach ratio
+                # observed on caddy (669 attachments / 156 flows)
+                # poisons the per-PF flow list with duplicates. The
+                # heuristic isn't strong enough to justify multi-attach
+                # — that's reserved for pass 1 where the file IS
+                # canonically owned by the PF.
                 ep_dir = ep.rsplit("/", 1)[0] if "/" in ep else ""
                 if ep_dir:
                     for pf in product_features:
@@ -591,9 +599,11 @@ class GoServerStrategy:
                             attachments += 1
                             by_pass["entry_dir_overlap"] += 1
                             matched = True
+                            break  # first-match-wins per S8 calibration
 
             if not matched:
-                # Pass 3 — cmd/<name> slug match.
+                # Pass 3 — cmd/<name> slug match. Same first-match-wins
+                # rule: a CLI command should land on at most one PF.
                 cmd = _command_name(flow)
                 if cmd:
                     for pf in product_features:
@@ -605,6 +615,7 @@ class GoServerStrategy:
                             attachments += 1
                             by_pass["cmd_slug_match"] += 1
                             matched = True
+                            break
 
             if not matched:
                 unattributed.append(flow.name)
