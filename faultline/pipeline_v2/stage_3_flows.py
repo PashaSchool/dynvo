@@ -64,8 +64,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_MAX_WORKERS = 8
-DEFAULT_WALL_TIMEOUT_S = 300  # 5 minutes
+# Wall-time cap MUST scale with feature count. Old fixed 300s left
+# chatwoot (330 features) and directus (242 features) with 189/231
+# features defaulted to flows=[] because there literally weren't
+# enough seconds for the 8-worker pool to drain the queue.
+#
+# Formula (scale-invariant per [[rule-no-magic-tuning]]):
+#   timeout = max(MIN_WALL_TIMEOUT_S, ceil(N_features * PER_CALL_BUDGET_S / max_workers))
+# with PER_CALL_BUDGET_S = 15s (Haiku 4.5 p99 latency observed across the
+# 24-repo corpus) and MIN_WALL_TIMEOUT_S = 300s (small repos still get
+# a generous floor). Caller can override via explicit `timeout=`.
+MIN_WALL_TIMEOUT_S = 300
+PER_CALL_BUDGET_S = 15
 MIN_EXPORTS_FOR_FLOW_DETECTION = 3
+
+
+def _compute_wall_timeout(n_features: int, max_workers: int) -> int:
+    """Universal wall-time cap that scales with feature count."""
+    if n_features <= 0 or max_workers <= 0:
+        return MIN_WALL_TIMEOUT_S
+    import math
+    needed = math.ceil(n_features * PER_CALL_BUDGET_S / max_workers)
+    return max(MIN_WALL_TIMEOUT_S, needed)
 
 # Prompt sample caps — keep the request small.
 MAX_PATHS_IN_PROMPT = 20
@@ -422,7 +442,7 @@ def stage_3_flows(
     *,
     model: str = DEFAULT_MODEL,
     max_workers: int = DEFAULT_MAX_WORKERS,
-    timeout: float = DEFAULT_WALL_TIMEOUT_S,
+    timeout: float | None = None,
     cost_tracker: CostTracker | None = None,
     client: Any | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
@@ -434,8 +454,11 @@ def stage_3_flows(
         ctx: Stage 0 context (for ``repo_path``).
         model: Haiku model id. Default Haiku 4.5.
         max_workers: ThreadPool size. 8 is a good default for Haiku.
-        timeout: Total wall-time cap, seconds. Features still pending
-            when the timeout fires receive ``flows=[]`` + a warning.
+        timeout: Total wall-time cap, seconds. When ``None`` (default),
+            computed dynamically via ``_compute_wall_timeout`` so big
+            repos (300+ features) don't hit a static cap that scales
+            below their feature count. Features still pending when the
+            timeout fires receive ``flows=[]`` + a warning.
         cost_tracker: optional shared tracker; one is created if None.
         client: optional preconstructed Anthropic-like client. Mostly
             useful for tests. Skips ``_client_factory`` when present.
@@ -449,6 +472,12 @@ def stage_3_flows(
     warnings: list[str] = []
     llm_calls = 0
     llm_call_lock = threading.Lock()
+
+    # Scale wall-time cap to feature count when caller didn't pin it.
+    effective_timeout = (
+        timeout if timeout is not None
+        else _compute_wall_timeout(len(features), max_workers)
+    )
 
     # Build the client lazily; if it's None and there are features that
     # need detection, we record one warning and return empty flows for
@@ -532,7 +561,7 @@ def stage_3_flows(
             for idx, f in enumerate(features)
         }
         try:
-            for fut in as_completed(future_to_idx, timeout=timeout):
+            for fut in as_completed(future_to_idx, timeout=effective_timeout):
                 idx = future_to_idx[fut]
                 try:
                     out[idx] = fut.result()
@@ -548,7 +577,7 @@ def stage_3_flows(
                     )
         except TimeoutError:
             warnings.append(
-                f"stage_3_flows wall-time {timeout}s exceeded; "
+                f"stage_3_flows wall-time {effective_timeout}s exceeded; "
                 f"{len(features) - len(out)} feature(s) defaulted to flows=[]"
             )
 
