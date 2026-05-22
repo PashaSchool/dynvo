@@ -189,6 +189,45 @@ def test_validate_drops_unknown_symbols() -> None:
     assert valid[0].symbol_names == ["X"]  # ZZZ filtered out
 
 
+def test_validate_dedups_flows_sharing_entry_point() -> None:
+    """Sprint S7-B: when the LLM hallucinates multiple flows from a
+    single endpoint (same entry_point_file + entry_point_line), keep
+    only the FIRST one. Verified-real on dub FINAL-M where one
+    route.ts:6 emitted 8 distinct flow names."""
+    # All three flows resolve to the SAME entry (a.ts:1) because their
+    # first symbol is X. Only the first should survive.
+    sym_loc = {"X": ("a.ts", 1), "Y": ("a.ts", 1), "Z": ("b.ts", 5)}
+    raw = [
+        {"name": "configure-saml-flow", "symbols": ["X"]},   # ok — kept
+        {"name": "manage-invites-flow", "symbols": ["X"]},   # dup of a.ts:1
+        {"name": "manage-billing-flow", "symbols": ["Y"]},   # dup of a.ts:1
+        {"name": "view-invoices-flow", "symbols": ["Z"]},    # new — kept
+    ]
+    valid, notes = _validate_and_attach_lines(raw, sym_loc)
+    assert [f.name for f in valid] == [
+        "configure-saml-flow", "view-invoices-flow",
+    ]
+    # First kept flow lives at a.ts:1; second at b.ts:5.
+    assert valid[0].entry_point_file == "a.ts"
+    assert valid[0].entry_point_line == 1
+    assert valid[1].entry_point_file == "b.ts"
+    assert valid[1].entry_point_line == 5
+    # Note recorded.
+    assert any("deduped 2 flow" in n for n in notes)
+
+
+def test_validate_does_not_dedup_flows_without_entry_point() -> None:
+    """Flows without resolved symbols (entry_file=None) carry no
+    collision key — they must NOT be collapsed against each other."""
+    sym_loc: dict[str, tuple[str, int]] = {}
+    raw = [
+        {"name": "foo-flow", "symbols": []},
+        {"name": "bar-flow", "symbols": []},
+    ]
+    valid, _notes = _validate_and_attach_lines(raw, sym_loc)
+    assert [f.name for f in valid] == ["foo-flow", "bar-flow"]
+
+
 # ── Orchestrator: features-with-flows happy path ──────────────────────────
 
 
