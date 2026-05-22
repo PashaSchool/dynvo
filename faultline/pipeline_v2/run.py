@@ -116,6 +116,10 @@ from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
 )
+from faultline.pipeline_v2.stage_8_rollup_strategies import (
+    stage_8_rollup_flows,
+    write_rollup_artifact,
+)
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     _default_client_factory as _stage_8_default_client_factory,
     run_stage_8,
@@ -993,6 +997,49 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 8 (rollup) — attach flows to product_features ────────
+    # Sprint S6.1 — per-shape flow-rollup dispatcher. Uses
+    # ctx.repo_shape (from Stage 0.6) to pick a strategy:
+    #   turborepo-monorepo → workspace-match
+    #   single-saas-routed → entry-point-in-paths
+    #   backend-monolith   → controller-class match (+ EP fallback)
+    #   cli-tool           → command-name match (+ EP fallback)
+    #   oss-library        → sonnet member_flows map ONLY (no path fb)
+    #   framework-repo     → sonnet member_flows + EP fallback
+    #   universal-residual → 2-pass entry-point + 50% overlap
+    # ``sonnet_member_flows_map`` is currently None — a follow-up sprint
+    # will extend the analyst response shape to surface it; until then
+    # oss-library / framework-repo gracefully degrade (no attachments,
+    # logged warning).
+    with StageLogger(run_dir, 8, "rollup") as log8_rollup:
+        rollup_result = stage_8_rollup_flows(
+            product_features,
+            list(bipartite.flows),
+            ctx,
+            sonnet_member_flows_map=None,
+        )
+        write_rollup_artifact(ctx, product_features, rollup_result)
+        log8_rollup.info(
+            f"rollup strategy={rollup_result.strategy_used} "
+            f"pfs_attributed={rollup_result.pfs_attributed_count}/"
+            f"{len(product_features)} "
+            f"total_attachments={rollup_result.total_attachments} "
+            f"unattributed_flows={len(rollup_result.unattributed_flows)}",
+        )
+    stage_8_rollup_telemetry: dict[str, Any] = {
+        "rollup_strategy": rollup_result.strategy_used,
+        "pfs_total": len(product_features),
+        "pfs_attributed_count": rollup_result.pfs_attributed_count,
+        "pfs_empty_count": len(product_features) - rollup_result.pfs_attributed_count,
+        "total_attachments": rollup_result.total_attachments,
+        "unattributed_flow_count": len(rollup_result.unattributed_flows),
+        "unattributed_flow_pct": round(
+            len(rollup_result.unattributed_flows) / max(len(bipartite.flows), 1),
+            4,
+        ),
+        "capped_pfs_count": len(rollup_result.diagnostics.get("capped_pfs", [])),
+    }
+
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
     # residual list (stage5 stripped FS-missing + anchor-dup before naming
@@ -1199,6 +1246,11 @@ def run_pipeline_v2(
         # Haiku mapping. ``haiku_call_cost_usd`` is included in the
         # top-level ``cost_usd`` total via the shared CostTracker.
         "stage_8": dict(stage_8_telemetry),
+        # Sprint S6.1 — Stage 8 per-shape flow-rollup dispatcher
+        # telemetry. ``rollup_strategy`` is one of the SHAPE_ROLLUPS
+        # registry keys; ``pfs_attributed_count`` reports how many PFs
+        # got at least one flow attached.
+        "stage_08_rollup": dict(stage_8_rollup_telemetry),
         # Sprint S6.1 — Stage 0.6 deterministic shape classifier.
         # Used by the Stage 8 flow-rollup dispatcher to pick the per-
         # shape attribution strategy. Universal-residual is the safe
