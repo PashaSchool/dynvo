@@ -1142,9 +1142,16 @@ def _fallback_verdict(
     """Emit an echo-of-Stage-0 verdict. ``confidence=1.0`` because the
     orchestrator treats this as "keep Stage 0 as-is" — Stage 0 IS
     reliable for the cases it handles; auditor is purely additive.
+
+    Sprint S9 extension: even on the fallback path (no API key / parse
+    fail / cost cap) we still apply the deterministic
+    ``framework-self`` hint rule. The auditor LLM is not the only
+    source of truth here — when the repo's own manifest says
+    ``name = "fastapi"`` we still want FrameworkRepoClassifier to fire
+    regardless of whether the auditor itself ran.
     """
     primary = (ctx.stack or "unknown").strip().lower()
-    return AuditorVerdict(
+    base = AuditorVerdict(
         primary_stack=primary,
         secondary_stacks=(),
         confidence=1.0,
@@ -1153,6 +1160,30 @@ def _fallback_verdict(
         cost_usd=round(cost_usd, 6),
         fallback_used=True,
     )
+    # Apply ONLY the S9 framework-self hint deterministically. We do
+    # NOT run the other corrections on the fallback path — those are
+    # designed to fix Sonnet hallucinations, not Stage 0 outputs, and
+    # would falsely flip the verdict when the user has Stage 0 reporting
+    # ``next-app-router`` but their package.json hasn't yet been
+    # populated (as happens in tests).
+    self_name = _read_repo_self_name(ctx)
+    if (
+        self_name
+        and (
+            self_name in _KNOWN_FRAMEWORK_SELF_NAMES
+            or self_name in _KNOWN_FRAMEWORK_SELF_SCOPES
+        )
+    ):
+        return AuditorVerdict(
+            primary_stack=base.primary_stack,
+            secondary_stacks=base.secondary_stacks,
+            confidence=base.confidence,
+            extractor_hints=("framework-self",),
+            reasoning=base.reasoning + " [+S9 framework-self hint]",
+            cost_usd=base.cost_usd,
+            fallback_used=True,
+        )
+    return base
 
 
 def _call_haiku(
