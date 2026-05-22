@@ -621,6 +621,13 @@ _SYSTEM_PROMPT = (
     '    "go-http-router via chi.Router{} in *.go"\n'
     '    "python-library — no app entry; parse __init__.py exports"\n'
     '    "rust-workspace with N member crates under crates/"\n'
+    "- When the repo IS the framework itself (its own manifest declares "
+    "the framework name — e.g. fastapi/fastapi's pyproject says "
+    '``name = "fastapi"``, vercel/next.js publishes the "next" package), '
+    'emit the literal token "framework-self" as one of the extractor_hints. '
+    "Stage 0.6 (shape classifier) requires this exact hint to route the "
+    "repo through the framework-repo strategy instead of the generic "
+    "library / app strategies.\n"
     "- Do NOT make claims about WHAT the product does. Only classify "
     "the technical stack. Marketing/product semantics are a separate "
     "stage and out of scope here.\n"
@@ -811,6 +818,124 @@ def _has_manage_py(ctx: "ScanContext") -> bool:
     return (ctx.repo_path / "manage.py").is_file()
 
 
+def _read_repo_self_name(ctx: "ScanContext") -> str | None:
+    """Return the repo's own package-manifest name, if any.
+
+    Reads (in order) root ``package.json#name`` then
+    ``pyproject.toml#project.name`` then ``Cargo.toml#package.name``.
+    Used by Sprint S9 ``framework-self`` detection — when a repo's own
+    manifest declares a name matching a known framework, the repo IS
+    that framework (e.g. ``fastapi/fastapi``'s pyproject says
+    ``name = "fastapi"``; ``vercel/next.js``'s root packages publish
+    ``"next"`` as their package name).
+
+    Returns the LOWERCASED name (``next``, ``fastapi``, ``react``,
+    ``swr``, ``axios``). Returns None when no manifest is readable.
+    Never raises — this is best-effort.
+    """
+    root = ctx.repo_path
+
+    # package.json#name (root only — workspaces have their own names
+    # which don't tell us the repo's identity)
+    pkg = root / "package.json"
+    if pkg.is_file():
+        try:
+            data = json.loads(pkg.read_text(encoding="utf-8", errors="ignore"))
+            n = data.get("name") if isinstance(data, dict) else None
+            if isinstance(n, str) and n.strip():
+                norm = n.strip().lower()
+                # Scoped names like ``@nestjs/core``: return the SCOPE
+                # token (``@nestjs/core`` → ``nestjs``) so the
+                # framework-self check can match on scope-as-framework
+                # without false-positives on generic suffixes like
+                # ``core`` / ``common`` / ``server``. The framework set
+                # vs scope set are distinct (see
+                # ``_KNOWN_FRAMEWORK_SELF_SCOPES``).
+                if norm.startswith("@") and "/" in norm:
+                    scope = norm[1:].split("/", 1)[0]
+                    return scope
+                return norm
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # pyproject.toml [project] name
+    py = root / "pyproject.toml"
+    if py.is_file():
+        try:
+            text = py.read_text(encoding="utf-8", errors="ignore")
+            # Look for ``name = "..."`` in the [project] table only —
+            # ``[tool.poetry]`` also has a name but tooling sections are
+            # historical and Poetry has shifted to PEP 621.
+            in_project = False
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("["):
+                    in_project = stripped in ("[project]",)
+                    continue
+                if in_project and stripped.startswith("name"):
+                    # name = "fastapi" or name='fastapi'
+                    m = re.match(
+                        r'name\s*=\s*[\'"]([^\'"]+)[\'"]', stripped,
+                    )
+                    if m:
+                        return m.group(1).strip().lower()
+        except OSError:
+            pass
+
+    # Cargo.toml [package] name
+    cargo = root / "Cargo.toml"
+    if cargo.is_file():
+        try:
+            text = cargo.read_text(encoding="utf-8", errors="ignore")
+            in_package = False
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("["):
+                    in_package = stripped == "[package]"
+                    continue
+                if in_package and stripped.startswith("name"):
+                    m = re.match(
+                        r'name\s*=\s*[\'"]([^\'"]+)[\'"]', stripped,
+                    )
+                    if m:
+                        return m.group(1).strip().lower()
+        except OSError:
+            pass
+
+    return None
+
+
+# Sprint S9 — known framework names. When a repo's self-name matches
+# one of these, the repo IS that framework, not an app built on it.
+# Mapping value is informational only; the boolean of "is a framework"
+# is what drives the ``framework-self`` hint emission.
+_KNOWN_FRAMEWORK_SELF_NAMES: frozenset[str] = frozenset({
+    # JS/TS frameworks + libraries that publish themselves as the named pkg
+    "next", "remix", "react", "vue", "svelte", "sveltekit",
+    "nuxt", "astro", "solid-js", "solid", "qwik",
+    "express", "fastify", "hono", "koa", "nestjs", "nest",
+    "vite", "rollup", "webpack", "esbuild", "parcel",
+    "swr", "axios", "react-router", "tanstack-router",
+    # Python frameworks
+    "fastapi", "django", "flask", "starlette", "tornado",
+    "pyramid", "bottle", "sanic", "litestar",
+    # Rust frameworks
+    "axum", "actix-web", "rocket", "warp", "tide",
+    # Go is harder (no package.json equivalent) — skip Go in this rule;
+    # Go-self-framework detection lives in shape classifier signals.
+})
+
+
+# Scoped npm packages where the SCOPE itself identifies the framework
+# (regardless of the unscoped suffix). ``@nestjs/core``,
+# ``@nestjs/common`` etc. all mean "NestJS framework". Without this,
+# scoped publishers would slip past the framework-self check.
+_KNOWN_FRAMEWORK_SELF_SCOPES: frozenset[str] = frozenset({
+    "nestjs", "remix-run", "sveltejs", "tanstack",
+    "nuxt", "astrojs", "vue", "solidjs", "qwik",
+})
+
+
 def _has_fastapi_call(ctx: "ScanContext") -> bool:
     """True when a top-level ``.py`` file instantiates ``FastAPI()``.
 
@@ -955,6 +1080,54 @@ def correct_auditor_verdict(
             "fastapi-app",
             "auditor said python-library but FastAPI() call present "
             "in a top-level .py file",
+        ), corrections
+
+    # Sprint S9 — framework-self extractor hint.
+    #
+    # FrameworkRepoClassifier (stage_0_6_shape.py) gates on the boolean
+    # ``framework-self`` being present in extractor_hints. Without it,
+    # repos that ARE the framework (fastapi/fastapi, vercel/next.js,
+    # vercel/swr, react itself) fall through to oss-library shape which
+    # uses member_flows semantics that fit applications, not frameworks.
+    #
+    # The auditor's prompt encourages it to tag the framework repos as
+    # ``python-library`` / ``ts-library`` (correct), but rarely thinks
+    # to emit the special ``framework-self`` directive in hints. We add
+    # it deterministically when the repo's own package-manifest name
+    # matches one of the recognised framework names.
+    #
+    # This is purely additive — it doesn't change primary_stack, just
+    # appends the hint when missing. No confidence penalty (we're
+    # augmenting evidence, not correcting an error).
+    self_name = _read_repo_self_name(ctx)
+    is_framework_self = bool(
+        self_name and (
+            self_name in _KNOWN_FRAMEWORK_SELF_NAMES
+            or self_name in _KNOWN_FRAMEWORK_SELF_SCOPES
+        )
+    )
+    if (
+        is_framework_self
+        and "framework-self" not in verdict.extractor_hints
+    ):
+        new_hints = (*verdict.extractor_hints, "framework-self")
+        corrections.append({
+            "original": "(no framework-self hint)",
+            "corrected": "framework-self hint added",
+            "reason": (
+                f"repo self-name `{self_name}` matches a known framework — "
+                "FrameworkRepoClassifier requires the explicit hint to fire"
+            ),
+        })
+        return AuditorVerdict(
+            primary_stack=verdict.primary_stack,
+            secondary_stacks=verdict.secondary_stacks,
+            confidence=verdict.confidence,  # no penalty — additive
+            extractor_hints=new_hints,
+            reasoning=verdict.reasoning,
+            cost_usd=verdict.cost_usd,
+            fallback_used=verdict.fallback_used,
+            corrections=tuple(corrections),
         ), corrections
 
     return verdict, corrections
