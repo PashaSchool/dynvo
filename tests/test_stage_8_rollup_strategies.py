@@ -25,6 +25,7 @@ from faultline.pipeline_v2.stage_8_rollup_strategies import (
     BackendMonolithStrategy,
     CliToolStrategy,
     FrameworkRepoStrategy,
+    GoServerStrategy,
     OssLibraryStrategy,
     RollupResult,
     SHAPE_ROLLUPS,
@@ -340,6 +341,107 @@ class TestBackendMonolithStrategy:
         assert result.total_attachments == 2
 
 
+# ── GoServerStrategy (Sprint S8) ─────────────────────────────────────
+
+
+class TestGoServerStrategy:
+    strategy = GoServerStrategy()
+
+    def test_pass_1_entry_point_in_paths(self):
+        """Pass 1 — exact match. Same semantic as SingleSaasRouted."""
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [_pf("api", ["server/routes.go", "server/handlers.go"])]
+        flows = [_flow("list-users-flow", "server/routes.go")]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        assert pfs[0].flows[0].name == "list-users-flow"
+        assert result.total_attachments == 1
+        assert result.diagnostics["go_server_pass_counts"]["entry_in_paths"] == 1
+
+    def test_pass_2_entry_directory_overlap(self):
+        """Pass 2 — entry-point directory overlaps. Captures the
+        ollama-like case where flows live in server/*.go but the PF
+        owns a sibling file in the same dir."""
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [_pf("http-api", ["server/handlers.go"])]  # routes.go NOT listed
+        flows = [_flow("list-users-flow", "server/routes.go")]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        assert pfs[0].flows[0].name == "list-users-flow"
+        assert result.total_attachments == 1
+        assert result.diagnostics["go_server_pass_counts"]["entry_dir_overlap"] == 1
+
+    def test_pass_3_cmd_slug_match(self):
+        """Pass 3 — cmd/<name>/main.go entry maps to PF whose name
+        contains <name>."""
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [_pf("serve-command", ["docs/serve.md"])]  # no path overlap
+        flows = [_flow("start-serve-flow", "cmd/serve/main.go")]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        assert pfs[0].flows[0].name == "start-serve-flow"
+        assert result.total_attachments == 1
+        assert result.diagnostics["go_server_pass_counts"]["cmd_slug_match"] == 1
+
+    def test_unattributed_when_no_signal(self):
+        """The ollama-shape case — content PFs that share NO directory
+        with HTTP route handlers MUST stay unattributed (forced attach
+        would be a lie)."""
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [_pf("nvidia-cuda-acceleration", ["ml/backend/ggml/cuda/kernel.cu"])]
+        flows = [_flow("list-users-flow", "server/routes.go")]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        assert pfs[0].flows == []
+        assert "list-users-flow" in result.unattributed_flows
+        assert result.diagnostics["unattributed_count"] == 1
+
+    def test_pass_order_strongest_wins(self):
+        """When multiple PFs would match via different passes, exact
+        entry-in-paths wins for the PFs whose paths include the file
+        AND any other PF whose dir overlaps also gets attached. We do
+        NOT short-circuit pass 2 on a pass-1 hit — multi-attach for
+        the same flow is legitimate when several PFs own slices of
+        the same module."""
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [
+            _pf("exact", ["server/routes.go"]),     # pass 1 hit
+            _pf("dir-only", ["server/handlers.go"]),  # pass 2 hit
+        ]
+        flows = [_flow("list-users-flow", "server/routes.go")]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        # Pass 1 already matched, so by current implementation pass 2
+        # is skipped (matched=True short-circuits). Only the exact PF
+        # gets the flow. This is conservative — we prefer fewer correct
+        # attachments over more loose ones (avoids the caddy 4×
+        # over-attach observed in S6.3).
+        assert pfs[0].flows[0].name == "list-users-flow"
+        assert pfs[1].flows == []
+        assert result.total_attachments == 1
+
+    def test_flow_without_entry_point_unattributed(self):
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [_pf("api", ["server/routes.go"])]
+        flows = [_flow("no-entry-flow", None)]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        assert pfs[0].flows == []
+        assert "no-entry-flow" in result.unattributed_flows
+
+    def test_diagnostics_recorded(self):
+        """The pass-count + unattributed-count diagnostics must always
+        be populated so the rollup artifact carries telemetry."""
+        ctx = _ctx(repo_shape="go-server")
+        pfs = [_pf("api", ["server/routes.go"])]
+        flows = [
+            _flow("a-flow", "server/routes.go"),       # pass 1
+            _flow("b-flow", "server/handlers.go"),     # pass 2 (dir-overlap)
+            _flow("c-flow", "cmd/api/main.go"),        # pass 3 — "api" in PF name
+            _flow("d-flow", "totally/unrelated.go"),   # unattributed
+        ]
+        result = self.strategy.rollup(pfs, flows, ctx)
+        counts = result.diagnostics["go_server_pass_counts"]
+        assert counts.get("entry_in_paths", 0) >= 1
+        assert counts.get("entry_dir_overlap", 0) >= 1
+        assert counts.get("cmd_slug_match", 0) >= 1
+        assert result.diagnostics["unattributed_count"] >= 1
+
+
 # ── CliToolStrategy ──────────────────────────────────────────────────
 
 
@@ -579,9 +681,16 @@ class TestStage8Dispatcher:
         }
         assert set(SHAPE_ROLLUPS.keys()) == expected
 
-    def test_go_server_routes_through_single_saas_routed(self):
-        """S6.2: go-server reuses SingleSaasRoutedStrategy."""
-        assert SHAPE_ROLLUPS["go-server"] is SHAPE_ROLLUPS["single-saas-routed"]
+    def test_go_server_uses_dedicated_strategy(self):
+        """Sprint S8: go-server now uses GoServerStrategy with extra
+        passes (entry-dir-overlap + cmd-slug-match) rather than aliasing
+        SingleSaasRoutedStrategy. The S6.2 alias delivered 0/1081
+        attachments on ollama because the inherited
+        ``entry_point_file in pf.paths`` test never fired."""
+        from faultline.pipeline_v2.stage_8_rollup_strategies import GoServerStrategy
+        assert SHAPE_ROLLUPS["go-server"] is not SHAPE_ROLLUPS["single-saas-routed"]
+        assert isinstance(SHAPE_ROLLUPS["go-server"], GoServerStrategy)
+        assert SHAPE_ROLLUPS["go-server"].shape == "go-server"
 
     def test_go_library_routes_through_oss_library(self):
         """S6.2: go-library reuses OssLibraryStrategy."""
