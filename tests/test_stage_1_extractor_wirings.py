@@ -145,6 +145,64 @@ def test_route_extractor_monorepo_workspace_prefix(tmp_path: Path) -> None:
     assert {"dashboard", "settings"} == names
 
 
+def test_route_extractor_fastapi_routers_directory(tmp_path: Path) -> None:
+    """Sprint S7-A: FastAPI convention puts one router per file under
+    ``backend/routers/<resource>.py`` (or ``app/routers/`` etc.). Each
+    file's STEM is the resource name and should produce one anchor.
+    Validated on Soc0/backend: 17 router files → 1 anchor before fix,
+    16 anchors after (stem-as-slug, drop ``__init__.py``).
+    """
+    files = [
+        "backend/routers/__init__.py",       # skipped
+        "backend/routers/cases.py",
+        "backend/routers/chat.py",
+        "backend/routers/compliance.py",
+        "backend/routers/findings.py",
+        "backend/routers/policy.py",
+        "backend/main.py",                   # not under routers/
+        "backend/lib/util.py",               # not under routers/
+        # Also covers ``api/routers/`` nesting variant.
+        "api/routers/preferences.py",
+    ]
+    for f in files:
+        _write(tmp_path / f, "from fastapi import APIRouter\nrouter = APIRouter()\n")
+    ctx = _ctx(
+        repo_path=tmp_path,
+        stack="fastapi",
+        tracked_files=files,
+    )
+    cands = RouteFileExtractor().extract(ctx)
+    names = {c.name for c in cands}
+    assert {"cases", "chat", "compliance", "findings", "policy",
+            "preferences"}.issubset(names)
+    # __init__.py / main.py / util.py must NOT produce anchors.
+    assert "init" not in names
+    assert "main" not in names
+    assert "util" not in names
+
+
+def test_route_extractor_fastapi_routers_django_stack(tmp_path: Path) -> None:
+    """Soc0/backend Stage 0 misclassifies the stack as ``django`` because
+    of generic Python signals. The routers/ convention still works for
+    any python stack tag — this is a no-regression test against the
+    Django code path."""
+    files = [
+        "routers/users.py",
+        "routers/orders.py",
+        "manage.py",  # django root marker, not under routers
+    ]
+    for f in files:
+        _write(tmp_path / f, "router = APIRouter()\n")
+    ctx = _ctx(
+        repo_path=tmp_path,
+        stack="django",
+        tracked_files=files,
+    )
+    cands = RouteFileExtractor().extract(ctx)
+    names = {c.name for c in cands}
+    assert {"users", "orders"} == names
+
+
 # ── mvc ────────────────────────────────────────────────────────────────────
 
 
