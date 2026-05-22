@@ -652,3 +652,127 @@ def test_correction_noop_when_signals_match(tmp_path: Path) -> None:
     corrected, corrections = correct_auditor_verdict(original, ctx)
     assert corrected is original  # untouched
     assert corrections == []
+
+
+# ─────────────── Sprint S9 — framework-self hint ─────────────────
+
+
+def test_s9_framework_self_added_for_fastapi_repo(tmp_path: Path) -> None:
+    """fastapi/fastapi repo: pyproject says ``name = "fastapi"`` →
+    framework-self hint must be appended even when the LLM forgot."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "pyproject.toml": "[project]\nname = \"fastapi\"\n",
+            "fastapi/__init__.py": "from .applications import FastAPI\n",
+        },
+        stack="python-library",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("python-library"), ctx,
+    )
+    assert "framework-self" in corrected.extractor_hints
+    # Hint addition is additive — no confidence penalty.
+    assert corrected.confidence == 0.95
+    # Correction is logged for telemetry.
+    assert any(
+        "framework-self" in c.get("corrected", "")
+        for c in corrections
+    )
+
+
+def test_s9_framework_self_added_for_next_repo(tmp_path: Path) -> None:
+    """vercel/next.js: root package.json#name == "next"."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "next",
+                "dependencies": {"react": "^19.0.0"},
+            }),
+        },
+        stack="ts-library",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("ts-library"), ctx,
+    )
+    assert "framework-self" in corrected.extractor_hints
+
+
+def test_s9_framework_self_noop_for_user_app(tmp_path: Path) -> None:
+    """An app built on top of FastAPI (name = "my-api") must NOT
+    receive the framework-self hint — that would route the whole
+    Stage 6.6 + Stage 8 pipeline through the wrong strategy."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "pyproject.toml": "[project]\nname = \"my-api\"\n",
+            "main.py": "from fastapi import FastAPI\napp = FastAPI()\n",
+        },
+        stack="fastapi-app",
+    )
+    corrected, _ = correct_auditor_verdict(
+        _verdict("fastapi-app"), ctx,
+    )
+    assert "framework-self" not in corrected.extractor_hints
+
+
+def test_s9_framework_self_noop_when_already_present(tmp_path: Path) -> None:
+    """If the auditor already emitted framework-self, the deterministic
+    layer must not double-add it."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={"pyproject.toml": "[project]\nname = \"fastapi\"\n"},
+        stack="python-library",
+    )
+    v = AuditorVerdict(
+        primary_stack="python-library",
+        secondary_stacks=(),
+        confidence=0.9,
+        extractor_hints=("framework-self",),
+        reasoning="",
+        cost_usd=0.0,
+        fallback_used=False,
+    )
+    corrected, corrections = correct_auditor_verdict(v, ctx)
+    # Exactly one framework-self in hints.
+    assert corrected.extractor_hints.count("framework-self") == 1
+    # No new correction was appended for hint addition.
+    assert not any(
+        "framework-self" in c.get("corrected", "")
+        for c in corrections
+    )
+
+
+def test_s9_framework_self_scoped_pkg_name(tmp_path: Path) -> None:
+    """Scoped npm names like ``@nestjs/core`` should match — we take
+    the suffix when normalising."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "@nestjs/core",
+                "dependencies": {},
+            }),
+        },
+        stack="ts-library",
+    )
+    corrected, _ = correct_auditor_verdict(
+        _verdict("ts-library"), ctx,
+    )
+    assert "framework-self" in corrected.extractor_hints
+
+
+def test_s9_framework_self_for_cargo_repo(tmp_path: Path) -> None:
+    """Rust framework repos: Cargo.toml [package] name = "axum"."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "Cargo.toml": "[package]\nname = \"axum\"\nversion = \"0.7.0\"\n",
+        },
+        stack="rust-library",
+    )
+    corrected, _ = correct_auditor_verdict(
+        _verdict("rust-library"), ctx,
+    )
+    assert "framework-self" in corrected.extractor_hints
