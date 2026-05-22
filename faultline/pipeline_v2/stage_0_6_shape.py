@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Sequence, runtime_checkable
@@ -117,6 +118,27 @@ class ShapeSignals:
 
     # ── Framework-self vs app ────────────────────────────────────────
     is_framework_self_repo: bool
+
+    # ── Go module detail (Extension 1) ───────────────────────────────
+    has_go_top_level_files: bool
+    has_go_cmd_with_main: bool
+    has_go_server_dir: bool
+
+    # ── Rust workspace detail (Extension 2) ──────────────────────────
+    cargo_workspace_member_count: int
+
+    # ── Non-canonical monorepo (Extension 3) ─────────────────────────
+    has_split_fullstack_frontend_backend: bool
+    has_packages_only_workspace: bool
+    packages_only_count: int
+
+    # ── Subdir-scan + framework-dep markers (Extension 4) ────────────
+    is_subdir_scan: bool
+    parent_git_root: str | None
+    package_json_has_react_dep: bool
+    package_json_has_vue_dep: bool
+    package_json_has_vite_dep: bool
+    has_src_pages_or_routes_dir: bool
 
     @classmethod
     def collect(cls, ctx: "ScanContext") -> "ShapeSignals":
@@ -237,6 +259,41 @@ class ShapeSignals:
         # explicitly flagged it.
         framework_self = "framework-self" in (ctx.extractor_hints or ())
 
+        # ── Go module detail (Extension 1) ──
+        has_go_top_level_files = (
+            (root / "go.mod").exists()
+            and _has_top_level_go_files(root)
+        )
+        has_go_cmd_with_main = _has_cmd_with_main_go(root)
+        has_go_server_dir = (
+            (root / "server").is_dir()
+            or (root / "api").is_dir()
+            or (root / "internal" / "server").is_dir()
+        )
+
+        # ── Rust workspace detail (Extension 2) ──
+        cargo_member_count = _cargo_workspace_member_count(root, cargo_text)
+
+        # ── Non-canonical monorepo detail (Extension 3) ──
+        split_fullstack = _is_split_fullstack(root)
+        packages_only_count = _count_packages_only(root)
+        has_packages_only = packages_only_count >= 2 and not (root / "apps").is_dir()
+
+        # ── Subdir-scan + framework-dep markers (Extension 4) ──
+        is_subdir = (
+            not (root / ".git").is_dir()
+            and _find_git_root_upwards(root) is not None
+        )
+        parent_git = _find_git_root_upwards(root)
+        pkg_has_react, pkg_has_vue, pkg_has_vite = _detect_framework_deps(
+            pkg_json,
+        )
+        has_src_pages_or_routes = (
+            (root / "src" / "pages").is_dir()
+            or (root / "src" / "routes").is_dir()
+            or (root / "src" / "app").is_dir()
+        )
+
         return cls(
             audited_stack=ctx.audited_stack,
             stage_0_stack=ctx.stack,
@@ -273,6 +330,19 @@ class ShapeSignals:
             workspace_has_apps_dir=has_apps_dir,
             workspace_has_packages_dir=has_packages_dir,
             is_framework_self_repo=framework_self,
+            has_go_top_level_files=has_go_top_level_files,
+            has_go_cmd_with_main=has_go_cmd_with_main,
+            has_go_server_dir=has_go_server_dir,
+            cargo_workspace_member_count=cargo_member_count,
+            has_split_fullstack_frontend_backend=split_fullstack,
+            has_packages_only_workspace=has_packages_only,
+            packages_only_count=packages_only_count,
+            is_subdir_scan=is_subdir,
+            parent_git_root=str(parent_git) if parent_git else None,
+            package_json_has_react_dep=pkg_has_react,
+            package_json_has_vue_dep=pkg_has_vue,
+            package_json_has_vite_dep=pkg_has_vite,
+            has_src_pages_or_routes_dir=has_src_pages_or_routes,
         )
 
 
@@ -325,46 +395,109 @@ class TurborepoMonorepoClassifier:
         ctx: "ScanContext",
         signals: ShapeSignals,
     ) -> ClassificationResult | None:
-        if not signals.monorepo:
-            return None
-        if not (signals.has_turbo_json or signals.has_pnpm_workspace):
-            return None
-        if signals.workspace_count < 2:
-            return None
-
-        matched: list[str] = []
-        matched.append("monorepo")
-        if signals.has_turbo_json:
-            matched.append("has_turbo_json")
-        if signals.has_pnpm_workspace:
-            matched.append("has_pnpm_workspace")
-
-        if signals.workspace_has_apps_dir and signals.workspace_has_packages_dir:
-            conf = 0.95
-            matched.extend(["workspace_has_apps_dir", "workspace_has_packages_dir"])
-            layout = "apps/+packages/ canonical Turborepo"
-        elif signals.workspace_has_apps_dir or signals.workspace_has_packages_dir:
-            conf = 0.85
-            if signals.workspace_has_apps_dir:
-                matched.append("workspace_has_apps_dir")
-            if signals.workspace_has_packages_dir:
-                matched.append("workspace_has_packages_dir")
-            layout = "apps/ XOR packages/ layout"
-        else:
-            conf = 0.70
-            layout = "flat workspaces (no apps/ or packages/)"
-
-        manager = "turbo.json" if signals.has_turbo_json else "pnpm-workspace.yaml"
-        rationale = (
-            f"Detected {signals.workspace_count} workspaces with {manager}; "
-            f"{layout}."
+        # ── Canonical Turborepo path ──
+        canonical_match = (
+            signals.monorepo
+            and (signals.has_turbo_json or signals.has_pnpm_workspace)
+            and signals.workspace_count >= 2
         )
-        return ClassificationResult(
-            shape=self.name,
-            confidence=conf,
-            rationale=rationale,
-            matched_signals=tuple(matched),
+        if canonical_match:
+            matched: list[str] = ["monorepo"]
+            if signals.has_turbo_json:
+                matched.append("has_turbo_json")
+            if signals.has_pnpm_workspace:
+                matched.append("has_pnpm_workspace")
+
+            if signals.workspace_has_apps_dir and signals.workspace_has_packages_dir:
+                conf = 0.95
+                matched.extend(
+                    ["workspace_has_apps_dir", "workspace_has_packages_dir"],
+                )
+                layout = "apps/+packages/ canonical Turborepo"
+            elif signals.workspace_has_apps_dir or signals.workspace_has_packages_dir:
+                conf = 0.85
+                if signals.workspace_has_apps_dir:
+                    matched.append("workspace_has_apps_dir")
+                if signals.workspace_has_packages_dir:
+                    matched.append("workspace_has_packages_dir")
+                layout = "apps/ XOR packages/ layout"
+            else:
+                conf = 0.70
+                layout = "flat workspaces (no apps/ or packages/)"
+
+            manager = (
+                "turbo.json" if signals.has_turbo_json else "pnpm-workspace.yaml"
+            )
+            rationale = (
+                f"Detected {signals.workspace_count} workspaces with {manager}; "
+                f"{layout}."
+            )
+            return ClassificationResult(
+                shape=self.name,
+                confidence=conf,
+                rationale=rationale,
+                matched_signals=tuple(matched),
+            )
+
+        # ── Extension 3c: Lerna/Nx monorepo (Stage 0 enumerated
+        #    workspaces but no turbo.json / pnpm-workspace.yaml). ──
+        lerna_nx_match = (
+            signals.monorepo
+            and signals.workspace_count >= 2
+            and not signals.has_turbo_json
+            and not signals.has_pnpm_workspace
+            and (
+                signals.workspace_has_apps_dir
+                or signals.workspace_has_packages_dir
+            )
         )
+        if lerna_nx_match:
+            return ClassificationResult(
+                shape=self.name,
+                confidence=0.80,
+                rationale=(
+                    f"Lerna/Nx monorepo: {signals.workspace_count} workspaces "
+                    "enumerated by Stage 0 (no turbo.json/pnpm-workspace.yaml)."
+                ),
+                matched_signals=(
+                    "monorepo",
+                    "workspace_count",
+                    "workspace_has_packages_dir"
+                    if signals.workspace_has_packages_dir
+                    else "workspace_has_apps_dir",
+                ),
+            )
+
+        # ── Extension 3a: split-fullstack (/frontend + /backend) ──
+        if signals.has_split_fullstack_frontend_backend:
+            return ClassificationResult(
+                shape=self.name,
+                confidence=0.80,
+                rationale=(
+                    "Split-fullstack monorepo: /frontend + /backend "
+                    "siblings each with their own framework manifest "
+                    "(e.g. infisical, soc0)."
+                ),
+                matched_signals=("has_split_fullstack_frontend_backend",),
+            )
+
+        # ── Extension 3b: packages-only (/packages without /apps) ──
+        if signals.has_packages_only_workspace:
+            return ClassificationResult(
+                shape=self.name,
+                confidence=0.80,
+                rationale=(
+                    f"Multi-package workspace without app entry: "
+                    f"{signals.packages_only_count} sub-packages under "
+                    f"/packages (e.g. strapi packages-only)."
+                ),
+                matched_signals=(
+                    "has_packages_only_workspace",
+                    "packages_only_count",
+                ),
+            )
+
+        return None
 
 
 class OssLibraryClassifier:
@@ -438,6 +571,132 @@ class OssLibraryClassifier:
             shape=self.name,
             confidence=conf,
             rationale=rationale,
+            matched_signals=tuple(matched),
+        )
+
+
+class GoServerClassifier:
+    """Go module with cmd/ binary — server / CLI app (e.g. ollama, caddy server).
+
+    More specific than :class:`GoLibraryClassifier`; runs first. Wins on
+    repos that have both library AND server shape (caddy is the canonical
+    example) — when run as a server, server rollup applies.
+    """
+
+    name: str = "go-server"
+    priority: int = 15
+
+    def classify(
+        self,
+        ctx: "ScanContext",
+        signals: ShapeSignals,
+    ) -> ClassificationResult | None:
+        if signals.monorepo:
+            return None
+        if not signals.has_go_mod:
+            return None
+        if not signals.has_go_cmd_with_main:
+            return None
+
+        matched = ["has_go_mod", "has_go_cmd_with_main"]
+        details: list[str] = ["cmd/<name>/main.go present"]
+        if signals.has_go_server_dir:
+            matched.append("has_go_server_dir")
+            details.append("server/api/internal/server dir present")
+
+        return ClassificationResult(
+            shape=self.name,
+            confidence=0.90,
+            rationale=(
+                "Go module with cmd/ binary — server/CLI app "
+                f"({'; '.join(details)})."
+            ),
+            matched_signals=tuple(matched),
+        )
+
+
+class GoLibraryClassifier:
+    """Go module without cmd/ — library shape (e.g. chi, caddy lib portion).
+
+    Signals: ``go.mod`` exists, no ``cmd/`` with main, and at least one
+    top-level ``*.go`` file (library entry-point convention like
+    ``chi.go`` / ``mux.go``).
+    """
+
+    name: str = "go-library"
+    priority: int = 18
+
+    def classify(
+        self,
+        ctx: "ScanContext",
+        signals: ShapeSignals,
+    ) -> ClassificationResult | None:
+        if signals.monorepo:
+            return None
+        if not signals.has_go_mod:
+            return None
+        if signals.has_go_cmd_with_main:
+            # GoServer wins instead.
+            return None
+        if not signals.has_go_top_level_files:
+            return None
+
+        return ClassificationResult(
+            shape=self.name,
+            confidence=0.90,
+            rationale=(
+                "Go module without cmd/ — library shape "
+                "(top-level *.go entry-point files present, "
+                "e.g. chi, caddyserver/caddy lib portion)."
+            ),
+            matched_signals=(
+                "has_go_mod",
+                "has_go_top_level_files",
+            ),
+        )
+
+
+class RustWorkspaceClassifier:
+    """Cargo workspace with multiple member crates (e.g. meilisearch).
+
+    Uses ``tomllib`` to parse ``Cargo.toml`` and count resolved member
+    crate directories. Rust workspaces are usage-pattern shaped, not
+    route-shaped — rollup uses ``OssLibraryStrategy`` (Sonnet
+    ``member_flows``).
+    """
+
+    name: str = "rust-workspace"
+    priority: int = 19
+
+    def classify(
+        self,
+        ctx: "ScanContext",
+        signals: ShapeSignals,
+    ) -> ClassificationResult | None:
+        if not signals.has_cargo_workspace:
+            return None
+        if signals.cargo_workspace_member_count < 2:
+            return None
+
+        boost = "rust-workspace" in (signals.extractor_hints or ())
+        if signals.cargo_workspace_member_count >= 3:
+            conf = 0.95
+        else:
+            conf = 0.85
+        if boost and conf < 0.95:
+            conf = min(0.95, conf + 0.05)
+
+        matched = ["has_cargo_workspace", "cargo_workspace_member_count"]
+        if boost:
+            matched.append("extractor_hint:rust-workspace")
+
+        return ClassificationResult(
+            shape=self.name,
+            confidence=conf,
+            rationale=(
+                f"Cargo workspace with {signals.cargo_workspace_member_count} "
+                "member crates (e.g. meilisearch)."
+            ),
             matched_signals=tuple(matched),
         )
 
@@ -649,6 +908,100 @@ class SingleSaasRoutedClassifier:
                 ),
                 matched_signals=("has_fastapi_app_factory",),
             )
+
+        # ── Extension 4: SPA framework subdir (Vite/React/Vue) ──
+        # A subdir scan of a known SPA framework (Vite + React/Vue with
+        # routing folders) classifies as single-saas-routed. Confidence
+        # capped at 0.70 because the boundary is implicit. Also fires
+        # for full-repo Vite/React SPAs that lack the App Router
+        # convention (e.g. Soc0/frontend scanned as standalone).
+        spa_match = (
+            signals.has_package_json
+            and (
+                signals.package_json_has_react_dep
+                or signals.package_json_has_vue_dep
+            )
+            and signals.package_json_has_vite_dep
+            and signals.has_src_pages_or_routes_dir
+        )
+        if spa_match:
+            framework = (
+                "React" if signals.package_json_has_react_dep else "Vue"
+            )
+            subdir_note = (
+                " (subdir scan)" if signals.is_subdir_scan else ""
+            )
+            matched = [
+                "has_package_json",
+                (
+                    "package_json_has_react_dep"
+                    if signals.package_json_has_react_dep
+                    else "package_json_has_vue_dep"
+                ),
+                "package_json_has_vite_dep",
+                "has_src_pages_or_routes_dir",
+            ]
+            return ClassificationResult(
+                shape=self.name,
+                confidence=0.70,
+                rationale=(
+                    f"Single-package routed app (Vite + {framework} SPA"
+                    f"{subdir_note}); flow → PF via "
+                    "entry-point-in-paths attribution."
+                ),
+                matched_signals=tuple(matched),
+            )
+
+        # Subdir scan of any framework — lower-confidence permissive
+        # fallback: any SPA with src/pages or src/routes folders and
+        # a package.json with a framework dep, even without Vite.
+        spa_loose_match = (
+            signals.is_subdir_scan
+            and signals.has_package_json
+            and (
+                signals.package_json_has_react_dep
+                or signals.package_json_has_vue_dep
+            )
+            and signals.has_src_pages_or_routes_dir
+        )
+        if spa_loose_match:
+            framework = (
+                "React" if signals.package_json_has_react_dep else "Vue"
+            )
+            return ClassificationResult(
+                shape=self.name,
+                confidence=0.65,
+                rationale=(
+                    f"Subdir scan: {framework} SPA with src/pages or "
+                    "src/routes; flow → PF via entry-point-in-paths."
+                ),
+                matched_signals=(
+                    "is_subdir_scan",
+                    "has_package_json",
+                    "has_src_pages_or_routes_dir",
+                ),
+            )
+
+        # FastAPI app at a subdir scan of a parent git repo (e.g.
+        # Soc0/backend). Same condition as canonical FastAPI but
+        # without requiring a parent ``[project]`` section.
+        if (
+            signals.is_subdir_scan
+            and signals.has_fastapi_app_factory
+        ):
+            return ClassificationResult(
+                shape=self.name,
+                confidence=0.70,
+                rationale=(
+                    "Subdir scan: FastAPI app at subdir of parent git "
+                    "repo; flow → PF via entry-point-in-paths."
+                ),
+                matched_signals=(
+                    "is_subdir_scan",
+                    "has_fastapi_app_factory",
+                ),
+            )
+
         return None
 
 
@@ -677,6 +1030,9 @@ class UniversalResidualClassifier:
 
 _DEFAULT_CLASSIFIERS: tuple[ShapeClassifier, ...] = (
     TurborepoMonorepoClassifier(),
+    GoServerClassifier(),
+    GoLibraryClassifier(),
+    RustWorkspaceClassifier(),
     OssLibraryClassifier(),
     BackendMonolithClassifier(),
     CliToolClassifier(),
@@ -871,6 +1227,197 @@ def _maybe_write_artifact(
         logger.warning("stage_0_6_shape: failed to write artifact: %s", exc)
 
 
+def _has_top_level_go_files(root: Path) -> bool:
+    """True when any ``*.go`` file (not test) lives at the repo root.
+
+    Library Go modules conventionally expose their public API via
+    top-level files (``chi.go``, ``mux.go``). Bin-only repos keep
+    their Go under ``cmd/`` or ``internal/``.
+    """
+    try:
+        for entry in root.iterdir():
+            if not entry.is_file():
+                continue
+            n = entry.name
+            if n.endswith(".go") and not n.endswith("_test.go"):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _has_cmd_with_main_go(root: Path) -> bool:
+    """True when ``cmd/<name>/main.go`` exists for any ``<name>``."""
+    cmd = root / "cmd"
+    if not cmd.is_dir():
+        return False
+    try:
+        for entry in cmd.iterdir():
+            if not entry.is_dir():
+                continue
+            if (entry / "main.go").exists():
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _cargo_workspace_member_count(root: Path, cargo_text: str | None) -> int:
+    """Count actual member crate dirs resolved from ``[workspace].members``.
+
+    Uses ``tomllib`` (NOT regex) to parse ``Cargo.toml``. Returns 0
+    when no workspace section or no resolvable members. Glob patterns
+    in members (e.g. ``"crates/*"``) are expanded against the filesystem.
+    """
+    if cargo_text is None or "[workspace]" not in cargo_text:
+        return 0
+    try:
+        data = tomllib.loads(cargo_text)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return 0
+    ws = data.get("workspace") or {}
+    members = ws.get("members") or []
+    if not isinstance(members, list):
+        return 0
+
+    count = 0
+    seen: set[str] = set()
+    for entry in members:
+        if not isinstance(entry, str):
+            continue
+        # Glob patterns: ``crates/*``
+        if "*" in entry or "?" in entry:
+            try:
+                for p in root.glob(entry):
+                    if p.is_dir() and (p / "Cargo.toml").exists():
+                        rel = str(p.relative_to(root))
+                        if rel not in seen:
+                            seen.add(rel)
+                            count += 1
+            except (OSError, ValueError):
+                continue
+        else:
+            p = root / entry
+            if p.is_dir() and (p / "Cargo.toml").exists():
+                if entry not in seen:
+                    seen.add(entry)
+                    count += 1
+    return count
+
+
+def _is_split_fullstack(root: Path) -> bool:
+    """True when /frontend + /backend siblings each have a framework manifest.
+
+    "Framework manifest" = ``package.json`` OR ``pyproject.toml`` OR
+    ``go.mod`` OR ``Cargo.toml``. Conservative: both sides must have one
+    so we don't fire on a repo that incidentally has a /frontend folder.
+    """
+    fe = root / "frontend"
+    be = root / "backend"
+    if not (fe.is_dir() and be.is_dir()):
+        return False
+    return _has_framework_manifest(fe) and _has_framework_manifest(be)
+
+
+def _has_framework_manifest(p: Path) -> bool:
+    return any(
+        (p / m).exists()
+        for m in (
+            "package.json",
+            "pyproject.toml",
+            "go.mod",
+            "Cargo.toml",
+            "Gemfile",
+            "composer.json",
+        )
+    )
+
+
+def _count_packages_only(root: Path) -> int:
+    """Count direct sub-packages under ``/packages`` that have a ``package.json``.
+
+    Returns 0 when ``/packages`` doesn't exist.
+    """
+    pkgs = root / "packages"
+    if not pkgs.is_dir():
+        return 0
+    count = 0
+    try:
+        for entry in pkgs.iterdir():
+            if entry.is_dir() and (entry / "package.json").exists():
+                count += 1
+    except OSError:
+        return 0
+    return count
+
+
+def _find_git_root_upwards(start: Path) -> Path | None:
+    """Walk parents of ``start`` looking for a ``.git`` directory.
+
+    Returns the first parent containing ``.git``, or ``None`` when not
+    found before reaching the filesystem root. Used to detect "scanning
+    a subdir of a git repo" (e.g. ``Soc0/frontend``).
+    """
+    try:
+        current = start.resolve()
+    except (OSError, RuntimeError):
+        return None
+    for parent in [current, *current.parents]:
+        if parent == current:
+            # Start is the candidate; if it has .git itself, NOT a subdir.
+            if (parent / ".git").is_dir():
+                return None
+            continue
+        if (parent / ".git").is_dir():
+            return parent
+    return None
+
+
+_REACT_DEP_KEYS: frozenset[str] = frozenset({
+    "react",
+    "react-dom",
+    "next",
+    "@remix-run/react",
+    "@tanstack/react-router",
+    "react-router",
+    "react-router-dom",
+})
+
+_VUE_DEP_KEYS: frozenset[str] = frozenset({
+    "vue",
+    "nuxt",
+    "@vue/runtime-core",
+})
+
+_VITE_DEP_KEYS: frozenset[str] = frozenset({
+    "vite",
+    "@vitejs/plugin-react",
+    "@vitejs/plugin-react-swc",
+    "@vitejs/plugin-vue",
+})
+
+
+def _detect_framework_deps(
+    pkg_json: dict[str, Any] | None,
+) -> tuple[bool, bool, bool]:
+    """Return ``(has_react, has_vue, has_vite)`` flags from package.json deps.
+
+    Reads ``dependencies`` and ``devDependencies``. Safe on missing /
+    malformed manifests.
+    """
+    if pkg_json is None:
+        return (False, False, False)
+    all_keys: set[str] = set()
+    for field_name in ("dependencies", "devDependencies", "peerDependencies"):
+        section = pkg_json.get(field_name)
+        if isinstance(section, dict):
+            all_keys.update(k for k in section.keys() if isinstance(k, str))
+    has_react = bool(all_keys & _REACT_DEP_KEYS)
+    has_vue = bool(all_keys & _VUE_DEP_KEYS)
+    has_vite = bool(all_keys & _VITE_DEP_KEYS)
+    return (has_react, has_vue, has_vite)
+
+
 __all__ = [
     "MIN_CONFIDENCE",
     "FALLBACK_CONFIDENCE",
@@ -884,5 +1431,8 @@ __all__ = [
     "FrameworkRepoClassifier",
     "SingleSaasRoutedClassifier",
     "UniversalResidualClassifier",
+    "GoServerClassifier",
+    "GoLibraryClassifier",
+    "RustWorkspaceClassifier",
     "classify_repo_shape",
 ]

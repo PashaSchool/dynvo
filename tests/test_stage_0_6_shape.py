@@ -25,7 +25,10 @@ from faultline.pipeline_v2.stage_0_6_shape import (
     ClassificationResult,
     CliToolClassifier,
     FrameworkRepoClassifier,
+    GoLibraryClassifier,
+    GoServerClassifier,
     OssLibraryClassifier,
+    RustWorkspaceClassifier,
     ShapeSignals,
     SingleSaasRoutedClassifier,
     TurborepoMonorepoClassifier,
@@ -75,6 +78,20 @@ def _make_signals(**overrides) -> ShapeSignals:
         workspace_has_apps_dir=False,
         workspace_has_packages_dir=False,
         is_framework_self_repo=False,
+        # Sprint S6.2 — Extension 1/2/3/4 fields.
+        has_go_top_level_files=False,
+        has_go_cmd_with_main=False,
+        has_go_server_dir=False,
+        cargo_workspace_member_count=0,
+        has_split_fullstack_frontend_backend=False,
+        has_packages_only_workspace=False,
+        packages_only_count=0,
+        is_subdir_scan=False,
+        parent_git_root=None,
+        package_json_has_react_dep=False,
+        package_json_has_vue_dep=False,
+        package_json_has_vite_dep=False,
+        has_src_pages_or_routes_dir=False,
     )
     defaults.update(overrides)
     return ShapeSignals(**defaults)
@@ -433,6 +450,300 @@ class TestUniversalResidualClassifier:
         assert "threshold" in r.rationale.lower()
 
 
+# ── GoServerClassifier (Sprint S6.2 Ext 1) ───────────────────────────
+
+
+class TestGoServerClassifier:
+    clf = GoServerClassifier()
+
+    def test_canonical_go_server_with_cmd_main(self):
+        """ollama-shape: go.mod + cmd/<name>/main.go + server/ dir."""
+        sig = _make_signals(
+            has_go_mod=True,
+            has_go_cmd_with_main=True,
+            has_go_server_dir=True,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "go-server"
+        assert r.confidence == 0.90
+        assert "server/api/internal/server" in r.rationale
+
+    def test_go_cmd_only_no_server_dir(self):
+        """A Go cmd binary without server/ dir still classifies."""
+        sig = _make_signals(
+            has_go_mod=True,
+            has_go_cmd_with_main=True,
+            has_go_server_dir=False,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "go-server"
+        assert "cmd/<name>/main.go present" in r.rationale
+
+    def test_go_library_without_cmd_does_not_fire(self):
+        """chi-shape: go.mod + top-level go files, no cmd — GoLibrary wins."""
+        sig = _make_signals(
+            has_go_mod=True,
+            has_go_top_level_files=True,
+            has_go_cmd_with_main=False,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+    def test_no_go_mod_does_not_fire(self):
+        sig = _make_signals(has_go_mod=False, has_go_cmd_with_main=True)
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+    def test_monorepo_does_not_fire(self):
+        sig = _make_signals(
+            monorepo=True,
+            has_go_mod=True,
+            has_go_cmd_with_main=True,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+
+# ── GoLibraryClassifier (Sprint S6.2 Ext 1) ──────────────────────────
+
+
+class TestGoLibraryClassifier:
+    clf = GoLibraryClassifier()
+
+    def test_canonical_go_library_chi_shape(self):
+        """chi-shape: go.mod + top-level go files, no cmd/ dir."""
+        sig = _make_signals(
+            has_go_mod=True,
+            has_go_top_level_files=True,
+            has_go_cmd_with_main=False,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "go-library"
+        assert r.confidence == 0.90
+        assert "library shape" in r.rationale
+
+    def test_go_with_cmd_does_not_fire(self):
+        """A Go module with cmd/ classifies as go-server, not go-library."""
+        sig = _make_signals(
+            has_go_mod=True,
+            has_go_top_level_files=True,
+            has_go_cmd_with_main=True,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+    def test_go_without_top_level_files_does_not_fire(self):
+        """An "internal-only" Go module without top-level entries doesn't fire."""
+        sig = _make_signals(
+            has_go_mod=True,
+            has_go_top_level_files=False,
+            has_go_cmd_with_main=False,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+    def test_no_go_mod_does_not_fire(self):
+        sig = _make_signals(has_go_top_level_files=True)
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+    def test_monorepo_does_not_fire(self):
+        sig = _make_signals(
+            monorepo=True,
+            has_go_mod=True,
+            has_go_top_level_files=True,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+
+# ── RustWorkspaceClassifier (Sprint S6.2 Ext 2) ──────────────────────
+
+
+class TestRustWorkspaceClassifier:
+    clf = RustWorkspaceClassifier()
+
+    def test_canonical_meilisearch_shape_conf_095(self):
+        """meilisearch-shape: Cargo workspace with ≥3 member crates."""
+        sig = _make_signals(
+            has_cargo_toml=True,
+            has_cargo_workspace=True,
+            cargo_workspace_member_count=17,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "rust-workspace"
+        assert r.confidence == 0.95
+        assert "17 member crates" in r.rationale
+
+    def test_two_member_workspace_conf_085(self):
+        """A 2-crate workspace is still a workspace, but lower confidence."""
+        sig = _make_signals(
+            has_cargo_toml=True,
+            has_cargo_workspace=True,
+            cargo_workspace_member_count=2,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.confidence == 0.85
+
+    def test_extractor_hint_boost_to_090(self):
+        """rust-workspace hint from auditor boosts 0.85 → 0.90."""
+        sig = _make_signals(
+            has_cargo_toml=True,
+            has_cargo_workspace=True,
+            cargo_workspace_member_count=2,
+            extractor_hints=("rust-workspace",),
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.confidence == 0.90
+
+    def test_single_crate_does_not_fire(self):
+        sig = _make_signals(
+            has_cargo_toml=True,
+            has_cargo_workspace=False,
+            cargo_is_single_crate=True,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+    def test_one_member_does_not_fire(self):
+        """A workspace declared but with <2 resolved members doesn't fire."""
+        sig = _make_signals(
+            has_cargo_toml=True,
+            has_cargo_workspace=True,
+            cargo_workspace_member_count=1,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+
+# ── Extension 3: TurborepoMonorepoClassifier non-canonical variants ──
+
+
+class TestTurborepoMonorepoNonCanonical:
+    clf = TurborepoMonorepoClassifier()
+
+    def test_split_fullstack_frontend_backend_conf_080(self):
+        """infisical/soc0-shape: /frontend + /backend, NOT canonical monorepo."""
+        sig = _make_signals(
+            monorepo=False,
+            has_split_fullstack_frontend_backend=True,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "turborepo-monorepo"
+        assert r.confidence == 0.80
+        assert "Split-fullstack" in r.rationale
+
+    def test_packages_only_workspace_conf_080(self):
+        """strapi-shape: /packages without /apps, multi-package."""
+        sig = _make_signals(
+            monorepo=False,
+            has_packages_only_workspace=True,
+            packages_only_count=7,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "turborepo-monorepo"
+        assert r.confidence == 0.80
+        assert "7 sub-packages" in r.rationale
+
+    def test_canonical_still_wins_over_extension_3(self):
+        """When both signatures match, canonical (0.95) wins."""
+        sig = _make_signals(
+            monorepo=True,
+            has_turbo_json=True,
+            workspace_count=4,
+            workspace_has_apps_dir=True,
+            workspace_has_packages_dir=True,
+            has_split_fullstack_frontend_backend=True,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.confidence == 0.95
+
+    def test_neither_canonical_nor_extension_3_does_not_fire(self):
+        sig = _make_signals(
+            monorepo=False,
+            has_split_fullstack_frontend_backend=False,
+            has_packages_only_workspace=False,
+        )
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+    def test_lerna_nx_monorepo_classifies_at_080(self):
+        """strapi-shape: monorepo enumerated by Stage 0 via lerna/nx,
+        no turbo.json / pnpm-workspace.yaml.
+        """
+        sig = _make_signals(
+            monorepo=True,
+            workspace_count=17,
+            workspace_has_packages_dir=True,
+            has_turbo_json=False,
+            has_pnpm_workspace=False,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "turborepo-monorepo"
+        assert r.confidence == 0.80
+        assert "Lerna/Nx" in r.rationale
+
+
+# ── Extension 4: SingleSaasRoutedClassifier subdir + SPA variants ────
+
+
+class TestSingleSaasRoutedExtension4:
+    clf = SingleSaasRoutedClassifier()
+
+    def test_vite_react_spa_subdir_classifies_conf_070(self):
+        """Soc0/frontend-shape: Vite + React SPA with src/."""
+        sig = _make_signals(
+            has_package_json=True,
+            package_json_has_react_dep=True,
+            package_json_has_vite_dep=True,
+            has_src_pages_or_routes_dir=True,
+            is_subdir_scan=True,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.shape == "single-saas-routed"
+        assert r.confidence == 0.70
+        assert "React SPA" in r.rationale
+        assert "subdir scan" in r.rationale
+
+    def test_vite_vue_spa_standalone_repo(self):
+        """Vite + Vue SPA at repo root (not subdir) — still classifies."""
+        sig = _make_signals(
+            has_package_json=True,
+            package_json_has_vue_dep=True,
+            package_json_has_vite_dep=True,
+            has_src_pages_or_routes_dir=True,
+            is_subdir_scan=False,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and "Vue SPA" in r.rationale
+
+    def test_fastapi_subdir_scan_classifies(self):
+        """Soc0/backend-shape: FastAPI at subdir of parent git repo."""
+        sig = _make_signals(
+            is_subdir_scan=True,
+            has_fastapi_app_factory=True,
+            # NOTE: pyproject_has_project_section may be True here
+            # since Soc0/backend has a pyproject — Ext 4 fires anyway.
+            pyproject_has_project_section=True,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.confidence == 0.70
+        assert "Subdir scan" in r.rationale and "FastAPI" in r.rationale
+
+    def test_react_subdir_without_vite_loose_match(self):
+        """React subdir scan without Vite — loose match at 0.65."""
+        sig = _make_signals(
+            is_subdir_scan=True,
+            has_package_json=True,
+            package_json_has_react_dep=True,
+            package_json_has_vite_dep=False,
+            has_src_pages_or_routes_dir=True,
+        )
+        r = self.clf.classify(_make_ctx(), sig)
+        assert r is not None and r.confidence == 0.65
+
+    def test_vite_without_routing_folder_does_not_fire(self):
+        """A Vite + React package.json without src/pages or src/routes doesn't fire."""
+        sig = _make_signals(
+            has_package_json=True,
+            package_json_has_react_dep=True,
+            package_json_has_vite_dep=True,
+            has_src_pages_or_routes_dir=False,
+        )
+        # Falls through to None (Ext 4 SPA path needs routing dir).
+        assert self.clf.classify(_make_ctx(), sig) is None
+
+
 # ── Dispatcher ───────────────────────────────────────────────────────
 
 
@@ -589,6 +900,160 @@ class TestShapeSignalsCollect:
         sig = ShapeSignals.collect(ctx)
         assert sig.has_gemfile is True
         assert sig.has_rails_app_dir is True
+
+    def test_go_library_signals_chi_shape(self, make_tmp_repo):
+        """chi-like: go.mod + top-level chi.go, no cmd/."""
+        repo = make_tmp_repo({
+            "go.mod": "module github.com/example/chi\n\ngo 1.21\n",
+            "chi.go": "package chi\n",
+            "mux.go": "package chi\n",
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack="go", monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.has_go_mod is True
+        assert sig.has_go_top_level_files is True
+        assert sig.has_go_cmd_with_main is False
+
+    def test_go_server_signals_ollama_shape(self, make_tmp_repo):
+        """ollama-like: go.mod + cmd/<name>/main.go + server/ dir."""
+        repo = make_tmp_repo({
+            "go.mod": "module github.com/example/ollama\n\ngo 1.21\n",
+            "cmd/serve/main.go": "package main\nfunc main(){}\n",
+            "server/server.go": "package server\n",
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack="go", monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.has_go_mod is True
+        assert sig.has_go_cmd_with_main is True
+        assert sig.has_go_server_dir is True
+
+    def test_rust_workspace_signals_meilisearch_shape(self, make_tmp_repo):
+        """meilisearch-like: Cargo workspace with members glob."""
+        repo = make_tmp_repo({
+            "Cargo.toml": (
+                "[workspace]\nresolver = \"2\"\n"
+                "members = [\"crates/a\", \"crates/b\", \"crates/c\"]\n"
+            ),
+            "crates/a/Cargo.toml": "[package]\nname=\"a\"\n",
+            "crates/b/Cargo.toml": "[package]\nname=\"b\"\n",
+            "crates/c/Cargo.toml": "[package]\nname=\"c\"\n",
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack="rust", monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.has_cargo_workspace is True
+        assert sig.cargo_workspace_member_count == 3
+
+    def test_rust_workspace_signals_glob_pattern(self, make_tmp_repo):
+        """Glob members like ``crates/*`` resolve via filesystem."""
+        repo = make_tmp_repo({
+            "Cargo.toml": (
+                "[workspace]\nmembers = [\"crates/*\"]\n"
+            ),
+            "crates/x/Cargo.toml": "[package]\nname=\"x\"\n",
+            "crates/y/Cargo.toml": "[package]\nname=\"y\"\n",
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack="rust", monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.cargo_workspace_member_count == 2
+
+    def test_split_fullstack_signals_infisical_shape(self, make_tmp_repo):
+        """infisical-like: /frontend + /backend siblings with manifests."""
+        repo = make_tmp_repo({
+            "frontend/package.json": '{"name":"fe"}',
+            "backend/package.json": '{"name":"be"}',
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.has_split_fullstack_frontend_backend is True
+
+    def test_packages_only_signals_strapi_shape(self, make_tmp_repo):
+        """strapi-like: /packages with N sub-packages, NO /apps."""
+        repo = make_tmp_repo({
+            "package.json": '{"name":"strapi-root"}',
+            "packages/core/package.json": '{"name":"core"}',
+            "packages/cli/package.json": '{"name":"cli"}',
+            "packages/utils/package.json": '{"name":"utils"}',
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.has_packages_only_workspace is True
+        assert sig.packages_only_count == 3
+
+    def test_packages_only_does_not_fire_when_apps_present(self, make_tmp_repo):
+        """When /apps coexists with /packages, packages-only signature is OFF."""
+        repo = make_tmp_repo({
+            "packages/a/package.json": "{}",
+            "packages/b/package.json": "{}",
+            "apps/web/package.json": "{}",
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.has_packages_only_workspace is False
+
+    def test_subdir_scan_detection(self, tmp_path):
+        """Scanning a subdir of a git repo sets is_subdir_scan + parent_git_root."""
+        # Build a parent dir with .git, and a subdir with package.json.
+        (tmp_path / ".git").mkdir()
+        sub = tmp_path / "frontend"
+        sub.mkdir()
+        (sub / "package.json").write_text('{"name":"fe"}')
+        ctx = ScanContext(
+            repo_path=sub, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.is_subdir_scan is True
+        assert sig.parent_git_root is not None
+
+    def test_subdir_scan_false_for_repo_root(self, tmp_path):
+        """A repo root with its own .git is NOT a subdir scan."""
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "package.json").write_text("{}")
+        ctx = ScanContext(
+            repo_path=tmp_path, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.is_subdir_scan is False
+
+    def test_framework_dep_detection(self, make_tmp_repo):
+        """package.json with react+vite deps reports both flags."""
+        repo = make_tmp_repo({
+            "package.json": json.dumps({
+                "name": "x",
+                "dependencies": {"react": "18", "react-dom": "18"},
+                "devDependencies": {"vite": "5", "@vitejs/plugin-react": "4"},
+            }),
+        })
+        ctx = ScanContext(
+            repo_path=repo, stack=None, monorepo=False,
+            workspaces=None, tracked_files=[], commits=[],
+        )
+        sig = ShapeSignals.collect(ctx)
+        assert sig.package_json_has_react_dep is True
+        assert sig.package_json_has_vite_dep is True
+        assert sig.package_json_has_vue_dep is False
 
     def test_no_md_files_are_read_during_collection(self, make_tmp_repo, monkeypatch):
         """Hard rule from CLAUDE.md: README parsing is forbidden."""

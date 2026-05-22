@@ -659,14 +659,27 @@ class UniversalResidualStrategy:
 # ── Registry — single source of truth ──────────────────────────────────
 
 
+# Shared instances reused for Go/Rust shape aliases.
+_SINGLE_SAAS_ROUTED_STRATEGY = SingleSaasRoutedStrategy()
+_OSS_LIBRARY_STRATEGY = OssLibraryStrategy()
+
+
 SHAPE_ROLLUPS: dict[str, FlowRollupStrategy] = {
     "turborepo-monorepo": TurborepoMonorepoStrategy(),
-    "single-saas-routed": SingleSaasRoutedStrategy(),
-    "oss-library": OssLibraryStrategy(),
+    "single-saas-routed": _SINGLE_SAAS_ROUTED_STRATEGY,
+    "oss-library": _OSS_LIBRARY_STRATEGY,
     "backend-monolith": BackendMonolithStrategy(),
     "cli-tool": CliToolStrategy(),
     "framework-repo": FrameworkRepoStrategy(),
     "universal-residual": UniversalResidualStrategy(),
+    # Sprint S6.2 — Go / Rust shape aliases.
+    # ``go-server``: route handlers via ``entry_point_file in PF.paths``
+    #   works for Go too (Gin/chi/Echo register handlers by file path).
+    # ``go-library`` and ``rust-workspace``: usage-pattern shaped, not
+    #   route-shaped — defer to Sonnet ``member_flows`` semantics.
+    "go-server": _SINGLE_SAAS_ROUTED_STRATEGY,
+    "go-library": _OSS_LIBRARY_STRATEGY,
+    "rust-workspace": _OSS_LIBRARY_STRATEGY,
 }
 
 
