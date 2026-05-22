@@ -78,6 +78,7 @@ from faultline.pipeline_v2.stack_auditor import (
     MIN_CONFIDENCE_TO_APPLY,
     run_stack_auditor,
 )
+from faultline.pipeline_v2.stage_0_6_shape import classify_repo_shape
 from faultline.pipeline_v2.stage_0_intake import stage_0_intake
 from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
 from faultline.pipeline_v2.stage_1_per_workspace import (
@@ -377,6 +378,21 @@ def run_pipeline_v2(
                 "corrections": list(verdict.corrections),
             },
             run_dir=run_dir,
+        )
+
+    # ── Stage 0.6 — shape classifier (deterministic, NO LLM) ──────
+    # Decides which Stage 8 flow-rollup STRATEGY applies (turborepo /
+    # oss-library / backend-monolith / single-saas-routed / cli-tool /
+    # framework-repo / universal-residual). Pure function over Stage 0 +
+    # 0.5 + structural manifest reads. Writes 06-stage-shape.json
+    # artifact directly to run_dir.
+    shape_result = classify_repo_shape(ctx)
+    ctx = ctx.with_shape(shape_result)
+    with StageLogger(run_dir, 6, "shape") as log_shape:
+        log_shape.info(
+            f"shape={shape_result.shape} "
+            f"confidence={shape_result.confidence:.2f} "
+            f"matched_signals={list(shape_result.matched_signals)}",
         )
 
     # ── Stage 1 — extractors ────────────────────────────────────────
@@ -1183,6 +1199,17 @@ def run_pipeline_v2(
         # Haiku mapping. ``haiku_call_cost_usd`` is included in the
         # top-level ``cost_usd`` total via the shared CostTracker.
         "stage_8": dict(stage_8_telemetry),
+        # Sprint S6.1 — Stage 0.6 deterministic shape classifier.
+        # Used by the Stage 8 flow-rollup dispatcher to pick the per-
+        # shape attribution strategy. Universal-residual is the safe
+        # fallback when no shape clears MIN_CONFIDENCE.
+        "stage_06": {
+            "shape": shape_result.shape,
+            "shape_confidence": shape_result.confidence,
+            "shape_rationale": shape_result.rationale,
+            "matched_signals": list(shape_result.matched_signals),
+            "fallback_used": shape_result.shape == "universal-residual",
+        },
     }
 
     # ── Stage 7 — output ───────────────────────────────────────────

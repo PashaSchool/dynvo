@@ -29,6 +29,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from faultline.pipeline_v2.stage_0_6_shape import ClassificationResult
 
 from faultline.analyzer.git import get_commits, get_tracked_files, load_repo
 from faultline.analyzer.workspace import (
@@ -109,6 +113,43 @@ class ScanContext:
     secondary_stacks: tuple[str, ...] = ()
     extractor_hints: tuple[str, ...] = ()
     auditor_confidence: float | None = None
+    # Sprint S6.1 — Stage 0.6 shape classifier additions. ``repo_shape``
+    # is a deterministic architecture tag (e.g. ``turborepo-monorepo``,
+    # ``oss-library``, ``backend-monolith``, ``single-saas-routed``,
+    # ``cli-tool``, ``framework-repo``, ``universal-residual``).
+    # Populated by ``stage_0_6_shape.classify_repo_shape``; ``None``
+    # until Stage 0.6 runs. Stage 8's flow-rollup dispatcher uses this
+    # to pick the correct rollup strategy.
+    repo_shape: str | None = None
+    shape_confidence: float = 0.0
+    shape_rationale: str = ""
+
+    def with_shape(self, result: "ClassificationResult") -> "ScanContext":
+        """Return a NEW ScanContext with the shape-classification fields populated.
+
+        Mirrors the ``with_audited_stack`` pattern — pure copy, no mutation
+        of the source instance. Imported lazily to avoid a circular
+        import (the classifier module imports ScanContext).
+        """
+        return ScanContext(
+            repo_path=self.repo_path,
+            stack=self.stack,
+            monorepo=self.monorepo,
+            workspaces=list(self.workspaces) if self.workspaces else self.workspaces,
+            tracked_files=self.tracked_files,
+            commits=self.commits,
+            stack_signals=list(self.stack_signals),
+            workspace_manager=self.workspace_manager,
+            run_id=self.run_id,
+            run_dir=self.run_dir,
+            audited_stack=self.audited_stack,
+            secondary_stacks=self.secondary_stacks,
+            extractor_hints=self.extractor_hints,
+            auditor_confidence=self.auditor_confidence,
+            repo_shape=result.shape,
+            shape_confidence=result.confidence,
+            shape_rationale=result.rationale,
+        )
 
     def with_audited_stack(
         self,
@@ -140,6 +181,9 @@ class ScanContext:
             secondary_stacks=tuple(secondary_stacks),
             extractor_hints=tuple(extractor_hints),
             auditor_confidence=auditor_confidence,
+            repo_shape=self.repo_shape,
+            shape_confidence=self.shape_confidence,
+            shape_rationale=self.shape_rationale,
         )
 
 
