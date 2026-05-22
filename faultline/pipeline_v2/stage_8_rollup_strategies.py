@@ -119,8 +119,21 @@ def _workspace_prefix(path: str, ctx: "ScanContext") -> str | None:
         if norm == ws or norm.startswith(ws + "/"):
             return ws
     # Heuristic fallback for monorepos without declared workspaces.
+    # Mirrors stage_8_analyst._WORKSPACE_FOLDER_ROOTS for canonical roots,
+    # extended with split-fullstack roots (frontend/backend/web/server/api/
+    # client/ui) so infisical / soc0 / similar non-canonical monorepos can
+    # derive a workspace boundary too. Universal across all stack shapes.
     parts = norm.split("/")
-    if len(parts) >= 2 and parts[0] in {"apps", "packages"}:
+    if len(parts) >= 2 and parts[0] in {
+        "apps", "packages", "plugins", "crates", "services", "libs",
+        "modules", "extensions", "examples", "e2e",
+        "frontend", "backend", "web", "server", "api", "client", "ui",
+    }:
+        # For split-fullstack roots (single-level), use the root itself
+        # as the workspace boundary. For canonical multi-package roots,
+        # use the second-level package name.
+        if parts[0] in {"frontend", "backend", "web", "server", "api", "client", "ui"}:
+            return parts[0]
         return parts[0] + "/" + parts[1]
     return None
 
