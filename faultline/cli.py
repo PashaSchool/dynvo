@@ -3064,6 +3064,97 @@ def scan_v2(
             rprint(f"  [yellow]⚠[/yellow] {w}")
 
 
+@app.command(name="classify-shape")
+def classify_shape_cmd(
+    repo_path: Path = typer.Argument(..., help="Path to the git repository to classify."),
+    skip_auditor: bool = typer.Option(
+        False,
+        "--skip-auditor",
+        help="Skip Stage 0.5 (no LLM); use Stage 0 heuristic stack only.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        help="Write full report to this file in addition to stdout.",
+    ),
+) -> None:
+    """Classify a repo's architectural SHAPE without running the full scan.
+
+    Runs Stage 0 (intake) + Stage 0.5 (stack auditor, unless --skip-auditor)
+    + Stage 0.6 (shape classifier). Cheap: $0.00-0.02, <2s. Pretty-prints
+    the verdict + collected signals as JSON to stdout. Exit code is 0 on
+    successful classification (including ``universal-residual``); non-zero
+    only on I/O failure (bad path, not a git repo).
+    """
+    import json as _json
+    import os as _os
+    from dataclasses import asdict as _asdict
+
+    from faultline.pipeline_v2.stack_auditor import (
+        MIN_CONFIDENCE_TO_APPLY,
+        run_stack_auditor,
+    )
+    from faultline.pipeline_v2.stage_0_6_shape import (
+        ShapeSignals,
+        classify_repo_shape,
+    )
+    from faultline.pipeline_v2.stage_0_intake import stage_0_intake
+
+    repo_path = Path(repo_path).resolve()
+    if not repo_path.is_dir():
+        rprint(f"[red]error[/red]: repo_path is not a directory: {repo_path}")
+        raise typer.Exit(code=2)
+
+    # Avoid touching ~/.faultline artifacts during CLI classification —
+    # the run_dir is set by stage_0_intake but we override it on the ctx
+    # before classification to suppress artifact writes (CLI mode).
+    ctx = stage_0_intake(repo_path)
+
+    if not skip_auditor and _os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            verdict = run_stack_auditor(ctx, model="claude-haiku-4-5-20251001")
+            if verdict.confidence >= MIN_CONFIDENCE_TO_APPLY:
+                ctx = ctx.with_audited_stack(
+                    audited_stack=verdict.primary_stack,
+                    secondary_stacks=verdict.secondary_stacks,
+                    extractor_hints=verdict.extractor_hints,
+                    auditor_confidence=verdict.confidence,
+                )
+        except Exception as exc:  # noqa: BLE001 - degrade silently
+            logger.warning("classify-shape: auditor failed (%s); continuing", exc)
+
+    # Force CLI mode → suppress artifact writes by clearing run_dir.
+    ctx.run_dir = None
+
+    result = classify_repo_shape(ctx)
+    signals = ShapeSignals.collect(ctx)
+
+    report = {
+        "repo_path": str(repo_path),
+        "stage_0": {
+            "stack": ctx.stack,
+            "monorepo": ctx.monorepo,
+            "workspace_count": len(ctx.workspaces or []),
+        },
+        "stage_0_5": {
+            "audited_stack": ctx.audited_stack,
+            "secondary_stacks": list(ctx.secondary_stacks or ()),
+            "auditor_confidence": ctx.auditor_confidence,
+        },
+        "stage_0_6": {
+            "shape": result.shape,
+            "confidence": result.confidence,
+            "rationale": result.rationale,
+            "matched_signals": list(result.matched_signals),
+        },
+        "signals": _asdict(signals),
+    }
+    pretty = _json.dumps(report, indent=2, sort_keys=True, default=str)
+    typer.echo(pretty)
+    if output is not None:
+        output.write_text(pretty)
+
+
 @app.command()
 def version():
     """Shows the faultline version."""
