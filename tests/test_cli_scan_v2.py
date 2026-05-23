@@ -50,7 +50,7 @@ def test_scan_v2_invokes_orchestrator_with_resolved_model(
 
     def _fake_run(
         repo_path, *, model, days, out_path, llm_reconcile,
-        run_id=None, max_tree_depth=None,
+        run_id=None, max_tree_depth=None, **_kw,
     ):
         captured["model"] = model
         captured["days"] = days
@@ -90,7 +90,7 @@ def test_scan_v2_propagates_warnings(
 
     def _fake_run(
         repo_path, *, model, days, out_path, llm_reconcile,
-        run_id=None, max_tree_depth=None,
+        run_id=None, max_tree_depth=None, **_kw,
     ):
         return {
             "path": str(tmp_path / "fm.json"),
@@ -120,7 +120,7 @@ def test_scan_v2_explicit_output_path_resolved(
 
     def _fake_run(
         repo_path, *, model, days, out_path, llm_reconcile,
-        run_id=None, max_tree_depth=None,
+        run_id=None, max_tree_depth=None, **_kw,
     ):
         captured["out_path"] = out_path
         return {
@@ -151,7 +151,7 @@ def test_scan_v2_run_id_flag_passed_through(
 
     def _fake_run(
         repo_path, *, model, days, out_path, llm_reconcile,
-        run_id=None, max_tree_depth=None,
+        run_id=None, max_tree_depth=None, **_kw,
     ):
         captured["run_id"] = run_id
         return {
@@ -186,7 +186,7 @@ def test_scan_v2_max_tree_depth_flag_passed_through(
 
     def _fake_run(
         repo_path, *, model, days, out_path, llm_reconcile,
-        run_id=None, max_tree_depth=None,
+        run_id=None, max_tree_depth=None, **_kw,
     ):
         captured["max_tree_depth"] = max_tree_depth
         return {

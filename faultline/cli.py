@@ -3013,6 +3013,35 @@ def scan_v2(
             "with deeper layering; lower to 4-5 for quick scans."
         ),
     ),
+    since: Optional[str] = typer.Option(
+        None,
+        "--since",
+        help=(
+            "Incremental scan: only re-extract features whose files "
+            "changed since this git commit SHA. Requires --base-scan-path. "
+            "When omitted (default), a full cold scan is run."
+        ),
+    ),
+    base_scan_path: Optional[str] = typer.Option(
+        None,
+        "--base-scan-path",
+        help=(
+            "Path to a previous feature-map JSON. Required when --since "
+            "is set. Also enables stable UUID lineage matching even on "
+            "full scans — features that overlap with the base ≥ "
+            "--lineage-jaccard-threshold keep their base UUID."
+        ),
+    ),
+    lineage_jaccard_threshold: float = typer.Option(
+        0.70,
+        "--lineage-jaccard-threshold",
+        help=(
+            "Jaccard cutoff (0..1) for considering a new feature the "
+            "same as a base feature in lineage matching. Default 0.70. "
+            "Tune per stack — Rails monoliths may need 0.60; tiny "
+            "libraries 0.80."
+        ),
+    ),
 ):
     """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
 
@@ -3037,6 +3066,13 @@ def scan_v2(
         f"days={days}, max_tree_depth={max_tree_depth})"
     )
 
+    if since and not base_scan_path:
+        rprint(
+            "[red]Error:[/red] --since requires --base-scan-path "
+            "(engine cannot match lineage without a previous scan)."
+        )
+        raise typer.Exit(code=2)
+
     try:
         result = run_pipeline_v2(
             repo,
@@ -3046,6 +3082,9 @@ def scan_v2(
             llm_reconcile=llm_reconcile,
             run_id=run_id,
             max_tree_depth=max_tree_depth,
+            since=since,
+            base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
+            lineage_jaccard_threshold=lineage_jaccard_threshold,
         )
     except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
         rprint(f"[red]Scan failed:[/red] {type(exc).__name__}: {exc}")
