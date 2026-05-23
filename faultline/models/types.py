@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class TimelinePoint(BaseModel):
@@ -99,6 +99,18 @@ class Flow(BaseModel):
     previous_names: list[str] = []
     split_from: str | None = None
     merged_from: list[str] = []
+    # Sprint 2 (2026-05-23) — flow-expansion surface (Stage 3.5).
+    # ``entry`` is the canonical starting point of the flow (file +
+    # symbol + lines). ``nodes`` + ``edges`` are the call graph
+    # produced by T1 (intra-repo) + T2 (cross-stack HTTP). ``summary``
+    # carries roll-up counters. All four default to empty/None so
+    # legacy serialized scans rehydrate without loss; landing keeps
+    # reading ``paths`` / ``participants`` / ``flow_symbol_attributions``
+    # while MCP / agent context fetchers can read the richer graph.
+    entry: dict[str, Any] | None = None
+    nodes: list["FlowNode"] = []
+    edges: list["FlowEdge"] = []
+    summary: "FlowSummary | None" = None
 
 
 class SymbolRange(BaseModel):
@@ -169,6 +181,92 @@ class SymbolAttribution(BaseModel):
     # The bug-ratio / coverage credit is NOT split — every flow gets
     # full credit per user spec ("a"). The badge is purely a hint.
     shared_with_flows: list[str] = []
+
+
+class FlowNode(BaseModel):
+    """One node in an expanded flow's call graph (Sprint 2).
+
+    Emitted by Stage 3.5 (flow expansion). Each node represents a
+    callable unit — typically a function/method/route-handler — or
+    an aggregation marker (``deep_call_subtree``) when fan-out
+    exceeds the per-flow cap.
+
+    ``kind`` values:
+      - ``entry``               — the flow's starting symbol.
+      - ``function``            — intra-repo function reached via
+                                  T1 import + identifier match.
+      - ``route_handler``       — server-side endpoint reached via
+                                  T2 cross-stack HTTP match.
+      - ``fetch_call``          — client-side HTTP call site (T2
+                                  source).
+      - ``file``                — file-level fallback when no symbol
+                                  resolution is possible (graceful
+                                  degrade for unsupported stacks).
+      - ``deep_call_subtree``   — aggregation marker emitted when
+                                  ``len(nodes) >= max_nodes_per_flow``;
+                                  ``count`` carries the dropped node
+                                  count for telemetry.
+
+    ``role`` values:
+      - ``entry``                — exactly one per flow.
+      - ``called``               — reached via T1 intra-repo edges.
+      - ``support``              — non-callable participant.
+      - ``cross_stack_client``   — T2 client-side ``fetch_call``.
+      - ``cross_stack_server``   — T2 server-side ``route_handler``.
+
+    ``confidence``:
+      - ``high``    — symbol resolved deterministically.
+      - ``medium``  — file-level resolution only.
+      - ``low``     — parse/match failure; emitted defensively.
+    """
+
+    id: str                                # "<file>#<symbol>" or "<file>"
+    kind: Literal[
+        "entry", "function", "route_handler",
+        "fetch_call", "file", "deep_call_subtree",
+    ]
+    file: str
+    symbol: str | None = None
+    lines: tuple[int, int] | None = None
+    role: Literal[
+        "entry", "called", "support",
+        "cross_stack_client", "cross_stack_server",
+    ]
+    confidence: Literal["high", "medium", "low"] = "medium"
+    count: int | None = None               # only set for deep_call_subtree
+
+
+class FlowEdge(BaseModel):
+    """One directed edge in an expanded flow's call graph (Sprint 2).
+
+    ``kind`` values:
+      - ``import``            — A imports B (T1 file-level edge).
+      - ``call``              — A's body references B by identifier
+                                (T1 intra-repo call edge).
+      - ``cross_stack_http``  — A is a ``fetch_call`` node whose URL
+                                literal matched a route in
+                                ``routes_index`` (T2 cross-stack edge).
+    """
+
+    # ``from`` is a Python keyword — pydantic supports it via alias.
+    from_: str = Field(alias="from")
+    to: str
+    kind: Literal["import", "call", "cross_stack_http"]
+    confidence: Literal["high", "medium", "low"] = "medium"
+
+    model_config = {"populate_by_name": True}
+
+
+class FlowSummary(BaseModel):
+    """Roll-up counters for one expanded flow (Sprint 2)."""
+
+    total_nodes: int = 0
+    total_files: int = 0
+    total_lines_touched: int = 0
+    cross_stack_hops: int = 0
+    max_depth: int = 0
+    unsupported_stack: bool = False
+    truncated: bool = False
 
 
 class FlowSymbolAttribution(BaseModel):
