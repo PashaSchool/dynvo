@@ -60,7 +60,20 @@ def load_assignments(repo_root: Path) -> dict[str, str]:
 def save_assignments(
     result: "DeepScanResult", repo_root: Path,
 ) -> int:
-    """Write the current scan's file → feature mapping. Returns count saved."""
+    """Write the current scan's file → feature mapping. Returns count saved.
+
+    Sprint 1 (2026-05-23): when the ``FAULTLINES_PRODUCTION=1`` env
+    var is set, this becomes a no-op so SaaS workers on shared hosts
+    don't accumulate per-repo state that would break cold-scan
+    semantics across tenants. See
+    ``faultline.pipeline_v2.production_mode``.
+    """
+    from faultline.pipeline_v2.production_mode import production_mode_enabled
+    if production_mode_enabled():
+        logger.info(
+            "assignments: FAULTLINES_PRODUCTION=1 — skipping save (cold-scan mode)",
+        )
+        return 0
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = _cache_path(repo_root)
     inverted: dict[str, str] = {}

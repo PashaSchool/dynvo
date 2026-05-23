@@ -92,6 +92,13 @@ class Flow(BaseModel):
     # empty when entry-symbol detection fails (telemetry-flagged in
     # ``scan_meta.stage_3_entry_detection_failure_rate``).
     flow_symbol_attributions: list["FlowSymbolAttribution"] = []
+    # Sprint 1 (2026-05-23) — stable lineage UUID. Empty string for
+    # flows produced before lineage was wired (defensive — the
+    # pipeline_v2 lineage pass should fill it in).
+    uuid: str = ""
+    previous_names: list[str] = []
+    split_from: str | None = None
+    merged_from: list[str] = []
 
 
 class SymbolRange(BaseModel):
@@ -281,6 +288,13 @@ class Feature(BaseModel):
     # ``None`` for product features themselves and for orphan developer
     # features that have no Layer 2 parent.
     product_feature_id: str | None = None
+    # Sprint 1 (2026-05-23) — stable lineage UUID + rename / split /
+    # merge bookkeeping. See ``faultline.pipeline_v2.lineage``.
+    # Defaults to "" so legacy serialized scans rehydrate without loss.
+    uuid: str = ""
+    previous_names: list[str] = []
+    split_from: str | None = None
+    merged_from: list[str] = []
 
 
 class FeatureFlowEdge(BaseModel):
@@ -333,6 +347,22 @@ class FeatureMap(BaseModel):
     # truth. Default empty for callers building pre-B1 maps.
     flows: list[Flow] = []
     feature_flow_edges: list[FeatureFlowEdge] = []
+    # Sprint 1 (2026-05-23) — additive lineage / incremental surfaces.
+    # ``path_index`` is a deterministic projection of features + flows
+    # for O(1) file → (feature_uuid, flow_uuids) lookup. ``routes_index``
+    # is a flat route registry built from the route extractor. Both
+    # default to empty so legacy scans rehydrate without loss.
+    path_index: dict[str, dict[str, Any]] = {}
+    routes_index: list[dict[str, Any]] = []
+    # ``is_full_scan=True`` for cold scans (default). Set to False
+    # only by the incremental ``--since`` path. ``base_scan_commit`` is
+    # the ``--since`` sha; ``scan_commit`` is the current HEAD sha.
+    # ``engine_version`` is stamped so consumers can refuse to merge
+    # incrementals across major engine bumps.
+    is_full_scan: bool = True
+    base_scan_commit: str = ""
+    scan_commit: str = ""
+    engine_version: str = ""
 
     @model_validator(mode="after")
     def _merge_layer_inputs(self) -> "FeatureMap":
