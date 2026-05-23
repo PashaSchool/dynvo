@@ -129,6 +129,12 @@ def build_feature_map(
     flows: list[Flow] | None = None,
     feature_flow_edges: list[FeatureFlowEdge] | None = None,
     product_features: list[Feature] | None = None,
+    path_index: dict[str, dict[str, Any]] | None = None,
+    routes_index: list[dict[str, Any]] | None = None,
+    is_full_scan: bool = True,
+    base_scan_commit: str = "",
+    scan_commit: str = "",
+    engine_version: str = "",
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
 
@@ -157,6 +163,12 @@ def build_feature_map(
         scan_meta=dict(scan_meta),
         flows=list(flows or []),
         feature_flow_edges=list(feature_flow_edges or []),
+        path_index=dict(path_index or {}),
+        routes_index=list(routes_index or []),
+        is_full_scan=is_full_scan,
+        base_scan_commit=base_scan_commit,
+        scan_commit=scan_commit,
+        engine_version=engine_version,
     )
 
 
@@ -173,6 +185,12 @@ def stage_7_output(
     flows: list[Flow] | None = None,
     feature_flow_edges: list[FeatureFlowEdge] | None = None,
     product_features: list[Feature] | None = None,
+    path_index: dict[str, dict[str, Any]] | None = None,
+    routes_index: list[dict[str, Any]] | None = None,
+    is_full_scan: bool = True,
+    base_scan_commit: str = "",
+    scan_commit: str = "",
+    engine_version: str = "",
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -192,6 +210,12 @@ def stage_7_output(
         features, ctx, scan_meta,
         days=days, flows=flows, feature_flow_edges=feature_flow_edges,
         product_features=product_features,
+        path_index=path_index,
+        routes_index=routes_index,
+        is_full_scan=is_full_scan,
+        base_scan_commit=base_scan_commit,
+        scan_commit=scan_commit,
+        engine_version=engine_version,
     )
 
     # Snapshot Stage 7's input for replay before we hand off to the writer.
