@@ -266,6 +266,9 @@ def run_pipeline_v2(
     llm_reconcile: bool = False,
     run_id: str | None = None,
     max_tree_depth: int | None = None,
+    since: str | None = None,
+    base_scan_path: Path | str | None = None,
+    lineage_jaccard_threshold: float | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -1270,7 +1273,100 @@ def run_pipeline_v2(
         },
     }
 
+    # ── Stage 6.8 — lineage + indexes (Sprint 1, 2026-05-23) ──────
+    # Pure post-pass: stamps stable UUIDs on every Feature + Flow,
+    # builds path_index + routes_index. NEVER affects scan-quality
+    # decisions. When ``base_scan_path`` is provided we match against
+    # the previous scan for cross-scan UUID stability; otherwise every
+    # feature/flow gets a fresh uuid4 (cold-scan default).
+    from faultline.pipeline_v2.incremental import (
+        carry_forward_metrics as _carry_forward_metrics,
+        changed_files_since as _changed_files_since,
+        head_sha as _head_sha,
+        load_base_scan as _load_base_scan,
+        touched_feature_uuids as _touched_feature_uuids,
+    )
+    from faultline.pipeline_v2.lineage import (
+        RELATED_THRESHOLD as _RELATED_THRESHOLD,
+        RENAME_THRESHOLD as _RENAME_THRESHOLD,
+    )
+    from faultline.pipeline_v2.stage_6_8_lineage import run_stage_6_8
+
+    rename_threshold = (
+        float(lineage_jaccard_threshold)
+        if lineage_jaccard_threshold is not None
+        else _RENAME_THRESHOLD
+    )
+
+    base_scan_dict: dict[str, Any] | None = None
+    if base_scan_path is not None:
+        base_scan_dict = _load_base_scan(base_scan_path)
+
+    lineage_result = run_stage_6_8(
+        features,
+        list(bipartite.flows),
+        base_scan=base_scan_dict,
+        extractor_signals=stage1_out,
+        rename_threshold=rename_threshold,
+        related_threshold=_RELATED_THRESHOLD,
+    )
+
+    # ── Incremental scan bookkeeping ───────────────────────────────
+    is_full_scan = since is None
+    head = _head_sha(repo_path) if not is_full_scan else _head_sha(repo_path)
+    carried_count = 0
+    incremental_meta: dict[str, Any] = {
+        "incremental_changed_files": [],
+        "incremental_touched_uuids": [],
+        "incremental_carried_forward_count": 0,
+    }
+    if not is_full_scan:
+        if base_scan_dict is None:
+            raise ValueError(
+                "--since requires --base-scan-path (engine cannot match "
+                "lineage without a previous scan)."
+            )
+        changed = _changed_files_since(repo_path, since or "")
+        touched = _touched_feature_uuids(changed, base_scan_dict)
+        # Carry forward Stage 6 metrics for untouched features.
+        # We mutate the Feature pydantic models via model_dump round-trip
+        # so the carry-forward helper can operate on plain dicts.
+        base_feats = (
+            base_scan_dict.get("developer_features")
+            or base_scan_dict.get("features")
+            or []
+        )
+        # Mutate features in-place — easier than rebuilding pydantic models.
+        feat_payload = [f.model_dump() for f in features]
+        carried_count = _carry_forward_metrics(
+            feat_payload, list(base_feats), touched,
+        )
+        # Push the touched metric values back onto the Feature objects.
+        by_uuid = {p.get("uuid"): p for p in feat_payload if p.get("uuid")}
+        for f in features:
+            p = by_uuid.get(f.uuid)
+            if not p:
+                continue
+            for k in (
+                "health_score", "bug_fix_ratio", "bug_fixes",
+                "coverage_pct", "total_commits",
+                "symbol_health_score",
+            ):
+                if k in p and p[k] is not None:
+                    setattr(f, k, p[k])
+        incremental_meta = {
+            "incremental_changed_files": list(changed),
+            "incremental_touched_uuids": sorted(touched),
+            "incremental_carried_forward_count": carried_count,
+        }
+    scan_meta["lineage_feature_stats"] = lineage_result.feature_lineage_stats
+    scan_meta["lineage_flow_stats"] = lineage_result.flow_lineage_stats
+    scan_meta["lineage_rename_threshold"] = rename_threshold
+    scan_meta["is_full_scan"] = is_full_scan
+    scan_meta.update(incremental_meta)
+
     # ── Stage 7 — output ───────────────────────────────────────────
+    from faultline import __version__ as _engine_version  # late import
     with StageLogger(run_dir, 7, "output") as log7:
         out = stage_7_output(
             features, ctx, scan_meta, out_path,
@@ -1278,6 +1374,12 @@ def run_pipeline_v2(
             flows=bipartite.flows,
             feature_flow_edges=bipartite.edges,
             product_features=product_features,
+            path_index=lineage_result.path_index,
+            routes_index=lineage_result.routes_index,
+            is_full_scan=is_full_scan,
+            base_scan_commit=(since or ""),
+            scan_commit=head,
+            engine_version=_engine_version,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
 
