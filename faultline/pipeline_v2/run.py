@@ -1365,6 +1365,50 @@ def run_pipeline_v2(
     scan_meta["is_full_scan"] = is_full_scan
     scan_meta.update(incremental_meta)
 
+    # ── Stage 3.5 — flow expansion (Sprint 2, deterministic) ──────
+    # Enriches every Flow with {entry, nodes[], edges[], summary}
+    # via T1 (intra-repo call graph) + T2 (cross-stack HTTP boundary
+    # matched against the Sprint 1 routes_index). Mutates Flow
+    # objects in place under both Feature.flows (containment view)
+    # AND the top-level bipartite list. Pure in-memory; no LLM; no
+    # persistence — preserves [[rule-cold-scan]]. Legacy fields on
+    # Flow (paths, participants, entry_point_file, coverage_pct,
+    # flow_symbol_attributions, uuid, all Stage 5.5 bipartite fields)
+    # are preserved unchanged.
+    #
+    # Inserted between Stage 6.8 (lineage / routes_index build) and
+    # Stage 7 (output) so:
+    #   - routes_index is available for T2 cross-stack matching;
+    #   - the expansion lands in the final FeatureMap JSON;
+    #   - lineage-stable UUIDs are present on every Flow for the
+    #     ``top_level_flows`` mirror pass.
+    from faultline.pipeline_v2.flow_expansion import expand_flows
+    with StageLogger(run_dir, 3, "flow_expansion") as log3_5:
+        fx = expand_flows(
+            features,
+            ctx,
+            routes_index=lineage_result.routes_index,
+            log=log3_5,
+            top_level_flows=list(bipartite.flows),
+        )
+        log3_5.info(
+            f"expansion: flows_expanded={fx.telemetry['flows_expanded']} "
+            f"nodes_total={fx.telemetry['nodes_total']} "
+            f"edges_total={fx.telemetry['edges_total']} "
+            f"cross_stack_hops_total={fx.telemetry['cross_stack_hops_total']} "
+            f"deepest_depth={fx.telemetry['deepest_depth_reached']} "
+            f"truncated={fx.telemetry['flows_truncated']} "
+            f"unsupported_stack={fx.telemetry['flows_unsupported_stack']}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=3,
+            stage_name="flow_expansion",
+            payload=fx.telemetry,
+            run_dir=run_dir,
+        )
+    scan_meta["stage_3_5_flow_expansion"] = dict(fx.telemetry)
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     with StageLogger(run_dir, 7, "output") as log7:
