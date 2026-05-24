@@ -269,6 +269,7 @@ def run_pipeline_v2(
     since: str | None = None,
     base_scan_path: Path | str | None = None,
     lineage_jaccard_threshold: float | None = None,
+    coverage_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -768,7 +769,10 @@ def run_pipeline_v2(
     # coverage / commit fields; it MUST NOT mutate Feature.paths or
     # Flow.paths (which the bipartite IDs were minted from).
     with StageLogger(run_dir, 6, "metrics") as log6:
-        features = stage_6_metrics(features, _isolate(ctx))
+        features = stage_6_metrics(
+            features, _isolate(ctx),
+            coverage_path=str(coverage_path) if coverage_path else None,
+        )
         with_commits = sum(1 for f in features if f.total_commits > 0)
         with_coverage = sum(1 for f in features if f.coverage_pct is not None)
         log6.info(

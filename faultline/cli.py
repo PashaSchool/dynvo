@@ -324,6 +324,18 @@ def analyze(
     """
     Analyzes a git repository and builds a feature map.
 
+    DEPRECATED (Sprint 3, 2026-05-24): the legacy `analyze` pipeline
+    has been superseded by `scan-v2`, which now emits ALL the same
+    historical metrics (coverage_pct, health_score, bug_fix_ratio,
+    bug_fix_prs, hotspot_files, weekly_points, bus_factor, health_trend,
+    symbol_health_score) in addition to Layer 2 product features, stable
+    UUID lineage, path_index, routes_index, and flow expansion. Migrate to:
+
+        faultline scan-v2 . --coverage path/to/lcov.info
+
+    `analyze` continues to work for back-compat but will be removed in
+    a future major version.
+
     Examples:
         faultline analyze
         faultline analyze ./my-project --days 90
@@ -336,6 +348,13 @@ def analyze(
         faultline analyze . --llm --flows --posthog-key phx_... --posthog-project 12345
         faultline analyze . --llm --flows --sentry-token sntrys_... --sentry-org my-org --sentry-project my-proj
     """
+    console.print(
+        "[yellow]⚠ `faultline analyze` is deprecated.[/yellow] "
+        "Use [bold]`faultline scan-v2`[/bold] — it now emits all the "
+        "historical metrics (coverage_pct, health_score, bug_fix_ratio, "
+        "hotspot_files, …) PLUS Layer 2 product features, UUID lineage, "
+        "and flow expansion. See `faultline scan-v2 --help`.",
+    )
     repo_path = str(Path(repo_path).resolve())
 
     # --flows requires --llm
@@ -3042,6 +3061,17 @@ def scan_v2(
             "libraries 0.80."
         ),
     ),
+    coverage: Optional[str] = typer.Option(
+        None,
+        "--coverage",
+        help=(
+            "Path to a coverage report (lcov.info / coverage-summary.json / "
+            "coverage.xml / coverage.json / .coverage). When omitted, "
+            "scan-v2 auto-detects lcov at standard locations under the "
+            "repo (coverage/lcov.info, lcov.info, coverage.lcov). When "
+            "neither is present, per-feature coverage_pct stays null."
+        ),
+    ),
 ):
     """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
 
@@ -3085,6 +3115,7 @@ def scan_v2(
             since=since,
             base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
             lineage_jaccard_threshold=lineage_jaccard_threshold,
+            coverage_path=coverage,
         )
     except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
         rprint(f"[red]Scan failed:[/red] {type(exc).__name__}: {exc}")
