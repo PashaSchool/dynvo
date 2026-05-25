@@ -1,0 +1,61 @@
+# VCS
+.git/
+.gitignore
+.gitattributes
+
+# Python build / cache artefacts
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Repo-only material (tests, eval corpus, docs) — not needed in the
+# runtime image. Keeping them out shaves ~hundreds of MB.
+tests/
+docs/
+eval/
+benchmarks/
+validation/
+memory/
+action/
+scripts/
+htmlcov/
+
+# Local-only state
+.faultline/
+~/.faultline/
+.env
+.env.*
+*.log
+
+# Editor / OS junk
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Sprint / planning markdown — also not runtime
+SPRINT_*.md
+*_PLAN.md
+*_RESULTS.md
+*_REPORT.md
+SELF_AUDIT*.md
+CHANGELOG.md
+PARTICIPANTS_REFACTOR_PLAN.md
+PER_BRANCH_SYNC_PLAN.md
+REFACTOR_SPRINT_DONE.md
+
+# Docker self-reference (avoid recursive copy)
+Dockerfile
+.dockerignore

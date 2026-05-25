@@ -44,6 +44,7 @@ htmlcov/
 .env.local
 .env.*
 *.key
+*.md
 
 # Hatch
 .hatch/
@@ -62,5 +63,3 @@ memory/
 
 # Waitlist data
 waitlist.json
-
-
