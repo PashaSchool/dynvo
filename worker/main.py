@@ -169,7 +169,7 @@ UPDATE pgboss.job
 
 _NACK_SQL = """
 UPDATE pgboss.job
-   SET state = CASE WHEN retry_count >= retry_limit THEN 'failed' ELSE 'retry' END,
+   SET state = (CASE WHEN retry_count >= retry_limit THEN 'failed' ELSE 'retry' END)::pgboss.job_state,
        completed_on = CASE WHEN retry_count >= retry_limit THEN now() ELSE NULL END,
        start_after = now() + (retry_delay || ' seconds')::interval,
        output = %s::jsonb
@@ -353,6 +353,10 @@ def process_job(cfg: WorkerConfig, job: dict[str, Any]) -> dict[str, Any]:
             )
             commit_sha = requested_sha
 
+        # scan-v2 (pipeline_v2) emits the full signal surface by default —
+        # llm/flows/symbols/trace-flows/tool-flows/smart-aggregators/critique
+        # are baked into the pipeline. The old `--llm`/`--flows` toggles
+        # belonged to the deprecated `analyze` command.
         cmd = [
             "faultlines",
             "scan-v2",
@@ -361,16 +365,6 @@ def process_job(cfg: WorkerConfig, job: dict[str, Any]) -> dict[str, Any]:
             str(scan_output),
             "--run-id",
             f"job-{job['id']}",
-            # Per [[rule-full-flag-scans]] — landing-grade scans need the
-            # complete signal surface so coverage, participants, and
-            # classifications all land in the JSON.
-            "--llm",
-            "--flows",
-            "--symbols",
-            "--trace-flows",
-            "--tool-flows",
-            "--smart-aggregators",
-            "--critique",
         ]
         if not is_full and since_commit:
             base_path = job_dir / "base-scan.json"
