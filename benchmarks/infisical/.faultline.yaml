@@ -1,0 +1,33 @@
+# Faultlines repo config — auto-generated after each scan.
+#
+# auto_aliases below = ALL feature names from the latest scan. Engine
+# locks these so the NEXT scan produces stable names with the SAME count.
+# Sub-features like ``foo/bar`` stay split — engine does NOT auto-collapse
+# them into a parent, so re-running ``analyze`` returns the same taxonomy.
+#
+# How to CONSOLIDATE sub-features into a parent (e.g. merge
+# ``network-detections/triage`` + ``network-detections/playbooks`` into
+# a single ``network-detections``):
+#   1. Add the parent name (no slash) to the ``features:`` block above
+#   2. Delete the matching ``network-detections/...`` lines from auto_aliases
+#   3. Re-run ``faultline analyze``
+#
+# How to RENAME a feature without breaking flow attribution: edit the
+# canonical key in-place. The file → feature cache at
+# ``~/.faultline/assignments-<repo>.json`` will renormalize the next scan.
+#
+# Anything in ``features:`` is user-owned and preserved verbatim.
+
+auto_aliases:
+  cli:
+    description: Command-line interface that lets users invoke faultline analysis
+      on a repository, configure options, and receive structured output.
+  evaluation-benchmarks:
+    description: Stores ground-truth feature maps and flow definitions for known open-source
+      repositories, used to evaluate and improve faultline's accuracy across sprints.
+  feature-analyzer:
+    description: Analyzes repository structure and code to group files into feature
+      candidates using structural heuristics and repo configuration.
+  llm-pipeline:
+    description: Orchestrates LLM calls through a multi-stage pipeline to detect,
+      decompose, and judge features and flows from source code.
