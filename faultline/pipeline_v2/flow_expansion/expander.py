@@ -36,6 +36,9 @@ from faultline.models.types import (
     FlowNode,
     FlowSummary,
 )
+from faultline.pipeline_v2.flow_expansion.flow_display_name import (
+    derive_display_name,
+)
 from faultline.pipeline_v2.flow_expansion.call_graph import (
     DEFAULT_MAX_DEPTH,
     DEFAULT_MAX_NODES_PER_FLOW,
@@ -183,13 +186,17 @@ def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def _project_loc_detail(flow: Flow) -> None:
+def _project_loc_detail(
+    flow: Flow,
+    routes: list[dict[str, Any]] | None = None,
+) -> None:
     """Derive the Phase-5 LOC-parity fields from the already-computed
     Stage 3.5 graph. PURE projection — reads ``flow.entry`` /
     ``flow.nodes`` / ``flow.edges`` / ``flow.flow_symbol_attributions``
     and writes the additive ``entry_point`` / ``line_ranges`` /
-    ``loc_symbol_attributions`` / ``loc_nodes`` / ``loc_edges``. Never
-    mutates an existing field. Idempotent.
+    ``loc_symbol_attributions`` / ``loc_nodes`` / ``loc_edges`` /
+    ``display_name``. Never mutates an existing pre-Phase-5 field.
+    Idempotent.
     """
     # ── entry_point (richer object alongside legacy scalar fields) ──
     if flow.entry:
@@ -291,6 +298,14 @@ def _project_loc_detail(flow: Flow) -> None:
         end = n.lines[1] if n.lines else None
         _add(n.file, n.symbol, n.kind, start, end, n.role)
     flow.loc_symbol_attributions = loc_attrs
+
+    # ── display_name (deterministic human label; route > symbol > fb) ─
+    # ADDITIVE: ``flow.name`` (stable id) is never touched. Only fill in
+    # when empty so an upstream-assigned label is preserved (idempotent).
+    if not flow.display_name:
+        label = derive_display_name(flow, routes)
+        if label:
+            flow.display_name = label
 
 
 def _expand_one_flow(
@@ -579,7 +594,7 @@ def expand_flows(
             )
             # Phase 5 — additive LOC-detail projection over the graph
             # just built (or the pre-existing one in the skip path).
-            _project_loc_detail(new_fl)
+            _project_loc_detail(new_fl, routes)
             if tel.get("skipped_already_expanded"):
                 flows_skipped += 1
             else:
@@ -620,6 +635,11 @@ def expand_flows(
             # Phase 5 — mirror the additive LOC-detail so the bipartite
             # top-level flows[] view stays consistent with containment.
             tlf.entry_point = src.entry_point
+            # Phase 5 — mirror the deterministic display label so the
+            # bipartite top-level flows[] view matches containment. Only
+            # fill when empty (preserve any upstream-assigned label).
+            if not tlf.display_name and src.display_name:
+                tlf.display_name = src.display_name
             tlf.line_ranges = list(src.line_ranges)
             tlf.loc_symbol_attributions = list(src.loc_symbol_attributions)
             tlf.loc_nodes = list(src.loc_nodes)
