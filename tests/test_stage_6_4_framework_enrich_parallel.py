@@ -170,6 +170,27 @@ def test_budget_exceeded_warns_and_skips(tmp_path: Path) -> None:
     assert "budget_skipped" in canned_block
 
 
+def test_default_budget_is_scale_invariant_no_skip(tmp_path: Path) -> None:
+    """With the default budget (wall_budget_sec=None) the wall scales
+    with (feature x active-linker) work units, so nothing is skipped.
+    """
+    from faultline.pipeline_v2.stage_6_4_framework_enrich import (
+        DEFAULT_PER_UNIT_BUDGET_SEC,
+    )
+
+    feats = [_new_feature(f"f{i}", [f"app/f{i}.tsx"]) for i in range(8)]
+    with StageLogger(tmp_path, 6, "fe_scale") as log:
+        res = run_stage_6_4(
+            _ctx(tmp_path), feats, log,
+            linkers=[_CannedLinker()],
+            max_workers=4,  # wall_budget_sec=None → scale-invariant default
+        )
+    assert res.budget_exceeded is False
+    assert res.features_budget_skipped == 0
+    # 1 active linker x 8 features.
+    assert res.budget_sec == DEFAULT_PER_UNIT_BUDGET_SEC * len(feats) * 1
+
+
 def test_telemetry_carries_concurrency_block(tmp_path: Path) -> None:
     """The :meth:`EnrichmentResult.telemetry` payload contains the
     Sprint F concurrency block.
