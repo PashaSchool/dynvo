@@ -1450,6 +1450,53 @@ def run_pipeline_v2(
         )
     scan_meta["stage_3_5_flow_expansion"] = dict(fx.telemetry)
 
+    # ── Stage 6.9 — test-file output-tree strip ────────────────────
+    # "Post-everything tree hygiene": despite the 6.9 label this is
+    # wired to run LAST (after every Stage 6.x metric pass, after Stage
+    # 8 analyst + Stage 8.5 backfill, and after Stage 3.5 flow expansion
+    # which populates loc_nodes/loc_edges) so it sees the fully-enriched
+    # tree and cannot disturb any upstream computation. It removes
+    # test-file entries from the OUTPUT TREE only and NEVER recomputes a
+    # metric scalar — coverage_pct/health/bug_fix_ratio are computed in
+    # Stage 6 WITH the test files on purpose. Disable with
+    # FAULTLINE_STAGE_6_9_TEST_STRIP=0. See the module docstring.
+    from faultline.pipeline_v2.stage_6_9_test_strip import (
+        stage_6_9_enabled,
+        strip_test_paths,
+    )
+
+    test_strip_telemetry: dict[str, int] = {
+        "paths_removed": 0,
+        "features_dropped": 0,
+        "flows_dropped": 0,
+        "flow_entries_recomputed": 0,
+    }
+    with StageLogger(run_dir, 6, "test_strip") as log6_9:
+        if stage_6_9_enabled():
+            test_strip_telemetry = strip_test_paths(features, bipartite.flows)
+            log6_9.info(
+                "test_strip: paths_removed=%d features_dropped=%d "
+                "flows_dropped=%d flow_entries_recomputed=%d"
+                % (
+                    test_strip_telemetry["paths_removed"],
+                    test_strip_telemetry["features_dropped"],
+                    test_strip_telemetry["flows_dropped"],
+                    test_strip_telemetry["flow_entries_recomputed"],
+                ),
+            )
+        else:
+            test_strip_telemetry["disabled"] = True  # type: ignore[assignment]
+            log6_9.info("test_strip: disabled via %s=0"
+                        % "FAULTLINE_STAGE_6_9_TEST_STRIP")
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="test_strip",
+            payload=test_strip_telemetry,
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_9_test_strip"] = dict(test_strip_telemetry)
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     with StageLogger(run_dir, 7, "output") as log7:
