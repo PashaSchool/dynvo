@@ -28,6 +28,11 @@ from faultline.models.types import (
     Feature,
     Flow,
     FlowEdge,
+    FlowEntryPoint,
+    FlowLineRange,
+    FlowLocEdge,
+    FlowLocNode,
+    FlowLocSymbolAttribution,
     FlowNode,
     FlowSummary,
 )
@@ -148,6 +153,144 @@ def _build_summary(
         unsupported_stack=unsupported_stack,
         truncated=truncated,
     )
+
+
+# Mapping FlowNode.role → the role label surfaced on the LOC parity
+# view. We expose entry|step|sink semantics the task asks for: the
+# single ``entry`` node stays ``entry``; T2 server endpoints and
+# aggregation markers are terminal ``sink``s; everything else is a
+# ``step``. The original FlowNode.role is preserved on ``Flow.nodes``.
+def _loc_role(node: FlowNode, *, is_sink: bool) -> str:
+    if node.role == "entry":
+        return "entry"
+    if is_sink or node.kind in ("route_handler", "deep_call_subtree"):
+        return "sink"
+    return "step"
+
+
+def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge a list of (start, end) into non-overlapping sorted spans."""
+    if not spans:
+        return []
+    ordered = sorted(spans)
+    merged: list[tuple[int, int]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end + 1:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _project_loc_detail(flow: Flow) -> None:
+    """Derive the Phase-5 LOC-parity fields from the already-computed
+    Stage 3.5 graph. PURE projection — reads ``flow.entry`` /
+    ``flow.nodes`` / ``flow.edges`` / ``flow.flow_symbol_attributions``
+    and writes the additive ``entry_point`` / ``line_ranges`` /
+    ``loc_symbol_attributions`` / ``loc_nodes`` / ``loc_edges``. Never
+    mutates an existing field. Idempotent.
+    """
+    # ── entry_point (richer object alongside legacy scalar fields) ──
+    if flow.entry:
+        ep_lines = flow.entry.get("lines")
+        flow.entry_point = FlowEntryPoint(
+            path=flow.entry.get("file") or (flow.entry_point_file or ""),
+            symbol=flow.entry.get("symbol"),
+            line=(ep_lines[0] if ep_lines else flow.entry_point_line),
+        )
+    elif flow.entry_point_file:
+        flow.entry_point = FlowEntryPoint(
+            path=flow.entry_point_file,
+            symbol=None,
+            line=flow.entry_point_line,
+        )
+
+    # Identify sink nodes: nodes that never appear as the FROM of any
+    # intra-repo edge (no outgoing call/import). Cross-stack servers are
+    # always sinks.
+    from_ids = {e.from_ for e in flow.edges}
+    node_by_id = {n.id: n for n in flow.nodes}
+
+    # ── loc_nodes (landing shape) + per-file span collection ────────
+    loc_nodes: list[FlowLocNode] = []
+    spans_by_path: dict[str, list[tuple[int, int]]] = {}
+    for n in flow.nodes:
+        is_sink = (
+            n.id not in from_ids and n.role != "entry"
+        ) or n.role == "cross_stack_server"
+        start = n.lines[0] if n.lines else None
+        end = n.lines[1] if n.lines else None
+        loc_nodes.append(FlowLocNode(
+            path=n.file,
+            symbol=n.symbol,
+            start_line=start,
+            end_line=end,
+            role=_loc_role(n, is_sink=is_sink),
+        ))
+        if start is not None and end is not None:
+            spans_by_path.setdefault(n.file, []).append((start, end))
+    flow.loc_nodes = loc_nodes
+
+    # ── line_ranges (flow's own merged span, per file) ──────────────
+    line_ranges: list[FlowLineRange] = []
+    for path in sorted(spans_by_path):
+        for start, end in _merge_spans(spans_by_path[path]):
+            line_ranges.append(FlowLineRange(
+                path=path, start_line=start, end_line=end,
+            ))
+    flow.line_ranges = line_ranges
+
+    # ── loc_edges (resolved endpoints + call-site) ──────────────────
+    loc_edges: list[FlowLocEdge] = []
+    for e in flow.edges:
+        src = node_by_id.get(e.from_)
+        dst = node_by_id.get(e.to)
+        if src is None or dst is None:
+            continue
+        # Call-site: the caller's file + its function start line — the
+        # most precise deterministic anchor available without a second
+        # AST pass over the caller body.
+        call_line = src.lines[0] if src.lines else None
+        loc_edges.append(FlowLocEdge(
+            from_path=src.file,
+            from_symbol=src.symbol,
+            to_path=dst.file,
+            to_symbol=dst.symbol,
+            kind=e.kind,
+            call_site={"path": src.file, "line": call_line},
+        ))
+    flow.loc_edges = loc_edges
+
+    # ── loc_symbol_attributions (full per-participant, parity shape) ─
+    # Prefer the precise Stage 3 flow_symbol_attributions when present
+    # (they carry roles + symbol-accurate line ranges); always also
+    # cover every graph node so a flow whose Stage 3 detection was thin
+    # still emits one record per participant. Dedup on
+    # (path, symbol, start, end).
+    loc_attrs: list[FlowLocSymbolAttribution] = []
+    seen: set[tuple[str, str | None, int | None, int | None]] = set()
+
+    def _add(path, symbol, kind, start, end, role):  # noqa: ANN001
+        key = (path, symbol, start, end)
+        if key in seen:
+            return
+        seen.add(key)
+        loc_attrs.append(FlowLocSymbolAttribution(
+            path=path, symbol=symbol, kind=kind,
+            start_line=start, end_line=end, role=role,
+        ))
+
+    for fsa in flow.flow_symbol_attributions or []:
+        _add(
+            fsa.file, fsa.symbol, "function",
+            fsa.line_start, fsa.line_end, fsa.role,
+        )
+    for n in flow.nodes:
+        start = n.lines[0] if n.lines else None
+        end = n.lines[1] if n.lines else None
+        _add(n.file, n.symbol, n.kind, start, end, n.role)
+    flow.loc_symbol_attributions = loc_attrs
 
 
 def _expand_one_flow(
@@ -434,6 +577,9 @@ def expand_flows(
                 fl, rctx, routes,
                 max_depth=max_depth, max_nodes=max_nodes,
             )
+            # Phase 5 — additive LOC-detail projection over the graph
+            # just built (or the pre-existing one in the skip path).
+            _project_loc_detail(new_fl)
             if tel.get("skipped_already_expanded"):
                 flows_skipped += 1
             else:
@@ -471,6 +617,13 @@ def expand_flows(
             tlf.nodes = list(src.nodes)
             tlf.edges = list(src.edges)
             tlf.summary = src.summary
+            # Phase 5 — mirror the additive LOC-detail so the bipartite
+            # top-level flows[] view stays consistent with containment.
+            tlf.entry_point = src.entry_point
+            tlf.line_ranges = list(src.line_ranges)
+            tlf.loc_symbol_attributions = list(src.loc_symbol_attributions)
+            tlf.loc_nodes = list(src.loc_nodes)
+            tlf.loc_edges = list(src.loc_edges)
 
     telemetry: dict[str, Any] = {
         "flows_expanded": flows_expanded,
