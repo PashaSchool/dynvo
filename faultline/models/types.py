@@ -111,6 +111,37 @@ class Flow(BaseModel):
     nodes: list["FlowNode"] = []
     edges: list["FlowEdge"] = []
     summary: "FlowSummary | None" = None
+    # Phase 5 (2026-05-26) — LOC-detail parity with Feature. These are
+    # ADDITIVE projections derived deterministically from the already-
+    # computed Stage 3.5 ``entry`` / ``nodes`` / ``edges`` graph and the
+    # Stage 3 ``flow_symbol_attributions``. They give a Flow the same
+    # line-level surface a Feature emits, in the shape the landing app
+    # consumes (``path`` / ``start_line`` / ``end_line``). NOTHING above
+    # is mutated — these fields default empty so legacy scans rehydrate
+    # unchanged.
+    #
+    #   * ``entry_point``        — richer entry object {path, symbol, line};
+    #                              the legacy ``entry_point_file`` /
+    #                              ``entry_point_line`` / ``entry`` stay.
+    #   * ``line_ranges``        — the flow's own span: one record per
+    #                              (path, start_line, end_line) covering
+    #                              every node with resolved lines, merged
+    #                              per-file into non-overlapping spans.
+    #   * ``loc_symbol_attributions`` — full per-participant records
+    #                              {path, symbol, kind, start_line,
+    #                              end_line} at parity with the Feature
+    #                              symbol surface (widens the thin
+    #                              ``flow_symbol_attributions``).
+    #   * ``loc_nodes``          — call-graph nodes in the landing shape
+    #                              {path, symbol, start_line, end_line,
+    #                              role}.
+    #   * ``loc_edges``          — caller→callee edges carrying the
+    #                              call-site {path, line}.
+    entry_point: "FlowEntryPoint | None" = None
+    line_ranges: list["FlowLineRange"] = []
+    loc_symbol_attributions: list["FlowLocSymbolAttribution"] = []
+    loc_nodes: list["FlowLocNode"] = []
+    loc_edges: list["FlowLocEdge"] = []
 
 
 class SymbolRange(BaseModel):
@@ -267,6 +298,88 @@ class FlowSummary(BaseModel):
     max_depth: int = 0
     unsupported_stack: bool = False
     truncated: bool = False
+
+
+class FlowEntryPoint(BaseModel):
+    """Phase 5 — richer entry-point object for a Flow.
+
+    Additive over the legacy scalar ``Flow.entry_point_file`` /
+    ``Flow.entry_point_line`` (both preserved). Mirrors the
+    ``{path, symbol, line}`` shape the landing app expects so a Flow's
+    entry renders at parity with a Feature's.
+    """
+
+    path: str
+    symbol: str | None = None
+    line: int | None = None
+
+
+class FlowLineRange(BaseModel):
+    """Phase 5 — one (path, start_line, end_line) span a Flow covers.
+
+    The flow's own line span, merged per file into non-overlapping
+    ranges. Derived from the Stage 3.5 node ``lines``.
+    """
+
+    path: str
+    start_line: int
+    end_line: int
+
+
+class FlowLocSymbolAttribution(BaseModel):
+    """Phase 5 — full per-participant symbol attribution for a Flow.
+
+    Same shape a Feature emits (``path`` / ``symbol`` / ``kind`` /
+    ``start_line`` / ``end_line``). Widens the thin
+    :class:`FlowSymbolAttribution` (which uses ``file`` / ``line_start``
+    / ``line_end`` / ``role``) into the landing-app contract while the
+    original field stays untouched. ``kind`` carries the node kind
+    (``entry`` / ``function`` / ``route_handler`` / ``fetch_call`` /
+    ``support`` / ``file``) so consumers can distinguish a resolved
+    function from a file-level fallback.
+    """
+
+    path: str
+    symbol: str | None = None
+    kind: str = "function"
+    start_line: int | None = None
+    end_line: int | None = None
+    role: str | None = None
+
+
+class FlowLocNode(BaseModel):
+    """Phase 5 — call-graph node in the landing-app shape.
+
+    Projection of :class:`FlowNode` onto ``{path, symbol, start_line,
+    end_line, role}``. The original :class:`FlowNode` (``id`` / ``kind``
+    / ``file`` / ``lines`` / ``confidence``) is preserved on
+    ``Flow.nodes``; this is the additive parity view.
+    """
+
+    path: str
+    symbol: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    role: str
+
+
+class FlowLocEdge(BaseModel):
+    """Phase 5 — caller→callee edge carrying the call-site.
+
+    Projection of :class:`FlowEdge` that resolves the abstract
+    ``from``/``to`` node ids back to their files/symbols and attaches a
+    best-effort call-site ``{path, line}`` (the caller node's file and
+    its start line — the most precise deterministic anchor available
+    without re-parsing the AST). The original :class:`FlowEdge` stays on
+    ``Flow.edges``.
+    """
+
+    from_path: str
+    from_symbol: str | None = None
+    to_path: str
+    to_symbol: str | None = None
+    kind: str
+    call_site: dict[str, Any] | None = None  # {"path": str, "line": int | None}
 
 
 class FlowSymbolAttribution(BaseModel):
