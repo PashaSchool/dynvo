@@ -84,3 +84,89 @@ def test_routes_index_accepts_dict_signals():
     sig = {"pattern": "/x", "method": "GET", "file": "x.ts"}
     routes = build_routes_index(features, {"route": [sig]})
     assert routes[0]["feature_uuid"] == "A" * 32
+
+
+# ── Fix 2 (2026-05-26): derive routes from real AnchorCandidate paths ─
+# The Stage 1 route extractor emits AnchorCandidate (paths only — no
+# pattern/method/file). routes_index must be populated by deriving the
+# URL pattern from each route file path.
+from faultline.pipeline_v2.extractors.base import AnchorCandidate
+from faultline.pipeline_v2.indexes import _derive_route_from_path
+
+
+def test_derive_route_app_router_api():
+    assert _derive_route_from_path("app/api/teams/[id]/route.ts") == (
+        "/api/teams/:id", "GET")
+    assert _derive_route_from_path("src/app/api/products/route.ts") == (
+        "/api/products", "GET")
+
+
+def test_derive_route_app_router_page_strips_group():
+    assert _derive_route_from_path("src/app/(dashboard)/settings/page.tsx") == (
+        "/settings", "PAGE")
+
+
+def test_derive_route_pages_router_dynamic():
+    assert _derive_route_from_path("pages/users/[id].tsx") == (
+        "/users/:id", "PAGE")
+
+
+def test_derive_route_non_route_path_returns_none():
+    assert _derive_route_from_path("lib/util/helpers.ts") is None
+
+
+def test_routes_index_from_anchor_candidate_paths():
+    features = [{
+        "uuid": "A" * 32,
+        "paths": ["src/app/api/teams/[id]/route.ts", "src/app/teams/page.tsx"],
+    }]
+    cand = AnchorCandidate(
+        name="teams",
+        paths=("src/app/api/teams/[id]/route.ts", "src/app/teams/page.tsx"),
+        source="route",
+        confidence_self=0.9,
+    )
+    routes = build_routes_index(features, {"route": [cand]})
+    by_file = {r["file"]: r for r in routes}
+    assert by_file["src/app/api/teams/[id]/route.ts"]["pattern"] == "/api/teams/:id"
+    assert by_file["src/app/api/teams/[id]/route.ts"]["method"] == "GET"
+    assert by_file["src/app/teams/page.tsx"]["pattern"] == "/teams"
+    assert by_file["src/app/teams/page.tsx"]["method"] == "PAGE"
+    # owning feature attributed via path
+    assert all(r["feature_uuid"] == "A" * 32 for r in routes)
+
+
+def test_routes_index_dedups_repeated_route_files():
+    features = [{"uuid": "A" * 32, "paths": ["app/api/x/route.ts"]}]
+    cand = AnchorCandidate(
+        name="x", paths=("app/api/x/route.ts", "app/api/x/route.ts"),
+        source="route", confidence_self=0.9,
+    )
+    routes = build_routes_index(features, {"route": [cand]})
+    assert len(routes) == 1
+
+
+def test_derive_route_monorepo_workspace_prefix():
+    # cal.com Turborepo: apps/api/v1/pages/api/... — workspace prefix
+    # stripped, per-verb leaf names the method.
+    assert _derive_route_from_path(
+        "apps/api/v1/pages/api/teams/[teamId]/_get.ts") == (
+        "/api/teams/:teamId", "GET")
+    assert _derive_route_from_path(
+        "apps/api/v1/pages/api/teams/[teamId]/_patch.ts") == (
+        "/api/teams/:teamId", "PATCH")
+    assert _derive_route_from_path(
+        "apps/api/v1/pages/api/attendees/[id]/_delete.ts") == (
+        "/api/attendees/:id", "DELETE")
+
+
+def test_derive_route_monorepo_app_router():
+    assert _derive_route_from_path(
+        "apps/web/app/(use-page-wrapper)/teams/page.tsx") == (
+        "/teams", "PAGE")
+
+
+def test_derive_route_skips_convention_private_leaf():
+    # _auth-middleware.ts / _app.tsx are not addressable routes.
+    assert _derive_route_from_path(
+        "apps/api/v1/pages/api/teams/[teamId]/_auth-middleware.ts") is None
