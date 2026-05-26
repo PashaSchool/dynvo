@@ -182,6 +182,31 @@ def test_budget_disabled_processes_all(tmp_path: Path) -> None:
     assert res.features_budget_skipped == 0
 
 
+def test_default_budget_is_scale_invariant_no_skip(tmp_path: Path) -> None:
+    """With the default budget (wall_budget_sec=None) the wall scales
+    with feature count, so no feature is skipped on a healthy repo.
+    """
+    ctx, feats = _build_multi_feature_repo(tmp_path, n_features=6)
+    # wall_budget_sec=None → per-feature * len(features) (large enough).
+    res = enrich_with_import_tree(ctx, feats, max_workers=4)
+    assert res.budget_exceeded is False
+    assert res.features_budget_skipped == 0
+    # The resolved wall must scale with feature count, not be flat.
+    from faultline.pipeline_v2.stage_6_3_import_tree import (
+        DEFAULT_PER_FEATURE_BUDGET_SEC,
+    )
+    assert res.budget_sec == DEFAULT_PER_FEATURE_BUDGET_SEC * len(feats)
+
+
+def test_per_feature_budget_env_override(tmp_path: Path, monkeypatch) -> None:
+    """FAULTLINE_STAGE_6_3_PER_FEATURE_SEC tunes the per-feature wall."""
+    monkeypatch.setenv("FAULTLINE_STAGE_6_3_PER_FEATURE_SEC", "3")
+    ctx, feats = _build_multi_feature_repo(tmp_path, n_features=4)
+    res = enrich_with_import_tree(ctx, feats, max_workers=2)
+    assert res.budget_sec == 3.0 * len(feats)
+    assert res.features_budget_skipped == 0
+
+
 def test_worker_exception_does_not_break_stage(tmp_path: Path, monkeypatch) -> None:
     """A worker exception on ONE feature must not break the stage; the
     rest of the features still get enriched.

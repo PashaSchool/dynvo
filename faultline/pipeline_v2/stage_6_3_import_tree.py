@@ -124,13 +124,28 @@ DEFAULT_MAX_SYMBOLS_PER_FEATURE = 500
 # Each feature's BFS is independent (its only shared state is the
 # read-mostly ``_SourceCache``). A modest ``ThreadPoolExecutor`` keeps
 # the GIL-bound regex / file-IO work busy without overwhelming a laptop.
-# The wall-clock budget caps how long the stage may run; when exceeded
-# we stop submitting new features, drain in-flight work, mark the
-# remainder as ``budget_skipped`` in telemetry, and emit a warning so
-# the operator can react. Scale-invariant: bounded by wall-time, not by
-# feature count or repo size (per ``rule-no-magic-tuning``).
+# The wall-clock budget is SCALE-INVARIANT: it is a per-feature time
+# allowance multiplied by the number of features, NOT a flat wall. A
+# repo with 10x the features gets 10x the budget, so in the normal case
+# every feature is enriched and ``features_budget_skipped`` is 0. The
+# budget only ever fires on a genuinely pathological feature (one whose
+# BFS hangs far beyond the typical per-feature cost). This honours
+# ``rule-no-magic-tuning``: there is no fixed wall that a big repo blows.
+#
+# When the budget IS exceeded we stop submitting new features, drain
+# in-flight work, mark the remainder as ``budget_skipped`` in telemetry,
+# and emit a warning so the operator can react. An external runner can
+# still enforce a hard ceiling via ``WORKER_TIMEOUT_SEC``; set the
+# per-feature budget to 0 to disable this stage's own guard entirely.
 DEFAULT_MAX_WORKERS = 4
-DEFAULT_WALL_BUDGET_SEC = 180.0
+# Per-feature time allowance (seconds). Effective wall budget =
+# DEFAULT_PER_FEATURE_BUDGET_SEC * len(features). Override the resolved
+# wall directly with FAULTLINE_STAGE_6_3_BUDGET_SEC (absolute seconds),
+# or the per-feature allowance with FAULTLINE_STAGE_6_3_PER_FEATURE_SEC.
+DEFAULT_PER_FEATURE_BUDGET_SEC = 6.0
+# Backward-compat alias for callers/tests that imported the old flat
+# default. No longer used to compute the wall (see resolution below).
+DEFAULT_WALL_BUDGET_SEC = DEFAULT_PER_FEATURE_BUDGET_SEC
 
 # Extensions we attempt to slice into symbol bodies. Files outside
 # this set are still attributed as ``support`` (whole-file ranges)
@@ -1393,10 +1408,14 @@ def enrich_with_import_tree(
         stage exceeds this wall time, in-flight features finish but no
         new features are submitted; remaining features are recorded
         with ``source_kind='budget_skipped'`` so the artifact captures
-        what was deferred. ``None`` resolves to
-        :data:`DEFAULT_WALL_BUDGET_SEC`. Set to 0 to disable the budget
-        (legacy behaviour — useful when an external runner already
-        enforces a higher ceiling).
+        what was deferred. ``None`` resolves to a SCALE-INVARIANT wall =
+        :data:`DEFAULT_PER_FEATURE_BUDGET_SEC` * ``len(features)`` (so a
+        bigger repo gets a proportionally bigger budget and is NOT
+        skipped). Override the absolute wall with
+        ``FAULTLINE_STAGE_6_3_BUDGET_SEC`` or the per-feature allowance
+        with ``FAULTLINE_STAGE_6_3_PER_FEATURE_SEC``. Set to 0 to disable
+        the budget entirely (useful when an external runner such as
+        ``WORKER_TIMEOUT_SEC`` already enforces a higher ceiling).
     """
     t0 = time.monotonic()
     repo_path = Path(ctx.repo_path)
@@ -1420,13 +1439,26 @@ def enrich_with_import_tree(
         except ValueError:
             max_workers = DEFAULT_MAX_WORKERS
     if wall_budget_sec is None:
+        # Absolute-seconds override wins if set; otherwise derive a
+        # scale-invariant wall = per-feature allowance * feature count.
         env_budget = os.environ.get("FAULTLINE_STAGE_6_3_BUDGET_SEC")
-        try:
-            wall_budget_sec = (
-                float(env_budget) if env_budget else DEFAULT_WALL_BUDGET_SEC
+        if env_budget:
+            try:
+                wall_budget_sec = float(env_budget)
+            except ValueError:
+                wall_budget_sec = None
+        if wall_budget_sec is None:
+            env_per_feat = os.environ.get(
+                "FAULTLINE_STAGE_6_3_PER_FEATURE_SEC"
             )
-        except ValueError:
-            wall_budget_sec = DEFAULT_WALL_BUDGET_SEC
+            try:
+                per_feature_sec = (
+                    float(env_per_feat) if env_per_feat
+                    else DEFAULT_PER_FEATURE_BUDGET_SEC
+                )
+            except ValueError:
+                per_feature_sec = DEFAULT_PER_FEATURE_BUDGET_SEC
+            wall_budget_sec = per_feature_sec * max(1, len(features))
 
     if log:
         log.info(
@@ -1737,5 +1769,6 @@ __all__ = [
     "DEFAULT_MAX_FILES_PER_FEATURE",
     "DEFAULT_MAX_SYMBOLS_PER_FEATURE",
     "DEFAULT_MAX_WORKERS",
+    "DEFAULT_PER_FEATURE_BUDGET_SEC",
     "DEFAULT_WALL_BUDGET_SEC",
 ]

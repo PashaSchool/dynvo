@@ -79,10 +79,26 @@ logger = logging.getLogger(__name__)
 #
 # Per (linker × feature) link emission is independent file IO + regex,
 # so a small thread pool reclaims wall time on monorepos with hundreds
-# of features. The wall budget guards against pathological linkers (one
-# that opens every TS file per feature).
+# of features.
+#
+# The wall budget is SCALE-INVARIANT: it is a per-(feature×linker) time
+# allowance multiplied by the number of (active-linker × feature) work
+# units, NOT a flat wall. A repo with 10x the features gets 10x the
+# budget, so in the normal case every feature is enriched by every
+# active linker and ``features_budget_skipped`` is 0. The guard only
+# fires on a genuinely pathological linker. This honours
+# ``rule-no-magic-tuning`` — there is no fixed wall a big repo blows.
+# An external runner can still enforce a hard ceiling via
+# ``WORKER_TIMEOUT_SEC``; set the per-unit allowance to 0 to disable.
 DEFAULT_MAX_WORKERS = 4
-DEFAULT_WALL_BUDGET_SEC = 90.0
+# Per (feature × active-linker) time allowance (seconds). Effective
+# wall = DEFAULT_PER_UNIT_BUDGET_SEC * len(features) * len(active_linkers).
+# Override the resolved wall directly with FAULTLINE_STAGE_6_4_BUDGET_SEC
+# (absolute seconds) or the per-unit allowance with
+# FAULTLINE_STAGE_6_4_PER_FEATURE_SEC.
+DEFAULT_PER_UNIT_BUDGET_SEC = 0.5
+# Backward-compat alias for callers/tests importing the old flat default.
+DEFAULT_WALL_BUDGET_SEC = DEFAULT_PER_UNIT_BUDGET_SEC
 
 
 # ── Result types ────────────────────────────────────────────────────────────
@@ -252,10 +268,16 @@ def run_stage_6_4(
         max_workers = _resolve_int_env(
             "FAULTLINE_STAGE_6_4_WORKERS", DEFAULT_MAX_WORKERS,
         )
-    if wall_budget_sec is None:
-        wall_budget_sec = _resolve_float_env(
-            "FAULTLINE_STAGE_6_4_BUDGET_SEC", DEFAULT_WALL_BUDGET_SEC,
-        )
+    # Absolute-seconds override (caller arg or env) wins; the
+    # scale-invariant default is computed below once ``active`` is known.
+    budget_override = wall_budget_sec
+    if budget_override is None:
+        env_budget = os.environ.get("FAULTLINE_STAGE_6_4_BUDGET_SEC")
+        if env_budget:
+            try:
+                budget_override = float(env_budget)
+            except ValueError:
+                budget_override = None
 
     available = linkers if linkers is not None else discover_linkers()
     if not available:
@@ -267,7 +289,7 @@ def run_stage_6_4(
             per_linker={},
             links_emitted_total=0,
             elapsed_sec=round(time.monotonic() - t0, 3),
-            budget_sec=wall_budget_sec,
+            budget_sec=budget_override or 0.0,
             max_workers=max_workers,
         )
 
@@ -288,6 +310,19 @@ def run_stage_6_4(
                 linker=linker.name,
             )
             logger.warning("linker.is_active raised", exc_info=True)
+
+    # Resolve the wall budget. Absolute override (caller/env) wins;
+    # otherwise derive a scale-invariant wall proportional to the
+    # (active-linker × feature) work units so big repos are not skipped.
+    if budget_override is not None:
+        wall_budget_sec = budget_override
+    else:
+        per_unit_sec = _resolve_float_env(
+            "FAULTLINE_STAGE_6_4_PER_FEATURE_SEC",
+            DEFAULT_PER_UNIT_BUDGET_SEC,
+        )
+        work_units = max(1, len(features)) * max(1, len(active))
+        wall_budget_sec = per_unit_sec * work_units
 
     per_linker: dict[str, dict[str, Any]] = {}
     links_total = 0
