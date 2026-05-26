@@ -55,7 +55,27 @@ _NOISE_SYMBOLS = {
     "getserversideprops", "getstaticprops", "getstaticpaths",
     "getinitialprops", "default", "middleware", "loader", "action",
     "generatemetadata", "page", "layout", "handler", "main",
+    # Bare HTTP-verb route handlers (Next.js App Router ``route.ts``
+    # exports ``GET`` / ``POST`` / … and Nest/Express handlers named
+    # ``getHandler`` / ``postHandler``). Humanizing these yields labels
+    # ("Get Handler", "Post") strictly worse than the kebab ``name``,
+    # so we demote them to fall through to the route / fallback tiers.
+    "get", "post", "put", "patch", "delete", "head", "options",
+    "gethandler", "posthandler", "puthandler", "patchhandler",
+    "deletehandler", "headhandler", "optionshandler",
 }
+
+# Trailing dangling conjunctions/prepositions — when the 6-word cap (or
+# a singularizer) leaves one of these as the LAST word, drop it so we
+# never emit "... Credentials Or" / "... Settings With".
+_DANGLING_TRAILERS = {"and", "or", "with", "for", "to", "of", "the", "a", "an"}
+
+# A version-suffix on a DTO/symbol token sequence: a run of trailing
+# all-numeric tokens (``CancelBookingOutput_2024_08_13`` →
+# "Cancel Booking Output 2024 08 13"). Such date/version tails make the
+# label worse than the kebab name, so a symbol whose humanized form ends
+# in ≥2 numeric tokens is demoted to fall through.
+_NUMERIC_TOKEN_RE = re.compile(r"^\d+$")
 
 # Path segments that carry no resource meaning.
 _NOISE_SEGMENTS = {"api", "v1", "v2", "v3", "trpc", "_", ""}
@@ -105,16 +125,50 @@ def _singularize(word: str) -> str:
     return word
 
 
+def _strip_dangling_trailer(words: list[str]) -> list[str]:
+    """Drop a trailing dangling conjunction/preposition.
+
+    Guards against the ``_MAX_WORDS`` cap (or a singularizer) leaving a
+    label ending in "Or" / "And" / "With" — strictly worse than ending
+    on the noun before it. Strips repeatedly (a label can end in two).
+    """
+    while words and words[-1].lower() in _DANGLING_TRAILERS:
+        words = words[:-1]
+    return words
+
+
 def _humanize_symbol(symbol: str) -> str:
-    """Split + strip handler prefix + Title-case a code symbol."""
+    """Split + strip handler prefix + Title-case a code symbol.
+
+    Returns ``""`` for symbols that would humanize to a label WORSE than
+    the kebab ``name`` (caller falls through): ``<...>`` sentinels and
+    version/date-suffixed DTOs (trailing run of ≥2 numeric tokens).
+    """
+    # Sentinel symbols (``<file>``, ``<deep:...>``, ``<anonymous>``) are
+    # not real identifiers — never humanize them; fall through.
+    if symbol.startswith("<"):
+        return ""
     tokens = [t for t in _TOKEN_SPLIT_RE.split(symbol) if t]
     if not tokens:
         return ""
     # Strip a leading handler-ish prefix (case-insensitive).
     if len(tokens) > 1 and tokens[0].lower() in _SYMBOL_PREFIXES:
         tokens = tokens[1:]
+    # Demote version/date-suffixed DTOs: a trailing run of ≥2 numeric
+    # tokens (``CancelBookingOutput_2024_08_13``) reads worse than name.
+    trailing_numeric = 0
+    for tok in reversed(tokens):
+        if _NUMERIC_TOKEN_RE.match(tok):
+            trailing_numeric += 1
+        else:
+            break
+    if trailing_numeric >= 2:
+        return ""
     tokens = tokens[:_MAX_WORDS]
-    return " ".join(_titleize_token(t) for t in tokens)
+    words = _strip_dangling_trailer(
+        [_titleize_token(t) for t in tokens],
+    )
+    return " ".join(words)
 
 
 def _path_segments(pattern: str) -> list[str]:
@@ -182,12 +236,54 @@ def _humanize_route(method: str, pattern: str) -> str:
             if parent.lower() not in resource.lower():
                 resource = f"{parent} {resource}"
 
-    words = f"{action} {resource}".split()
-    return " ".join(words[:_MAX_WORDS])
+    words = _strip_dangling_trailer(f"{action} {resource}".split()[:_MAX_WORDS])
+    return " ".join(words)
 
 
-def _fallback_label(flow: "Flow") -> str:
-    """Humanize summary / description / kebab name as a last resort."""
+def _humanize_file_basename(entry_file: str | None) -> str:
+    """Humanize the entry file's path tail into a label.
+
+    Used when the symbol tier is a ``<file>`` sentinel — the file path
+    is the only real signal. ``apple-calendar/webhook.ts`` → "Apple
+    Calendar Webhook". We take the leaf directory + filename stem so a
+    bare ``route.ts`` / ``page.tsx`` still picks up its parent dir
+    ("teams/route.ts" → "Teams"). Dynamic + noise segments are dropped.
+    """
+    if not entry_file:
+        return ""
+    segs = [s for s in entry_file.split("/") if s]
+    if not segs:
+        return ""
+    # Strip the extension off the filename stem.
+    fname = segs[-1]
+    stem = re.sub(r"\.[A-Za-z0-9]+$", "", fname)
+    # Convention markers (route/page/index/etc.) carry no meaning — drop
+    # them and lean on the parent directory.
+    parts: list[str] = segs[:-1]
+    if stem and stem not in {
+        "route", "page", "layout", "index", "handler", "default",
+        "+page", "+server", "_app", "_document", "middleware",
+    }:
+        parts.append(stem)
+    # Keep the last two meaningful (non-dynamic, non-noise) segments so
+    # we get "Apple Calendar Webhook" not the whole repo path.
+    meaningful = [
+        s for s in parts
+        if not _DYNAMIC_SEG_RE.match(s) and s.lower() not in _NOISE_SEGMENTS
+    ]
+    if not meaningful:
+        return ""
+    meaningful = meaningful[-2:]
+    tokens: list[str] = []
+    for seg in meaningful:
+        tokens.extend(t for t in _TOKEN_SPLIT_RE.split(seg) if t)
+    tokens = tokens[:_MAX_WORDS]
+    words = _strip_dangling_trailer([_titleize_token(t) for t in tokens])
+    return " ".join(words)
+
+
+def _name_label(flow: "Flow") -> str:
+    """Humanize summary.title / description / kebab name."""
     summary = getattr(flow, "summary", None)
     title = getattr(summary, "title", None) if summary is not None else None
     candidate = title or getattr(flow, "description", None) or flow.name or ""
@@ -197,7 +293,45 @@ def _fallback_label(flow: "Flow") -> str:
     # Drop a trailing "-flow" / " flow" so the label isn't "... Flow".
     candidate = re.sub(r"[-_\s]flow$", "", candidate, flags=re.IGNORECASE)
     tokens = [t for t in _TOKEN_SPLIT_RE.split(candidate) if t][:_MAX_WORDS]
-    return " ".join(_titleize_token(t) for t in tokens)
+    words = _strip_dangling_trailer([_titleize_token(t) for t in tokens])
+    return " ".join(words)
+
+
+def _meaningful_word_count(label: str) -> int:
+    """Count label words that aren't generic structural nouns.
+
+    Used to choose between the file-basename label and the kebab-name
+    label in the fallback tier: a descriptive name ("Setup Alby
+    Integration") should win over a thin file label ("Pages Alby"),
+    while a generic name should lose to a specific file basename
+    ("Apple Calendar Webhook"). Structural-route directory nouns carry
+    no product meaning so they don't count.
+    """
+    generic = {
+        "api", "app", "pages", "page", "src", "route", "routes",
+        "handler", "index", "view", "get", "post", "the", "a", "an",
+    }
+    return sum(1 for w in label.split() if w.lower() not in generic)
+
+
+def _fallback_label(flow: "Flow", entry_file: str | None = None) -> str:
+    """Last-resort label: the richer of {file-basename, kebab name}.
+
+    Per Fix 1 (2026-05-26): a ``<file>``-entry flow has no usable symbol.
+    The humanized entry-file basename ("Apple Calendar Webhook") often
+    reads better than a generic kebab name — but a descriptive kebab
+    name ("Setup Alby Integration") must NOT be regressed to a thin file
+    label ("Pages Alby"). We compute both and keep whichever has more
+    *meaningful* (non-structural) words; the kebab name wins ties so the
+    stable-id-derived label remains the default when neither is richer.
+    """
+    name_label = _name_label(flow)
+    file_label = _humanize_file_basename(entry_file)
+    if file_label and (
+        _meaningful_word_count(file_label) > _meaningful_word_count(name_label)
+    ):
+        return file_label
+    return name_label or file_label
 
 
 def _match_route(
@@ -257,14 +391,22 @@ def derive_display_name(
         if label:
             return label
 
-    # 2. entry_point symbol (skip framework-boilerplate symbols).
-    if entry_symbol and entry_symbol.lower() not in _NOISE_SYMBOLS:
+    # 2. entry_point symbol. Skip framework-boilerplate + bare-verb
+    #    handlers (``_NOISE_SYMBOLS``) and ``<...>`` sentinels (incl.
+    #    ``<file>``) so they fall THROUGH to the file-basename fallback
+    #    rather than emitting "<file>" / "Get Handler" verbatim.
+    if (
+        entry_symbol
+        and not entry_symbol.startswith("<")
+        and entry_symbol.lower() not in _NOISE_SYMBOLS
+    ):
         label = _humanize_symbol(entry_symbol)
         if label:
             return label
 
-    # 3. Fallback (summary / description / kebab name).
-    return _fallback_label(flow)
+    # 3. Fallback — humanize the entry-file basename, then summary /
+    #    description / kebab name.
+    return _fallback_label(flow, entry_file)
 
 
 __all__ = ["derive_display_name"]

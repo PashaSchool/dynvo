@@ -200,3 +200,82 @@ def test_expand_flows_sets_display_name_and_preserves_name(tmp_path: Path) -> No
     assert flow.display_name == "Create Checkout Session"
     # Stable id byte-identical.
     assert flow.name == "checkout-flow"
+
+
+# ── Fix 1 (2026-05-26): <file> sentinel leak ────────────────────────
+def test_file_sentinel_symbol_falls_through_to_basename() -> None:
+    # entry symbol is the literal "<file>" sentinel — humanizing it
+    # verbatim produced display_name "<file>" (the #1 cal-com defect).
+    # It must fall through to the humanized entry-file basename.
+    fl = _flow(
+        "apple-calendar-webhook-flow",
+        entry_file="app/api/integrations/apple-calendar/webhook.ts",
+        entry_symbol="<file>",
+    )
+    assert derive_display_name(fl, routes=[]) == "Apple Calendar Webhook"
+
+
+def test_file_sentinel_via_entry_point_file_only() -> None:
+    # No entry_point object, no symbol — only entry_point_file. Still
+    # must produce a basename label, never "<file>".
+    now = datetime.now(timezone.utc)
+    fl = Flow(
+        name="zoom-video-flow", entry_point_file="lib/integrations/zoom/video.ts",
+        paths=["lib/integrations/zoom/video.ts"], authors=[], total_commits=1,
+        bug_fixes=0, bug_fix_ratio=0.0, last_modified=now, health_score=90.0,
+    )
+    label = derive_display_name(fl, routes=[])
+    assert "<" not in label
+    assert label == "Zoom Video"
+
+
+def test_humanize_symbol_returns_empty_for_sentinels() -> None:
+    assert _humanize_symbol("<file>") == ""
+    assert _humanize_symbol("<deep:foo>") == ""
+    assert _humanize_symbol("<anonymous>") == ""
+
+
+# ── Fix 3 (2026-05-26): demote weak symbol labels ───────────────────
+_WEAK_VERB_CASES = ["GET", "POST", "Put", "patch", "DELETE", "getHandler", "postHandler"]
+
+
+@pytest.mark.parametrize("symbol", _WEAK_VERB_CASES)
+def test_bare_verb_handler_demoted_to_fallback(symbol: str) -> None:
+    # A bare HTTP-verb / *Handler symbol must NOT win the symbol tier;
+    # falls through to the humanized name.
+    fl = _flow(
+        "create-team-invite-flow",
+        entry_file="lib/teams/invite.ts",
+        entry_symbol=symbol,
+    )
+    label = derive_display_name(fl, routes=[])
+    assert label != symbol.title()
+    assert "Handler" not in label
+    # Name is richer than the file basename → name wins.
+    assert label == "Create Team Invite"
+
+
+def test_version_suffixed_dto_demoted() -> None:
+    # CancelBookingOutput_2024_08_13 → trailing date tokens make a label
+    # worse than the kebab name; demote to fallback.
+    assert _humanize_symbol("CancelBookingOutput_2024_08_13") == ""
+    fl = _flow(
+        "cancel-booking-flow",
+        entry_file="lib/booking/cancel.ts",
+        entry_symbol="CancelBookingOutput_2024_08_13",
+    )
+    assert derive_display_name(fl, routes=[]) == "Cancel Booking"
+
+
+def test_single_version_token_kept() -> None:
+    # A single trailing numeric token is fine ("V2 Endpoint" reads ok);
+    # only a run of >=2 (date/version) is demoted.
+    assert _humanize_symbol("listBookings2") == "List Bookings2"
+
+
+def test_dangling_conjunction_trimmed() -> None:
+    # 6-word cap leaving a trailing "Or" / "With" → drop the dangler.
+    out = _humanize_symbol("updateBillingCredentialsOrSubscriptionWith")
+    assert not out.lower().endswith(" or")
+    assert not out.lower().endswith(" with")
+    assert out.split()[-1].lower() not in {"or", "and", "with"}
