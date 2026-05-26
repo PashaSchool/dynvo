@@ -57,9 +57,17 @@ __all__ = [
 
 STAGE_6_9_ENV_FLAG = "FAULTLINE_STAGE_6_9_TEST_STRIP"
 
-# ── APPROVED predicate (implemented exactly as the experimenter validated) ──
-_BASENAME_SUFFIXES = (".test.", ".spec.", ".e2e.", ".cy.", "_test.", "_spec.")
-_SEGMENTS = {
+# ── Test-file predicate ─────────────────────────────────────────────────────
+# Token-based (2026-05-26): the original substring form missed the hyphenated
+# NestJS convention `*.e2e-spec.ts` (and `jest-e2e.ts`, `test-setup.ts`). We
+# now inspect the dot-component immediately before the extension, split it on
+# - / _, and flag the file when that component STARTS or ENDS with a test
+# marker token. This catches foo.test.ts / foo.spec.ts / foo.e2e.ts / foo.cy.ts
+# / foo_test.go / test_foo.py / foo-spec.ts / app.e2e-spec.ts / jest-e2e.ts /
+# test-setup.ts, WITHOUT false-positiving product files that merely contain a
+# marker mid-name (webhook-test-header.tsx) or words like latest / contest /
+# spectrum / testimonial.
+_TEST_DIR_SEGMENTS = {
     "__tests__",
     "__mocks__",
     "tests",
@@ -69,18 +77,34 @@ _SEGMENTS = {
     "playwright",
     "__fixtures__",
 }
+_TEST_MARKER_TOKENS = {"test", "tests", "spec", "specs", "e2e", "cy"}
+
+
+def _split_tokens(component: str) -> list[str]:
+    out: list[str] = []
+    for chunk in component.split("-"):
+        out.extend(chunk.split("_"))
+    return [t for t in out if t]
 
 
 def is_test_path(path: str) -> bool:
     """Return ``True`` if ``path`` is a test/mock/fixture file or lives
-    under a test directory segment. Frozen predicate — do not retune."""
+    under a test directory segment."""
     if not path or not isinstance(path, str):
         return False
     p = path.lower().replace("\\", "/")
     segs = p.split("/")
-    if any(suf in segs[-1] for suf in _BASENAME_SUFFIXES):
+    # Directory conventions — any dir segment except the filename itself.
+    if any(seg in _TEST_DIR_SEGMENTS for seg in segs[:-1]):
         return True
-    return any(seg in _SEGMENTS for seg in segs)
+    # Filename conventions — pre-extension component starts/ends with a marker.
+    base = segs[-1] if segs else ""
+    dotparts = base.split(".")
+    if len(dotparts) >= 2:
+        toks = _split_tokens(dotparts[-2])
+        if toks and (toks[0] in _TEST_MARKER_TOKENS or toks[-1] in _TEST_MARKER_TOKENS):
+            return True
+    return False
 
 
 def stage_6_9_enabled() -> bool:

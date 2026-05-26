@@ -52,6 +52,11 @@ _NOW = datetime(2026, 5, 26, tzinfo=timezone.utc)
         "src/__fixtures__/data.json",
         "DEEP/Tests/Thing.cs",  # case-insensitive segment
         "A/B/C.TEST.TS",        # case-insensitive basename
+        "apps/api/v2/src/app.e2e-spec.ts",          # NestJS hyphenated convention
+        "apps/api/v2/src/x.controller.e2e-spec.ts",  # NestJS, multi-dot
+        "apps/api/v2/jest-e2e.ts",                   # jest e2e runner (ends e2e)
+        "apps/web/modules/test-setup.ts",            # test- prefix
+        "src/foo-spec.ts",                           # hyphen spec suffix
     ],
 )
 def test_predicate_positive(path: str) -> None:
@@ -67,6 +72,9 @@ def test_predicate_positive(path: str) -> None:
         "src/contest/foo.ts",        # "contest" not a test segment
         "app/page.tsx",
         "lib/spectrum.ts",           # contains "spec" but not ".spec."
+        "apps/web/modules/webhooks/views/webhook-test-header.tsx",  # product file: "test" mid-name
+        "components/TestimonialCard.tsx",  # "test" prefix substring, single token
+        "src/manifest.ts",           # ends "fest" not a marker token
         "",
         None,
         123,
