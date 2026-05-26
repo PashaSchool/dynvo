@@ -128,6 +128,9 @@ from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
     run_stage_8_analyst,
 )
+from faultline.pipeline_v2.stage_8_5_member_backfill import (
+    run_stage_8_5_backfill,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1049,6 +1052,40 @@ def run_pipeline_v2(
         "capped_pfs_count": len(rollup_result.diagnostics.get("capped_pfs", [])),
     }
 
+    # ── Stage 8.5 — deterministic path-overlap member backfill ─────
+    # ADDITIVE: runs after the analyst + rollup, only ever STAMPS
+    # ``product_feature_id`` on dev features the analyst left UNMAPPED
+    # (the bulk that never reached the capped analyst payload). Never
+    # touches the product_features[] array, the analyst prompt, or any
+    # already-mapped feature → Layer-2 product P/R are invariant. Scale-
+    # invariant majority-overlap threshold (see module docstring).
+    # Default ON; disable via FAULTLINE_STAGE_8_5_BACKFILL=0.
+    with StageLogger(run_dir, 8, "member_backfill") as log8_bf:
+        backfill_result = run_stage_8_5_backfill(
+            features,
+            product_features,
+            dev_to_product_map,
+        )
+        log8_bf.info(
+            f"backfill enabled={backfill_result.enabled} "
+            f"threshold={backfill_result.threshold} "
+            f"attached={backfill_result.attached} "
+            f"attached_pct {backfill_result.attached_pct_before:.3f}"
+            f"->{backfill_result.attached_pct_after:.3f} "
+            f"still_unmapped={backfill_result.still_unmapped}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="member_backfill",
+            payload={
+                "telemetry": backfill_result.as_telemetry(),
+                "assignments": backfill_result.assignments,
+            },
+            run_dir=run_dir,
+        )
+    stage_8_5_backfill_telemetry = backfill_result.as_telemetry()
+
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
     # residual list (stage5 stripped FS-missing + anchor-dup before naming
@@ -1260,6 +1297,10 @@ def run_pipeline_v2(
         # registry keys; ``pfs_attributed_count`` reports how many PFs
         # got at least one flow attached.
         "stage_08_rollup": dict(stage_8_rollup_telemetry),
+        # Stage 8.5 — deterministic path-overlap member backfill.
+        # Additive: only stamps product_feature_id on analyst-unmapped
+        # dev features; never alters the product_features[] array.
+        "stage_8_5_backfill": dict(stage_8_5_backfill_telemetry),
         # Sprint S6.1 — Stage 0.6 deterministic shape classifier.
         # Used by the Stage 8 flow-rollup dispatcher to pick the per-
         # shape attribution strategy. Universal-residual is the safe
