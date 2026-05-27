@@ -38,8 +38,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
-
+from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     posix,
     read_text,
@@ -54,25 +53,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_YAML_PATH = (
-    Path(__file__).resolve().parents[3] / "eval" / "stacks" / "fastapi.yaml"
-)
-
 _HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
 
 
 def _load_config() -> dict:
-    """Load fastapi.yaml. Returns ``{}`` on any error."""
-    text = read_text(_YAML_PATH)
-    if not text:
-        logger.debug("fastapi.yaml not readable at %s", _YAML_PATH)
-        return {}
-    try:
-        data = yaml.safe_load(text) or {}
-    except yaml.YAMLError as exc:
-        logger.warning("fastapi.yaml parse failed: %s", exc)
-        return {}
-    return data if isinstance(data, dict) else {}
+    """Load fastapi.yaml from the packaged data tree (hermetic)."""
+    return load_stack_yaml("fastapi")
 
 
 # Compiled-regex cache keyed by id(config) so test reloads don't reuse

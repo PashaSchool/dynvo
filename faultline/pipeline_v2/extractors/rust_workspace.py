@@ -30,11 +30,9 @@ import fnmatch
 import logging
 import tomllib
 from collections import defaultdict
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
-
+from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     posix,
     read_text,
@@ -49,26 +47,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_YAML_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "eval"
-    / "stacks"
-    / "rust-workspace.yaml"
-)
-
-
 def _load_config() -> dict:
-    """Load rust-workspace.yaml. Returns ``{}`` on any error."""
-    text = read_text(_YAML_PATH)
-    if not text:
-        logger.debug("rust-workspace.yaml not readable at %s", _YAML_PATH)
-        return {}
-    try:
-        data = yaml.safe_load(text) or {}
-    except yaml.YAMLError as exc:
-        logger.warning("rust-workspace.yaml parse failed: %s", exc)
-        return {}
-    return data if isinstance(data, dict) else {}
+    """Load rust-workspace.yaml from the packaged data tree (hermetic)."""
+    return load_stack_yaml("rust-workspace")
 
 
 # ── Activation gate ────────────────────────────────────────────────────────

@@ -1,0 +1,79 @@
+stack: rails-app
+display_name: Ruby on Rails Application
+
+# Activation: Stage 0.5 Stack Auditor labels the repo `rails-app`.
+# The five Rails extractors below ALL self-skip otherwise — there is
+# no fallback heuristic (a Rails app without the audited tag is rare
+# enough that we don't want to risk false-positive activation on a
+# random Ruby project).
+detection:
+  any:
+    - audited_stack_equals: "rails-app"
+    - audited_stack_in_secondary: "rails-app"
+
+# ── rails_routes ───────────────────────────────────────────────────────
+# config/routes.rb conventions. We do NOT need a Ruby AST — the four
+# patterns below cover ~95% of real-world routes.rb files.
+routes:
+  file: "config/routes.rb"
+  patterns:
+    # `resources :users` / `resources :users, only: [:index]`
+    resources_block:    'resources\s+:([a-zA-Z_]+)'
+    # `resource :profile` (singular — single-row resource)
+    resource_singular:  'resource\s+:([a-zA-Z_]+)'
+    # `get "/foo" => "users#show"`  or  `get :foo, to: "users#show"`
+    explicit_verb:      '(?:get|post|put|patch|delete)\s+[\''"]?[/:]?([a-zA-Z_][\w/]*)[\''"]?\s*(?:=>|,\s*to:)'
+    # `namespace :api do … end` — surfaces a sub-feature
+    namespace_block:    'namespace\s+:([a-zA-Z_]+)'
+  confidence: 0.95
+
+# ── rails_models ───────────────────────────────────────────────────────
+# app/models/**/*.rb — each ActiveRecord model is one anchor. We also
+# capture has_many / belongs_to / has_one for future Stage 2 edge use.
+models:
+  glob: "app/models/**/*.rb"
+  class_pattern: 'class\s+([A-Z]\w*)\s*<\s*(?:ApplicationRecord|ActiveRecord::Base)'
+  association_patterns:
+    has_many:    'has_many\s+:([a-zA-Z_]+)'
+    belongs_to:  'belongs_to\s+:([a-zA-Z_]+)'
+    has_one:     'has_one\s+:([a-zA-Z_]+)'
+  confidence: 0.85
+
+# ── rails_views ────────────────────────────────────────────────────────
+# app/views/<resource>/**/*.{erb,haml,html.erb,slim} — one anchor per
+# parent resource directory.
+views:
+  base_dir: "app/views"
+  extensions: [".erb", ".haml", ".slim", ".html.erb"]
+  # Layouts and shared partial dirs are not resource folders.
+  skip_dirs:
+    - "layouts"
+    - "shared"
+    - "application"
+  confidence: 0.80
+
+# ── rails_jobs ─────────────────────────────────────────────────────────
+# app/jobs/**/*.rb — ActiveJob / Sidekiq workers.
+jobs:
+  glob: "app/jobs/**/*.rb"
+  class_pattern: 'class\s+([A-Z]\w*)\s*<\s*(?:ApplicationJob|ActiveJob::Base|Sidekiq::Job|Sidekiq::Worker)'
+  confidence: 0.85
+
+# ── rails_stimulus ─────────────────────────────────────────────────────
+# app/javascript/controllers/*_controller.js — Stimulus controllers.
+stimulus:
+  base_dirs:
+    - "app/javascript/controllers"
+    - "app/javascript/src/controllers"
+  filename_suffix: "_controller.js"
+  content_pattern: 'extends\s+Controller'
+  confidence: 0.80
+
+# ── Cross-extractor merger (Stage 2 enhancement) ───────────────────────
+# When multiple Rails extractors emit anchors for the same resource
+# noun (singular ↔ plural), they MUST collapse into one feature.
+# Stage 2 reads `cross_extractor_merge.enabled` and uses the
+# `rails_resource` normalizer.
+cross_extractor_merge:
+  enabled: true
+  normalizer: rails_resource
