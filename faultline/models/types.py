@@ -39,6 +39,9 @@ class FileBlame(BaseModel):
 class Flow(BaseModel):
     name: str                  # "checkout-flow", "login-flow"
     display_name: str | None = None  # Title Case label for UI ("Checkout")
+    # Clean kebab label WITHOUT the trailing "-flow"/"-flows" suffix, for compact
+    # display in tables/PR comments ("checkout-flow" -> "checkout"). Additive.
+    short_label: str = ""
     description: str | None = None
     participants: list["FlowParticipant"] = []
     # Sprint 4: tool-augmented flow detection grounds every flow in
