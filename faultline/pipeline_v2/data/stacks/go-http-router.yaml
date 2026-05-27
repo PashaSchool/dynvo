@@ -1,0 +1,53 @@
+stack: go-http-router
+display_name: Go HTTP Router (chi/gin/echo/fiber/std/httprouter)
+
+# Activation: any of these stack slugs (set by Stage 0 heuristic or
+# Stage 0.5 auditor) will fire the go_router extractor.
+detection:
+  any:
+    - audited_stack_prefix: "go-"
+    - stack_equals: "go"
+    - secondary_stack_equals: "go"
+
+file_glob: "**/*.go"
+
+# Path-prefix excludes — applied as ``starts_with`` against the
+# POSIX-normalised tracked file path. Vendored deps, tests, and
+# generated mocks should never produce routes.
+excludes:
+  - "vendor/"
+  - "node_modules/"
+  - ".git/"
+
+# Suffix excludes — Go test files end with ``_test.go``.
+exclude_suffixes:
+  - "_test.go"
+
+# One block per supported router. The extractor compiles each pair
+# of regexes once at construction time.
+router_patterns:
+  chi:
+    router_constructor: 'chi\.NewRouter\(\)'
+    route_call: '\.(Get|Post|Put|Patch|Delete|Head|Options|Connect|Trace|Method|Handle|HandleFunc)\(\s*"([^"]+)"'
+  gin:
+    router_constructor: 'gin\.(Default|New)\(\)'
+    route_call: '\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any|Handle)\(\s*"([^"]+)"'
+  echo:
+    router_constructor: 'echo\.New\(\)'
+    route_call: '\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any)\(\s*"([^"]+)"'
+  fiber:
+    router_constructor: 'fiber\.New\(\)'
+    route_call: '\.(Get|Post|Put|Patch|Delete|Head|Options|All)\(\s*"([^"]+)"'
+  stdlib_http:
+    router_constructor: 'http\.NewServeMux\(\)'
+    route_call: '\.(HandleFunc|Handle)\(\s*"([^"]+)"'
+  httprouter:
+    router_constructor: 'httprouter\.New\(\)'
+    route_call: '\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Handle|HandlerFunc)\(\s*"([^"]+)"'
+
+# Confidence policy. When the router constructor is visible in the
+# SAME FILE as the route call, this is the canonical "router root"
+# file and we trust the signal more.
+confidence:
+  with_constructor_in_file: 0.9
+  without_constructor_in_file: 0.7

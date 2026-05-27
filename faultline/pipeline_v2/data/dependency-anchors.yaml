@@ -1,0 +1,303 @@
+# Layer 2 product clusterer — dependency → product label map.
+#
+# Single source of truth for Sprint B3's Rule 2 (dependency anchor
+# clustering). Each entry maps a category slug to:
+#   - deps: list of npm/pip/cargo dependency name patterns (exact match
+#     OR token-prefix; see _dep_matches in faultline.pipeline_v2.extractors.package
+#     for the same matching algorithm)
+#   - product_label: customer-facing TitleCase label that becomes the
+#     product feature name when any developer feature's paths import
+#     one of these deps
+#   - name_aliases: (Sprint Rails H3) list of substrings that, when
+#     present in the developer feature's slug (kebab-case) OR in any
+#     of its file-path basenames, authorise this cluster to claim
+#     that feature. Without this guard, a Rails app with a Stripe
+#     gem would fold every unanchored model (Address, Property, …)
+#     into "Billing" purely because the dep exists somewhere in the
+#     repo. The guard requires the feature's NAME to actually carry
+#     a semantic signal of the category before the dep-anchor claims
+#     it. Aliases are case-insensitive substrings.
+#
+# Stack-agnostic: a Python repo importing `stripe` and a Node repo
+# importing `stripe` both produce a "Billing" product feature.
+#
+# Adding a new product label = add an entry here, no Python change.
+# Per the hard rule: dep → product mappings live in YAML, never in
+# Python.
+
+billing:
+  deps:
+    - stripe
+    - "@stripe/*"
+    - paddle
+    - "@paddle/*"
+    - paddle-sdk
+    - lemonsqueezy.js
+    - "@lemonsqueezy/*"
+    - polar
+    - "@polar-sh/*"
+  product_label: Billing
+  name_aliases:
+    - billing
+    - payment
+    - subscription
+    - invoice
+    - checkout
+    - charge
+    - plan
+    - stripe
+    - paddle
+    - polar
+    - price
+
+auth:
+  deps:
+    - next-auth
+    - "@auth/*"
+    - better-auth
+    - lucia
+    - lucia-auth
+    - clerk
+    - "@clerk/*"
+    - "@workos-inc/*"
+    - "@kinde-oss/*"
+    - "@supabase/auth-js"
+    - "@supabase/auth-helpers-nextjs"
+    - django-allauth
+    - authlib
+    - python-jose
+    - devise
+    - doorkeeper
+  product_label: Auth
+  name_aliases:
+    - auth
+    - session
+    - login
+    - signin
+    - sign-in
+    - signup
+    - sign-up
+    - password
+    - oauth
+    - sso
+    - mfa
+    - 2fa
+    - account
+    - user
+    - identity
+    - token
+    - permission
+    - role
+
+email:
+  deps:
+    - resend
+    - "@sendgrid/mail"
+    - nodemailer
+    - postmark
+    - mailgun
+    - "@aws-sdk/client-ses"
+    - sendgrid
+    - mailer
+  product_label: Email
+  name_aliases:
+    - email
+    - mail
+    - mailer
+    - notification
+    - send
+    - inbox
+    - reply
+    - resend
+
+background-jobs:
+  deps:
+    - inngest
+    - bullmq
+    - bull
+    - trigger.dev
+    - "@trigger.dev/*"
+    - "@upstash/qstash"
+    - agenda
+    - celery
+    - rq
+    - dramatiq
+    - sidekiq
+  product_label: Background Jobs
+  name_aliases:
+    - job
+    - jobs
+    - worker
+    - queue
+    - task
+    - schedule
+    - cron
+    - background
+
+cache:
+  deps:
+    - "@upstash/redis"
+    - ioredis
+    - redis
+    - "@vercel/kv"
+  product_label: Cache
+  name_aliases:
+    - cache
+    - redis
+    - kv
+
+database:
+  deps:
+    - "@prisma/client"
+    - drizzle-orm
+    - kysely
+    - knex
+    - "@supabase/supabase-js"
+    - sequelize
+    - typeorm
+    - mongoose
+  product_label: Database
+  name_aliases:
+    - database
+    - db
+    - migration
+    - schema
+    - query
+
+analytics:
+  deps:
+    - posthog-node
+    - posthog-js
+    - mixpanel
+    - "@segment/analytics-node"
+    - "@segment/*"
+  product_label: Analytics
+  name_aliases:
+    - analytics
+    - tracking
+    - event
+    - metric
+    - telemetry
+    - report
+    - posthog
+    - segment
+    - mixpanel
+
+error-monitoring:
+  deps:
+    - "@sentry/*"
+    - "@datadog/*"
+    - bugsnag
+    - rollbar
+  product_label: Error Monitoring
+  name_aliases:
+    - error
+    - monitor
+    - monitoring
+    - alert
+    - sentry
+    - exception
+    - log
+    - logs
+
+file-storage:
+  deps:
+    - "@vercel/blob"
+    - "@aws-sdk/client-s3"
+    - "@google-cloud/storage"
+    - uploadthing
+    - "@uploadthing/*"
+    - boto3
+  product_label: File Storage
+  name_aliases:
+    - file
+    - upload
+    - storage
+    - asset
+    - attachment
+    - blob
+    - s3
+    - bucket
+    - media
+    - document
+
+search:
+  deps:
+    - meilisearch
+    - "@elastic/elasticsearch"
+    - typesense
+    - algoliasearch
+  product_label: Search
+  name_aliases:
+    - search
+    - query
+    - index
+    - autocomplete
+    - find
+    - filter
+    - meilisearch
+    - elastic
+    - algolia
+
+realtime:
+  deps:
+    - pusher
+    - "@pusher/*"
+    - ably
+    - socket.io
+    - ws
+    - actioncable
+    - "@rails/actioncable"
+  product_label: Realtime
+  name_aliases:
+    - realtime
+    - websocket
+    - channel
+    - stream
+    - subscription
+    - presence
+    - broadcast
+    - pusher
+    - ably
+    - socket
+
+ai:
+  deps:
+    - "@anthropic-ai/sdk"
+    - anthropic
+    - openai
+    - "@ai-sdk/openai"
+    - "@ai-sdk/anthropic"
+    - "@google/generative-ai"
+    - langchain
+    - llamaindex
+    - ai
+  product_label: AI
+  name_aliases:
+    - ai
+    - llm
+    - chat
+    - completion
+    - prompt
+    - assistant
+    - openai
+    - anthropic
+    - claude
+    - gpt
+    - model
+    - embedding
+
+i18n:
+  deps:
+    - next-i18next
+    - i18next
+    - react-i18next
+    - "@lingui/*"
+  product_label: Internationalization
+  name_aliases:
+    - i18n
+    - locale
+    - translation
+    - language
+    - intl
+    - lang

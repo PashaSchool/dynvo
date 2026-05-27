@@ -1,0 +1,60 @@
+stack: python-library
+display_name: Python Library (package + __init__.py exports)
+
+# Activation: auditor labels the repo `python-library`, or Stage 0
+# detected Python with no application-entry markers (manage.py,
+# wsgi.py, app = FastAPI(), app = Flask()). The library shape is
+# different from app shape: features map to top-level submodules
+# and public exports declared in __init__.py.
+detection:
+  any:
+    - audited_stack_equals: "python-library"
+  qualifiers:
+    no_app_markers:
+      - "manage.py"
+      - "wsgi.py"
+      - "asgi.py"
+    no_app_call_patterns:
+      - 'app\s*=\s*FastAPI\('
+      - 'app\s*=\s*Flask\('
+      - 'application\s*=\s*Django'
+
+manifest_candidates:
+  - "pyproject.toml"
+  - "setup.py"
+  - "setup.cfg"
+
+init_file: "__init__.py"
+
+# Regexes used to parse a package __init__.py for public symbols.
+# The first two extract re-exported names from `from .X import Y, Z`
+# (single-line and multi-line parenthesised form). The third pulls
+# the contents of `__all__ = [...]`.
+public_export_patterns:
+  from_relative_single: '^from\s+\.([\w.]+)\s+import\s+(.+)$'
+  from_relative_paren:  '^from\s+\.([\w.]+)\s+import\s+\(([^)]*)\)'
+  dunder_all:           '^__all__\s*=\s*\[([^\]]*)\]'
+
+# Path of submodules within the root package whose presence yields
+# a feature anchor.
+submodule_init_glob: "{root_pkg}/{name}/__init__.py"
+submodule_pkg_glob:  "{root_pkg}/{name}/"
+
+# When __all__ lists a name that doesn't match a submodule, emit a
+# lower-confidence per-symbol anchor.
+confidence:
+  submodule: 0.85
+  symbol_only: 0.6
+
+# Universal Python skip-paths within a library.
+excludes:
+  - "tests/"
+  - "test/"
+  - "docs/"
+  - "examples/"
+  - "scripts/"
+  - ".venv/"
+  - "venv/"
+  - "build/"
+  - "dist/"
+  - "__pycache__/"
