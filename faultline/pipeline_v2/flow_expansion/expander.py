@@ -20,6 +20,7 @@ field (``id``, ``primary_feature``, ``secondary_features``,
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,9 +37,9 @@ from faultline.models.types import (
     FlowNode,
     FlowSummary,
 )
-from faultline.pipeline_v2.flow_expansion.flow_display_name import (
-    derive_display_name,
-)
+# NOTE: flow_display_name.derive_display_name is intentionally NOT imported —
+# display_name is reverted to kebab (flow.name). The module stays in-tree for
+# a future opt-in. See the display_name block in _attach_loc_detail below.
 from faultline.pipeline_v2.flow_expansion.call_graph import (
     DEFAULT_MAX_DEPTH,
     DEFAULT_MAX_NODES_PER_FLOW,
@@ -299,13 +300,19 @@ def _project_loc_detail(
         _add(n.file, n.symbol, n.kind, start, end, n.role)
     flow.loc_symbol_attributions = loc_attrs
 
-    # ── display_name (deterministic human label; route > symbol > fb) ─
-    # ADDITIVE: ``flow.name`` (stable id) is never touched. Only fill in
-    # when empty so an upstream-assigned label is preserved (idempotent).
+    # ── display_name (REVERTED to kebab per user 2026-05-26) ──────────
+    # The human-readable deriver (route > symbol > fb) is intentionally
+    # NOT used: the user wants flow labels to stay kebab ("як перед тим
+    # було, кебабом"). We mirror the stable kebab ``flow.name`` so any
+    # consumer reading ``display_name`` shows kebab too. ``derive_display_name``
+    # / ``flow_display_name.py`` are kept in-tree (dormant) for future opt-in.
+    # ADDITIVE: only fill when empty so an upstream-assigned label survives.
     if not flow.display_name:
-        label = derive_display_name(flow, routes)
-        if label:
-            flow.display_name = label
+        flow.display_name = flow.name
+    # short_label: kebab name without the trailing "-flow"/"-flows" suffix, for
+    # compact display ("create-case-flow" -> "create-case"). Additive.
+    if not flow.short_label:
+        flow.short_label = re.sub(r"-flows?$", "", flow.name)
 
 
 def _expand_one_flow(

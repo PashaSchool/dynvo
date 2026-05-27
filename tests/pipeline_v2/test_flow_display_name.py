@@ -171,7 +171,7 @@ def _multi_file_repo(repo: Path) -> None:
     subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=repo, check=True)
 
 
-def test_expand_flows_sets_display_name_and_preserves_name(tmp_path: Path) -> None:
+def test_expand_flows_sets_display_name_to_kebab_name(tmp_path: Path) -> None:
     repo = tmp_path / "dn"
     repo.mkdir()
     _multi_file_repo(repo)
@@ -196,10 +196,13 @@ def test_expand_flows_sets_display_name_and_preserves_name(tmp_path: Path) -> No
     )
     expand_flows([feat], ctx, routes_index=[])
 
-    # display_name derived deterministically from the resolved entry symbol.
-    assert flow.display_name == "Create Checkout Session"
+    # REVERTED 2026-05-26: display_name now mirrors the kebab stable id
+    # (the human-readable deriver is dormant; user wants kebab labels).
+    assert flow.display_name == "checkout-flow"
     # Stable id byte-identical.
     assert flow.name == "checkout-flow"
+    # short_label: kebab name without the "-flow" suffix (additive field).
+    assert flow.short_label == "checkout"
 
 
 # ── Fix 1 (2026-05-26): <file> sentinel leak ────────────────────────
