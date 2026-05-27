@@ -131,54 +131,96 @@ def test_orchestrator_empty_registry(tmp_path: Path) -> None:
     assert stage_1_extractors(ctx, extractors=[]) == {}
 
 
-def test_orchestrator_falls_back_to_default_loader_when_no_entrypoints(
+def test_orchestrator_always_loads_built_in_extractors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When entry-point group returns empty, the discovery path calls
-    ``_load_default_extractors``. We don't assert on the *contents* of
-    that list here (the 5 built-in extractor modules land in A4) —
-    we only verify the orchestrator routes correctly to the loader."""
+    """The built-in first-party extractors are ALWAYS in the registry,
+    even when the entry-point group is empty (stale / editable install)
+    — they are loaded directly from this package.
+
+    This guards the ``routes_index == 0 on FastAPI`` regression: a
+    partial/empty entry-point snapshot must never drop a built-in
+    extractor such as ``fastapi-route``."""
     import importlib
     mod = importlib.import_module("faultline.pipeline_v2.stage_1_extractors")
 
-    called = {"count": 0}
-
-    def _stub_loader() -> list:
-        called["count"] += 1
-        return []
-
     monkeypatch.setattr(mod, "entry_points", lambda group=None: [])
-    monkeypatch.setattr(mod, "_load_default_extractors", _stub_loader)
 
-    ctx = _ctx(repo_path=tmp_path)
-    stage_1_extractors(ctx)  # ``extractors=None`` triggers discovery
+    registry = mod._discover_extractors()
+    names = {ex.name for ex in registry}
+    # All built-ins present, regardless of entry-point state.
+    assert {
+        "route", "mvc", "schema", "package", "config",
+        "fastapi-route", "route-fastify",
+        "rails-routes", "rails-models", "rails-views",
+        "rails-jobs", "rails-stimulus",
+    }.issubset(names)
 
-    assert called["count"] == 1
 
-
-def test_orchestrator_prefers_entry_points_over_defaults(
+def test_orchestrator_does_not_drop_built_ins_for_stale_partial_entrypoints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """REGRESSION GUARD for commit ab1811c follow-up: a STALE entry-point
+    group listing only a SUBSET of the built-ins (the exact shape of the
+    installed dist-info that omitted ``fastapi-route``) must NOT cause the
+    newer built-ins to be dropped. Merge semantics keep them."""
+    import importlib
+    mod = importlib.import_module("faultline.pipeline_v2.stage_1_extractors")
+
+    # Simulate a stale snapshot: only the 9 pre-fastapi extractors.
+    stale_names = [
+        "config", "go-router", "js-library", "mvc", "package",
+        "python-library", "route", "rust-workspace", "schema",
+    ]
+
+    def _fake_ep(name: str):
+        # Point each stale ep at the real built-in class so .load() works.
+        from faultline.pipeline_v2.extractors.route import RouteFileExtractor
+        return type(
+            "EP", (),
+            {"name": name, "load": staticmethod(lambda: RouteFileExtractor)},
+        )()
+
+    monkeypatch.setattr(
+        mod, "entry_points",
+        lambda group=None: [_fake_ep(n) for n in stale_names],
+    )
+
+    names = {ex.name for ex in mod._discover_extractors()}
+    # fastapi-route lives in-tree but NOT in the stale ep list — it must
+    # still be present via the always-on built-in merge.
+    assert "fastapi-route" in names
+    assert "route-fastify" in names
+
+
+def test_orchestrator_adds_third_party_entry_point_extractor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuinely-external entry-point extractor (name not colliding
+    with any built-in) is ADDED on top of the built-ins."""
     import importlib
     mod = importlib.import_module("faultline.pipeline_v2.stage_1_extractors")
 
     class _Stub:
-        name = "stub"
+        name = "custom-stub"
 
         def extract(self, ctx: ScanContext) -> list[AnchorCandidate]:
             return [
                 AnchorCandidate(
-                    name="stub-only", paths=(), source="stub",
+                    name="stub-only", paths=(), source="custom-stub",
                     confidence_self=0.1,
                 ),
             ]
 
-    fake_ep = type("EP", (), {"name": "stub", "load": staticmethod(lambda: _Stub)})()
+    fake_ep = type(
+        "EP", (),
+        {"name": "custom-stub", "load": staticmethod(lambda: _Stub)},
+    )()
     monkeypatch.setattr(mod, "entry_points", lambda group=None: [fake_ep])
 
-    ctx = _ctx(repo_path=tmp_path)
-    result = stage_1_extractors(ctx)
-    assert set(result.keys()) == {"stub"}
-    assert result["stub"][0].name == "stub-only"
+    names = {ex.name for ex in mod._discover_extractors()}
+    assert "custom-stub" in names          # third-party added
+    assert "route" in names                # built-ins still present
