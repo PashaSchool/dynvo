@@ -5,15 +5,28 @@ Runs all registered :class:`AnchorExtractor` instances against the
 bound (file reads, manifest parses), so a ``ThreadPoolExecutor`` is
 the right primitive — see ``python-architect-developer`` skill.
 
-Discovery preference order:
+Discovery model (MERGE, not either/or):
 
-  1. Python entry-points under ``faultlines.extractors`` group
-     (installed packages register themselves; customers can plug in
-     ``~/.faultline/extractors/<custom>.py`` packages).
-  2. Hardcoded default registry of the 5 built-in extractors. Used
-     when entry-points return an empty group — typical for editable
-     installs that haven't been re-installed since the entry-points
-     were added.
+  1. The built-in first-party extractors are ALWAYS present. They
+     are loaded directly from this package via
+     ``_load_default_extractors`` and can never be dropped by a
+     stale, partial, or empty entry-point group.
+  2. Python entry-points under ``faultlines.extractors`` ADD any
+     third-party / customer extractors on top of the built-ins
+     (``~/.faultline/extractors/<custom>.py`` packages). An
+     entry-point whose ``name`` collides with a built-in is ignored
+     (the in-tree class wins — it is the source of truth).
+
+Why merge instead of "entry-points override defaults": the installed
+``*.dist-info/entry_points.txt`` is a SNAPSHOT taken at install time.
+On an editable install that hasn't been re-installed since a new
+built-in extractor was added (e.g. ``fastapi-route``, the Rails
+suite), that snapshot is stale and lists only a subset of the
+built-ins. The previous "use entry-points OR fall back to defaults"
+logic then silently ran the stale subset and dropped the newer
+first-party extractors — producing ``routes_index == 0`` on FastAPI
+repos despite the extractor existing in-tree. Merging makes the
+built-in set authoritative and immune to that snapshot drift.
 
 Failure handling: each extractor runs inside a try/except. A failing
 extractor does NOT kill the orchestrator; the failure is recorded in
@@ -117,10 +130,12 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     return out
 
 
-def _discover_extractors() -> list[AnchorExtractor]:
-    """Discover registered extractors via ``importlib.metadata``.
+def _discover_entry_point_extractors() -> list[AnchorExtractor]:
+    """Load extractors registered via ``importlib.metadata`` entry-points.
 
-    Falls back to the built-in 5 when the group is empty.
+    Returns whatever the (possibly empty / partial / stale) group
+    yields. Callers MERGE this with the built-in set rather than
+    treating it as authoritative.
     """
     try:
         eps = entry_points(group=_DEFAULT_ENTRY_POINT_GROUP)
@@ -148,9 +163,32 @@ def _discover_extractors() -> list[AnchorExtractor]:
         except Exception as exc:  # noqa: BLE001 — extractor load failure is non-fatal
             logger.warning("failed to load extractor %s: %s", ep.name, exc)
 
-    if not loaded:
-        return _load_default_extractors()
     return loaded
+
+
+def _discover_extractors() -> list[AnchorExtractor]:
+    """Build the active extractor registry.
+
+    The built-in first-party extractors are ALWAYS included. Any
+    entry-point-registered third-party extractor whose ``name`` does
+    NOT collide with a built-in is appended. A stale, partial, or
+    empty entry-point group can therefore never drop a built-in — it
+    can only ADD genuinely-external extractors.
+    """
+    extractors: list[AnchorExtractor] = _load_default_extractors()
+    seen: set[str] = {ex.name for ex in extractors}
+
+    for ext in _discover_entry_point_extractors():
+        name = getattr(ext, "name", None)
+        if not name or name in seen:
+            # ``name in seen`` → an entry-point pointing at a built-in
+            # (the common case for an in-tree install); the in-tree
+            # instance already loaded wins. Skip the duplicate.
+            continue
+        extractors.append(ext)
+        seen.add(name)
+
+    return extractors
 
 
 def _safe_extract(
