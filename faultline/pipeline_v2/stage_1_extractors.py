@@ -91,6 +91,11 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     _try("faultline.pipeline_v2.extractors.go_router",       "GoRouterExtractor")
     _try("faultline.pipeline_v2.extractors.rust_workspace",  "RustWorkspaceExtractor")
     _try("faultline.pipeline_v2.extractors.python_library",  "PythonLibraryExtractor")
+    # FastAPI HTTP-route extractor. Parses @app/@router decorators +
+    # APIRouter(prefix=...) + include_router(...) into explicit routes.
+    # Self-skips unless Stage 0 / the auditor signals fastapi (primary
+    # or secondary) or a Python repo exposes FastAPI source markers.
+    _try("faultline.pipeline_v2.extractors.fastapi",         "FastApiRouteExtractor")
     # Sprint S3.1 — Fastify code-based router. Self-skips unless the
     # auditor / Stage 0 / a workspace package.json signals fastify.
     _try("faultline.pipeline_v2.extractors.fastify",         "FastifyRouteExtractor")

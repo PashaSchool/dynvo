@@ -1,0 +1,55 @@
+stack: fastapi
+display_name: FastAPI
+
+# How we know FastAPI is in use. Stage 0 / the auditor own primary
+# classification; this block documents the markers the route extractor
+# also checks when deciding to activate (dep manifest or in-source
+# FastAPI()/APIRouter usage).
+detection:
+  any:
+    - dep_substring: "fastapi"
+    - source_marker: "APIRouter("
+    - source_marker: "FastAPI("
+
+# Route extraction — FastAPI declares routes via decorators on an app
+# or router object. The URL lives INSIDE the source (decorator arg +
+# the router's own prefix + any include_router prefix), not the
+# file-system path. Patterns are regex applied per .py file.
+route_extraction:
+  # Files to scan. We only read tracked .py files; vendored trees are
+  # excluded by `excludes` below.
+  file_suffix: ".py"
+
+  # `@app.get("/x")`, `@router.post("/y", status_code=201)`,
+  # `@cases_router.delete("/{id}")`. Group 1 = object name, group 2 =
+  # HTTP method, group 3 = the decorator path literal.
+  decorator_pattern: '@(\w+)\.(get|post|put|patch|delete|head|options)\(\s*[''"]([^''"]*)[''"]'
+
+  # `router = APIRouter(prefix="/api/admin")` /
+  # `router: APIRouter = APIRouter(prefix="/api/admin")`. Group 1 = the
+  # variable bound to the router, group 2 = its prefix (may be absent).
+  router_ctor_pattern: '(\w+)\s*(?::\s*APIRouter\s*)?=\s*APIRouter\(([^)]*)\)'
+
+  # Extract `prefix="..."` out of an APIRouter(...) or
+  # include_router(...) argument blob.
+  prefix_pattern: 'prefix\s*=\s*[''"]([^''"]*)[''"]'
+
+  # `app.include_router(admin.router, prefix="/extra")`. Group 1 = the
+  # included router reference, the prefix (if any) composes onto every
+  # route already collected for that router's module.
+  include_router_pattern: '\.include_router\(\s*([\w.]+)\s*(?:,\s*([^)]*))?\)'
+
+# Never treat these as route sources.
+excludes:
+  - "site-packages/"
+  - "node_modules/"
+  - ".venv/"
+  - "venv/"
+  - "tests/"
+  - "test/"
+  - "migrations/"
+
+# Confidence emitted on anchors.
+confidence:
+  with_router_ctor: 0.9
+  decorator_only: 0.75

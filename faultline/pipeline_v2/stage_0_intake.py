@@ -331,6 +331,43 @@ def _detect_js_stack(
     return None, signals
 
 
+# Substrings that, when present in a ``settings.py``, prove it is a
+# Django settings module rather than an arbitrary module named
+# ``settings.py``. Scale-invariant (no per-repo magic) — these are
+# Django framework identifiers, true on every Django project.
+_DJANGO_SETTINGS_MARKERS = (
+    "INSTALLED_APPS",
+    "DJANGO_SETTINGS_MODULE",
+    "django.",
+)
+
+
+def _is_django_repo(root: Path, files: list[str], dep_haystack: str) -> bool:
+    """``True`` only when a genuine Django marker is present.
+
+    Order is cheapest-first: dependency manifest substring → root
+    ``manage.py`` → a ``settings.py`` containing Django config markers.
+    Vendored ``settings.py`` under ``site-packages`` / ``node_modules``
+    are ignored; an arbitrary ``tool_settings.py`` is ignored (the
+    filename must be exactly ``settings.py``).
+    """
+    if "django" in dep_haystack:
+        return True
+    if (root / "manage.py").is_file():
+        return True
+    for rel in files:
+        norm = rel.replace("\\", "/")
+        leaf = norm.rsplit("/", 1)[-1]
+        if leaf != "settings.py":
+            continue
+        if "/site-packages/" in f"/{norm}" or "/node_modules/" in f"/{norm}":
+            continue
+        blob = _read_text(root / rel)
+        if blob and any(marker in blob for marker in _DJANGO_SETTINGS_MARKERS):
+            return True
+    return False
+
+
 def _detect_python_stack(
     root: Path,
     files: list[str],
@@ -348,11 +385,21 @@ def _detect_python_stack(
             signals.append(f"{fname} present")
     haystack = "\n".join(dep_text_blobs)
 
-    # Django
-    if "django" in haystack or any(
-        f.endswith("manage.py") or f.endswith("settings.py") for f in files
-    ):
-        signals.append("django dep or manage.py/settings.py present")
+    # Django — require a REAL Django marker, not a loose filename match.
+    #
+    # The previous heuristic fired on ANY tracked file whose name ended
+    # in ``settings.py`` — which false-positives on FastAPI/Flask repos
+    # that have a router/module named ``tool_settings.py`` (or vendored
+    # ``…/site-packages/*/settings.py``). Django is now recognised only
+    # when at least one of these holds:
+    #   1. ``django`` is in the dependency manifests, OR
+    #   2. a ``manage.py`` exists at the repo root (the canonical Django
+    #      project entry point), OR
+    #   3. a ``settings.py`` actually contains Django config markers
+    #      (``INSTALLED_APPS`` / ``DJANGO_SETTINGS_MODULE`` /
+    #      ``django.`` import).
+    if _is_django_repo(root, files, haystack):
+        signals.append("django dep, manage.py, or django-config settings.py")
         return "django", signals
 
     # FastAPI
