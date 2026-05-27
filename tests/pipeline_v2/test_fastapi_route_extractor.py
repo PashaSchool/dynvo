@@ -207,5 +207,102 @@ def test_django_true_via_dep(tmp_path: Path) -> None:
     assert _is_django_repo(tmp_path, [], "django==5.0") is True
 
 
+# ── INTEGRATION: real discovered registry → build_routes_index ──────────────
+#
+# Guards the isolated-test blind spot that masked the ab1811c integration
+# gap: the prior unit tests called ``FastApiRouteExtractor`` DIRECTLY, so
+# they passed even though the extractor was never part of the registry that
+# ``stage_1_extractors`` actually iterates. This test builds the REAL
+# registry the pipeline uses (``_discover_extractors``), runs it through the
+# orchestrator, and asserts the FastAPI routes reach ``build_routes_index``.
+
+
+def test_integration_real_registry_runs_fastapi_and_populates_routes_index(
+    tmp_path: Path,
+) -> None:
+    import sys
+
+    from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
+
+    # Resolve the module object (the package re-exports the function under
+    # the same dotted name, shadowing the private helpers on the alias).
+    mod = sys.modules["faultline.pipeline_v2.stage_1_extractors"]
+
+    # ── A FastAPI repo fixture (routers/ + decorator routes) ──
+    (tmp_path / "backend" / "routers").mkdir(parents=True)
+    (tmp_path / "backend" / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from .routers import cases, chat\n"
+        "app = FastAPI()\n"
+        "app.include_router(cases.router, prefix='/api')\n"
+        "app.include_router(chat.router, prefix='/api')\n",
+    )
+    (tmp_path / "backend" / "routers" / "cases.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/cases')\n"
+        "@router.get('/')\n"
+        "def list_cases(): ...\n"
+        "@router.post('/{case_id}/close')\n"
+        "def close_case(): ...\n",
+    )
+    (tmp_path / "backend" / "routers" / "chat.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/chat')\n"
+        "@router.get('/threads')\n"
+        "def threads(): ...\n",
+    )
+    files = [
+        "backend/main.py",
+        "backend/routers/cases.py",
+        "backend/routers/chat.py",
+    ]
+    ctx = _ctx(tmp_path, files, stack="fastapi")
+
+    # Build the REAL registry the pipeline uses — NOT a hand-constructed
+    # list. This is the line that previously omitted fastapi-route.
+    registry = mod._discover_extractors()
+    registry_names = {ex.name for ex in registry}
+    assert "fastapi-route" in registry_names, (
+        "fastapi-route must be in the discovered registry the pipeline runs"
+    )
+
+    # Run the orchestrator with the discovered registry.
+    stage1_out = stage_1_extractors(ctx, extractors=registry)
+
+    # extractor_hits-equivalent: fastapi-route present AND > 0.
+    assert "fastapi-route" in stage1_out
+    assert len(stage1_out["fastapi-route"]) > 0
+
+    # Feed the orchestrator output to build_routes_index (Pass A reads the
+    # explicit ``routes`` tuples the FastAPI extractor emitted).
+    feat_view = [
+        {"uuid": "f1", "paths": files},
+    ]
+    routes_index = build_routes_index(feat_view, stage1_out)
+    assert len(routes_index) > 0, "routes_index must be non-empty on FastAPI repo"
+    patterns = {r["pattern"] for r in routes_index}
+    # include_router prefix + router prefix + leaf path compose.
+    assert any("/api/cases" in p for p in patterns)
+    assert any("/api/chat/threads" in p for p in patterns)
+
+
+def test_integration_default_registry_includes_all_built_ins() -> None:
+    """The discovered registry must include EVERY built-in extractor,
+    independent of the installed dist-info entry-point snapshot."""
+    import sys
+
+    import faultline.pipeline_v2.stage_1_extractors  # noqa: F401
+
+    mod = sys.modules["faultline.pipeline_v2.stage_1_extractors"]
+    names = {ex.name for ex in mod._discover_extractors()}
+    assert {
+        "route", "mvc", "schema", "package", "config",
+        "go-router", "rust-workspace", "python-library", "js-library",
+        "fastapi-route", "route-fastify",
+        "rails-routes", "rails-models", "rails-views",
+        "rails-jobs", "rails-stimulus",
+    }.issubset(names)
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q", "--no-cov"]))

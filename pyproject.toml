@@ -103,6 +103,11 @@ go-router      = "faultline.pipeline_v2.extractors.go_router:GoRouterExtractor"
 rust-workspace = "faultline.pipeline_v2.extractors.rust_workspace:RustWorkspaceExtractor"
 python-library = "faultline.pipeline_v2.extractors.python_library:PythonLibraryExtractor"
 js-library     = "faultline.pipeline_v2.extractors.js_library:JsLibraryExtractor"
+# FastAPI decorator-route extractor — emits explicit routes consumed by
+# build_routes_index Pass A. Self-skips on non-FastAPI repos.
+fastapi-route  = "faultline.pipeline_v2.extractors.fastapi:FastApiRouteExtractor"
+# Sprint S3.1 — Fastify code-based router. Self-skips on non-Fastify.
+route-fastify  = "faultline.pipeline_v2.extractors.fastify:FastifyRouteExtractor"
 # Sprint Rails — five Rails-app extractors. Each self-skips unless the
 # Stage 0.5 auditor labelled the repo ``rails-app``.
 rails-routes   = "faultline.pipeline_v2.extractors.rails_routes:RailsRoutesExtractor"
