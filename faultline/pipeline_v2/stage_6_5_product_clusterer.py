@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from faultline.pipeline_v2.data import load_data_text
 from faultline.pipeline_v2.domain_noun import extract_domain_noun
 
 if TYPE_CHECKING:
@@ -72,9 +73,7 @@ logger = logging.getLogger(__name__)
 # ── YAML config loader (cached on first read) ───────────────────────────
 
 
-_ANCHOR_YAML_PATH = (
-    Path(__file__).resolve().parents[2] / "eval" / "dependency-anchors.yaml"
-)
+_ANCHOR_DATA_FILE = "dependency-anchors.yaml"
 
 # Path-concentration threshold for Rule 1: a feature's paths must
 # concentrate at least this fraction under a single workspace for the
@@ -262,13 +261,13 @@ def _load_dep_anchors() -> list[tuple[tuple[str, ...], str]]:
     out: list[tuple[tuple[str, ...], str]] = []
     aliases: dict[str, tuple[str, ...]] = {}
     try:
-        text = _ANCHOR_YAML_PATH.read_text(encoding="utf-8")
+        text = load_data_text(_ANCHOR_DATA_FILE)
         raw = yaml.safe_load(text) or {}
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, FileNotFoundError, yaml.YAMLError) as exc:
         logger.warning(
             "stage_6_5_product_clusterer: cannot read %s (%s) — "
             "Rule 2 (dep-anchor) will be skipped",
-            _ANCHOR_YAML_PATH, exc,
+            _ANCHOR_DATA_FILE, exc,
         )
         _DEP_ANCHORS_CACHE = out
         _DEP_ALIASES_CACHE = aliases

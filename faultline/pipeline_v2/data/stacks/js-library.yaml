@@ -1,0 +1,90 @@
+stack: js-library
+display_name: JavaScript / TypeScript Library (package.json#exports + lib/ layout)
+
+# Activation: auditor labels the repo `js-client-library`, `js-library`,
+# or `ts-library`. The library shape is distinct from app shape (Next /
+# Nuxt / Express) — features here are public API exports + lib/ submodules,
+# not URL routes.
+detection:
+  audited_stack_equals:
+    - "js-client-library"
+    - "js-library"
+    - "ts-library"
+    - "js-node-library"
+  # Disqualify when ANY of these app frameworks are direct deps —
+  # those repos are apps, not libraries.
+  no_app_deps:
+    - "next"
+    - "nuxt"
+    - "@remix-run/react"
+    - "@sveltejs/kit"
+    - "astro"
+    # Server frameworks: their presence in deps means we treat this
+    # as a server app, not a library.
+    - "express"
+    - "fastify"
+    - "@nestjs/core"
+    - "koa"
+    - "hapi"
+
+# Files we look at on the root.
+manifest_candidates:
+  - "package.json"
+
+# Top-level entry file names — re-exports from these become candidate
+# symbol-anchors. We also use these to discover the "source root".
+entry_file_candidates:
+  - "index.js"
+  - "index.mjs"
+  - "index.cjs"
+  - "index.ts"
+  - "index.d.ts"
+  - "src/index.js"
+  - "src/index.ts"
+  - "src/index.d.ts"
+
+# Source directory candidates — first one that exists with >= 3 files
+# becomes the source root for submodule discovery.
+source_root_candidates:
+  - "lib"
+  - "src"
+  - "source"
+  - "packages"
+
+# Regexes used to parse JS/TS entry files for re-exports.
+# Anchor patterns chosen to be tolerant of formatting variants.
+public_export_patterns:
+  # `export { A, B as C } from './sub'`
+  reexport_named:        "export\\s*\\{([^}]+)\\}\\s*from\\s*['\"]([^'\"]+)['\"]"
+  # `export * from './sub'`
+  reexport_star:         "export\\s*\\*\\s*from\\s*['\"]([^'\"]+)['\"]"
+  # `export default ...`
+  export_default:        "^export\\s+default\\s+"
+  # `import X from './sub'` — used inside index.js to wire main object
+  import_default:        "^import\\s+(\\w+)\\s+from\\s*['\"](\\.[^'\"]+)['\"]"
+  # `export { A, B }`
+  named_export_list:     "export\\s*\\{([^}]+)\\}\\s*;"
+
+confidence:
+  submodule: 0.85
+  package_exports_subpath: 0.85
+  symbol_only: 0.6
+
+# Universal JS/TS skip paths within a library.
+excludes:
+  - "node_modules/"
+  - "dist/"
+  - "build/"
+  - "out/"
+  - "coverage/"
+  - "test/"
+  - "tests/"
+  - "__tests__/"
+  - "docs/"
+  - "examples/"
+  - "example/"
+  - "sandbox/"
+  - "benchmarks/"
+  - "scripts/"
+  - ".github/"
+  - ".husky/"

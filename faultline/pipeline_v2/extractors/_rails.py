@@ -20,12 +20,9 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
-
-from faultline.pipeline_v2.extractors._util import read_text
+from faultline.pipeline_v2.data import load_stack_yaml
 
 if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext
@@ -34,37 +31,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_YAML_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "eval"
-    / "stacks"
-    / "rails-app.yaml"
-)
-
 _CONFIG_CACHE: dict | None = None
 
 
 def load_rails_config() -> dict:
-    """Read ``eval/stacks/rails-app.yaml`` once; cache for subsequent calls.
+    """Read ``rails-app.yaml`` from the packaged data tree once; cache it.
 
-    Empty / unreadable / malformed YAML yields ``{}`` so every caller
-    can use ``cfg.get(...)`` without a None check.
+    Hermetic: resolves via ``importlib.resources`` so it works identically
+    from the dev repo, an installed wheel, or the Fly worker image.
     """
     global _CONFIG_CACHE
     if _CONFIG_CACHE is not None:
         return _CONFIG_CACHE
-    text = read_text(_YAML_PATH)
-    if not text:
-        logger.debug("rails-app.yaml not readable at %s", _YAML_PATH)
-        _CONFIG_CACHE = {}
-        return _CONFIG_CACHE
-    try:
-        data = yaml.safe_load(text) or {}
-    except yaml.YAMLError as exc:
-        logger.warning("rails-app.yaml parse failed: %s", exc)
-        _CONFIG_CACHE = {}
-        return _CONFIG_CACHE
-    _CONFIG_CACHE = data if isinstance(data, dict) else {}
+    _CONFIG_CACHE = load_stack_yaml("rails-app")
     return _CONFIG_CACHE
 
 
