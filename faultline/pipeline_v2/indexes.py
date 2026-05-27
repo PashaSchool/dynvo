@@ -249,9 +249,6 @@ def build_routes_index(
     """
     if not extractor_signals:
         return []
-    route_signals = extractor_signals.get("route") or []
-    if not route_signals:
-        return []
 
     # file -> feature_uuid lookup (first-write-wins, matches path_index)
     file_owner: dict[str, str] = {}
@@ -277,6 +274,29 @@ def build_routes_index(
             "file": file_str,
         })
 
+    # Pass A — explicit ``routes`` tuples emitted by decorator-/DSL-routed
+    # extractors (FastAPI etc.) where the URL pattern lives in the source,
+    # not the file-system path. Scan EVERY extractor's candidates (not just
+    # the ``"route"`` extractor) so any extractor that carries explicit
+    # routes contributes. ``_errors`` and non-AnchorCandidate values are
+    # skipped defensively.
+    for src_name, candidates in extractor_signals.items():
+        if src_name == "_errors" or not candidates:
+            continue
+        for cand in candidates:
+            explicit = getattr(cand, "routes", None)
+            if not explicit:
+                continue
+            for entry in explicit:
+                try:
+                    pat, meth, file_str = entry
+                except (ValueError, TypeError):
+                    continue
+                _emit(str(pat), str(meth or "GET"), str(file_str or ""))
+
+    # Pass B — the filesystem ``route`` extractor's candidates, mapped to
+    # ``(pattern, method)`` via the on-disk routing convention.
+    route_signals = extractor_signals.get("route") or []
     for sig in route_signals:
         # Path 1 — a signal that already carries an explicit
         # ``{pattern, method, file}`` (synthetic / future RouteSignal).

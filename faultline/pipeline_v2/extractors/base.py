@@ -37,6 +37,13 @@ class AnchorCandidate:
         rationale: short human-readable string explaining why this
             anchor exists. Surfaced in stage artifacts / debug output;
             never shown to end-users without sanitisation.
+        routes: optional explicit HTTP-route tuples for decorator- /
+            DSL-routed stacks where the URL pattern lives *inside* the
+            source file (FastAPI ``@router.get("/x")``), not in the
+            file-system path. Each item is ``(pattern, method, file)``.
+            Filesystem-routed stacks (Next.js etc.) leave this empty —
+            ``build_routes_index`` derives their routes from ``paths``.
+            Additive; existing extractors do not set it.
     """
 
     name: str
@@ -45,6 +52,7 @@ class AnchorCandidate:
     confidence_self: float
     display_name: str | None = None
     rationale: str = ""
+    routes: tuple[tuple[str, str, str], ...] = ()
 
 
 @runtime_checkable
