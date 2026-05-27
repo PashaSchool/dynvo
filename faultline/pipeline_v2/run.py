@@ -141,9 +141,12 @@ logger = logging.getLogger(__name__)
 # the orchestrator resolves to the canonical Anthropic model id.
 MODEL_ALIASES: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",
-    "sonnet": "claude-sonnet-4-6-20251108",
+    # Sonnet 4.6 has no dated snapshot on the API — the bare id is the only
+    # valid form (the previously-pinned `-20251108` snapshot 404s). Verified
+    # against the Anthropic API 2026-05-27.
+    "sonnet": "claude-sonnet-4-6",
     "claude-haiku-4-5": "claude-haiku-4-5-20251001",
-    "claude-sonnet-4-6": "claude-sonnet-4-6-20251108",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
 }
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
