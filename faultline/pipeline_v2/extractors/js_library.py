@@ -27,11 +27,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
-
+from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
     posix,
@@ -47,25 +45,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_YAML_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "eval"
-    / "stacks"
-    / "js-library.yaml"
-)
-
-
 def _load_config() -> dict:
-    text = read_text(_YAML_PATH)
-    if not text:
-        logger.debug("js-library.yaml not readable at %s", _YAML_PATH)
-        return {}
-    try:
-        data = yaml.safe_load(text) or {}
-    except yaml.YAMLError as exc:
-        logger.warning("js-library.yaml parse failed: %s", exc)
-        return {}
-    return data if isinstance(data, dict) else {}
+    """Load js-library.yaml from the packaged data tree (hermetic)."""
+    return load_stack_yaml("js-library")
 
 
 # ── Activation gate ────────────────────────────────────────────────────────

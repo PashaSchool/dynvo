@@ -31,11 +31,9 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
-
+from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     posix,
     read_text,
@@ -53,29 +51,9 @@ logger = logging.getLogger(__name__)
 # ── YAML config loader ─────────────────────────────────────────────────────
 
 
-_YAML_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "eval"
-    / "stacks"
-    / "go-http-router.yaml"
-)
-
-
 def _load_config() -> dict:
-    """Load the go-http-router YAML. Returns ``{}`` on any error.
-
-    Cached on first successful load.
-    """
-    text = read_text(_YAML_PATH)
-    if not text:
-        logger.debug("go-http-router.yaml not readable at %s", _YAML_PATH)
-        return {}
-    try:
-        data = yaml.safe_load(text) or {}
-    except yaml.YAMLError as exc:
-        logger.warning("go-http-router.yaml parse failed: %s", exc)
-        return {}
-    return data if isinstance(data, dict) else {}
+    """Load the go-http-router YAML from the packaged data tree (hermetic)."""
+    return load_stack_yaml("go-http-router")
 
 
 # Compiled-regex cache. Keyed by id(config) so YAML reloads in tests
