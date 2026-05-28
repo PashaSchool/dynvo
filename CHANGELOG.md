@@ -5,6 +5,29 @@ All notable changes to `faultlines` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-05-28
+
+The first stable major. Cardinal changes since `0.x`:
+
+### Added
+- **Pipeline v2** (`faultlines scan-v2`) — new code-grounded scanner. Stages 0–7, only Stages 3 + 4 hit the LLM. Outputs both `developer_features[]` (engineering grain, line-attributed) and `product_features[]` (product grain, clustered).
+- **Stack-aware Stage-1 extractors** (deterministic, zero LLM): `route` (Next.js / Remix / SvelteKit / Astro / TanStack / FastAPI / Express / Hono / Fastify / Laravel / Phoenix / Spring), `mvc`, `schema`, `package`, `config`, `go_router` (chi / gin / echo / fiber / httprouter / stdlib), `rust_workspace`, `python_library`, `fastapi`, `_rails`. Patterns authored in `eval/stacks/<stack>.yaml`.
+- **Stage 0.5 Stack Auditor** — one Haiku call between heuristic stack intake and deterministic extractors, refining stack detection.
+- **Bipartite flow ↔ feature store** — output carries top-level `flows[]` + `feature_flow_edges[]` (`primary` / `secondary`) alongside the containment view. Cross-cutting flows are first-class.
+- **Monorepo (uv workspace)** — the repository now hosts two independently-releasable packages: `faultlines` (this engine) and `faultlines-mcp` (the MCP server for AI coding agents).
+- **Hermetic packaging** — runtime stack data + dependency-anchors ship **inside the wheel** at `faultline/pipeline_v2/data/**` and load via `importlib.resources`. Same wheel behaves identically in `pip install`, Docker, or any fresh venv — no sibling `eval/` required.
+
+### Changed
+- **`analyze` defaults to the new pipeline** — pass `--legacy` for the pre-rewrite 5-strategy detector.
+- **Model alias resolution fixed** — `--model sonnet` / `claude-sonnet-4-6` now correctly resolves to the live `claude-sonnet-4-6` model id (the previously-pinned dated snapshot 404'd).
+
+### Removed
+- **MCP server moved out of the engine** — `faultline.mcp_server` is gone; install the separate [`faultlines-mcp`](faultlines-mcp/README.md) package instead. The engine no longer carries the MCP SDK dependency.
+- **Legacy `benchmarks/` harness** — superseded by the `eval/golden/` + `eval/developer-golden/` + `eval/detection_eval.py` ground-truth system.
+- The old `[tool.hatch.build.targets.wheel.force-include] "eval" = "eval"` packaging band-aid (resolved by hermetic in-package data).
+
+---
+
 ## [0.10.0] — 2026-04-14
 
 ### Added
