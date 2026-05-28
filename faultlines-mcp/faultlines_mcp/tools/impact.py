@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from faultline.mcp_server import mcp, _load_map, _inject_warning, _savings_metadata
-from faultline.impact.risk import predict_impact
+from faultlines_mcp.server import mcp, _load_map, _inject_warning, _savings_metadata
+from faultline.impact.risk import predict_impact  # engine-boundary import
 
 
 @mcp.tool()

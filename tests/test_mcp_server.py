@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from faultline.mcp_server import (
+from faultlines_mcp.server import (
     _load_map,
     _savings_metadata,
     find_feature,

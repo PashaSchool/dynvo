@@ -84,7 +84,12 @@ Issues = "https://github.com/PashaSchool/faultlines/issues"
 
 [project.scripts]
 faultlines = "faultline.cli:app"
-faultlines-mcp = "faultline.mcp_server:main"
+# MCP server now lives in faultlines-mcp/faultlines_mcp/ (top-level folder,
+# sibling of faultline/). Same wheel ships both today; the MCP package will be
+# extracted to its own PyPI distribution later — extraction will only require
+# moving this entry to faultlines-mcp/pyproject.toml and removing the package
+# from this wheel's `packages` list.
+faultlines-mcp = "faultlines_mcp:main"
 # Keep the old name as alias for backwards compat
 
 # Stage 1 extractor plugin group. The orchestrator at
@@ -138,7 +143,10 @@ dependencies = [
 test = "pytest tests/"
 
 [tool.hatch.build.targets.wheel]
-packages = ["faultline"]
+# Engine (faultline) + MCP server (faultlines_mcp, at faultlines-mcp/) ship in
+# the same wheel today. When MCP is released as a standalone PyPI package, drop
+# the second entry here and move it into faultlines-mcp/pyproject.toml.
+packages = ["faultline", "faultlines-mcp/faultlines_mcp"]
 
 # Runtime data (stack patterns + dependency-anchors.yaml) ships INSIDE the
 # package at faultline/pipeline_v2/data/** and is loaded hermetically via
