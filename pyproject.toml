@@ -51,7 +51,9 @@ dependencies = [
 ollama = ["ollama>=0.4.0"]
 deepseek = ["openai>=1.0.0"]
 analytics = ["httpx>=0.27.0"]
-mcp = ["mcp>=1.0.0"]
+# MCP support moved to the standalone `faultlines-mcp` package — install it
+# separately (`pip install faultlines-mcp`). It depends on this engine, so
+# both end up in your env; the engine no longer carries the `mcp` SDK dep.
 watch = ["watchdog>=4.0.0"]
 trace = [
     "tree-sitter>=0.23.0",
@@ -84,13 +86,9 @@ Issues = "https://github.com/PashaSchool/faultlines/issues"
 
 [project.scripts]
 faultlines = "faultline.cli:app"
-# MCP server now lives in faultlines-mcp/faultlines_mcp/ (top-level folder,
-# sibling of faultline/). Same wheel ships both today; the MCP package will be
-# extracted to its own PyPI distribution later — extraction will only require
-# moving this entry to faultlines-mcp/pyproject.toml and removing the package
-# from this wheel's `packages` list.
-faultlines-mcp = "faultlines_mcp:main"
-# Keep the old name as alias for backwards compat
+# The `faultlines-mcp` console script is now provided by the separate
+# `faultlines-mcp` package (this repo's `faultlines-mcp/` workspace member).
+# Install it with `pip install faultlines-mcp`.
 
 # Stage 1 extractor plugin group. The orchestrator at
 # ``faultline.pipeline_v2.stage_1_extractors`` discovers extractors
@@ -143,10 +141,17 @@ dependencies = [
 test = "pytest tests/"
 
 [tool.hatch.build.targets.wheel]
-# Engine (faultline) + MCP server (faultlines_mcp, at faultlines-mcp/) ship in
-# the same wheel today. When MCP is released as a standalone PyPI package, drop
-# the second entry here and move it into faultlines-mcp/pyproject.toml.
-packages = ["faultline", "faultlines-mcp/faultlines_mcp"]
+# Engine ships only `faultline` from this wheel. The MCP server is its own
+# package (`faultlines-mcp`, this monorepo's other workspace member) — see
+# `faultlines-mcp/pyproject.toml`.
+packages = ["faultline"]
+
+# uv workspace — `uv sync` from the repo root installs both this engine
+# and the sibling `faultlines-mcp` package in editable mode in one venv.
+# Pip users without uv install each package separately:
+#   pip install -e . && pip install -e ./faultlines-mcp
+[tool.uv.workspace]
+members = ["faultlines-mcp"]
 
 # Runtime data (stack patterns + dependency-anchors.yaml) ships INSIDE the
 # package at faultline/pipeline_v2/data/** and is loaded hermetically via
