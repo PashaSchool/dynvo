@@ -22,9 +22,16 @@ from pathlib import Path
 
 from faultline.models.types import Commit, Feature
 from faultline.pipeline_v2.stage_0_intake import ScanContext
+from faultline.models.types import Flow
 from faultline.pipeline_v2.stage_6_metrics import (
-    _build_file_to_feature_index,
+    HOTSPOT_BUG_RATIO_MIN,
+    HOTSPOT_COMMITS_MIN,
     _attach_commit_metrics,
+    _attach_hotspots,
+    _build_file_to_feature_index,
+    _build_path_commit_index,
+    _hotspots_from_paths,
+    attach_hotspots_to_product_features,
     stage_6_metrics,
 )
 
@@ -152,3 +159,147 @@ def test_stage_6_mutates_in_place_and_returns_same_list(tmp_path: Path) -> None:
     out = stage_6_metrics(feats, ctx)
     assert out is feats
     assert feats[0].total_commits == 1
+
+
+# ── Hotspot tests (Sprint 2026-05-28) ────────────────────────────────────
+
+
+def _mk_flow(name: str, paths: list[str]) -> Flow:
+    return Flow(
+        name=name,
+        paths=paths,
+        authors=[],
+        total_commits=0,
+        bug_fixes=0,
+        bug_fix_ratio=0.0,
+        last_modified=datetime.now(tz=timezone.utc),
+        health_score=80.0,
+    )
+
+
+def _bug_commits(path: str, n_bugs: int, n_other: int, sha_prefix: str) -> list[Commit]:
+    commits: list[Commit] = []
+    for i in range(n_bugs):
+        commits.append(_mk_commit(f"{sha_prefix}b{i}", [path], is_bug_fix=True, days_ago=i + 1))
+    for i in range(n_other):
+        commits.append(_mk_commit(f"{sha_prefix}o{i}", [path], is_bug_fix=False, days_ago=100 + i))
+    return commits
+
+
+def test_hotspot_thresholds_are_scale_invariant_constants() -> None:
+    """Universal thresholds — ratio + minimum sample size."""
+    assert 0.0 < HOTSPOT_BUG_RATIO_MIN < 1.0
+    assert HOTSPOT_COMMITS_MIN >= 3  # statistical floor
+
+
+def test_feature_with_no_hotspots_emits_empty_list() -> None:
+    """Low bug_fix_ratio across all files → empty hotspot_files."""
+    feat = _mk_feature("billing", ["a.ts", "b.ts"])
+    # 1 bug + 9 features per file → ratio = 10%, below 40% threshold
+    commits = _bug_commits("a.ts", 1, 9, "A") + _bug_commits("b.ts", 1, 9, "B")
+    path_index = _build_path_commit_index(commits)
+    assert _hotspots_from_paths(feat.paths, path_index) == []
+
+
+def test_feature_with_one_qualifying_hotspot() -> None:
+    """One file ≥40% ratio AND ≥5 commits → exactly one hotspot."""
+    feat = _mk_feature("auth", ["login.ts", "session.ts"])
+    # login.ts: 4 bugs / 6 commits = 67% — qualifies (≥5 commits, ≥40%)
+    # session.ts: 0 bugs / 6 commits — doesn't
+    commits = _bug_commits("login.ts", 4, 2, "L") + _bug_commits("session.ts", 0, 6, "S")
+    path_index = _build_path_commit_index(commits)
+    hot = _hotspots_from_paths(feat.paths, path_index)
+    assert len(hot) == 1
+    assert hot[0].path == "login.ts"
+    assert hot[0].bug_fixes == 4
+    assert hot[0].total_commits == 6
+    assert hot[0].bug_fix_ratio == round(4 / 6, 3)
+
+
+def test_hotspot_requires_minimum_commits_even_at_ratio_1() -> None:
+    """2-of-2 bug-fixes is ratio=1.0 but commits<5 → MUST NOT qualify."""
+    feat = _mk_feature("admin", ["risky.ts"])
+    commits = _bug_commits("risky.ts", 2, 0, "R")  # ratio 1.0 but only 2 commits
+    path_index = _build_path_commit_index(commits)
+    assert _hotspots_from_paths(feat.paths, path_index) == []
+
+
+def test_hotspots_sorted_ratio_desc_then_total_commits_desc() -> None:
+    """Higher ratio first; ties broken by total_commits desc."""
+    feat = _mk_feature("svc", ["a.ts", "b.ts", "c.ts"])
+    # a.ts: 6/10 = 60% (10 commits)
+    # b.ts: 8/10 = 80% (10 commits) — highest ratio → first
+    # c.ts: 6/8  = 75% (8 commits)
+    commits = (
+        _bug_commits("a.ts", 6, 4, "A")
+        + _bug_commits("b.ts", 8, 2, "B")
+        + _bug_commits("c.ts", 6, 2, "C")
+    )
+    path_index = _build_path_commit_index(commits)
+    hot = _hotspots_from_paths(feat.paths, path_index)
+    assert [h.path for h in hot] == ["b.ts", "c.ts", "a.ts"]
+    # Tie-break check: forge two paths with identical ratio + commits,
+    # the secondary key (total_commits desc) must keep order stable;
+    # tertiary key is path (alpha) so output is deterministic.
+    feat2 = _mk_feature("tied", ["z.ts", "y.ts"])
+    tied = _bug_commits("z.ts", 5, 5, "Z") + _bug_commits("y.ts", 5, 5, "Y")
+    idx2 = _build_path_commit_index(tied)
+    hot2 = _hotspots_from_paths(feat2.paths, idx2)
+    # Same ratio + same total_commits → fall through to path alpha.
+    assert [h.path for h in hot2] == ["y.ts", "z.ts"]
+
+
+def test_flow_inherits_parent_feature_paths_when_own_paths_empty(tmp_path: Path) -> None:
+    """Flow with empty .paths falls back to parent feature's paths."""
+    feat = _mk_feature("auth", ["login.ts"])
+    flow = _mk_flow("login-flow", paths=[])  # empty — must fall back
+    feat.flows = [flow]
+    commits = _bug_commits("login.ts", 4, 2, "L")
+    _attach_hotspots([feat], commits)
+    assert len(flow.hotspot_files_detail) == 1
+    assert flow.hotspot_files_detail[0].path == "login.ts"
+
+
+def test_attach_hotspots_populates_feature_and_flow() -> None:
+    feat = _mk_feature("auth", ["login.ts", "session.ts"])
+    flow = _mk_flow("login-flow", ["login.ts"])
+    feat.flows = [flow]
+    commits = _bug_commits("login.ts", 4, 2, "L")
+    feats_hot, flows_hot = _attach_hotspots([feat], commits)
+    assert feats_hot == 1
+    assert flows_hot == 1
+    assert len(feat.hotspot_files) == 1
+    assert feat.hotspot_files[0].path == "login.ts"
+    assert len(flow.hotspot_files_detail) == 1
+
+
+def test_attach_hotspots_handles_empty_inputs() -> None:
+    assert _attach_hotspots([], []) == (0, 0)
+    feat = _mk_feature("x", ["a.ts"])
+    assert _attach_hotspots([feat], []) == (0, 0)
+    assert feat.hotspot_files == []
+
+
+def test_product_feature_hotspots_via_helper() -> None:
+    pf = _mk_feature("Billing", ["stripe/checkout.ts", "stripe/webhook.ts"])
+    pf.layer = "product"
+    commits = (
+        _bug_commits("stripe/checkout.ts", 5, 3, "C")
+        + _bug_commits("stripe/webhook.ts", 0, 8, "W")
+    )
+    count = attach_hotspots_to_product_features([pf], commits)
+    assert count == 1
+    assert len(pf.hotspot_files) == 1
+    assert pf.hotspot_files[0].path == "stripe/checkout.ts"
+    assert pf.hotspot_files[0].bug_fixes == 5
+
+
+def test_stage_6_metrics_attaches_hotspots_end_to_end(tmp_path: Path) -> None:
+    feat = _mk_feature("auth", ["login.ts"])
+    feat.flows = [_mk_flow("login-flow", ["login.ts"])]
+    commits = _bug_commits("login.ts", 5, 3, "X")
+    ctx = _mk_ctx(tmp_path, commits)
+    out = stage_6_metrics([feat], ctx)
+    assert len(out[0].hotspot_files) == 1
+    assert out[0].hotspot_files[0].path == "login.ts"
+    assert len(out[0].flows[0].hotspot_files_detail) == 1

@@ -36,6 +36,25 @@ class FileBlame(BaseModel):
     total_commits: int
 
 
+class HotspotFile(BaseModel):
+    """One source file inside an entity (feature / flow / product feature)
+    whose commit history shows bug-fix churn above the universal
+    hotspot thresholds.
+
+    Emitted by ``stage_6_metrics`` on a per-entity basis. Thresholds
+    are scale-invariant (ratio + minimum sample size) so the same
+    rule applies regardless of repo size — see
+    ``HOTSPOT_BUG_RATIO_MIN`` / ``HOTSPOT_COMMITS_MIN`` in that
+    module. Sorting (ratio desc, then total_commits desc) lets
+    renderers slice ``[:N]`` without re-sorting.
+    """
+
+    path: str
+    bug_fix_ratio: float       # bug_fixes / total_commits, rounded to 3 dp
+    bug_fixes: int             # commits whose Commit.is_bug_fix is True
+    total_commits: int         # commits touching this file inside the entity's window
+
+
 class Flow(BaseModel):
     name: str                  # "checkout-flow", "login-flow"
     display_name: str | None = None  # Title Case label for UI ("Checkout")
@@ -64,7 +83,14 @@ class Flow(BaseModel):
     weekly_points: list[TimelinePoint] = []  # weekly activity timeline
     bus_factor: int = 1                      # authors with ≥20% of flow commits
     health_trend: float | None = None        # first_half_bug_ratio - second_half; positive = improving
-    hotspot_files: list[str] = []            # source files with >40% bug_fix_ratio (≥3 commits)
+    hotspot_files: list[str] = []            # legacy: file paths with >40% bug_fix_ratio (≥3 commits); kept for back-compat with the legacy analyzer + MCP consumers
+    # Sprint 2026-05-28 — richer dict-shape hotspots emitted by
+    # pipeline_v2 Stage 6. Each entry carries path + ratio + bug_fixes
+    # + total_commits so renderers (carousel, PR comments, MCP risk
+    # surface) can show counts/ratios without re-walking git. Empty
+    # for scans produced before this field existed and for entities
+    # below the universal hotspot thresholds.
+    hotspot_files_detail: list["HotspotFile"] = []
     coverage_pct: float | None = None        # avg line coverage % across source files; None if unavailable
     symbol_attributions: list["SymbolAttribution"] = []  # symbols (functions/classes) that belong to this flow — populated when --symbols is enabled
     # Sprint 12 Day 3.5 — multi-feature ownership. A flow can
@@ -458,6 +484,12 @@ class Feature(BaseModel):
     last_modified: datetime
     health_score: float       # 0-100, higher is better
     flows: list[Flow] = []    # populated when --flows flag is used
+    # Sprint 2026-05-28 — per-feature hotspot files (dict shape). Each
+    # entry: path + bug_fix_ratio + bug_fixes + total_commits. Sorted
+    # by ratio desc, then total_commits desc. Emitted by
+    # ``stage_6_metrics`` for every layer (developer + product). Empty
+    # when no file in this feature crosses the universal thresholds.
+    hotspot_files: list[HotspotFile] = []
     bug_fix_prs: list[PullRequest] = []
     coverage_pct: float | None = None  # avg line coverage % across source files; None if unavailable
     shared_attributions: list[SymbolAttribution] = []  # symbol-scoped data for shared files

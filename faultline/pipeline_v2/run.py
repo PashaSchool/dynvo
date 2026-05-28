@@ -95,7 +95,10 @@ from faultline.pipeline_v2.stage_5_5_bipartite import stage_5_5_bipartite
 from faultline.pipeline_v2.stage_5_postprocess import (
     stage_5_from_stage3_result_with_telemetry,
 )
-from faultline.pipeline_v2.stage_6_metrics import stage_6_metrics
+from faultline.pipeline_v2.stage_6_metrics import (
+    attach_hotspots_to_product_features,
+    stage_6_metrics,
+)
 from faultline.pipeline_v2.stage_6_5_product_clusterer import (
     run_product_clusterer,
 )
@@ -1088,6 +1091,26 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
     stage_8_5_backfill_telemetry = backfill_result.as_telemetry()
+
+    # ── Product-feature hotspots (Sprint 2026-05-28) ───────────────
+    # Stage 6 already attached hotspots to every Layer 1 (developer)
+    # feature + their flows. Product (Layer 2) features were not yet
+    # finalised at that point — their ``paths`` aggregate only settles
+    # after Stage 8 rollup + Stage 8.5 backfill. Run the same
+    # deterministic pass on them here so the final scan output carries
+    # hotspots on both layers. Pure git data, no extra deps.
+    try:
+        pfs_with_hotspots = attach_hotspots_to_product_features(
+            product_features, ctx.commits,
+        )
+        logger.info(
+            "stage_6_metrics: hotspots attached on %d/%d product features",
+            pfs_with_hotspots, len(product_features),
+        )
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "stage_6_metrics: product-feature hotspot pass failed: %s", exc,
+        )
 
     # ── Scan meta assembly ─────────────────────────────────────────
     # Count fallback survivors by NAME match against the post-A1-validation
