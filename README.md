@@ -9,6 +9,19 @@ Point `faultlines` at a git repo and get back a feature map — which parts of y
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/PashaSchool/featuremap)](https://github.com/PashaSchool/featuremap)
 
+> **Monorepo (uv workspace):** this repository hosts two installable packages — the engine (`faultlines`, this folder) and the MCP server (`faultlines-mcp`, see [`faultlines-mcp/README.md`](faultlines-mcp/README.md)) for AI coding agents. They release independently.
+
+## What's new
+
+- **Pipeline v2 (`scan-v2`)** — new code-grounded detection pipeline. Stages 0–7 in order; only Stages 3 + 4 hit the LLM. Outputs both `developer_features[]` (engineering grain, attributed to files/symbols) and `product_features[]` (product grain, clustered). `analyze` is now backed by the same pipeline; pass `--legacy` for the old single-pass detector.
+- **Stack-aware extractors** — Stage 1 deterministic extractors per stack: `route` (Next.js / Remix / SvelteKit / Astro / TanStack / FastAPI / Express / Hono / Fastify / Laravel / Phoenix / Spring), `mvc`, `schema`, `package`, `config`, `go_router` (chi/gin/echo/fiber/httprouter/stdlib), `rust_workspace`, `python_library`, `fastapi`, `_rails`. Patterns live in `eval/stacks/<stack>.yaml`.
+- **Hermetic packaging** — runtime stack data (`pipeline_v2/data/{stacks/*.yaml, dependency-anchors.yaml}`) ships **inside the wheel** and is loaded via `importlib.resources`. Same wheel behaves identically in `pip install`, Docker, or a fresh venv — no sibling `eval/` required. Replaces the old `Path(__file__).parents[N]/eval/...` filesystem walks.
+- **`scan-v2` model resolution fix** — `--model sonnet` / `claude-sonnet-4-6` now correctly resolves to the live `claude-sonnet-4-6` model id (the previously-pinned dated snapshot 404'd).
+- **MCP server extracted** — the AI-agent surface is now its own package, [`faultlines-mcp`](faultlines-mcp/README.md). The engine no longer depends on the MCP SDK; install MCP separately when you need it.
+- **Bipartite feature ↔ flow store** — output carries top-level `flows[]` + `feature_flow_edges[]` (primary / secondary) alongside the containment view. Cross-cutting flows are first-class.
+- **Stage 0.5 Stack Auditor** — one Haiku call refines stack detection between heuristic intake (Stage 0) and deterministic extractors (Stage 1).
+- **Two-grain accuracy on a 25-repo benchmark** — average product-feature recall ~85% and developer-feature recall ~92% on the open golden corpus (`eval/golden/`, `eval/developer-golden/`).
+
 ## Try it in 30 seconds
 
 ```bash
@@ -207,26 +220,16 @@ faultlines watch-stop .
 
 Requires `pip install 'faultlines[watch]'`.
 
-## MCP server
+## MCP server (for AI coding agents)
 
-Expose your feature map to AI agents (Claude Code, Cursor, Windsurf) via [MCP](https://modelcontextprotocol.io):
+The MCP server is its own package, [`faultlines-mcp`](faultlines-mcp/README.md), so the engine can stay slim and the MCP surface can iterate independently for marketplaces (Cursor / Claude Code / Cline / Aider / Continue / …).
 
 ```bash
-pip install 'faultlines[mcp]'
-faultlines mcp-serve
+pip install faultlines-mcp     # depends on this engine
+faultlines-mcp                 # stdio MCP server
 ```
 
-Available tools for AI agents:
-
-| Tool | What it does |
-|------|-------------|
-| `list_features` | All features sorted by risk |
-| `find_feature` | Feature detail with flows, authors, health |
-| `get_flow_files` | Files belonging to a specific flow |
-| `find_symbols_in_flow` | Functions/classes in a flow with line ranges and roles |
-| `find_symbols_for_feature` | Shared types/interfaces for a feature |
-
-When `--symbols` was used at scan time, AI agents get **precise function-level context** instead of entire files — reducing token consumption by up to 93%.
+Then point your agent at it (full configs in [`faultlines-mcp/README.md`](faultlines-mcp/README.md)). Ten tools: `list_features` · `find_feature` · `get_feature_files` · `get_flow_files` · `get_feature_owners` · `get_hotspots` · `get_repo_summary` · `find_symbols_in_flow` · `find_symbols_for_feature` · `predict_impact`. When the scan ran with `--symbols`, the agent gets **function-level context with line ranges** instead of whole files — typically ~93% fewer tokens read per query.
 
 ## Output format
 
@@ -366,6 +369,57 @@ Ollama is free (runs locally). Heuristic mode (no `--llm`) is free and instant.
 - **Tech leads** — prioritise refactoring with data, not gut feeling
 - **New team members** — understand which parts of the codebase need the most care
 - **AI agents** — connect via MCP to get precise function-level context per flow instead of reading whole files
+
+## Repo layout (monorepo)
+
+This repository is a **uv workspace** with two independently-releasable Python packages:
+
+```
+featuremap/
+├── faultline/                   ← engine package (this README, ships as `faultlines` on PyPI)
+│   ├── cli.py                   ← `faultlines` console
+│   ├── pipeline_v2/             ← scan-v2 stages 0–7
+│   │   ├── extractors/          ← deterministic Stage 1 extractors (go_router, fastapi, _rails, …)
+│   │   ├── data/                ← runtime stack patterns + dep-anchors (importlib.resources)
+│   │   └── stage_6_5_product_clusterer.py
+│   ├── llm/                     ← LLM-backed stages (Sonnet/Haiku via pipeline_v2/run.py)
+│   ├── impact/                  ← risk + blast-radius scoring
+│   └── symbols/                 ← symbol-level attribution
+├── faultlines-mcp/              ← MCP server package (ships as `faultlines-mcp` on PyPI)
+│   ├── faultlines_mcp/          ← thin protocol surface, depends on `faultlines`
+│   └── pyproject.toml
+├── eval/                        ← golden corpus + stack pattern authoring + benchmark scripts
+└── pyproject.toml               ← engine + `[tool.uv.workspace]` root
+```
+
+### Develop both packages (uv)
+
+```bash
+uv sync --all-packages           # installs both packages in editable mode in one venv
+.venv/bin/faultlines --help      # engine CLI
+.venv/bin/faultlines-mcp         # MCP stdio server
+.venv/bin/pytest                 # full suite
+```
+
+### Develop without uv (pip only)
+
+```bash
+pip install -e .                 # engine
+pip install -e ./faultlines-mcp  # MCP (depends on engine)
+pip install pytest pytest-cov pytest-asyncio
+pytest
+```
+
+### Release independently
+
+Each package versions and publishes separately:
+
+```bash
+# Engine
+hatch build -t wheel             # → dist/faultlines-X.Y.Z-py3-none-any.whl
+# MCP
+cd faultlines-mcp && hatch build -t wheel
+```
 
 ## Contributing
 
