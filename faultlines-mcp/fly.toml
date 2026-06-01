@@ -1,0 +1,33 @@
+# Fly app for the Faultlines MCP HTTP service.
+#
+# Stateless tool dispatcher: every request carries its own scan + runtime, so
+# the machine holds no data and can scale to zero. Set the shared secret with:
+#   fly secrets set MCP_SERVICE_TOKEN=<token> --app faultlines-mcp-service
+# (the same token the dashboard env uses to authenticate to /call and /tools).
+
+app = "faultlines-mcp-service"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
