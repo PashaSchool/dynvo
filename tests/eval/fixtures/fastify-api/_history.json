@@ -1,0 +1,32 @@
+{
+  "_comment": "Ordered commit plan replayed by tests/eval/_make_fixtures.py. See nextjs-shop/_history.json for the contract.",
+  "author_name": "Faultlines Eval",
+  "author_email": "eval@faultlines.test",
+  "commits": [
+    {
+      "message": "chore: scaffold fastify server",
+      "date": "2024-03-02T10:00:00",
+      "files": ["package.json", "src/server.js", "src/models.js"]
+    },
+    {
+      "message": "feat: auth plugin",
+      "date": "2024-03-04T10:00:00",
+      "files": ["src/plugins/auth.js"]
+    },
+    {
+      "message": "feat: product routes",
+      "date": "2024-03-05T10:00:00",
+      "files": ["src/routes/products.js", "src/models.js"]
+    },
+    {
+      "message": "feat: checkout routes",
+      "date": "2024-03-08T10:00:00",
+      "files": ["src/routes/checkout.js", "src/models.js"]
+    },
+    {
+      "message": "fix: delete product route param handling",
+      "date": "2024-03-12T10:00:00",
+      "files": ["src/routes/products.js"]
+    }
+  ]
+}

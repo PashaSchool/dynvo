@@ -1,0 +1,20 @@
+# Ground truth for the fastapi-svc fixture.
+#
+# Derived from what the CODE implements — NOT from engine output.
+# The service exposes user management, order management, and a health
+# probe. `models.py` is a shared schema module, not a standalone product
+# feature, so it is intentionally absent.
+features:
+  - name: users
+    description: Create, list, and fetch users.
+    aliases:
+      - user-management
+  - name: orders
+    description: Create and list orders.
+    aliases:
+      - order-management
+  - name: health
+    description: Service health probe endpoint.
+    aliases:
+      - health-check
+      - healthcheck

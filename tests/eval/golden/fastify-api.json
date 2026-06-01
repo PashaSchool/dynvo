@@ -1,0 +1,24 @@
+{
+  "features": [
+    {
+      "name": "checkout",
+      "paths": [
+        "src/routes/checkout.js"
+      ]
+    },
+    {
+      "name": "plugins-auth",
+      "paths": [
+        "src/plugins/auth.js"
+      ]
+    },
+    {
+      "name": "products",
+      "paths": [
+        "src/routes/products.js"
+      ]
+    }
+  ],
+  "flows": [],
+  "stack": "fastify"
+}

@@ -1,0 +1,29 @@
+# Ground truth for the nextjs-shop fixture.
+#
+# Derived from what the CODE implements — NOT from engine output.
+# A thoughtful product owner of this storefront would name these
+# customer-visible capabilities. `db.ts` and `next.config.js` are
+# infrastructure, not product features, so they are intentionally
+# ABSENT from the truth (they count against precision if detected as
+# standalone features — that's the honest signal).
+#
+# Consumed by faultline.benchmark.loader.load_expected_features via the
+# accuracy-floor test. Aliases capture acceptable engine namings.
+features:
+  - name: products
+    description: Browse the product catalog.
+    aliases:
+      - product-catalog
+      - catalog
+  - name: cart
+    description: Add items to and view the shopping cart.
+    aliases:
+      - shopping-cart
+  - name: checkout
+    description: Submit an order via the checkout API route.
+    aliases:
+      - checkout-api
+  - name: pricing
+    description: Marketing pricing page.
+    aliases:
+      - plans

@@ -1,0 +1,26 @@
+{
+  "features": [
+    {
+      "name": "health",
+      "paths": [
+        "app/main.py"
+      ]
+    },
+    {
+      "name": "orders",
+      "paths": [
+        "app/models.py",
+        "app/routers/orders.py"
+      ]
+    },
+    {
+      "name": "users",
+      "paths": [
+        "app/models.py",
+        "app/routers/users.py"
+      ]
+    }
+  ],
+  "flows": [],
+  "stack": "fastapi"
+}
