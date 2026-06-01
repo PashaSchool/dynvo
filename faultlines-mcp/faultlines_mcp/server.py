@@ -1,17 +1,29 @@
-"""Faultlines MCP server.
+"""Faultlines MCP server — local stdio mode.
 
 Exposes the latest feature-map JSON as tools that AI coding agents
 (Cursor, Claude Code, Cline, Aider) can call to get precise codebase
 context instead of grepping and reading random files.
 
-Tools:
+The 13 tools' LOGIC lives ONCE, as pure functions in
+:mod:`faultlines_mcp.core` (the single source of truth shared with the
+HTTP service). The ``@mcp.tool()`` wrappers here are THIN: they load the
+feature map from disk via :func:`_load_map`, delegate to the matching
+``core`` pure function (with ``runtime=None``), then inject the local-only
+freshness / stale warnings before returning. Behavior is unchanged for
+local users — each wrapper still returns the same flat dict shape it
+always did.
+
+Tools (all 13 from the unified spec):
     list_features       -- overview of all features with health scores
     find_feature        -- semantic search by name or description
     get_feature_files   -- exact file list for a feature
-    get_hotspots        -- riskiest features (lowest health)
-    get_feature_owners  -- top contributors for a feature
     get_flow_files      -- files belonging to a user-facing flow
     get_repo_summary    -- high-level repo stats
+    get_hotspots        -- riskiest features (lowest health)
+    get_feature_owners  -- top contributors for a feature
+    analyze_change_impact / get_regression_risk      -- blast radius / risk
+    find_symbols_in_flow / find_symbols_for_feature  -- symbol attribution
+    get_feature_errors / get_feature_pageviews       -- runtime (graceful)
 
 Run:
     faultlines-mcp                  # uses default map location
@@ -37,14 +49,10 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from faultlines_mcp import core
+
 mcp = FastMCP("faultlines")
 
-
-# Per-request token-savings metadata. AI agents usually ignore this,
-# but the SaaS dashboard aggregates it across calls to show savings.
-_AVG_GREP_FILES_PER_QUERY = 15          # files an agent would read without MCP
-_AVG_TOKENS_PER_FILE = 2500             # ~10KB at 4 chars/token
-_AVG_MCP_RESPONSE_TOKENS = 500          # typical MCP response size
 _STALE_DAYS = 30                        # warn after this many days
 
 
@@ -175,52 +183,51 @@ def _load_map() -> dict[str, Any]:
 def _maybe_auto_refresh(path: Path, data: dict[str, Any]) -> None:
     """If FAULTLINE_AUTO_REFRESH is enabled, kick off a background refresh.
 
-    Non-blocking: returns immediately. Current query sees the data as it
-    was when loaded; next query will see the refreshed version.
+    Engine-independent: this shells out to the ``faultlines`` CLI as a
+    detached subprocess (never an import). Non-blocking — returns
+    immediately. The current query sees the data as it was when loaded;
+    the next query will see the refreshed version.
+
+    Only triggers when:
+      - ``FAULTLINE_AUTO_REFRESH`` is set to 1/true/yes, AND
+      - the map records a ``repo_path`` we can re-scan.
     """
+    if os.environ.get("FAULTLINE_AUTO_REFRESH") not in ("1", "true", "yes"):
+        return
+    repo_path = data.get("repo_path", "")
+    if not repo_path or not Path(repo_path).exists():
+        return
+    import subprocess
     try:
-        from faultline.cache.auto_refresh import maybe_trigger_refresh
-        maybe_trigger_refresh(path, data)
-    except Exception:
+        # Detached, fire-and-forget. Output discarded; the CLI writes a
+        # fresh feature-map-*.json that the next _load_map() picks up.
+        subprocess.Popen(
+            ["faultlines", "refresh", repo_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except (FileNotFoundError, OSError):
         # Auto-refresh is best-effort — never break a tool call because
-        # of a refresh issue.
+        # the CLI is absent or the spawn failed.
         pass
 
 
-def _savings_metadata(
-    files_returned: int,
-    *,
-    tool_name: str | None = None,
-    query_arg: str | None = None,
-) -> dict[str, Any]:
-    """Estimate tokens saved vs a naive grep-and-read-files workflow.
+def _serve(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Load the feature map from disk, delegate to the ``core`` pure fn, and
+    inject local-only freshness / stale warnings.
 
-    Side effect: when ``tool_name`` is provided AND ``FAULTLINE_API_KEY``
-    is set in the environment, the call is enqueued for cloud telemetry.
-    No-op otherwise.
+    This is the single bridge between the FastMCP wrappers (which own disk
+    I/O) and the pure tool logic (which owns everything else). Each wrapper
+    returns the pure fn's ``details`` dict — preserving the historical flat
+    response shape local users already depend on — with the warning fields
+    merged in. ``runtime=None`` always: the local package has no Sentry/
+    PostHog connection.
     """
-    without_mcp = _AVG_GREP_FILES_PER_QUERY * _AVG_TOKENS_PER_FILE
-    with_mcp = _AVG_MCP_RESPONSE_TOKENS + (files_returned * _AVG_TOKENS_PER_FILE)
-    saved = max(0, without_mcp - with_mcp)
-
-    if tool_name and os.environ.get("FAULTLINE_API_KEY"):
-        try:
-            from faultline.cloud.event_buffer import record_mcp_event
-            record_mcp_event(
-                tool_name=tool_name,
-                query_arg=query_arg,
-                files_returned=files_returned,
-                tokens_saved=saved,
-            )
-        except Exception:
-            # Telemetry must never break a tool call.
-            pass
-
-    return {
-        "estimated_tokens_saved": saved,
-        "files_returned": files_returned,
-        "baseline_tokens": without_mcp,
-    }
+    fm = _load_map()
+    result = core.call_tool(tool_name, fm, args, runtime=None)
+    return _inject_warning(dict(result["details"]), fm)
 
 
 @mcp.tool()
@@ -232,53 +239,7 @@ def list_features() -> dict[str, Any]:
     the riskiest code is visible first. For details on a specific
     feature, follow up with ``find_feature``.
     """
-    fm = _load_map()
-    features = sorted(
-        fm.get("features", []),
-        key=lambda f: f.get("health_score", 100),
-    )
-    return _inject_warning({
-        "repo_path": fm.get("repo_path", ""),
-        "total_features": len(features),
-        "total_commits": fm.get("total_commits", 0),
-        "features": [
-            {
-                "name": f["name"],
-                "description": f.get("description"),
-                "health": round(f.get("health_score", 0)),
-                "bug_fix_ratio": round(f.get("bug_fix_ratio", 0) * 100, 1),
-                "commits": f.get("total_commits", 0),
-                "file_count": len(f.get("paths", [])),
-                "flow_count": len(f.get("flows", [])),
-                "coverage_pct": f.get("coverage_pct"),
-            }
-            for f in features
-        ],
-        "_savings_metadata": _savings_metadata(0, tool_name="list_features"),
-    }, fm)
-
-
-def _match_feature(fm: dict[str, Any], query: str) -> dict[str, Any] | None:
-    """Resolve a feature by exact display_name / name / alias / label match.
-
-    Used by name-based tools (get_feature_files, get_feature_owners, etc).
-    Case-insensitive exact equality, not substring — callers pass the
-    name the user already picked, not a fuzzy query. Falls back to
-    case-insensitive match so "Tags" resolves "tags".
-    """
-    q = query.strip().lower()
-    for f in fm.get("features", []):
-        display = (f.get("display_name") or "").lower()
-        name = (f.get("name") or "").lower()
-        if q == display or q == name:
-            return f
-        aliases = f.get("aliases") or []
-        if any(q == (a or "").lower() for a in aliases):
-            return f
-        labels = f.get("labels") or []
-        if any(q == (lab.get("name") or "").lower() for lab in labels if isinstance(lab, dict)):
-            return f
-    return None
+    return _serve("list_features", {})
 
 
 @mcp.tool()
@@ -300,53 +261,11 @@ def find_feature(query: str) -> dict[str, Any] | None:
         query: Feature name, alias, or keyword (e.g. "payments",
             "auth", "checkout", "rich text editor", "labels")
     """
-    fm = _load_map()
-    q = query.lower()
-
-    def _haystacks(f: dict[str, Any]) -> list[str]:
-        out: list[str] = []
-        for key in ("display_name", "name"):
-            v = f.get(key)
-            if isinstance(v, str):
-                out.append(v.lower())
-        for v in f.get("aliases") or []:
-            if isinstance(v, str):
-                out.append(v.lower())
-        for lab in f.get("labels") or []:
-            name = lab.get("name") if isinstance(lab, dict) else None
-            if isinstance(name, str):
-                out.append(name.lower())
-        desc = f.get("description")
-        if isinstance(desc, str):
-            out.append(desc.lower())
-        return out
-
-    for f in fm.get("features", []):
-        if any(q in hay for hay in _haystacks(f)):
-            display_name = f.get("display_name") or f["name"]
-            return _inject_warning({
-                "name": display_name,
-                "original_name": f.get("original_name") or f.get("name"),
-                "aliases": f.get("aliases") or [],
-                "labels": f.get("labels") or [],
-                "description": f.get("description"),
-                "health": round(f.get("health_score", 0)),
-                "bug_fix_ratio": round(f.get("bug_fix_ratio", 0) * 100, 1),
-                "coverage_pct": f.get("coverage_pct"),
-                "files": f.get("paths", []),
-                "file_count": len(f.get("paths", [])),
-                "owners": f.get("authors", [])[:5],
-                "flows": [
-                    {"name": fl["name"], "health": round(fl.get("health_score", 0))}
-                    for fl in f.get("flows", [])
-                ],
-                "_savings_metadata": _savings_metadata(
-                    len(f.get("paths", [])),
-                    tool_name="find_feature",
-                    query_arg=query,
-                ),
-            }, fm)
-    return None
+    result = _serve("find_feature", {"query": query})
+    # Preserve the historical contract: a miss returns ``None``, not a dict.
+    if result.get("matched") is False:
+        return None
+    return result
 
 
 @mcp.tool()
@@ -360,27 +279,7 @@ def get_feature_files(feature_name: str) -> dict[str, Any]:
     Args:
         feature_name: Exact feature name from ``list_features``
     """
-    fm = _load_map()
-    f = _match_feature(fm, feature_name)
-    if f:
-        resolved = f.get("display_name") or f.get("name") or feature_name
-        return _inject_warning({
-            "feature": resolved,
-            "files": f.get("paths", []),
-            "file_count": len(f.get("paths", [])),
-            "hotspot_files": [
-                h for fl in f.get("flows", [])
-                for h in fl.get("hotspot_files", [])
-            ][:5],
-            "_savings_metadata": _savings_metadata(
-                len(f.get("paths", [])),
-                tool_name="get_feature_files",
-                query_arg=feature_name,
-            ),
-        }, fm)
-    return {"error": f"Feature '{feature_name}' not found", "available": [
-        f.get("display_name") or f["name"] for f in fm.get("features", [])
-    ]}
+    return _serve("get_feature_files", {"feature_name": feature_name})
 
 
 @mcp.tool()
@@ -395,33 +294,7 @@ def get_hotspots(limit: int = 5) -> dict[str, Any]:
     Args:
         limit: Max features to return (default 5)
     """
-    fm = _load_map()
-    risky = sorted(
-        fm.get("features", []),
-        key=lambda f: f.get("health_score", 100),
-    )[:limit]
-
-    result = []
-    for f in risky:
-        hotspot_files: list[str] = []
-        for fl in f.get("flows", []):
-            hotspot_files.extend(fl.get("hotspot_files", []))
-        result.append({
-            "name": f["name"],
-            "description": f.get("description"),
-            "health": round(f.get("health_score", 0)),
-            "bug_fix_ratio": round(f.get("bug_fix_ratio", 0) * 100, 1),
-            "bug_fixes": f.get("bug_fixes", 0),
-            "commits": f.get("total_commits", 0),
-            "coverage_pct": f.get("coverage_pct"),
-            "hotspot_files": hotspot_files[:3],
-            "owners": f.get("authors", [])[:3],
-        })
-
-    return _inject_warning({
-        "hotspots": result,
-        "_savings_metadata": _savings_metadata(limit, tool_name="get_hotspots"),
-    }, fm)
+    return _serve("get_hotspots", {"limit": limit})
 
 
 @mcp.tool()
@@ -436,26 +309,7 @@ def get_feature_owners(feature_name: str) -> dict[str, Any]:
     Args:
         feature_name: Exact feature name from ``list_features``
     """
-    fm = _load_map()
-    f = _match_feature(fm, feature_name)
-    if f:
-        resolved = f.get("display_name") or f.get("name") or feature_name
-        authors = f.get("authors", [])
-        flow_bus_factors = [
-            fl.get("bus_factor", 1) for fl in f.get("flows", [])
-        ]
-        min_bus_factor = min(flow_bus_factors) if flow_bus_factors else len(authors) or 1
-        return _inject_warning({
-            "feature": resolved,
-            "owners": authors,
-            "total_contributors": len(authors),
-            "bus_factor": min_bus_factor,
-            "at_risk": min_bus_factor == 1,
-            "_savings_metadata": _savings_metadata(
-                1, tool_name="get_feature_owners", query_arg=feature_name,
-            ),
-        }, fm)
-    return {"error": f"Feature '{feature_name}' not found"}
+    return _serve("get_feature_owners", {"feature_name": feature_name})
 
 
 @mcp.tool()
@@ -470,28 +324,7 @@ def get_flow_files(feature_name: str, flow_name: str) -> dict[str, Any]:
         feature_name: Parent feature name
         flow_name: Flow name from ``find_feature`` results
     """
-    fm = _load_map()
-    for f in fm.get("features", []):
-        if f.get("name") != feature_name:
-            continue
-        for fl in f.get("flows", []):
-            if fl.get("name") == flow_name:
-                return _inject_warning({
-                    "feature": feature_name,
-                    "flow": flow_name,
-                    "description": fl.get("description"),
-                    "files": fl.get("paths", []),
-                    "file_count": len(fl.get("paths", [])),
-                    "health": round(fl.get("health_score", 0)),
-                    "bug_fix_ratio": round(fl.get("bug_fix_ratio", 0) * 100, 1),
-                    "hotspot_files": fl.get("hotspot_files", []),
-                    "_savings_metadata": _savings_metadata(
-                        len(fl.get("paths", [])),
-                        tool_name="get_flow_files",
-                        query_arg=f"{feature_name}/{flow_name}",
-                    ),
-                }, fm)
-    return {"error": f"Flow '{flow_name}' in feature '{feature_name}' not found"}
+    return _serve("get_flow_files", {"feature_name": feature_name, "flow_name": flow_name})
 
 
 @mcp.tool()
@@ -502,42 +335,110 @@ def get_repo_summary() -> dict[str, Any]:
     starting work on an unfamiliar repo. Returns aggregated metrics
     without file-level detail.
     """
-    fm = _load_map()
-    features = fm.get("features", [])
-    total_bug_fixes = sum(f.get("bug_fixes", 0) for f in features)
-    avg_health = (
-        sum(f.get("health_score", 0) for f in features) / len(features)
-        if features else 0
-    )
-    at_risk = sum(1 for f in features if f.get("health_score", 100) < 50)
-    with_coverage = [
-        f.get("coverage_pct") for f in features if f.get("coverage_pct") is not None
-    ]
-    avg_coverage = sum(with_coverage) / len(with_coverage) if with_coverage else None
+    return _serve("get_repo_summary", {})
 
-    return _inject_warning({
-        "repo_path": fm.get("repo_path", ""),
-        "remote_url": fm.get("remote_url", ""),
-        "analyzed_at": fm.get("analyzed_at", ""),
-        "date_range_days": fm.get("date_range_days", 0),
-        "total_commits": fm.get("total_commits", 0),
-        "total_features": len(features),
-        "total_flows": sum(len(f.get("flows", [])) for f in features),
-        "total_bug_fixes": total_bug_fixes,
-        "avg_health_score": round(avg_health, 1),
-        "avg_coverage_pct": round(avg_coverage, 1) if avg_coverage is not None else None,
-        "features_at_risk": at_risk,
-        "_savings_metadata": _savings_metadata(0, tool_name="get_repo_summary"),
-    }, fm)
+
+@mcp.tool()
+def analyze_change_impact(changed_files: list[str], repo_path: str = ".") -> dict[str, Any]:
+    """Blast radius for a set of files you are about to change.
+
+    Use this BEFORE submitting a PR or making a refactor. Returns which
+    features the changed files touch (by path overlap), total impact,
+    co-changed-but-missing files, a risk level, and recommendations.
+    Engine-free: reads precomputed scan fields — no live git, no engine.
+
+    Args:
+        changed_files: Files being changed (repo-relative).
+        repo_path: Accepted for compatibility; unused (data comes from the map).
+    """
+    return _serve("analyze_change_impact",
+                  {"changed_files": changed_files, "repo_path": repo_path})
+
+
+@mcp.tool()
+def get_regression_risk(changed_files: list[str]) -> dict[str, Any]:
+    """Quick check: how likely is this change to cause a regression?
+
+    Returns a probability (0.0-1.0) based on how buggy the affected
+    features have been historically. Use this for a fast go/no-go
+    signal before merging.
+
+    Args:
+        changed_files: Files being changed (relative to repo root).
+    """
+    return _serve("get_regression_risk", {"changed_files": changed_files})
+
+
+@mcp.tool()
+def find_symbols_in_flow(feature_name: str, flow_name: str) -> dict[str, Any]:
+    """Get precise symbols (functions, classes) that belong to a flow.
+
+    Returns a list of symbols grouped by file, so the AI agent can read
+    only the relevant functions instead of the full file. Falls back
+    to full file paths when symbol-level attribution is unavailable.
+
+    Args:
+        feature_name: Parent feature name (from list_features).
+        flow_name: Flow name (from find_feature or get_flow_files).
+    """
+    return _serve("find_symbols_in_flow",
+                  {"feature_name": feature_name, "flow_name": flow_name})
+
+
+@mcp.tool()
+def find_symbols_for_feature(feature_name: str) -> dict[str, Any]:
+    """Get the feature's shared symbols (types, interfaces, enums).
+
+    Returns types and interfaces that are shared across all flows in
+    the feature. These are the contracts/models your AI agent needs
+    to understand the feature's data shape.
+
+    Args:
+        feature_name: Feature name from list_features.
+    """
+    return _serve("find_symbols_for_feature", {"feature_name": feature_name})
+
+
+@mcp.tool()
+def get_feature_errors(feature_name: str, window: str = "24h") -> dict[str, Any]:
+    """Production errors (Sentry) mapped to a feature.
+
+    Hosted MCP queries the org's Sentry integration and maps issues to
+    the feature by path. The standalone local package has no hosted
+    connection, so this returns a graceful, structured "unavailable"
+    result — the tool stays REGISTERED so the toolkit is identical
+    across deployment modes.
+
+    Args:
+        feature_name: Feature name from ``list_features``.
+        window: Lookback window (e.g. "24h", "14d"). Hosted-only.
+    """
+    return _serve("get_feature_errors", {"feature_name": feature_name, "window": window})
+
+
+@mcp.tool()
+def get_feature_pageviews(feature_name: str, window: str = "24h") -> dict[str, Any]:
+    """Product usage / pageviews (PostHog) for a feature.
+
+    Hosted MCP queries the org's PostHog integration and maps events to
+    the feature by path. The standalone local package has no hosted
+    connection, so this returns a graceful, structured "unavailable"
+    result — the tool stays REGISTERED so the toolkit is identical
+    across deployment modes.
+
+    Args:
+        feature_name: Feature name from ``list_features``.
+        window: Lookback window (e.g. "24h", "14d"). Hosted-only.
+    """
+    return _serve("get_feature_pageviews", {"feature_name": feature_name, "window": window})
 
 
 def main() -> None:
-    """Entry point for the ``faultlines-mcp`` console script."""
-    # Register impact analysis tools (adds 2 more MCP tools)
-    import faultlines_mcp.tools.impact  # noqa: F401
-    # Register symbol-level attribution tools (adds 2 more MCP tools)
-    import faultlines_mcp.tools.symbols  # noqa: F401
+    """Entry point for the ``faultlines-mcp`` console script.
 
+    All 13 tools are registered at import time via the ``@mcp.tool()``
+    decorators above; this just starts the stdio server loop.
+    """
     mcp.run()
 
 

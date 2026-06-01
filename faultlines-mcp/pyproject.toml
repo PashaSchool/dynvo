@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faultlines-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server for the Faultlines feature map — serve precise codebase context to AI coding agents (Cursor, Claude Code, Cline, Aider) instead of having them grep the repo."
 readme = "README.md"
 license = "MIT"
@@ -27,12 +27,20 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
+  # Fully standalone: the MCP server reads the feature-map JSON directly
+  # and has ZERO dependency on the `faultlines` engine package. Pure
+  # stdlib + the MCP protocol library. Auto-refresh (optional) shells out
+  # to the `faultlines` CLI via subprocess — never an import.
   "mcp>=1.0.0",
-  # Engine import surface today is intentionally one symbol
-  # (faultline.impact.risk.predict_impact). Everything else MCP needs is
-  # read from the feature-map JSON via path. When this package ships
-  # standalone on PyPI, pin a stable engine version range here.
-  "faultlines",
+]
+
+[project.optional-dependencies]
+# HTTP service mode (the hosted dashboard proxies to it). Kept OPTIONAL so a
+# plain `pip install faultlines-mcp` for local stdio use stays lean and never
+# pulls in a web framework. The stdio path never imports fastapi/uvicorn.
+http = [
+  "fastapi",
+  "uvicorn[standard]",
 ]
 
 [project.urls]
@@ -42,13 +50,8 @@ Repository = "https://github.com/PashaSchool/faultlines"
 
 [project.scripts]
 faultlines-mcp = "faultlines_mcp:main"
+# HTTP service entry point (requires the `http` extra → fastapi + uvicorn).
+faultlines-mcp-serve = "faultlines_mcp.http_service:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["faultlines_mcp"]
-
-# uv workspace integration — resolve the `faultlines` engine dep from the
-# sibling workspace member (this repo's root) instead of PyPI when developing
-# locally. Released wheels keep the PyPI-range dep; the workspace source
-# block only affects `uv sync` inside this monorepo.
-[tool.uv.sources]
-faultlines = { workspace = true }
