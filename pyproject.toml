@@ -152,16 +152,12 @@ packages = ["faultline"]
 [tool.uv.workspace]
 members = ["faultlines-mcp"]
 
-# Runtime data (stack patterns + dependency-anchors.yaml) ships INSIDE the
-# package at faultline/pipeline_v2/data/** and is loaded hermetically via
-# importlib.resources (see faultline/pipeline_v2/data/__init__.py). This
-# force-include guarantees the non-.py YAML files land in the wheel even if
-# hatchling's default file selection changes. It replaces the old
-# `"eval" = "eval"` band-aid that put data at site-packages/eval/** —
-# the source of bug-featuremap-eval-not-in-wheel (extractors silently
-# no-op'd in the wheel when the eval/ sibling was absent).
-[tool.hatch.build.targets.wheel.force-include]
-"faultline/pipeline_v2/data" = "faultline/pipeline_v2/data"
+# Runtime data (stack patterns + dependency-anchors.yaml) at
+# faultline/pipeline_v2/data/** ships automatically — `packages = ["faultline"]`
+# already includes non-.py files under the package, and the data is loaded
+# hermetically via importlib.resources. A previous force-include of the same
+# path re-added these files at the SAME wheel location, producing duplicate ZIP
+# entries that PyPI rejects ("Duplicate filename in local headers") — removed.
 
 [tool.pytest.ini_options]
 addopts = [
