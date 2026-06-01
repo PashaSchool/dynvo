@@ -1,0 +1,43 @@
+{
+  "features": [
+    {
+      "name": "cart",
+      "paths": [
+        "app/(shop)/cart/page.tsx"
+      ]
+    },
+    {
+      "name": "checkout",
+      "paths": [
+        "app/api/checkout/route.ts"
+      ]
+    },
+    {
+      "name": "db",
+      "paths": [
+        "lib/db.ts"
+      ]
+    },
+    {
+      "name": "next-config",
+      "paths": [
+        "next.config.js"
+      ]
+    },
+    {
+      "name": "pricing",
+      "paths": [
+        "app/(marketing)/pricing/page.tsx"
+      ]
+    },
+    {
+      "name": "products",
+      "paths": [
+        "app/(shop)/products/page.tsx",
+        "lib/db.ts"
+      ]
+    }
+  ],
+  "flows": [],
+  "stack": "next-app-router"
+}

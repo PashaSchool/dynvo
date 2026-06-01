@@ -1,0 +1,37 @@
+{
+  "_comment": "Ordered commit plan replayed by tests/eval/_make_fixtures.py. Each commit stages the listed files (taken from this fixture source tree) and commits them with the given message + date. The union of all `files` MUST equal every tracked file in the fixture (excluding _history.json itself). Dates are fixed so churn/co-change signals are reproducible.",
+  "author_name": "Faultlines Eval",
+  "author_email": "eval@faultlines.test",
+  "commits": [
+    {
+      "message": "chore: scaffold next app",
+      "date": "2024-01-02T10:00:00",
+      "files": ["package.json", "next.config.js", "lib/db.ts"]
+    },
+    {
+      "message": "feat: products listing page",
+      "date": "2024-01-05T10:00:00",
+      "files": ["app/(shop)/products/page.tsx"]
+    },
+    {
+      "message": "feat: shopping cart page",
+      "date": "2024-01-08T10:00:00",
+      "files": ["app/(shop)/cart/page.tsx"]
+    },
+    {
+      "message": "feat: checkout api route",
+      "date": "2024-01-11T10:00:00",
+      "files": ["app/api/checkout/route.ts"]
+    },
+    {
+      "message": "feat: marketing pricing page",
+      "date": "2024-01-14T10:00:00",
+      "files": ["app/(marketing)/pricing/page.tsx"]
+    },
+    {
+      "message": "fix: correct products query in db lib",
+      "date": "2024-01-18T10:00:00",
+      "files": ["lib/db.ts", "app/(shop)/products/page.tsx"]
+    }
+  ]
+}
