@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faultlines"
-version = "0.1.0"
+version = "1.0.0"
 description = "Map features in any codebase from git history alone. No Jira required."
 readme = "README.md"
-license = "MIT"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
     { name = "Faultlines" },
@@ -20,7 +20,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

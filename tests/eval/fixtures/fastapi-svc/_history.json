@@ -1,0 +1,27 @@
+{
+  "_comment": "Ordered commit plan replayed by tests/eval/_make_fixtures.py. See nextjs-shop/_history.json for the contract.",
+  "author_name": "Faultlines Eval",
+  "author_email": "eval@faultlines.test",
+  "commits": [
+    {
+      "message": "chore: scaffold fastapi service",
+      "date": "2024-02-02T10:00:00",
+      "files": ["requirements.txt", "app/__init__.py", "app/main.py", "app/models.py"]
+    },
+    {
+      "message": "feat: users router",
+      "date": "2024-02-05T10:00:00",
+      "files": ["app/routers/__init__.py", "app/routers/users.py"]
+    },
+    {
+      "message": "feat: orders router",
+      "date": "2024-02-08T10:00:00",
+      "files": ["app/routers/orders.py"]
+    },
+    {
+      "message": "fix: validate user payload in users router",
+      "date": "2024-02-12T10:00:00",
+      "files": ["app/routers/users.py", "app/models.py"]
+    }
+  ]
+}
