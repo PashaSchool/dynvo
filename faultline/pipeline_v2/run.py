@@ -1451,10 +1451,22 @@ def run_pipeline_v2(
     #     ``top_level_flows`` mirror pass.
     from faultline.pipeline_v2.flow_expansion import expand_flows
     with StageLogger(run_dir, 3, "flow_expansion") as log3_5:
+        # max_depth=1 — a flow's attributed implementation is the entry
+        # symbol + its DIRECT callees (same-file AND imported), with no
+        # transitive recursion. Deeper walks turn each flow into the
+        # whole transitive closure of the import graph and stop being a
+        # narrative slice of ONE behaviour (measured: avg 62.5 nodes/flow
+        # and 235/447 flows hitting the node cap at depth 4). Cross-file
+        # resolution is independently hard-capped at depth 1 inside
+        # build_call_graph; this aligns same-file recursion to the same
+        # "entry + direct callees" target. Fan-in gating then demotes
+        # high-fan-in shared infrastructure to role=shared (excluded
+        # from core LOC, still recorded as a shared-dependency badge).
         fx = expand_flows(
             features,
             ctx,
             routes_index=lineage_result.routes_index,
+            max_depth=1,
             log=log3_5,
             top_level_flows=list(bipartite.flows),
         )

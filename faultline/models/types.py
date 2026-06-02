@@ -289,11 +289,12 @@ class FlowNode(BaseModel):
     symbol: str | None = None
     lines: tuple[int, int] | None = None
     role: Literal[
-        "entry", "called", "support",
+        "entry", "called", "support", "shared",
         "cross_stack_client", "cross_stack_server",
     ]
     confidence: Literal["high", "medium", "low"] = "medium"
     count: int | None = None               # only set for deep_call_subtree
+    fan_in: int | None = None              # only set for role=shared
 
 
 class FlowEdge(BaseModel):
@@ -456,6 +457,18 @@ class FlowSymbolAttribution(BaseModel):
                                appended after the symbol via
                                ``::<condition>`` so consumers can route
                                on it without growing the schema.
+      - ``shared``           — a direct callee that is SHARED
+                               INFRASTRUCTURE: its symbol is called by
+                               many DISTINCT flow entry-points across
+                               the whole scan (high fan-in — e.g. a DB
+                               session opener, a registry, a generic
+                               validator/logger). Recorded so the
+                               dashboard can render a shared-dependency
+                               badge, but EXCLUDED from the flow's core
+                               LOC. ``fan_in`` (on FlowNode) carries the
+                               distinct-caller count. Per
+                               ``flow-feature-concept``: sharing is
+                               normal — surface it, don't delete it.
     """
 
     file: str                  # repo-relative path
@@ -463,7 +476,7 @@ class FlowSymbolAttribution(BaseModel):
     line_start: int            # 1-indexed, inclusive
     line_end: int              # 1-indexed, inclusive
     role: Literal[
-        "entry", "called", "support",
+        "entry", "called", "support", "shared",
         "anchor-consumer", "schema-consumer", "structural",
         "framework-link", "branch",
     ]

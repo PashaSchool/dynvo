@@ -42,6 +42,7 @@ from faultline.models.types import (
 # display_name is reverted to kebab (flow.name). The module stays in-tree for
 # a future opt-in. See the display_name block in _attach_loc_detail below.
 from faultline.pipeline_v2.flow_expansion.call_graph import (
+    DEFAULT_CROSS_FILE_MAX_DEPTH,
     DEFAULT_MAX_DEPTH,
     DEFAULT_MAX_NODES_PER_FLOW,
     CallGraphResult,
@@ -52,6 +53,12 @@ from faultline.pipeline_v2.flow_expansion.cross_stack import (
     CrossStackHit,
     confidence_for_hit,
     find_cross_stack_hits,
+)
+from faultline.pipeline_v2.flow_expansion.fan_in import (
+    DEFAULT_FAN_IN_RATIO,
+    FanInAccumulator,
+    FanInResult,
+    symbol_key,
 )
 from faultline.pipeline_v2.flow_reach import (
     ReachContext,
@@ -371,6 +378,79 @@ def _merge_callees_into_symbol_attributions(
     flow.flow_symbol_attributions = merged
 
 
+def _flow_identity(flow: Flow) -> str:
+    """Stable identity for a flow used as the fan-in caller key.
+
+    One flow == one entry-point. Prefer the lineage-stable uuid; fall
+    back to ``<entry_file>#<entry_symbol>`` so probes / tests without a
+    uuid still get distinct identities.
+    """
+    if flow.uuid:
+        return flow.uuid
+    ef = flow.entry_point_file or ""
+    es = _flow_entry_symbol(flow) or ""
+    return f"{ef}#{es}"
+
+
+def _record_flow_callees(flow: Flow, acc: FanInAccumulator) -> None:
+    """Pass-1 — record every CALLED symbol of ``flow`` into ``acc``.
+
+    Only role=``called`` cross-/same-file callees count toward fan-in.
+    The entry symbol itself, support files, and cross-stack nodes are
+    not infrastructure-shared in this sense.
+    """
+    flow_id = _flow_identity(flow)
+    for fsa in flow.flow_symbol_attributions or []:
+        if fsa.role == "called" and fsa.symbol and fsa.symbol != "<file>":
+            acc.record(fsa.file, fsa.symbol, flow_id)
+
+
+def _demote_shared(flow: Flow, fan_in: FanInResult) -> int:
+    """Pass-2 — flip high-fan-in ``called`` callees to ``shared``.
+
+    A demoted attribution stays RECORDED (per ``flow-feature-concept``:
+    sharing is normal — surface it as a shared-dependency badge) but is
+    EXCLUDED from the flow's CORE LOC by virtue of its role. The matching
+    ``FlowNode`` (if present) is updated too so the graph view and the
+    line-attribution view agree, and its ``fan_in`` is stamped for the
+    dashboard badge.
+
+    Returns the number of attributions demoted (telemetry).
+    """
+    if not fan_in.shared_keys:
+        return 0
+
+    demoted = 0
+    new_attrs: list[FlowSymbolAttribution] = []
+    for fsa in flow.flow_symbol_attributions or []:
+        if (
+            fsa.role == "called"
+            and fsa.symbol
+            and symbol_key(fsa.file, fsa.symbol) in fan_in.shared_keys
+        ):
+            new_attrs.append(fsa.model_copy(update={"role": "shared"}))
+            demoted += 1
+        else:
+            new_attrs.append(fsa)
+    flow.flow_symbol_attributions = new_attrs
+
+    # Mirror onto graph nodes so the call-graph view stays consistent
+    # and the dashboard can read fan_in off the node.
+    for n in flow.nodes:
+        if (
+            n.role == "called"
+            and n.symbol
+            and symbol_key(n.file, n.symbol) in fan_in.shared_keys
+        ):
+            n.role = "shared"  # type: ignore[assignment]
+            n.fan_in = fan_in.fan_in.get(symbol_key(n.file, n.symbol))
+
+    # Re-project the additive LOC-detail so loc_symbol_attributions /
+    # loc_nodes reflect the new roles.
+    _project_loc_detail(flow)
+    return demoted
+
+
 def _expand_one_flow(
     flow: Flow,
     rctx: ReachContext,
@@ -615,10 +695,21 @@ def expand_flows(
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     max_nodes: int = DEFAULT_MAX_NODES_PER_FLOW,
+    fan_in_ratio: float = DEFAULT_FAN_IN_RATIO,
     log: "StageLogger | None" = None,
     top_level_flows: list[Flow] | None = None,
 ) -> FlowExpansionResult:
     """Run Stage 3.5 over every flow on every feature.
+
+    Two passes (the fan-in classification needs every flow visible):
+
+      * **Pass 1** — expand each flow's depth-1 call graph and record,
+        per callee symbol, the set of DISTINCT flows that call it.
+      * **Pass 2** — derive a scale-invariant fan-in threshold from the
+        whole-scan distribution and demote high-fan-in callees from
+        ``role="called"`` to ``role="shared"`` (shared infrastructure;
+        excluded from core LOC, still recorded). See
+        :mod:`faultline.pipeline_v2.flow_expansion.fan_in`.
 
     Args:
         features: Stage 5.5-emitted feature list (carries Flow objects
@@ -627,8 +718,12 @@ def expand_flows(
         routes_index: Sprint 1 ``routes_index`` projection. Required
             for T2; pass ``None`` or ``[]`` to disable cross-stack
             resolution (T1 still runs).
-        max_depth: per-flow BFS depth cap (default 4).
+        max_depth: per-flow same-file BFS depth cap (default 4). Cross-
+            file resolution is independently capped at depth 1 inside
+            :func:`build_call_graph`.
         max_nodes: per-flow node cap (default 80).
+        fan_in_ratio: shared-infra ratio-vs-median multiplier (default
+            3.0). Scale-invariant.
         log: optional :class:`StageLogger` from the orchestrator.
         top_level_flows: Sprint B1 top-level flows array. When
             provided, the same expansion is mirrored onto those Flow
@@ -649,8 +744,11 @@ def expand_flows(
     deepest_depth = 0
     per_flow_telemetry: list[dict[str, Any]] = []
 
+    # ── Pass 1 — expand every flow's depth-1 graph; record callees ───
     # Mutate flows in place under their owning features.
     flow_by_uuid: dict[str, Flow] = {}
+    expanded_flows: list[Flow] = []
+    fan_in_acc = FanInAccumulator()
     for feat in features:
         for fl in feat.flows or []:
             new_fl, tel = _expand_one_flow(
@@ -660,6 +758,9 @@ def expand_flows(
             # Phase 5 — additive LOC-detail projection over the graph
             # just built (or the pre-existing one in the skip path).
             _project_loc_detail(new_fl, routes)
+            # Pass-1 fan-in accounting: which flows call which symbols.
+            _record_flow_callees(new_fl, fan_in_acc)
+            expanded_flows.append(new_fl)
             if tel.get("skipped_already_expanded"):
                 flows_skipped += 1
             else:
@@ -686,6 +787,23 @@ def expand_flows(
                 **tel,
             })
 
+    # ── Pass 2 — global fan-in gating (demote shared infrastructure) ─
+    fan_in_result = fan_in_acc.finalize(ratio=fan_in_ratio)
+    shared_attributions_total = 0
+    flows_with_shared = 0
+    for fl in expanded_flows:
+        demoted = _demote_shared(fl, fan_in_result)
+        if demoted:
+            shared_attributions_total += demoted
+            flows_with_shared += 1
+    if log is not None and fan_in_result.threshold is not None:
+        log.info(
+            f"fan_in: threshold={fan_in_result.threshold} "
+            f"ratio={fan_in_result.ratio} median={fan_in_result.median} "
+            f"shared_symbols={len(fan_in_result.shared_keys)} "
+            f"shared_attributions={shared_attributions_total}",
+        )
+
     # Mirror onto the top-level bipartite flow list (same Flow object
     # identity? not guaranteed — match by uuid).
     if top_level_flows:
@@ -709,6 +827,11 @@ def expand_flows(
             tlf.loc_symbol_attributions = list(src.loc_symbol_attributions)
             tlf.loc_nodes = list(src.loc_nodes)
             tlf.loc_edges = list(src.loc_edges)
+            # Mirror the (post-fan-in) per-symbol attributions so the
+            # bipartite view sees the same core/shared split.
+            tlf.flow_symbol_attributions = list(
+                src.flow_symbol_attributions or [],
+            )
 
     telemetry: dict[str, Any] = {
         "flows_expanded": flows_expanded,
@@ -721,8 +844,17 @@ def expand_flows(
         "cross_stack_hops_total": cross_stack_total,
         "deepest_depth_reached": deepest_depth,
         "max_depth_configured": max_depth,
+        "cross_file_max_depth": DEFAULT_CROSS_FILE_MAX_DEPTH,
         "max_nodes_per_flow_configured": max_nodes,
         "routes_index_size": len(routes),
+        # Fan-in gating (scale-invariant shared-infra classification).
+        "fanin_threshold": fan_in_result.threshold,
+        "fanin_ratio": fan_in_result.ratio,
+        "fanin_median": fan_in_result.median,
+        "fanin_candidate_symbols": fan_in_result.candidate_count,
+        "fanin_shared_symbols": len(fan_in_result.shared_keys),
+        "shared_attributions_total": shared_attributions_total,
+        "flows_with_shared": flows_with_shared,
     }
     return FlowExpansionResult(features=features, telemetry=telemetry)
 
