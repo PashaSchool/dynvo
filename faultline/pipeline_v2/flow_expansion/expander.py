@@ -833,6 +833,82 @@ def expand_flows(
                 src.flow_symbol_attributions or [],
             )
 
+    # ── Reverse cross-stack — attach FRONTEND ui-layer participants ──
+    # Backend-seeded flows have no frontend node, so the forward T2 pass
+    # never reaches them. Build a route → frontend-caller index ONCE and
+    # attach matching frontend files as a distinct ``ui``-role
+    # FlowParticipant. ADDITIVE: ui participants are never nodes / edges /
+    # flow_symbol_attributions, so the core-LOC projection is untouched.
+    # Idempotent across the two flow lists (containment + top-level).
+    from faultline.pipeline_v2.flow_expansion.reverse_cross_stack import (
+        attach_reverse_cross_stack,
+        build_reverse_index,
+    )
+
+    reverse_telemetry: dict[str, Any] = {
+        "frontend_callers_scanned": 0,
+        "routes_with_ui_callers": 0,
+        "patterns_with_ui_callers": 0,
+        "ui_participants_attached": 0,
+        "flows_with_ui_participants": 0,
+    }
+    if routes:
+        rev_index = build_reverse_index(rctx, routes)
+        rev_containment = attach_reverse_cross_stack(
+            expanded_flows, rctx, routes, index=rev_index,
+        )
+        reverse_telemetry = dict(rev_containment)
+        if top_level_flows:
+            rev_top = attach_reverse_cross_stack(
+                list(top_level_flows), rctx, routes, index=rev_index,
+            )
+            reverse_telemetry["ui_participants_attached_top_level"] = (
+                rev_top["ui_participants_attached"]
+            )
+        if log is not None and reverse_telemetry["ui_participants_attached"]:
+            log.info(
+                "reverse_cross_stack: frontend_callers="
+                f"{reverse_telemetry['frontend_callers_scanned']} "
+                f"routes_matched={reverse_telemetry['routes_with_ui_callers']} "
+                "ui_participants="
+                f"{reverse_telemetry['ui_participants_attached']} "
+                "flows_with_ui="
+                f"{reverse_telemetry['flows_with_ui_participants']}",
+            )
+
+    # ── Flow test-file mapping (Gap 2) — populate Flow.test_files ─────
+    # Deterministic per-flow test mapper; builds the test index ONCE
+    # (reuses rctx already in hand, no second repo parse) and stamps
+    # test_files + test_file_count onto both flow lists. ADDITIVE: only
+    # the two test fields are written, so core LOC is untouched. Feeds
+    # Stage 6.7b AC drafting.
+    from faultline.pipeline_v2.flow_test_mapper import (
+        attach_flow_test_files,
+        build_flow_test_index,
+    )
+
+    test_map_telemetry: dict[str, Any] = {
+        "test_files_total_in_repo": 0,
+        "flows_with_test_files": 0,
+        "flow_test_file_links": 0,
+    }
+    test_index = build_flow_test_index(rctx)
+    test_map_telemetry = attach_flow_test_files(
+        expanded_flows, rctx, index=test_index,
+    )
+    if top_level_flows:
+        attach_flow_test_files(
+            list(top_level_flows), rctx, index=test_index,
+        )
+    if log is not None and test_map_telemetry["flows_with_test_files"]:
+        log.info(
+            "flow_test_mapper: repo_test_files="
+            f"{test_map_telemetry['test_files_total_in_repo']} "
+            "flows_with_tests="
+            f"{test_map_telemetry['flows_with_test_files']} "
+            f"links={test_map_telemetry['flow_test_file_links']}",
+        )
+
     telemetry: dict[str, Any] = {
         "flows_expanded": flows_expanded,
         "flows_skipped_already_expanded": flows_skipped,
@@ -855,6 +931,10 @@ def expand_flows(
         "fanin_shared_symbols": len(fan_in_result.shared_keys),
         "shared_attributions_total": shared_attributions_total,
         "flows_with_shared": flows_with_shared,
+        # Reverse cross-stack (frontend ui-layer participant attachment).
+        **{f"reverse_{k}": v for k, v in reverse_telemetry.items()},
+        # Flow test-file mapping (Gap 2).
+        **{f"testmap_{k}": v for k, v in test_map_telemetry.items()},
     }
     return FlowExpansionResult(features=features, telemetry=telemetry)
 
