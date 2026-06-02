@@ -36,6 +36,7 @@ from faultline.models.types import (
     FlowLocSymbolAttribution,
     FlowNode,
     FlowSummary,
+    FlowSymbolAttribution,
 )
 # NOTE: flow_display_name.derive_display_name is intentionally NOT imported —
 # display_name is reverted to kebab (flow.name). The module stays in-tree for
@@ -315,6 +316,61 @@ def _project_loc_detail(
         flow.short_label = re.sub(r"-flows?$", "", flow.name)
 
 
+def _merge_callees_into_symbol_attributions(
+    flow: Flow,
+    flow_nodes: list[FlowNode],
+) -> None:
+    """Write traced callee symbols into ``flow.flow_symbol_attributions``.
+
+    Stage 3 seeds ``flow_symbol_attributions`` with the ENTRY symbol
+    (role=``entry``) and any branch slices (role=``branch``). The T1
+    call graph then discovers the helpers/services the entry actually
+    calls — but historically those landed only in ``loc_*`` projections,
+    never back in ``flow_symbol_attributions``, the field the landing
+    reads. That made every Python/Go/Ruby flow render as the entry
+    function alone ("4 LOC").
+
+    This merges every symbol-resolved graph node (role ``called`` /
+    ``cross_stack_client`` / ``cross_stack_server``) into
+    ``flow_symbol_attributions``, preserving the existing ``entry`` /
+    ``branch`` records and deduping on (file, symbol, line_start,
+    line_end). Idempotent — safe to re-run on an already-expanded flow.
+    """
+    existing = list(flow.flow_symbol_attributions or [])
+    seen: set[tuple[str, str, int | None, int | None]] = {
+        (a.file, a.symbol, a.line_start, a.line_end) for a in existing
+    }
+    # Track (file, symbol) already attributed in ANY role so a called
+    # node never shadows / duplicates the entry symbol.
+    seen_file_symbol: set[tuple[str, str]] = {
+        (a.file, a.symbol) for a in existing
+    }
+
+    merged = existing
+    for n in flow_nodes:
+        # Only symbol-resolved, called/cross-stack roles carry new info.
+        if n.symbol is None or n.lines is None:
+            continue
+        if n.role not in ("called", "cross_stack_client", "cross_stack_server"):
+            continue
+        if (n.file, n.symbol) in seen_file_symbol:
+            continue
+        key = (n.file, n.symbol, n.lines[0], n.lines[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        seen_file_symbol.add((n.file, n.symbol))
+        merged.append(FlowSymbolAttribution(
+            file=n.file,
+            symbol=n.symbol,
+            line_start=n.lines[0],
+            line_end=n.lines[1],
+            role="called",
+        ))
+
+    flow.flow_symbol_attributions = merged
+
+
 def _expand_one_flow(
     flow: Flow,
     rctx: ReachContext,
@@ -530,6 +586,8 @@ def _expand_one_flow(
     }
     flow.nodes = flow_nodes
     flow.edges = flow_edges
+    # Gap C — surface the traced callees in the field the landing reads.
+    _merge_callees_into_symbol_attributions(flow, flow_nodes)
     flow.summary = _build_summary(
         nodes=flow_nodes,
         edges=flow_edges,

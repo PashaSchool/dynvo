@@ -241,7 +241,10 @@ def build_call_graph(
         ]
 
         # (b) Call-identifier edges (intra-symbol → callee file/symbol).
+        # ``same_file_callees`` is tracked separately so its edges carry
+        # the ``same_file=True`` confidence label.
         callees_by_symbol: dict[tuple[str, str], CallNode] = {}
+        same_file_keys: set[tuple[str, str]] = set()
         if current.symbol is not None:
             src_sig = rctx.signatures.get(current.file)
             src = src_sig.source if src_sig else ""
@@ -250,8 +253,36 @@ def build_call_graph(
             call_idents = _extract_called_identifiers(
                 src, line_start, line_end,
             )
-            # Build identifier → (callee_file, callee_sig) lookup
-            # restricted to files this file imports (resolver scope).
+
+            # (b.0) Same-file callees — a handler calling a private
+            # helper / method defined in its OWN module. Previously
+            # unresolved (the resolver only scanned imported files),
+            # which is why dynamic-language flows with in-module helpers
+            # (Python ``self._helper()``, JS local funcs) collapsed to a
+            # single entry node. Resolve against the current file's own
+            # symbol_ranges; skip the entry symbol itself to avoid a
+            # self-loop.
+            own_ranges = src_sig.symbol_ranges if src_sig else []
+            for rng in own_ranges:
+                sym = rng.name
+                if sym == current.symbol:
+                    continue
+                if sym not in call_idents:
+                    continue
+                key = (current.file, sym)
+                if key in callees_by_symbol:
+                    continue
+                callees_by_symbol[key] = CallNode(
+                    id=_node_id(current.file, sym),
+                    file=current.file,
+                    symbol=sym,
+                    lines=(rng.start_line, rng.end_line),
+                    depth=current.depth + 1,
+                )
+                same_file_keys.add(key)
+
+            # (b.1) Cross-file callees — identifier → (callee_file,
+            # callee_sig) restricted to files this file imports.
             for cf in imported_files:
                 csig = rctx.signatures.get(cf)
                 exports = _file_exports(csig)
@@ -285,7 +316,7 @@ def build_call_graph(
                 kind="call",
                 confidence=confidence_for_call(
                     resolved_symbol=True,
-                    same_file=False,
+                    same_file=(cf, sym) in same_file_keys,
                 ),
             ))
 

@@ -14,6 +14,7 @@ Supported patterns:
   - Express routes:    router.get('/path', ...) / app.post('/path', ...)
   - ES imports:        import X from 'Y'
 """
+import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -192,7 +193,14 @@ def extract_signatures(
         else:
             sig = _parse_file(rel_path, source)
             sig.symbol_ranges = extract_symbol_ranges(source)
-            sig.source = source
+
+        # The T1 call-graph (flow_expansion/call_graph.py) scans a
+        # symbol's body for callee identifiers via ``sig.source``. This
+        # was previously populated ONLY for TS/JS, so every Python / Go /
+        # Rust / Ruby flow collapsed to a single entry node (0 edges).
+        # Populate it for every language so same-file + imported callees
+        # resolve uniformly.
+        sig.source = source
 
         if not sig.is_empty():
             result[rel_path] = sig
@@ -352,13 +360,92 @@ def _parse_file(rel_path: str, source: str) -> FileSignature:
 
 
 def _parse_python_file(rel_path: str, source: str) -> FileSignature:
-    sig = FileSignature(path=rel_path)
-    seen: set[str] = set()
+    """Extract exports, routes, and symbol ranges from a Python file.
 
-    # Collect (start_line, name, kind) for symbol-range computation.
-    # Used by P7 — flow_tracer attaches these ranges to participants
-    # so the dashboard can show "Create Project flow exercises
-    # ProjectView.post() lines 23-45" instead of "lines 1-1".
+    Prefers the stdlib :mod:`ast` module for symbol ranges: it gives
+    EXACT ``(node.lineno, node.end_lineno)`` boundaries for every
+    ``def`` / ``async def`` / ``class`` — including nested methods —
+    which the regex heuristic (next-symbol-start-minus-one) could only
+    approximate. Precise ranges matter for the T1 call graph, which
+    scans a symbol's body line-slice for callee identifiers: a too-wide
+    range pulls in sibling functions' calls (over-attribution), a
+    too-narrow one misses real callees.
+
+    ``exports`` keeps MODULE-LEVEL names only (unchanged contract for
+    Stage 3's MIN_EXPORTS_FOR_FLOW_DETECTION gate). Nested methods get
+    symbol *ranges* (so same-file ``self._helper()`` callees resolve)
+    but are NOT added to ``exports`` — that would inflate the export
+    list with private internals and shift flow-detection vocabulary.
+
+    Falls back to the regex scanner when the source is not valid Python
+    (partial files, syntax errors, templating) so we never regress to
+    zero symbols on a parse failure.
+    """
+    sig = FileSignature(path=rel_path)
+
+    # Routes are regex-derived in both paths (decorators are awkward to
+    # match structurally and the regex already generalises across
+    # FastAPI / Flask / blueprint styles via the stack-agnostic pattern).
+    for match in _RE_PYTHON_ROUTE.finditer(source):
+        method = match.group(1).upper()
+        path = match.group(2)
+        sig.routes.append(f"{method} {path}")
+
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        _python_symbols_via_regex(sig, source)
+        return sig
+
+    total_lines = source.count("\n") + 1
+    seen_exports: set[str] = set()
+    seen_range_keys: set[tuple[str, int]] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            kind = "function"
+        elif isinstance(node, ast.ClassDef):
+            kind = "class"
+        else:
+            continue
+        name = node.name
+        start = node.lineno
+        end = getattr(node, "end_lineno", None) or start
+        key = (name, start)
+        if key in seen_range_keys:
+            continue
+        seen_range_keys.add(key)
+        sig.symbol_ranges.append(SymbolRange(
+            name=name,
+            start_line=start,
+            end_line=max(start, end),
+            kind=kind,
+        ))
+
+    # Module-level names → exports (stable Stage-3 contract).
+    for node in tree.body:
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            if node.name not in seen_exports:
+                seen_exports.add(node.name)
+                sig.exports.append(node.name)
+
+    if not sig.symbol_ranges and total_lines:
+        # No defs/classes at all (e.g. a script of bare statements) —
+        # nothing to attribute; leave ranges empty.
+        pass
+
+    return sig
+
+
+def _python_symbols_via_regex(sig: FileSignature, source: str) -> None:
+    """Regex fallback for Python files that don't parse via ``ast``.
+
+    Module-level ``class`` / ``def`` only (the ``^`` anchors require
+    column-0). End-of-symbol = next symbol's start - 1 (EOF for last).
+    """
+    seen: set[str] = set()
     raw_symbols: list[tuple[int, str, str]] = []
 
     for match in _RE_PYTHON_CLASS.finditer(source):
@@ -377,14 +464,6 @@ def _parse_python_file(rel_path: str, source: str) -> FileSignature:
             line = source.count("\n", 0, match.start()) + 1
             raw_symbols.append((line, name, "function"))
 
-    for match in _RE_PYTHON_ROUTE.finditer(source):
-        method = match.group(1).upper()
-        path = match.group(2)
-        sig.routes.append(f"{method} {path}")
-
-    # Compute line ranges. Each symbol's end_line = (next symbol's
-    # start_line - 1) — same heuristic as the TS extractor. EOF for
-    # the last one. Sort by start_line first so ordering is correct.
     raw_symbols.sort(key=lambda x: x[0])
     total_lines = source.count("\n") + 1
     for i, (start, name, kind) in enumerate(raw_symbols):
@@ -396,8 +475,6 @@ def _parse_python_file(rel_path: str, source: str) -> FileSignature:
             name=name, start_line=start, end_line=max(start, end),
             kind=kind,
         ))
-
-    return sig
 
 
 def _parse_ruby_file(rel_path: str, source: str) -> FileSignature:
