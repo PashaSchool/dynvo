@@ -35,7 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from faultline.models.types import Feature, FeatureFlowEdge, FeatureMap, Flow
+from faultline.models.types import (
+    Feature,
+    FeatureFlowEdge,
+    FeatureMap,
+    Flow,
+    UserFlow,
+)
 from faultline.output.writer import write_feature_map
 
 if TYPE_CHECKING:
@@ -129,6 +135,7 @@ def build_feature_map(
     flows: list[Flow] | None = None,
     feature_flow_edges: list[FeatureFlowEdge] | None = None,
     product_features: list[Feature] | None = None,
+    user_flows: list[UserFlow] | None = None,
     path_index: dict[str, dict[str, Any]] | None = None,
     routes_index: list[dict[str, Any]] | None = None,
     is_full_scan: bool = True,
@@ -163,6 +170,7 @@ def build_feature_map(
         scan_meta=dict(scan_meta),
         flows=list(flows or []),
         feature_flow_edges=list(feature_flow_edges or []),
+        user_flows=list(user_flows or []),
         path_index=dict(path_index or {}),
         routes_index=list(routes_index or []),
         is_full_scan=is_full_scan,
@@ -185,6 +193,7 @@ def stage_7_output(
     flows: list[Flow] | None = None,
     feature_flow_edges: list[FeatureFlowEdge] | None = None,
     product_features: list[Feature] | None = None,
+    user_flows: list[UserFlow] | None = None,
     path_index: dict[str, dict[str, Any]] | None = None,
     routes_index: list[dict[str, Any]] | None = None,
     is_full_scan: bool = True,
@@ -210,6 +219,7 @@ def stage_7_output(
         features, ctx, scan_meta,
         days=days, flows=flows, feature_flow_edges=feature_flow_edges,
         product_features=product_features,
+        user_flows=user_flows,
         path_index=path_index,
         routes_index=routes_index,
         is_full_scan=is_full_scan,

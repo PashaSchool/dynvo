@@ -1535,6 +1535,40 @@ def run_pipeline_v2(
         )
     scan_meta["stage_6_9_test_strip"] = dict(test_strip_telemetry)
 
+    # ── Stage 6.7 — User-Flow rollup (Layer-2-for-flows, $0 LLM) ────
+    # Deterministic post-pass: rolls the code-grain flow store up into
+    # product-grain user_flows[] and stamps Flow.user_flow_id. Runs
+    # after product_features (6.5) + bipartite store + test_strip so
+    # domains, cross-links, and the final flow set all exist. Additive —
+    # mirrors the developer_feature → product_feature model for flows.
+    from faultline.pipeline_v2.stage_6_7_user_flows import run_user_flow_rollup
+    user_flows: list = []
+    with StageLogger(run_dir, 6, "user_flows") as log6_7:
+        user_flows, uf_telemetry = run_user_flow_rollup(bipartite.flows, features)
+        log6_7.info(
+            "user_flows: %d flows -> %d unique -> %d UF, %d domains, "
+            "%d with cross_links (dedup_dropped=%d)"
+            % (
+                uf_telemetry["total_flows"],
+                uf_telemetry["unique_flows"],
+                uf_telemetry["user_flows"],
+                uf_telemetry["domains"],
+                uf_telemetry["uf_with_cross_links"],
+                uf_telemetry["dedup_dropped"],
+            ),
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="user_flows",
+            payload={
+                **uf_telemetry,
+                "user_flows": [uf.model_dump() for uf in user_flows],
+            },
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_7_user_flows"] = dict(uf_telemetry)
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     with StageLogger(run_dir, 7, "output") as log7:
@@ -1544,6 +1578,7 @@ def run_pipeline_v2(
             flows=bipartite.flows,
             feature_flow_edges=bipartite.edges,
             product_features=product_features,
+            user_flows=user_flows,
             path_index=lineage_result.path_index,
             routes_index=lineage_result.routes_index,
             is_full_scan=is_full_scan,

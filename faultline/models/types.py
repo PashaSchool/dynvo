@@ -171,6 +171,13 @@ class Flow(BaseModel):
     loc_symbol_attributions: list["FlowLocSymbolAttribution"] = []
     loc_nodes: list["FlowLocNode"] = []
     loc_edges: list["FlowLocEdge"] = []
+    # UF-Stage1 (2026-06-02) — Layer-2-for-flows pointer. Mirrors the
+    # ``Feature.product_feature_id`` two-layer model: a code-grain flow
+    # rolls up into one product-grain User Flow (see ``UserFlow``).
+    # ``None`` for flows produced before the deterministic UF rollup
+    # ran, or flows the rollup could not assign. Additive — never read
+    # in place of any existing field.
+    user_flow_id: str | None = None
 
 
 class SymbolRange(BaseModel):
@@ -574,6 +581,34 @@ class FeatureFlowEdge(BaseModel):
     reason: str | None = None
 
 
+class UserFlow(BaseModel):
+    """A product-grain User Flow (UF) — UF-Stage1 (2026-06-02).
+
+    The Layer-2-for-flows projection: several code-grain ``Flow`` rows
+    that share a ``(domain, intent)`` cluster key roll up into one
+    user-facing journey ("Create & edit detectors"). Symmetric to the
+    existing ``developer_features[].product_feature_id → product_features[]``
+    model — each member ``Flow`` points back via ``Flow.user_flow_id``.
+
+    Stage 1 names the UF from a deterministic template (no LLM). A later
+    Stage 2 may refine ``name`` / draft acceptance criteria via LLM and
+    fill ``ui_tier`` from a frontend classifier; both stay additive.
+    """
+
+    id: str                              # "UF-001" — stable within a scan
+    name: str                            # journey label from the template
+    product_feature_id: str | None = None  # the domain this UF belongs to
+    intent: str                          # author|browse|lifecycle|execute|manage|bulk|export|other
+    resource: str                        # representative noun ("detector")
+    member_flow_ids: list[str] = []      # composing code-flows (uuid or name)
+    member_count: int = 0
+    routes: list[str] = []               # union of members' router paths
+    cross_links: list[str] = []          # other product_feature_ids touched
+    ac_draft_count: int = 0              # # members with test_files (AC reach)
+    coverage_pct: float | None = None    # mean of members' coverage_pct
+    ui_tier: str | None = None           # Stage 2 / frontend classifier
+
+
 class FeatureMap(BaseModel):
     repo_path: str
     remote_url: str = ""      # GitHub base URL, e.g. https://github.com/org/repo
@@ -606,6 +641,12 @@ class FeatureMap(BaseModel):
     # truth. Default empty for callers building pre-B1 maps.
     flows: list[Flow] = []
     feature_flow_edges: list[FeatureFlowEdge] = []
+    # UF-Stage1 (2026-06-02) — top-level product-grain User Flows,
+    # rolled up deterministically from ``flows`` by the Stage 6.7
+    # clusterer. Mirrors ``product_features`` (the Layer-2 view of
+    # ``developer_features``). Default empty so legacy scans and
+    # Layer-1-only callers rehydrate unchanged.
+    user_flows: list[UserFlow] = []
     # Sprint 1 (2026-05-23) — additive lineage / incremental surfaces.
     # ``path_index`` is a deterministic projection of features + flows
     # for O(1) file → (feature_uuid, flow_uuids) lookup. ``routes_index``
