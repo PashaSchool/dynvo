@@ -139,18 +139,71 @@ _RE_PY_IMPORT = re.compile(
 )
 
 
+def compute_python_source_roots(file_set: frozenset[str]) -> tuple[str, ...]:
+    """Deterministically discover Python *source-root* directories.
+
+    A "source root" is a directory that gets prepended to ``sys.path``
+    at runtime, so absolute imports inside the repo are written relative
+    to it rather than to the repo root. The dominant cases:
+
+        * repo root itself (``src``-less layout) — always included as
+          ``""``.
+        * a ``src/`` layout (``src/<pkg>/__init__.py``) → ``src``.
+        * a service / app sub-directory that is itself NOT a package
+          but contains top-level packages (``backend/agent/__init__.py``
+          with no ``backend/__init__.py``) → ``backend``. This is the
+          standard FastAPI / Django / monorepo-service convention.
+
+    We infer roots structurally (no per-repo paths, no config): a
+    directory ``D`` is a source root iff some immediate child directory
+    of ``D`` is a Python *package* (contains ``__init__.py``) while
+    ``D`` itself is NOT a package. Walking up stops at the first
+    packageless ancestor, which is exactly the importable base.
+
+    Returns a stable, de-duplicated tuple including ``""`` (repo root)
+    first. Pure function of ``file_set`` — cheap to compute once and
+    cache on :class:`ReachContext`.
+    """
+    package_dirs: set[str] = set()
+    for path in file_set:
+        if path.endswith("/__init__.py"):
+            package_dirs.add(path[: -len("/__init__.py")])
+        elif path == "__init__.py":
+            package_dirs.add("")
+
+    roots: set[str] = {""}
+    for pkg in package_dirs:
+        # The source root for this package is its nearest ancestor that
+        # is itself NOT a package. Walk up while the parent is a package.
+        parent = pkg.rsplit("/", 1)[0] if "/" in pkg else ""
+        # Climb until ``parent`` is not a package dir.
+        while parent and parent in package_dirs:
+            parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
+        roots.add(parent)
+
+    # Stable ordering: repo root first, then shallow → deep, then lexical.
+    ordered = sorted(roots, key=lambda r: (r.count("/") if r else -1, r))
+    return tuple(ordered)
+
+
 def _resolve_python_module(
     importer: str,
     module: str,
     file_set: frozenset[str],
+    *,
+    source_roots: tuple[str, ...] = ("",),
 ) -> str | None:
     """Resolve a Python dotted module path to a file in ``file_set``.
 
     Handles:
         * absolute: ``foo.bar.baz`` → ``foo/bar/baz.py`` or
-          ``foo/bar/baz/__init__.py``.
+          ``foo/bar/baz/__init__.py``, tried under every directory in
+          ``source_roots`` (repo root + any inferred ``sys.path`` base
+          such as ``src`` or a ``backend`` service dir). This is what
+          makes ``from agent.detector_tools import x`` resolve when the
+          file actually lives at ``backend/agent/detector_tools.py``.
         * relative: ``.sibling`` / ``..parent.child`` resolved against
-          the importer's package directory.
+          the importer's package directory (source-root-independent).
 
     Returns ``None`` when the module resolves outside ``file_set``
     (third-party / stdlib).
@@ -175,26 +228,31 @@ def _resolve_python_module(
             return None
         base_parts = parts[: len(parts) - up] if up > 0 else parts
         base = "/".join(base_parts)
+        bases: tuple[str, ...] = (base,)
     else:
-        base = ""
+        # Absolute import: try each candidate source root as the base.
+        bases = source_roots or ("",)
 
     if rest:
         rest_path = rest.replace(".", "/")
-        candidate_stem = f"{base}/{rest_path}" if base else rest_path
     else:
-        candidate_stem = base
+        rest_path = ""
 
-    candidate_stem = candidate_stem.lstrip("/")
-    if not candidate_stem:
-        return None
-
-    # Try foo/bar/baz.py first, then foo/bar/baz/__init__.py.
-    for candidate in (
-        f"{candidate_stem}.py",
-        f"{candidate_stem}/__init__.py",
-    ):
-        if candidate in file_set:
-            return candidate
+    for base in bases:
+        if rest_path:
+            candidate_stem = f"{base}/{rest_path}" if base else rest_path
+        else:
+            candidate_stem = base
+        candidate_stem = candidate_stem.lstrip("/")
+        if not candidate_stem:
+            continue
+        # Try foo/bar/baz.py first, then foo/bar/baz/__init__.py.
+        for candidate in (
+            f"{candidate_stem}.py",
+            f"{candidate_stem}/__init__.py",
+        ):
+            if candidate in file_set:
+                return candidate
 
     return None
 
@@ -339,6 +397,7 @@ def _file_edges(
     monorepo_packages: set[str] | None,
     go_module_prefix: str | None,
     repo_path: Path,
+    python_source_roots: tuple[str, ...] = ("",),
 ) -> list[str]:
     """Return the set of files ``rel_path`` reaches via one hop.
 
@@ -375,12 +434,14 @@ def _file_edges(
         for match in _RE_PY_FROM_IMPORT.finditer(source):
             resolved = _resolve_python_module(
                 rel_path, match.group(1), file_set,
+                source_roots=python_source_roots,
             )
             if resolved and resolved != rel_path:
                 out.add(resolved)
         for match in _RE_PY_IMPORT.finditer(source):
             resolved = _resolve_python_module(
                 rel_path, match.group(1), file_set,
+                source_roots=python_source_roots,
             )
             if resolved and resolved != rel_path:
                 out.add(resolved)
@@ -445,6 +506,7 @@ class ReachContext:
     alias_map: dict[str, str]
     monorepo_packages: set[str]
     go_module_prefix: str | None
+    python_source_roots: tuple[str, ...] = ("",)
 
 
 def build_reach_context(ctx: "ScanContext") -> ReachContext:
@@ -461,6 +523,7 @@ def build_reach_context(ctx: "ScanContext") -> ReachContext:
     alias_map = load_tsconfig_paths(str(repo_path))
     monorepo_packages = detect_monorepo_packages(str(repo_path))
     go_module_prefix = _go_module_path(repo_path)
+    python_source_roots = compute_python_source_roots(file_set)
     return ReachContext(
         repo_path=repo_path,
         file_set=file_set,
@@ -468,6 +531,7 @@ def build_reach_context(ctx: "ScanContext") -> ReachContext:
         alias_map=alias_map,
         monorepo_packages=monorepo_packages,
         go_module_prefix=go_module_prefix,
+        python_source_roots=python_source_roots,
     )
 
 
@@ -520,6 +584,7 @@ def compute_flow_reach(
                     monorepo_packages=rctx.monorepo_packages,
                     go_module_prefix=rctx.go_module_prefix,
                     repo_path=rctx.repo_path,
+                    python_source_roots=rctx.python_source_roots,
                 )
             except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug("flow_reach: edge extraction failed for %s: %s",
@@ -555,6 +620,7 @@ __all__ = [
     "ReachContext",
     "build_reach_context",
     "compute_flow_reach",
+    "compute_python_source_roots",
     "DEFAULT_MAX_DEPTH",
     "DEFAULT_MAX_PATHS",
 ]

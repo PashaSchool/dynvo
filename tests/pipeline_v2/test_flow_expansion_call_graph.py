@@ -119,7 +119,12 @@ def ts_call_chain(tmp_path: Path) -> Path:
     return repo
 
 
-def test_t1_resolves_call_chain_depth_2(ts_call_chain: Path):
+def test_t1_cross_file_capped_at_depth_1(ts_call_chain: Path):
+    """Depth-1 cross-file cap: the entry's DIRECT cross-file callee is
+    pulled (handler → service) but the TRANSITIVE cross-file callee is
+    NOT (service → repo). A flow is a narrative slice — entry + its
+    direct callees — not the whole transitive import closure.
+    """
     ctx = stage_0_intake(ts_call_chain, days=30)
     flow = _make_flow(
         "view-user",
@@ -131,21 +136,61 @@ def test_t1_resolves_call_chain_depth_2(ts_call_chain: Path):
     expand_flows([feat], ctx, routes_index=[])
     files_in_graph = {n.file for n in flow.nodes}
     assert "src/handler.ts" in files_in_graph
+    # Direct callee of the entry — pulled.
     assert "src/service.ts" in files_in_graph
-    assert "src/repo.ts" in files_in_graph
+    # Transitive cross-file callee — NOT pulled (the over-pull we cut).
+    assert "src/repo.ts" not in files_in_graph
     # First node is the entry.
     assert flow.nodes[0].role == "entry"
     assert flow.nodes[0].file == "src/handler.ts"
-    # Depth reached should be ≥2 (handler → service → repo).
+    # Depth reached is exactly 1 cross-file hop.
     assert flow.summary is not None
-    assert flow.summary.max_depth >= 2
+    assert flow.summary.max_depth == 1
     assert flow.summary.unsupported_stack is False
-    # Call edges should beat import edges in precision: at least one
-    # call edge to a symbol node, not just file-level.
+    # Call edges should beat import edges in precision: the direct call
+    # edge to the service symbol is present.
     call_edges = [e for e in flow.edges if e.kind == "call"]
     assert any(
         "service.ts#findUser" in e.to for e in call_edges
     ), f"expected call edge to service#findUser, got edges {[e.model_dump() for e in flow.edges]}"
+    # No edge should reach the transitive repo symbol.
+    assert not any("repo.ts" in e.to for e in flow.edges)
+
+
+def test_t1_same_file_recursion_beyond_depth_1(tmp_path: Path):
+    """Same-file callee recursion still runs past the cross-file bound:
+    a handler that calls a private helper which calls another private
+    helper IN THE SAME MODULE keeps the whole same-file chain (that is
+    still one behaviour's narrative), even though cross-file is capped
+    at depth 1.
+    """
+    repo = tmp_path / "same_file_chain"
+    repo.mkdir()
+    _write(repo, "src/handler.py", """
+        def handle_request(user_id):
+            return _step_one(user_id)
+        def _step_one(user_id):
+            return _step_two(user_id)
+        def _step_two(user_id):
+            return {"id": user_id}
+    """)
+    _init_git_repo(repo)
+    ctx = stage_0_intake(repo, days=30)
+    flow = _make_flow(
+        "handle-request",
+        entry_file="src/handler.py",
+        entry_symbol="handle_request",
+        entry_line=1,
+    )
+    feat = _make_feature("handler", ["src/handler.py"], [flow])
+    expand_flows([feat], ctx, routes_index=[])
+    symbols = {n.symbol for n in flow.nodes if n.symbol}
+    # Direct same-file callee.
+    assert "_step_one" in symbols
+    # Transitive SAME-FILE callee survives the depth-1 cross-file cap.
+    assert "_step_two" in symbols
+    assert flow.summary is not None
+    assert flow.summary.max_depth >= 2
 
 
 def test_legacy_paths_preserved_after_expansion(ts_call_chain: Path):
@@ -203,6 +248,116 @@ def test_t1_resolves_python_imports(py_chain: Path):
     assert "app/views.py" in files
     assert "app/services.py" in files
     assert flow.summary.max_depth >= 1
+
+
+# ── Fixture 2b: Python SOURCE-ROOT layout (src / service-dir) ───────────
+
+
+@pytest.fixture
+def py_source_root_chain(tmp_path: Path) -> Path:
+    """A repo whose Python packages live under a non-package source dir.
+
+    ``backend/`` is NOT itself a package (no ``backend/__init__.py``) but
+    hosts the importable packages ``routers`` and ``agent``. At runtime
+    ``backend/`` is on ``sys.path``, so imports are written
+    ``from agent.tools import helper`` even though the file sits at
+    ``backend/agent/tools.py``. This is the standard FastAPI / Django /
+    monorepo-service convention. The resolver must infer ``backend`` as a
+    source root structurally (no hardcoded path).
+    """
+    repo = tmp_path / "py_src_root"
+    repo.mkdir()
+    # Absolute, source-root-relative import.
+    _write(repo, "backend/routers/detectors.py", """
+        from agent.tools import derive_keys
+        from ..agent.helpers import derive_names
+        def create_detector():
+            keys = derive_keys({})
+            names = derive_names({})
+            return (keys, names)
+    """)
+    _write(repo, "backend/agent/tools.py", """
+        def derive_keys(plan):
+            return list(plan.keys())
+    """)
+    _write(repo, "backend/agent/helpers.py", """
+        def derive_names(plan):
+            return list(plan.values())
+    """)
+    _write(repo, "backend/routers/__init__.py", "")
+    _write(repo, "backend/agent/__init__.py", "")
+    _init_git_repo(repo)
+    return repo
+
+
+def test_t1_resolves_python_source_root_imports(py_source_root_chain: Path):
+    """Absolute (``agent.tools``) AND relative (``..agent.helpers``)
+    imports both resolve to the source-root file + land in
+    ``flow_symbol_attributions`` with role=``called``.
+    """
+    ctx = stage_0_intake(py_source_root_chain, days=30)
+    flow = _make_flow(
+        "create-detector",
+        entry_file="backend/routers/detectors.py",
+        entry_symbol="create_detector",
+        entry_line=3,
+    )
+    feat = _make_feature(
+        "detectors", ["backend/routers/detectors.py"], [flow],
+    )
+    expand_flows([feat], ctx, routes_index=[])
+
+    files = {n.file for n in flow.nodes}
+    # Absolute import resolved through the inferred ``backend`` root.
+    assert "backend/agent/tools.py" in files
+    # Relative import still resolves (regression guard).
+    assert "backend/agent/helpers.py" in files
+
+    # Both helpers must be attributed as role=called.
+    called = {
+        (fsa.file, fsa.symbol)
+        for fsa in (flow.flow_symbol_attributions or [])
+        if fsa.role == "called"
+    }
+    assert ("backend/agent/tools.py", "derive_keys") in called
+    assert ("backend/agent/helpers.py", "derive_names") in called
+
+
+def test_source_root_resolution_no_overpull(py_source_root_chain: Path):
+    """An exported symbol that is NOT called in the entry body must NOT
+    be attributed — guards against shared-util over-pull when source
+    roots widen the candidate file set.
+    """
+    # Add an unrelated exported helper to the callee file that the
+    # entry never calls.
+    _write(py_source_root_chain, "backend/agent/tools.py", """
+        def derive_keys(plan):
+            return list(plan.keys())
+        def never_called_helper(plan):
+            return 42
+    """)
+    subprocess.run(
+        ["git", "commit", "-qam", "add helper"],
+        cwd=py_source_root_chain, check=True,
+    )
+    ctx = stage_0_intake(py_source_root_chain, days=30)
+    flow = _make_flow(
+        "create-detector",
+        entry_file="backend/routers/detectors.py",
+        entry_symbol="create_detector",
+        entry_line=3,
+    )
+    feat = _make_feature(
+        "detectors", ["backend/routers/detectors.py"], [flow],
+    )
+    expand_flows([feat], ctx, routes_index=[])
+    called_symbols = {
+        fsa.symbol
+        for fsa in (flow.flow_symbol_attributions or [])
+        if fsa.role == "called"
+    }
+    assert "derive_keys" in called_symbols
+    assert "never_called_helper" not in called_symbols
 
 
 # ── Fixture 3: cross-stack Next.js ──────────────────────────────────────

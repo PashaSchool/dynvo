@@ -799,7 +799,10 @@ def _resolve_py_module(
     from faultline.pipeline_v2.flow_reach import _resolve_python_module
 
     try:
-        return _resolve_python_module(importer, module, rctx.file_set)
+        return _resolve_python_module(
+            importer, module, rctx.file_set,
+            source_roots=getattr(rctx, "python_source_roots", ("",)),
+        )
     except Exception:  # noqa: BLE001
         return None
 

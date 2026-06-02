@@ -16,9 +16,25 @@ specific edge kinds without touching this module.
 
 Caps
 ====
-  - ``MAX_DEPTH = 4`` — handler → service → repository → util.
+  - ``MAX_DEPTH = 4`` — bound on SAME-FILE callee recursion (a handler
+    calling a private helper that calls another private helper in the
+    same module).
+  - ``CROSS_FILE_MAX_DEPTH = 1`` — cross-file ``call`` / ``import``
+    edges may be emitted ONLY from a node whose depth is strictly less
+    than this bound. With the default of 1, that means only the ENTRY
+    node (depth 0) fans out across file boundaries: a flow's attributed
+    implementation is the entry symbol plus its DIRECT callees (same-
+    file AND imported), with NO further cross-file recursion.
+
+    Why: cross-file BFS at ``MAX_DEPTH`` collapses the narrative-slice
+    property — each flow becomes the whole transitive closure of the
+    repo's import graph (measured on a FastAPI service: avg 62.5
+    nodes/flow, 235/447 flows hitting the node cap). A flow is a
+    reading lens over ONE behaviour, not the program's call tree. See
+    ``flow-feature-concept``: a flow's identity is its narrative slice.
   - ``MAX_NODES_PER_FLOW = 80`` — beyond this we emit a single
-    ``deep_call_subtree`` aggregation node and stop expansion.
+    ``deep_call_subtree`` aggregation node and stop expansion. With the
+    depth-1 cross-file cap this should rarely bind.
   - Test / vendor / generated files filtered via the same markers
     used by :mod:`flow_reach` (single source of truth: reuse the
     helper there).
@@ -45,6 +61,7 @@ from faultline.pipeline_v2.flow_expansion.confidence import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_DEPTH = 4
+DEFAULT_CROSS_FILE_MAX_DEPTH = 1
 DEFAULT_MAX_NODES_PER_FLOW = 80
 
 # Common JS / TS / Python identifier — used to scan a function body
@@ -152,6 +169,7 @@ def build_call_graph(
     entry_line: int | None,
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
+    cross_file_max_depth: int = DEFAULT_CROSS_FILE_MAX_DEPTH,
     max_nodes: int = DEFAULT_MAX_NODES_PER_FLOW,
 ) -> CallGraphResult:
     """BFS from ``(entry_file, entry_symbol)`` over import + call edges.
@@ -170,10 +188,22 @@ def build_call_graph(
             ``<callee_file>#<callee_symbol>`` node.
       3. Stop when EITHER max_depth reached OR node cap hit.
 
+    Cross-file depth gate
+    ---------------------
+    A neighbour in a DIFFERENT file (cross-file ``call`` / ``import``
+    edge) is only expanded when ``current.depth < cross_file_max_depth``.
+    With the default of 1 only the entry node fans out across files, so
+    the graph is "entry + its direct callees" rather than the whole
+    transitive import closure. Same-file callees keep recursing up to
+    ``max_depth`` (a handler → private helper → private helper chain
+    inside ONE module is still part of that behaviour's narrative).
+
     Per [[rule-cold-scan]]: pure in-memory; no persistence.
     """
     if max_depth < 1:
         max_depth = 1
+    if cross_file_max_depth < 0:
+        cross_file_max_depth = 0
     if max_nodes < 1:
         max_nodes = 1
 
@@ -216,6 +246,13 @@ def build_call_graph(
         if _is_test_or_vendor_or_generated(current.file):
             continue
 
+        # Cross-file edges fan out only from nodes shallower than the
+        # cross-file bound (default: entry only). Beyond that we keep
+        # recursing through SAME-FILE callees but never pull in another
+        # file's symbols — that is what keeps a flow a narrative slice
+        # rather than the whole transitive closure.
+        allow_cross_file = current.depth < cross_file_max_depth
+
         # (a) File-level import edges.
         try:
             imported_files = _file_edges(
@@ -226,6 +263,7 @@ def build_call_graph(
                 monorepo_packages=rctx.monorepo_packages,
                 go_module_prefix=rctx.go_module_prefix,
                 repo_path=rctx.repo_path,
+                python_source_roots=rctx.python_source_roots,
             )
         except Exception as exc:  # noqa: BLE001 — defensive
             logger.debug(
@@ -234,10 +272,14 @@ def build_call_graph(
             )
             imported_files = []
 
-        # Filter once.
+        # Filter once. Drop ALL cross-file imports when the current node
+        # is past the cross-file bound — imports are by definition edges
+        # to another file, so beyond depth-1 they would re-open the
+        # transitive closure we are explicitly excluding.
         imported_files = [
             f for f in imported_files
             if not _is_test_or_vendor_or_generated(f)
+            and (allow_cross_file or f == current.file)
         ]
 
         # (b) Call-identifier edges (intra-symbol → callee file/symbol).
