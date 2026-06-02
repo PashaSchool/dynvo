@@ -590,13 +590,17 @@ class UserFlow(BaseModel):
     existing ``developer_features[].product_feature_id → product_features[]``
     model — each member ``Flow`` points back via ``Flow.user_flow_id``.
 
-    Stage 1 names the UF from a deterministic template (no LLM). A later
-    Stage 2 may refine ``name`` / draft acceptance criteria via LLM and
-    fill ``ui_tier`` from a frontend classifier; both stay additive.
+    Stage 6.7 names the UF from a deterministic template (no LLM).
+    Stage 6.7b (additive Haiku refiner) overwrites ``name`` with a
+    journey label, fills ``description`` / ``ui_tier``, resolves
+    ``intent`` for "other" clusters, and drafts ``acceptance`` from
+    test-reached members. Membership/grain are NOT changed — Stage 6.7
+    stays the source of truth. ``refined`` flags a successful pass.
     """
 
     id: str                              # "UF-001" — stable within a scan
-    name: str                            # journey label from the template
+    name: str                            # journey label (template, or LLM-refined in 6.7b)
+    description: str | None = None       # journey-grain description (Stage 6.7b LLM refiner)
     product_feature_id: str | None = None  # the domain this UF belongs to
     intent: str                          # author|browse|lifecycle|execute|manage|bulk|export|other
     resource: str                        # representative noun ("detector")
@@ -605,8 +609,10 @@ class UserFlow(BaseModel):
     routes: list[str] = []               # union of members' router paths
     cross_links: list[str] = []          # other product_feature_ids touched
     ac_draft_count: int = 0              # # members with test_files (AC reach)
+    acceptance: list[str] = []           # "AC-n" first-draft observable assertions (Stage 6.7b)
     coverage_pct: float | None = None    # mean of members' coverage_pct
-    ui_tier: str | None = None           # Stage 2 / frontend classifier
+    ui_tier: str | None = None           # full-page|panel|settings|admin|no-ui (Stage 6.7b)
+    refined: bool = False                # True when Stage 6.7b LLM refined this UF
 
 
 class FeatureMap(BaseModel):

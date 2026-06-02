@@ -1569,6 +1569,35 @@ def run_pipeline_v2(
         )
     scan_meta["stage_6_7_user_flows"] = dict(uf_telemetry)
 
+    # ── Stage 6.7b — User-Flow LLM refiner (additive Haiku) ─────────
+    # One Haiku call per domain over the deterministic 6.7 UF clusters:
+    # journey-grain name/description, resolves intent="other", infers
+    # ui_tier from the frontend surface, drafts AC from test-reach.
+    # Membership/grain from 6.7 are NOT changed. Graceful per-domain
+    # degrade: on any LLM failure the UFs keep their deterministic
+    # name/intent. Uses the SAME shared CostTracker + model_id as the
+    # rest of the LLM stages; no README, no .ai/specs.
+    from faultline.pipeline_v2.stage_6_7b_uf_refiner import refine_user_flows
+    with StageLogger(run_dir, 6, "uf_refiner") as log6_7b:
+        user_flows, uf_refine_telemetry = refine_user_flows(
+            user_flows,
+            bipartite.flows,
+            model=model_id,
+            cost_tracker=tracker,
+            log=log6_7b,
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="uf_refiner",
+            payload={
+                **uf_refine_telemetry,
+                "user_flows": [uf.model_dump() for uf in user_flows],
+            },
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_7b_uf_refiner"] = dict(uf_refine_telemetry)
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     with StageLogger(run_dir, 7, "output") as log7:
