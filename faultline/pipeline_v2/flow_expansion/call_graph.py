@@ -321,6 +321,7 @@ def build_call_graph(
                 go_module_prefix=rctx.go_module_prefix,
                 repo_path=rctx.repo_path,
                 python_source_roots=rctx.python_source_roots,
+                workspace_package_map=rctx.workspace_package_map,
             )
         except Exception as exc:  # noqa: BLE001 — defensive
             logger.debug(

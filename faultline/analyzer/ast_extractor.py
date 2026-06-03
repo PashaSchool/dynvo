@@ -369,10 +369,29 @@ def _parse_file(rel_path: str, source: str) -> FileSignature:
         path = match.group(2)
         sig.routes.append(f"{method} {path}")
 
-    # Collect imports (only internal/relative, skip node_modules)
+    # Collect imports. We keep:
+    #   * relative ('./x', '../x') and builtin aliases ('@/x', '~/x', '#/x')
+    #     — always internal;
+    #   * SCOPED bare specifiers ('@scope/pkg[/subpath]') — these are the
+    #     workspace cross-package imports ('@calcom/lib', '@calcom/features/…')
+    #     that the downstream resolver maps to real files via the
+    #     package.json#name → dir map. A scoped specifier that is genuinely
+    #     third-party (e.g. '@sentry/node') simply fails resolution and adds
+    #     no edge, so retaining it here is safe — the resolver is the single
+    #     gate. (Previously these were dropped at parse time, which made the
+    #     cross-package callee bodies unreachable for flow tracing.)
+    # We still skip UNSCOPED bare specifiers ('react', 'next/server') to keep
+    # the import list lean; unscoped workspace package names are far rarer and
+    # the directory-name monorepo resolver already covers the common case.
     for match in _RE_IMPORT.finditer(source):
         src = match.group(1)
-        if src.startswith(".") or src.startswith("@/") or src.startswith("~/"):
+        if (
+            src.startswith(".")
+            or src.startswith("@/")
+            or src.startswith("~/")
+            or src.startswith("#/")
+            or src.startswith("@")  # scoped workspace/3p — resolver gates it
+        ):
             sig.imports.append(src)
 
     return sig

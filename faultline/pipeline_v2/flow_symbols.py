@@ -785,6 +785,8 @@ def _resolve_ts_specifier(
             importer, specifier, rctx.file_set,
             alias_map=rctx.alias_map,
             monorepo_packages=rctx.monorepo_packages,
+            workspace_package_map=getattr(rctx, "workspace_package_map", None),
+            repo_root=str(rctx.repo_path),
         )
     except Exception:  # noqa: BLE001 — defensive
         return None

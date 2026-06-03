@@ -95,6 +95,25 @@ def test_extracts_relative_imports():
     assert "react" not in sig.imports       # node_modules excluded
 
 
+def test_collects_scoped_workspace_imports():
+    """Scoped specifiers ('@scope/pkg[/sub]') are retained so the
+    downstream workspace resolver can map them to real files. Unscoped
+    bare specifiers ('next/server') stay excluded."""
+    source = textwrap.dedent("""\
+        import { prisma } from '@calcom/prisma';
+        import logger from '@calcom/lib/logger';
+        import { Svc } from '@calcom/features/webhooks/lib/Svc';
+        import { NextResponse } from 'next/server';
+        import React from 'react';
+    """)
+    sig = _parse_file("apps/web/route.ts", source)
+    assert "@calcom/prisma" in sig.imports
+    assert "@calcom/lib/logger" in sig.imports
+    assert "@calcom/features/webhooks/lib/Svc" in sig.imports
+    assert "next/server" not in sig.imports   # unscoped bare → excluded
+    assert "react" not in sig.imports
+
+
 def test_python_file_returns_empty_signature():
     sig = _parse_file("services/auth.py", "def login(): pass")
     assert sig.is_empty()
