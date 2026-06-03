@@ -132,8 +132,11 @@ def test_domain_none_when_ungroundable():
 # ── Stage C — cluster by (domain, intent) ───────────────────────────────
 
 
-def test_cluster_groups_by_domain_and_intent_not_resource():
-    # two distinct resources, same domain + intent -> ONE cluster.
+def test_cluster_grain_separates_distinct_resources():
+    # Distinct resources within the same domain + intent are now SEPARATE
+    # UFs (cluster key = (domain, resource, intent)). "Create a detector"
+    # and "Add a suppression rule" are different user journeys even though
+    # both are "author" intent on the same domain.
     scan = {
         "flows": [
             _flow("create-detector-flow", paths=["backend/routers/detectors.py"]),
@@ -143,10 +146,12 @@ def test_cluster_groups_by_domain_and_intent_not_resource():
         "developer_features": [],
     }
     r = cluster_user_flows(scan)
-    intents = sorted(u["intent"] for u in r["user_flows"])
-    assert intents == ["author", "browse"]  # 2 UF, not 3
-    author = next(u for u in r["user_flows"] if u["intent"] == "author")
-    assert author["member_count"] == 2
+    # 3 UF: (detector, author), (rule, author), (detector, browse).
+    assert len(r["user_flows"]) == 3
+    resources = sorted(u["resource"] for u in r["user_flows"])
+    assert resources == ["detector", "detector", "rule"]
+    # Every cluster is a single distinct (resource, intent) pair.
+    assert all(u["member_count"] == 1 for u in r["user_flows"])
 
 
 def test_uf_ids_deterministic_and_ordered():

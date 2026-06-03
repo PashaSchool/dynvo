@@ -1544,7 +1544,10 @@ def run_pipeline_v2(
     from faultline.pipeline_v2.stage_6_7_user_flows import run_user_flow_rollup
     user_flows: list = []
     with StageLogger(run_dir, 6, "user_flows") as log6_7:
-        user_flows, uf_telemetry = run_user_flow_rollup(bipartite.flows, features)
+        user_flows, uf_telemetry = run_user_flow_rollup(
+            bipartite.flows, features,
+            routes_index=lineage_result.routes_index,
+        )
         log6_7.info(
             "user_flows: %d flows -> %d unique -> %d UF, %d domains, "
             "%d with cross_links (dedup_dropped=%d)"
