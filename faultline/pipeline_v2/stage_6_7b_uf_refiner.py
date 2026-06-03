@@ -485,9 +485,13 @@ def refine_user_flows(
         flows_by_key[f.uuid or f.name] = f
         flows_by_key.setdefault(f.name, f)
 
+    # Group by the CODE-GRAIN domain (cluster key), not the Layer-2
+    # product_feature_id marketing link. The refiner batches one LLM call
+    # per code-grain domain; product_feature_id is a separate grouping link
+    # and would over-merge unrelated code domains under one marketing label.
     by_domain: dict[str | None, list["UserFlow"]] = defaultdict(list)
     for uf in user_flows:
-        by_domain[uf.product_feature_id].append(uf)
+        by_domain[uf.domain].append(uf)
     telemetry["domains_total"] = len(by_domain)
 
     tracker = cost_tracker or CostTracker(max_cost=None)

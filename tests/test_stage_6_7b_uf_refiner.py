@@ -105,6 +105,7 @@ def _uf(
     return UserFlow(
         id=uf_id,
         name=name,
+        domain=domain,
         product_feature_id=domain,
         intent=intent,
         resource="detector",

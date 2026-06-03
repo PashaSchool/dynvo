@@ -425,7 +425,10 @@ def plan_uf_refinement_reuse(
     domains_seen: set[str | None] = set()
     reused = 0
     for uf in user_flows:
-        domain = uf.product_feature_id
+        # Key on the CODE-GRAIN domain (cluster key), consistent with how
+        # Stage 6.7b batches its per-domain LLM calls. product_feature_id
+        # is the separate Layer-2 grouping link, not the refiner batch key.
+        domain = uf.domain
         domains_seen.add(domain)
         base_uf = by_member.get(_uf_member_key(uf.member_flow_ids))
         if base_uf is not None:

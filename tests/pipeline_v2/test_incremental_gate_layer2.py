@@ -38,6 +38,7 @@ def _uf(
     return UserFlow(
         id=uf_id,
         name=name,
+        domain=domain,
         product_feature_id=domain,
         intent=intent,
         resource="thing",
@@ -62,6 +63,7 @@ def _uf_dict(
         "id": uf_id,
         "name": name,
         "description": f"{name} description",
+        "domain": domain,
         "product_feature_id": domain,
         "intent": intent,
         "resource": "thing",

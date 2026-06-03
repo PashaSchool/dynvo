@@ -151,6 +151,88 @@ def _norm_domain(token: str) -> str:
     return _singular(token)
 
 
+def _normalise_pfid_to_domain(pfid: str) -> str | None:
+    """Reduce a Layer-2 ``product_feature_id`` (a marketing LABEL such as
+    ``organizations-&-multi-team-management`` or
+    ``cal.com-atoms-–-embeddable-react-ui-components``) to a SHORT
+    code-grain token suitable as a cluster key.
+
+    The Layer-2 id is a grouping LABEL, not a code token — using it
+    verbatim as the clustering key produces one "domain" per product
+    feature (127 on cal.com) made of long marketing strings. Here we
+    keep it only as a coarse signal by slugifying and taking the HEAD
+    NOUN: strip marketing punctuation (``& – ( ) , .``), split on the
+    first conjunction / separator, and keep the leading word group.
+
+    Example: ``organizations-&-multi-team-management`` → ``organization``;
+    ``booking-creation,-rescheduling-&-cancellation`` → ``booking``.
+
+    This is a STRUCTURAL normalization (slug + head-noun + singular), not
+    an enumeration of any repo's feature names (rule-no-repo-specific-paths)
+    and not a tuned cutoff (rule-no-magic-tuning). NEVER aligned to any
+    external spec (rule-ai-specs-validation-only).
+    """
+    s = pfid.lower().strip()
+    # Drop a leading product/brand qualifier like ``cal.com-atoms-...`` —
+    # split on the first dot so the brand prefix never becomes the token.
+    if "." in s:
+        s = s.split(".", 1)[1] if not s.split(".", 1)[0].isalpha() or len(
+            s.split(".", 1)[0]) <= 4 else s
+    # Strip marketing punctuation and collapse separators to single hyphen.
+    s = re.sub(r"[&–—(),:/]", " ", s)
+    s = re.sub(r"[\s_]+", "-", s).strip("-")
+    if not s:
+        return None
+    # Take the HEAD NOUN — the single leading resource word of the label.
+    # Marketing labels lead with their primary resource noun
+    # (``booking-creation,-...`` → ``booking``;
+    # ``organizations-&-multi-team-management`` → ``organization``), so the
+    # first non-stopword token is the coarse code-grain domain. Collapsing
+    # to one head word is what brings the per-product-feature labels down
+    # to a shared resource domain (rule-no-magic-tuning: structural head,
+    # not a tuned cutoff). Brand/qualifier leaders (``rest``, ``api``,
+    # ``com``, ``self``, ``multi``, ``auto``) are skipped so the real
+    # resource noun surfaces.
+    _LEAD_QUALIFIERS = {
+        "the", "a", "an", "and", "with", "of", "for", "to",
+        "rest", "api", "com", "self", "multi", "auto", "real", "full",
+        "open", "custom", "smart", "new", "advanced", "built", "in",
+    }
+    tokens = [t for t in s.split("-") if t]
+    if not tokens:
+        return None
+    head = None
+    for t in tokens:
+        if t in _LEAD_QUALIFIERS:
+            continue
+        head = t
+        break
+    if head is None:
+        head = tokens[0]
+    return _norm_domain(head)
+
+
+def _pfid_of(members: list[dict], df_by_name: dict) -> str | None:
+    """Resolve the Layer-2 ``product_feature_id`` for a UF cluster by
+    MAJORITY VOTE over its member flows' primary developer-features.
+
+    This is the legitimate UF → product-feature grouping link (symmetric
+    to ``developer_feature.product_feature_id``). It is resolved
+    INDEPENDENTLY of the cluster key / domain — the domain is a
+    code-grain token; this is the marketing grouping label. Keeping the
+    two decoupled is the whole point of this stage (see module docstring).
+    """
+    votes: Counter = Counter()
+    for m in members:
+        dev = df_by_name.get(m.get("primary_feature")) or {}
+        pfid = dev.get("product_feature_id")
+        if pfid:
+            votes[pfid] += 1
+    if not votes:
+        return None
+    return votes.most_common(1)[0][0]
+
+
 def _normalise_name_to_domain(feat_name: str) -> str:
     """Strip known framework prefixes (``api-``, ``test-``, ``v1-``) from a
     developer-feature name and normalise to a domain token.
@@ -206,10 +288,19 @@ def _domain_of(
         m = _JOBS_DIR_RE.search(fp)
         if m and m.group(1) != "__init__":
             return _norm_domain(m.group(1))
-    # Signal 3 — product_feature_id from Stage 6.5.
+    # Signal 3 — product_feature_id from Stage 6.5, NORMALIZED to a
+    # code-grain token. The raw product_feature_id is a Layer-2 marketing
+    # LABEL; using it verbatim makes one domain per product feature out of
+    # long marketing strings. We keep it only as a coarse signal by
+    # reducing it to its head-noun slug. The raw id is preserved
+    # separately as the UF's product_feature_id grouping link (see
+    # _pfid_of / cluster_user_flows), NOT as the domain.
     dev = df_by_name.get(flow.get("primary_feature")) or {}
-    if dev.get("product_feature_id"):
-        return dev["product_feature_id"]
+    pfid = dev.get("product_feature_id")
+    if pfid:
+        token = _normalise_pfid_to_domain(pfid)
+        if token:
+            return token
     # Signal 4 — frontend module directory.
     for fp in files:
         m = _FRONTEND_MODULE_RE.search(fp)
@@ -264,8 +355,18 @@ def _flow_key(flow: dict) -> str:
     return flow.get("uuid") or flow["name"]
 
 
-def _enrich(members: list[dict], domain: str | None, df_by_name: dict) -> dict:
-    """Stage E — deterministic enrichment of a cluster's members."""
+def _enrich(
+    members: list[dict],
+    own_pfid: str | None,
+    df_by_name: dict,
+) -> dict:
+    """Stage E — deterministic enrichment of a cluster's members.
+
+    ``own_pfid`` is the cluster's resolved Layer-2 product_feature_id
+    (NOT the code-grain domain). cross_links collect the OTHER product
+    features touched via secondary_features, excluding the cluster's own
+    product feature.
+    """
     routes: set[str] = set()
     cross: set[str] = set()
     tests = 0
@@ -277,7 +378,7 @@ def _enrich(members: list[dict], domain: str | None, df_by_name: dict) -> dict:
         for sf in m.get("secondary_features") or []:
             dev = df_by_name.get(sf) or {}
             pf = dev.get("product_feature_id")
-            if pf and pf != domain:
+            if pf and pf != own_pfid:
                 cross.add(pf)
         if m.get("test_files"):
             tests += 1
@@ -421,14 +522,21 @@ def cluster_user_flows(
         uf_id = f"UF-{i + 1:03d}"
         counts = cluster_resources[(domain, resource, intent)]
         label_resource = counts.most_common(1)[0][0] if counts else str(domain)
-        enriched = _enrich(members, domain, df_by_name)
+        # product_feature_id is the Layer-2 grouping LINK, resolved
+        # independently of the (code-grain) domain by majority vote over
+        # members. Decoupling these two is the fix: domain is the cluster
+        # key (a short code token), product_feature_id is the marketing
+        # roll-up link — they must not be the same string.
+        pfid = _pfid_of(members, df_by_name)
+        enriched = _enrich(members, pfid, df_by_name)
         for m in members:
             flow_to_uf[_flow_key(m)] = uf_id
             name_to_uf[m["name"]] = uf_id
         user_flows.append({
             "id": uf_id,
             "name": _uf_name(domain, intent, label_resource),
-            "product_feature_id": domain,
+            "domain": domain,
+            "product_feature_id": pfid,
             "intent": intent,
             "resource": label_resource,
             "member_flow_ids": [_flow_key(m) for m in members],
@@ -477,7 +585,10 @@ def run_user_flow_rollup(
         f.user_flow_id = flow_to_uf.get(key) or name_to_uf.get(f.name)
 
     user_flows = [UserFlow(**uf) for uf in result["user_flows"]]
-    domains = {uf.product_feature_id for uf in user_flows if uf.product_feature_id}
+    # domains = distinct code-grain cluster keys; product_feature_links =
+    # distinct Layer-2 grouping links (kept separate by design).
+    domains = {uf.domain for uf in user_flows if uf.domain}
+    pf_links = {uf.product_feature_id for uf in user_flows if uf.product_feature_id}
     intents: Counter = Counter(uf.intent for uf in user_flows)
     telemetry = {
         "total_flows": result["total_flows"],
@@ -485,9 +596,11 @@ def run_user_flow_rollup(
         "dedup_dropped": result["dedup_dropped"],
         "user_flows": len(user_flows),
         "domains": len(domains),
-        "unmapped_domain": sum(
-            1 for uf in user_flows if uf.product_feature_id is None
+        "product_feature_links": len(pf_links),
+        "uf_with_product_feature": sum(
+            1 for uf in user_flows if uf.product_feature_id is not None
         ),
+        "unmapped_domain": sum(1 for uf in user_flows if uf.domain is None),
         "by_intent": dict(sorted(intents.items(), key=lambda kv: -kv[1])),
         "uf_with_cross_links": sum(1 for uf in user_flows if uf.cross_links),
     }

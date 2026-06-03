@@ -608,7 +608,8 @@ class UserFlow(BaseModel):
     id: str                              # "UF-001" — stable within a scan
     name: str                            # journey label (template, or LLM-refined in 6.7b)
     description: str | None = None       # journey-grain description (Stage 6.7b LLM refiner)
-    product_feature_id: str | None = None  # the domain this UF belongs to
+    domain: str | None = None            # code-grain cluster key (router/folder/module token)
+    product_feature_id: str | None = None  # Layer-2 grouping LINK (marketing product feature), member-majority vote — NOT the code-grain domain
     intent: str                          # author|browse|lifecycle|execute|manage|bulk|export|other
     resource: str                        # representative noun ("detector")
     member_flow_ids: list[str] = []      # composing code-flows (uuid or name)
