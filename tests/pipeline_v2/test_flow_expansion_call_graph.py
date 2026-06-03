@@ -586,3 +586,102 @@ def test_perf_smoke_100_flows_under_5s(ts_call_chain: Path):
     expand_flows([feat], ctx, routes_index=[])
     elapsed = time.monotonic() - t0
     assert elapsed < 5.0, f"expansion took {elapsed:.2f}s on 100 flows"
+
+
+# ── Method-level member-call resolution (whole-class over-count fix) ─────
+
+
+@pytest.fixture
+def ts_member_call_repo(tmp_path: Path) -> Path:
+    """Entry handler constructs a big repo class + calls ONE method.
+
+    The repo class has many methods (a large body). The handler does
+    ``new BookingRepo(db)`` and ``service.process()``. The flow must
+    attribute the CONSTRUCTOR body + the called METHOD body only — never
+    the whole multi-hundred-line class.
+    """
+    repo = tmp_path / "member_call"
+    repo.mkdir()
+    _write(repo, "src/handler.ts", """
+        import { BookingRepo } from './repo';
+        import { Svc } from './svc';
+        export function handle(db, req) {
+          const r = new BookingRepo(db);
+          const s = new Svc(r);
+          return s.process(req);
+        }
+    """)
+    # A deliberately LARGE class — many methods, only some called.
+    methods = []
+    line = 0
+    for i in range(20):
+        methods.append(
+            f"  method{i}(x) {{\n" +
+            "".join(f"    const a{j} = x + {j};\n" for j in range(8)) +
+            f"    return a0;\n  }}"
+        )
+    big_class = (
+        "export class BookingRepo {\n"
+        "  constructor(db) {\n    this.db = db;\n  }\n"
+        + "\n".join(methods) +
+        "\n}\n"
+    )
+    _write(repo, "src/repo.ts", big_class)
+    _write(repo, "src/svc.ts", """
+        export class Svc {
+          constructor(repo) {
+            this.repo = repo;
+          }
+          process(req) {
+            return this.helper(req);
+          }
+          helper(req) {
+            return req.id;
+          }
+        }
+    """)
+    _init_git_repo(repo)
+    return repo
+
+
+def test_member_call_resolves_to_method_not_whole_class(
+    ts_member_call_repo: Path,
+):
+    ctx = stage_0_intake(ts_member_call_repo, days=30)
+    flow = _make_flow(
+        "process-booking",
+        entry_file="src/handler.ts",
+        entry_symbol="handle",
+        entry_line=2,
+    )
+    feat = _make_feature("booking", ["src/handler.ts"], [flow])
+    expand_flows([feat], ctx, routes_index=[])
+
+    # The big repo class must NOT be pulled in whole. Any node from repo.ts
+    # must be the CONSTRUCTOR only (a ``new BookingRepo()`` call); none of
+    # its 20 ``methodN`` bodies are exercised by the entry.
+    repo_nodes = [n for n in flow.nodes if n.file == "src/repo.ts"]
+    repo_loc = sum(
+        (n.lines[1] - n.lines[0] + 1)
+        for n in repo_nodes
+        if n.lines
+    )
+    # Whole class is > 180 LOC; constructor is ~3 LOC. A correct
+    # attribution is tiny.
+    assert repo_loc < 30, (
+        f"repo.ts over-attributed {repo_loc} LOC "
+        f"(whole class leaked): {[n.symbol for n in repo_nodes]}"
+    )
+    # The called service method ``process`` IS attributed.
+    svc_symbols = {n.symbol for n in flow.nodes if n.file == "src/svc.ts"}
+    assert any(
+        s and s.endswith("process") for s in svc_symbols
+    ), f"expected Svc.process resolved, got {svc_symbols}"
+    # And the whole Svc class is NOT pulled — only the called method(s).
+    svc_loc = sum(
+        (n.lines[1] - n.lines[0] + 1)
+        for n in flow.nodes
+        if n.file == "src/svc.ts" and n.lines
+    )
+    # process (~3) + helper (~3, same-file recursion) + ctor (~3) — small.
+    assert svc_loc < 40, f"svc.ts over-attributed {svc_loc} LOC"

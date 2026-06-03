@@ -184,7 +184,14 @@ class SymbolRange(BaseModel):
     name: str              # exported symbol name, e.g. "FEATURE_FLAGS"
     start_line: int        # 1-indexed, inclusive
     end_line: int          # 1-indexed, inclusive
-    kind: str = "const"    # "const", "function", "class", "type", "enum", "reexport"
+    kind: str = "const"    # "const", "function", "class", "type", "enum", "reexport", "method", "constructor"
+    # When this symbol is a METHOD (or constructor / class field arrow-fn)
+    # defined INSIDE a class, ``parent`` carries the enclosing class name.
+    # Method-level indexing (added so a member call ``obj.findById()``
+    # resolves to the SPECIFIC method body, not the whole enclosing class —
+    # the whole-class-pulled-into-a-flow over-count). ``None`` for top-level
+    # symbols. Purely additive: existing readers ignore it.
+    parent: str | None = None
 
 
 class FlowParticipant(BaseModel):

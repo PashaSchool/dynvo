@@ -75,6 +75,61 @@ _IDENT_CALL_PATTERN = re.compile(
     r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(",
 )
 
+# Member-expression call: ``obj.method(`` / ``this.method(`` /
+# ``Class.staticMethod(`` — group 1 is the METHOD name (the identifier
+# AFTER the dot). Used to resolve a call to the SPECIFIC method body of an
+# imported class, never the whole class. The receiver (``obj``) is
+# intentionally ignored: we match the callee file by which imported file
+# exports a class CONTAINING a method of this name. STRUCTURAL — no
+# per-repo names.
+_MEMBER_CALL_PATTERN = re.compile(
+    r"\.\s*([A-Za-z_$][\w$]*)\s*\(",
+)
+# Constructor call: ``new Class(`` — group 1 is the class name. Resolves
+# to the class's CONSTRUCTOR body only (or nothing if no explicit
+# constructor), never the whole class.
+_NEW_CALL_PATTERN = re.compile(
+    r"\bnew\s+([A-Za-z_$][\w$]*)\s*\(",
+)
+
+
+def _extract_member_method_calls(
+    source: str,
+    start_line: int | None,
+    end_line: int | None,
+) -> set[str]:
+    """Method names invoked as ``obj.method(...)`` in a source slice.
+
+    These are the callee METHODS the flow actually exercises. Resolving
+    them to the specific method body (not the enclosing class) is what
+    keeps a flow's LOC = lines actually run, instead of pulling a whole
+    1800-line repository class in for one ``repo.findById()`` call.
+    """
+    if not source:
+        return set()
+    if start_line is not None and end_line is not None and end_line >= start_line:
+        lines = source.splitlines()
+        slice_ = "\n".join(lines[start_line - 1: end_line])
+    else:
+        slice_ = source
+    return {m.group(1) for m in _MEMBER_CALL_PATTERN.finditer(slice_)}
+
+
+def _extract_constructor_calls(
+    source: str,
+    start_line: int | None,
+    end_line: int | None,
+) -> set[str]:
+    """Class names invoked as ``new Class(...)`` in a source slice."""
+    if not source:
+        return set()
+    if start_line is not None and end_line is not None and end_line >= start_line:
+        lines = source.splitlines()
+        slice_ = "\n".join(lines[start_line - 1: end_line])
+    else:
+        slice_ = source
+    return {m.group(1) for m in _NEW_CALL_PATTERN.finditer(slice_)}
+
 # A call-expression with its parenthesised argument list, e.g.
 # ``defaultResponderForAppDir(postHandler)`` or
 # ``apiHandler({ GET: getHandler, POST: postHandler })``. Group 1 is the
@@ -163,6 +218,13 @@ class CallGraphResult:
     depth_reached: int = 0
     truncated: bool = False
     dropped_node_count: int = 0
+    # Telemetry for method-level member-call resolution. A member call
+    # ``obj.method()`` to an imported file whose method we could NOT pin to
+    # a specific symbol range is counted as a MISS — we attribute nothing
+    # for it (a tight under-count beats a whole-class over-count) and record
+    # it here so the miss rate is measurable.
+    member_calls_resolved: int = 0
+    member_calls_unresolved: int = 0
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -194,6 +256,71 @@ def _file_exports(sig: FileSignature | None) -> tuple[str, ...]:
     if sig is None:
         return ()
     return tuple(sig.exports)
+
+
+def _symbol_range_obj(sig: FileSignature | None, symbol: str):
+    """Return the FIRST top-level ``SymbolRange`` named ``symbol``.
+
+    Top-level means kind != method/constructor — the exported function /
+    class / const, not an inner method (those are resolved member-aware).
+    Returns ``None`` when absent.
+    """
+    if sig is None:
+        return None
+    for rng in sig.symbol_ranges:
+        if rng.name == symbol and rng.kind not in ("method", "constructor"):
+            return rng
+    return None
+
+
+def _find_method_symbols(
+    sig: FileSignature | None,
+    method_name: str,
+) -> list[tuple[str, int, int, str | None]]:
+    """All METHOD / constructor symbols named ``method_name`` in a file.
+
+    Returns ``(name, start_line, end_line, parent_class)`` tuples. A file
+    may legitimately define a method of the same name on >1 class; we
+    cannot statically know the receiver's class without type inference, so
+    every same-named method is a candidate. The caller attributes each
+    candidate's OWN tight body range — the union of (typically 1) candidate
+    bodies is still vastly smaller than the whole class, and keeps the flow
+    honest (the real method IS among them). Constructors are matched by the
+    synthetic name ``constructor``.
+    """
+    if sig is None:
+        return []
+    out: list[tuple[str, int, int, str | None]] = []
+    for rng in sig.symbol_ranges:
+        if rng.kind not in ("method", "constructor"):
+            continue
+        if rng.name == method_name:
+            out.append((
+                rng.name, rng.start_line, rng.end_line,
+                getattr(rng, "parent", None),
+            ))
+    return out
+
+
+def _find_constructor_symbol(
+    sig: FileSignature | None,
+    class_name: str,
+) -> tuple[int, int] | None:
+    """The ``(start, end)`` of ``class_name``'s constructor body, if any.
+
+    Returns ``None`` when the class has no EXPLICIT constructor — then a
+    ``new Class()`` call attributes nothing (an implicit constructor has no
+    user-authored lines to count), which is the correct under-count.
+    """
+    if sig is None:
+        return None
+    for rng in sig.symbol_ranges:
+        if (
+            rng.kind == "constructor"
+            and getattr(rng, "parent", None) == class_name
+        ):
+            return (rng.start_line, rng.end_line)
+    return None
 
 
 def _extract_called_identifiers(
@@ -287,6 +414,8 @@ def build_call_graph(
     depth_reached = 0
     truncated = False
     dropped = 0
+    member_resolved = 0
+    member_unresolved = 0
 
     queue: deque[CallNode] = deque([seed])
     while queue:
@@ -351,6 +480,21 @@ def build_call_graph(
             line_start = current.lines[0] if current.lines else None
             line_end = current.lines[1] if current.lines else None
             call_idents = _extract_called_identifiers(
+                src, line_start, line_end,
+            )
+            # Member-expression method calls (``obj.method()``) and
+            # constructor calls (``new Class()``) recovered WITH their
+            # receiver/keyword context, so we can resolve them to the
+            # SPECIFIC method / constructor body of an imported class
+            # rather than the whole class. ``call_idents`` already holds
+            # the bare method name too (it drops the ``.``), which is why
+            # the OLD resolver wrongly matched the class export; the
+            # member/constructor sets below let us route those names to
+            # method-level ranges and EXCLUDE the whole-class fallback.
+            member_method_calls = _extract_member_method_calls(
+                src, line_start, line_end,
+            )
+            constructor_calls = _extract_constructor_calls(
                 src, line_start, line_end,
             )
 
@@ -422,21 +566,110 @@ def build_call_graph(
 
             # (b.1) Cross-file callees — identifier → (callee_file,
             # callee_sig) restricted to files this file imports.
+            #
+            # METHOD-LEVEL resolution (the core of this fix):
+            #   * A direct call to a FUNCTION / const export (``helper()``)
+            #     resolves to that symbol's full range — a function's body
+            #     IS its full range, so this is correct and UNCHANGED.
+            #   * A call to a CLASS export name is NOT pulled in whole. The
+            #     name only appears because of ``new Class()`` (constructor)
+            #     or a static call; we attribute the CONSTRUCTOR body only
+            #     (or nothing if implicit). The whole-class body is never
+            #     attributed for a mere construction.
+            #   * A member call ``obj.method()`` resolves to the specific
+            #     METHOD symbol(s) of that name in the imported file — the
+            #     method's OWN tight line range, never the enclosing class.
+            #   * Unresolvable member calls attribute NOTHING (tight under-
+            #     count) and bump the miss counter.
             for cf in imported_files:
                 csig = rctx.signatures.get(cf)
-                exports = _file_exports(csig)
-                if not exports:
+                if csig is None:
                     continue
+                exports = _file_exports(csig)
+
+                # Direct function/const-export calls: ``name()`` where the
+                # export is NOT a class. Classes are handled via the
+                # constructor / member paths below so we never pull a whole
+                # class in just because its name was referenced.
                 for sym in exports:
-                    if sym in call_idents:
-                        rng = _symbol_line_range(csig, sym)
-                        callees_by_symbol[(cf, sym)] = CallNode(
-                            id=_node_id(cf, sym),
+                    if sym not in call_idents:
+                        continue
+                    rng_obj = _symbol_range_obj(csig, sym)
+                    if rng_obj is not None and rng_obj.kind == "class":
+                        continue  # never whole-class; see constructor path
+                    rng = (
+                        (rng_obj.start_line, rng_obj.end_line)
+                        if rng_obj is not None
+                        else None
+                    )
+                    callees_by_symbol[(cf, sym)] = CallNode(
+                        id=_node_id(cf, sym),
+                        file=cf,
+                        symbol=sym,
+                        lines=rng,
+                        depth=current.depth + 1,
+                    )
+
+                # Constructor calls: ``new Class()`` → constructor body
+                # only. The class must actually be exported by this file
+                # (avoids cross-file name collisions). Nothing attributed
+                # when the class has no explicit constructor.
+                for cls in constructor_calls:
+                    if cls not in exports:
+                        continue
+                    ctor = _find_constructor_symbol(csig, cls)
+                    if ctor is None:
+                        continue
+                    ctor_key = (cf, f"{cls}.constructor")
+                    callees_by_symbol[ctor_key] = CallNode(
+                        id=_node_id(cf, f"{cls}.constructor"),
+                        file=cf,
+                        symbol=f"{cls}.constructor",
+                        lines=ctor,
+                        depth=current.depth + 1,
+                    )
+
+                # Member method calls: ``obj.method()`` → the specific
+                # method body(ies) of that name in this imported file. We
+                # only resolve a member call to a file that the symbol could
+                # plausibly come from (it exports a class AND defines a
+                # method of this name) — pure structural matching.
+                file_has_class = any(
+                    r.kind == "class" for r in csig.symbol_ranges
+                )
+                for meth in member_method_calls:
+                    if not file_has_class:
+                        continue
+                    cands = _find_method_symbols(csig, meth)
+                    if not cands:
+                        continue
+                    for (mname, ms, me, parent) in cands:
+                        label = f"{parent}.{mname}" if parent else mname
+                        callees_by_symbol[(cf, label)] = CallNode(
+                            id=_node_id(cf, label),
                             file=cf,
-                            symbol=sym,
-                            lines=rng,
+                            symbol=label,
+                            lines=(ms, me),
                             depth=current.depth + 1,
                         )
+
+            # Member-call resolution telemetry: a member call is RESOLVED
+            # when at least one imported file defines a class with a method
+            # of that name; otherwise it is a MISS (attributed nothing).
+            for meth in member_method_calls:
+                resolved = any(
+                    _find_method_symbols(rctx.signatures.get(cf), meth)
+                    and any(
+                        r.kind == "class"
+                        for r in (rctx.signatures.get(cf).symbol_ranges)  # type: ignore[union-attr]
+                    )
+                    for cf in imported_files
+                    if rctx.signatures.get(cf) is not None
+                )
+                if resolved:
+                    member_resolved += 1
+                else:
+                    member_unresolved += 1
 
         # Emit call edges first (more precise than import edges).
         for (cf, sym), node in callees_by_symbol.items():
@@ -504,6 +737,8 @@ def build_call_graph(
         depth_reached=depth_reached,
         truncated=truncated,
         dropped_node_count=dropped,
+        member_calls_resolved=member_resolved,
+        member_calls_unresolved=member_unresolved,
     )
 
 

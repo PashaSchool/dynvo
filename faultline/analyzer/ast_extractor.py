@@ -142,6 +142,41 @@ _RE_TYPE_EXPORT = re.compile(
     r"export\s+(?:declare\s+)?(?:type|interface|enum)\s+(\w+)"
 )
 
+# TS/JS class declaration (named). Group 1 = class name. Matches both
+# ``export class Foo`` and bare ``class Foo`` (and ``export default class
+# Foo``). Used to locate class bodies for METHOD-LEVEL indexing so a member
+# call ``obj.method()`` resolves to the specific method body, not the whole
+# class. Anchored at a word boundary; the body span is then recovered by a
+# brace-matching scan (regex alone can't balance braces).
+_RE_TS_CLASS_DECL = re.compile(
+    r"\bclass\s+([A-Za-z_$][\w$]*)\b",
+)
+
+# A method / class-field declaration on its OWN line inside a class body.
+# Group 1 = method name. Covers:
+#   foo(           async foo(        static foo(      *foo(
+#   public foo(    private foo(      protected foo(   get foo(   set foo(
+#   foo = (args) => {     foo = async (args) => {     (arrow class fields)
+# Leading whitespace required (class members are indented). The trailing
+# ``(`` or ``=`` is what distinguishes a method/arrow-field from a plain
+# data field. STRUCTURAL — no per-repo names. Control-flow keywords that
+# could masquerade as a call (``if (``, ``for (`` …) are filtered by the
+# caller via _TS_NON_METHOD_KEYWORDS.
+_RE_TS_METHOD = re.compile(
+    r"^\s+(?:public\s+|private\s+|protected\s+|readonly\s+|static\s+|"
+    r"abstract\s+|override\s+|async\s+|get\s+|set\s+|\*\s*)*"
+    r"([A-Za-z_$#][\w$]*)\s*"
+    r"(?:[(<]|=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>)",
+)
+# Tokens that _RE_TS_METHOD would otherwise capture as a "method" because
+# they are followed by ``(`` — these are control-flow / operators, never
+# real callable members. Excluding them keeps phantom method symbols out.
+_TS_NON_METHOD_KEYWORDS = frozenset({
+    "if", "for", "while", "switch", "catch", "return", "await", "yield",
+    "typeof", "instanceof", "in", "of", "new", "do", "else", "case",
+    "function", "constructor",  # constructor handled separately
+})
+
 
 @dataclass
 class FileSignature:
@@ -439,26 +474,52 @@ def _parse_python_file(rel_path: str, source: str) -> FileSignature:
     seen_exports: set[str] = set()
     seen_range_keys: set[tuple[str, int]] = set()
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            kind = "function"
-        elif isinstance(node, ast.ClassDef):
-            kind = "class"
-        else:
-            continue
-        name = node.name
-        start = node.lineno
-        end = getattr(node, "end_lineno", None) or start
-        key = (name, start)
-        if key in seen_range_keys:
-            continue
-        seen_range_keys.add(key)
-        sig.symbol_ranges.append(SymbolRange(
-            name=name,
-            start_line=start,
-            end_line=max(start, end),
-            kind=kind,
-        ))
+    # Class-aware walk: a ``def`` whose nearest enclosing scope is a
+    # ``class`` is a METHOD (tag kind="method"/"constructor" + parent) so a
+    # cross-file member call ``instance.find_by_id()`` resolves to that
+    # method's OWN exact range, never the whole class. Module-level ``def``
+    # stays ``function``; classes stay ``class`` (kept for anchoring).
+    # ``__init__`` is tagged ``constructor`` to mirror the TS path (so a
+    # ``Class(...)`` construction attributes the initialiser body only).
+    def _walk(node: ast.AST, parent_class: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                start = child.lineno
+                end = getattr(child, "end_lineno", None) or start
+                key = (child.name, start)
+                if key not in seen_range_keys:
+                    seen_range_keys.add(key)
+                    sig.symbol_ranges.append(SymbolRange(
+                        name=child.name, start_line=start,
+                        end_line=max(start, end), kind="class",
+                    ))
+                _walk(child, child.name)
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                start = child.lineno
+                end = getattr(child, "end_lineno", None) or start
+                if parent_class is not None:
+                    kind = (
+                        "constructor"
+                        if child.name == "__init__"
+                        else "method"
+                    )
+                else:
+                    kind = "function"
+                key = (child.name, start)
+                if key not in seen_range_keys:
+                    seen_range_keys.add(key)
+                    sig.symbol_ranges.append(SymbolRange(
+                        name=child.name, start_line=start,
+                        end_line=max(start, end), kind=kind,
+                        parent=parent_class,
+                    ))
+                # Recurse into the function body too (nested defs / closures
+                # keep kind="function"; nested classes get their own parent).
+                _walk(child, None)
+            else:
+                _walk(child, parent_class)
+
+    _walk(tree, None)
 
     # Module-level names → exports (stable Stage-3 contract).
     for node in tree.body:
@@ -628,12 +689,233 @@ def _infer_nextjs_route_path(rel_path: str) -> str:
     return "/" + "/".join(trimmed) if trimmed else "/"
 
 
+def _find_class_body_span(
+    source: str, class_decl_offset: int,
+) -> tuple[int, int] | None:
+    """Return ``(body_open_offset, body_close_offset)`` for a class body.
+
+    Starting at the class declaration char offset, find the first ``{``
+    (the class body open brace) and scan forward tracking brace depth
+    (skipping braces inside strings / template literals / line + block
+    comments) until the matching close brace. Returns char offsets of the
+    open and close brace, or ``None`` if unbalanced (truncated / malformed
+    source) — the caller then simply skips method indexing for that class
+    and keeps the whole-class symbol as before (graceful degrade).
+    """
+    n = len(source)
+    i = source.find("{", class_decl_offset)
+    if i < 0:
+        return None
+    open_off = i
+    depth = 0
+    in_str: str | None = None       # current string/template delimiter
+    in_line_comment = False
+    in_block_comment = False
+    while i < n:
+        c = source[i]
+        nxt = source[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            if c == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+        if in_block_comment:
+            if c == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if in_str is not None:
+            if c == "\\":
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+            i += 1
+            continue
+        # not in string/comment
+        if c == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        if c == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        if c in ("'", '"', "`"):
+            in_str = c
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return (open_off, i)
+        i += 1
+    return None
+
+
+def _extract_class_methods(
+    source: str,
+    class_name: str,
+    body_open_off: int,
+    body_close_off: int,
+) -> list[SymbolRange]:
+    """Index each method / arrow-field of a class body as its own symbol.
+
+    The method body span is approximated the same scale-invariant way the
+    top-level extractor uses: a method runs until the NEXT method's start
+    line minus one (or the class body close for the last one). This gives a
+    tight per-method line range so a member call resolves to ONE method's
+    lines, not the whole 1800-line class. Constructors are tagged
+    ``kind="constructor"`` so the call-graph resolver can attribute them on
+    ``new Class()`` separately.
+
+    Only DIRECT members of THIS class body are indexed — declarations that
+    live in a nested block (deeper brace depth than the class body) are
+    skipped, so inner-function locals never masquerade as methods.
+    """
+    # Identify the line numbers spanned by the class body.
+    body_open_line = source.count("\n", 0, body_open_off) + 1
+    body_close_line = source.count("\n", 0, body_close_off) + 1
+    lines = source.splitlines()
+
+    # Pre-compute, per line index, the brace depth RELATIVE to the class
+    # body open, so we only accept method declarations at the body's
+    # immediate level (depth 1 inside the class). Track string/comment
+    # state across lines to avoid counting braces in literals.
+    raw: list[tuple[int, str, str]] = []  # (start_line, name, kind)
+    depth = 0
+    in_str: str | None = None
+    in_block_comment = False
+    # Walk char-by-char from body_open_off to body_close_off, but record a
+    # candidate only when we are exactly at depth 1 (immediate member) and
+    # at the START of a line's first significant token.
+    # Simpler + robust: iterate lines, maintain depth at line START.
+    # Compute depth at the start of each line by scanning the body once.
+    line_start_depth: dict[int, int] = {}
+    i = body_open_off
+    cur_line = body_open_line
+    line_start_depth[cur_line] = 0
+    n = body_close_off
+    while i <= n:
+        c = source[i]
+        nxt = source[i + 1] if i + 1 < len(source) else ""
+        if c == "\n":
+            cur_line += 1
+            line_start_depth[cur_line] = depth
+            i += 1
+            continue
+        if in_block_comment:
+            if c == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if in_str is not None:
+            if c == "\\":
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+            i += 1
+            continue
+        if c == "/" and nxt == "/":
+            # line comment — skip to EOL
+            j = source.find("\n", i)
+            if j < 0:
+                break
+            i = j
+            continue
+        if c == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        if c in ("'", '"', "`"):
+            in_str = c
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+
+    seen: set[str] = set()
+    for ln in range(body_open_line, body_close_line + 1):
+        idx = ln - 1
+        if idx < 0 or idx >= len(lines):
+            continue
+        # Only immediate members: the line must START at class-body depth 1.
+        if line_start_depth.get(ln, 99) != 1:
+            continue
+        line_txt = lines[idx]
+        stripped = line_txt.strip()
+        if stripped.startswith("constructor"):
+            if "constructor" not in seen and re.match(
+                r"constructor\s*\(", stripped,
+            ):
+                seen.add("constructor")
+                raw.append((ln, "constructor", "constructor"))
+            continue
+        m = _RE_TS_METHOD.match(line_txt)
+        if not m:
+            continue
+        name = m.group(1)
+        if name in _TS_NON_METHOD_KEYWORDS or name in seen:
+            continue
+        seen.add(name)
+        raw.append((ln, name, "method"))
+
+    if not raw:
+        return []
+    raw.sort(key=lambda x: x[0])
+    out: list[SymbolRange] = []
+    for k, (start, name, kind) in enumerate(raw):
+        end = (
+            raw[k + 1][0] - 1
+            if k + 1 < len(raw)
+            else body_close_line
+        )
+        out.append(SymbolRange(
+            name=name,
+            start_line=start,
+            end_line=max(start, end),
+            kind=kind,
+            parent=class_name,
+        ))
+    return out
+
+
+def _extract_all_class_methods(source: str) -> list[SymbolRange]:
+    """Index methods for EVERY class declared in a TS/JS source file."""
+    out: list[SymbolRange] = []
+    for m in _RE_TS_CLASS_DECL.finditer(source):
+        class_name = m.group(1)
+        span = _find_class_body_span(source, m.start())
+        if span is None:
+            continue
+        out.extend(
+            _extract_class_methods(source, class_name, span[0], span[1])
+        )
+    return out
+
+
 def extract_symbol_ranges(source: str) -> list[SymbolRange]:
     """Extracts line ranges for each exported symbol in TS/JS source.
 
     MVP heuristic: each export's end_line = next export's start_line - 1,
     or EOF for the last export. This avoids complex brace-balancing but
     gives reasonable line attribution for most files.
+
+    Additionally indexes class METHODS / constructors / arrow class-fields
+    as their own ``SymbolRange`` (kind ``method`` / ``constructor``,
+    ``parent`` = class name) so a member call ``obj.findById()`` resolves
+    to the specific method body rather than the whole enclosing class. The
+    class symbol itself is KEPT (feature anchoring depends on it).
     """
     total_lines = source.count("\n") + 1
     # Collect all export positions with their symbol names and kinds
@@ -694,7 +976,14 @@ def extract_symbol_ranges(source: str) -> list[SymbolRange]:
         line = source[:match.start()].count("\n") + 1
         exports.append((line, match.group(1), "local"))
 
-    if not exports:
+    # Class METHODS / constructors as their own tight ranges (computed by a
+    # brace-balanced scan, independent of the top-level next-export
+    # heuristic). Appended below AFTER top-level dedup so a method named the
+    # same as a top-level symbol never shadows the top-level one — methods
+    # are namespaced by ``parent`` and resolved member-aware downstream.
+    method_ranges = _extract_all_class_methods(source)
+
+    if not exports and not method_ranges:
         return []
 
     # Sort by start_line, deduplicate by name (keep first occurrence so an
@@ -717,6 +1006,10 @@ def extract_symbol_ranges(source: str) -> list[SymbolRange]:
         ranges.append(SymbolRange(
             name=name, start_line=start, end_line=max(start, end), kind=kind,
         ))
+
+    # Append method-level symbols (kept distinct from top-level symbols via
+    # their ``parent`` field; a member call resolves to these tight ranges).
+    ranges.extend(method_ranges)
 
     return ranges
 
