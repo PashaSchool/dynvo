@@ -230,12 +230,235 @@ def rehydrate_untouched_features(
     )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Layer-2 (Stage 8) + User-Flow (Stage 6.7b) reuse — the second cost
+# ceiling described in finding-incremental-no-llm-savings.
+#
+# Stages 3/4 are gated above (per-feature / per-cluster Haiku). The two
+# LLM stages that still run over the WHOLE merged feature set on every
+# incremental are:
+#   * Stage 8   — single Sonnet analyst call (Layer-2 product_features).
+#   * Stage 6.7b — per-domain Haiku User-Flow refiner.
+# Both are pure functions of the DETERMINISTIC structural feature set
+# (Stage 0/1/2) and the deterministic Stage 6.7 UF rollup, so when that
+# structure is unchanged from the base scan their outputs are reusable
+# verbatim — no fresh LLM call, no priors leaking into a cold scan
+# (these helpers are only ever called on the --since path).
+# ─────────────────────────────────────────────────────────────────────
+
+
+def is_noop_change(features_touched: int) -> bool:
+    """True when the incremental diff touched ZERO Stage-2 features.
+
+    When no developer feature changed, the entire Layer-1 feature set is
+    identical to the base scan (deterministic Stage 0/1/2 reproduce it,
+    and every feature was re-hydrated from base). Therefore the base
+    scan's Layer-2 ``product_features`` AND its refined ``user_flows``
+    are valid verbatim, and BOTH Stage 8 (Sonnet) and Stage 6.7b (Haiku)
+    can be skipped — the documented lowest-risk reuse. A structural
+    predicate, not a tuned threshold (``rule-no-magic-tuning``).
+    """
+    return features_touched == 0
+
+
+def base_product_features(base_scan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the base scan's Layer-2 ``product_features`` list (or [])."""
+    pf = base_scan.get("product_features")
+    return list(pf) if isinstance(pf, list) else []
+
+
+def rehydrate_base_product_features(
+    base_scan: dict[str, Any],
+) -> tuple[list[Feature], dict[str, tuple[str, ...]]]:
+    """Rebuild base Layer-2 ``product_features`` + the dev→product map.
+
+    Used ONLY in the no-op incremental case (zero touched dev features),
+    where the deterministic Layer-1 feature set is identical to the base
+    scan, so the base scan's FINAL ``product_features`` (already through
+    Stage 8 analyst + rollup + 8.5 backfill + hotspots) are valid
+    verbatim. Each base PF dict is re-validated into a :class:`Feature`;
+    the dev→product map is reconstructed from each developer feature's
+    ``product_feature_id`` (single-valued — sufficient to re-stamp the
+    Layer-1 ↔ Layer-2 pointer, which is the only consumer downstream of a
+    skipped Stage 8). A PF dict that fails validation is skipped and
+    reported via the logger, never crashing the scan.
+    """
+    from faultline.models.types import Feature  # local import: avoid cycle
+
+    pfs: list[Feature] = []
+    for pf in base_product_features(base_scan):
+        if not isinstance(pf, dict):
+            continue
+        try:
+            pfs.append(Feature.model_validate(pf))
+        except Exception as exc:  # noqa: BLE001 — base scan is external input
+            logger.warning(
+                "incremental_gate: could not rehydrate base product feature "
+                "%r (%s) — dropping it from the reused Layer-2 set",
+                pf.get("name"), exc,
+            )
+    dev_map: dict[str, tuple[str, ...]] = {}
+    base_devs = (
+        base_scan.get("developer_features")
+        or base_scan.get("features")
+        or []
+    )
+    for df in base_devs:
+        if not isinstance(df, dict):
+            continue
+        name = df.get("name")
+        pfid = df.get("product_feature_id")
+        if name and pfid:
+            dev_map[str(name)] = (str(pfid),)
+    return pfs, dev_map
+
+
+def base_user_flows(base_scan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the base scan's ``user_flows`` list (or [])."""
+    uf = base_scan.get("user_flows")
+    return list(uf) if isinstance(uf, list) else []
+
+
+def _uf_member_key(member_flow_ids: list[str]) -> frozenset[str]:
+    """Structural identity of a User-Flow: its set of member flow ids.
+
+    A :class:`UserFlow`'s ``id`` (``UF-001``) is positional and NOT
+    stable across scans, but its ``member_flow_ids`` (flow uuids / names
+    from the deterministic Stage 6.7 rollup) ARE — for unchanged code the
+    same flows roll into the same UF. The frozenset of member ids is thus
+    a stable, deterministic reuse key. No similarity threshold, no magic
+    number, no repo-specific path.
+    """
+    return frozenset(member_flow_ids or [])
+
+
+def base_refinement_by_member_set(
+    base_scan: dict[str, Any],
+) -> dict[frozenset[str], dict[str, Any]]:
+    """Index base-scan REFINED user-flows by their member-flow-set key.
+
+    Only UFs the base scan actually refined (``refined`` truthy) are
+    indexed — an un-refined base UF carries no LLM work worth reusing.
+    The returned dict maps ``frozenset(member_flow_ids)`` → the base UF
+    dict, so a fresh UF with the same member set can adopt the base's
+    journey-grain ``name`` / ``description`` / ``intent`` / ``ui_tier`` /
+    ``acceptance`` without a Haiku call. First occurrence wins on a key
+    collision (Stage 6.7 dedups identical member sets, so collisions are
+    not expected).
+    """
+    out: dict[frozenset[str], dict[str, Any]] = {}
+    for uf in base_user_flows(base_scan):
+        if not isinstance(uf, dict) or not uf.get("refined"):
+            continue
+        key = _uf_member_key(uf.get("member_flow_ids") or [])
+        out.setdefault(key, uf)
+    return out
+
+
+# Fields a refined base UF contributes back to a structurally-identical
+# fresh UF. EXACTLY the fields Stage 6.7b's ``_apply_refinement`` writes —
+# name / description / intent / ui_tier / acceptance. Membership, grain
+# and ordering (member_flow_ids, cross_links, id, resource) are NEVER
+# copied — those come from THIS scan's deterministic Stage 6.7 rollup.
+_REFINED_UF_FIELDS = (
+    "name",
+    "description",
+    "intent",
+    "ui_tier",
+    "acceptance",
+)
+
+
+def apply_base_uf_refinement(
+    uf: "UserFlow",
+    base_uf: dict[str, Any],
+) -> None:
+    """Copy a base UF's refined presentation fields onto a fresh UF.
+
+    Mutates ``uf`` in place: adopts the base scan's journey-grain
+    name/description/intent/ui_tier/acceptance and marks ``refined=True``
+    so downstream consumers treat it as LLM-quality. Membership and the
+    structural ``id``/``member_flow_ids`` of the fresh UF are preserved —
+    only presentation is borrowed.
+    """
+    for fld in _REFINED_UF_FIELDS:
+        if fld in base_uf and base_uf[fld] is not None:
+            setattr(uf, fld, base_uf[fld])
+    uf.refined = True
+
+
+@dataclass
+class UFReusePlan:
+    """Which fresh UFs can reuse base refinement vs need a fresh call.
+
+    Attributes:
+        reused_domains: ``product_feature_id`` domains where EVERY UF
+            matched a refined base twin — these domains skip the Haiku
+            call entirely.
+        rescan_domains: domains with ≥1 UF whose member-set has no
+            refined base twin — these still get one Haiku call.
+        reused_uf_count: number of fresh UFs that adopted base refinement.
+    """
+
+    reused_domains: set[str | None]
+    rescan_domains: set[str | None]
+    reused_uf_count: int
+
+
+def plan_uf_refinement_reuse(
+    user_flows: list["UserFlow"],
+    base_scan: dict[str, Any],
+) -> UFReusePlan:
+    """Apply base refinement to matching UFs; report per-domain reuse.
+
+    For each fresh UF, if a refined base UF shares its member-flow-set,
+    copy the base presentation onto it (via :func:`apply_base_uf_refinement`)
+    and record its domain as reusable; otherwise the UF's domain needs a
+    fresh Haiku call. A domain is fully reusable iff NONE of its UFs fell
+    through. ``run.py`` then restricts Stage 6.7b to ``rescan_domains``.
+
+    Pure except for the in-place presentation copy onto ``user_flows``;
+    membership is never changed.
+    """
+    by_member = base_refinement_by_member_set(base_scan)
+    rescan_domains: set[str | None] = set()
+    domains_seen: set[str | None] = set()
+    reused = 0
+    for uf in user_flows:
+        domain = uf.product_feature_id
+        domains_seen.add(domain)
+        base_uf = by_member.get(_uf_member_key(uf.member_flow_ids))
+        if base_uf is not None:
+            apply_base_uf_refinement(uf, base_uf)
+            reused += 1
+        else:
+            rescan_domains.add(domain)
+    reused_domains = domains_seen - rescan_domains
+    return UFReusePlan(
+        reused_domains=reused_domains,
+        rescan_domains=rescan_domains,
+        reused_uf_count=reused,
+    )
+
+
+if TYPE_CHECKING:
+    from faultline.models.types import UserFlow
+
+
 __all__ = [
     "FeaturePartition",
     "RehydrateResult",
+    "UFReusePlan",
+    "apply_base_uf_refinement",
     "base_features_by_name",
+    "base_product_features",
+    "base_refinement_by_member_set",
+    "base_user_flows",
     "compute_changed_set",
     "filter_unattributed",
+    "is_noop_change",
     "partition_features",
+    "plan_uf_refinement_reuse",
+    "rehydrate_base_product_features",
     "rehydrate_untouched_features",
 ]

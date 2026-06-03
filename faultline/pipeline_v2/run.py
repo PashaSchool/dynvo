@@ -1058,6 +1058,24 @@ def run_pipeline_v2(
         "source": "deterministic-only",
         "haiku_called": False,
     }
+    # ── Incremental Layer-2 reuse decision (--since path ONLY) ─────
+    # Stage 8 (single Sonnet analyst call) + Stage 6.7b (per-domain Haiku
+    # UF refiner) are the second cost ceiling from
+    # finding-incremental-no-llm-savings: they still run over the WHOLE
+    # merged feature set on every incremental. Both are pure functions of
+    # the DETERMINISTIC feature set (Stage 0/1/2), so a NO-OP diff (zero
+    # touched dev features → the Layer-1 set is identical to base) lets us
+    # reuse the base scan's FINAL product_features verbatim and SKIP the
+    # analyst + its deterministic post-passes (rollup, 8.5, hotspots).
+    # On a full / cold scan this is ALWAYS False — Stage 8 below runs
+    # whole-repo, byte-identical (cold-scan rule).
+    incremental_layer2_noop = (
+        not is_full_scan
+        and incremental_base_scan is not None
+        and incremental_gate_meta.get(
+            "incremental_gate_features_touched", -1,
+        ) == 0
+    )
     with StageLogger(run_dir, 8, "marketing_clusterer") as log8:
         s8_client = _stage_8_default_client_factory()
         # Source-breakdown was already computed by Stage 6.5 and stamped
@@ -1075,7 +1093,41 @@ def run_pipeline_v2(
         s8_mode = os.environ.get(
             "FAULTLINE_STAGE_8_MODE", "analyst",
         ).strip().lower() or "analyst"
-        if s8_mode == "analyst":
+        if incremental_layer2_noop:
+            # No developer feature changed → reuse the base scan's FINAL
+            # Layer-2 (already through analyst + rollup + 8.5 + hotspots)
+            # verbatim. Build a Stage8Result from base so the override
+            # block below is unchanged; the deterministic post-passes
+            # (rollup / 8.5 / hotspots) are skipped via the
+            # ``incremental_layer2_noop`` guard since base PFs already
+            # carry attached flows + backfilled members + hotspots.
+            from faultline.pipeline_v2.incremental_gate import (
+                rehydrate_base_product_features as _rehydrate_base_pfs,
+            )
+            from faultline.pipeline_v2.stage_8_marketing_clusterer import (
+                Stage8Result as _Stage8Result,
+            )
+            _reused_pfs, _reused_map = _rehydrate_base_pfs(
+                incremental_base_scan,
+            )
+            stage_8_result = _Stage8Result(
+                product_features=_reused_pfs,
+                dev_to_product_map=_reused_map,
+                telemetry={
+                    "source": "incremental-reuse-base",
+                    "haiku_called": False,
+                    "sonnet_called": False,
+                    "reused_product_features": len(_reused_pfs),
+                    "incremental_layer2_noop": True,
+                },
+                member_flows_map={},
+            )
+            log8.info(
+                "mode=incremental-reuse-base — reused "
+                f"{len(_reused_pfs)} base product features (analyst "
+                "skipped, no-op diff)",
+            )
+        elif s8_mode == "analyst":
             log8.info(f"mode=analyst model={_STAGE_8_ANALYST_MODEL}")
             stage_8_result = run_stage_8_analyst(
                 ctx,
@@ -1710,12 +1762,35 @@ def run_pipeline_v2(
     # rest of the LLM stages; no README, no .ai/specs.
     from faultline.pipeline_v2.stage_6_7b_uf_refiner import refine_user_flows
     with StageLogger(run_dir, 6, "uf_refiner") as log6_7b:
+        # ── Incremental UF-refiner reuse (--since path ONLY) ───────
+        # A UF's refined presentation depends ONLY on its member flows
+        # (deterministic Stage 6.7) + their frontend signal. UFs whose
+        # member-flow-set is unchanged from the base scan adopt the base
+        # refinement verbatim (keyed on frozenset(member_flow_ids) — a
+        # stable structural key, no magic number). Only domains with a
+        # changed UF still get a Haiku call. On a full / cold scan
+        # ``domain_allowlist`` stays None → every domain is refined,
+        # byte-identical to before (cold-scan rule).
+        uf_domain_allowlist: set[str | None] | None = None
+        if not is_full_scan and incremental_base_scan is not None:
+            from faultline.pipeline_v2.incremental_gate import (
+                plan_uf_refinement_reuse as _plan_uf_reuse,
+            )
+            uf_plan = _plan_uf_reuse(user_flows, incremental_base_scan)
+            uf_domain_allowlist = uf_plan.rescan_domains
+            log6_7b.info(
+                "uf_refiner incremental reuse: "
+                f"reused_uf={uf_plan.reused_uf_count} "
+                f"reused_domains={len(uf_plan.reused_domains)} "
+                f"rescan_domains={len(uf_plan.rescan_domains)}",
+            )
         user_flows, uf_refine_telemetry = refine_user_flows(
             user_flows,
             bipartite.flows,
             model=model_id,
             cost_tracker=tracker,
             log=log6_7b,
+            domain_allowlist=uf_domain_allowlist,
         )
         write_stage_artifact(
             ctx.repo_path,

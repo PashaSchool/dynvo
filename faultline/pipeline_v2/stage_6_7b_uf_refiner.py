@@ -420,6 +420,7 @@ def refine_user_flows(
     model: str = DEFAULT_MODEL,
     cost_tracker: CostTracker | None = None,
     log: "StageLogger | None" = None,
+    domain_allowlist: set[str | None] | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Refine ``user_flows`` in place via one Haiku call per domain.
@@ -433,6 +434,15 @@ def refine_user_flows(
         cost_tracker: shared :class:`CostTracker`; cost is recorded
             into it AND summed in the returned telemetry.
         log: optional :class:`StageLogger`.
+        domain_allowlist: INCREMENTAL-PATH gating hook. When ``None``
+            (the default, and ALWAYS on a full / cold scan) every domain
+            is refined — behaviour is byte-identical to before this hook
+            existed. When a set is supplied (only the ``--since`` path
+            passes one), domains NOT in it skip their Haiku call and keep
+            whatever fields they already carry (on the incremental path
+            those are base-scan refinements applied upstream by
+            ``incremental_gate.plan_uf_refinement_reuse``). This is how
+            Stage 6.7b reuse is realised without re-clustering.
         _client_factory: injection hook for the default client builder.
 
     Returns:
@@ -482,8 +492,16 @@ def refine_user_flows(
 
     tracker = cost_tracker or CostTracker(max_cost=None)
     total_cost = 0.0
+    domains_reused = 0
 
     for domain, ufs in sorted(by_domain.items(), key=lambda kv: str(kv[0])):
+        # Incremental reuse: a domain NOT in the allowlist had every UF
+        # matched to a refined base twin upstream — its members are
+        # unchanged, so re-calling Haiku would just reproduce the base
+        # presentation. Skip the call; keep the already-applied fields.
+        if domain_allowlist is not None and domain not in domain_allowlist:
+            domains_reused += 1
+            continue
         members_by_uf = {
             uf.id: _member_flows_for(uf, flows_by_key) for uf in ufs
         }
@@ -544,6 +562,7 @@ def refine_user_flows(
         telemetry["uf_refined"] += refined_here
 
     telemetry["cost_usd"] = round(total_cost, 6)
+    telemetry["domains_reused"] = domains_reused
     telemetry["intent_other_after"] = sum(
         1 for uf in user_flows if uf.intent == "other"
     )
