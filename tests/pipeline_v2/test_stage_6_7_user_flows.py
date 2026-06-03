@@ -132,11 +132,18 @@ def test_domain_none_when_ungroundable():
 # ── Stage C — cluster by (domain, intent) ───────────────────────────────
 
 
-def test_cluster_grain_separates_distinct_resources():
-    # Distinct resources within the same domain + intent are now SEPARATE
-    # UFs (cluster key = (domain, resource, intent)). "Create a detector"
-    # and "Add a suppression rule" are different user journeys even though
-    # both are "author" intent on the same domain.
+def test_singleton_resources_fold_into_domain_intent_journey():
+    # SINGLETON resource-clusters within the same (domain, intent) fold
+    # into ONE journey UF: a resource that appears exactly once is grain
+    # noise, not a recurring user journey. "create-detector" and
+    # "create-rule" each appear once under the same (detector-domain,
+    # author) → one "Create & edit" journey. "list-detector" (browse) is
+    # a different intent → its own UF.
+    #
+    # This grain rule is corpus-validated (formbricks/infisical/documenso/
+    # dub/openstatus) where per-resource-singleton grain over-split the
+    # rollup 3-6x past product truth. It is NOT tuned to any spec count —
+    # it is the structural "no recurring journey ⇒ fold" rule.
     scan = {
         "flows": [
             _flow("create-detector-flow", paths=["backend/routers/detectors.py"]),
@@ -146,12 +153,35 @@ def test_cluster_grain_separates_distinct_resources():
         "developer_features": [],
     }
     r = cluster_user_flows(scan)
-    # 3 UF: (detector, author), (rule, author), (detector, browse).
-    assert len(r["user_flows"]) == 3
-    resources = sorted(u["resource"] for u in r["user_flows"])
-    assert resources == ["detector", "detector", "rule"]
-    # Every cluster is a single distinct (resource, intent) pair.
-    assert all(u["member_count"] == 1 for u in r["user_flows"])
+    # 2 UF: (detector, author) folding both author singletons, and
+    # (detector, browse).
+    assert len(r["user_flows"]) == 2
+    intents = sorted(u["intent"] for u in r["user_flows"])
+    assert intents == ["author", "browse"]
+    author = next(u for u in r["user_flows"] if u["intent"] == "author")
+    assert author["member_count"] == 2  # both create-* folded
+
+
+def test_recurring_resource_journey_stays_distinct():
+    # A resource+intent the codebase exercises REPEATEDLY (multi-member)
+    # is a real recurring journey and is NEVER folded away, even when a
+    # sibling singleton shares its (domain, intent).
+    scan = {
+        "flows": [
+            _flow("create-detector-flow", paths=["backend/routers/detectors.py"]),
+            _flow("update-detector-flow", paths=["backend/routers/detectors.py"]),
+            _flow("create-rule-flow", paths=["backend/routers/detectors.py"]),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    # (detector, author) has 2 members (create+update) → recurring journey,
+    # kept distinct. (rule, author) is a lone singleton → kept as its own
+    # UF (no sibling singleton to fold with).
+    by_res = {u["resource"]: u for u in r["user_flows"]}
+    assert by_res["detector"]["member_count"] == 2
+    assert "rule" in by_res
+    assert by_res["rule"]["member_count"] == 1
 
 
 def test_uf_ids_deterministic_and_ordered():

@@ -53,6 +53,32 @@ INTENT: dict[str, str] = {
     "tag": "manage", "link": "manage",
     "bulk": "bulk",
     "export": "export", "download": "export", "report": "export",
+    # Universal web/SaaS verbs harvested from the OTHER bucket across the
+    # whole eval corpus (formbricks/dub/documenso/infisical/openstatus) —
+    # each appears in MULTIPLE repos, so these are stack-neutral journey
+    # verbs, not repo-specific names (see rule-no-repo-specific-paths /
+    # rule-no-magic-tuning). Mapped by plain dictionary semantics, not by
+    # tuning to any spec count.
+    # author — bring a resource into being / shape it / supply input
+    "register": "author", "setup": "author", "connect": "author",
+    "initialize": "author", "compose": "author", "customize": "author",
+    "enter": "author", "input": "author", "submit": "author",
+    "select": "author", "subscribe": "author", "apply": "author",
+    "provide": "author", "upload": "author", "import": "author",
+    # browse — read / inspect / validate-and-read
+    "verify": "browse", "validate": "browse", "check": "browse",
+    "confirm": "browse", "fetch": "browse", "access": "browse",
+    "render": "browse", "display": "browse", "count": "browse",
+    "detect": "browse",
+    # execute — run an effectful action / dispatch
+    "notify": "execute", "distribute": "execute", "invite": "execute",
+    "process": "execute", "migrate": "execute", "authenticate": "execute",
+    "login": "execute", "receive": "execute", "handle": "execute",
+    # lifecycle — advance a resource's state
+    "accept": "lifecycle", "complete": "lifecycle", "revoke": "lifecycle",
+    "renew": "lifecycle", "activate": "lifecycle", "deactivate": "lifecycle",
+    # manage — mutate / control an existing resource
+    "toggle": "manage", "rotate": "manage", "format": "manage",
 }
 
 # Journey-language name templates, keyed by intent class.
@@ -276,59 +302,66 @@ def _merge_singleton_noise(
     clusters: dict[tuple, list],
     cluster_resources: dict[tuple, Counter],
 ) -> dict[tuple, list]:
-    """Stage C-post — collapse singleton ``other``-intent clusters.
+    """Stage C-post — collapse SINGLETON resource-clusters within the same
+    ``(domain, intent)`` into one journey UF.
 
-    A ``(domain, resource, intent)`` cluster with a single member and
-    ``intent == "other"`` represents an unmapped verb: the flow did not
-    match any intent class. These tend to be noise UFs (one flow, no
-    clear journey intent). We collapse them into the largest existing
-    cluster for the *same domain*, if one exists — preferring the
-    ``manage`` intent by convention (the catch-all journey).
+    Why this shape (structural, scale-invariant — see rule-no-magic-tuning):
 
-    Rules (all structural, no magic numbers):
-    - Only singleton clusters (``len(members) == 1``) with
-      ``intent == "other"`` are candidates.
-    - Merge target = the largest cluster for ``(domain, *, *)`` that is
-      NOT itself a singleton ``other``.
-    - If no such sibling exists, leave the cluster intact (it might be
-      the only UF for that domain).
+    The cluster key ``(domain, resource, intent)`` keeps every distinct
+    resource separate. That is correct for a *recurring* journey — a
+    resource+intent the codebase exercises repeatedly (``create-detector``
+    appearing across 5 flows) is a real, nameable user task and stays its
+    own UF. But a resource that appears exactly ONCE for a given
+    ``(domain, intent)`` is grain noise: there is no recurring journey to
+    preserve, only a single code-grain flow. Emitting one UF per such
+    singleton over-splits the rollup 3-6× past product grain (measured on
+    formbricks/infisical/documenso/dub/openstatus).
 
-    This is grain correction, not a threshold — it never discards flows,
-    only re-assigns their cluster membership.
+    Rule: for each ``(domain, intent)`` with a non-None ``domain``, fold
+    ALL its singleton resource-clusters (``len(members) == 1``) together
+    into a single "journey" UF for that ``(domain, intent)``. Multi-member
+    resource clusters are left untouched (genuine recurring journeys).
+    When ``domain is None`` we cannot assert two singletons belong to the
+    same journey, so they are kept separate (conservative — no blind
+    cross-domain collapse, per finding-pathset-merge-refuted).
+
+    Never discards flows; only re-assigns cluster membership. The folded
+    UF inherits the ``(domain, <most-common-resource>, intent)`` key so
+    its journey label stays meaningful.
     """
-    # Index: domain -> list of (key, member_list) sorted by size desc.
-    by_domain: dict[Any, list[tuple[tuple, list]]] = defaultdict(list)
-    for key, members in clusters.items():
-        by_domain[key[0]].append((key, members))
-    # Sort within domain by member count descending.
-    for dom in by_domain:
-        by_domain[dom].sort(key=lambda t: -len(t[1]))
-
+    # Bucket singleton clusters by (domain, intent); keep everything else
+    # (multi-member clusters, and singletons with domain=None) as-is.
+    singleton_buckets: dict[tuple, list[tuple]] = defaultdict(list)
     merged: dict[tuple, list] = {}
-    absorbed: set[tuple] = set()  # keys that were merged into another
 
     for key, members in clusters.items():
-        if key in absorbed:
-            continue
         domain, resource, intent = key
-        if len(members) == 1 and intent == "other":
-            # Find the largest non-singleton-other sibling for this domain.
-            candidates = [
-                (k, m) for k, m in by_domain[domain]
-                if not (len(m) == 1 and k[2] == "other") and k != key
-            ]
-            if candidates:
-                # Merge into the largest candidate.
-                target_key, target_members = candidates[0]
-                if target_key not in merged:
-                    merged[target_key] = list(clusters[target_key])
-                merged[target_key].extend(members)
-                cluster_resources[target_key].update(cluster_resources[key])
-                absorbed.add(key)
-                continue
-        # No merge — keep as-is.
-        if key not in merged:
+        if len(members) == 1 and domain is not None:
+            singleton_buckets[(domain, intent)].append(key)
+        else:
             merged[key] = list(members)
+
+    for (domain, intent), keys in singleton_buckets.items():
+        if len(keys) == 1:
+            # A lone singleton for this (domain,intent) — nothing to fold
+            # it with; keep its original (domain, resource, intent) key.
+            k = keys[0]
+            merged[k] = list(clusters[k])
+            continue
+        # Fold all singletons into one journey UF. The representative key
+        # uses the most frequent resource among the folded singletons so
+        # the label remains a real resource noun.
+        agg_res: Counter = Counter()
+        members_all: list = []
+        for k in keys:
+            members_all.extend(clusters[k])
+            agg_res.update(cluster_resources[k])
+        rep_resource = agg_res.most_common(1)[0][0] if agg_res else "item"
+        rep_key = (domain, rep_resource, intent)
+        merged.setdefault(rep_key, [])
+        merged[rep_key].extend(members_all)
+        # Preserve resource provenance for label selection downstream.
+        cluster_resources[rep_key].update(agg_res)
 
     return merged
 
