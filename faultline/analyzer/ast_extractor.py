@@ -54,6 +54,25 @@ _RE_EXPRESS_ROUTE = re.compile(
 # ES6 import paths
 _RE_IMPORT = re.compile(r"import\s+.*?from\s+['\"]([^'\"]+)['\"]")
 
+# Top-level LOCAL (non-exported) function/arrow declarations in TS/JS.
+# These are NOT exports — they never enter ``FileSignature.exports`` and
+# therefore never become feature anchors. They are recorded ONLY in
+# ``symbol_ranges`` so the call-graph tracer can resolve same-file
+# handler references such as ``const POST = wrap(postHandler)`` where the
+# real body lives in a local ``postHandler`` symbol. Anchored to line
+# start (MULTILINE) to avoid matching nested / inline closures.
+#   function foo(  /  async function foo(
+_RE_LOCAL_FUNC_DECL = re.compile(
+    r"^(?:async\s+)?function\s*\*?\s*(\w+)\s*[(<]",
+    re.MULTILINE,
+)
+#   const foo = (  /  const foo = async (  /  let foo = function  / arrow
+_RE_LOCAL_ARROW_DECL = re.compile(
+    r"^(?:const|let|var)\s+(\w+)\s*=\s*"
+    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*(?::[^=]+)?=>|[A-Za-z_$][\w$]*\s*=>)",
+    re.MULTILINE,
+)
+
 # Python patterns
 _RE_PYTHON_CLASS = re.compile(r"^class\s+(\w+)", re.MULTILINE)
 _RE_PYTHON_FUNC = re.compile(r"^(?:async\s+)?def\s+([a-zA-Z]\w*)", re.MULTILINE)
@@ -641,10 +660,26 @@ def extract_symbol_ranges(source: str) -> list[SymbolRange]:
             if name:
                 exports.append((line, name, "reexport"))
 
+    # Top-level LOCAL function / arrow declarations. Recorded with
+    # kind="local" so callers can tell them apart from exports. They are
+    # appended AFTER exports so that a name which is BOTH exported and
+    # locally declared keeps its export kind (first-occurrence dedup
+    # below). This is what lets the call-graph tracer resolve handler
+    # references like ``const POST = wrap(postHandler)`` whose body lives
+    # in a non-exported ``postHandler`` symbol. STRUCTURAL + stack-neutral
+    # (no hardcoded wrapper or handler names).
+    for match in _RE_LOCAL_FUNC_DECL.finditer(source):
+        line = source[:match.start()].count("\n") + 1
+        exports.append((line, match.group(1), "local"))
+    for match in _RE_LOCAL_ARROW_DECL.finditer(source):
+        line = source[:match.start()].count("\n") + 1
+        exports.append((line, match.group(1), "local"))
+
     if not exports:
         return []
 
-    # Sort by start_line, deduplicate by name (keep first occurrence)
+    # Sort by start_line, deduplicate by name (keep first occurrence so an
+    # exported symbol's kind wins over a later same-name local match).
     exports.sort(key=lambda x: x[0])
     seen: set[str] = set()
     unique: list[tuple[int, str, str]] = []

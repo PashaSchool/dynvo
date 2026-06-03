@@ -75,6 +75,63 @@ _IDENT_CALL_PATTERN = re.compile(
     r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(",
 )
 
+# A call-expression with its parenthesised argument list, e.g.
+# ``defaultResponderForAppDir(postHandler)`` or
+# ``apiHandler({ GET: getHandler, POST: postHandler })``. Group 1 is the
+# raw argument text between the outermost parens. Used to recover
+# function-REFERENCE arguments (handlers passed by name) that the plain
+# call-pattern above misses because they are not themselves invoked.
+#
+# Non-nesting-aware on purpose (regex): the argument slice may under-
+# capture deeply nested parens, but the downstream resolver only emits an
+# edge when an identifier in the slice resolves to a real LOCAL function
+# symbol, so spurious captures are precision-filtered. This is the
+# structural fix for higher-order wrapper entries common in JS/TS:
+#   export const POST = defaultResponderForAppDir(postHandler)
+#   export default withErrorHandler(handler)
+#   export const GET = apiHandler({ GET: getHandler })
+# No hardcoded wrapper names — any ``f(...refs...)`` whose ref is a local
+# function is unwrapped.
+_CALL_ARGS_PATTERN = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_]*\s*\(([^;]*?)\)",
+    re.DOTALL,
+)
+_BARE_IDENT_PATTERN = re.compile(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\b")
+
+
+def _extract_reference_identifiers(
+    source: str,
+    start_line: int | None,
+    end_line: int | None,
+) -> set[str]:
+    """Collect identifiers passed as REFERENCE ARGUMENTS to calls.
+
+    Recovers higher-order-wrapper handler references: in
+    ``const POST = wrap(postHandler)`` the plain call-pattern finds only
+    ``wrap`` (``postHandler`` is never followed by ``(``). Here we scan
+    the argument lists of every call-expression in the slice and return
+    the bare identifiers found inside them (positional refs AND object-
+    property values like ``{ GET: getHandler }``).
+
+    The caller intersects these against the file's LOCAL function symbols
+    before emitting any edge, so non-handler tokens (literals, type
+    names, the wrapper itself) never produce phantom callees. STRUCTURAL
+    and stack-neutral — no wrapper-name allow-list.
+    """
+    if not source:
+        return set()
+    if start_line is not None and end_line is not None and end_line >= start_line:
+        lines = source.splitlines()
+        slice_ = "\n".join(lines[start_line - 1: end_line])
+    else:
+        slice_ = source
+    refs: set[str] = set()
+    for m in _CALL_ARGS_PATTERN.finditer(slice_):
+        args = m.group(1)
+        for im in _BARE_IDENT_PATTERN.finditer(args):
+            refs.add(im.group(1))
+    return refs
+
 
 @dataclass(frozen=True)
 class CallNode:
@@ -296,6 +353,20 @@ def build_call_graph(
                 src, line_start, line_end,
             )
 
+            # Higher-order WRAPPER unwrap: when the entry/current symbol's
+            # body is ``X = wrap(handler)`` the real logic lives in the
+            # local ``handler`` reference, which is NOT a call-expression
+            # and so is absent from ``call_idents``. Recover identifiers
+            # passed as reference arguments and treat any that resolve to
+            # a LOCAL function symbol as a same-file callee (the true
+            # handler body). Intersection with own_ranges below keeps this
+            # precise; no wrapper-name allow-list (structural, stack-
+            # neutral). See _extract_reference_identifiers docstring.
+            ref_idents = _extract_reference_identifiers(
+                src, line_start, line_end,
+            )
+            same_file_targets = call_idents | ref_idents
+
             # (b.0) Same-file callees — a handler calling a private
             # helper / method defined in its OWN module. Previously
             # unresolved (the resolver only scanned imported files),
@@ -309,17 +380,42 @@ def build_call_graph(
                 sym = rng.name
                 if sym == current.symbol:
                     continue
-                if sym not in call_idents:
-                    continue
+                # Same-file callees match EITHER a real call (``foo()``)
+                # OR a function REFERENCE argument (``wrap(foo)``). The
+                # reference path only fires for symbols that are callable
+                # (local function / arrow / exported function), so a const
+                # data object passed as an arg never becomes a phantom
+                # callee.
+                is_ref_only = sym not in call_idents
+                if is_ref_only:
+                    if sym not in same_file_targets:
+                        continue
+                    if rng.kind not in ("local", "function"):
+                        continue
                 key = (current.file, sym)
                 if key in callees_by_symbol:
                     continue
+                # Wrapper-unwrap depth handling: when the entry symbol's
+                # body is a pure higher-order wrapper (``X = wrap(handler)``)
+                # the referenced LOCAL handler is the TRUE entry body. It
+                # must inherit the entry's cross-file budget so its own
+                # imported callees (repositories / services) still fan out
+                # at depth-1 — otherwise unwrapping merely shifts the real
+                # logic one level deeper than the cross-file cap and the
+                # flow stays single-file. A reference-only callee resolved
+                # AT the entry node (depth 0) therefore keeps depth 0; all
+                # other callees recurse at depth+1 as before.
+                callee_depth = (
+                    current.depth
+                    if (is_ref_only and current.depth == 0)
+                    else current.depth + 1
+                )
                 callees_by_symbol[key] = CallNode(
                     id=_node_id(current.file, sym),
                     file=current.file,
                     symbol=sym,
                     lines=(rng.start_line, rng.end_line),
-                    depth=current.depth + 1,
+                    depth=callee_depth,
                 )
                 same_file_keys.add(key)
 
