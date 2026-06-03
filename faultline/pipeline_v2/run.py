@@ -552,6 +552,104 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 2.5 — incremental LLM gating (--since path ONLY) ─────
+    # Restrict the expensive LLM stages (Stage 3 per-feature flows +
+    # Stage 4 per-cluster residual) to the files this diff touched.
+    # On a FULL / cold scan this block is skipped entirely and the
+    # whole-repo path below is byte-for-byte unchanged (cold-scan rule).
+    #
+    # See ``incremental_gate`` for the rationale: untouched features are
+    # re-hydrated from the base scan AFTER Stage 5 (their flows/metrics
+    # are already final there), so they never pay for Stage 3/4. This is
+    # Option A from ``finding-incremental-no-llm-savings`` — it turns a
+    # ~$0.24 PR scan into a ~$0.01-0.03 one without re-LLM-ing unchanged
+    # code.
+    is_full_scan = since is None
+    incremental_base_scan: dict[str, Any] | None = None
+    incremental_untouched: list[Any] = []
+    incremental_gate_meta: dict[str, Any] = {}
+    if not is_full_scan:
+        from faultline.pipeline_v2.incremental import (
+            load_base_scan as _load_base_scan_early,
+        )
+        from faultline.pipeline_v2.incremental_gate import (
+            compute_changed_set,
+            filter_unattributed,
+            partition_features,
+            rehydrate_untouched_features,
+        )
+
+        if base_scan_path is None:
+            raise ValueError(
+                "--since requires --base-scan-path (engine cannot gate "
+                "LLM stages without a previous scan to reuse).",
+            )
+        incremental_base_scan = _load_base_scan_early(base_scan_path)
+        changed_set = compute_changed_set(
+            repo_path, since or "", incremental_base_scan,
+        )
+        with StageLogger(run_dir, 2, "incremental_gate") as log2_5:
+            partition = partition_features(deterministic_features, changed_set)
+            # Re-hydrate untouched features from the base scan NOW so we
+            # know which ones have a base twin. Features with no base
+            # match (``missing_names``) are routed BACK through Stage 3
+            # rather than dropped — the silent-drop guard.
+            rehydrate = rehydrate_untouched_features(
+                partition.untouched, incremental_base_scan,
+            )
+            missing = set(rehydrate.missing_names)
+            rescan_untouched = [
+                f for f in partition.untouched if f.name in missing
+            ]
+            unattributed_pre = len(unattributed)
+            unattributed = filter_unattributed(unattributed, changed_set)
+            # Stage 3 + Stage 4 see ONLY changed work (+ any untouched
+            # feature we could not re-hydrate) from here on.
+            deterministic_features = partition.touched + rescan_untouched
+            incremental_untouched = rehydrate.features
+            incremental_gate_meta = {
+                "incremental_gate_active": True,
+                "incremental_gate_changed_files": len(changed_set),
+                "incremental_gate_features_touched": len(partition.touched),
+                "incremental_gate_features_untouched": len(partition.untouched),
+                "incremental_gate_features_rehydrated": len(rehydrate.features),
+                "incremental_gate_features_rescanned_missing": len(
+                    rescan_untouched,
+                ),
+                "incremental_gate_unattributed_pre": unattributed_pre,
+                "incremental_gate_unattributed_post": len(unattributed),
+            }
+            log2_5.info(
+                "incremental gate: "
+                f"changed_files={len(changed_set)} "
+                f"features_touched={len(partition.touched)} "
+                f"features_untouched={len(partition.untouched)} "
+                f"rehydrated={len(rehydrate.features)} "
+                f"rescanned_missing={len(rescan_untouched)} "
+                f"residual_paths={unattributed_pre}->{len(unattributed)}",
+            )
+            for nm in rehydrate.missing_names:
+                log2_5.warn(
+                    f"untouched feature {nm!r} not in base scan — "
+                    f"re-scanning via Stage 3",
+                )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=2,
+                stage_name="incremental_gate",
+                payload={
+                    **incremental_gate_meta,
+                    "touched_feature_names": [
+                        f.name for f in partition.touched
+                    ],
+                    "rehydrated_feature_names_sample":
+                        rehydrate.rehydrated_names[:50],
+                    "rescanned_missing_feature_names":
+                        rehydrate.missing_names[:50],
+                },
+                run_dir=run_dir,
+            )
+
     # ── Stage 3 — flow detection (Haiku) ───────────────────────────
     with StageLogger(run_dir, 3, "flows") as log3:
         stage3 = stage_3_flows(
@@ -657,6 +755,30 @@ def run_pipeline_v2(
         validation_drops = stage5_result.validation_drops
         for name, reason in stage5_result.drop_log:
             log5.drop(name, reason)
+        # ── Incremental splice (--since path ONLY) ─────────────────
+        # Re-attach the untouched features re-hydrated from the base
+        # scan (Stage 2.5). They are already final ``Feature`` objects
+        # (flows + metrics intact) and skipped Stage 3/4 entirely — the
+        # cost saving. They join the freshly-scanned touched features
+        # here and flow through the deterministic downstream stages
+        # (5.3 collapse, 5.5 bipartite, 6 metrics, 8 Layer-2) over the
+        # COMPLETE feature set so cross-cutting + Layer 2 stay correct.
+        if not is_full_scan and incremental_untouched:
+            existing_names = {f.name for f in features}
+            spliced = 0
+            for uf in incremental_untouched:
+                if uf.name in existing_names:
+                    # A freshly-scanned touched feature already owns this
+                    # name (rename / split collision) — prefer the fresh
+                    # one; never double-emit.
+                    continue
+                features.append(uf)
+                existing_names.add(uf.name)
+                spliced += 1
+            log5.info(
+                f"incremental splice: re-attached {spliced} untouched "
+                f"feature(s) from base scan (skipped Stage 3/4)",
+            )
         for f in features:
             log5.emit(f.name, "survived naming discipline")
         if any(v > 0 for v in validation_drops.as_dict().values()):
@@ -1365,8 +1487,12 @@ def run_pipeline_v2(
         else _RENAME_THRESHOLD
     )
 
-    base_scan_dict: dict[str, Any] | None = None
-    if base_scan_path is not None:
+    # Reuse the base scan already loaded by the Stage 2.5 incremental
+    # gate (avoids re-parsing a large JSON). Falls back to a fresh load
+    # for callers that pass ``base_scan_path`` for lineage WITHOUT
+    # ``--since`` (full scan with lineage stamping).
+    base_scan_dict: dict[str, Any] | None = incremental_base_scan
+    if base_scan_dict is None and base_scan_path is not None:
         base_scan_dict = _load_base_scan(base_scan_path)
 
     lineage_result = run_stage_6_8(
@@ -1431,6 +1557,8 @@ def run_pipeline_v2(
     scan_meta["lineage_rename_threshold"] = rename_threshold
     scan_meta["is_full_scan"] = is_full_scan
     scan_meta.update(incremental_meta)
+    # Stage 2.5 LLM-gating telemetry (empty dict on a full scan).
+    scan_meta.update(incremental_gate_meta)
 
     # ── Stage 3.5 — flow expansion (Sprint 2, deterministic) ──────
     # Enriches every Flow with {entry, nodes[], edges[], summary}
