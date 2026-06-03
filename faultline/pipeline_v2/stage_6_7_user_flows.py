@@ -123,6 +123,258 @@ _API_PREFIX_RE = re.compile(r"^/api(?:/v\d+)?/([a-z][a-z0-9-]+)")
 _FEAT_PREFIX_RE = re.compile(r"^(?:api|test|v\d+)-")
 
 
+# ───────────────────────────────────────────────────────────────────────
+# Non-journey UF filters (Stage 6.7 rollup ONLY — Layer-1 flows[] untouched)
+#
+# A User Flow is a PRODUCT-grain user JOURNEY (see flow-feature-concept).
+# Shared rendering infrastructure (design-system primitives), per-connector
+# plugin packages, and build/DI/normalization artifacts are NOT journeys, so
+# they must not SEED a UF. The underlying flows[] and developer_features[]
+# are left fully intact at Layer 1 — only `user_flows[]` changes here.
+#
+# All three filters are STRUCTURAL + scale-invariant (path-segment vocab,
+# sibling-count RATIOS, universal infra-token set) — no cal.com paths and no
+# magic counts (rule-no-repo-specific-paths, rule-no-magic-tuning). They are
+# the UF-rollup siblings of the existing _STRUCTURAL_FEATURE_NAMES /
+# _PHANTOM_CLUSTER_NAMES phantom work in Layer 1 / Layer 2.
+# ───────────────────────────────────────────────────────────────────────
+
+# Filter A — design-system / UI-primitive package locations. A directory
+# segment literally named one of these is a shared rendering-infra package,
+# not a product domain. Universal across React/Vue/Svelte design systems.
+_PRIMITIVE_DIR_SEGMENTS = frozenset({
+    "ui", "components", "component", "design-system", "design_system",
+    "primitives", "primitive", "atoms", "atom",
+})
+# UI-primitive vocabulary — basenames (or barrel-export `index`) that name a
+# rendering primitive rather than a feature. Universal HTML/ARIA widget nouns.
+_PRIMITIVE_FILE_VOCAB = frozenset({
+    "index", "button", "buttons", "badge", "avatar", "dialog", "modal",
+    "input", "form", "forms", "checkbox", "radio", "select", "dropdown",
+    "tooltip", "popover", "toast", "alert", "card", "icon", "icons",
+    "label", "switch", "toggle", "tabs", "table", "list", "menu", "skeleton",
+    "spinner", "loader", "divider", "accordion", "slider", "tag", "chip",
+    "breadcrumb", "pagination", "drawer", "sheet", "scrollarea", "separator",
+    "calendar", "datepicker", "textarea", "combobox", "command",
+})
+
+# UI-primitive / widget DOMAIN-TOKEN words. When the resolved domain token is
+# built only from these (``atom``, ``component``, ``data_table`` →
+# {data, table}, ``form_builder`` → {form, builder}, ``embed``/``embeddable``),
+# the "domain" is a rendering-widget package, not a product journey. Universal
+# widget vocabulary — same spirit as _PRIMITIVE_FILE_VOCAB, applied to the
+# domain token rather than a filename.
+_PRIMITIVE_DOMAIN_WORDS = frozenset({
+    "atom", "atoms", "component", "components", "primitive", "primitives",
+    "widget", "widgets", "data", "table", "datatable", "form", "forms",
+    "builder", "embed", "embeddable", "embeds", "icon", "icons", "ui",
+    "layout", "layouts", "theme", "themes", "style", "styles",
+})
+
+# Filter B — plugin / connector ROOT directory names. When many sibling
+# child dirs under one of these each contribute flows, the parent is the
+# integration domain, not each connector child.
+_PLUGIN_ROOT_SEGMENTS = frozenset({
+    "app-store", "app_store", "apps", "integrations", "integration",
+    "connectors", "connector", "plugins", "plugin", "extensions",
+})
+# Canonical journey domain a collapsed plugin-root maps to.
+_PLUGIN_DOMAIN = "integration"
+
+# Filter C — universal build / DI / normalization infra tokens. A domain that
+# resolves to one of these (or to a single char / pure number / bare version)
+# is an extraction artifact, never a user journey. Same spirit as the Layer-1
+# _STRUCTURAL_FEATURE_NAMES set — universal, not repo-specific.
+_INFRA_DOMAIN_TOKENS = frozenset({
+    "di", "dto", "ioc", "container",
+    "util", "utils", "lib", "libs", "library", "libraries",
+    "config", "configs", "configuration", "settings_config",
+    "type", "types", "typing",
+    "const", "constant", "constants", "enum", "enums",
+    "helper", "helpers", "util_helper",
+    "internal", "core", "common", "shared", "base", "misc",
+    "prisma", "schema", "orm", "client",
+    "key", "keys", "command", "commands", "api", "app", "apps",
+    "no", "yes", "automated", "transactional", "platform_library",
+    "internationalization", "i18n", "intl", "locale", "locales",
+})
+_VERSION_TOKEN_RE = re.compile(r"^v\d+$")
+
+# Infra / shared-library / cross-cutting PACKAGE roots. When a flow's PRIMARY
+# anchor lives in one of these packages, the flow is shared infrastructure
+# (email dispatch, i18n, a barrel library) reused by many real journeys — not
+# itself a journey. Universal package-name vocabulary, not repo-specific paths.
+_INFRA_PACKAGE_SEGMENTS = frozenset({
+    "lib", "libs", "library", "libraries", "utils", "util", "helpers",
+    "config", "configs", "types", "typings", "constants", "internal",
+    "prisma", "schema", "orm", "db", "database",
+    "emails", "email", "mail", "mailer", "sms",
+    "i18n", "intl", "internationalization", "locales", "translations",
+    "di", "ioc",
+})
+
+
+# Workspace-root / monorepo marker segments that prefix a package path. The
+# package-defining segment is the FIRST segment AFTER these markers. Universal
+# across pnpm/turbo/nx/cargo/go-workspace layouts — directory names, not paths.
+_WORKSPACE_ROOT_SEGMENTS = frozenset({
+    "packages", "package", "apps", "app", "src", "lib", "libs", "modules",
+    "platform", "internal", "pkg", "crates", "services", "projects",
+})
+
+
+def _path_segments(fp: str) -> list[str]:
+    return [s for s in re.split(r"[\\/]+", fp.lower()) if s]
+
+
+def _package_segments(segs: list[str]) -> list[str]:
+    """Strip leading workspace-root markers so the FIRST remaining segment is
+    the package/top-level-module name. ``packages/ui/components/form/index.ts``
+    → ``['ui', 'components', 'form', 'index.ts']``;
+    ``packages/platform/atoms/index.ts`` → ``['atoms', 'index.ts']``.
+
+    Only leading markers are stripped (a workspace marker that appears deep,
+    e.g. ``features/calendars/components/``, is NOT a package root)."""
+    i = 0
+    while i < len(segs) and segs[i] in _WORKSPACE_ROOT_SEGMENTS:
+        i += 1
+    return segs[i:]
+
+
+def _is_ui_primitive_flow(flow: dict) -> bool:
+    """Filter A — true when the flow's PRIMARY anchor lives in a design-system
+    / UI-primitive PACKAGE (the primitive dir segment is the package root,
+    shallow), not merely references one deep under a feature.
+
+    We key off the PRIMARY anchor (``entry_point_file``, falling back to the
+    first path), never secondary paths: real journeys routinely import shared
+    primitives as *secondary* paths (a booking flow that pulls in
+    ``packages/ui/components/icon/index.ts``) and a feature dir can legitimately
+    nest a ``components/`` folder (``features/calendars/components/DatePicker``).
+    The discriminator is SHALLOWNESS — the primitive segment must be the
+    package-defining segment (first segment after the workspace-root markers),
+    which is the structural signature of a design-system package, not a feature
+    that happens to have a components/ subfolder. Structural dir-segment vocab
+    only — no repo-specific paths (rule-no-repo-specific-paths).
+    """
+    anchor = flow.get("entry_point_file") or ""
+    if not anchor:
+        paths = flow.get("paths") or []
+        anchor = paths[0] if paths else ""
+    if not anchor:
+        return False
+    pkg = _package_segments(_path_segments(anchor))
+    if len(pkg) < 2:
+        return False
+    # Shallow check: a primitive segment appears as the package root (idx 0)
+    # or immediately inside it (idx 1) — i.e. this is a UI-primitive package,
+    # not a feature with a nested components/ subfolder.
+    head = pkg[:2]
+    return any(seg in _PRIMITIVE_DIR_SEGMENTS for seg in head)
+
+
+def _plugin_root_of(flow: dict) -> tuple[str, str] | None:
+    """Return ``(plugin_root_segment, connector_child)`` when the flow's
+    primary anchor lives under a plugin/connector root — i.e. the path
+    contains ``<root>/<child>/...`` where ``<root>`` is a plugin-root name.
+    Used by Filter B to detect, then collapse, per-connector sibling domains.
+    """
+    anchor = flow.get("entry_point_file") or ""
+    if not anchor:
+        paths = flow.get("paths") or []
+        anchor = paths[0] if paths else ""
+    segs = _path_segments(anchor)
+    for i, seg in enumerate(segs[:-1]):
+        if seg in _PLUGIN_ROOT_SEGMENTS:
+            child = segs[i + 1]
+            # The child must be a real connector dir, not a shared `_utils`
+            # / `_components` helper folder under the plugin root.
+            if child and not child.startswith((".", "_")):
+                return seg, child
+    return None
+
+
+def _is_infra_domain(domain: str | None) -> bool:
+    """Filter C — true when the resolved domain token is a build/DI/ORM/infra
+    artifact, a single character, a pure number, or a bare version token."""
+    if not domain:
+        return False
+    d = domain.strip().lower()
+    if not d:
+        return False
+    if len(d) == 1:
+        return True
+    if d.isdigit():
+        return True
+    if _VERSION_TOKEN_RE.match(d):
+        return True
+    if d in _INFRA_DOMAIN_TOKENS:
+        return True
+    # Compound token whose HEAD (last underscore segment) is an infra word is
+    # itself infra — ``platform_util`` → head ``util``, ``platform_enum`` →
+    # head ``enum``. The head noun is the semantic core of the domain token.
+    words = [w for w in re.split(r"[_\-]+", d) if w]
+    if len(words) >= 2 and words[-1] in _INFRA_DOMAIN_TOKENS:
+        return True
+    return False
+
+
+# Lead words that mark a domain token as a UI-component CONTAINER package
+# (``components_card``, ``ui_button``, ``atoms_dialog`` …): the lead names the
+# design-system package, the tail names the specific widget. Such a domain is
+# a rendering-widget package regardless of the tail word.
+_PRIMITIVE_CONTAINER_LEADS = frozenset({
+    "components", "component", "atoms", "atom", "ui", "primitives",
+    "primitive", "widgets", "widget", "designsystem", "design",
+})
+
+
+def _is_primitive_domain(domain: str | None) -> bool:
+    """Filter A (domain-token arm) — true when the resolved domain token names
+    a rendering-widget package rather than a product journey:
+
+    * its LEAD word is a UI-component container (``components_card``,
+      ``ui_button``, ``atoms_dialog``), OR
+    * EVERY word is a UI-primitive / widget word (``atom``, ``component``,
+      ``data_table`` → {data, table}, ``form_builder`` → {form, builder}).
+
+    The all-words rule is conservative — a real domain that merely contains one
+    primitive word (``form_response`` → {form, response}) is NOT dropped because
+    ``response`` is not a primitive word and ``form`` is not a container lead."""
+    if not domain:
+        return False
+    words = [w for w in re.split(r"[_\-]+", domain.strip().lower()) if w]
+    if not words:
+        return False
+    if words[0] in _PRIMITIVE_CONTAINER_LEADS and len(words) >= 2:
+        return True
+    # All-words arm uses the NARROW domain-widget set only. The broader
+    # filename vocab (_PRIMITIVE_FILE_VOCAB) deliberately is NOT unioned here:
+    # several of its entries (``calendar``, ``table``, ``list``, ``menu``,
+    # ``command``, ``tag``) are also legitimate PRODUCT domain nouns, so using
+    # them as domain-token drops would filter real journeys (e.g. cal.com's
+    # ``calendar``). Keep this arm conservative.
+    return all(w in _PRIMITIVE_DOMAIN_WORDS for w in words)
+
+
+def _is_infra_package_flow(flow: dict) -> bool:
+    """Filter C (package-root arm) — true when the flow's PRIMARY anchor lives
+    in a shared-infra PACKAGE (email/i18n/lib/prisma/db/...). These flows are
+    cross-cutting infrastructure reused by real journeys, not journeys
+    themselves. Keyed off the package-root segment (shallow), so a feature that
+    merely imports infra deep in its tree is unaffected."""
+    anchor = flow.get("entry_point_file") or ""
+    if not anchor:
+        paths = flow.get("paths") or []
+        anchor = paths[0] if paths else ""
+    if not anchor:
+        return False
+    pkg = _package_segments(_path_segments(anchor))
+    if len(pkg) < 2:
+        return False
+    return pkg[0] in _INFRA_PACKAGE_SEGMENTS
+
+
 def _singular(word: str) -> str:
     if word.endswith("ies"):
         return word[:-3] + "y"
@@ -336,6 +588,57 @@ def _domain_of(
     return None
 
 
+def _detect_plugin_roots(
+    flows: list[dict],
+    domain_of: dict[int, str | None],
+) -> set[str]:
+    """Filter B detection (structural, scale-invariant).
+
+    A plugin/connector ROOT is a directory under which MANY distinct sibling
+    child dirs each contribute flows — the cal.com ``packages/app-store/<100
+    connectors>`` shape, but also Inngest ``integrations/*``, Backstage
+    ``plugins/*``, etc. We confirm a candidate root only when its sibling
+    children are *predominantly small* per-child domains: the ratio of
+    distinct children to total flows under the root is high (each child owns
+    only a few flows), which is exactly the over-split signature. A handful of
+    large children (a real multi-feature monorepo dir that merely happens to
+    be named ``apps``) does NOT trip it.
+
+    Returns the set of plugin-root path-segments to collapse. Thresholds are
+    RATIOS over the root's own children (rule-no-magic-tuning): a root must
+    have at least a minimal sibling fan-out AND its children must average
+    near-singleton flow counts.
+    """
+    # Gather, per candidate root segment, the children that contribute flows.
+    root_children: dict[str, Counter] = defaultdict(Counter)
+    for idx, f in enumerate(flows):
+        pr = _plugin_root_of(f)
+        if pr is None:
+            continue
+        root, child = pr
+        root_children[root][child] += 1
+
+    roots: set[str] = set()
+    for root, children in root_children.items():
+        n_children = len(children)
+        n_flows = sum(children.values())
+        if n_children < 2 or n_flows == 0:
+            continue
+        # Fan-out signature: a plugin root has MANY children relative to its
+        # flows (avg flows/child small) — i.e. the over-split is per-connector.
+        # A monorepo `apps/` with 2 big apps (web, api) has few children with
+        # many flows each → avg high → NOT collapsed.
+        avg_flows_per_child = n_flows / n_children
+        # Scale-invariant: collapse when the root has a broad sibling fan-out
+        # (children are the dominant unit, each near-singleton). "Broad" =
+        # children outnumber a small structural floor AND children-per-flow
+        # density is high (>= half the flows are distinct children).
+        children_ratio = n_children / n_flows
+        if n_children >= 3 and avg_flows_per_child <= 8 and children_ratio >= 0.25:
+            roots.add(root)
+    return roots
+
+
 def _dedup_by_name(flows: list[dict]) -> list[dict]:
     """Stage A — dedup by canonical NAME (first-seen wins).
 
@@ -493,14 +796,75 @@ def cluster_user_flows(
 
     uniq = _dedup_by_name(flows)
 
-    # Stage B+C — cluster by (domain, resource, intent).
+    # Pre-pass — resolve every surviving flow's code-grain domain ONCE so the
+    # plugin-root detector (Filter B) can see the global sibling fan-out.
+    domain_of: dict[int, str | None] = {
+        idx: _domain_of(f, df_by_name, routes_index) for idx, f in enumerate(uniq)
+    }
+    plugin_roots = _detect_plugin_roots(uniq, domain_of)
+
+    # Stage B+C — cluster by (domain, resource, intent), applying the three
+    # non-journey UF filters. EXCLUDED flows are still in flows[] (Layer 1 is
+    # untouched); they simply do not SEED a user_flow.
+    #   A. UI-primitive flows (design-system rendering infra) → excluded.
+    #   B. Per-connector plugin flows → domain folded to the plugin root.
+    #   C. Infra/DI/version/single-char/numeric artifact domains → excluded.
     # Distinct resources within the same domain + intent are separate UFs
     # (e.g. "create-detector-flow" and "create-suppression-rule-flow" are
     # different user tasks even though both are "author" intent).
     clusters: dict[tuple, list] = defaultdict(list)
     cluster_resources: dict[tuple, Counter] = defaultdict(Counter)
-    for f in uniq:
-        domain = _domain_of(f, df_by_name, routes_index)
+    excluded = {"ui_primitive": 0, "infra_domain": 0}
+    plugin_collapsed = 0
+    for idx, f in enumerate(uniq):
+        domain = domain_of[idx]
+        # Filter B (precedence) — collapse per-connector sibling domains into
+        # one integration journey when the flow sits under a detected plugin
+        # root. Shared plugin-root helper dirs (``app-store/_utils``) also fold.
+        anchor = f.get("entry_point_file") or (
+            (f.get("paths") or [None])[0] or "")
+        in_plugin_root = any(
+            seg in plugin_roots for seg in _path_segments(anchor)
+        )
+        if in_plugin_root:
+            verb, resource = _split_name(f["name"])
+            intent = INTENT.get(verb, "other")
+            key = (_PLUGIN_DOMAIN, resource, intent)
+            clusters[key].append(f)
+            cluster_resources[key][resource] += 1
+            plugin_collapsed += 1
+            continue
+        # A domain is STRONG when it is a real product noun — not None, not a
+        # primitive widget token, not an infra/version/artifact token. A strong
+        # domain means the flow was grounded to a real product surface (usually
+        # via its pfid), so an incidental structural anchor (a barrel file, a
+        # top-level components/ file) must NOT drag the journey out. Anchor-based
+        # exclusions (primitive package, infra package) fire only on WEAK
+        # domains; domain-TOKEN exclusions always fire (they target the domain
+        # itself). This is the load-bearing "never filter a real journey" guard.
+        domain_strong = (
+            domain is not None
+            and not _is_primitive_domain(domain)
+            and not _is_infra_domain(domain)
+        )
+        # Filter A — UI-component-library rendering infra. Primitive-only domain
+        # token always excludes; primitive PACKAGE anchor excludes only when the
+        # domain is weak.
+        if _is_primitive_domain(domain) or (
+            not domain_strong and _is_ui_primitive_flow(f)
+        ):
+            excluded["ui_primitive"] += 1
+            continue
+        # Filter C — infra / DI / version / numeric / artifact DOMAIN tokens are
+        # never journeys (always excludes).
+        if _is_infra_domain(domain):
+            excluded["infra_domain"] += 1
+            continue
+        # Filter C (infra-package arm) — a shared-infra package anchor with NO
+        # strong product domain signal is pure infrastructure.
+        if not domain_strong and _is_infra_package_flow(f):
+            excluded["infra_domain"] += 1
+            continue
         verb, resource = _split_name(f["name"])
         intent = INTENT.get(verb, "other")
         key = (domain, resource, intent)
@@ -551,6 +915,10 @@ def cluster_user_flows(
         "unique_flows": len(uniq),
         "total_flows": len(flows),
         "dedup_dropped": len(flows) - len(uniq),
+        "uf_filtered_ui_primitive": excluded["ui_primitive"],
+        "uf_filtered_infra_domain": excluded["infra_domain"],
+        "uf_plugin_collapsed": plugin_collapsed,
+        "uf_plugin_roots": sorted(plugin_roots),
     }
 
 
@@ -603,6 +971,10 @@ def run_user_flow_rollup(
         "unmapped_domain": sum(1 for uf in user_flows if uf.domain is None),
         "by_intent": dict(sorted(intents.items(), key=lambda kv: -kv[1])),
         "uf_with_cross_links": sum(1 for uf in user_flows if uf.cross_links),
+        "uf_filtered_ui_primitive": result.get("uf_filtered_ui_primitive", 0),
+        "uf_filtered_infra_domain": result.get("uf_filtered_infra_domain", 0),
+        "uf_plugin_collapsed": result.get("uf_plugin_collapsed", 0),
+        "uf_plugin_roots": result.get("uf_plugin_roots", []),
     }
     return user_flows, telemetry
 

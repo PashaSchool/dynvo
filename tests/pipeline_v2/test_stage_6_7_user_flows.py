@@ -280,7 +280,9 @@ def test_enrichment_routes_crosslinks_tests_coverage():
 
 
 def test_coverage_none_when_no_members_have_coverage():
-    scan = {"flows": [_flow("view-x-flow", paths=["backend/routers/xs.py"])],
+    # Use a real product noun ("invoices") so the domain is not a single-char
+    # / widget / infra artifact dropped by the non-journey filters.
+    scan = {"flows": [_flow("view-invoice-flow", paths=["backend/routers/invoices.py"])],
             "developer_features": []}
     r = cluster_user_flows(scan)
     assert r["user_flows"][0]["coverage_pct"] is None
@@ -321,3 +323,271 @@ def test_adapter_stamps_duplicate_rows_via_name_fallback():
     # both rows (incl. the deduped duplicate) carry the same id by name.
     assert flows[0].user_flow_id == flows[1].user_flow_id
     assert flows[0].user_flow_id is not None
+
+
+# ── Non-journey UF filters (Filter A/B/C) ───────────────────────────────
+#
+# A User Flow is a product-grain JOURNEY. Shared UI primitives, per-connector
+# plugin packages, and infra/DI/version artifacts are NOT journeys and must
+# not seed a UF — while flows[] / developer_features[] stay fully intact.
+# All fixtures are synthetic with neutral structural names (no real-repo
+# paths) per rule-no-repo-specific-paths.
+
+
+# Filter A — UI-primitive / design-system rendering infra is excluded.
+
+
+def test_filter_a_ui_primitive_package_barrel_excluded():
+    """A flow whose entry point is a design-system package barrel
+    (``<pkg>/ui/components/form/index.ts``) does not seed a UF."""
+    scan = {
+        "flows": [
+            _flow("input-text-flow", paths=["packages/ui/components/form/index.ts"],
+                  entry_point_file="packages/ui/components/form/index.ts"),
+            _flow("pick-color-flow", paths=["packages/ui/components/form/index.ts"],
+                  entry_point_file="packages/ui/components/form/index.ts"),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_ui_primitive"] == 2
+    assert r["user_flows"] == []
+    # Layer 1 untouched.
+    assert r["total_flows"] == 2
+
+
+def test_filter_a_primitive_package_root_even_with_nonprimitive_file():
+    """An ``atoms`` design-system PACKAGE is excluded even when the specific
+    file is a hook (``platform/atoms/hooks/useAtomsContext.ts``) — the package
+    root segment is the structural signal."""
+    scan = {
+        "flows": [
+            _flow("use-atoms-context-flow",
+                  entry_point_file="packages/platform/atoms/hooks/useAtomsContext.ts",
+                  paths=["packages/platform/atoms/hooks/useAtomsContext.ts"]),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_ui_primitive"] == 1
+    assert r["user_flows"] == []
+
+
+def test_filter_a_does_not_drop_feature_with_nested_components_subfolder():
+    """A real feature whose code lives under ``features/<domain>/components/``
+    (primitive segment is NESTED, not the package root) MUST survive."""
+    scan = {
+        "flows": [
+            _flow("pick-available-date-flow",
+                  entry_point_file="packages/features/calendars/components/DatePicker.tsx",
+                  paths=["packages/features/calendars/components/DatePicker.tsx"]),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_ui_primitive"] == 0
+    assert len(r["user_flows"]) == 1
+
+
+def test_filter_a_secondary_primitive_path_does_not_exclude():
+    """A journey that merely IMPORTS a primitive as a SECONDARY path (its own
+    entry point is a feature file) is not UI-primitive infra and survives."""
+    scan = {
+        "flows": [
+            _flow("configure-event-payment-flow",
+                  entry_point_file="packages/features/bookings/lib/payment.ts",
+                  paths=["packages/features/bookings/lib/payment.ts",
+                         "packages/ui/components/icon/index.ts"]),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_ui_primitive"] == 0
+    assert len(r["user_flows"]) == 1
+
+
+def test_filter_a_primitive_domain_token_excluded():
+    """A flow whose resolved domain token is built only from widget words
+    (``data_table`` → {data, table}) is excluded as a widget package."""
+    scan = {
+        "flows": [
+            _flow("paginate-table-flow",
+                  entry_point_file="packages/features/data-table/lib/parsers.ts",
+                  paths=["packages/features/data-table/lib/parsers.ts"],
+                  primary_feature="data-table"),
+        ],
+        "developer_features": [
+            {"name": "data-table", "product_feature_id": "data-table-widget"},
+        ],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_ui_primitive"] == 1
+    assert r["user_flows"] == []
+
+
+# Filter B — per-connector plugin sibling collapse.
+
+
+def test_filter_b_collapses_many_sibling_connectors_into_integration():
+    """Many sibling child dirs under a plugin root (``app-store/<connector>``)
+    each contributing flows collapse into ONE integration journey domain."""
+    flows = []
+    for conn in ["alpha", "bravo", "charlie", "delta", "echo"]:
+        flows.append(_flow(f"add-{conn}-integration-flow",
+                           entry_point_file=f"packages/app-store/{conn}/api/index.ts",
+                           paths=[f"packages/app-store/{conn}/api/index.ts"]))
+    scan = {"flows": flows, "developer_features": []}
+    r = cluster_user_flows(scan)
+    assert "app-store" in r["uf_plugin_roots"]
+    assert r["uf_plugin_collapsed"] == 5
+    # All five connectors share the single "integration" domain.
+    domains = {uf["domain"] for uf in r["user_flows"]}
+    assert domains == {"integration"}
+
+
+def test_filter_b_does_not_collapse_few_large_sibling_apps():
+    """A monorepo ``apps/`` with only a couple of LARGE children (web, api),
+    each owning many flows, is NOT a plugin root and is not collapsed."""
+    flows = []
+    for i in range(8):
+        flows.append(_flow(f"web-action-{i}-flow",
+                           entry_point_file="apps/web/src/page.tsx",
+                           paths=["apps/web/src/page.tsx"]))
+    for i in range(8):
+        flows.append(_flow(f"api-action-{i}-flow",
+                           entry_point_file="apps/api/src/route.ts",
+                           paths=["apps/api/src/route.ts"]))
+    scan = {"flows": flows, "developer_features": []}
+    r = cluster_user_flows(scan)
+    assert "apps" not in r["uf_plugin_roots"]
+    assert r["uf_plugin_collapsed"] == 0
+
+
+def test_filter_b_shared_plugin_root_helper_also_collapses():
+    """Flows anchored in a plugin-root shared helper dir (``app-store/_utils``)
+    fold to the integration domain once the root is detected."""
+    flows = []
+    for conn in ["alpha", "bravo", "charlie"]:
+        flows.append(_flow(f"add-{conn}-integration-flow",
+                           entry_point_file=f"packages/app-store/{conn}/api/index.ts",
+                           paths=[f"packages/app-store/{conn}/api/index.ts"]))
+    flows.append(_flow("install-app-helper-flow",
+                       entry_point_file="packages/app-store/_utils/installation.ts",
+                       paths=["packages/app-store/_utils/installation.ts"]))
+    scan = {"flows": flows, "developer_features": []}
+    r = cluster_user_flows(scan)
+    assert r["uf_plugin_collapsed"] == 4
+    assert {uf["domain"] for uf in r["user_flows"]} == {"integration"}
+
+
+# Filter C — infra / DI / version / artifact domain tokens dropped.
+
+
+def test_filter_c_infra_di_domain_dropped():
+    scan = {
+        "flows": [
+            _flow("initialize-dependency-container-flow",
+                  entry_point_file="packages/features/di/di.ts",
+                  paths=["packages/features/di/di.ts"], primary_feature="di"),
+        ],
+        "developer_features": [{"name": "di", "product_feature_id": "di"}],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_infra_domain"] == 1
+    assert r["user_flows"] == []
+
+
+def test_filter_c_version_and_numeric_and_single_char_dropped():
+    scan = {
+        "flows": [
+            _flow("create-team-flow",
+                  entry_point_file="apps/api/v1/teams.ts",
+                  paths=["apps/api/v1/teams.ts"], primary_feature="v1"),
+            _flow("calc-billing-flow",
+                  entry_point_file="packages/ee/billing/x.ts",
+                  paths=["packages/ee/billing/x.ts"], primary_feature="0"),
+        ],
+        "developer_features": [
+            {"name": "v1", "product_feature_id": "v1"},
+            {"name": "0", "product_feature_id": "0"},
+        ],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_infra_domain"] == 2
+    assert r["user_flows"] == []
+
+
+def test_filter_c_compound_infra_head_dropped():
+    """A compound domain whose HEAD word is infra (``platform_util`` → head
+    ``util``, resolved via the source-folder heuristic) is dropped; a compound
+    whose head is a real noun (``team_setting``) survives."""
+    scan = {
+        "flows": [
+            _flow("read-permissions-flow",
+                  entry_point_file="src/platform_util/permissions.ts",
+                  paths=["src/platform_util/permissions.ts"]),
+            _flow("manage-team-setting-flow",
+                  entry_point_file="src/team_setting/lib.ts",
+                  paths=["src/team_setting/lib.ts"]),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_infra_domain"] == 1
+    # team_setting (head "setting") survives.
+    assert len(r["user_flows"]) == 1
+    assert r["user_flows"][0]["domain"] == "team_setting"
+
+
+# Real-journey protection guard — a true journey is NEVER filtered.
+
+
+def test_real_journey_never_filtered_by_any_filter():
+    """A real booking journey grounded in a backend router is untouched by all
+    three filters (the load-bearing safety property)."""
+    scan = {
+        "flows": [
+            _flow("create-booking-flow",
+                  entry_point_file="apps/web/app/booking/route.ts",
+                  paths=["apps/web/app/booking/route.ts",
+                         "packages/ui/components/button/index.ts"],
+                  primary_feature="booking"),
+            _flow("cancel-booking-flow",
+                  entry_point_file="backend/routers/bookings.py",
+                  paths=["backend/routers/bookings.py"],
+                  primary_feature="booking"),
+        ],
+        "developer_features": [
+            {"name": "booking", "product_feature_id": "booking-management"},
+        ],
+    }
+    r = cluster_user_flows(scan)
+    assert r["uf_filtered_ui_primitive"] == 0
+    assert r["uf_filtered_infra_domain"] == 0
+    assert r["uf_plugin_collapsed"] == 0
+    domains = {uf["domain"] for uf in r["user_flows"]}
+    assert "booking" in domains
+
+
+def test_filters_do_not_change_total_flows_layer1_intact():
+    """Across a mixed scan, total_flows == input flow count: Layer 1 intact."""
+    flows = [
+        _flow("input-text-flow", entry_point_file="packages/ui/components/form/index.ts",
+              paths=["packages/ui/components/form/index.ts"]),
+        _flow("add-alpha-integration-flow", entry_point_file="packages/app-store/alpha/api/index.ts",
+              paths=["packages/app-store/alpha/api/index.ts"]),
+        _flow("add-bravo-integration-flow", entry_point_file="packages/app-store/bravo/api/index.ts",
+              paths=["packages/app-store/bravo/api/index.ts"]),
+        _flow("add-charlie-integration-flow", entry_point_file="packages/app-store/charlie/api/index.ts",
+              paths=["packages/app-store/charlie/api/index.ts"]),
+        _flow("init-di-flow", entry_point_file="packages/features/di/di.ts",
+              paths=["packages/features/di/di.ts"], primary_feature="di"),
+        _flow("create-booking-flow", entry_point_file="backend/routers/bookings.py",
+              paths=["backend/routers/bookings.py"], primary_feature="booking"),
+    ]
+    scan = {"flows": flows,
+            "developer_features": [{"name": "di", "product_feature_id": "di"},
+                                   {"name": "booking", "product_feature_id": "booking"}]}
+    r = cluster_user_flows(scan)
+    assert r["total_flows"] == 6
+    assert r["unique_flows"] == 6
