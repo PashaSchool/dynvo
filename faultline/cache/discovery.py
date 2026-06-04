@@ -31,6 +31,7 @@ from faultline.llm.cost import CostTracker, deterministic_params
 from faultline.models.types import FeatureMap
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 _MAX_ORPHANS_IN_PROMPT = 80
@@ -242,7 +243,7 @@ def _llm_classify_group(
     try:
         client = Anthropic(api_key=api_key) if api_key else Anthropic()
         response = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}],
             **deterministic_params(model),

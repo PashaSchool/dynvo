@@ -10,6 +10,7 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _MODEL = "claude-haiku-4-5-20251001"
 
@@ -95,7 +96,7 @@ def summarize_with_llm(
     try:
         client = anthropic.Anthropic(api_key=key)
         response = client.messages.create(
-            model=_MODEL,
+            model=gateway_model(_MODEL),
             max_tokens=2048,
             temperature=0,
             system=_SYSTEM_PROMPT,

@@ -11,6 +11,7 @@ import anthropic
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0  # seconds, doubles each attempt
@@ -4125,7 +4126,7 @@ def validate_api_key(api_key: str | None = None) -> tuple[bool, str]:
     client = anthropic.Anthropic(api_key=key)
     try:
         client.messages.create(
-            model=_MODEL,
+            model=gateway_model(_MODEL),
             max_tokens=10,
             temperature=0,
             messages=[{"role": "user", "content": "hi"}],

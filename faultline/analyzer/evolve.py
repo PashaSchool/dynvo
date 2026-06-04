@@ -33,6 +33,7 @@ from faultline.llm.cost import deterministic_params
 from faultline.models.types import FeatureMap, Feature, Flow
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_RETRIES = 2
@@ -533,7 +534,7 @@ def evolve_with_llm(
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.create(
-                model=_MODEL,
+                model=gateway_model(_MODEL),
                 max_tokens=4096,
                 system=_EVOLVE_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],

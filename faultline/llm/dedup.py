@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 DEFAULT_MAX_TOKENS = 8_192
@@ -428,7 +429,7 @@ def dedup_features(
 
     try:
         response = client.messages.create(
-            model=resolved_model,
+            model=gateway_model(resolved_model),
             max_tokens=max_tokens,
             system=_DEDUP_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_payload}],

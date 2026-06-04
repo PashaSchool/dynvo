@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from faultline.models.types import SymbolRange
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 DEFAULT_MAX_TOKENS = 4_096
@@ -379,7 +380,7 @@ def pick_flow_symbols(
     params = deterministic_params(model)
     try:
         response = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             system=_SYSTEM_PROMPT,
             messages=[{
                 "role": "user",

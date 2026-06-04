@@ -82,6 +82,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 # ── Constants ───────────────────────────────────────────────────────────
@@ -476,7 +477,7 @@ def _call_sonnet(
     t0 = time.time()
     try:
         msg = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],

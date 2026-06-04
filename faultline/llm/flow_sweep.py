@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from faultline.llm.sonnet_scanner import DeepScanResult
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 DEFAULT_MAX_TOKENS = 4_096
@@ -326,7 +327,7 @@ def promote_unattached_as_flows(
         params = deterministic_params(model)
         try:
             response = client.messages.create(
-                model=model,
+                model=gateway_model(model),
                 system=_PROMOTE_SYSTEM_PROMPT,
                 messages=[{
                     "role": "user",
@@ -560,7 +561,7 @@ def cross_validate_neighbours(
         params = deterministic_params(model)
         try:
             response = client.messages.create(
-                model=model,
+                model=gateway_model(model),
                 system=_CROSS_VAL_SYSTEM_PROMPT,
                 messages=[{
                     "role": "user",

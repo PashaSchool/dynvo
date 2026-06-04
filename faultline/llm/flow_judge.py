@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from faultline.llm.sonnet_scanner import DeepScanResult
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 DEFAULT_MAX_TOKENS = 8_192
@@ -742,7 +743,7 @@ def re_judge_with_signals(
     params = deterministic_params(model)
     try:
         response = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             system=_SYSTEM_PROMPT,
             messages=[{
                 "role": "user",
@@ -876,7 +877,7 @@ def judge_flow_attribution(
         params = deterministic_params(model)
         try:
             response = client.messages.create(
-                model=model,
+                model=gateway_model(model),
                 system=_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": _build_prompt(batch, features)}],
                 max_tokens=DEFAULT_MAX_TOKENS,
