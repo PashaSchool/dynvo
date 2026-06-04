@@ -722,6 +722,7 @@ def run_pipeline_v2(
             log4.warn(w)
         log4.info(
             f"cost_usd={stage4.cost_usd:.4f} llm_calls={stage4.llm_calls} "
+            f"cache_hits={stage4.cache_hits} "
             f"clusters_processed={stage4.clusters_processed}/"
             f"{stage4.clusters_total} "
             f"saturation_stopped={stage4.saturation_stopped}",
@@ -734,6 +735,7 @@ def run_pipeline_v2(
                 "residual_feature_count": len(residual_features),
                 "cost_usd": stage4.cost_usd,
                 "llm_calls": stage4.llm_calls,
+                "cache_hits": stage4.cache_hits,
                 "warnings": stage4.warnings,
                 "clusters_total": stage4.clusters_total,
                 "clusters_processed": stage4.clusters_processed,

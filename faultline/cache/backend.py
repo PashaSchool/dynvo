@@ -59,6 +59,12 @@ class CacheKind(str, Enum):
 
     ASSIGNMENT = "assignment"
     LLM_NAME = "llm-name"
+    # Stage 4 residual fallback: one entry per residual cluster, keyed on
+    # the content hash of the cluster's LLM input (system prompt + cluster
+    # signature + sample paths + size + canonical model + cache version).
+    # Content-keyed (same input → same answer) so this is a deterministic
+    # short-circuit, not per-repo memory — compliant with rule-cold-scan.
+    LLM_RESIDUAL = "llm-residual"
     FLOW_VERDICT = "flow-verdict"
     FLOW_SYMBOL = "flow-symbol"
     MARKETING = "marketing"
@@ -139,6 +145,8 @@ class FilesystemCacheBackend:
         safe_key = _safe_component(key)
         if kind == CacheKind.LLM_NAME.value:
             return self._base / "llm-cache" / f"{safe_key}.json"
+        if kind == CacheKind.LLM_RESIDUAL.value:
+            return self._base / "llm-cache" / "residual" / f"{safe_key}.json"
         if kind == CacheKind.MARKETING.value:
             return self._base / "marketing-cache" / f"{safe_key}.json"
         if kind == CacheKind.ASSIGNMENT.value:
@@ -160,6 +168,7 @@ class FilesystemCacheBackend:
         """
         return kind in {
             CacheKind.LLM_NAME.value,
+            CacheKind.LLM_RESIDUAL.value,
             CacheKind.MARKETING.value,
             CacheKind.BLAME.value,
         }
