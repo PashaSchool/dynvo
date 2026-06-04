@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from faultline.llm.cost import CostTracker, deterministic_params
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.llm.sonnet_scanner import DeepScanResult
 
 logger = logging.getLogger(__name__)
@@ -485,21 +486,34 @@ def _load_cache(
     repo_slug: str,
     feature_hash: str,
     flow_hash: str | None = None,
+    *,
+    cache_backend: "CacheBackend | None" = None,
 ) -> dict[str, dict[str, Any]]:
     """Read cached verdicts for this repo.
 
     Sprint 15 — invalidates on EITHER feature-set or flow-set change.
     The flow hash is optional for backwards-compat; legacy cache files
     without it count as invalid and force a full re-judge.
+
+    When ``cache_backend`` is supplied it is the source of truth (the
+    full payload dict is stored under ``(flow-verdict, repo_slug)``);
+    otherwise the legacy ``cache_dir`` filesystem path is used. The
+    cache KEY (``repo_slug``) + invalidation hashes are identical either
+    way.
     """
-    if cache_dir is None:
+    if cache_backend is not None:
+        data = cache_backend.get("flow-verdict", repo_slug)
+    elif cache_dir is not None:
+        path = _cache_path(cache_dir, repo_slug)
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    else:
         return {}
-    path = _cache_path(cache_dir, repo_slug)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+    if not isinstance(data, dict):
         return {}
     if data.get("version") != _CACHE_VERSION:
         return {}
@@ -517,20 +531,26 @@ def _save_cache(
     feature_hash: str,
     verdict_map: dict[str, dict[str, Any]],
     flow_hash: str | None = None,
+    *,
+    cache_backend: "CacheBackend | None" = None,
 ) -> None:
-    """Persist verdicts. Creates parent directory if needed; silently
-    swallows IO errors so a broken cache never blocks a scan."""
+    """Persist verdicts. Routes through ``cache_backend`` when supplied,
+    else the legacy ``cache_dir`` filesystem path. Silently swallows IO
+    errors so a broken cache never blocks a scan."""
+    payload = {
+        "version": _CACHE_VERSION,
+        "feature_set_hash": feature_hash,
+        "flow_set_hash": flow_hash or "",
+        "verdicts": verdict_map,
+    }
+    if cache_backend is not None:
+        cache_backend.set("flow-verdict", repo_slug, payload)
+        return
     if cache_dir is None:
         return
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
         path = _cache_path(cache_dir, repo_slug)
-        payload = {
-            "version": _CACHE_VERSION,
-            "feature_set_hash": feature_hash,
-            "flow_set_hash": flow_hash or "",
-            "verdicts": verdict_map,
-        }
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
     except OSError as exc:
         logger.warning("flow_judge: cache save failed (%s)", exc)
@@ -771,6 +791,7 @@ def judge_flow_attribution(
     client: _AnthropicLike | None = None,
     cache_dir: Path | None = DEFAULT_CACHE_DIR,
     repo_slug: str | None = None,
+    cache_backend: "CacheBackend | None" = None,
 ) -> int:
     """Run Haiku judge over every flow and apply high-confidence
     moves in place. Returns the count of moves made.
@@ -802,7 +823,10 @@ def judge_flow_attribution(
         repo_slug = _slugify_repo(getattr(result, "repo_path", "") or "")
     feature_hash = _feature_set_hash(features)
     flow_hash = _flow_set_hash(flows)  # Sprint 15
-    cache = _load_cache(cache_dir, repo_slug, feature_hash, flow_hash)
+    cache = _load_cache(
+        cache_dir, repo_slug, feature_hash, flow_hash,
+        cache_backend=cache_backend,
+    )
 
     cached_verdicts: list[FlowVerdict] = []
     fresh_flows: list[FlowEntry] = []
@@ -895,12 +919,15 @@ def judge_flow_attribution(
                 all_verdicts.append(v)
 
     # Persist cache: keep cached entries + add fresh ones
-    if cache_dir is not None:
+    if cache_dir is not None or cache_backend is not None:
         merged: dict[str, dict[str, Any]] = dict(cache)  # start with old hits
         for v in fresh_verdicts:
             key = f"{v.current_owner}::{v.flow_name}"
             merged[key] = _verdict_to_dict(v)
-        _save_cache(cache_dir, repo_slug, feature_hash, merged, flow_hash)
+        _save_cache(
+            cache_dir, repo_slug, feature_hash, merged, flow_hash,
+            cache_backend=cache_backend,
+        )
 
     moves = _apply_verdicts(result, all_verdicts)
     if moves:

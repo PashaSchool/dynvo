@@ -69,8 +69,10 @@ def stage_artifact_dir(repo_path: Path | str) -> Path:
     ``write_stage_artifact(..., run_dir=ctx.run_dir)``) so the
     snapshot lands under the run-id subdir.
     """
+    from faultline.cache.paths import faultline_base_dir
+
     slug = _repo_slug(repo_path)
-    target = Path.home() / ".faultline" / "logs" / slug
+    target = faultline_base_dir() / "logs" / slug
     target.mkdir(parents=True, exist_ok=True)
     return target
 

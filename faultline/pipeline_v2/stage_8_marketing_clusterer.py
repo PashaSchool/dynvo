@@ -66,6 +66,7 @@ from faultline.analyzer.marketing_fetcher import (
 from faultline.llm.cost import CostTracker, deterministic_params
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.models.types import Feature
     from faultline.pipeline_v2.run_logger import StageLogger
     from faultline.pipeline_v2.stage_0_intake import ScanContext
@@ -76,10 +77,11 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ───────────────────────────────────────────────────────────
 
-# Where we keep marketing-page extractions to avoid hammering public
-# sites on consecutive scans. Same shape as ``~/.faultline/llm-cache/``
-# — content-keyed by slug + 7-day TTL.
-_MARKETING_CACHE_DIR = Path.home() / ".faultline" / "marketing-cache"
+# Marketing-page extractions are cached (content-keyed by slug, 7-day
+# TTL) through the pluggable cache backend under the ``marketing`` kind
+# so consecutive scans don't hammer public sites. The on-disk layout
+# (``<base>/marketing-cache/<slug>.json``) is preserved by
+# ``FilesystemCacheBackend``.
 
 # Conservative TTL — marketing pages change rarely; 7 days lets daily
 # CI scans of the same repo stay fast.
@@ -125,19 +127,29 @@ class Stage8Result:
 # ── Cache helpers ───────────────────────────────────────────────────────
 
 
-def _cache_path(slug: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9._\-]", "_", slug or "unknown")
-    return _MARKETING_CACHE_DIR / f"{safe}.json"
+def _cache_key(slug: str) -> str:
+    """The ``marketing`` cache key — sanitised slug, unchanged from the
+    legacy ``marketing-cache/<slug>.json`` filename so dev caches hit."""
+    return re.sub(r"[^A-Za-z0-9._\-]", "_", slug or "unknown")
 
 
-def _load_cached_taxonomy(slug: str) -> MarketingTaxonomy | None:
+def _resolve_marketing_backend(
+    cache_backend: "CacheBackend | None",
+) -> "CacheBackend":
+    if cache_backend is not None:
+        return cache_backend
+    from faultline.cache import get_cache_backend
+
+    return get_cache_backend()
+
+
+def _load_cached_taxonomy(
+    slug: str, *, cache_backend: "CacheBackend | None" = None,
+) -> MarketingTaxonomy | None:
     """Return the cached taxonomy if present + fresh, else None."""
-    path = _cache_path(slug)
-    if not path.is_file():
-        return None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    backend = _resolve_marketing_backend(cache_backend)
+    raw = backend.get("marketing", _cache_key(slug))
+    if not isinstance(raw, dict):
         return None
     fetched_at = raw.get("fetched_at_epoch")
     if not isinstance(fetched_at, (int, float)):
@@ -157,22 +169,20 @@ def _load_cached_taxonomy(slug: str) -> MarketingTaxonomy | None:
     )
 
 
-def _write_cache(taxonomy: MarketingTaxonomy) -> None:
+def _write_cache(
+    taxonomy: MarketingTaxonomy, *, cache_backend: "CacheBackend | None" = None,
+) -> None:
     """Persist taxonomy to cache. Failures are logged + swallowed."""
-    try:
-        _MARKETING_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        path = _cache_path(taxonomy.repo_slug)
-        path.write_text(json.dumps({
-            "repo_slug": taxonomy.repo_slug,
-            "source_url": taxonomy.source_url,
-            "fetched_at": taxonomy.fetched_at,
-            "fetched_at_epoch": time.time(),
-            "product_features": list(taxonomy.product_features),
-            "confidence": taxonomy.confidence,
-            "notes": taxonomy.notes,
-        }, indent=2), encoding="utf-8")
-    except OSError as exc:
-        logger.debug("stage_8: cache write failed: %s", exc)
+    backend = _resolve_marketing_backend(cache_backend)
+    backend.set("marketing", _cache_key(taxonomy.repo_slug), {
+        "repo_slug": taxonomy.repo_slug,
+        "source_url": taxonomy.source_url,
+        "fetched_at": taxonomy.fetched_at,
+        "fetched_at_epoch": time.time(),
+        "product_features": list(taxonomy.product_features),
+        "confidence": taxonomy.confidence,
+        "notes": taxonomy.notes,
+    })
 
 
 # ── Marketing fetch (cached) ────────────────────────────────────────────
@@ -242,6 +252,7 @@ def fetch_marketing_taxonomy(
     *,
     cache_ttl_seconds: int = _CACHE_TTL_SECONDS,
     use_cache: bool = True,
+    cache_backend: "CacheBackend | None" = None,
 ) -> MarketingTaxonomy | None:
     """Top-level entry — discover + fetch + parse, with caching.
 
@@ -265,7 +276,7 @@ def fetch_marketing_taxonomy(
     like "Turn X into Y").
     """
     if use_cache:
-        cached = _load_cached_taxonomy(repo_slug)
+        cached = _load_cached_taxonomy(repo_slug, cache_backend=cache_backend)
         if cached is not None:
             return cached
 
@@ -384,7 +395,7 @@ def fetch_marketing_taxonomy(
         ),
     )
     if use_cache:
-        _write_cache(taxonomy)
+        _write_cache(taxonomy, cache_backend=cache_backend)
     return taxonomy
 
 
@@ -674,6 +685,9 @@ def run_stage_8(
     folded into ``scan_meta.stage_8``.
     """
     slug = ctx.repo_path.name
+    # Cache routes through the pluggable backend threaded on the context
+    # (None → the call helpers fall back to the env-selected default).
+    cache_backend = getattr(ctx, "cache_backend", None)
     base_map: dict[str, tuple[str, ...]] = dict(dev_to_product_map_pre or {})
 
     # ── 1. Customer YAML short-circuit ──
@@ -709,10 +723,12 @@ def run_stage_8(
 
     # ── 2. Marketing + Haiku ──
     # Try cache first to surface telemetry; if hit, no fetch happens.
-    cached_before = _load_cached_taxonomy(slug)
+    cached_before = _load_cached_taxonomy(slug, cache_backend=cache_backend)
     taxonomy: MarketingTaxonomy | None = None
     if client is not None:
-        taxonomy = fetch_marketing_taxonomy(ctx.repo_path, slug)
+        taxonomy = fetch_marketing_taxonomy(
+            ctx.repo_path, slug, cache_backend=cache_backend,
+        )
 
     if (
         client is not None

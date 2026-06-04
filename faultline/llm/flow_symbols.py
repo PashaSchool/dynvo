@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 from faultline.llm.cost import CostTracker, deterministic_params
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.llm.sonnet_scanner import DeepScanResult
     from faultline.models.types import SymbolRange
 
@@ -284,15 +285,29 @@ def _cache_path(cache_dir: Path, repo_slug: str) -> Path:
 def _load_cache(
     cache_dir: Path | None,
     repo_slug: str,
+    *,
+    cache_backend: "CacheBackend | None" = None,
 ) -> dict[str, dict[str, Any]]:
-    if cache_dir is None:
+    """Read cached per-flow symbol picks.
+
+    When ``cache_backend`` is supplied it is the source of truth (full
+    payload stored under ``(flow-symbol, repo_slug)``); otherwise the
+    legacy ``cache_dir`` filesystem path is used. Key + version gate are
+    identical either way.
+    """
+    if cache_backend is not None:
+        data = cache_backend.get("flow-symbol", repo_slug)
+    elif cache_dir is not None:
+        path = _cache_path(cache_dir, repo_slug)
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    else:
         return {}
-    path = _cache_path(cache_dir, repo_slug)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+    if not isinstance(data, dict):
         return {}
     if data.get("version") != _CACHE_VERSION:
         return {}
@@ -304,15 +319,20 @@ def _save_cache(
     cache_dir: Path | None,
     repo_slug: str,
     flow_map: dict[str, dict[str, Any]],
+    *,
+    cache_backend: "CacheBackend | None" = None,
 ) -> None:
+    payload = {
+        "version": _CACHE_VERSION,
+        "flows": flow_map,
+    }
+    if cache_backend is not None:
+        cache_backend.set("flow-symbol", repo_slug, payload)
+        return
     if cache_dir is None:
         return
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": _CACHE_VERSION,
-            "flows": flow_map,
-        }
         _cache_path(cache_dir, repo_slug).write_text(
             json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
         )
@@ -586,6 +606,7 @@ def resolve_flow_symbols(
     cache_dir: Path | None = DEFAULT_CACHE_DIR,
     repo_slug: str | None = None,
     candidate_builder: CandidateBuilder | None = None,
+    cache_backend: "CacheBackend | None" = None,
 ) -> int:
     """Walk every flow, ask Haiku which symbols participate, write
     results into ``result.flow_participants``.
@@ -604,7 +625,7 @@ def resolve_flow_symbols(
     if candidate_builder is None:
         candidate_builder = default_candidate_builder(source_loader)
 
-    cache = _load_cache(cache_dir, repo_slug)
+    cache = _load_cache(cache_dir, repo_slug, cache_backend=cache_backend)
     new_cache: dict[str, dict[str, Any]] = dict(cache)
 
     populated = 0
@@ -661,7 +682,7 @@ def resolve_flow_symbols(
             )
             populated += 1
 
-    _save_cache(cache_dir, repo_slug, new_cache)
+    _save_cache(cache_dir, repo_slug, new_cache, cache_backend=cache_backend)
     return populated
 
 

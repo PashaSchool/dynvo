@@ -278,6 +278,7 @@ def run_pipeline_v2(
     since: str | None = None,
     base_scan_path: Path | str | None = None,
     lineage_jaccard_threshold: float | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -319,8 +320,17 @@ def run_pipeline_v2(
     # cost is the FULL LLM bill for this scan.
     tracker = CostTracker(max_cost=None)
 
+    # ── Cache backend — constructed once, threaded via ctx ──────────
+    # Env ``FAULTLINES_CACHE_BACKEND`` selects fs (default) or a lazily
+    # injected DB backend (hosted workers). NOT a global singleton — the
+    # instance lives on the ScanContext and flows to every cache site.
+    from faultline.cache import get_cache_backend
+
+    cache_backend = get_cache_backend(org_id=org_id)
+
     # ── Stage 0 — intake ────────────────────────────────────────────
     ctx = stage_0_intake(repo_path, days=days, run_id=run_id)
+    ctx.cache_backend = cache_backend
     run_dir = ctx.run_dir
     assert run_dir is not None, "Stage 0 must populate ctx.run_dir"
 
@@ -1822,6 +1832,12 @@ def run_pipeline_v2(
             engine_version=_engine_version,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
+
+    # ── Flush any buffered cache writes (no-op for fs backend) ──────
+    try:
+        cache_backend.flush()
+    except Exception as exc:  # noqa: BLE001 — never fail a scan on cache flush
+        logger.warning("pipeline_v2: cache flush failed: %s", exc)
 
     # ── Atomically point `latest` at this run ──────────────────────
     update_latest_symlink(ctx.repo_path, ctx.run_id or "")
