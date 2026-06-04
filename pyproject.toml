@@ -156,13 +156,15 @@ members = ["faultlines-mcp"]
 # Runtime data (stack patterns + dependency-anchors.yaml) ships INSIDE the
 # package at faultline/pipeline_v2/data/** and is loaded hermetically via
 # importlib.resources (see faultline/pipeline_v2/data/__init__.py). This
-# force-include guarantees the non-.py YAML files land in the wheel even if
-# hatchling's default file selection changes. It replaces the old
-# `"eval" = "eval"` band-aid that put data at site-packages/eval/** —
-# the source of bug-featuremap-eval-not-in-wheel (extractors silently
-# no-op'd in the wheel when the eval/ sibling was absent).
-[tool.hatch.build.targets.wheel.force-include]
-"faultline/pipeline_v2/data" = "faultline/pipeline_v2/data"
+# Runtime data (dependency-anchors.yaml + stacks/*.yaml) ships INSIDE the
+# package via hatchling's default package discovery (`packages = ["faultline"]`),
+# which now includes the non-.py files under faultline/**. The previous
+# force-include here was redundant AND fatal: it re-added every data file at
+# the same archive path, so hatchling aborted with a duplicate-file error.
+# (Replaced the even older `"eval" = "eval"` band-aid — see
+# bug-featuremap-eval-not-in-wheel.) A wheel-content assertion lives in
+# tests/test_wheel_hermetic.py; verify the YAML is present after any
+# packaging change.
 
 [tool.pytest.ini_options]
 addopts = [
