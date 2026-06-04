@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faultlines-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for the Faultlines feature map — serve precise codebase context to AI coding agents (Cursor, Claude Code, Cline, Aider) instead of having them grep the repo."
 readme = "README.md"
 license = "MIT"
