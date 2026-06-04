@@ -195,26 +195,159 @@ def test_singleton_resources_fold_into_domain_intent_journey():
     assert author["member_count"] == 2  # both create-* folded
 
 
-def test_recurring_resource_journey_stays_distinct():
-    # A resource+intent the codebase exercises REPEATEDLY (multi-member)
-    # is a real recurring journey and is NEVER folded away, even when a
-    # sibling singleton shares its (domain, intent).
+def test_distinct_domain_journeys_stay_distinct():
+    # Distinct DOMAINS render distinct names ("Create & edit detectors" vs
+    # "Create & edit rules") and so are never merged — the name-collision
+    # merge only folds clusters that already render to the SAME name.
     scan = {
         "flows": [
             _flow("create-detector-flow", paths=["backend/routers/detectors.py"]),
             _flow("update-detector-flow", paths=["backend/routers/detectors.py"]),
-            _flow("create-rule-flow", paths=["backend/routers/detectors.py"]),
+            _flow("create-rule-flow", paths=["backend/routers/rules.py"]),
         ],
         "developer_features": [],
     }
     r = cluster_user_flows(scan)
-    # (detector, author) has 2 members (create+update) → recurring journey,
-    # kept distinct. (rule, author) is a lone singleton → kept as its own
-    # UF (no sibling singleton to fold with).
-    by_res = {u["resource"]: u for u in r["user_flows"]}
-    assert by_res["detector"]["member_count"] == 2
-    assert "rule" in by_res
-    assert by_res["rule"]["member_count"] == 1
+    by_dom = {u["domain"]: u for u in r["user_flows"]}
+    assert by_dom["detector"]["member_count"] == 2  # create+update detector
+    assert by_dom["rule"]["member_count"] == 1
+    names = sorted(u["name"] for u in r["user_flows"])
+    assert names == ["Create & edit detectors", "Create & edit rules"]
+
+
+def test_same_name_multimember_clusters_merge_into_one_uf():
+    # REGRESSION (cal.com duplicate-User-Flow bug): the UF NAME is derived
+    # from (domain, intent) when domain is present, so multiple multi-member
+    # (domain, resource, intent) clusters sharing the same (domain, intent)
+    # emit the SAME human name ("Browse & filter organizations" ×11 on
+    # cal.com). _merge_singleton_noise only folds 1-member clusters, leaving
+    # the multi-member collisions. _merge_same_name_clusters closes that gap:
+    # two UFs a user cannot tell apart (identical name + domain) are one
+    # journey at product grain. Distinct INTENTS render distinct names and
+    # are never merged.
+    #
+    # Fixture: one domain (organization, via pfid), three browse resources
+    # each with 2 members (so none is a singleton — _merge_singleton_noise
+    # cannot touch them) + one author resource. All three browse clusters
+    # render to "Browse & filter organizations" and must collapse to ONE.
+    devs = [{"name": "org-feat", "product_feature_id": "organizations-&-multi-team-management"}]
+    scan = {
+        "flows": [
+            _flow("list-booking-flow", primary_feature="org-feat"),
+            _flow("view-booking-flow", primary_feature="org-feat"),
+            _flow("list-calendar-flow", primary_feature="org-feat"),
+            _flow("view-calendar-flow", primary_feature="org-feat"),
+            _flow("list-webhook-flow", primary_feature="org-feat"),
+            _flow("view-webhook-flow", primary_feature="org-feat"),
+            _flow("create-booking-flow", primary_feature="org-feat"),
+            _flow("update-booking-flow", primary_feature="org-feat"),
+        ],
+        "developer_features": devs,
+    }
+    r = cluster_user_flows(scan)
+    names = [u["name"] for u in r["user_flows"]]
+    # exactly one browse UF and one author UF — no name appears twice
+    assert names.count("Browse & filter organizations") == 1
+    assert names.count("Create & edit organizations") == 1
+    assert len(names) == len(set(names)), f"duplicate UF names: {names}"
+    browse = next(u for u in r["user_flows"] if u["intent"] == "browse")
+    # all 6 browse members (3 resources × 2) folded into the one browse UF
+    assert browse["member_count"] == 6
+
+
+def test_same_name_merge_is_recall_safe_members_conserved():
+    # The merge only re-buckets members — it never drops a flow. Total member
+    # count and the set of member_flow_ids are conserved (recall-safe).
+    devs = [{"name": "org-feat", "product_feature_id": "organizations-&-multi-team-management"}]
+    flows = [
+        _flow("list-booking-flow", primary_feature="org-feat"),
+        _flow("view-booking-flow", primary_feature="org-feat"),
+        _flow("list-calendar-flow", primary_feature="org-feat"),
+        _flow("view-calendar-flow", primary_feature="org-feat"),
+    ]
+    scan = {"flows": flows, "developer_features": devs}
+    r = cluster_user_flows(scan)
+    total_members = sum(u["member_count"] for u in r["user_flows"])
+    assert total_members == 4
+    all_ids = {mid for u in r["user_flows"] for mid in u["member_flow_ids"]}
+    assert all_ids == {f["uuid"] for f in flows}
+    # every flow got a UF assignment
+    assert len(r["flow_to_uf"]) == 4
+
+
+def test_same_name_merge_unions_cross_links():
+    # When two same-name clusters merge, their cross_links union. Both browse
+    # resources (booking, calendar) share the org domain via pfid (no router
+    # path, so Signal 3 head-noun "organization" is the domain for both →
+    # identical "Browse & filter organizations" name → collision). One cluster
+    # carries a billing cross-link, the other an email cross-link; the merged
+    # browse UF must carry BOTH (own pfid excluded).
+    devs = [
+        {"name": "org-feat", "product_feature_id": "organizations-&-multi-team-management"},
+        {"name": "billing", "product_feature_id": "billing-&-subscriptions"},
+        {"name": "email", "product_feature_id": "email-notifications"},
+    ]
+    scan = {
+        "flows": [
+            _flow("list-booking-flow", primary_feature="org-feat",
+                  secondary_features=["billing"]),
+            _flow("view-booking-flow", primary_feature="org-feat"),
+            _flow("list-calendar-flow", primary_feature="org-feat",
+                  secondary_features=["email"]),
+            _flow("view-calendar-flow", primary_feature="org-feat"),
+        ],
+        "developer_features": devs,
+    }
+    r = cluster_user_flows(scan)
+    browse = [u for u in r["user_flows"] if u["intent"] == "browse"]
+    assert len(browse) == 1, f"expected 1 merged browse UF, got {len(browse)}"
+    b = browse[0]
+    assert b["member_count"] == 4
+    assert "billing-&-subscriptions" in b["cross_links"]
+    assert "email-notifications" in b["cross_links"]
+    # own product feature is never a cross-link
+    assert "organizations-&-multi-team-management" not in b["cross_links"]
+
+
+def test_same_name_merge_tiny_medium_large_scale_invariant():
+    # rule-no-magic-tuning: same structural behavior at 3 scales. N browse
+    # resources (each 2 members) under one domain always collapse to ONE
+    # browse UF, regardless of N (tiny=2, medium=10, large=60).
+    def build(n):
+        devs = [{"name": "org-feat",
+                 "product_feature_id": "organizations-&-multi-team-management"}]
+        flows = []
+        for i in range(n):
+            flows.append(_flow(f"list-res{i}-flow", uuid=f"l{i}",
+                               primary_feature="org-feat"))
+            flows.append(_flow(f"view-res{i}-flow", uuid=f"v{i}",
+                               primary_feature="org-feat"))
+        return {"flows": flows, "developer_features": devs}
+
+    for n in (2, 10, 60):
+        r = cluster_user_flows(build(n))
+        browse = [u for u in r["user_flows"] if u["intent"] == "browse"]
+        assert len(browse) == 1, f"n={n}: expected 1 browse UF, got {len(browse)}"
+        assert browse[0]["member_count"] == 2 * n
+
+
+def test_none_domain_clusters_not_blindly_merged():
+    # When domain is None the name falls back to the per-cluster resource, so
+    # two None-domain clusters only collide when their resource labels are
+    # already identical. Distinct resources keep distinct names → not merged
+    # (conservative, per finding-pathset-merge-refuted).
+    scan = {
+        "flows": [
+            _flow("frobnicate-alpha-flow"),  # unknown verb → other intent
+            _flow("frobnicate-beta-flow"),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    # distinct resources (alpha, beta), domain None → distinct names → 2 UFs
+    assert len(r["user_flows"]) == 2
+    names = sorted(u["name"] for u in r["user_flows"])
+    assert names == ["alpha", "beta"]
 
 
 def test_uf_ids_deterministic_and_ordered():

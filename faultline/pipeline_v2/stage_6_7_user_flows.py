@@ -770,6 +770,77 @@ def _merge_singleton_noise(
     return merged
 
 
+def _merge_same_name_clusters(
+    clusters: dict[tuple, list],
+    cluster_resources: dict[tuple, Counter],
+) -> dict[tuple, list]:
+    """Stage C-post-2 — collapse clusters that would render to the SAME UF
+    name into one journey UF.
+
+    Why this shape (structural, scale-invariant — see rule-no-magic-tuning):
+
+    The UF NAME is the user-facing identity of a journey. ``_uf_name`` derives
+    it from ``(domain, intent)`` whenever ``domain`` is present (the resource
+    is collapsed into the domain noun, e.g. every ``(organization, <resource>,
+    browse)`` cluster renders to "Browse & filter organizations"). So multiple
+    multi-member ``(domain, resource, intent)`` clusters that share the same
+    ``(domain, intent)`` emit DIFFERENT cluster keys but the SAME human name —
+    e.g. cal.com's organizations product feature showed 11 separate
+    "Browse & filter organizations" UFs. Two UFs a user cannot tell apart
+    (identical name, same domain) are by definition one journey at product
+    grain, so they must be a single UF.
+
+    ``_merge_singleton_noise`` only folds 1-member clusters, so these
+    multi-member name-collisions survive it. This pass closes that gap by
+    keying directly on the NAME-DETERMINANT signature ``(domain, intent,
+    name)`` rather than on member count: every cluster that yields the same
+    rendered name is folded together. Distinct intents render distinct names
+    (``Browse …`` vs ``Create & edit …``) so they are never merged — the pass
+    cannot collapse genuinely different journeys.
+
+    When ``domain is None`` the name falls back to the per-cluster ``resource``
+    (``_uf_name`` then uses the resource label), so two such clusters only
+    collide when their resource labels are already identical — folding them is
+    still correct (same name = same journey). The conservative no-blind-merge
+    spirit of finding-pathset-merge-refuted is preserved: we merge ONLY on an
+    already-identical rendered name, never across differing names.
+
+    Never discards flows; only re-assigns cluster membership. Recall-safe by
+    construction — every member flow keeps a UF id.
+    """
+    name_buckets: dict[tuple, list[tuple]] = defaultdict(list)
+    for key in clusters:
+        domain, resource, intent = key
+        counts = cluster_resources.get(key)
+        label_resource = (
+            counts.most_common(1)[0][0] if counts else (resource or str(domain))
+        )
+        name = _uf_name(domain, intent, label_resource)
+        # Scope the merge to one journey identity: same rendered NAME AND same
+        # code-grain domain. Keeping domain in the signature stops a None-domain
+        # resource label from ever colliding with a real domain's label.
+        name_buckets[(domain, intent, name)].append(key)
+
+    merged: dict[tuple, list] = {}
+    for (domain, intent, _name), keys in name_buckets.items():
+        if len(keys) == 1:
+            k = keys[0]
+            merged[k] = list(clusters[k])
+            continue
+        agg_res: Counter = Counter()
+        members_all: list = []
+        for k in keys:
+            members_all.extend(clusters[k])
+            agg_res.update(cluster_resources[k])
+        rep_resource = agg_res.most_common(1)[0][0] if agg_res else "item"
+        rep_key = (domain, rep_resource, intent)
+        merged.setdefault(rep_key, [])
+        merged[rep_key].extend(members_all)
+        cluster_resources[rep_key].update(agg_res)
+
+    return merged
+
+
 def cluster_user_flows(
     scan: dict,
     routes_index: list[dict] | None = None,
@@ -874,6 +945,11 @@ def cluster_user_flows(
     # Stage C-post — collapse singleton other-intent clusters into the
     # largest domain sibling so we don't emit one UF per unmapped verb.
     clusters = _merge_singleton_noise(clusters, cluster_resources)
+    # Stage C-post-2 — collapse multi-member clusters that would render to the
+    # SAME UF name (same domain + intent) into one journey. Closes the
+    # name-collision gap _merge_singleton_noise leaves for multi-member
+    # clusters (e.g. 11× "Browse & filter organizations" on cal.com).
+    clusters = _merge_same_name_clusters(clusters, cluster_resources)
 
     user_flows: list[dict] = []
     flow_to_uf: dict[str, str] = {}
