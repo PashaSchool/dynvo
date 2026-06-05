@@ -1397,8 +1397,12 @@ class TestDeepScanReturnsDeepScanResult:
         with patch(
             "faultline.llm.sonnet_scanner.deep_scan",
         ) as mock_ds:
-            mock_ds.side_effect = lambda *args, **kw: _ds_result(
-                {kw["package_name"]: ["src/file0.ts"]}
+            # Attribute every package file to one cohesive sub-feature, so
+            # there is no unattributed leftover and the single sub-feature
+            # collapses to the bare package name (no `api/api` /
+            # `api/uncategorized` noise from the leftover guard rail).
+            mock_ds.side_effect = lambda files, *args, **kw: _ds_result(
+                {kw["package_name"]: list(files)}
             )
             result = deep_scan_workspace(
                 ws, api_key="sk-ant-test", min_files_for_llm=30, max_workers=1,
