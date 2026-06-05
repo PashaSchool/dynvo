@@ -88,6 +88,10 @@ That writes a versioned **feature-map JSON** to `~/.faultline/`. Explore it, dif
 This is the wedge. Install the companion MCP server and your agent stops guessing:
 
 ```bash
+# one-off, no install (recommended)
+uvx faultlines-mcp
+
+# or install it
 pip install faultlines-mcp
 ```
 
