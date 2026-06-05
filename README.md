@@ -12,6 +12,7 @@ No Jira. No annotations. No manual tagging. Just `git log` and your code.
 [![Python](https://img.shields.io/pypi/pyversions/faultlines?color=6E56CF)](https://pypi.org/project/faultlines/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6E56CF.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-ready-6E56CF)](https://modelcontextprotocol.io)
+[![Downloads](https://img.shields.io/pypi/dm/faultlines?color=6E56CF)](https://pypi.org/project/faultlines/)
 
 [**Website**](https://faultlines.dev) · [**Quick start**](#-quick-start) · [**For AI agents**](#-built-for-ai-coding-agents) · [**How it works**](#-how-it-works)
 
