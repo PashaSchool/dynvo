@@ -296,12 +296,14 @@ class TestBuildGraph:
         assert g.exports == {}
         assert g.forward == {}
 
-    def test_python_files_skipped_in_forward(self, tmp_path: Path):
+    def test_python_imports_resolved_in_forward(self, tmp_path: Path):
         _write(tmp_path, "a.py", "from b import x\n")
         _write(tmp_path, "b.py", "x = 1\n")
         g = build_symbol_graph(tmp_path, ["a.py", "b.py"])
-        # Python isn't TS/JS — forward map omits a.py
-        assert "a.py" not in g.forward
+        # Python import resolution (P1 accuracy sprint): a.py's `from b
+        # import x` becomes a forward edge to b.py, same shape as TS/JS.
+        edges = g.forward.get("a.py") or []
+        assert any(e.target_file == "b.py" and e.target_symbol == "x" for e in edges)
 
     def test_export_ranges_carried_over(self, tmp_path: Path):
         _write(tmp_path, "x.ts",
