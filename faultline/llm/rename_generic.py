@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from faultline.llm.sonnet_scanner import DeepScanResult
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 DEFAULT_SAMPLE_PATHS = 6
@@ -225,7 +226,7 @@ def rename_generic_features(
 
     try:
         response = client.messages.create(
-            model=chosen_model,
+            model=gateway_model(chosen_model),
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": _format_user_message(candidates)}],
             max_tokens=2048,

@@ -4,19 +4,23 @@ import logging
 import os
 import re
 import time
-from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import anthropic
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0  # seconds, doubles each attempt
 
 from faultline.analyzer.ast_extractor import FileSignature
 from faultline.models.types import Commit, Feature
+
+if TYPE_CHECKING:  # pragma: no cover
+    from faultline.cache.backend import CacheBackend
 
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_SAMPLE_PATHS = 5
@@ -3879,7 +3883,6 @@ def merge_and_name_clusters_ollama(
 # Used when co-change detection produced the clusters and LLM only needs to name them.
 # Results are cached: same file set → same names on every run.
 
-_NAME_CACHE_DIR = Path.home() / ".faultline" / "llm-cache"
 _NAME_CACHE_TTL_DAYS = 90
 
 _NAMING_SYSTEM_PROMPT = """\
@@ -3920,21 +3923,27 @@ def _cluster_cache_key(cluster_mapping: dict[str, list[str]], model: str) -> str
     return hashlib.sha256(content.encode()).hexdigest()[:24]
 
 
+def _name_cache_backend() -> "CacheBackend":
+    """Default backend for the detector name cache (legacy pipeline path).
+
+    Routed through the pluggable backend so hosted workers persist the
+    content-keyed name cache wherever they configure. The 90-day TTL +
+    on-disk ``llm-cache/<key>.json`` layout are preserved exactly by
+    ``FilesystemCacheBackend`` for the ``llm-name`` kind.
+    """
+    from faultline.cache import get_cache_backend
+
+    return get_cache_backend()
+
+
 def _read_name_cache(key: str) -> dict[str, str] | None:
     """Returns cached {cluster_id: feature_name} mapping or None if missing/expired."""
-    path = _NAME_CACHE_DIR / f"{key}.json"
-    if not path.exists():
-        return None
-    age_days = (datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)).days
-    if age_days > _NAME_CACHE_TTL_DAYS:
-        path.unlink()
-        return None
-    return json.loads(path.read_text())
+    value = _name_cache_backend().get("llm-name", key)
+    return value if isinstance(value, dict) else None
 
 
 def _write_name_cache(key: str, names: dict[str, str]) -> None:
-    _NAME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    (_NAME_CACHE_DIR / f"{key}.json").write_text(json.dumps(names))
+    _name_cache_backend().set("llm-name", key, names)
 
 
 def _format_clusters_for_prompt(cluster_mapping: dict[str, list[str]]) -> str:
@@ -4117,7 +4126,7 @@ def validate_api_key(api_key: str | None = None) -> tuple[bool, str]:
     client = anthropic.Anthropic(api_key=key)
     try:
         client.messages.create(
-            model=_MODEL,
+            model=gateway_model(_MODEL),
             max_tokens=10,
             temperature=0,
             messages=[{"role": "user", "content": "hi"}],

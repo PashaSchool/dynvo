@@ -278,6 +278,7 @@ def run_pipeline_v2(
     since: str | None = None,
     base_scan_path: Path | str | None = None,
     lineage_jaccard_threshold: float | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -319,8 +320,17 @@ def run_pipeline_v2(
     # cost is the FULL LLM bill for this scan.
     tracker = CostTracker(max_cost=None)
 
+    # ── Cache backend — constructed once, threaded via ctx ──────────
+    # Env ``FAULTLINES_CACHE_BACKEND`` selects fs (default) or a lazily
+    # injected DB backend (hosted workers). NOT a global singleton — the
+    # instance lives on the ScanContext and flows to every cache site.
+    from faultline.cache import get_cache_backend
+
+    cache_backend = get_cache_backend(org_id=org_id)
+
     # ── Stage 0 — intake ────────────────────────────────────────────
     ctx = stage_0_intake(repo_path, days=days, run_id=run_id)
+    ctx.cache_backend = cache_backend
     run_dir = ctx.run_dir
     assert run_dir is not None, "Stage 0 must populate ctx.run_dir"
 
@@ -552,6 +562,104 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── Stage 2.5 — incremental LLM gating (--since path ONLY) ─────
+    # Restrict the expensive LLM stages (Stage 3 per-feature flows +
+    # Stage 4 per-cluster residual) to the files this diff touched.
+    # On a FULL / cold scan this block is skipped entirely and the
+    # whole-repo path below is byte-for-byte unchanged (cold-scan rule).
+    #
+    # See ``incremental_gate`` for the rationale: untouched features are
+    # re-hydrated from the base scan AFTER Stage 5 (their flows/metrics
+    # are already final there), so they never pay for Stage 3/4. This is
+    # Option A from ``finding-incremental-no-llm-savings`` — it turns a
+    # ~$0.24 PR scan into a ~$0.01-0.03 one without re-LLM-ing unchanged
+    # code.
+    is_full_scan = since is None
+    incremental_base_scan: dict[str, Any] | None = None
+    incremental_untouched: list[Any] = []
+    incremental_gate_meta: dict[str, Any] = {}
+    if not is_full_scan:
+        from faultline.pipeline_v2.incremental import (
+            load_base_scan as _load_base_scan_early,
+        )
+        from faultline.pipeline_v2.incremental_gate import (
+            compute_changed_set,
+            filter_unattributed,
+            partition_features,
+            rehydrate_untouched_features,
+        )
+
+        if base_scan_path is None:
+            raise ValueError(
+                "--since requires --base-scan-path (engine cannot gate "
+                "LLM stages without a previous scan to reuse).",
+            )
+        incremental_base_scan = _load_base_scan_early(base_scan_path)
+        changed_set = compute_changed_set(
+            repo_path, since or "", incremental_base_scan,
+        )
+        with StageLogger(run_dir, 2, "incremental_gate") as log2_5:
+            partition = partition_features(deterministic_features, changed_set)
+            # Re-hydrate untouched features from the base scan NOW so we
+            # know which ones have a base twin. Features with no base
+            # match (``missing_names``) are routed BACK through Stage 3
+            # rather than dropped — the silent-drop guard.
+            rehydrate = rehydrate_untouched_features(
+                partition.untouched, incremental_base_scan,
+            )
+            missing = set(rehydrate.missing_names)
+            rescan_untouched = [
+                f for f in partition.untouched if f.name in missing
+            ]
+            unattributed_pre = len(unattributed)
+            unattributed = filter_unattributed(unattributed, changed_set)
+            # Stage 3 + Stage 4 see ONLY changed work (+ any untouched
+            # feature we could not re-hydrate) from here on.
+            deterministic_features = partition.touched + rescan_untouched
+            incremental_untouched = rehydrate.features
+            incremental_gate_meta = {
+                "incremental_gate_active": True,
+                "incremental_gate_changed_files": len(changed_set),
+                "incremental_gate_features_touched": len(partition.touched),
+                "incremental_gate_features_untouched": len(partition.untouched),
+                "incremental_gate_features_rehydrated": len(rehydrate.features),
+                "incremental_gate_features_rescanned_missing": len(
+                    rescan_untouched,
+                ),
+                "incremental_gate_unattributed_pre": unattributed_pre,
+                "incremental_gate_unattributed_post": len(unattributed),
+            }
+            log2_5.info(
+                "incremental gate: "
+                f"changed_files={len(changed_set)} "
+                f"features_touched={len(partition.touched)} "
+                f"features_untouched={len(partition.untouched)} "
+                f"rehydrated={len(rehydrate.features)} "
+                f"rescanned_missing={len(rescan_untouched)} "
+                f"residual_paths={unattributed_pre}->{len(unattributed)}",
+            )
+            for nm in rehydrate.missing_names:
+                log2_5.warn(
+                    f"untouched feature {nm!r} not in base scan — "
+                    f"re-scanning via Stage 3",
+                )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=2,
+                stage_name="incremental_gate",
+                payload={
+                    **incremental_gate_meta,
+                    "touched_feature_names": [
+                        f.name for f in partition.touched
+                    ],
+                    "rehydrated_feature_names_sample":
+                        rehydrate.rehydrated_names[:50],
+                    "rescanned_missing_feature_names":
+                        rehydrate.missing_names[:50],
+                },
+                run_dir=run_dir,
+            )
+
     # ── Stage 3 — flow detection (Haiku) ───────────────────────────
     with StageLogger(run_dir, 3, "flows") as log3:
         stage3 = stage_3_flows(
@@ -614,6 +722,7 @@ def run_pipeline_v2(
             log4.warn(w)
         log4.info(
             f"cost_usd={stage4.cost_usd:.4f} llm_calls={stage4.llm_calls} "
+            f"cache_hits={stage4.cache_hits} "
             f"clusters_processed={stage4.clusters_processed}/"
             f"{stage4.clusters_total} "
             f"saturation_stopped={stage4.saturation_stopped}",
@@ -626,6 +735,7 @@ def run_pipeline_v2(
                 "residual_feature_count": len(residual_features),
                 "cost_usd": stage4.cost_usd,
                 "llm_calls": stage4.llm_calls,
+                "cache_hits": stage4.cache_hits,
                 "warnings": stage4.warnings,
                 "clusters_total": stage4.clusters_total,
                 "clusters_processed": stage4.clusters_processed,
@@ -657,6 +767,30 @@ def run_pipeline_v2(
         validation_drops = stage5_result.validation_drops
         for name, reason in stage5_result.drop_log:
             log5.drop(name, reason)
+        # ── Incremental splice (--since path ONLY) ─────────────────
+        # Re-attach the untouched features re-hydrated from the base
+        # scan (Stage 2.5). They are already final ``Feature`` objects
+        # (flows + metrics intact) and skipped Stage 3/4 entirely — the
+        # cost saving. They join the freshly-scanned touched features
+        # here and flow through the deterministic downstream stages
+        # (5.3 collapse, 5.5 bipartite, 6 metrics, 8 Layer-2) over the
+        # COMPLETE feature set so cross-cutting + Layer 2 stay correct.
+        if not is_full_scan and incremental_untouched:
+            existing_names = {f.name for f in features}
+            spliced = 0
+            for uf in incremental_untouched:
+                if uf.name in existing_names:
+                    # A freshly-scanned touched feature already owns this
+                    # name (rename / split collision) — prefer the fresh
+                    # one; never double-emit.
+                    continue
+                features.append(uf)
+                existing_names.add(uf.name)
+                spliced += 1
+            log5.info(
+                f"incremental splice: re-attached {spliced} untouched "
+                f"feature(s) from base scan (skipped Stage 3/4)",
+            )
         for f in features:
             log5.emit(f.name, "survived naming discipline")
         if any(v > 0 for v in validation_drops.as_dict().values()):
@@ -936,6 +1070,24 @@ def run_pipeline_v2(
         "source": "deterministic-only",
         "haiku_called": False,
     }
+    # ── Incremental Layer-2 reuse decision (--since path ONLY) ─────
+    # Stage 8 (single Sonnet analyst call) + Stage 6.7b (per-domain Haiku
+    # UF refiner) are the second cost ceiling from
+    # finding-incremental-no-llm-savings: they still run over the WHOLE
+    # merged feature set on every incremental. Both are pure functions of
+    # the DETERMINISTIC feature set (Stage 0/1/2), so a NO-OP diff (zero
+    # touched dev features → the Layer-1 set is identical to base) lets us
+    # reuse the base scan's FINAL product_features verbatim and SKIP the
+    # analyst + its deterministic post-passes (rollup, 8.5, hotspots).
+    # On a full / cold scan this is ALWAYS False — Stage 8 below runs
+    # whole-repo, byte-identical (cold-scan rule).
+    incremental_layer2_noop = (
+        not is_full_scan
+        and incremental_base_scan is not None
+        and incremental_gate_meta.get(
+            "incremental_gate_features_touched", -1,
+        ) == 0
+    )
     with StageLogger(run_dir, 8, "marketing_clusterer") as log8:
         s8_client = _stage_8_default_client_factory()
         # Source-breakdown was already computed by Stage 6.5 and stamped
@@ -953,7 +1105,41 @@ def run_pipeline_v2(
         s8_mode = os.environ.get(
             "FAULTLINE_STAGE_8_MODE", "analyst",
         ).strip().lower() or "analyst"
-        if s8_mode == "analyst":
+        if incremental_layer2_noop:
+            # No developer feature changed → reuse the base scan's FINAL
+            # Layer-2 (already through analyst + rollup + 8.5 + hotspots)
+            # verbatim. Build a Stage8Result from base so the override
+            # block below is unchanged; the deterministic post-passes
+            # (rollup / 8.5 / hotspots) are skipped via the
+            # ``incremental_layer2_noop`` guard since base PFs already
+            # carry attached flows + backfilled members + hotspots.
+            from faultline.pipeline_v2.incremental_gate import (
+                rehydrate_base_product_features as _rehydrate_base_pfs,
+            )
+            from faultline.pipeline_v2.stage_8_marketing_clusterer import (
+                Stage8Result as _Stage8Result,
+            )
+            _reused_pfs, _reused_map = _rehydrate_base_pfs(
+                incremental_base_scan,
+            )
+            stage_8_result = _Stage8Result(
+                product_features=_reused_pfs,
+                dev_to_product_map=_reused_map,
+                telemetry={
+                    "source": "incremental-reuse-base",
+                    "haiku_called": False,
+                    "sonnet_called": False,
+                    "reused_product_features": len(_reused_pfs),
+                    "incremental_layer2_noop": True,
+                },
+                member_flows_map={},
+            )
+            log8.info(
+                "mode=incremental-reuse-base — reused "
+                f"{len(_reused_pfs)} base product features (analyst "
+                "skipped, no-op diff)",
+            )
+        elif s8_mode == "analyst":
             log8.info(f"mode=analyst model={_STAGE_8_ANALYST_MODEL}")
             stage_8_result = run_stage_8_analyst(
                 ctx,
@@ -1365,8 +1551,12 @@ def run_pipeline_v2(
         else _RENAME_THRESHOLD
     )
 
-    base_scan_dict: dict[str, Any] | None = None
-    if base_scan_path is not None:
+    # Reuse the base scan already loaded by the Stage 2.5 incremental
+    # gate (avoids re-parsing a large JSON). Falls back to a fresh load
+    # for callers that pass ``base_scan_path`` for lineage WITHOUT
+    # ``--since`` (full scan with lineage stamping).
+    base_scan_dict: dict[str, Any] | None = incremental_base_scan
+    if base_scan_dict is None and base_scan_path is not None:
         base_scan_dict = _load_base_scan(base_scan_path)
 
     lineage_result = run_stage_6_8(
@@ -1431,6 +1621,8 @@ def run_pipeline_v2(
     scan_meta["lineage_rename_threshold"] = rename_threshold
     scan_meta["is_full_scan"] = is_full_scan
     scan_meta.update(incremental_meta)
+    # Stage 2.5 LLM-gating telemetry (empty dict on a full scan).
+    scan_meta.update(incremental_gate_meta)
 
     # ── Stage 3.5 — flow expansion (Sprint 2, deterministic) ──────
     # Enriches every Flow with {entry, nodes[], edges[], summary}
@@ -1451,10 +1643,22 @@ def run_pipeline_v2(
     #     ``top_level_flows`` mirror pass.
     from faultline.pipeline_v2.flow_expansion import expand_flows
     with StageLogger(run_dir, 3, "flow_expansion") as log3_5:
+        # max_depth=1 — a flow's attributed implementation is the entry
+        # symbol + its DIRECT callees (same-file AND imported), with no
+        # transitive recursion. Deeper walks turn each flow into the
+        # whole transitive closure of the import graph and stop being a
+        # narrative slice of ONE behaviour (measured: avg 62.5 nodes/flow
+        # and 235/447 flows hitting the node cap at depth 4). Cross-file
+        # resolution is independently hard-capped at depth 1 inside
+        # build_call_graph; this aligns same-file recursion to the same
+        # "entry + direct callees" target. Fan-in gating then demotes
+        # high-fan-in shared infrastructure to role=shared (excluded
+        # from core LOC, still recorded as a shared-dependency badge).
         fx = expand_flows(
             features,
             ctx,
             routes_index=lineage_result.routes_index,
+            max_depth=1,
             log=log3_5,
             top_level_flows=list(bipartite.flows),
         )
@@ -1523,6 +1727,95 @@ def run_pipeline_v2(
         )
     scan_meta["stage_6_9_test_strip"] = dict(test_strip_telemetry)
 
+    # ── Stage 6.7 — User-Flow rollup (Layer-2-for-flows, $0 LLM) ────
+    # Deterministic post-pass: rolls the code-grain flow store up into
+    # product-grain user_flows[] and stamps Flow.user_flow_id. Runs
+    # after product_features (6.5) + bipartite store + test_strip so
+    # domains, cross-links, and the final flow set all exist. Additive —
+    # mirrors the developer_feature → product_feature model for flows.
+    from faultline.pipeline_v2.stage_6_7_user_flows import run_user_flow_rollup
+    user_flows: list = []
+    with StageLogger(run_dir, 6, "user_flows") as log6_7:
+        user_flows, uf_telemetry = run_user_flow_rollup(
+            bipartite.flows, features,
+            routes_index=lineage_result.routes_index,
+        )
+        log6_7.info(
+            "user_flows: %d flows -> %d unique -> %d UF, %d domains, "
+            "%d with cross_links (dedup_dropped=%d)"
+            % (
+                uf_telemetry["total_flows"],
+                uf_telemetry["unique_flows"],
+                uf_telemetry["user_flows"],
+                uf_telemetry["domains"],
+                uf_telemetry["uf_with_cross_links"],
+                uf_telemetry["dedup_dropped"],
+            ),
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="user_flows",
+            payload={
+                **uf_telemetry,
+                "user_flows": [uf.model_dump() for uf in user_flows],
+            },
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_7_user_flows"] = dict(uf_telemetry)
+
+    # ── Stage 6.7b — User-Flow LLM refiner (additive Haiku) ─────────
+    # One Haiku call per domain over the deterministic 6.7 UF clusters:
+    # journey-grain name/description, resolves intent="other", infers
+    # ui_tier from the frontend surface, drafts AC from test-reach.
+    # Membership/grain from 6.7 are NOT changed. Graceful per-domain
+    # degrade: on any LLM failure the UFs keep their deterministic
+    # name/intent. Uses the SAME shared CostTracker + model_id as the
+    # rest of the LLM stages; no README, no .ai/specs.
+    from faultline.pipeline_v2.stage_6_7b_uf_refiner import refine_user_flows
+    with StageLogger(run_dir, 6, "uf_refiner") as log6_7b:
+        # ── Incremental UF-refiner reuse (--since path ONLY) ───────
+        # A UF's refined presentation depends ONLY on its member flows
+        # (deterministic Stage 6.7) + their frontend signal. UFs whose
+        # member-flow-set is unchanged from the base scan adopt the base
+        # refinement verbatim (keyed on frozenset(member_flow_ids) — a
+        # stable structural key, no magic number). Only domains with a
+        # changed UF still get a Haiku call. On a full / cold scan
+        # ``domain_allowlist`` stays None → every domain is refined,
+        # byte-identical to before (cold-scan rule).
+        uf_domain_allowlist: set[str | None] | None = None
+        if not is_full_scan and incremental_base_scan is not None:
+            from faultline.pipeline_v2.incremental_gate import (
+                plan_uf_refinement_reuse as _plan_uf_reuse,
+            )
+            uf_plan = _plan_uf_reuse(user_flows, incremental_base_scan)
+            uf_domain_allowlist = uf_plan.rescan_domains
+            log6_7b.info(
+                "uf_refiner incremental reuse: "
+                f"reused_uf={uf_plan.reused_uf_count} "
+                f"reused_domains={len(uf_plan.reused_domains)} "
+                f"rescan_domains={len(uf_plan.rescan_domains)}",
+            )
+        user_flows, uf_refine_telemetry = refine_user_flows(
+            user_flows,
+            bipartite.flows,
+            model=model_id,
+            cost_tracker=tracker,
+            log=log6_7b,
+            domain_allowlist=uf_domain_allowlist,
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="uf_refiner",
+            payload={
+                **uf_refine_telemetry,
+                "user_flows": [uf.model_dump() for uf in user_flows],
+            },
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_7b_uf_refiner"] = dict(uf_refine_telemetry)
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     with StageLogger(run_dir, 7, "output") as log7:
@@ -1532,6 +1825,7 @@ def run_pipeline_v2(
             flows=bipartite.flows,
             feature_flow_edges=bipartite.edges,
             product_features=product_features,
+            user_flows=user_flows,
             path_index=lineage_result.path_index,
             routes_index=lineage_result.routes_index,
             is_full_scan=is_full_scan,
@@ -1540,6 +1834,12 @@ def run_pipeline_v2(
             engine_version=_engine_version,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
+
+    # ── Flush any buffered cache writes (no-op for fs backend) ──────
+    try:
+        cache_backend.flush()
+    except Exception as exc:  # noqa: BLE001 — never fail a scan on cache flush
+        logger.warning("pipeline_v2: cache flush failed: %s", exc)
 
     # ── Atomically point `latest` at this run ──────────────────────
     update_latest_symlink(ctx.repo_path, ctx.run_id or "")

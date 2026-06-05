@@ -20,9 +20,11 @@ def write_feature_map(feature_map: FeatureMap, output_path: str | None = None) -
     if output_path is not None:
         path = Path(output_path)
     else:
+        from faultline.cache.paths import faultline_base_dir
+
         slug = _repo_slug(feature_map.repo_path)
         ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
-        path = Path.home() / ".faultline" / f"feature-map-{slug}-{ts}.json"
+        path = faultline_base_dir() / f"feature-map-{slug}-{ts}.json"
 
     path.parent.mkdir(parents=True, exist_ok=True)
     data = feature_map.model_dump(mode="json")

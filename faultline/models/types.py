@@ -171,13 +171,27 @@ class Flow(BaseModel):
     loc_symbol_attributions: list["FlowLocSymbolAttribution"] = []
     loc_nodes: list["FlowLocNode"] = []
     loc_edges: list["FlowLocEdge"] = []
+    # UF-Stage1 (2026-06-02) — Layer-2-for-flows pointer. Mirrors the
+    # ``Feature.product_feature_id`` two-layer model: a code-grain flow
+    # rolls up into one product-grain User Flow (see ``UserFlow``).
+    # ``None`` for flows produced before the deterministic UF rollup
+    # ran, or flows the rollup could not assign. Additive — never read
+    # in place of any existing field.
+    user_flow_id: str | None = None
 
 
 class SymbolRange(BaseModel):
     name: str              # exported symbol name, e.g. "FEATURE_FLAGS"
     start_line: int        # 1-indexed, inclusive
     end_line: int          # 1-indexed, inclusive
-    kind: str = "const"    # "const", "function", "class", "type", "enum", "reexport"
+    kind: str = "const"    # "const", "function", "class", "type", "enum", "reexport", "method", "constructor"
+    # When this symbol is a METHOD (or constructor / class field arrow-fn)
+    # defined INSIDE a class, ``parent`` carries the enclosing class name.
+    # Method-level indexing (added so a member call ``obj.findById()``
+    # resolves to the SPECIFIC method body, not the whole enclosing class —
+    # the whole-class-pulled-into-a-flow over-count). ``None`` for top-level
+    # symbols. Purely additive: existing readers ignore it.
+    parent: str | None = None
 
 
 class FlowParticipant(BaseModel):
@@ -289,11 +303,12 @@ class FlowNode(BaseModel):
     symbol: str | None = None
     lines: tuple[int, int] | None = None
     role: Literal[
-        "entry", "called", "support",
+        "entry", "called", "support", "shared",
         "cross_stack_client", "cross_stack_server",
     ]
     confidence: Literal["high", "medium", "low"] = "medium"
     count: int | None = None               # only set for deep_call_subtree
+    fan_in: int | None = None              # only set for role=shared
 
 
 class FlowEdge(BaseModel):
@@ -456,6 +471,18 @@ class FlowSymbolAttribution(BaseModel):
                                appended after the symbol via
                                ``::<condition>`` so consumers can route
                                on it without growing the schema.
+      - ``shared``           — a direct callee that is SHARED
+                               INFRASTRUCTURE: its symbol is called by
+                               many DISTINCT flow entry-points across
+                               the whole scan (high fan-in — e.g. a DB
+                               session opener, a registry, a generic
+                               validator/logger). Recorded so the
+                               dashboard can render a shared-dependency
+                               badge, but EXCLUDED from the flow's core
+                               LOC. ``fan_in`` (on FlowNode) carries the
+                               distinct-caller count. Per
+                               ``flow-feature-concept``: sharing is
+                               normal — surface it, don't delete it.
     """
 
     file: str                  # repo-relative path
@@ -463,7 +490,7 @@ class FlowSymbolAttribution(BaseModel):
     line_start: int            # 1-indexed, inclusive
     line_end: int              # 1-indexed, inclusive
     role: Literal[
-        "entry", "called", "support",
+        "entry", "called", "support", "shared",
         "anchor-consumer", "schema-consumer", "structural",
         "framework-link", "branch",
     ]
@@ -561,6 +588,41 @@ class FeatureFlowEdge(BaseModel):
     reason: str | None = None
 
 
+class UserFlow(BaseModel):
+    """A product-grain User Flow (UF) — UF-Stage1 (2026-06-02).
+
+    The Layer-2-for-flows projection: several code-grain ``Flow`` rows
+    that share a ``(domain, intent)`` cluster key roll up into one
+    user-facing journey ("Create & edit detectors"). Symmetric to the
+    existing ``developer_features[].product_feature_id → product_features[]``
+    model — each member ``Flow`` points back via ``Flow.user_flow_id``.
+
+    Stage 6.7 names the UF from a deterministic template (no LLM).
+    Stage 6.7b (additive Haiku refiner) overwrites ``name`` with a
+    journey label, fills ``description`` / ``ui_tier``, resolves
+    ``intent`` for "other" clusters, and drafts ``acceptance`` from
+    test-reached members. Membership/grain are NOT changed — Stage 6.7
+    stays the source of truth. ``refined`` flags a successful pass.
+    """
+
+    id: str                              # "UF-001" — stable within a scan
+    name: str                            # journey label (template, or LLM-refined in 6.7b)
+    description: str | None = None       # journey-grain description (Stage 6.7b LLM refiner)
+    domain: str | None = None            # code-grain cluster key (router/folder/module token)
+    product_feature_id: str | None = None  # Layer-2 grouping LINK (marketing product feature), member-majority vote — NOT the code-grain domain
+    intent: str                          # author|browse|lifecycle|execute|manage|bulk|export|other
+    resource: str                        # representative noun ("detector")
+    member_flow_ids: list[str] = []      # composing code-flows (uuid or name)
+    member_count: int = 0
+    routes: list[str] = []               # union of members' router paths
+    cross_links: list[str] = []          # other product_feature_ids touched
+    ac_draft_count: int = 0              # # members with test_files (AC reach)
+    acceptance: list[str] = []           # "AC-n" first-draft observable assertions (Stage 6.7b)
+    coverage_pct: float | None = None    # mean of members' coverage_pct
+    ui_tier: str | None = None           # full-page|panel|settings|admin|no-ui (Stage 6.7b)
+    refined: bool = False                # True when Stage 6.7b LLM refined this UF
+
+
 class FeatureMap(BaseModel):
     repo_path: str
     remote_url: str = ""      # GitHub base URL, e.g. https://github.com/org/repo
@@ -593,6 +655,12 @@ class FeatureMap(BaseModel):
     # truth. Default empty for callers building pre-B1 maps.
     flows: list[Flow] = []
     feature_flow_edges: list[FeatureFlowEdge] = []
+    # UF-Stage1 (2026-06-02) — top-level product-grain User Flows,
+    # rolled up deterministically from ``flows`` by the Stage 6.7
+    # clusterer. Mirrors ``product_features`` (the Layer-2 view of
+    # ``developer_features``). Default empty so legacy scans and
+    # Layer-1-only callers rehydrate unchanged.
+    user_flows: list[UserFlow] = []
     # Sprint 1 (2026-05-23) — additive lineage / incremental surfaces.
     # ``path_index`` is a deterministic projection of features + flows
     # for O(1) file → (feature_uuid, flow_uuids) lookup. ``routes_index``

@@ -82,6 +82,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 # ── Constants ───────────────────────────────────────────────────────────
@@ -273,6 +274,8 @@ def _compact_flows(
 def _harvest_marketing_text(
     repo_path: Path,
     repo_slug: str,
+    *,
+    cache_backend: Any | None = None,
 ) -> tuple[str, str | None, int]:
     """Build a single marketing-context blob for the analyst prompt.
 
@@ -296,7 +299,9 @@ def _harvest_marketing_text(
     taxonomy_size = 0
 
     # Taxonomy (cached or fresh).
-    taxonomy = fetch_marketing_taxonomy(repo_path, repo_slug)
+    taxonomy = fetch_marketing_taxonomy(
+        repo_path, repo_slug, cache_backend=cache_backend,
+    )
     if taxonomy is not None:
         marketing_url = taxonomy.source_url
         taxonomy_size = len(taxonomy.product_features)
@@ -368,7 +373,7 @@ def build_analyst_payload(
     workspace_packages = _workspace_packages_from_paths(developer_features)
     root_pkg = _read_root_package(ctx.repo_path)
     marketing_text, marketing_url, taxonomy_size = _harvest_marketing_text(
-        ctx.repo_path, slug,
+        ctx.repo_path, slug, cache_backend=getattr(ctx, "cache_backend", None),
     )
     return {
         "slug": slug,
@@ -472,7 +477,7 @@ def _call_sonnet(
     t0 = time.time()
     try:
         msg = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],

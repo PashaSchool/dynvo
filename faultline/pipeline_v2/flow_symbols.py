@@ -785,6 +785,8 @@ def _resolve_ts_specifier(
             importer, specifier, rctx.file_set,
             alias_map=rctx.alias_map,
             monorepo_packages=rctx.monorepo_packages,
+            workspace_package_map=getattr(rctx, "workspace_package_map", None),
+            repo_root=str(rctx.repo_path),
         )
     except Exception:  # noqa: BLE001 — defensive
         return None
@@ -799,7 +801,10 @@ def _resolve_py_module(
     from faultline.pipeline_v2.flow_reach import _resolve_python_module
 
     try:
-        return _resolve_python_module(importer, module, rctx.file_set)
+        return _resolve_python_module(
+            importer, module, rctx.file_set,
+            source_roots=getattr(rctx, "python_source_roots", ("",)),
+        )
     except Exception:  # noqa: BLE001
         return None
 

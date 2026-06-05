@@ -38,6 +38,7 @@ at the leftovers and proposes names".
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -45,6 +46,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
+from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params
 from faultline.pipeline_v2.residual_clusterer import (
     ResidualCluster,
@@ -62,6 +64,7 @@ if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -151,6 +154,10 @@ class Stage4Result:
     # Sprint S2c — noise-path-segment drop counter (subset of
     # guard_singletons_dropped).
     guard_noise_path_drops: int = 0
+    # Warm-cache telemetry — residual clusters served from the
+    # content-hash cache (CacheKind.LLM_RESIDUAL) instead of a Haiku
+    # call. ``cache_hits`` are NOT counted in ``llm_calls``.
+    cache_hits: int = 0
 
 
 # ── Prompt builders ────────────────────────────────────────────────────────
@@ -199,6 +206,65 @@ def _build_user_prompt(cluster: ResidualCluster, idx: int, total: int) -> str:
     return f"{header}\n{body}\n\nReturn JSON only."
 
 
+# ── Residual LLM cache (content-hash short-circuit) ─────────────────────────
+#
+# Each residual cluster's LLM output is a pure function of its input:
+#   (system prompt, cluster signature, sample paths, cluster size, model).
+# We cache the PARSED feature list keyed on a sha256 of exactly those
+# inputs so an unchanged cluster never re-issues a Haiku call (warm-cache
+# token savings). This is content-keyed deterministic short-circuiting,
+# NOT per-repo memory — compliant with rule-cold-scan.
+#
+# STAGE4_CACHE_VERSION is the manual invalidation lever required by
+# rule-cache-invalidation: bump it whenever the prompt template, parse
+# logic, or cached-value shape changes in a way that should NOT serve a
+# stale answer. (The system-prompt text is ALSO hashed into the key as a
+# belt-and-braces guard, but the version constant is the documented,
+# explicit control surface.)
+STAGE4_CACHE_VERSION = "v1"
+
+
+def _residual_cache_key(
+    cluster: ResidualCluster,
+    *,
+    model: str,
+    system: str,
+) -> str:
+    """Content-hash key for one residual cluster's LLM call.
+
+    Components (every input that affects the LLM output):
+      * ``STAGE4_CACHE_VERSION`` — manual invalidation lever.
+      * canonical ``model`` id (pre-gateway, so the key is stable
+        whether or not the AI-Gateway model shim is active).
+      * the ``system`` prompt text (auto-invalidates on prompt edits).
+      * the cluster *signature* tuple ``cluster.key``.
+      * ``cluster.size`` (shown to the LLM in the user prompt).
+      * ``cluster.sample_paths`` — repo-RELATIVE paths the clusterer
+        already produced deterministically (sorted membership →
+        evenly-spaced sample), so the same logical cluster keys
+        identically across different clone/job dirs.
+
+    Deliberately EXCLUDED: the ``Cluster {idx+1} of {total}`` preamble
+    rendered by ``_build_user_prompt`` — that ordering/count is run-
+    dependent (a function of how many clusters survived to the LLM
+    pass) and does not change what the cluster *is*. Including it would
+    needlessly miss the cache when an unrelated cluster appears/drops.
+    """
+    payload = json.dumps(
+        {
+            "version": STAGE4_CACHE_VERSION,
+            "model": model,
+            "system": system,
+            "key": list(cluster.key),
+            "size": cluster.size,
+            "sample_paths": list(cluster.sample_paths),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
 # ── LLM client wiring ──────────────────────────────────────────────────────
 
 
@@ -227,7 +293,7 @@ def _call_haiku(
     """
     try:
         msg = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
@@ -527,6 +593,11 @@ def stage_4_residual(
     # (Stage 3's cost is already on the shared tracker).
     stage4_cost_at_loop_start = tracker.total_cost_usd
 
+    # Defensive: a missing backend behaves exactly as pre-cache (no
+    # short-circuit, every cluster issues its Haiku call).
+    cache_backend = getattr(ctx, "cache_backend", None)
+    cache_hits = 0
+
     for i, cluster in enumerate(llm_clusters):
         # Budget guard 1: shared tracker has its own cap → respect it.
         if (
@@ -559,25 +630,60 @@ def stage_4_residual(
                 break
 
         prompt = _build_user_prompt(cluster, i, len(llm_clusters))
-        text, in_t, out_t = _call_haiku(
-            client,
-            model=model,
-            system=_SYSTEM_PROMPT,
-            user=prompt,
-            max_tokens=DEFAULT_MAX_TOKENS,
-        )
-        llm_calls += 1
-        if in_t or out_t:
-            tracker.record(
-                provider="anthropic",
-                model=model,
-                input_tokens=in_t,
-                output_tokens=out_t,
-                label="stage-4-residual",
-            )
-        clusters_processed += 1
 
-        raw = _parse_response(text) if text else []
+        # ── Cache lookup (content-hash short-circuit) ──────────────
+        cache_key = None
+        cached_raw = None
+        if cache_backend is not None:
+            cache_key = _residual_cache_key(
+                cluster, model=model, system=_SYSTEM_PROMPT,
+            )
+            try:
+                stored = cache_backend.get(CacheKind.LLM_RESIDUAL.value, cache_key)
+            except Exception as exc:  # noqa: BLE001 — cache must never break a scan
+                logger.warning("stage_4_residual: cache get failed: %s", exc)
+                stored = None
+            if isinstance(stored, dict) and isinstance(stored.get("features"), list):
+                cached_raw = [f for f in stored["features"] if isinstance(f, dict)]
+
+        if cached_raw is not None:
+            # HIT: no LLM call, no token cost recorded — the whole point
+            # of the warm cache. ``raw`` is byte-identical to what a
+            # fresh ``_parse_response`` produced on the cold run.
+            cache_hits += 1
+            raw = cached_raw
+        else:
+            text, in_t, out_t = _call_haiku(
+                client,
+                model=model,
+                system=_SYSTEM_PROMPT,
+                user=prompt,
+                max_tokens=DEFAULT_MAX_TOKENS,
+            )
+            llm_calls += 1
+            if in_t or out_t:
+                tracker.record(
+                    provider="anthropic",
+                    model=model,
+                    input_tokens=in_t,
+                    output_tokens=out_t,
+                    label="stage-4-residual",
+                )
+            raw = _parse_response(text) if text else []
+            # MISS → persist the parsed features for future runs. Store
+            # only the deterministic parse output (not raw text / tokens
+            # / timestamps) so a hit replays byte-identically downstream.
+            if cache_backend is not None and cache_key is not None:
+                try:
+                    cache_backend.set(
+                        CacheKind.LLM_RESIDUAL.value,
+                        cache_key,
+                        {"version": STAGE4_CACHE_VERSION, "features": raw},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("stage_4_residual: cache set failed: %s", exc)
+
+        clusters_processed += 1
         cluster_member_set = set(cluster.paths)
         accepted, rejected = _build_developer_features_for_cluster(
             raw, cluster_member_set, emitted_names,
@@ -645,11 +751,13 @@ def stage_4_residual(
             for d in guarded.drops
         ],
         guard_noise_path_drops=guarded.noise_path_drops,
+        cache_hits=cache_hits,
     )
 
 
 __all__ = [
     "SAT_WINDOW",
+    "STAGE4_CACHE_VERSION",
     "Stage4Result",
     "stage_4_residual",
 ]

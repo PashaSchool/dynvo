@@ -513,3 +513,177 @@ class TestBuildImportClusters:
                 break
         assert auth_members is not None
         assert "auth/signup.ts" in auth_members
+
+
+# ---------------------------------------------------------------------------
+# Workspace package map + scoped cross-package import resolution
+# (universal pnpm / npm / yarn workspaces + tsconfig path aliases)
+# ---------------------------------------------------------------------------
+
+import json as _json_test
+import os as _os_test
+
+from faultline.analyzer.import_graph import (
+    detect_workspace_package_map,
+    _read_workspace_globs,
+    _expand_workspace_glob,
+    _resolve_workspace_package_import,
+)
+
+
+def _write(root: str, rel: str, content: str = "{}") -> None:
+    p = _os_test.path.join(root, rel)
+    _os_test.makedirs(_os_test.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+class TestWorkspaceGlobReading:
+    def test_npm_yarn_workspaces_array(self, tmp_path) -> None:
+        _write(str(tmp_path), "package.json",
+               _json_test.dumps({"workspaces": ["packages/*", "apps/*"]}))
+        assert _read_workspace_globs(str(tmp_path)) == ["packages/*", "apps/*"]
+
+    def test_yarn_classic_object_shape(self, tmp_path) -> None:
+        _write(str(tmp_path), "package.json",
+               _json_test.dumps({"workspaces": {"packages": ["libs/*"]}}))
+        assert _read_workspace_globs(str(tmp_path)) == ["libs/*"]
+
+    def test_pnpm_workspace_yaml(self, tmp_path) -> None:
+        _write(str(tmp_path), "pnpm-workspace.yaml",
+               "packages:\n  - 'packages/*'\n  - \"apps/api/*\"\n  - tools/cli\n")
+        globs = _read_workspace_globs(str(tmp_path))
+        assert globs == ["packages/*", "apps/api/*", "tools/cli"]
+
+    def test_no_config_returns_empty(self, tmp_path) -> None:
+        assert _read_workspace_globs(str(tmp_path)) == []
+
+
+class TestExpandWorkspaceGlob:
+    def test_single_wildcard_lists_dirs(self, tmp_path) -> None:
+        _os_test.makedirs(str(tmp_path / "packages" / "lib"))
+        _os_test.makedirs(str(tmp_path / "packages" / "ui"))
+        _write(str(tmp_path), "packages/readme.txt", "x")  # not a dir → ignored
+        got = _expand_workspace_glob(str(tmp_path), "packages/*")
+        assert got == ["packages/lib", "packages/ui"]
+
+    def test_nested_wildcard(self, tmp_path) -> None:
+        _os_test.makedirs(str(tmp_path / "packages" / "features" / "billing"))
+        got = _expand_workspace_glob(str(tmp_path), "packages/features/*")
+        assert got == ["packages/features/billing"]
+
+    def test_literal_dir(self, tmp_path) -> None:
+        _os_test.makedirs(str(tmp_path / "packages" / "app-store"))
+        assert _expand_workspace_glob(str(tmp_path), "packages/app-store") == [
+            "packages/app-store"
+        ]
+
+    def test_multi_wildcard_skipped(self, tmp_path) -> None:
+        assert _expand_workspace_glob(str(tmp_path), "packages/**/src") == []
+
+
+class TestDetectWorkspacePackageMap:
+    def _scaffold(self, root: str) -> None:
+        _write(root, "package.json", _json_test.dumps(
+            {"workspaces": ["packages/*", "packages/features/*", "apps/*"]}))
+        _write(root, "packages/lib/package.json",
+               _json_test.dumps({"name": "@scope/lib", "main": "index.ts"}))
+        _write(root, "packages/lib/index.ts", "export const x = 1;")
+        _write(root, "packages/lib/logger.ts", "export const log = 1;")
+        _write(root, "packages/prisma/package.json",
+               _json_test.dumps({"name": "@scope/prisma", "main": "index.ts"}))
+        _write(root, "packages/prisma/index.ts", "export const db = 1;")
+        _write(root, "packages/features/billing/package.json",
+               _json_test.dumps({"name": "@scope/features-billing"}))
+        _write(root, "packages/features/billing/charge.ts", "export const c = 1;")
+        _write(root, "apps/web/package.json",
+               _json_test.dumps({"name": "@scope/web"}))
+        _write(root, "apps/web/lib/api.ts", "export const a = 1;")
+
+    def test_name_to_dir_map(self, tmp_path) -> None:
+        self._scaffold(str(tmp_path))
+        m = detect_workspace_package_map(str(tmp_path))
+        assert m["@scope/lib"] == "packages/lib"
+        assert m["@scope/prisma"] == "packages/prisma"
+        assert m["@scope/features-billing"] == "packages/features/billing"
+        # package living under apps/ is mapped too
+        assert m["@scope/web"] == "apps/web"
+
+    def test_empty_when_no_workspaces(self, tmp_path) -> None:
+        _write(str(tmp_path), "package.json", _json_test.dumps({"name": "solo"}))
+        assert detect_workspace_package_map(str(tmp_path)) == {}
+
+
+class TestResolveScopedWorkspaceImport:
+    @pytest.fixture()
+    def env(self, tmp_path):
+        root = str(tmp_path)
+        TestDetectWorkspacePackageMap()._scaffold(root)
+        file_set = {
+            "packages/lib/index.ts",
+            "packages/lib/logger.ts",
+            "packages/prisma/index.ts",
+            "packages/features/billing/charge.ts",
+            "apps/web/lib/api.ts",
+        }
+        m = detect_workspace_package_map(root)
+        return root, file_set, m
+
+    def test_bare_scoped_import_resolves_to_main(self, env) -> None:
+        root, fs, m = env
+        assert _resolve_workspace_package_import(
+            "@scope/prisma", fs, m, root) == "packages/prisma/index.ts"
+
+    def test_scoped_subpath(self, env) -> None:
+        root, fs, m = env
+        assert _resolve_workspace_package_import(
+            "@scope/lib/logger", fs, m, root) == "packages/lib/logger.ts"
+
+    def test_deep_subpath_under_nested_package(self, env) -> None:
+        root, fs, m = env
+        assert _resolve_workspace_package_import(
+            "@scope/features-billing/charge", fs, m, root
+        ) == "packages/features/billing/charge.ts"
+
+    def test_package_under_apps_dir(self, env) -> None:
+        root, fs, m = env
+        assert _resolve_workspace_package_import(
+            "@scope/web/lib/api", fs, m, root) == "apps/web/lib/api.ts"
+
+    def test_third_party_scoped_returns_none(self, env) -> None:
+        root, fs, m = env
+        assert _resolve_workspace_package_import(
+            "@sentry/node", fs, m, root) is None
+
+    def test_empty_map_returns_none(self, env) -> None:
+        root, fs, _ = env
+        assert _resolve_workspace_package_import("@scope/lib", fs, {}, root) is None
+
+
+class TestResolveImportWorkspaceFallbackIsAdditive:
+    """The workspace fallback must NOT change behaviour for imports that
+    already resolve via relative / alias / dir-name resolution."""
+
+    def test_relative_still_wins_when_map_present(self, tmp_path) -> None:
+        root = str(tmp_path)
+        TestDetectWorkspacePackageMap()._scaffold(root)
+        m = detect_workspace_package_map(root)
+        fs = {"packages/lib/index.ts", "packages/lib/logger.ts"}
+        # relative import resolves WITHOUT touching the workspace resolver
+        got = _resolve_import(
+            "packages/lib/index.ts", "./logger", fs,
+            workspace_package_map=m, repo_root=root,
+        )
+        assert got == "packages/lib/logger.ts"
+
+    def test_scoped_resolves_only_via_fallback(self, tmp_path) -> None:
+        root = str(tmp_path)
+        TestDetectWorkspacePackageMap()._scaffold(root)
+        m = detect_workspace_package_map(root)
+        fs = {"packages/lib/logger.ts"}
+        # Without the map → None (legacy behaviour). With the map → resolves.
+        assert _resolve_import("apps/web/x.ts", "@scope/lib/logger", fs) is None
+        assert _resolve_import(
+            "apps/web/x.ts", "@scope/lib/logger", fs,
+            workspace_package_map=m, repo_root=root,
+        ) == "packages/lib/logger.ts"
