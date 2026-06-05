@@ -38,6 +38,7 @@ jobs:
             engine:
               - 'faultline/**'
               - 'pyproject.toml'
+              - 'README.md'        # shipped as the engine's long_description
             mcp:
               - 'faultlines-mcp/**'
 

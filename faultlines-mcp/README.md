@@ -62,6 +62,12 @@ configure) and answers tool calls against it.
 - **HTTP service** (`pip install 'faultlines-mcp[http]'`, run `faultlines-mcp-serve`)
   — the shape the hosted Faultlines dashboard proxies to.
 
+## Related
+
+- [`faultlines`](https://pypi.org/project/faultlines/) — the engine that
+  generates the feature-map JSON this server reads (`pip install faultlines`).
+- [faultlines.dev](https://faultlines.dev) — hosted dashboard + docs.
+
 ## License
 
 MIT
