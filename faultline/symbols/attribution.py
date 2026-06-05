@@ -19,6 +19,7 @@ from faultline.models.types import Feature, SymbolAttribution
 from faultline.symbols.extractor import FileSymbols
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
 _DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:14b"
@@ -147,7 +148,7 @@ def _ask_llm(
     try:
         client = Anthropic(api_key=api_key) if api_key else Anthropic()
         response = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
             **deterministic_params(model),

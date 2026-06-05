@@ -45,6 +45,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 # Sprint 5 stability tuning (Step E from the 95% plan): cap how
@@ -412,7 +413,7 @@ def critique_and_refine(
 
     try:
         response = client.messages.create(
-            model=resolved_model,
+            model=gateway_model(resolved_model),
             max_tokens=max_tokens,
             system=_CRITIQUE_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_payload}],
@@ -509,7 +510,7 @@ def critique_and_refine(
             # and sufficient for short names. Reuse the same client.
             try:
                 resp = client.messages.create(
-                    model=resolved_model,
+                    model=gateway_model(resolved_model),
                     max_tokens=512,
                     system=(
                         "Rename one user-flow that has a vague name. "

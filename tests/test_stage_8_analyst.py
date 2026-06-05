@@ -129,12 +129,11 @@ class _FakeRaisingClient:
 def _isolated_marketing_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Redirect marketing cache so tests don't poison the user cache."""
-    monkeypatch.setattr(
-        "faultline.pipeline_v2.stage_8_marketing_clusterer."
-        "_MARKETING_CACHE_DIR",
-        tmp_path / "marketing-cache",
-    )
+    """Redirect engine base dir so tests don't poison the user cache.
+
+    The default ``FilesystemCacheBackend`` resolves its base from
+    ``FAULTLINES_RUN_DIR`` → marketing cache lands under tmp_path."""
+    monkeypatch.setenv("FAULTLINES_RUN_DIR", str(tmp_path))
 
 
 @pytest.fixture(autouse=True)
@@ -145,7 +144,7 @@ def _block_real_marketing_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_analyst.fetch_marketing_taxonomy",
-        lambda repo_path, slug: None,
+        lambda repo_path, slug, **_: None,
     )
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_analyst.discover_marketing_site",
@@ -331,7 +330,7 @@ def test_run_stage_8_analyst_happy_path(
     )
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_analyst.fetch_marketing_taxonomy",
-        lambda repo_path, slug: fake_tax,
+        lambda repo_path, slug, **_: fake_tax,
     )
 
     response = _good_response([
@@ -411,7 +410,7 @@ def test_parse_failure_triggers_retry_then_haiku_fallback(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: None,
+        lambda repo_path, slug, **_: None,
     )
 
     repo_root = tmp_path / "myrepo"
@@ -475,7 +474,7 @@ def test_no_client_falls_back_to_haiku_without_crashing(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: None,
+        lambda repo_path, slug, **_: None,
     )
 
     result = run_stage_8_analyst(
@@ -505,7 +504,7 @@ def test_sonnet_500_falls_back_to_haiku(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: None,
+        lambda repo_path, slug, **_: None,
     )
 
     result = run_stage_8_analyst(

@@ -36,6 +36,7 @@ from faultline.analyzer.validation import (
 from faultline.llm.cost import CostTracker, deterministic_params
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_RETRIES = 2
@@ -1492,7 +1493,7 @@ def deep_scan(
     for attempt in range(_MAX_RETRIES):
         try:
             response = client.messages.create(
-                model=resolved_model,
+                model=gateway_model(resolved_model),
                 max_tokens=8_192,
                 system=system_prompt,
                 messages=[{"role": "user", "content": prompt}],

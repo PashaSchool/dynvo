@@ -43,8 +43,15 @@ def repo_slug(repo_path: Path | str) -> str:
 
 
 def slug_log_dir(repo_path: Path | str) -> Path:
-    """Return ``~/.faultline/logs/<slug>/``, creating it if needed."""
-    target = Path.home() / ".faultline" / "logs" / repo_slug(repo_path)
+    """Return ``<base>/logs/<slug>/``, creating it if needed.
+
+    ``<base>`` resolves to ``$FAULTLINES_RUN_DIR`` when the worker sets
+    it (job-scoped temp dir), else ``~/.faultline`` (dev). See
+    ``faultline.cache.paths.faultline_base_dir``.
+    """
+    from faultline.cache.paths import faultline_base_dir
+
+    target = faultline_base_dir() / "logs" / repo_slug(repo_path)
     target.mkdir(parents=True, exist_ok=True)
     return target
 

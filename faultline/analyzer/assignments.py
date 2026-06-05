@@ -16,49 +16,56 @@ names; this catches the cases where Sonnet ignores the hint.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
+    from faultline.cache.backend import CacheBackend
     from faultline.llm.sonnet_scanner import DeepScanResult
 
 
 logger = logging.getLogger(__name__)
 
 
-_CACHE_DIR = Path.home() / ".faultline"
 _RENAME_THRESHOLD = 0.6  # 60% of files must map to a single previous canonical
 
 
 def _slug_for_root(repo_root: Path) -> str:
-    """Stable, filesystem-safe identifier for a repo path."""
+    """Stable, filesystem-safe identifier for a repo path.
+
+    This is the cache KEY for the ``assignment`` kind — unchanged from
+    the legacy ``assignments-<slug>.json`` filename so dev fs caches
+    stay valid.
+    """
     return repo_root.resolve().name.lower().replace(" ", "-")
 
 
-def _cache_path(repo_root: Path) -> Path:
-    return _CACHE_DIR / f"assignments-{_slug_for_root(repo_root)}.json"
+def _resolve_backend(cache_backend: "CacheBackend | None") -> "CacheBackend":
+    if cache_backend is not None:
+        return cache_backend
+    from faultline.cache import get_cache_backend
+
+    return get_cache_backend()
 
 
-def load_assignments(repo_root: Path) -> dict[str, str]:
+def load_assignments(
+    repo_root: Path, *, cache_backend: "CacheBackend | None" = None,
+) -> dict[str, str]:
     """Return ``{file_path: canonical_name}`` from previous scan, or {}."""
-    path = _cache_path(repo_root)
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("assignments: cannot read %s (%s) — ignoring", path, exc)
-        return {}
+    backend = _resolve_backend(cache_backend)
+    data = backend.get("assignment", _slug_for_root(repo_root))
     if not isinstance(data, dict):
         return {}
     return {str(k): str(v) for k, v in data.items()}
 
 
 def save_assignments(
-    result: "DeepScanResult", repo_root: Path,
+    result: "DeepScanResult",
+    repo_root: Path,
+    *,
+    cache_backend: "CacheBackend | None" = None,
 ) -> int:
     """Write the current scan's file → feature mapping. Returns count saved.
 
@@ -74,23 +81,17 @@ def save_assignments(
             "assignments: FAULTLINES_PRODUCTION=1 — skipping save (cold-scan mode)",
         )
         return 0
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    path = _cache_path(repo_root)
+    backend = _resolve_backend(cache_backend)
     inverted: dict[str, str] = {}
     for feature_name, files in result.features.items():
         for f in files:
             inverted[f] = feature_name
-    try:
-        path.write_text(
-            json.dumps(inverted, sort_keys=True, indent=0),
-            encoding="utf-8",
-        )
-    except OSError as exc:
-        logger.warning("assignments: cannot write %s (%s)", path, exc)
-        return 0
+    # Stable ordering preserves byte-identical cache bodies across runs.
+    inverted = {k: inverted[k] for k in sorted(inverted)}
+    backend.set("assignment", _slug_for_root(repo_root), inverted)
     logger.info(
-        "assignments: saved %d file→feature mappings to %s",
-        len(inverted), path,
+        "assignments: saved %d file→feature mappings (slug=%s)",
+        len(inverted), _slug_for_root(repo_root),
     )
     return len(inverted)
 
