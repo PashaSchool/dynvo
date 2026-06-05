@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from faultline.cli import app
@@ -19,19 +20,15 @@ from faultline.cli import app
 runner = CliRunner()
 
 
-def test_scan_v2_help_lists_flags() -> None:
-    # Pin a wide width so Rich never truncates long option names. Without
-    # a TTY (CI) Rich falls back to whatever COLUMNS is in os.environ; a
-    # narrow value leaked by another test would clip "--model" → "--mod…"
-    # and fail this assertion. Forcing COLUMNS here makes it deterministic.
-    result = runner.invoke(app, ["scan-v2", "--help"], env={"COLUMNS": "200"})
-    assert result.exit_code == 0
-    out = result.stdout
-    assert "--model" in out
-    assert "--llm-reconcile" in out
-    assert "--days" in out
-    assert "--output" in out
-    assert "--run-id" in out
+def test_scan_v2_exposes_expected_flags() -> None:
+    # Introspect the registered Click options directly instead of asserting
+    # on `--help` output. Rich-rendered help truncates long option names at
+    # narrow widths and wraps differently across platforms/terminals, which
+    # made the prior text-scraping assertion flaky in headless CI. The flags
+    # a command exposes is what we actually care about — read it from source.
+    scan_v2 = get_command(app).commands["scan-v2"]
+    flags = {opt for param in scan_v2.params for opt in param.opts}
+    assert {"--model", "--llm-reconcile", "--days", "--output", "--run-id"} <= flags
 
 
 def test_scan_v2_nonexistent_dir_exits_with_2(tmp_path: Path) -> None:
