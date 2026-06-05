@@ -37,6 +37,8 @@ jobs:
           # `mcp` extra removed (MCP is now the standalone faultlines-mcp package);
           # keep `watch` which the engine tests still use.
           pip install -e '.[watch]'
+          # The standalone MCP package — tests/test_mcp_server.py imports it.
+          pip install -e ./faultlines-mcp
           pip install pytest pytest-cov
 
       - name: Run tests
