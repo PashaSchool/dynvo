@@ -1,9 +1,10 @@
 name: Release
 
-# Auto-publish to TestPyPI on merge to main. Each package is released
+# Auto-publish to PyPI on merge to main. Each package is released
 # independently based on which paths changed. Every release minor-bumps the
-# package version. The `release` job is gated behind the `testpypi`
-# GitHub Environment, so nothing publishes until you click Approve.
+# package version. Each release is staged to TestPyPI first, then published
+# to the real PyPI. The `release` job is gated behind the `pypi` GitHub
+# Environment, so nothing publishes until you click Approve.
 on:
   push:
     branches: [main]
@@ -41,16 +42,17 @@ jobs:
               - 'faultlines-mcp/**'
 
   release:
-    name: Bump, build, publish to TestPyPI
+    name: Bump, build, publish to PyPI
     needs: detect
     if: ${{ needs.detect.outputs.engine == 'true' || needs.detect.outputs.mcp == 'true' }}
     runs-on: ubuntu-latest
     # Approval gate: configure required reviewers on this environment in
-    # repo Settings → Environments → testpypi. The job pauses here until
-    # an approver (you) clicks Approve.
+    # repo Settings → Environments → pypi. The job pauses here until an
+    # approver (you) clicks Approve. One approval covers both the TestPyPI
+    # staging upload and the real PyPI publish below.
     environment:
-      name: testpypi
-      url: https://test.pypi.org/project/faultlines/
+      name: pypi
+      url: https://pypi.org/project/faultlines/
     permissions:
       contents: write   # push the version-bump commit + tags back to main
       id-token: write   # OIDC token for PyPI Trusted Publishing
@@ -89,19 +91,38 @@ jobs:
         if: ${{ needs.detect.outputs.mcp == 'true' }}
         run: python -m build --outdir faultlines-mcp/dist faultlines-mcp
 
-      # --- Publish to TestPyPI via Trusted Publishing (OIDC, no secrets) ---
-      - name: Publish engine to TestPyPI
+      # --- Stage on TestPyPI via Trusted Publishing (OIDC, no secrets) ---
+      # skip-existing keeps re-runs idempotent: if a prior attempt already
+      # uploaded this version to TestPyPI (e.g. prod failed and the bump was
+      # never committed), staging the same version again is a no-op instead
+      # of a hard 400.
+      - name: Stage engine on TestPyPI
         if: ${{ needs.detect.outputs.engine == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist/
+          skip-existing: true
 
-      - name: Publish mcp to TestPyPI
+      - name: Stage mcp on TestPyPI
         if: ${{ needs.detect.outputs.mcp == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          packages-dir: faultlines-mcp/dist/
+          skip-existing: true
+
+      # --- Publish to the real PyPI (default repository-url) ---
+      - name: Publish engine to PyPI
+        if: ${{ needs.detect.outputs.engine == 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Publish mcp to PyPI
+        if: ${{ needs.detect.outputs.mcp == 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
           packages-dir: faultlines-mcp/dist/
 
       # --- Persist the bump back to main only after publish succeeds ---
