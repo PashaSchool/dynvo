@@ -1,5 +1,8 @@
-"""Pipeline v2 — the Layer 1/2 rebuild that lives in parallel to
-``faultline.llm.pipeline``.
+"""Pipeline v2 — the Layer 1/2 code-grounded scanner.
+
+This is the only scan pipeline; the legacy ``faultline.llm.pipeline``
+(the old ``analyze`` command) has been removed. ``faultline scan-v2``
+and the bare ``faultline <repo>`` invocation both run this pipeline.
 
 Public surface (built up incrementally as stages land on the
 ``agent/layer1-dev-features-v1`` branch):
@@ -12,9 +15,6 @@ Public surface (built up incrementally as stages land on the
     Stage 5 — :func:`stage_5_postprocess`   (naming-discipline + slug)
     Stage 6 — :func:`stage_6_metrics`       (commit + coverage enrichment)
     Stage 7 — :func:`stage_7_output`        (FeatureMap assembly + writer)
-
-The legacy pipeline at ``faultline.llm.pipeline`` is untouched and
-stays the default until v2 reaches parity.
 """
 
 from faultline.pipeline_v2.extractors import (

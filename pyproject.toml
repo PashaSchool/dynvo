@@ -47,8 +47,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ollama = ["ollama>=0.4.0"]
-deepseek = ["openai>=1.0.0"]
 analytics = ["httpx>=0.27.0"]
 # MCP support moved to the standalone `faultlines-mcp` package — install it
 # separately (`pip install faultlines-mcp`). It depends on this engine, so
@@ -84,7 +82,7 @@ Repository = "https://github.com/PashaSchool/faultlines"
 Issues = "https://github.com/PashaSchool/faultlines/issues"
 
 [project.scripts]
-faultlines = "faultline.cli:app"
+faultlines = "faultline.cli:main"
 # The `faultlines-mcp` console script is now provided by the separate
 # `faultlines-mcp` package (this repo's `faultlines-mcp/` workspace member).
 # Install it with `pip install faultlines-mcp`.
@@ -176,7 +174,6 @@ markers = [
 source = ["faultline"]
 omit = [
     "faultline/llm/detector.py",
-    "faultline/llm/deepseek_client.py",
     "faultline/llm/flow_detector.py",
     "faultline/cli.py",
     "faultline/digest/*",

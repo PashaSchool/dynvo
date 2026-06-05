@@ -79,8 +79,8 @@ def detect_features_from_cochange(
     Also returns None if the resulting mapping is empty (no co-change signal).
 
     The returned dict maps feature_name → list of file paths.
-    Names are directory-derived; pass the result to name_clusters_llm() or
-    name_clusters_ollama() to replace them with semantic business domain names.
+    Names are directory-derived; pass the result to name_clusters_llm()
+    to replace them with semantic business domain names.
 
     Args:
         files: Tracked file paths (relative, with path prefix already stripped).
