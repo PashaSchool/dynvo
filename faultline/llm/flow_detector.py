@@ -1,7 +1,7 @@
 """
 LLM-based flow detection within a feature.
 
-Takes a feature's files + their extracted signatures and asks Claude (or Ollama)
+Takes a feature's files + their extracted signatures and asks Claude
 to identify distinct user-facing flows — named sequences of actions a user takes
 end-to-end through the codebase.
 
@@ -28,8 +28,6 @@ from faultline.analyzer.ast_extractor import FileSignature
 
 
 _MODEL = "claude-haiku-4-5-20251001"
-_DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
-_DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
 # If a feature has more files than this, send only exports+routes (skip imports)
 _SIGNATURE_TRIM_THRESHOLD = 30
@@ -340,100 +338,6 @@ def detect_flows_llm(
             phase1.extend(deep_flows)
 
     return _enrich_crud_gaps(phase1, feature_name, feature_files, signatures)
-
-
-def detect_flows_ollama(
-    feature_name: str,
-    feature_files: list[str],
-    signatures: dict[str, FileSignature],
-    model: str = _DEFAULT_OLLAMA_MODEL,
-    host: str = _DEFAULT_OLLAMA_HOST,
-    e2e_anchors: dict[str, list[str]] | None = None,
-    commits: list | None = None,
-) -> list[_FlowFileMapping]:
-    """
-    Detects user-facing flows using a local Ollama model.
-
-    Args:
-        e2e_anchors: Optional dict of flow_name → [files] from e2e test detection.
-            When provided, these flow names are used as authoritative anchors.
-        commits: Optional list of Commit objects for co-change analysis.
-
-    Returns:
-        List of FlowFileMapping objects, empty on any failure.
-    """
-    if not feature_files:
-        return []
-
-    try:
-        import ollama as _ollama
-    except ImportError:
-        return []
-
-    signatures_text = _build_signatures_text(feature_files, signatures)
-    e2e_context = _format_e2e_anchors(e2e_anchors or {})
-    extra_context = _build_flow_extra_context(feature_files, signatures, commits)
-    prompt = _FLOW_USER_PROMPT.format(
-        feature_name=feature_name,
-        e2e_context=e2e_context,
-        signatures_text=signatures_text,
-        extra_context=extra_context,
-    )
-
-    try:
-        client = _ollama.Client(host=host)
-        response = client.chat(
-            model=model,
-            messages=[
-                {"role": "system", "content": _FLOW_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            format=_FlowDetectionResponse.model_json_schema(),
-        )
-        parsed = _FlowDetectionResponse.model_validate_json(response.message.content)
-        filtered = _filter_valid_files(parsed.flows, set(feature_files))
-        return _enrich_crud_gaps(filtered, feature_name, feature_files, signatures)
-    except (ValidationError, Exception):
-        return []
-
-
-_DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
-
-
-def detect_flows_deepseek(
-    feature_name: str,
-    feature_files: list[str],
-    signatures: dict[str, FileSignature],
-    api_key: str | None = None,
-    model: str = _DEFAULT_DEEPSEEK_MODEL,
-    base_url: str | None = None,
-    e2e_anchors: dict[str, list[str]] | None = None,
-    commits: list | None = None,
-) -> list[_FlowFileMapping]:
-    """Detects user-facing flows using DeepSeek API. Returns [] on failure."""
-    if not feature_files:
-        return []
-
-    from faultline.llm.deepseek_client import call_deepseek_parsed
-
-    signatures_text = _build_signatures_text(feature_files, signatures)
-    e2e_context = _format_e2e_anchors(e2e_anchors or {})
-    extra_context = _build_flow_extra_context(feature_files, signatures, commits)
-    prompt = _FLOW_USER_PROMPT.format(
-        feature_name=feature_name,
-        e2e_context=e2e_context,
-        signatures_text=signatures_text,
-        extra_context=extra_context,
-    )
-
-    parsed = call_deepseek_parsed(
-        _FLOW_SYSTEM_PROMPT, prompt, _FlowDetectionResponse,
-        api_key=api_key, model=model, base_url=base_url, max_tokens=4096,
-    )
-    if not parsed:
-        return []
-    filtered = _filter_valid_files(parsed.flows, set(feature_files))
-    return _enrich_crud_gaps(filtered, feature_name, feature_files, signatures)
 
 
 def _chunked_flow_detection(

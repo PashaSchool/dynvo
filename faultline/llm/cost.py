@@ -131,7 +131,7 @@ def estimate_call_cost(
 class CostRecord:
     """Single LLM call accounted for by the tracker."""
 
-    provider: Literal["anthropic", "ollama", "deepseek"]
+    provider: Literal["anthropic"]
     model: str
     input_tokens: int
     output_tokens: int
@@ -191,7 +191,7 @@ class CostTracker:
     def record(
         self,
         *,
-        provider: Literal["anthropic", "ollama", "deepseek"],
+        provider: Literal["anthropic"] = "anthropic",
         model: str,
         input_tokens: int,
         output_tokens: int,
@@ -200,16 +200,10 @@ class CostTracker:
     ) -> CostRecord:
         """Record a single LLM call and return the resulting CostRecord.
 
-        For non-Anthropic providers (ollama runs locally, deepseek has
-        its own pricing elsewhere), cost is set to 0.0 — the tracker
-        still records tokens for reporting.
+        Anthropic is the only supported provider; cost is always derived
+        from the Anthropic pricing table.
         """
-        if provider == "anthropic":
-            cost = estimate_call_cost(
-                model, input_tokens, output_tokens, batch=batch
-            )
-        else:
-            cost = 0.0
+        cost = estimate_call_cost(model, input_tokens, output_tokens, batch=batch)
 
         rec = CostRecord(
             provider=provider,
