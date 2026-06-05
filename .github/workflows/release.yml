@@ -2,9 +2,15 @@ name: Release
 
 # Auto-publish to PyPI on merge to main. Each package is released
 # independently based on which paths changed. Every release minor-bumps the
-# package version. Each release is staged to TestPyPI first, then published
-# to the real PyPI. The `release` job is gated behind the `pypi` GitHub
-# Environment, so nothing publishes until you click Approve.
+# package version.
+#
+# Two-stage flow:
+#   1. `stage`   — bump + build + upload to TestPyPI. Runs automatically
+#                  (the `testpypi` Environment has no required reviewers).
+#   2. `release` — publish the SAME artifacts to the real PyPI, then commit
+#                  the bump + tag back to main. Gated behind the `pypi`
+#                  Environment, so prod publishing waits for your Approve.
+# Prod only runs if TestPyPI staging succeeded (`needs: stage`).
 on:
   push:
     branches: [main]
@@ -42,27 +48,26 @@ jobs:
             mcp:
               - 'faultlines-mcp/**'
 
-  release:
-    name: Bump, build, publish to PyPI
+  stage:
+    name: Bump, build, stage on TestPyPI
     needs: detect
     if: ${{ needs.detect.outputs.engine == 'true' || needs.detect.outputs.mcp == 'true' }}
     runs-on: ubuntu-latest
-    # Approval gate: configure required reviewers on this environment in
-    # repo Settings → Environments → pypi. The job pauses here until an
-    # approver (you) clicks Approve. One approval covers both the TestPyPI
-    # staging upload and the real PyPI publish below.
+    # `testpypi` Environment: configure it WITHOUT required reviewers so
+    # staging runs automatically. TestPyPI trusted publishers must use
+    # environment name `testpypi` to match this job's OIDC claim.
     environment:
-      name: pypi
-      url: https://pypi.org/project/faultlines/
+      name: testpypi
+      url: https://test.pypi.org/project/faultlines/
     permissions:
-      contents: write   # push the version-bump commit + tags back to main
-      id-token: write   # OIDC token for PyPI Trusted Publishing
+      id-token: write   # OIDC token for TestPyPI Trusted Publishing
+    outputs:
+      engine_version: ${{ steps.engine.outputs.version }}
+      mcp_version: ${{ steps.mcp.outputs.version }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -72,7 +77,7 @@ jobs:
       - name: Install build tooling
         run: python -m pip install --upgrade build
 
-      # --- Version bump (working tree only; committed after a successful publish) ---
+      # --- Version bump (working tree only; committed in the prod job) ---
       - name: Bump engine (faultlines) minor version
         id: engine
         if: ${{ needs.detect.outputs.engine == 'true' }}
@@ -92,11 +97,7 @@ jobs:
         if: ${{ needs.detect.outputs.mcp == 'true' }}
         run: python -m build --outdir faultlines-mcp/dist faultlines-mcp
 
-      # --- Stage on TestPyPI via Trusted Publishing (OIDC, no secrets) ---
-      # skip-existing keeps re-runs idempotent: if a prior attempt already
-      # uploaded this version to TestPyPI (e.g. prod failed and the bump was
-      # never committed), staging the same version again is a no-op instead
-      # of a hard 400.
+      # --- Stage on TestPyPI (skip-existing → idempotent re-runs) ---
       - name: Stage engine on TestPyPI
         if: ${{ needs.detect.outputs.engine == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -113,6 +114,62 @@ jobs:
           packages-dir: faultlines-mcp/dist/
           skip-existing: true
 
+      # --- Hand the exact built artifacts to the prod job ---
+      - name: Upload engine artifact
+        if: ${{ needs.detect.outputs.engine == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-engine
+          path: dist/
+
+      - name: Upload mcp artifact
+        if: ${{ needs.detect.outputs.mcp == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-mcp
+          path: faultlines-mcp/dist/
+
+  release:
+    name: Publish to PyPI (approved)
+    needs: [detect, stage]
+    if: ${{ needs.detect.outputs.engine == 'true' || needs.detect.outputs.mcp == 'true' }}
+    runs-on: ubuntu-latest
+    # `pypi` Environment: configure it WITH required reviewers so this job
+    # pauses for your Approve before anything reaches the real PyPI. PyPI
+    # trusted publishers must use environment name `pypi`.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/faultlines/
+    permissions:
+      contents: write   # push the version-bump commit + tags back to main
+      id-token: write   # OIDC token for PyPI Trusted Publishing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # --- Pull the exact artifacts validated on TestPyPI ---
+      - name: Download engine artifact
+        if: ${{ needs.detect.outputs.engine == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-engine
+          path: dist/
+
+      - name: Download mcp artifact
+        if: ${{ needs.detect.outputs.mcp == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-mcp
+          path: faultlines-mcp/dist/
+
       # --- Publish to the real PyPI (default repository-url) ---
       - name: Publish engine to PyPI
         if: ${{ needs.detect.outputs.engine == 'true' }}
@@ -126,29 +183,34 @@ jobs:
         with:
           packages-dir: faultlines-mcp/dist/
 
-      # --- Persist the bump back to main only after publish succeeds ---
+      # --- Persist the bump back to main only after prod publish succeeds ---
+      # Re-run the deterministic bump on a fresh main checkout so pyproject
+      # reflects the just-published version. The numbers come from the stage
+      # job's outputs (the same versions baked into the published artifacts).
       - name: Commit version bumps and tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml faultlines-mcp/pyproject.toml
 
           summary=""
           if [ "${{ needs.detect.outputs.engine }}" = "true" ]; then
-            summary="faultlines v${{ steps.engine.outputs.version }}"
+            python scripts/bump_minor_version.py pyproject.toml >/dev/null
+            summary="faultlines v${{ needs.stage.outputs.engine_version }}"
           fi
           if [ "${{ needs.detect.outputs.mcp }}" = "true" ]; then
+            python scripts/bump_minor_version.py faultlines-mcp/pyproject.toml >/dev/null
             [ -n "$summary" ] && summary="$summary, "
-            summary="${summary}faultlines-mcp v${{ steps.mcp.outputs.version }}"
+            summary="${summary}faultlines-mcp v${{ needs.stage.outputs.mcp_version }}"
           fi
 
+          git add pyproject.toml faultlines-mcp/pyproject.toml
           git commit -m "chore(release): $summary [skip ci]"
 
           if [ "${{ needs.detect.outputs.engine }}" = "true" ]; then
-            git tag -a "faultlines-v${{ steps.engine.outputs.version }}" -m "faultlines v${{ steps.engine.outputs.version }}"
+            git tag -a "faultlines-v${{ needs.stage.outputs.engine_version }}" -m "faultlines v${{ needs.stage.outputs.engine_version }}"
           fi
           if [ "${{ needs.detect.outputs.mcp }}" = "true" ]; then
-            git tag -a "faultlines-mcp-v${{ steps.mcp.outputs.version }}" -m "faultlines-mcp v${{ steps.mcp.outputs.version }}"
+            git tag -a "faultlines-mcp-v${{ needs.stage.outputs.mcp_version }}" -m "faultlines-mcp v${{ needs.stage.outputs.mcp_version }}"
           fi
 
           git push origin HEAD:main --follow-tags
