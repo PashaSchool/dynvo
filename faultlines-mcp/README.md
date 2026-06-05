@@ -1,5 +1,10 @@
 # faultlines-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/faultlines-mcp?color=6E56CF)](https://pypi.org/project/faultlines-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/faultlines-mcp?color=6E56CF)](https://pypi.org/project/faultlines-mcp/)
+[![Downloads](https://img.shields.io/pypi/dm/faultlines-mcp?color=6E56CF)](https://pypi.org/project/faultlines-mcp/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-6E56CF.svg)](../LICENSE)
+
 MCP server for the [Faultlines](https://faultlines.dev) feature map — serve
 precise, structured codebase context to AI coding agents (Cursor, Claude Code,
 Cline, Aider) instead of having them grep the whole repo.
@@ -39,6 +44,13 @@ Cursor `mcp` config):
 The server loads the feature-map JSON for the current repo (or the path you
 configure) and answers tool calls against it.
 
+## Configuration
+
+- `FAULTLINE_MAP_PATH` — explicit path to a feature-map JSON. When unset, the
+  server loads the most recent `~/.faultline/feature-map-*.json`.
+- `FAULTLINE_AUTO_REFRESH` — set to `1` to shell out to the `faultlines` CLI
+  and refresh the map in the background between queries.
+
 ## Tools (read-only)
 
 - `list_features` — every detected feature
@@ -61,6 +73,12 @@ configure) and answers tool calls against it.
   library, no web framework pulled in.
 - **HTTP service** (`pip install 'faultlines-mcp[http]'`, run `faultlines-mcp-serve`)
   — the shape the hosted Faultlines dashboard proxies to.
+
+## Related
+
+- [`faultlines`](https://pypi.org/project/faultlines/) — the engine that
+  generates the feature-map JSON this server reads (`pip install faultlines`).
+- [faultlines.dev](https://faultlines.dev) — hosted dashboard + docs.
 
 ## License
 

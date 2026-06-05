@@ -194,8 +194,11 @@ class TestInjectFlows:
         assert flow.bug_fixes == 7
         assert flow.health_score == 65.5
 
-    def test_handles_flow_without_entry_trail(self):
-        # Legacy / non-Sprint-4 description without the suffix.
+    def test_drops_flow_without_entry_trail(self):
+        # P3 hallucination filter: a flow with no participants AND no
+        # recorded entry_point is ungrounded — it got no file attribution
+        # from any path — so it is dropped rather than injected. A plain
+        # description (no `(entry: ...)` suffix) carries no entry point.
         fm = _map([_f("x")])
         _inject_new_pipeline_flows(
             fm,
@@ -203,12 +206,10 @@ class TestInjectFlows:
             flow_descriptions={"x": {"plain-flow": "Just a description."}},
             commits=[],
         )
-        flow = fm.features[0].flows[0]
-        assert flow.description == "Just a description."
-        assert flow.entry_point_file is None
-        assert flow.entry_point_line is None
+        assert fm.features[0].flows == []
 
-    def test_handles_missing_description(self):
+    def test_drops_flow_with_missing_description(self):
+        # No description and no entry trail → ungrounded → dropped (P3).
         fm = _map([_f("x")])
         _inject_new_pipeline_flows(
             fm,
@@ -216,10 +217,7 @@ class TestInjectFlows:
             flow_descriptions={},  # no descriptions at all
             commits=[],
         )
-        flow = fm.features[0].flows[0]
-        assert flow.name == "bare"
-        assert flow.description is None
-        assert flow.entry_point_file is None
+        assert fm.features[0].flows == []
 
     def test_empty_flows_dict_is_noop(self):
         fm = _map([_f("x")])

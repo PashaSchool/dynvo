@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faultlines"
-version = "0.1.0"
+version = "1.1.0"
 description = "Map features in any codebase from git history alone. No Jira required."
 readme = "README.md"
-license = "MIT"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
     { name = "Faultlines" },
@@ -20,7 +20,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -153,18 +152,12 @@ packages = ["faultline"]
 [tool.uv.workspace]
 members = ["faultlines-mcp"]
 
-# Runtime data (stack patterns + dependency-anchors.yaml) ships INSIDE the
-# package at faultline/pipeline_v2/data/** and is loaded hermetically via
-# importlib.resources (see faultline/pipeline_v2/data/__init__.py). This
-# Runtime data (dependency-anchors.yaml + stacks/*.yaml) ships INSIDE the
-# package via hatchling's default package discovery (`packages = ["faultline"]`),
-# which now includes the non-.py files under faultline/**. The previous
-# force-include here was redundant AND fatal: it re-added every data file at
-# the same archive path, so hatchling aborted with a duplicate-file error.
-# (Replaced the even older `"eval" = "eval"` band-aid — see
-# bug-featuremap-eval-not-in-wheel.) A wheel-content assertion lives in
-# tests/test_wheel_hermetic.py; verify the YAML is present after any
-# packaging change.
+# Runtime data (stack patterns + dependency-anchors.yaml) at
+# faultline/pipeline_v2/data/** ships automatically — `packages = ["faultline"]`
+# already includes non-.py files under the package, and the data is loaded
+# hermetically via importlib.resources. A previous force-include of the same
+# path re-added these files at the SAME wheel location, producing duplicate ZIP
+# entries that PyPI rejects ("Duplicate filename in local headers") — removed.
 
 [tool.pytest.ini_options]
 addopts = [

@@ -1,0 +1,20 @@
+# Ground truth for the fastify-api fixture.
+#
+# Derived from what the CODE implements — NOT from engine output.
+# The API exposes product CRUD and a checkout flow. `server.js` is the
+# bootstrap/registration file, not a product feature, so it is
+# intentionally absent.
+features:
+  - name: products
+    description: List, create, and delete products.
+    aliases:
+      - product-catalog
+  - name: checkout
+    description: Submit a checkout and read its status.
+    aliases:
+      - checkout-flow
+  - name: authentication
+    description: Request authentication via the auth plugin.
+    aliases:
+      - auth
+      - plugins-auth

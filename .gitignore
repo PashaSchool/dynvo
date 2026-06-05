@@ -48,12 +48,7 @@ htmlcov/
 # Hatch
 .hatch/
 
-# SaaS dashboard (lives in separate private repo: faultlines-app)
-saas-dashboard/
-dashboard/
-
 # Internal mission docs (not for public)
-REWRITE_PLAN.md
 memory/
 
 # Landing page screenshots
@@ -65,3 +60,4 @@ waitlist.json
 
 .pypirc
 docs/
+.pypirc

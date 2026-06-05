@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faultlines-mcp"
-version = "0.2.1"
+version = "0.5.0"
 description = "MCP server for the Faultlines feature map — serve precise codebase context to AI coding agents (Cursor, Claude Code, Cline, Aider) instead of having them grep the repo."
-readme = "README.md"
-license = "MIT"
+readme = { text = "MCP server for the Faultlines feature map — serve precise codebase context (features, flows, owners, hotspots, symbols, impact) to AI coding agents like Cursor and Claude Code instead of having them grep the repo. Standalone, engine-free. See https://faultlines.dev", content-type = "text/markdown" }
+license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "Faultlines" }]
 keywords = [
@@ -19,7 +19,6 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
