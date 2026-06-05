@@ -1,0 +1,132 @@
+name: Release
+
+# Auto-publish to TestPyPI on merge to main. Each package is released
+# independently based on which paths changed. Every release minor-bumps the
+# package version. The `release` job is gated behind the `testpypi`
+# GitHub Environment, so nothing publishes until you click Approve.
+on:
+  push:
+    branches: [main]
+
+# Serialize releases so two quick merges can't race on the version bump /
+# push-back to main.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect changed packages
+    runs-on: ubuntu-latest
+    # Skip the release commit this workflow pushes back (belt-and-braces with
+    # the `[skip ci]` marker in that commit message).
+    if: ${{ !contains(github.event.head_commit.message, 'chore(release)') }}
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      mcp: ${{ steps.filter.outputs.mcp }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            engine:
+              - 'faultline/**'
+              - 'pyproject.toml'
+            mcp:
+              - 'faultlines-mcp/**'
+
+  release:
+    name: Bump, build, publish to TestPyPI
+    needs: detect
+    if: ${{ needs.detect.outputs.engine == 'true' || needs.detect.outputs.mcp == 'true' }}
+    runs-on: ubuntu-latest
+    # Approval gate: configure required reviewers on this environment in
+    # repo Settings → Environments → testpypi. The job pauses here until
+    # an approver (you) clicks Approve.
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/faultlines/
+    permissions:
+      contents: write   # push the version-bump commit + tags back to main
+      id-token: write   # OIDC token for PyPI Trusted Publishing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build
+
+      # --- Version bump (working tree only; committed after a successful publish) ---
+      - name: Bump engine (faultlines) minor version
+        id: engine
+        if: ${{ needs.detect.outputs.engine == 'true' }}
+        run: echo "version=$(python scripts/bump_minor_version.py pyproject.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Bump mcp (faultlines-mcp) minor version
+        id: mcp
+        if: ${{ needs.detect.outputs.mcp == 'true' }}
+        run: echo "version=$(python scripts/bump_minor_version.py faultlines-mcp/pyproject.toml)" >> "$GITHUB_OUTPUT"
+
+      # --- Build ---
+      - name: Build engine
+        if: ${{ needs.detect.outputs.engine == 'true' }}
+        run: python -m build --outdir dist .
+
+      - name: Build mcp
+        if: ${{ needs.detect.outputs.mcp == 'true' }}
+        run: python -m build --outdir faultlines-mcp/dist faultlines-mcp
+
+      # --- Publish to TestPyPI via Trusted Publishing (OIDC, no secrets) ---
+      - name: Publish engine to TestPyPI
+        if: ${{ needs.detect.outputs.engine == 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+
+      - name: Publish mcp to TestPyPI
+        if: ${{ needs.detect.outputs.mcp == 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: faultlines-mcp/dist/
+
+      # --- Persist the bump back to main only after publish succeeds ---
+      - name: Commit version bumps and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml faultlines-mcp/pyproject.toml
+
+          summary=""
+          if [ "${{ needs.detect.outputs.engine }}" = "true" ]; then
+            summary="faultlines v${{ steps.engine.outputs.version }}"
+          fi
+          if [ "${{ needs.detect.outputs.mcp }}" = "true" ]; then
+            [ -n "$summary" ] && summary="$summary, "
+            summary="${summary}faultlines-mcp v${{ steps.mcp.outputs.version }}"
+          fi
+
+          git commit -m "chore(release): $summary [skip ci]"
+
+          if [ "${{ needs.detect.outputs.engine }}" = "true" ]; then
+            git tag -a "faultlines-v${{ steps.engine.outputs.version }}" -m "faultlines v${{ steps.engine.outputs.version }}"
+          fi
+          if [ "${{ needs.detect.outputs.mcp }}" = "true" ]; then
+            git tag -a "faultlines-mcp-v${{ steps.mcp.outputs.version }}" -m "faultlines-mcp v${{ steps.mcp.outputs.version }}"
+          fi
+
+          git push origin HEAD:main --follow-tags
