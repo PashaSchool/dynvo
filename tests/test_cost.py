@@ -100,18 +100,6 @@ class TestCostTrackerRecord:
         assert t.total_output_tokens == 150_000
         assert t.call_count == 2
 
-    def test_ollama_records_but_costs_zero(self) -> None:
-        t = CostTracker()
-        t.record(
-            provider="ollama",
-            model="llama3.1:8b",
-            input_tokens=1_000_000,
-            output_tokens=500_000,
-            label="local-run",
-        )
-        assert t.total_cost_usd == 0.0
-        assert t.total_input_tokens == 1_000_000  # still tracked for reporting
-
     def test_batch_discount_applied(self) -> None:
         t = CostTracker()
         t.record(

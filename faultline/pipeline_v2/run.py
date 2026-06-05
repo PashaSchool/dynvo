@@ -148,8 +148,10 @@ MODEL_ALIASES: dict[str, str] = {
     # valid form (the previously-pinned `-20251108` snapshot 404s). Verified
     # against the Anthropic API 2026-05-27.
     "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-7",
     "claude-haiku-4-5": "claude-haiku-4-5-20251001",
     "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-opus-4-7": "claude-opus-4-7",
 }
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
