@@ -44,6 +44,13 @@ Cursor `mcp` config):
 The server loads the feature-map JSON for the current repo (or the path you
 configure) and answers tool calls against it.
 
+## Configuration
+
+- `FAULTLINE_MAP_PATH` — explicit path to a feature-map JSON. When unset, the
+  server loads the most recent `~/.faultline/feature-map-*.json`.
+- `FAULTLINE_AUTO_REFRESH` — set to `1` to shell out to the `faultlines` CLI
+  and refresh the map in the background between queries.
+
 ## Tools (read-only)
 
 - `list_features` — every detected feature
