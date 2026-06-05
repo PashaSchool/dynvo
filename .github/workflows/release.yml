@@ -226,6 +226,18 @@ jobs:
         with:
           packages-dir: faultlines-mcp/dist/
 
+      # --- Notify faultlines-app to redeploy the worker on the new engine ---
+      - name: Ping faultlines-app (engine published)
+        if: ${{ needs.detect.outputs.engine == 'true' }}
+        env:
+          DISPATCH_TOKEN: ${{ secrets.FAULTLINES_APP_DISPATCH_TOKEN }}
+        run: |
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/PashaSchool/faultlines-app/dispatches \
+            -d '{"event_type":"engine-published","client_payload":{"version":"${{ needs.stage.outputs.engine_version }}"}}'
+
       # --- Persist the bump back to main only after prod publish succeeds ---
       # Re-run the deterministic bump on a fresh main checkout so pyproject
       # reflects the just-published version. The numbers come from the stage
