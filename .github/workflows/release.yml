@@ -229,9 +229,14 @@ jobs:
       # --- Notify faultlines-app to redeploy the worker on the new engine ---
       - name: Ping faultlines-app (engine published)
         if: ${{ needs.detect.outputs.engine == 'true' }}
+        continue-on-error: true
         env:
           DISPATCH_TOKEN: ${{ secrets.FAULTLINES_APP_DISPATCH_TOKEN }}
         run: |
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "FAULTLINES_APP_DISPATCH_TOKEN not set — skipping worker ping (the 6h PyPI poll picks up this release)."
+            exit 0
+          fi
           curl -fsSL -X POST \
             -H "Authorization: Bearer $DISPATCH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
