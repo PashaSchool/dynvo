@@ -98,6 +98,10 @@ jobs:
         run: python -m build --outdir faultlines-mcp/dist faultlines-mcp
 
       # --- Stage on TestPyPI (skip-existing → idempotent re-runs) ---
+      # attestations: false — staging is validation only, and any
+      # .publish.attestation files generated here would ride along in the
+      # uploaded artifact and make the prod publish fail ("distributions
+      # already have publish attestations"). Prod generates fresh ones.
       - name: Stage engine on TestPyPI
         if: ${{ needs.detect.outputs.engine == 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -105,6 +109,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist/
           skip-existing: true
+          attestations: false
 
       - name: Stage mcp on TestPyPI
         if: ${{ needs.detect.outputs.mcp == 'true' }}
@@ -113,6 +118,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: faultlines-mcp/dist/
           skip-existing: true
+          attestations: false
 
       # --- Hand the exact built artifacts to the prod job ---
       - name: Upload engine artifact

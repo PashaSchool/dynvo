@@ -2,6 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/faultlines-mcp?color=6E56CF)](https://pypi.org/project/faultlines-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/faultlines-mcp?color=6E56CF)](https://pypi.org/project/faultlines-mcp/)
+[![Downloads](https://img.shields.io/pypi/dm/faultlines-mcp?color=6E56CF)](https://pypi.org/project/faultlines-mcp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6E56CF.svg)](../LICENSE)
 
 MCP server for the [Faultlines](https://faultlines.dev) feature map — serve
