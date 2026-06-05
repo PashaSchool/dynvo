@@ -20,7 +20,11 @@ runner = CliRunner()
 
 
 def test_scan_v2_help_lists_flags() -> None:
-    result = runner.invoke(app, ["scan-v2", "--help"])
+    # Pin a wide width so Rich never truncates long option names. Without
+    # a TTY (CI) Rich falls back to whatever COLUMNS is in os.environ; a
+    # narrow value leaked by another test would clip "--model" → "--mod…"
+    # and fail this assertion. Forcing COLUMNS here makes it deterministic.
+    result = runner.invoke(app, ["scan-v2", "--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
     out = result.stdout
     assert "--model" in out
