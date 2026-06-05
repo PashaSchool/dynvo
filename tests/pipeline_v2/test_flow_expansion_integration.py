@@ -156,7 +156,19 @@ def test_backward_compat_all_sprint_1_fields_preserved(tmp_path: Path):
             for a in flow.flow_symbol_attributions
         ],
     }
+    # flow_symbol_attributions is ADDITIVE post-Gap-C: the entry/branch
+    # records are preserved verbatim, but the call graph may append
+    # role="called" records for traced callees. Compare the other fields
+    # verbatim; assert pre-existing attributions are preserved (prefix)
+    # and any additions are role="called".
+    before_fsa = before.pop("flow_symbol_attributions")
+    after_fsa = after.pop("flow_symbol_attributions")
     assert before == after, "Sprint 1 / B1 fields must be preserved verbatim"
+    assert after_fsa[: len(before_fsa)] == before_fsa, (
+        "pre-existing flow_symbol_attributions must be preserved"
+    )
+    for rec in after_fsa[len(before_fsa):]:
+        assert rec[4] == "called", "only role=called records may be appended"
 
     # New Sprint 2 surface is populated.
     assert flow.entry is not None

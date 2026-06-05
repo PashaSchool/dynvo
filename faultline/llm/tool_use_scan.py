@@ -37,6 +37,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 DEFAULT_TOOL_BUDGET = 15
@@ -267,7 +268,7 @@ def tool_use_scan(
         tools_for_call = TOOL_SCHEMAS if tool_calls_made < tool_budget else []
 
         kwargs: dict[str, Any] = {
-            "model": model,
+            "model": gateway_model(model),
             "max_tokens": max_tokens,
             "system": system_prompt or _SYSTEM_PROMPT,
             "messages": messages,

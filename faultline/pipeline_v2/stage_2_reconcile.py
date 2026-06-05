@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 # ── Source priority ────────────────────────────────────────────────────────
@@ -290,7 +291,7 @@ def _llm_pick_name(
     try:
         client = Anthropic()
         msg = client.messages.create(
-            model=_HAIKU_MODEL_ID,
+            model=gateway_model(_HAIKU_MODEL_ID),
             max_tokens=24,
             messages=[{"role": "user", "content": prompt}],
         )

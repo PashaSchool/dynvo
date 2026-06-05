@@ -58,6 +58,6 @@ memory/
 # Waitlist data
 waitlist.json
 
-
+.pypirc
 docs/
 .pypirc

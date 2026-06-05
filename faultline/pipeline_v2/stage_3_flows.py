@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_2_reconcile import DeveloperFeature
 
 logger = logging.getLogger(__name__)
+from faultline.llm.model_gateway import resolve_model as gateway_model
 
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -407,7 +408,7 @@ def _call_haiku(
     """
     try:
         msg = client.messages.create(
-            model=model,
+            model=gateway_model(model),
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],

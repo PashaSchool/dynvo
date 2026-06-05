@@ -24,6 +24,7 @@ from faultline.pipeline_v2.flow_reach import (
     _resolve_python_module,
     build_reach_context,
     compute_flow_reach,
+    compute_python_source_roots,
 )
 
 
@@ -196,6 +197,89 @@ def test_resolve_python_module_misses_stdlib(tmp_path: Path):
     # stdlib / third-party — won't be in file_set
     assert _resolve_python_module("foo/bar.py", "os", file_set) is None
     assert _resolve_python_module("foo/bar.py", "requests", file_set) is None
+
+
+# ── Source-root inference (FastAPI / Django / src-layout) ────────────────
+
+
+def test_compute_source_roots_detects_service_dir():
+    """A packageless dir hosting packages is inferred as a source root."""
+    fs = frozenset({
+        "backend/agent/__init__.py",
+        "backend/agent/tools.py",
+        "backend/routers/__init__.py",
+        "backend/routers/detectors.py",
+    })
+    roots = compute_python_source_roots(fs)
+    assert "" in roots          # repo root always present
+    assert "backend" in roots   # inferred service source root
+
+
+def test_compute_source_roots_detects_src_layout():
+    fs = frozenset({
+        "src/pkg/__init__.py",
+        "src/pkg/mod.py",
+    })
+    roots = compute_python_source_roots(fs)
+    assert "src" in roots
+
+
+def test_compute_source_roots_plain_root_layout_no_widen():
+    """A repo-root package layout yields only the root — no over-broaden."""
+    fs = frozenset({
+        "app/__init__.py",
+        "app/main.py",
+        "app/util.py",
+    })
+    roots = compute_python_source_roots(fs)
+    assert roots == ("",)
+
+
+def test_resolve_python_absolute_via_source_root():
+    """``from agent.tools import x`` resolves when the file lives under a
+    source root (``backend/agent/tools.py``).
+    """
+    fs = frozenset({
+        "backend/agent/__init__.py",
+        "backend/agent/tools.py",
+        "backend/routers/__init__.py",
+        "backend/routers/detectors.py",
+    })
+    roots = compute_python_source_roots(fs)
+    resolved = _resolve_python_module(
+        "backend/routers/detectors.py", "agent.tools", fs,
+        source_roots=roots,
+    )
+    assert resolved == "backend/agent/tools.py"
+
+
+def test_resolve_python_absolute_without_root_misses():
+    """Backward-compat: with default (repo-root) roots, a source-root
+    import does NOT resolve — the new behaviour is opt-in via the
+    inferred roots threaded from ReachContext.
+    """
+    fs = frozenset({"backend/agent/tools.py"})
+    assert _resolve_python_module(
+        "backend/routers/detectors.py", "agent.tools", fs,
+    ) is None
+
+
+def test_reach_python_source_root_end_to_end(tmp_path: Path):
+    """Full build_reach_context path resolves a source-root import."""
+    _write(tmp_path, "backend/agent/__init__.py", "")
+    _write(tmp_path, "backend/agent/tools.py", "def derive(): return 1\n")
+    _write(tmp_path, "backend/routers/__init__.py", "")
+    _write(
+        tmp_path, "backend/routers/detectors.py",
+        "from agent.tools import derive\n\ndef create(): return derive()\n",
+    )
+    tracked = [
+        "backend/agent/__init__.py", "backend/agent/tools.py",
+        "backend/routers/__init__.py", "backend/routers/detectors.py",
+    ]
+    rctx = build_reach_context(_ctx(tmp_path, tracked))
+    reach = compute_flow_reach(rctx, "backend/routers/detectors.py", 1)
+    assert "backend/agent/tools.py" in reach.reached_paths
 
 
 def test_reach_go_internal_imports(tmp_path: Path):

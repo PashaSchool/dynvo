@@ -20,7 +20,7 @@ from faultline.models.types import Feature
 from faultline.pipeline_v2.stage_0_intake import ScanContext
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     Stage8Result,
-    _cache_path,
+    _cache_key,
     _load_cached_taxonomy,
     _write_cache,
     cluster_via_haiku,
@@ -108,13 +108,11 @@ class _FakeClient:
 
 @pytest.fixture(autouse=True)
 def _isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect the marketing cache to a per-test tmp dir so we don't
-    poison ``~/.faultline/marketing-cache/`` from the test suite."""
-    monkeypatch.setattr(
-        "faultline.pipeline_v2.stage_8_marketing_clusterer."
-        "_MARKETING_CACHE_DIR",
-        tmp_path / "marketing-cache",
-    )
+    """Redirect the engine base dir to a per-test tmp dir so we don't
+    poison ``~/.faultline/marketing-cache/`` from the test suite. The
+    default ``FilesystemCacheBackend`` resolves its base from
+    ``FAULTLINES_RUN_DIR`` → marketing cache lands under tmp_path."""
+    monkeypatch.setenv("FAULTLINES_RUN_DIR", str(tmp_path))
 
 
 # ── Test 1: customer YAML short-circuit ─────────────────────────────────
@@ -169,7 +167,7 @@ def test_marketing_fetch_plus_haiku_overrides_pre_mapping(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: fake_taxonomy,
+        lambda repo_path, slug, **_: fake_taxonomy,
     )
 
     client = _FakeClient(response_text=json.dumps({"mappings": [
@@ -216,7 +214,7 @@ def test_marketing_fetch_failed_falls_back(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: None,
+        lambda repo_path, slug, **_: None,
     )
 
     client = _FakeClient(response_text="not-called")
@@ -260,7 +258,7 @@ def test_taxonomy_below_threshold_falls_back(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: tiny,
+        lambda repo_path, slug, **_: tiny,
     )
 
     client = _FakeClient(response_text="not-called")
@@ -326,7 +324,7 @@ def test_haiku_invented_labels_are_rejected(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: fake_taxonomy,
+        lambda repo_path, slug, **_: fake_taxonomy,
     )
 
     # Haiku invents "Made Up Feature" (not in taxonomy).
@@ -433,7 +431,7 @@ def test_empty_haiku_response_falls_back(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: fake_taxonomy,
+        lambda repo_path, slug, **_: fake_taxonomy,
     )
 
     # Haiku returns empty mapping.
@@ -561,7 +559,7 @@ def test_m2_drops_singleton_pre_pfs_fully_covered_by_haiku(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: fake_taxonomy,
+        lambda repo_path, slug, **_: fake_taxonomy,
     )
     client = _FakeClient(response_text=json.dumps({"mappings": [
         {"developer": "checker", "product": "HTTP Uptime Monitoring"},
@@ -618,7 +616,7 @@ def test_m2_keeps_pre_pfs_when_haiku_leaves_dev_unmapped(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: fake_taxonomy,
+        lambda repo_path, slug, **_: fake_taxonomy,
     )
     # Haiku maps only `checker`, returns null for `misc_util`.
     client = _FakeClient(response_text=json.dumps({"mappings": [
@@ -675,7 +673,7 @@ def test_m2_drops_pre_pf_with_partial_haiku_coverage(
     monkeypatch.setattr(
         "faultline.pipeline_v2.stage_8_marketing_clusterer."
         "fetch_marketing_taxonomy",
-        lambda repo_path, slug: fake_taxonomy,
+        lambda repo_path, slug, **_: fake_taxonomy,
     )
     client = _FakeClient(response_text=json.dumps({"mappings": [
         {"developer": "checker", "product": "HTTP Uptime Monitoring"},

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.pipeline_v2.stage_0_6_shape import ClassificationResult
 
 from faultline.analyzer.git import get_commits, get_tracked_files, load_repo
@@ -123,6 +124,13 @@ class ScanContext:
     repo_shape: str | None = None
     shape_confidence: float = 0.0
     shape_rationale: str = ""
+    # Pluggable cache backend (spec: encrypted-db-cache-backend). The
+    # orchestrator (``pipeline_v2/run.py``) constructs it once via
+    # ``faultline.cache.get_cache_backend`` and threads it here so cache
+    # call sites route through it instead of hardcoding ``~/.faultline``.
+    # ``None`` → those call sites fall back to the env-selected default
+    # (preserves CLI / test behaviour). NOT a global singleton.
+    cache_backend: "CacheBackend | None" = None
 
     def with_shape(self, result: "ClassificationResult") -> "ScanContext":
         """Return a NEW ScanContext with the shape-classification fields populated.
@@ -149,6 +157,7 @@ class ScanContext:
             repo_shape=result.shape,
             shape_confidence=result.confidence,
             shape_rationale=result.rationale,
+            cache_backend=self.cache_backend,
         )
 
     def with_audited_stack(
@@ -184,6 +193,7 @@ class ScanContext:
             repo_shape=self.repo_shape,
             shape_confidence=self.shape_confidence,
             shape_rationale=self.shape_rationale,
+            cache_backend=self.cache_backend,
         )
 
 

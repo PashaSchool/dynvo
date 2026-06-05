@@ -446,6 +446,8 @@ def _resolve_import(
     file_set: set[str],
     alias_map: dict[str, str] | None = None,
     monorepo_packages: set[str] | None = None,
+    workspace_package_map: dict[str, str] | None = None,
+    repo_root: str | None = None,
 ) -> str | None:
     """Resolves an import path to an actual file in the project.
 
@@ -454,6 +456,10 @@ def _resolve_import(
     - Alias imports: @/foo, ~/bar (mapped to root and src/ root)
     - tsconfig paths: custom aliases from tsconfig.json
     - Monorepo bare imports: 'react-reconciler/src/...' → 'packages/react-reconciler/src/...'
+    - Workspace scoped imports: '@calcom/lib' → 'packages/lib', resolved via
+      ``workspace_package_map`` (package.json#name → dir). ADDITIVE fallback,
+      tried ONLY when every resolver above fails. See
+      :func:`_resolve_workspace_package_import`.
     - Bare imports that might be internal: skipped (likely node_modules)
 
     Returns None if the path resolves outside the file set.
@@ -491,6 +497,17 @@ def _resolve_import(
     # Try monorepo bare import: 'shared/foo' → 'packages/shared/src/foo'
     if monorepo_packages:
         result = _resolve_monorepo_import(import_path, file_set, monorepo_packages)
+        if result:
+            return result
+
+    # Additive final fallback: workspace-aliased scoped imports
+    # ('@scope/pkg', '@scope/pkg/subpath') resolved through the
+    # package.json#name → dir map. Only reached when NOTHING above matched,
+    # so imports that already resolve keep their existing target.
+    if workspace_package_map:
+        result = _resolve_workspace_package_import(
+            import_path, file_set, workspace_package_map, repo_root,
+        )
         if result:
             return result
 
@@ -555,6 +572,299 @@ def detect_monorepo_packages(repo_root: str) -> set[str]:
                 package_names.add(entry)
 
     return package_names
+
+
+# Workspace-glob containers expanded one level by ``*``. We don't pull a
+# YAML parser in just for ``pnpm-workspace.yaml`` — its ``packages:`` block
+# is a flat list of glob strings, recovered with a tolerant line scan below.
+_WS_GLOB_RE = None  # placeholder; pattern compiled lazily in the function
+
+
+def _read_workspace_globs(repo_root: str) -> list[str]:
+    """Collect workspace glob patterns from package manager config.
+
+    Sources (all optional, structural — never README):
+      * ``package.json#workspaces`` — either a list, or
+        ``{"packages": [...]}`` (Yarn classic shape).
+      * ``pnpm-workspace.yaml`` — the ``packages:`` list block.
+
+    Returns the raw glob strings (e.g. ``"packages/*"``,
+    ``"packages/features/*"``, ``"apps/api/*"``, ``"packages/app-store"``).
+    De-duplicated, order-preserving. Never raises.
+    """
+    import json as _json
+    import re as _re
+
+    globs: list[str] = []
+    seen: set[str] = set()
+
+    def _add(g: object) -> None:
+        if isinstance(g, str) and g and g not in seen:
+            seen.add(g)
+            globs.append(g)
+
+    # 1) package.json#workspaces
+    pkg_json = os.path.join(repo_root, "package.json")
+    if os.path.isfile(pkg_json):
+        try:
+            with open(pkg_json, encoding="utf-8") as f:
+                data = _json.load(f)
+            ws = data.get("workspaces")
+            if isinstance(ws, dict):
+                ws = ws.get("packages")
+            if isinstance(ws, list):
+                for g in ws:
+                    _add(g)
+        except (OSError, ValueError):
+            pass
+
+    # 2) pnpm-workspace.yaml — tolerant line scan of the ``packages:`` list.
+    pnpm_ws = os.path.join(repo_root, "pnpm-workspace.yaml")
+    if os.path.isfile(pnpm_ws):
+        try:
+            with open(pnpm_ws, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            in_packages = False
+            item_re = _re.compile(r"""^\s*-\s*['"]?([^'"\s#]+)['"]?""")
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("packages:"):
+                    in_packages = True
+                    continue
+                if in_packages:
+                    # A new top-level key ends the packages block.
+                    if stripped and not stripped.startswith("-") and stripped.endswith(":"):
+                        in_packages = False
+                        continue
+                    m = item_re.match(line)
+                    if m:
+                        _add(m.group(1))
+        except OSError:
+            pass
+
+    return globs
+
+
+def _expand_workspace_glob(repo_root: str, glob: str) -> list[str]:
+    """Expand ONE workspace glob into concrete package directories.
+
+    Only the trailing-``/*`` (single-segment wildcard) form is expanded by
+    listing immediate child directories — that covers the overwhelmingly
+    dominant workspace conventions (``packages/*``, ``packages/features/*``,
+    ``apps/api/*``). A literal path (no wildcard) is returned as-is when it
+    exists. We deliberately do NOT implement full globbing (``**``) — a
+    package dir is identified by carrying its own ``package.json``, checked
+    by the caller, so over-listing here is harmless.
+
+    Returns repo-relative directory paths (forward-slash).
+    """
+    glob = glob.strip().rstrip("/")
+    if not glob:
+        return []
+    if glob.endswith("/*"):
+        parent_rel = glob[:-2]
+        parent_abs = os.path.join(repo_root, parent_rel)
+        if not os.path.isdir(parent_abs):
+            return []
+        out: list[str] = []
+        for entry in sorted(os.listdir(parent_abs)):
+            child = os.path.join(parent_abs, entry)
+            if os.path.isdir(child):
+                out.append(f"{parent_rel}/{entry}" if parent_rel else entry)
+        return out
+    if "*" in glob:
+        # Unsupported multi-wildcard pattern — skip (caller falls back to
+        # the directory-name resolver). Keeps this universal, not clever.
+        return []
+    # Literal directory.
+    if os.path.isdir(os.path.join(repo_root, glob)):
+        return [glob]
+    return []
+
+
+def detect_workspace_package_map(repo_root: str) -> dict[str, str]:
+    """Map each workspace package's declared ``name`` → its directory.
+
+    This is the structural backbone for resolving scoped monorepo imports
+    such as ``@calcom/lib`` → ``packages/lib`` or
+    ``@calcom/features`` → ``packages/features``. Built ENTIRELY from
+    config (never README, never hardcoded repo paths):
+
+      1. Gather workspace globs from ``package.json#workspaces`` /
+         ``pnpm-workspace.yaml`` (:func:`_read_workspace_globs`).
+      2. Expand each glob to concrete package dirs
+         (:func:`_expand_workspace_glob`).
+      3. For each dir carrying a ``package.json``, read its ``name`` and
+         map ``name → dir``.
+
+    Universal across pnpm / npm / yarn workspaces. When no workspace config
+    exists the map is empty and callers fall back to the legacy
+    directory-name resolver (behaviour unchanged for non-workspace repos).
+
+    Returns ``{}`` on any failure — never raises.
+    """
+    import json as _json
+
+    pkg_map: dict[str, str] = {}
+    globs = _read_workspace_globs(repo_root)
+    if not globs:
+        return {}
+
+    dirs: list[str] = []
+    seen_dirs: set[str] = set()
+    for g in globs:
+        for d in _expand_workspace_glob(repo_root, g):
+            if d not in seen_dirs:
+                seen_dirs.add(d)
+                dirs.append(d)
+
+    for d in dirs:
+        pj = os.path.join(repo_root, d, "package.json")
+        if not os.path.isfile(pj):
+            continue
+        try:
+            with open(pj, encoding="utf-8") as f:
+                name = _json.load(f).get("name")
+        except (OSError, ValueError):
+            continue
+        if isinstance(name, str) and name:
+            # First declaration wins (stable across reruns since ``dirs``
+            # is glob-order then lexical).
+            pkg_map.setdefault(name, d)
+
+    return pkg_map
+
+
+# package.json fields consulted (in priority order) to resolve a BARE
+# scoped import (no subpath) to a concrete entry file. ``exports`` "."
+# is handled separately before this list.
+_PKG_ENTRY_FIELDS = ("module", "main")
+
+
+def _resolve_workspace_package_import(
+    import_path: str,
+    file_set: set[str],
+    workspace_package_map: dict[str, str],
+    repo_root: str | None = None,
+) -> str | None:
+    """Resolve a scoped/workspace import via the package-name → dir map.
+
+    Handles the cross-PACKAGE monorepo shapes the directory-name resolver
+    misses:
+
+        ``@calcom/lib``                       (bare scoped → pkg entry)
+        ``@calcom/lib/logger``                (scoped + subpath)
+        ``@calcom/features/calendar-subscription/lib/X``  (deep subpath)
+        ``mypkg`` / ``mypkg/sub``             (unscoped workspace name)
+
+    Resolution order for a matched package whose dir is ``pkgdir``:
+      * bare (no subpath): the package's ``exports["."]`` / ``module`` /
+        ``main`` entry, else ``pkgdir/index.*``.
+      * subpath ``sub``: ``pkgdir/sub`` with extension + index fallback
+        (the dominant convention — most workspace packages re-export from
+        source subpaths directly under their root).
+
+    ADDITIVE: only ever called after relative + tsconfig-alias + builtin-
+    alias + directory-name resolution have all failed, so it never changes
+    behaviour for imports that already resolved.
+    """
+    if not workspace_package_map:
+        return None
+
+    # Longest-name-first so ``@scope/a/b`` prefers a package literally named
+    # ``@scope/a/b`` over package ``@scope/a`` with subpath ``b``. Both are
+    # valid workspace shapes; the more specific package name wins.
+    for name in sorted(workspace_package_map, key=len, reverse=True):
+        if import_path == name:
+            subpath = ""
+        elif import_path.startswith(name + "/"):
+            subpath = import_path[len(name) + 1:]
+        else:
+            continue
+
+        pkgdir = workspace_package_map[name]
+
+        if subpath:
+            base = f"{pkgdir}/{subpath}"
+            result = _try_extensions(base, file_set)
+            if result:
+                return result
+            # Some packages expose a subpath that maps through their own
+            # src/ root (``pkgdir/src/sub``) — try that as a fallback.
+            result = _try_extensions(f"{pkgdir}/src/{subpath}", file_set)
+            if result:
+                return result
+            return None
+
+        # Bare package import — resolve the package entry point.
+        entry = _package_entry_file(pkgdir, file_set, repo_root)
+        if entry:
+            return entry
+        # Fall back to conventional index resolution.
+        for base in (f"{pkgdir}/index", f"{pkgdir}/src/index"):
+            result = _try_extensions(base, file_set)
+            if result:
+                return result
+        return None
+
+    return None
+
+
+def _package_entry_file(
+    pkgdir: str,
+    file_set: set[str],
+    repo_root: str | None,
+) -> str | None:
+    """Resolve a workspace package's main entry file from its package.json.
+
+    Consults ``exports["."]`` (string or ``{import|default|...: path}``)
+    then ``module`` / ``main``. Returns the first declared entry that
+    exists in ``file_set``. Returns ``None`` when no package.json is
+    readable (caller falls back to index resolution).
+    """
+    if repo_root is None:
+        return None
+    import json as _json
+
+    pj = os.path.join(repo_root, pkgdir, "package.json")
+    if not os.path.isfile(pj):
+        return None
+    try:
+        with open(pj, encoding="utf-8") as f:
+            data = _json.load(f)
+    except (OSError, ValueError):
+        return None
+
+    candidates: list[str] = []
+    exports = data.get("exports")
+    dot = None
+    if isinstance(exports, str):
+        dot = exports
+    elif isinstance(exports, dict):
+        root_exp = exports.get(".")
+        if isinstance(root_exp, str):
+            dot = root_exp
+        elif isinstance(root_exp, dict):
+            for cond in ("import", "module", "default", "require"):
+                v = root_exp.get(cond)
+                if isinstance(v, str):
+                    dot = v
+                    break
+    if isinstance(dot, str) and dot:
+        candidates.append(dot)
+    for field in _PKG_ENTRY_FIELDS:
+        v = data.get(field)
+        if isinstance(v, str) and v:
+            candidates.append(v)
+
+    for raw in candidates:
+        rel = raw.lstrip("./")
+        base = f"{pkgdir}/{rel}" if rel else pkgdir
+        # Entry may already carry an extension, or be extensionless / a dir.
+        result = _try_extensions(base, file_set)
+        if result:
+            return result
+    return None
 
 
 # .js → .ts extension swaps for TypeScript projects that use .js in imports
