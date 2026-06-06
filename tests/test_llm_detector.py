@@ -162,7 +162,10 @@ def test_reads_api_key_from_env_var(mock_cls, monkeypatch):
     result = detect_features_llm(["src/main.py"])
 
     mock_cls.assert_called_once_with(api_key="sk-ant-env-key")
-    assert result == {"core": ["src/main.py"]}
+    # This test asserts the env-var API key is used. The post-process renamer
+    # may rebucket a lone structural file (e.g. "core" → "shared-infra"), so
+    # assert the file flows through rather than the renamer-dependent name.
+    assert [f for files in result.values() for f in files] == ["src/main.py"]
 
 
 @patch("faultline.llm.detector.anthropic.Anthropic")
