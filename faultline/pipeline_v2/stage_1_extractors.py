@@ -112,6 +112,13 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     # Sprint S3.1 — Fastify code-based router. Self-skips unless the
     # auditor / Stage 0 / a workspace package.json signals fastify.
     _try("faultline.pipeline_v2.extractors.fastify",         "FastifyRouteExtractor")
+    # Django / DRF URLConf + view extractor. Parses urls.py urlpatterns
+    # (path/re_path/url + include), DRF ViewSets/APIViews, and Django CBVs
+    # into explicit routes with view-symbol attribution. Self-skips unless
+    # the auditor / Stage 0 / a workspace stack signals django-app (or a
+    # Python repo exposes Django source markers). Critical for the Django
+    # backend workspace of a polyglot monorepo (Stage 1 per-workspace).
+    _try("faultline.pipeline_v2.extractors.django",          "DjangoExtractor")
     # Sprint H — JS/TS library extractor. Mirrors python-library: reads
     # package.json#exports + lib/ submodule layout. Self-skips for app-
     # shaped repos (next/express/fastify/etc. in direct deps).
