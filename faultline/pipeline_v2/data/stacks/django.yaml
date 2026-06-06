@@ -1,0 +1,124 @@
+stack: django
+display_name: Django / Django REST Framework
+
+# How we know Django (and optionally DRF) is in use. Stage 0 / the
+# auditor own primary classification (the auditor emits ``django-app``
+# when ``manage.py`` is present); this block documents the structural
+# markers the extractor's own activation gate also checks so it fires on
+# a Django *workspace* of a polyglot monorepo where the top-level stack
+# tag is something else. NO repo-specific paths — all markers are
+# framework conventions.
+detection:
+  any:
+    - file_basename: "manage.py"
+    - source_marker: "urlpatterns"
+    - source_marker: "INSTALLED_APPS"
+    - dep_substring: "django"
+    - dep_substring: "djangorestframework"
+    - source_marker: "rest_framework"
+
+# Route extraction — Django declares URL routes in ``urls.py`` modules
+# via ``urlpatterns = [...]`` entries built with ``path()`` / ``re_path()``
+# / legacy ``url()``. The URL pattern + the view symbol live INSIDE the
+# source, not the filesystem path, so (like FastAPI) we emit explicit
+# ``routes`` tuples per anchor. ``include(...)`` stitches sub-app URLConfs
+# under a prefix.
+route_extraction:
+  file_suffix: ".py"
+
+  # Only ``urls.py`` (or ``*_urls.py`` / ``urlconf.py``) carry urlpatterns
+  # by convention. We additionally require the ``urlpatterns`` token in
+  # the file body before parsing, so this glob is a cheap pre-filter, not
+  # a hard requirement.
+  urls_file_basenames:
+    - "urls.py"
+    - "urlconf.py"
+
+  # ``path('users/', views.UserList.as_view(), name='user-list')``
+  # ``path("api/", include("app.urls"))``
+  # ``re_path(r'^posts/(?P<pk>\d+)/$', PostDetail.as_view())``
+  # ``url(r'^legacy/$', legacy_view)``
+  # Group 1 = the function name (path|re_path|url), group 2 = the route
+  # literal (raw string), group 3 = the remainder of the call args (view
+  # ref + kwargs) up to the closing paren.
+  route_pattern: '\b(path|re_path|url)\(\s*[rR]?[''"]([^''"]*)[''"]\s*,\s*([^\n]*)'
+
+  # ``include("app.urls")`` / ``include(("app.urls", "app"))`` /
+  # ``include(router.urls)`` — group 1 = the include target reference.
+  include_pattern: 'include\(\s*\(?\s*[rR]?[''"]?([\w./]+)[''"]?'
+
+  # The view reference inside a route's arg blob. Captures either
+  # ``Foo.as_view()`` (class-based / DRF), ``views.foo`` (function ref),
+  # or a bare ``foo``. Group 1 = the symbol (sans ``.as_view()``).
+  view_ref_pattern: '([A-Za-z_][\w.]*)\s*\.as_view\s*\(|name\s*=\s*[''"]([^''"]*)[''"]'
+
+# DRF / class-based view detection — supporting signals attached to the
+# nearest route anchor and used to name viewset-rooted features. Applied
+# per ``.py`` file (typically ``views.py`` / ``viewsets.py`` / ``api.py``).
+view_extraction:
+  file_basename_hints:
+    - "views.py"
+    - "viewsets.py"
+    - "api.py"
+
+  # ``class UserViewSet(viewsets.ModelViewSet):`` /
+  # ``class PostList(generics.ListCreateAPIView):`` /
+  # ``class FooView(APIView):`` /
+  # ``class BarView(View):``
+  # Group 1 = the class name, group 2 = the (comma-joined) base list.
+  view_class_pattern: 'class\s+([A-Za-z_]\w*)\s*\(\s*([^)]*)\)\s*:'
+
+  # Base-class tokens that mark a class as an HTTP view (CBV/DRF). Match
+  # is substring-based so ``rest_framework.viewsets.ModelViewSet`` and a
+  # bare ``ModelViewSet`` both qualify. Universal DRF/Django vocabulary.
+  view_base_markers:
+    - "ViewSet"
+    - "APIView"
+    - "GenericAPIView"
+    - "ListAPIView"
+    - "CreateAPIView"
+    - "RetrieveAPIView"
+    - "UpdateAPIView"
+    - "DestroyAPIView"
+    - "ListCreateAPIView"
+    - "RetrieveUpdateAPIView"
+    - "RetrieveDestroyAPIView"
+    - "RetrieveUpdateDestroyAPIView"
+    - "TemplateView"
+    - "RedirectView"
+    - "ListView"
+    - "DetailView"
+    - "CreateView"
+    - "UpdateView"
+    - "DeleteView"
+    - "FormView"
+    - "View"
+
+# Supporting (non-route) signals — DRF serializers + Django models. We
+# do NOT emit a standalone anchor per serializer/model (that would
+# explode feature count on large apps); instead we count them as
+# secondary evidence and use them to confirm the app is a real
+# Django/DRF API. Cheap, optional.
+support_extraction:
+  serializer_basename_hints:
+    - "serializers.py"
+  serializer_pattern: 'class\s+([A-Za-z_]\w*)\s*\(\s*[^)]*[Ss]erializer[^)]*\)\s*:'
+  model_basename_hints:
+    - "models.py"
+  model_pattern: 'class\s+([A-Za-z_]\w*)\s*\(\s*[^)]*[Mm]odels?\.Model[^)]*\)\s*:'
+
+# Never treat these as Django sources.
+excludes:
+  - "site-packages/"
+  - "node_modules/"
+  - ".venv/"
+  - "venv/"
+  - "tests/"
+  - "test/"
+  - "migrations/"
+
+# Confidence emitted on anchors.
+confidence:
+  route_with_view: 0.9
+  route_only: 0.78
+  viewset_only: 0.72
