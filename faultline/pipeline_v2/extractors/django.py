@@ -335,7 +335,14 @@ class DjangoExtractor:
         )
         serializer_count = 0
         model_count = 0
+        # View class names referenced by a parsed route (by bare class stem).
+        routed_view_symbols: set[str] = set()
 
+        # Pass A reads every file to populate ``view_class_files`` BEFORE
+        # any route is parsed; route→view-file attribution in Pass B then
+        # resolves regardless of the order tracked_files lists urls.py vs
+        # views.py. Cache the read text so Pass B does not re-read.
+        file_text: dict[str, str] = {}
         for rel_path in ctx.tracked_files:
             if not rel_path.endswith(c.file_suffix):
                 continue
@@ -345,6 +352,7 @@ class DjangoExtractor:
             if not text:
                 continue
             rel_posix = posix(rel_path)
+            file_text[rel_path] = text
 
             # View classes (CBV / DRF) — any .py may declare them but we
             # only pay the regex on files that contain ``class``.
@@ -365,6 +373,10 @@ class DjangoExtractor:
                 serializer_count += len(c.serializer_re.findall(text))
             if _basename_matches(rel_path, c.model_basenames):
                 model_count += len(c.model_re.findall(text))
+
+        # ── Pass B: parse routes (view_class_files is now complete) ──
+        for rel_path, text in file_text.items():
+            rel_posix = posix(rel_path)
 
             # Routes — only urls.py-shaped files with urlpatterns.
             if not _basename_matches(rel_path, c.urls_basenames):
@@ -409,21 +421,23 @@ class DjangoExtractor:
                     buckets[slug]["files"].add(rel_posix)
                     if view_sym:
                         buckets[slug]["has_view"] = True
-                        # Attribute the view's declaring file too.
+                        # Attribute the view's declaring file too, and record
+                        # the view symbol so its class is not re-emitted as a
+                        # residual (a routed view sharing a file with an
+                        # unrouted one must NOT suppress the latter).
                         base_sym = view_sym.split(".")[-1]
+                        routed_view_symbols.add(base_sym)
                         decl = view_class_files.get(base_sym)
                         if decl:
                             buckets[slug]["files"].add(decl)
 
         out: list[AnchorCandidate] = []
-        routed_view_files: set[str] = set()
 
         for slug, data in buckets.items():
             routes = data["routes"]
             if not routes:
                 continue
             files = data["files"]
-            routed_view_files |= files
             conf = (
                 c.conf_route_with_view if data["has_view"] else c.conf_route_only
             )
@@ -447,7 +461,7 @@ class DjangoExtractor:
         # such viewset file, named by the class, so they aren't lost.
         residual_by_file: dict[str, set[str]] = defaultdict(set)
         for cls_name, file_str in viewset_classes.items():
-            if file_str in routed_view_files:
+            if cls_name in routed_view_symbols:
                 continue
             residual_by_file[file_str].add(cls_name)
 
