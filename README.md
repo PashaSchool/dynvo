@@ -38,7 +38,7 @@ The answers were in your **git history** the whole time. Faultlines reads them.
 ## What Faultlines does
 
 ```
-$ faultlines scan-v2 ./my-app --llm --flows --symbols
+$ faultlines ./my-app
 
   ✓ 472 commits analysed · 1,284 files mapped
 
@@ -78,9 +78,19 @@ A **two-layer feature map**:
 ```bash
 pip install faultlines
 
-# Scan a repo — deterministic by default, add --llm for richer naming
-faultlines scan-v2 /path/to/your/repo --llm --flows --symbols
+# Scan a repo. Bare `faultlines <repo>` runs the scan pipeline —
+# flows and symbol-level attribution are included by default.
+faultlines /path/to/your/repo
 ```
+
+Faultlines is **deterministic-first**: the feature/flow structure comes from your code and git history with no LLM required. Set an `ANTHROPIC_API_KEY` and a **Haiku** pass automatically adds human-readable names and flow detection — no flag needed. Pick the model with `--model haiku|sonnet|opus` (default: `haiku`):
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+faultlines /path/to/your/repo --model sonnet
+```
+
+> `scan-v2` is the explicit name of the same pipeline (`faultlines scan-v2 <repo>`); the bare form is just shorthand for it.
 
 That writes a versioned **feature-map JSON** to `~/.faultline/`. Explore it, diff it across runs, ship it to CI, or hand it to your AI agent (below).
 
@@ -135,12 +145,12 @@ Now Cursor / Claude Code / Cline / Windsurf can call **13 tools**:
  code/config ─┘    (routes · MVC · schema ·   │
                     package · stack patterns)  ├─▶  feature & flow map
                                                │     + metrics + symbols
-        optional LLM pass (naming · flows) ────┘            │
+        Haiku pass · naming + flows (key set) ─┘            │
                                                             ▼
                               feature-map JSON  ──▶  CLI · CI · dashboard · MCP
 ```
 
-**Deterministic-first.** The structure comes from your routing conventions, configs, schemas and git co-change patterns. An optional LLM pass adds human-readable names and flow detection. The output is a single versioned JSON — the stable contract every consumer reads.
+**Deterministic-first.** The structure comes from your routing conventions, configs, schemas and git co-change patterns — no LLM required. When `ANTHROPIC_API_KEY` is set, an Anthropic (Haiku by default, `--model sonnet|opus`) pass adds human-readable names and flow detection automatically. The output is a single versioned JSON — the stable contract every consumer reads.
 
 ## 🔌 Integrations
 
