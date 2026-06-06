@@ -29,6 +29,7 @@ _EVAL_STACKS = _REPO_ROOT / "eval" / "stacks"
 _EVAL_DEP_ANCHORS = _REPO_ROOT / "eval" / "dependency-anchors.yaml"
 
 _STACK_NAMES = [
+    "django",
     "fastapi",
     "go-http-router",
     "js-library",
