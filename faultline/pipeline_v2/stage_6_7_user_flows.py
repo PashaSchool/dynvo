@@ -640,14 +640,22 @@ def _detect_plugin_roots(
 
 
 def _dedup_by_name(flows: list[dict]) -> list[dict]:
-    """Stage A — dedup by canonical NAME (first-seen wins).
+    """Stage A — dedup by (NAME, owning feature), first-seen wins.
 
     Duplicate-flow rows share a name but carry distinct uuids, so a
     uuid-keyed dedup would not collapse them (see bug-duplicate-flow-keys).
+    The key is scoped to the owning ``primary_feature`` because a journey
+    name (``reschedule-booking-flow``) legitimately recurs across many
+    DISTINCT features in a monorepo — a name-only key collapsed them
+    globally (measured on cal.com: 705/1545 flows dropped, all from
+    different features, 0 true duplicates), starving the UF rollup. Keying
+    on (name, feature) still collapses genuine within-feature duplicate
+    rows while letting distinct cross-feature flows survive to be grouped
+    by the clusterer. Falls back to name-only when no feature is present.
     """
-    seen: dict[str, dict] = {}
+    seen: dict[tuple, dict] = {}
     for f in flows:
-        key = f.get("name")
+        key = (f.get("name"), f.get("primary_feature"))
         if key not in seen:
             seen[key] = f
     return list(seen.values())
