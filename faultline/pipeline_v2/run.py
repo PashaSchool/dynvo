@@ -1766,6 +1766,34 @@ def run_pipeline_v2(
         )
     scan_meta["stage_6_7_user_flows"] = dict(uf_telemetry)
 
+    # ── Stage 6.7c — Mega-UF semantic split (additive Sonnet) ──────
+    # 6.7's deterministic clusterer over-merges genuinely-distinct journeys
+    # into a few mega-UFs (cal.com: one 'availability' UF spanned 33
+    # journeys). A handful of LLM calls partition ONLY those mega-mixed UFs
+    # into per-journey sub-UFs (recall-safe — unplaced members fall to a
+    # residual sub-UF, no flow dropped). Runs BEFORE 6.7b so the refiner
+    # names the split UFs. Shared CostTracker; graceful degrade keeps the
+    # mega-UF on any LLM failure. Measured F1 64→74 on cal.com vs uf-golden.
+    from faultline.pipeline_v2.stage_6_7c_uf_splitter import split_mega_user_flows
+    with StageLogger(run_dir, 6, "uf_splitter") as log6_7c:
+        user_flows, uf_split_telemetry = split_mega_user_flows(
+            user_flows,
+            bipartite.flows,
+            cost_tracker=tracker,
+            log=log6_7c,
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="uf_splitter",
+            payload={
+                **uf_split_telemetry,
+                "user_flows": [uf.model_dump() for uf in user_flows],
+            },
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_7c_uf_splitter"] = dict(uf_split_telemetry)
+
     # ── Stage 6.7b — User-Flow LLM refiner (additive Haiku) ─────────
     # One Haiku call per domain over the deterministic 6.7 UF clusters:
     # journey-grain name/description, resolves intent="other", infers
