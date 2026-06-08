@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import statistics
 from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.data import load_stack_yaml
@@ -43,6 +44,74 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+# ── Median-outlier flat-leaf collapse (scale-invariant, no magic counts) ────
+#
+# A library whose source root holds MANY flat one-file modules (yup's
+# ``src/*.ts`` = 18 files) must not explode into one feature-per-file.
+# A *directory* whose count of flat single-file leaves is an outlier
+# relative to the median FILE-COUNT of the sibling folder-modules is
+# collapsed to its folder anchor. Folder-modules and explicit
+# package.json#exports are ALWAYS kept (real, author-declared
+# boundaries); only flat-file leaves collapse, and only when there is a
+# folder anchor to fold into.
+#
+# Both constants are scale-invariant comparators, not corpus-tuned
+# absolutes (per memory/rule-no-magic-tuning):
+#   * _FLAT_OUTLIER_MULT — a flat-leaf group is an outlier when its size
+#     exceeds MULT × the median substantive-anchor file-count.
+#   * _FLAT_OUTLIER_MEDIAN_FLOOR — below this many flat leaves in a dir
+#     we never collapse (a handful of flat modules IS the feature map
+#     for a small lib; collapsing would erase signal).
+#
+# NOTE: this copy is intentionally LOCAL to js_library.py. An equivalent
+# guard lives in the Rust module extractor (rust_packages.py) which is on
+# the still-unmerged PR #25 branch — importing it here would create a
+# cross-PR dependency. TODO: DRY into a shared util once #25 merges.
+_FLAT_OUTLIER_MULT = 2.0
+_FLAT_OUTLIER_MEDIAN_FLOOR = 3
+
+
+def _collapse_oversplit_flat(
+    flat_by_dir: dict[str, dict[str, str]],
+    folder_file_counts: list[int],
+    foldable_dirs: set[str],
+) -> set[str]:
+    """Return the set of dir-keys whose flat-leaf set should collapse.
+
+    Scale-invariant outlier detection. A directory's flat single-file
+    modules "explode" relative to the repo's OWN sense of feature size,
+    given by the median file-count of the sibling folder-modules. A dir
+    whose flat-leaf count exceeds ``_FLAT_OUTLIER_MULT`` × that median
+    (and clears ``_FLAT_OUTLIER_MEDIAN_FLOOR``) is an outlier.
+
+    Critical: we only collapse a dir that has a FOLD TARGET — a real
+    folder-module anchor (``foldable_dirs``). A noise-named module dir
+    with no folder anchor (e.g. a public ``core/`` whose leaves ARE the
+    feature surface) keeps its leaves rather than silently dropping them
+    back to the LLM. With no folder-modules to reference we fall back to
+    the floor alone for the genuine giant-flat-dir explosion.
+    """
+    if not flat_by_dir:
+        return set()
+
+    counts = [c for c in folder_file_counts if c > 0]
+    median_folder = (
+        statistics.median(counts) if counts else float(_FLAT_OUTLIER_MEDIAN_FLOOR)
+    )
+    threshold = max(
+        _FLAT_OUTLIER_MEDIAN_FLOOR,
+        _FLAT_OUTLIER_MULT * median_folder,
+    )
+
+    collapsed: set[str] = set()
+    for dir_key, modules in flat_by_dir.items():
+        if len(modules) <= threshold:
+            continue
+        if dir_key in foldable_dirs:
+            collapsed.add(dir_key)
+    return collapsed
 
 
 def _load_config() -> dict:
@@ -448,28 +517,59 @@ class JsLibraryExtractor:
         # an anchor.
         if source_root:
             sub_dirs: dict[str, list[str]] = {}
-            sub_files: dict[str, str] = {}
+            # Flat module files keyed by the directory that holds them.
+            # ``flat_by_dir[<dir>]`` maps module-name → tracked path. The
+            # holding dir is the source root itself (root-level flat
+            # modules) or a first-level subdir (nested flat modules like
+            # ``source/core/options.ts``). Keying by dir lets the median-
+            # collapse decide per-directory whether the flat-leaf set has
+            # exploded.
+            flat_by_dir: dict[str, dict[str, str]] = {}
             # Full path prefix in tracked-file terms. In workspace mode
             # tracked_files carry the workspace-relative paths
             # (e.g. ``packages/better-auth/src/...``); in root mode just
             # ``src/...``.
             prefix = f"{ws_prefix}{source_root}/"
+
+            def _is_src_module_file(rest: str) -> str | None:
+                if not re.search(r"\.(m?[jt]s|cts|cjs)$", rest):
+                    return None
+                base = rest.rsplit("/", 1)[-1]
+                # ``*.d.ts`` declaration files are not feature modules.
+                if base.endswith(".d.ts"):
+                    return None
+                name = re.sub(r"\.(m?[jt]s|cts|cjs)$", "", base)
+                if not name or is_noise(name):
+                    return None
+                return name
+
             for t in tracked:
                 if not t.startswith(prefix):
                     continue
                 if _excluded(t):
                     continue
                 rest = t[len(prefix):]
-                if "/" in rest:
+                depth = rest.count("/")
+                if depth == 0:
+                    # Root-level flat module file: <source_root>/<m>.ts
+                    name = _is_src_module_file(rest)
+                    if name:
+                        flat_by_dir.setdefault(source_root, {}).setdefault(name, t)
+                else:
                     top = rest.split("/", 1)[0]
                     sub_dirs.setdefault(top, []).append(t)
-                else:
-                    if re.search(r"\.(m?[jt]s|cts|cjs)$", rest):
-                        name = re.sub(r"\.(m?[jt]s|cts|cjs)$", "", rest)
-                        if name and not is_noise(name):
-                            sub_files.setdefault(name, t)
+                    if depth == 1:
+                        # First-level nested flat module:
+                        # <source_root>/<sub>/<m>.ts
+                        name = _is_src_module_file(rest)
+                        if name:
+                            dir_key = f"{source_root}/{top}"
+                            flat_by_dir.setdefault(dir_key, {}).setdefault(name, t)
 
-            # Submodule anchors.
+            # Folder-module anchors — ALWAYS kept (author-declared dir
+            # boundary). These also become the collapse target for an
+            # exploding flat-leaf set inside that dir.
+            folder_slugs: dict[str, str] = {}  # dir_key -> slug
             for sub, files in sorted(sub_dirs.items()):
                 slug = slugify(sub)
                 if not slug or is_noise(slug) or slug in emitted_slugs:
@@ -487,17 +587,76 @@ class JsLibraryExtractor:
                     ),
                 )
                 emitted_slugs.add(slug)
+                folder_slugs[f"{source_root}/{sub}"] = slug
 
-            # Top-level single-file modules — only when explicitly
-            # re-exported from the entry file. Avoid spamming on
-            # internal utility files.
-            entry_candidates = self._config.get("entry_file_candidates") or [
-                "index.js", "index.ts", "index.mjs", "src/index.ts", "src/index.js",
-            ]
-            entry_file = _find_entry_file(ws_base, entry_candidates)
-            reexported = _parse_entry_reexports(read_text(entry_file) or "") if entry_file else set()
-            for name, file_path in sorted(sub_files.items()):
-                if name in reexported or name.lower() in {s.lower() for s in reexported}:
+            # Public-API reachability for NESTED dirs. A nested noise-named
+            # module dir (e.g. ``source/core/``) is a public feature
+            # surface only when the source-root barrel re-exports through
+            # it (``export * from './core/...'`` or ``export {...} from
+            # './core/x'``). An internal helper dir (e.g. ``src/util/``,
+            # reached only by ``import`` statements) is NOT public — its
+            # flat helpers must not become per-file phantom features
+            # (memory/next-sprint-structural-folder-phantoms). Root-level
+            # flat modules need no gate: they sit on the public source root
+            # itself.
+            #
+            # KEY: the library's public entry is its source-root barrel
+            # (``<source_root>/index.{ts,js,...}``). A narrow configured
+            # entry-candidate list can miss it (e.g. configured
+            # ``src/index.ts`` won't find ``source/index.ts``). We read the
+            # source-root barrel DIRECTLY and union with any configured
+            # entry file.
+            entry_texts: list[str] = []
+            for cand in ("index.ts", "index.js", "index.mjs", "index.cts", "index.cjs"):
+                barrel_path = repo / f"{ws_prefix}{source_root}/{cand}"
+                barrel_text = read_text(barrel_path)
+                if barrel_text:
+                    entry_texts.append(barrel_text)
+                    break
+            cfg_entry = _find_entry_file(
+                ws_base,
+                self._config.get("entry_file_candidates")
+                or ["index.ts", "src/index.ts"],
+            )
+            if cfg_entry:
+                cfg_text = read_text(cfg_entry)
+                if cfg_text:
+                    entry_texts.append(cfg_text)
+
+            public_nested_dirs: set[str] = set()
+            for entry_text in entry_texts:
+                for tgt in _parse_entry_star_reexports(entry_text):
+                    seg = tgt.strip("/").split("/")[0]
+                    if seg:
+                        public_nested_dirs.add(f"{source_root}/{seg}")
+                for m in _REEXPORT_NAMED.finditer(entry_text):
+                    rel = (m.group(2) or "").lstrip("./")
+                    seg = rel.split("/")[0]
+                    if seg and "/" in rel:
+                        public_nested_dirs.add(f"{source_root}/{seg}")
+
+            # Flat single-file modules — ROOT-level files emit
+            # deterministically; NESTED dirs only when publicly reachable.
+            # Guarded by the median-outlier collapse so a huge flat source
+            # dir doesn't explode into one feature per file.
+            folder_file_counts = [len(files) for files in sub_dirs.values()]
+            foldable_dirs = set(folder_slugs.keys())
+            collapsed_dirs = _collapse_oversplit_flat(
+                flat_by_dir, folder_file_counts, foldable_dirs,
+            )
+            for dir_key, modules in sorted(flat_by_dir.items()):
+                if dir_key != source_root and dir_key not in public_nested_dirs:
+                    # Internal helper dir (util/, internal/) — not a public
+                    # feature surface. Leave to Stage 2/4.
+                    continue
+                if dir_key in collapsed_dirs:
+                    # Exploding flat set with a folder anchor to fold into —
+                    # don't emit per-file leaves (the folder-module anchor
+                    # already covers the dir). A root-level flat set with no
+                    # fold target is NOT in collapsed_dirs (floor-only path
+                    # in _collapse_oversplit_flat) and still emits below.
+                    continue
+                for name, file_path in sorted(modules.items()):
                     slug = slugify(name)
                     if not slug or is_noise(slug) or slug in emitted_slugs:
                         continue
@@ -507,10 +666,7 @@ class JsLibraryExtractor:
                             paths=(file_path,),
                             source=self.name,
                             confidence_self=sub_conf,
-                            rationale=(
-                                f"js-library single-file module {file_path!r} "
-                                f"re-exported from entry"
-                            ),
+                            rationale=f"js-library source module {file_path!r}",
                         ),
                     )
                     emitted_slugs.add(slug)
