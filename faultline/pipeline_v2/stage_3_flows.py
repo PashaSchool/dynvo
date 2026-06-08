@@ -64,7 +64,14 @@ from faultline.llm.model_gateway import resolve_model as gateway_model
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MAX_TOKENS = 2000
-DEFAULT_MAX_WORKERS = 8
+# ThreadPool size for the per-feature flow-detection LLM calls. Tunable via
+# env so a deploy can raise concurrency WITHOUT an engine release — on giant
+# repos (lobe-chat: 939 features) the per-call latency through the AI Gateway
+# dominates wall-clock, and more parallelism cuts it. Bounded [1, 32] to avoid
+# blowing the provider's rate limit. Default 8 (good for Haiku, direct).
+DEFAULT_MAX_WORKERS = max(
+    1, min(32, int(os.environ.get("FAULTLINES_STAGE3_MAX_WORKERS", "8") or "8"))
+)
 # Wall-time cap MUST scale with feature count. Old fixed 300s left
 # chatwoot (330 features) and directus (242 features) with 189/231
 # features defaulted to flows=[] because there literally weren't
