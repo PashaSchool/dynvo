@@ -191,3 +191,105 @@ def test_idempotent():
     attach_flow_test_files([flow], rctx, index=index)
     assert flow.test_files == [test]
     assert flow.test_file_count == 1
+
+
+# --- Inverted-index correctness (perf refactor) -----------------------------
+
+
+def test_route_literal_substring_inside_longer_identifier_still_matches():
+    """The substring trap: route literal ``/f`` must match a test that only
+    contains ``/foo`` (where ``/f`` is a substring but NOT a \\w+ token).
+
+    This is exactly the case a token-only Signal-3 index would silently
+    drop — Signal 3 must keep exact ``lit in src`` substring semantics.
+    """
+    src = "backend/api/f.py"
+    # Test references "/foo" — "/f" is a SUBSTRING of it, never its own
+    # token, and there is no filename convention linking it to ``src``.
+    test = "frontend/tests/e2e/foo.spec.ts"
+    rctx = _FakeRctx(
+        repo_path="/repo",
+        file_set=frozenset({src, test}),
+        signatures={
+            test: _FakeSig(
+                source="test('foo', async ({page}) => {"
+                       " await page.goto('/foo'); })",
+            ),
+        },
+    )
+    flow = _flow(
+        name="f-flow", paths=[src], entry_file=src, route_pattern="/f",
+    )
+    index = build_flow_test_index(rctx)
+    # "/f" is a substring of "/foo" -> the route-literal scan must match.
+    assert test in _tests_for_flow(flow, index)
+    # And it is memoized after first request.
+    assert index.route_to_tests["/f"] == {test}
+
+
+def test_symbol_matches_whole_word_token_not_substring_occurrence():
+    """A symbol-only flow: the symbol appears as a whole-word token in one
+    test and ONLY as a substring inside a longer identifier in another.
+
+    The token pre-filter + \\b…\\b confirm must match ONLY the whole-word
+    test (regex boundary semantics preserved; the substring-only file is
+    not even a token-index candidate, and would fail confirm anyway).
+    """
+    src = "backend/svc/order.py"
+    whole = "backend/tests/test_whole.py"     # token "create" present
+    substr = "backend/tests/test_substr.py"   # only "create_order_v2"
+    rctx = _FakeRctx(
+        repo_path="/repo",
+        file_set=frozenset({src, whole, substr}),
+        signatures={
+            whole: _FakeSig(source="from svc import create\ncreate()"),
+            substr: _FakeSig(source="x = create_order_v2()"),
+        },
+    )
+    flow = _flow(
+        name="create-flow", paths=[src],
+        entry_file=src, entry_symbol="create",
+    )
+    index = build_flow_test_index(rctx)
+    tfs = _tests_for_flow(flow, index)
+    assert whole in tfs
+    assert substr not in tfs
+
+
+def test_flow_with_neither_symbols_nor_route_literals_is_empty():
+    """No filename match, no entry symbol, no route literal -> empty.
+
+    Signals 2 and 3 are both skipped; nothing spuriously attaches.
+    """
+    src = "backend/api/lonely.py"
+    test = "backend/tests/test_other.py"
+    rctx = _FakeRctx(
+        repo_path="/repo",
+        file_set=frozenset({src, test}),
+        signatures={test: _FakeSig(source="def test_z(): pass")},
+    )
+    flow = _flow(name="lonely-flow", paths=["backend/api/nope.py"])
+    index = build_flow_test_index(rctx)
+    assert _tests_for_flow(flow, index) == []
+
+
+def test_attach_telemetry_shape_unchanged():
+    """``attach_flow_test_files`` still returns exactly the three telemetry
+    keys with correct values after the index inversion."""
+    src = "backend/api/q.py"
+    test = "backend/tests/test_q.py"
+    rctx = _FakeRctx(
+        repo_path="/repo",
+        file_set=frozenset({src, test}),
+        signatures={test: _FakeSig(source="def test_q(): pass")},
+    )
+    flow = _flow(name="q-flow", paths=[src], entry_file=src)
+    tel = attach_flow_test_files([flow], rctx)
+    assert set(tel) == {
+        "test_files_total_in_repo",
+        "flows_with_test_files",
+        "flow_test_file_links",
+    }
+    assert tel["test_files_total_in_repo"] == 1
+    assert tel["flows_with_test_files"] == 1
+    assert tel["flow_test_file_links"] == 1
