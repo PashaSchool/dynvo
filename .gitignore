@@ -54,6 +54,9 @@ memory/
 # Landing page screenshots
 *.png
 *.webp
+# …but keep committed brand/README assets
+!assets/
+!assets/**
 
 # Waitlist data
 waitlist.json
