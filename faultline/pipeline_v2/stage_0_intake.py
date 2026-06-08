@@ -248,21 +248,48 @@ def _detect_js_stack(
     """Return (stack_slug, signals) for a JS/TS-shaped directory.
 
     Looks at:
-      - package.json deps (dependencies + devDependencies)
+      - package.json RUNTIME deps (dependencies + peerDependencies) for
+        app-framework classification; devDependencies never make a repo
+        an app of that framework (vite branch consults dev_deps only for
+        an EXACT ``vite`` entry, never ``vitest``)
       - presence of framework config files (next.config.*, etc.)
       - presence of routing convention dirs (app/, pages/, src/routes/)
     """
     signals: list[str] = []
 
-    deps: dict[str, object] = {}
+    # Separate RUNTIME deps (dependencies + peerDependencies) from
+    # DEV deps. App-framework classification keys on runtime deps ONLY:
+    # a library that dev-depends on express (for its own test server) or
+    # on vitest (for its tests) is NOT an express/vite APP. Conflating
+    # devDeps mis-tags pure libraries (got→express, yup→vite) and
+    # suppresses JsLibraryExtractor downstream.
+    runtime_deps: dict[str, object] = {}
+    dev_deps: dict[str, object] = {}
     if pkg:
-        for key in ("dependencies", "devDependencies", "peerDependencies"):
+        for key in ("dependencies", "peerDependencies"):
             block = pkg.get(key)
             if isinstance(block, dict):
-                deps.update(block)
-    has_dep = lambda name: any(  # noqa: E731
-        d == name or d.startswith(name) for d in deps
-    )
+                runtime_deps.update(block)
+        dev_block = pkg.get("devDependencies")
+        if isinstance(dev_block, dict):
+            dev_deps.update(dev_block)
+
+    def _matches(deps: dict[str, object], name: str) -> bool:
+        """Exact match, or scoped-prefix match only when *name* ends in '/'.
+
+        Exact-or-scoped-prefix avoids the substring trap: ``vite`` must
+        NOT match ``vitest`` and ``express`` must NOT match
+        ``express-rate-limit``. A trailing slash (``@remix-run/``) opts
+        into prefix matching for npm scopes.
+        """
+        for d in deps:
+            if d == name:
+                return True
+            if name.endswith("/") and d.startswith(name):
+                return True
+        return False
+
+    has_dep = lambda name: _matches(runtime_deps, name)  # noqa: E731
 
     has_next = has_dep("next")
     if has_next:
@@ -328,9 +355,17 @@ def _detect_js_stack(
             signals.append(f"package.json depends on {dep_name}")
             return slug, signals
 
-    # Vite-based SPA (last resort for JS)
-    if has_dep("vite") or (root / "vite.config.ts").exists() or (root / "vite.config.js").exists():
-        signals.append("Vite signals (dep or vite.config.*)")
+    # Vite-based SPA (last resort for JS). Accept an EXACT ``vite`` dep
+    # (runtime or dev) or a ``vite.config.*`` file — but NEVER ``vitest``
+    # (that is a test runner, not an app-bundler signal). ``has_dep`` is
+    # already exact-match on runtime deps; we add the exact dev-deps case
+    # explicitly so a vitest-only devDep can't prefix-match into "vite".
+    has_vite_config = any(
+        (root / f"vite.config.{ext}").exists()
+        for ext in ("ts", "js", "mjs", "cjs", "mts", "cts")
+    )
+    if has_dep("vite") or ("vite" in dev_deps) or has_vite_config:
+        signals.append("Vite signals (exact vite dep or vite.config.*)")
         return "vite", signals
 
     # JS/TS but no recognised framework
