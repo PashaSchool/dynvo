@@ -108,6 +108,12 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     # route-only go_router. Self-skips via the same Go activation gate.
     _try("faultline.pipeline_v2.extractors.go_packages",     "GoPackageExtractor")
     _try("faultline.pipeline_v2.extractors.rust_workspace",  "RustWorkspaceExtractor")
+    # Rust intra-crate module extractor. Emits one deterministic anchor per
+    # first-level src/ module (src/<m>.rs, src/<m>/, src/bin/<n>.rs) for each
+    # crate root. rust_workspace only emits ONE anchor per workspace member;
+    # this closes the within-crate gap that pushes meilisearch (~36%) and
+    # single-crate Rust repos to the LLM. Self-skips via the same Rust gate.
+    _try("faultline.pipeline_v2.extractors.rust_packages",   "RustModuleExtractor")
     _try("faultline.pipeline_v2.extractors.python_library",  "PythonLibraryExtractor")
     # FastAPI HTTP-route extractor. Parses @app/@router decorators +
     # APIRouter(prefix=...) + include_router(...) into explicit routes.
