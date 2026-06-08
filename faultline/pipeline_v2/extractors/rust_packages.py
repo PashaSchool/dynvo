@@ -61,6 +61,7 @@ No LLM. No network. Pure tracked-file index walk + path arithmetic.
 from __future__ import annotations
 
 import logging
+import statistics
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -108,6 +109,42 @@ _SRC_DIR = "src"
 
 # The conventional binary subdirectory inside ``src/``.
 _BIN_DIR = "bin"
+
+# Rationale tags. The flat-leaf rationale is load-bearing: the
+# over-split collapse pass keys off it to know which units are eligible
+# for collapse (folder-modules and binaries are NEVER collapsed).
+_FLAT_MODULE_RATIONALE = "rust src module file"
+_FOLDER_MODULE_RATIONALE = "rust src module folder"
+_BIN_MODULE_RATIONALE = "rust src/bin binary"
+
+# ── Over-split collapse tunables ────────────────────────────────────────────
+#
+# These are SCALE-INVARIANT / RELATIVE thresholds, not corpus-fit
+# absolutes — per memory/rule-no-magic-tuning. A big Cargo workspace can
+# explode developer_features when a handful of giant crates each lay
+# their src/ tree out as dozens of flat ``src/<m>.rs`` leaf modules.
+# ``RustWorkspaceExtractor`` already emits one crate-level anchor per
+# member, so collapsing a crate's redundant flat leaves into that crate
+# never loses coverage — the crate anchor is the floor.
+#
+# The collapse is a RELATIVE-OUTLIER rule, not a fixed cap: we compute
+# the workspace MEDIAN flat-leaf count per crate (median, not mean — so
+# a few giant crates can't inflate the centre and shield each other) and
+# only collapse crates whose flat-leaf count is a multiple of that
+# median. On a small/uniform workspace the median sits below the floor
+# and the pass is inert. This is the median sibling of the
+# "flag features with < median/3 paths" pattern named in the rule.
+#
+# ``_FLAT_OUTLIER_MULT`` — a crate is an outlier when its flat-leaf
+# count is >= this multiple of the workspace median. 2.0 = "twice the
+# typical crate".
+_FLAT_OUTLIER_MULT = 2.0
+# ``_FLAT_OUTLIER_MEDIAN_FLOOR`` — minimum-input guard: below this many
+# flat leaves at the median, the workspace is too small/uniform for an
+# outlier judgement to mean anything, so the pass does nothing. Without
+# the floor, a tiny ``median == 1`` workspace would "collapse" any crate
+# with 2 flat modules, which is nonsense.
+_FLAT_OUTLIER_MEDIAN_FLOOR = 3
 
 # Past this anchor count we very likely over-split — log it, mirroring
 # go_packages.
@@ -173,7 +210,7 @@ def _module_unit(parts: tuple[str, ...]) -> tuple[str, str, str] | None:
         leaf = after[1]
         if leaf.endswith(".rs") and leaf not in _ROOT_MODULE_FILES:
             module = leaf[:-len(".rs")]
-            return crate, module, "rust src/bin binary"
+            return crate, module, _BIN_MODULE_RATIONALE
         return None
 
     head = after[0]
@@ -184,11 +221,72 @@ def _module_unit(parts: tuple[str, ...]) -> tuple[str, str, str] | None:
             # ``src/lib.rs`` / ``src/main.rs`` — crate root, not a module.
             return None
         module = head[:-len(".rs")]
-        return crate, module, "rust src module file"
+        return crate, module, _FLAT_MODULE_RATIONALE
 
     # ``src/<module>/...`` — a module folder. First-level dir is the
     # unit; everything beneath folds into it (recursive ownership).
-    return crate, head, "rust src module folder"
+    return crate, head, _FOLDER_MODULE_RATIONALE
+
+
+# ── Over-split collapse pass ────────────────────────────────────────────────
+
+
+def _collapse_oversplit_flat(
+    units: dict[tuple[str, str], dict],
+) -> dict[tuple[str, str], dict]:
+    """Drop flat-leaf modules of crates that over-split relative to peers.
+
+    A crate "over-splits" when its number of flat ``src/<m>.rs`` leaf
+    modules is a large RELATIVE outlier versus the rest of the workspace.
+    Such a crate's flat leaves are dropped; the crate-level anchor from
+    :class:`RustWorkspaceExtractor` remains the floor, so coverage is not
+    lost. Folder-modules (``src/<m>/``) and ``src/bin/<n>.rs`` binaries
+    are ALWAYS kept regardless — only flat leaves are eligible.
+
+    Scale-invariant rule (see module tunables / rule-no-magic-tuning):
+      * Compute each crate's flat-leaf count.
+      * Take the workspace MEDIAN of those counts (median, not mean, so
+        a few giant crates can't shield each other).
+      * If that median is below ``_FLAT_OUTLIER_MEDIAN_FLOOR`` the
+        workspace is too small/uniform — return ``units`` unchanged
+        (inert). This is what preserves small/uniform workspaces.
+      * Otherwise drop the flat leaves of every crate whose flat-leaf
+        count is ``>= _FLAT_OUTLIER_MULT * median``.
+
+    Returns a new ``units`` dict; the input is not mutated.
+    """
+    # Flat-leaf count per crate. Crates with zero flat leaves still
+    # appear in the median sample as 0 — but we only sample crates that
+    # actually have flat leaves, so a pure folder-module crate doesn't
+    # drag the median to 0 and falsely inflate everyone else's ratio.
+    flat_counts: dict[str, int] = defaultdict(int)
+    for (crate, _module), data in units.items():
+        if data["rationale"] == _FLAT_MODULE_RATIONALE:
+            flat_counts[crate] += 1
+
+    if not flat_counts:
+        return units
+
+    median = statistics.median(flat_counts.values())
+    if median < _FLAT_OUTLIER_MEDIAN_FLOOR:
+        # Too small / uniform for a relative-outlier judgement to mean
+        # anything — leave every unit untouched.
+        return units
+
+    cutoff = _FLAT_OUTLIER_MULT * median
+    oversplit_crates = {
+        crate for crate, count in flat_counts.items() if count >= cutoff
+    }
+    if not oversplit_crates:
+        return units
+
+    collapsed: dict[tuple[str, str], dict] = {}
+    for (crate, module), data in units.items():
+        is_flat = data["rationale"] == _FLAT_MODULE_RATIONALE
+        if is_flat and crate in oversplit_crates:
+            continue  # drop this flat leaf — crate anchor covers it.
+        collapsed[(crate, module)] = data
+    return collapsed
 
 
 # ── Extractor ───────────────────────────────────────────────────────────────
@@ -237,6 +335,7 @@ class RustModuleExtractor:
             bucket["paths"].add(norm)
             bucket["rationale"] = rationale
 
+        units = _collapse_oversplit_flat(units)
         return self._build_anchors(units)
 
     def _build_anchors(
