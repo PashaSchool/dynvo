@@ -131,6 +131,10 @@ from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
     run_stage_8_analyst,
 )
+from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
+    drop_all_nonsource_features,
+    reconcile_product_features,
+)
 from faultline.pipeline_v2.stage_8_5_member_backfill import (
     run_stage_8_5_backfill,
 )
@@ -1280,6 +1284,62 @@ def run_pipeline_v2(
         )
     stage_8_5_backfill_telemetry = backfill_result.as_telemetry()
 
+    # ── Stage 8.6 — universal non-source scaffold/docs drop ────────
+    # Path-sets are FINAL after Stage 8.5 backfill. Drop every developer
+    # feature whose entire path-set is non-source (docs / config / static
+    # / certs / lockfiles) — junk that carries no behaviour yet inflates
+    # the feature count and the llm_fallback_pct denominator. All-or-
+    # nothing: a single source path keeps the feature. Deterministic, no
+    # LLM, scale-invariant (extension-category + tiny build-leaf set; no
+    # path names, counts, or ratios). Runs BEFORE scan_meta assembly so
+    # llm_fallback_pct recomputes over the pruned set. After dropping we
+    # reconcile Layer-2: recompute surviving product features' path union
+    # and drop any product feature that lost all its members.
+    # Default ON; disable via FAULTLINE_STAGE_8_6_NONSOURCE_DROP=0.
+    stage_8_6_telemetry: dict[str, Any] = {
+        "dropped": 0,
+        "dropped_sample": [],
+        "pf_recomputed": 0,
+        "pf_dropped_empty": 0,
+    }
+    with StageLogger(run_dir, 8, "nonsource_drop") as log8_ns:
+        features_before_ns = len(features)
+        features, nonsource_dropped = drop_all_nonsource_features(features)
+        if nonsource_dropped:
+            product_features, pf_recon = reconcile_product_features(
+                features, product_features,
+            )
+            # Keep dev_to_product_map consistent with surviving features +
+            # product features (drop entries for vanished members / PFs).
+            surviving_pf_names = {pf.name for pf in product_features}
+            surviving_feat_names = {f.name for f in features}
+            dev_to_product_map = {
+                k: tuple(v for v in vals if v in surviving_pf_names)
+                for k, vals in dev_to_product_map.items()
+                if k in surviving_feat_names
+            }
+        else:
+            pf_recon = {"recomputed": 0, "dropped_empty": 0}
+        stage_8_6_telemetry = {
+            "dropped": len(nonsource_dropped),
+            "dropped_sample": list(nonsource_dropped[:20]),
+            "pf_recomputed": pf_recon["recomputed"],
+            "pf_dropped_empty": pf_recon["dropped_empty"],
+        }
+        log8_ns.info(
+            f"nonsource_drop features {features_before_ns}->{len(features)} "
+            f"dropped={len(nonsource_dropped)} "
+            f"pf_recomputed={pf_recon['recomputed']} "
+            f"pf_dropped_empty={pf_recon['dropped_empty']}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="nonsource_drop",
+            payload=stage_8_6_telemetry,
+            run_dir=run_dir,
+        )
+
     # ── Product-feature hotspots (Sprint 2026-05-28) ───────────────
     # Stage 6 already attached hotspots to every Layer 1 (developer)
     # feature + their flows. Product (Layer 2) features were not yet
@@ -1515,6 +1575,11 @@ def run_pipeline_v2(
         # Additive: only stamps product_feature_id on analyst-unmapped
         # dev features; never alters the product_features[] array.
         "stage_8_5_backfill": dict(stage_8_5_backfill_telemetry),
+        # Stage 8.6 — universal non-source scaffold/docs drop. Count +
+        # sample of developer features removed because their entire
+        # path-set was non-source, plus Layer-2 reconcile counters.
+        "stage_8_6_nonsource_drops": stage_8_6_telemetry["dropped"],
+        "stage_8_6_nonsource_drop": dict(stage_8_6_telemetry),
         # Sprint S6.1 — Stage 0.6 deterministic shape classifier.
         # Used by the Stage 8 flow-rollup dispatcher to pick the per-
         # shape attribution strategy. Universal-residual is the safe
