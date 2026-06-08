@@ -102,6 +102,11 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     # activation gate (Go / Rust workspace / Python library) fails,
     # so registering them unconditionally is safe + cheap.
     _try("faultline.pipeline_v2.extractors.go_router",       "GoRouterExtractor")
+    # Go package-structure extractor. Emits one deterministic anchor per
+    # cmd/ internal/ pkg/ modules/ apps/ first-level dir + top-level
+    # repo-root package. Closes the ~50% Go llm_fallback gap left by the
+    # route-only go_router. Self-skips via the same Go activation gate.
+    _try("faultline.pipeline_v2.extractors.go_packages",     "GoPackageExtractor")
     _try("faultline.pipeline_v2.extractors.rust_workspace",  "RustWorkspaceExtractor")
     _try("faultline.pipeline_v2.extractors.python_library",  "PythonLibraryExtractor")
     # FastAPI HTTP-route extractor. Parses @app/@router decorators +
