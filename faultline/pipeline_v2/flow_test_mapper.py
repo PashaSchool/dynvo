@@ -61,6 +61,12 @@ logger = logging.getLogger(__name__)
 
 _MAX_FILE_BYTES = 512_000
 
+# Word-token splitter for the inverted entry-symbol index (Signal 2). Uses
+# the SAME ``\w`` class as the ``\b…\b`` symbol pattern, so ``\bIDENT\b``
+# matches a file iff ``IDENT`` is one of that file's ``\w+`` tokens — making
+# the token pre-filter lossless (every regex confirm still runs).
+_TOKEN_RE = re.compile(r"\w+")
+
 # Identifier-boundary match for an entry symbol so ``foo`` doesn't match
 # ``foobar``. Compiled per-symbol; symbols are short so this is cheap.
 def _symbol_pattern(symbol: str) -> re.Pattern[str] | None:
@@ -85,6 +91,17 @@ class FlowTestIndex:
     test_source: dict[str, str] = field(default_factory=dict)
     # source_file -> [test files] via filename convention.
     by_source_file: dict[str, list[str]] = field(default_factory=dict)
+    # Signal 2 — inverted WORD-TOKEN index: \w+ token -> {test files that
+    # contain it}. Built once; used to pre-filter symbol candidates before
+    # the (unchanged) \b…\b regex confirm. Lossless because \b boundaries
+    # and \w+ runs share the same \w character class.
+    token_to_tests: dict[str, set[str]] = field(default_factory=dict)
+    # Signal 3 — per-DISTINCT-literal substring-match memo. NOT a token
+    # index (substring semantics differ from token semantics, e.g. ``/f``
+    # is a substring of ``/foo`` but not a \w+ token of it). Populated
+    # lazily by ``_route_matches`` so each distinct literal scans the
+    # corpus at most once.
+    route_to_tests: dict[str, set[str]] = field(default_factory=dict)
 
 
 def build_flow_test_index(rctx: "ReachContext") -> FlowTestIndex:
@@ -99,11 +116,14 @@ def build_flow_test_index(rctx: "ReachContext") -> FlowTestIndex:
         source_set=source_set,
     )
 
-    # Read test sources (bounded).
+    # Read test sources (bounded) + build the inverted word-token index
+    # (Signal 2) in the SAME pass so the corpus is tokenized exactly once.
     for tf in test_files:
         src = _read_source(rctx, tf)
         if src:
             index.test_source[tf] = src
+            for tok in set(_TOKEN_RE.findall(src)):
+                index.token_to_tests.setdefault(tok, set()).add(tf)
 
     # Filename-convention map: for each test, which source file does it
     # cover? Reuse the shared matcher. Invert into source -> [tests].
@@ -188,6 +208,22 @@ def _flow_source_paths(flow: "Flow") -> list[str]:
     return paths
 
 
+def _route_matches(index: FlowTestIndex, lit: str) -> set[str]:
+    """Test files whose source CONTAINS ``lit`` as a substring (memoized).
+
+    The exact ``lit in src`` predicate is preserved — a token index would be
+    wrong here (substring ≠ token). Each DISTINCT literal scans the corpus
+    at most once; later calls are O(1) cache reads. ``distinct_literals`` is
+    far smaller than the flow count, so this kills the per-flow blowup.
+    """
+    cached = index.route_to_tests.get(lit)
+    if cached is not None:
+        return cached
+    matched = {tf for tf, src in index.test_source.items() if lit in src}
+    index.route_to_tests[lit] = matched
+    return matched
+
+
 def tests_for_flow(flow: "Flow", index: FlowTestIndex) -> list[str]:
     """All test files exercising ``flow`` via the three signals."""
     tests: set[str] = set()
@@ -196,23 +232,24 @@ def tests_for_flow(flow: "Flow", index: FlowTestIndex) -> list[str]:
     for sp in _flow_source_paths(flow):
         tests.update(index.by_source_file.get(sp, []))
 
-    # Signal 2 — entry/called symbol reference in test source.
-    sym_pats = [
-        p for p in (_symbol_pattern(s) for s in _flow_entry_symbols(flow))
-        if p is not None
-    ]
-    # Signal 3 — route literal reference in test source.
-    route_literals = _flow_route_literals(flow)
-
-    if sym_pats or route_literals:
-        for tf, src in index.test_source.items():
+    # Signal 2 — entry/called symbol reference in test source. Pre-filter
+    # via the inverted token index, then CONFIRM each candidate with the
+    # original \b…\b regex (lossless: token membership is a superset of, and
+    # the regex is the exact predicate over, the same \w class).
+    for sym in _flow_entry_symbols(flow):
+        pat = _symbol_pattern(sym)
+        if pat is None:
+            continue
+        for tf in index.token_to_tests.get(sym, ()):
             if tf in tests:
                 continue
-            if any(lit in src for lit in route_literals):
+            if pat.search(index.test_source[tf]):
                 tests.add(tf)
-                continue
-            if any(p.search(src) for p in sym_pats):
-                tests.add(tf)
+
+    # Signal 3 — route literal reference (exact substring) in test source,
+    # memoized per distinct literal.
+    for lit in _flow_route_literals(flow):
+        tests |= _route_matches(index, lit)
 
     return sorted(tests)
 
