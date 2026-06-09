@@ -35,13 +35,31 @@ if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
     from faultline.pipeline_v2.stage_0_6_shape import ClassificationResult
 
-from faultline.analyzer.git import get_commits, get_tracked_files, load_repo
+from faultline.analyzer.git import (
+    get_commits,
+    get_tracked_files,
+    load_repo,
+    normalize_subpath,
+    scope_files_to_subpath,
+)
 from faultline.analyzer.workspace import (
     WorkspaceInfo,
     WorkspacePackage,
     detect_workspace,
 )
 from faultline.models.types import Commit
+
+
+class SubpathScopeError(ValueError):
+    """A ``--subpath`` scoped scan could not be applied safely.
+
+    Raised by Stage 0 when a requested subpath escapes the repo root,
+    is not an existing directory, or matches no tracked files. The
+    pipeline is expected to PROPAGATE this (fail loud) rather than fall
+    back to a whole-repo scan — silently scanning the wrong tree emits
+    garbage features (the bug this guard prevents: 6 fake features
+    instead of 216 on inbox-zero/apps/web).
+    """
 
 
 # ── Public types ────────────────────────────────────────────────────────────
@@ -131,6 +149,12 @@ class ScanContext:
     # ``None`` → those call sites fall back to the env-selected default
     # (preserves CLI / test behaviour). NOT a global singleton.
     cache_backend: "CacheBackend | None" = None
+    # Monorepo sub-project scoping. ``None`` == whole-repo (back-compat).
+    # When set (e.g. ``"apps/web"``) ``repo_path`` is the subtree root,
+    # ``tracked_files`` + commit ``files_changed`` are subpath-relative,
+    # and the caller must prepend ``subpath/`` to reconstruct a
+    # repo-root-relative path. Emitted into ``scan_meta.subpath``.
+    subpath: str | None = None
 
     def with_shape(self, result: "ClassificationResult") -> "ScanContext":
         """Return a NEW ScanContext with the shape-classification fields populated.
@@ -158,6 +182,7 @@ class ScanContext:
             shape_confidence=result.confidence,
             shape_rationale=result.rationale,
             cache_backend=self.cache_backend,
+            subpath=self.subpath,
         )
 
     def with_audited_stack(
@@ -194,6 +219,7 @@ class ScanContext:
             shape_confidence=self.shape_confidence,
             shape_rationale=self.shape_rationale,
             cache_backend=self.cache_backend,
+            subpath=self.subpath,
         )
 
 
@@ -577,6 +603,7 @@ def stage_0_intake(
     days: int = 365,
     skip_git: bool = False,
     run_id: str | None = None,
+    subpath: str | None = None,
 ) -> ScanContext:
     """Run Stage 0 against ``repo_path`` and return a ``ScanContext``.
 
@@ -591,18 +618,77 @@ def stage_0_intake(
             Stage 0 generates ``<utc-ts>-<sha8>`` and creates
             ``~/.faultline/logs/<slug>/<run_id>/``. CLI users pass
             ``--run-id baseline`` to label A/B experiment runs.
+        subpath: Optional repo-root-relative directory (e.g. ``apps/web``)
+            to scope the scan to. When given, this Stage scopes the
+            tracked-file list AND git history to the subtree, relativizes
+            every path to it (so extractors see ``app/page.tsx``, not
+            ``apps/web/app/page.tsx``), runs stack/workspace detection
+            against the subtree root, and sets ``ctx.repo_path`` to the
+            subtree. Output feature/flow paths are therefore subpath-
+            relative. RAISES ``SubpathScopeError`` if the subpath is not
+            an existing directory under the repo root or if it yields an
+            empty tracked-file set (fail loud — never silently scan the
+            wrong tree). ``None`` → whole-repo (back-compat, unchanged).
     """
     repo_path = Path(repo_path).resolve()
     if not repo_path.is_dir():
         raise ValueError(f"repo_path is not a directory: {repo_path}")
 
+    # ── Subpath scoping setup + fail-loud guard ────────────────────────
+    norm_subpath = normalize_subpath(subpath)
+    if norm_subpath is not None:
+        scope_root = (repo_path / norm_subpath).resolve()
+        # Guard 1: the subpath must resolve to a directory *under* the
+        # repo root. A "../" escape, an absolute path, or a missing dir
+        # is a hard error — we refuse to silently scan the wrong tree.
+        try:
+            scope_root.relative_to(repo_path)
+        except ValueError:
+            raise SubpathScopeError(
+                f"subpath {subpath!r} escapes the repo root {repo_path} "
+                f"(resolved to {scope_root})"
+            )
+        if scope_root == repo_path:
+            # Empty / "." subpath that normalized away — treat as whole-repo.
+            norm_subpath = None
+        elif not scope_root.is_dir():
+            raise SubpathScopeError(
+                f"subpath {subpath!r} is not a directory under {repo_path} "
+                f"(looked for {scope_root})"
+            )
+
     if skip_git:
-        tracked_files = _walk_tracked_files(repo_path)
+        all_files = _walk_tracked_files(repo_path)
+        tracked_files = scope_files_to_subpath(all_files, norm_subpath)
         commits: list[Commit] = []
     else:
+        # load_repo uses search_parent_directories=True, so even when we
+        # later set repo_path to the subtree it still finds the monorepo
+        # .git. We pass the ORIGINAL repo root here so src= scoping in
+        # get_tracked_files/get_commits matches the repo-root-relative
+        # paths git emits.
         repo = load_repo(str(repo_path))
-        tracked_files = get_tracked_files(repo)
-        commits = get_commits(repo, days=days)
+        tracked_files = get_tracked_files(repo, src=norm_subpath)
+        if norm_subpath is not None:
+            tracked_files = scope_files_to_subpath(tracked_files, norm_subpath)
+        commits = get_commits(repo, days=days, src=norm_subpath)
+
+    # Guard 2: a requested subpath that yields no tracked files is a
+    # mistake (wrong path, typo, or an unfiltered escape) — fail loud.
+    if norm_subpath is not None and not tracked_files:
+        raise SubpathScopeError(
+            f"subpath {subpath!r} matched no tracked files under "
+            f"{repo_path} — refusing to emit a scan over the wrong tree"
+        )
+
+    # From here on, when scoped, the effective root IS the subtree: stack
+    # + workspace detection read manifests from there, and tracked_files
+    # are already subpath-relative.
+    effective_root = (
+        (repo_path / norm_subpath).resolve()
+        if norm_subpath is not None
+        else repo_path
+    )
 
     # Run-id assignment lives here (Stage 0 is the only place that
     # owns "this run started"). Import lazily to keep the stage's
@@ -613,22 +699,32 @@ def stage_0_intake(
         sanitize_run_id,
     )
 
+    # Run-id / run-dir stay keyed off the ORIGINAL repo root so artifacts
+    # land under the repo's slug. The subpath is folded into the run id so
+    # two scoped scans of the same repo don't collide on disk.
+    run_id_seed = run_id
+    if run_id_seed is None and norm_subpath is not None:
+        run_id_seed = f"{generate_run_id(repo_path)}-{norm_subpath.replace('/', '_')}"
     resolved_run_id = (
-        sanitize_run_id(run_id) if run_id else generate_run_id(repo_path)
+        sanitize_run_id(run_id_seed) if run_id_seed else generate_run_id(repo_path)
     )
     resolved_run_dir = run_artifact_dir(repo_path, resolved_run_id)
 
-    # Detect monorepo + enumerate workspaces (reuses analyzer/workspace).
-    ws_info = detect_workspace(str(repo_path), tracked_files)
+    # Detect monorepo + enumerate workspaces against the EFFECTIVE root
+    # (the subtree when scoped, else the repo root). When a subpath is an
+    # individual app inside a monorepo it will usually NOT itself look
+    # like a monorepo, so the scan proceeds single-app — exactly what we
+    # want (one FeatureMap per sub-project).
+    ws_info = detect_workspace(str(effective_root), tracked_files)
 
     if ws_info.detected:
-        workspaces = _enrich_workspaces(repo_path, ws_info)
+        workspaces = _enrich_workspaces(effective_root, ws_info)
         # Root stack — the monorepo itself usually carries one too
         # (e.g. a Turbo monorepo where the root has next-config-only
         # tooling). Don't fail if there's no recognisable root stack.
-        root_stack, root_signals = detect_stack(repo_path, tracked_files)
+        root_stack, root_signals = detect_stack(effective_root, tracked_files)
         return ScanContext(
-            repo_path=repo_path,
+            repo_path=effective_root,
             stack=root_stack,
             monorepo=True,
             workspaces=workspaces,
@@ -638,11 +734,12 @@ def stage_0_intake(
             workspace_manager=ws_info.manager,
             run_id=resolved_run_id,
             run_dir=resolved_run_dir,
+            subpath=norm_subpath,
         )
 
-    stack, signals = detect_stack(repo_path, tracked_files)
+    stack, signals = detect_stack(effective_root, tracked_files)
     return ScanContext(
-        repo_path=repo_path,
+        repo_path=effective_root,
         stack=stack,
         monorepo=False,
         workspaces=None,
@@ -652,6 +749,7 @@ def stage_0_intake(
         workspace_manager=None,
         run_id=resolved_run_id,
         run_dir=resolved_run_dir,
+        subpath=norm_subpath,
     )
 
 

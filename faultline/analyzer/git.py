@@ -82,6 +82,45 @@ def get_remote_url(repo: Repo) -> str:
         return ""
 
 
+def normalize_subpath(src: str | None) -> str | None:
+    """Return ``src`` as a clean posix prefix WITHOUT a trailing slash.
+
+    ``"apps/web/"`` → ``"apps/web"``; ``"./apps/web"`` → ``"apps/web"``;
+    ``""`` / ``"."`` / ``None`` → ``None`` (whole-repo, no scoping).
+    """
+    if not src:
+        return None
+    norm = Path(src).as_posix().strip("/")
+    if norm in ("", "."):
+        return None
+    return norm
+
+
+def scope_files_to_subpath(
+    files: list[str], src: str | None
+) -> list[str]:
+    """Filter ``files`` to those under ``src`` and relativize them.
+
+    ``["apps/web/page.tsx", "apps/worker/x.ts"]`` scoped to ``apps/web``
+    → ``["page.tsx"]``. Matching is on path *segments* so ``apps/web``
+    does NOT match a sibling ``apps/web-extra``. ``src=None`` returns
+    ``files`` unchanged (whole-repo).
+    """
+    norm = normalize_subpath(src)
+    if norm is None:
+        return list(files)
+    prefix = norm + "/"
+    out: list[str] = []
+    for f in files:
+        posix = Path(f).as_posix()
+        if posix == norm:
+            # The subpath itself as a file (degenerate) — skip; it's a dir.
+            continue
+        if posix.startswith(prefix):
+            out.append(posix[len(prefix):])
+    return out
+
+
 def load_repo(path: str) -> Repo:
     try:
         repo = Repo(path, search_parent_directories=True)
@@ -132,7 +171,12 @@ def estimate_duration(commit_count: int, use_llm: bool = False, use_flows: bool 
         return f"~ {minutes:.1f} min"
 
 
-def get_commits(repo: Repo, days: int = 365, max_commits: int = DEFAULT_MAX_COMMITS) -> list[Commit]:
+def get_commits(
+    repo: Repo,
+    days: int = 365,
+    max_commits: int = DEFAULT_MAX_COMMITS,
+    src: str | None = None,
+) -> list[Commit]:
     """Returns all commits from the last N days (up to max_commits).
 
     Sprint G perf fix (2026-05-20): replaces the per-commit
@@ -142,8 +186,18 @@ def get_commits(repo: Repo, days: int = 365, max_commits: int = DEFAULT_MAX_COMM
     the same repo, ~40× speedup). Falls back to the GitPython walk on
     any subprocess failure so unusual repo states (shallow clones,
     detached HEADs, custom worktrees) still work.
+
+    Args:
+        src: Optional repo-root-relative subdirectory (e.g. ``apps/web``).
+            When given, history is scoped to that subtree: commits that
+            touched no file under ``src`` are dropped, and every
+            surviving commit's ``files_changed`` is filtered to the
+            subtree AND relativized to it (``apps/web/page.tsx`` →
+            ``page.tsx``). This keeps co-change / bug-ratio / coverage
+            from computing over the whole monorepo. ``None`` preserves
+            the whole-repo behaviour (back-compat).
     """
-    fast = _get_commits_fast(repo, days=days, max_commits=max_commits)
+    fast = _get_commits_fast(repo, days=days, max_commits=max_commits, src=src)
     if fast is not None:
         return fast
 
@@ -166,6 +220,12 @@ def get_commits(repo: Repo, days: int = 365, max_commits: int = DEFAULT_MAX_COMM
                 break
 
             files_changed = list(commit.stats.files.keys())
+            if src is not None:
+                files_changed = scope_files_to_subpath(files_changed, src)
+                if not files_changed:
+                    # Commit touched nothing under the subpath — drop it
+                    # so co-change / bug-ratio don't count it.
+                    continue
             msg = commit.message.strip()
             commits.append(Commit(
                 sha=commit.hexsha[:8],
@@ -200,6 +260,7 @@ def _get_commits_fast(
     *,
     days: int,
     max_commits: int,
+    src: str | None = None,
 ) -> list[Commit] | None:
     """Stream commit metadata + file lists via ``git log --name-only``.
 
@@ -238,6 +299,14 @@ def _get_commits_fast(
         "--name-only",
         "-z",  # NUL-separates commit records + filenames cleanly.
     ]
+    # Scope to a subpath: ``-- <subpath>`` makes ``git log`` only list
+    # commits that touched the subtree. ``--name-only`` still prints
+    # ALL files in each such commit, so we additionally filter +
+    # relativize the file list in memory below. The pathspec must come
+    # last, after a ``--`` separator.
+    norm_src = normalize_subpath(src)
+    if norm_src is not None:
+        cmd += ["--", norm_src]
 
     try:
         result = subprocess.run(
@@ -306,6 +375,13 @@ def _get_commits_fast(
             f.strip() for f in files_block.split("\x00")
             if f.strip()
         ]
+        if norm_src is not None:
+            files_changed = scope_files_to_subpath(files_changed, norm_src)
+            if not files_changed:
+                # ``-- <subpath>`` already ensured this commit touched the
+                # subtree, but a rename-only commit can surface with an
+                # empty in-subtree set after relativization — skip it.
+                continue
         msg = body.strip()
         try:
             commits.append(Commit(
