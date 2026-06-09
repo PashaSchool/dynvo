@@ -285,6 +285,7 @@ def run_pipeline_v2(
     base_scan_path: Path | str | None = None,
     lineage_jaccard_threshold: float | None = None,
     org_id: str | None = None,
+    subpath: str | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -335,7 +336,11 @@ def run_pipeline_v2(
     cache_backend = get_cache_backend(org_id=org_id)
 
     # ── Stage 0 — intake ────────────────────────────────────────────
-    ctx = stage_0_intake(repo_path, days=days, run_id=run_id)
+    # ``subpath`` scopes the whole scan to a monorepo sub-project. Stage 0
+    # raises ``SubpathScopeError`` (a ValueError) if scoping can't be
+    # applied — we let it propagate (fail loud), never silently scan the
+    # wrong tree.
+    ctx = stage_0_intake(repo_path, days=days, run_id=run_id, subpath=subpath)
     ctx.cache_backend = cache_backend
     run_dir = ctx.run_dir
     assert run_dir is not None, "Stage 0 must populate ctx.run_dir"
@@ -1436,6 +1441,19 @@ def run_pipeline_v2(
         "monorepo": ctx.monorepo,
         "workspace_manager": ctx.workspace_manager,
         "stack_signals": ctx.stack_signals,
+        # Monorepo sub-project scoping. ``None`` for a whole-repo scan.
+        # When set, every feature/flow path in this FeatureMap is relative
+        # to ``subpath`` (prepend ``subpath/`` to reconstruct a repo-root-
+        # relative path).
+        "subpath": ctx.subpath,
+        # Authoritative workspace list (name + path), emitted from
+        # ``detect_workspace`` so the app can populate
+        # ``workspacePackageCount`` and re-seed the sub-project picker
+        # from engine truth (spec §3.3). Empty list for non-monorepos.
+        "workspaces": [
+            {"name": w.name, "path": w.path, "stack": w.stack}
+            for w in (ctx.workspaces or [])
+        ],
         # Sprint A3 — Stage 0.5 auditor surface.
         # Always emitted so consumers can detect a fallback by
         # `auditor_fallback_used: True` rather than absent keys.
