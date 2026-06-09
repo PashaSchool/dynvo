@@ -1,8 +1,10 @@
 <div align="center">
 
-# 🗺️ Faultlines
+<a href="https://faultlines.dev">
+  <img src="assets/faultlines-banner.png" alt="Faultlines — Codebase intelligence for teams and AI agents" width="100%">
+</a>
 
-### Your codebase has a map. You just can't see it yet.
+<br>
 
 **Faultlines turns raw git history into a living map of every _feature_ and _user flow_ in your repo — with bug hotspots, test coverage, and the precise context your AI coding agent actually needs.**
 
