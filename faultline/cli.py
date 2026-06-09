@@ -2,7 +2,7 @@ import logging
 import re
 import typer
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from rich.console import Console
 from rich import print as rprint
 
@@ -760,6 +760,18 @@ def scan_v2(
             "libraries 0.80."
         ),
     ),
+    subpath: Optional[List[str]] = typer.Option(
+        None,
+        "--subpath",
+        help=(
+            "Scan a SUBDIRECTORY of the repo as its own project "
+            "(monorepo sub-project). Repeatable — pass once per "
+            "sub-project, e.g. --subpath apps/web --subpath apps/worker. "
+            "Each subpath is a repo-root-relative dir; the scan is scoped "
+            "+ relativized to that subtree and one FeatureMap is written "
+            "per subpath. Omit for a whole-repo scan (default)."
+        ),
+    ),
 ):
     """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
 
@@ -778,11 +790,12 @@ def scan_v2(
     resolved_model = resolve_model(model)
     out_path = Path(output).resolve() if output else None
 
-    rprint(
-        f"[bold blue]faultline scan-v2[/bold blue] {repo} "
-        f"(model={resolved_model}, llm_reconcile={llm_reconcile}, "
-        f"days={days}, max_tree_depth={max_tree_depth})"
-    )
+    # Normalise the repeatable --subpath into a list of scopes. ``[None]``
+    # means a single whole-repo scan (the default, unchanged behaviour).
+    # Multiple subpaths run sequentially against the same clone — one
+    # FeatureMap per subpath. (Multi-subpath single-git-pass partitioning
+    # is a documented fast-follow; correctness-first here.)
+    scopes: list[Optional[str]] = list(subpath) if subpath else [None]
 
     if since and not base_scan_path:
         rprint(
@@ -791,34 +804,60 @@ def scan_v2(
         )
         raise typer.Exit(code=2)
 
-    try:
-        result = run_pipeline_v2(
-            repo,
-            model=resolved_model,
-            days=days,
-            out_path=out_path,
-            llm_reconcile=llm_reconcile,
-            run_id=run_id,
-            max_tree_depth=max_tree_depth,
-            since=since,
-            base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
-            lineage_jaccard_threshold=lineage_jaccard_threshold,
+    if out_path is not None and len([s for s in scopes if s is not None]) > 1:
+        rprint(
+            "[red]Error:[/red] --output cannot be combined with multiple "
+            "--subpath values (each subpath writes its own FeatureMap). "
+            "Drop --output to let each scan pick a timestamped path."
         )
-    except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
-        rprint(f"[red]Scan failed:[/red] {type(exc).__name__}: {exc}")
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=2)
 
-    rprint(
-        f"[green]✓[/green] Wrote {result['path']}  "
-        f"(run_id={result.get('run_id')}, "
-        f"stack={result['stack']}, "
-        f"cost=${result['cost_usd']:.4f}, "
-        f"calls={result['calls']}, "
-        f"elapsed={result['elapsed_sec']}s)"
-    )
-    if result.get("warnings"):
-        for w in result["warnings"]:
-            rprint(f"  [yellow]⚠[/yellow] {w}")
+    exit_code = 0
+    for scope in scopes:
+        scope_label = f" subpath={scope}" if scope else ""
+        rprint(
+            f"[bold blue]faultline scan-v2[/bold blue] {repo}{scope_label} "
+            f"(model={resolved_model}, llm_reconcile={llm_reconcile}, "
+            f"days={days}, max_tree_depth={max_tree_depth})"
+        )
+        try:
+            result = run_pipeline_v2(
+                repo,
+                model=resolved_model,
+                days=days,
+                out_path=out_path,
+                llm_reconcile=llm_reconcile,
+                run_id=run_id,
+                max_tree_depth=max_tree_depth,
+                since=since,
+                base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
+                lineage_jaccard_threshold=lineage_jaccard_threshold,
+                subpath=scope,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
+            rprint(f"[red]Scan failed{scope_label}:[/red] {type(exc).__name__}: {exc}")
+            # With multiple subpaths, keep going but remember the failure
+            # so the command exits non-zero.
+            exit_code = 1
+            if len(scopes) == 1:
+                raise typer.Exit(code=1) from exc
+            continue
+
+        rprint(
+            f"[green]✓[/green] Wrote {result['path']}  "
+            f"(run_id={result.get('run_id')}, "
+            f"subpath={result.get('subpath')}, "
+            f"stack={result['stack']}, "
+            f"cost=${result['cost_usd']:.4f}, "
+            f"calls={result['calls']}, "
+            f"elapsed={result['elapsed_sec']}s)"
+        )
+        if result.get("warnings"):
+            for w in result["warnings"]:
+                rprint(f"  [yellow]⚠[/yellow] {w}")
+
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command(name="classify-shape")
