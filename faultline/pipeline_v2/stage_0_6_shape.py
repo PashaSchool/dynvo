@@ -814,7 +814,7 @@ class CliToolClassifier:
 
         if go_match:
             entry = "cmd/"
-            matched = ("has_cmd_dir", "has_go_mod", "audited_stack")
+            matched: tuple[str, ...] = ("has_cmd_dir", "has_go_mod", "audited_stack")
         elif py_match:
             entry = "cli.py/__main__.py"
             matched = ("has_cli_py_entry", "has_pyproject")

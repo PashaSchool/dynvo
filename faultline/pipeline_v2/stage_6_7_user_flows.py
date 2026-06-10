@@ -908,7 +908,7 @@ def cluster_user_flows(
         if in_plugin_root:
             verb, resource = _split_name(f["name"])
             intent = INTENT.get(verb, "other")
-            key = (_PLUGIN_DOMAIN, resource, intent)
+            key: tuple[str | None, str, str] = (_PLUGIN_DOMAIN, resource, intent)
             clusters[key].append(f)
             cluster_resources[key][resource] += 1
             plugin_collapsed += 1

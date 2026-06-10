@@ -69,7 +69,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.run_dir import update_latest_symlink
@@ -497,7 +497,9 @@ def run_pipeline_v2(
         extractor_hits = _extractor_hits(stage1_out)
         for name, count in extractor_hits.items():
             log1.info(f"{name}: {count} candidates", feature=None)
-        for name, err in (stage1_out.get("_errors") or {}).items():
+        # "_errors" carries a dict[str, str] payload, not anchor candidates.
+        stage1_errs = cast("dict[str, str]", stage1_out.get("_errors") or {})
+        for name, err in stage1_errs.items():
             log1.warn(f"extractor {name} errored: {err}")
 
         # Sprint D3 — workspace package detection telemetry.
@@ -802,8 +804,8 @@ def run_pipeline_v2(
                 f"incremental splice: re-attached {spliced} untouched "
                 f"feature(s) from base scan (skipped Stage 3/4)",
             )
-        for f in features:
-            log5.emit(f.name, "survived naming discipline")
+        for feat in features:
+            log5.emit(feat.name, "survived naming discipline")
         if any(v > 0 for v in validation_drops.as_dict().values()):
             log5.info(
                 f"validation drops: filesystem_missing="
@@ -955,10 +957,10 @@ def run_pipeline_v2(
         # before the bipartite extension lands in their stack. The
         # full multi-label set lives in the orchestrator's mapping
         # dict and is preserved in the scan_meta telemetry below.
-        for f in features:
-            labels = dev_to_product_map.get(f.name)
+        for feat in features:
+            labels = dev_to_product_map.get(feat.name)
             if labels:
-                f.product_feature_id = labels[0]
+                feat.product_feature_id = labels[0]
         write_stage_artifact(
             ctx.repo_path,
             stage_index=6,
@@ -1130,6 +1132,8 @@ def run_pipeline_v2(
             from faultline.pipeline_v2.stage_8_marketing_clusterer import (
                 Stage8Result as _Stage8Result,
             )
+            # incremental_layer2_noop implies a loaded base scan.
+            assert incremental_base_scan is not None
             _reused_pfs, _reused_map = _rehydrate_base_pfs(
                 incremental_base_scan,
             )
@@ -1184,9 +1188,9 @@ def run_pipeline_v2(
         # legacy single-valued ``product_feature_id`` stamp.
         product_features = stage_8_result.product_features
         dev_to_product_map = stage_8_result.dev_to_product_map
-        for f in features:
-            labels = dev_to_product_map.get(f.name)
-            f.product_feature_id = labels[0] if labels else None
+        for feat in features:
+            labels = dev_to_product_map.get(feat.name)
+            feat.product_feature_id = labels[0] if labels else None
         stage_8_telemetry = stage_8_result.telemetry
         write_stage_artifact(
             ctx.repo_path,
@@ -1685,8 +1689,8 @@ def run_pipeline_v2(
         )
         # Push the touched metric values back onto the Feature objects.
         by_uuid = {p.get("uuid"): p for p in feat_payload if p.get("uuid")}
-        for f in features:
-            p = by_uuid.get(f.uuid)
+        for feat in features:
+            p = by_uuid.get(feat.uuid)
             if not p:
                 continue
             for k in (
@@ -1695,7 +1699,7 @@ def run_pipeline_v2(
                 "symbol_health_score",
             ):
                 if k in p and p[k] is not None:
-                    setattr(f, k, p[k])
+                    setattr(feat, k, p[k])
         incremental_meta = {
             "incremental_changed_files": list(changed),
             "incremental_touched_uuids": sorted(touched),
@@ -1800,7 +1804,7 @@ def run_pipeline_v2(
                 ),
             )
         else:
-            test_strip_telemetry["disabled"] = True  # type: ignore[assignment]
+            test_strip_telemetry["disabled"] = True
             log6_9.info("test_strip: disabled via %s=0"
                         % "FAULTLINE_STAGE_6_9_TEST_STRIP")
         write_stage_artifact(

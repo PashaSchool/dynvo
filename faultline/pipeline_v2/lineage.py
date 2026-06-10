@@ -219,7 +219,7 @@ def assign_feature_lineage(
             n_wins_base.setdefault(n_idx, b_idx)
 
     # ── Step 3 — assign records ─────────────────────────────────────
-    records: list[LineageRecord] = []
+    records = []
     for n_idx, feat in enumerate(new_features):
         name = new_names[n_idx]
         row = overlaps[n_idx]

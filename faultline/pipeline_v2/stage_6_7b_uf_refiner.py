@@ -534,6 +534,7 @@ def refine_user_flows(
             total_cost += call_cost
 
         degraded_reason: str | None = None
+        parsed = None
         if call_cost > COST_CAP_USD_PER_DOMAIN:
             degraded_reason = f"cost_cap ${call_cost:.4f}"
         else:
@@ -541,7 +542,7 @@ def refine_user_flows(
             if parsed is None:
                 degraded_reason = "json_parse_failed"
 
-        if degraded_reason is not None:
+        if degraded_reason is not None or parsed is None:
             telemetry["domains_degraded"] += 1
             # Graceful degrade: deterministic ui_tier so field isn't null.
             for uf in ufs:

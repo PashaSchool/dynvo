@@ -442,7 +442,7 @@ def _demote_shared(flow: Flow, fan_in: FanInResult) -> int:
             and n.symbol
             and symbol_key(n.file, n.symbol) in fan_in.shared_keys
         ):
-            n.role = "shared"  # type: ignore[assignment]
+            n.role = "shared"
             n.fan_in = fan_in.fan_in.get(symbol_key(n.file, n.symbol))
 
     # Re-project the additive LOC-detail so loc_symbol_attributions /
@@ -555,7 +555,7 @@ def _expand_one_flow(
         )
     flow_nodes: list[FlowNode] = list(node_map.values())
     flow_edges: list[FlowEdge] = [
-        FlowEdge(
+        FlowEdge(  # type: ignore[call-arg]  # populate_by_name=True accepts from_
             from_=e.from_id, to=e.to_id, kind=e.kind,  # type: ignore[arg-type]
             confidence=e.confidence,                    # type: ignore[arg-type]
         )
@@ -648,7 +648,7 @@ def _expand_one_flow(
                     )
                     node_map[server_id] = server_node
                     flow_nodes.append(server_node)
-                flow_edges.append(FlowEdge(
+                flow_edges.append(FlowEdge(  # type: ignore[call-arg]  # populate_by_name=True accepts from_
                     from_=fetch_id,
                     to=server_id,
                     kind="cross_stack_http",
