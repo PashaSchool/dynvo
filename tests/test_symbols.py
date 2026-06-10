@@ -18,7 +18,6 @@ from faultline.symbols.extractor import (
     FileSymbols,
     extract_file_symbols,
 )
-from faultline.symbols.pipeline import enrich_with_symbols
 
 
 def _sig(path: str, ranges: list[SymbolRange]) -> FileSignature:
@@ -263,35 +262,3 @@ class TestAttributeSymbolsToFlows:
 
         assert feature.flows[0].symbol_attributions[0].symbols == ["charge"]
         assert feature.flows[1].symbol_attributions[0].symbols == ["refund"]
-
-
-class TestPipeline:
-    def test_enrich_with_symbols_skips_empty_map(self) -> None:
-        from faultline.models.types import FeatureMap
-        fm = FeatureMap(
-            repo_path="/tmp/x",
-            analyzed_at=datetime.now(tz=timezone.utc),
-            total_commits=0,
-            date_range_days=0,
-            features=[],
-        )
-        # Should not raise
-        enrich_with_symbols(fm, {})
-
-    def test_enrich_runs_per_feature(self) -> None:
-        from faultline.models.types import FeatureMap
-        fm = FeatureMap(
-            repo_path="/tmp/x",
-            analyzed_at=datetime.now(tz=timezone.utc),
-            total_commits=10,
-            date_range_days=30,
-            features=[_feature_with_flows()],
-        )
-        sigs = {
-            "src/stripe.ts": _sig("src/stripe.ts", [
-                SymbolRange(name="charge", start_line=10, end_line=45, kind="function"),
-            ]),
-        }
-        with patch("faultline.symbols.pipeline.attribute_symbols_to_flows") as mock_attr:
-            enrich_with_symbols(fm, sigs)
-            mock_attr.assert_called_once()

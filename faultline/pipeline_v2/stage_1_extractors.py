@@ -40,9 +40,10 @@ No LLM calls. No network calls.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from importlib.metadata import entry_points  # module-level binding so tests can monkeypatch
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from faultline.pipeline_v2.extractors.base import (
     AnchorCandidate,
@@ -155,6 +156,7 @@ def _discover_entry_point_extractors() -> list[AnchorExtractor]:
     yields. Callers MERGE this with the built-in set rather than
     treating it as authoritative.
     """
+    eps: Iterable[Any]
     try:
         eps = entry_points(group=_DEFAULT_ENTRY_POINT_GROUP)
     except TypeError:
@@ -162,7 +164,7 @@ def _discover_entry_point_extractors() -> list[AnchorExtractor]:
         # some packaging interpreters. Fall back defensively — we
         # still target 3.11+ overall.
         all_eps = entry_points()
-        eps = all_eps.get(_DEFAULT_ENTRY_POINT_GROUP, [])  # type: ignore[attr-defined]
+        eps = all_eps.get(_DEFAULT_ENTRY_POINT_GROUP, [])  # 3.10 dict-style API
     except Exception:  # noqa: BLE001 — defensive
         eps = []
 

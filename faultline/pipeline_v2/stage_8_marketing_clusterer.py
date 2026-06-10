@@ -697,7 +697,7 @@ def run_stage_8(
     if customer_count > 0:
         if log is not None:
             log.info(f"customer-yaml-detected source_count={customer_count}")
-        telemetry = {
+        telemetry: dict[str, Any] = {
             "source": "customer-yaml",
             "marketing_url": None,
             "taxonomy_size": 0,

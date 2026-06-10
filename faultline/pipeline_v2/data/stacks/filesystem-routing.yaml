@@ -1,0 +1,79 @@
+# File-system routing conventions per stack — consumed by the
+# RouteFileExtractor (faultline/pipeline_v2/extractors/route.py).
+#
+# Schema:
+#   stacks:
+#     <stack-tag>:
+#       roots:    path prefixes — every match must start with one of
+#                 these (the workspace path is prepended per-workspace
+#                 when scanning a monorepo). Order matters: the first
+#                 root that prefixes the file wins.
+#       suffixes: filename endings — file must end with one of these to
+#                 count as a page/handler. Order matters: the first
+#                 suffix that matches is stripped to derive the stem.
+#
+#   python_routing_markers: marker FILENAMES for Python web frameworks
+#     (Django / FastAPI / Flask) where routing lives in marker files,
+#     not file-system convention. The extractor emits one anchor per
+#     directory containing a marker file.
+#
+# All paths are POSIX. Adding a new framework = add an entry here,
+# no Python change.
+
+stacks:
+  # Next.js App Router — both ``app/`` and ``src/app/`` are valid.
+  # ``/route.ts`` / ``/route.js`` are App Router API handlers.
+  next-app-router:
+    roots: ["app/", "src/app/"]
+    suffixes: ["/page.tsx", "/page.jsx", "/page.ts", "/page.js", "/route.ts", "/route.js"]
+
+  # Pages Router — any ts/tsx file under pages/ counts; api/ included
+  next-pages:
+    roots: ["pages/", "src/pages/"]
+    suffixes: [".tsx", ".jsx", ".ts", ".js"]
+
+  # Remix — app/routes/**
+  remix:
+    roots: ["app/routes/"]
+    suffixes: [".tsx", ".jsx", ".ts", ".js"]
+
+  # Astro — src/pages/**.astro (and ts/tsx for islands API)
+  astro:
+    roots: ["src/pages/", "pages/"]
+    suffixes: [".astro", ".tsx", ".ts", ".js"]
+
+  # SvelteKit — src/routes/+page.svelte and +server.ts
+  sveltekit:
+    roots: ["src/routes/"]
+    suffixes: ["+page.svelte", "+server.ts", "+server.js", "+page.ts"]
+
+  # Nuxt — pages/**/*.vue (Nuxt 3)
+  nuxt:
+    roots: ["pages/", "src/pages/"]
+    suffixes: [".vue"]
+
+  # TanStack Router — file-based routes at src/routes/**, AND many
+  # apps use src/pages/** alongside an explicit route config. Match
+  # both so polyglot frontends like infisical's TanStack+Vite app
+  # produce anchor candidates.
+  tanstack-router:
+    roots: ["src/routes/", "src/pages/"]
+    suffixes: [".tsx", ".jsx", ".ts", ".js"]
+
+  # Generic Vite SPA — most Vite apps mount a router (TanStack /
+  # react-router) over src/pages/** or src/routes/**. We use the
+  # same convention as TanStack since the file shape is what we
+  # actually grep on.
+  vite:
+    roots: ["src/pages/", "src/routes/"]
+    suffixes: [".tsx", ".jsx", ".ts", ".js"]
+
+# Python web frameworks — when present, routing lives in marker files
+# (not file-system convention). For these stacks the extractor emits
+# one anchor per *directory containing* the marker file. ``urls.py``
+# / ``router*.py`` are the conventional markers.
+python_routing_markers:
+  - urls.py      # Django
+  - router.py    # FastAPI convention
+  - routers.py   # variant
+  - routes.py    # Flask / FastAPI variant

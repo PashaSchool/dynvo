@@ -76,6 +76,28 @@ jobs:
           ruff check faultline/ tests/ || true
           ruff format --check faultline/ tests/ || true
 
+  typecheck:
+    name: Type check (mypy, pipeline_v2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[watch]'
+          pip install mypy types-PyYAML
+
+      # Blocking — pipeline_v2 must stay mypy-clean (lenient config in
+      # pyproject.toml [tool.mypy]).
+      - name: Run mypy
+        run: mypy faultline/pipeline_v2
+
   build:
     name: Build wheel
     runs-on: ubuntu-latest
