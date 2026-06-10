@@ -9,9 +9,6 @@ Public API:
     run_watcher(repo_path, ...) — foreground loop
     start_daemon(repo_path, ...) — background (fork + nohup)
     stop_daemon(repo_path) — kill background watcher
-
-Alternatives:
-    cache.auto_refresh — lighter MCP-triggered refresh, no process needed
 """
 
 from faultline.watch.daemon import run_watcher, start_daemon, stop_daemon, watcher_status

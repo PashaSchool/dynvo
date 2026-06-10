@@ -1,4 +1,4 @@
-"""Unit tests for faultline.pipeline_v2.incremental + production_mode."""
+"""Unit tests for faultline.pipeline_v2.incremental."""
 from __future__ import annotations
 
 import json
@@ -15,45 +15,6 @@ from faultline.pipeline_v2.incremental import (
     load_base_scan,
     touched_feature_uuids,
 )
-from faultline.pipeline_v2.production_mode import production_mode_enabled
-
-
-# ── production_mode ────────────────────────────────────────────────
-
-
-def test_production_mode_default_off(monkeypatch):
-    monkeypatch.delenv("FAULTLINES_PRODUCTION", raising=False)
-    assert production_mode_enabled() is False
-
-
-@pytest.mark.parametrize("val", ["1", "true", "True", "yes", "YES"])
-def test_production_mode_truthy_values(monkeypatch, val):
-    monkeypatch.setenv("FAULTLINES_PRODUCTION", val)
-    assert production_mode_enabled() is True
-
-
-@pytest.mark.parametrize("val", ["0", "false", "no", ""])
-def test_production_mode_falsy_values(monkeypatch, val):
-    monkeypatch.setenv("FAULTLINES_PRODUCTION", val)
-    assert production_mode_enabled() is False
-
-
-def test_production_mode_suppresses_assignments_write(monkeypatch, tmp_path):
-    """save_assignments must early-return 0 when production mode is on."""
-    from types import SimpleNamespace
-
-    monkeypatch.setenv("FAULTLINES_PRODUCTION", "1")
-    from faultline.analyzer.assignments import save_assignments
-    # Minimal DeepScanResult shape: just .features dict
-    fake_result = SimpleNamespace(features={"f1": ["a.ts"]})
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    n = save_assignments(fake_result, repo)
-    assert n == 0
-    # No assignments file written under HOME
-    cache = Path.home() / ".faultline" / f"assignments-{repo.name}.json"
-    # In CI this file may exist from prior runs — we just verify our
-    # call DIDN'T touch it. The mtime is checked indirectly by n == 0.
 
 
 # ── load_base_scan ─────────────────────────────────────────────────

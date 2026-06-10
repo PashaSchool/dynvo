@@ -47,7 +47,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-analytics = ["httpx>=0.27.0"]
 # MCP support moved to the standalone `faultlines-mcp` package — install it
 # separately (`pip install faultlines-mcp`). It depends on this engine, so
 # both end up in your env; the engine no longer carries the `mcp` SDK dep.
@@ -175,11 +174,9 @@ source = ["faultline"]
 omit = [
     "faultline/cli.py",
     "faultline/digest/*",
-    "faultline/integrations/*",
     "faultline/output/reporter.py",
     "faultline/analyzer/evolve.py",
     "faultline/analyzer/incremental.py",
-    "faultline/analyzer/shared_files.py",
 ]
 
 [tool.coverage.report]
