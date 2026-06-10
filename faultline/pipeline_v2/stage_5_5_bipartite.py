@@ -152,10 +152,10 @@ def _build_path_to_features(features: Iterable[Feature]) -> dict[str, set[str]]:
                 continue
             out.setdefault(path, set()).add(feat.name)
         for attr in getattr(feat, "shared_attributions", None) or []:
-            path = getattr(attr, "file_path", None)
-            if not path:
+            attr_path = getattr(attr, "file_path", None)
+            if not attr_path:
                 continue
-            out.setdefault(path, set()).add(feat.name)
+            out.setdefault(attr_path, set()).add(feat.name)
     return out
 
 

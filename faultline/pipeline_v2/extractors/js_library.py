@@ -40,6 +40,8 @@ from faultline.pipeline_v2.extractors._util import (
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
 

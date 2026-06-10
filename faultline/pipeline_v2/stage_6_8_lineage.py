@@ -120,11 +120,11 @@ def run_stage_6_8(
         rename_threshold=rename_threshold,
         related_threshold=related_threshold,
     )
-    for f, rec in zip(flows, flow_records):
-        f.uuid = rec.uuid
-        f.previous_names = list(rec.previous_names)
-        f.split_from = rec.split_from
-        f.merged_from = list(rec.merged_from)
+    for fl, rec in zip(flows, flow_records):
+        fl.uuid = rec.uuid
+        fl.previous_names = list(rec.previous_names)
+        fl.split_from = rec.split_from
+        fl.merged_from = list(rec.merged_from)
 
     # ── Indexes ─────────────────────────────────────────────────────
     feat_view = [

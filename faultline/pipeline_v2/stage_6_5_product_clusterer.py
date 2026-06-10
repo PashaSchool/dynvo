@@ -889,9 +889,9 @@ def run_product_clusterer(
         "rules": set(),
         "max_conf": 0.0,
     })
-    for dev_name, labels in mapping.items():
+    for dev_name, pf_labels in mapping.items():
         contributing = winning_votes_per_dev.get(dev_name, [])
-        for label in labels:
+        for label in pf_labels:
             entry = pf_accum[label]
             entry["dev_names"].append(dev_name)
             # Filter the contributing votes to only those that pointed

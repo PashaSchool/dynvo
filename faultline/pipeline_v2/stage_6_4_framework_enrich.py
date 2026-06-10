@@ -157,7 +157,7 @@ def _link_to_symbol_attribution(link: FrameworkLink) -> FlowSymbolAttribution:
         symbol=f"{role_tag}:{link.link_kind}:{link.target_symbol}",
         line_start=link.target_line_start,
         line_end=link.target_line_end,
-        role=role_tag,
+        role="framework-link",
     )
 
 
@@ -421,10 +421,10 @@ def run_stage_6_4(
                                     links_by_index[pending_idx] = []
 
                 for index, feature in enumerate(features):
-                    links = links_by_index.get(index)
-                    if not links:
+                    feat_links = links_by_index.get(index)
+                    if not feat_links:
                         continue
-                    added = _attach_links_to_feature(feature, links)
+                    added = _attach_links_to_feature(feature, feat_links)
                     linker_total += added
 
         links_total += linker_total

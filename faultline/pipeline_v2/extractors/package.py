@@ -312,26 +312,26 @@ class PackageAnchorExtractor:
         if ctx.monorepo and ctx.workspaces:
             seen_workspace_slugs: set[str] = set()
             for ws in ctx.workspaces:
-                slug = _workspace_slug(ws)
-                if not slug:
+                ws_slug = _workspace_slug(ws)
+                if not ws_slug:
                     continue
-                if slug in seen_workspace_slugs:
+                if ws_slug in seen_workspace_slugs:
                     # Two workspaces with the same slug — keep only the
                     # first. Stage 2 would merge them anyway, but
                     # skipping here keeps Stage 1 telemetry honest
                     # (extractor_hits["package"] == real anchor count).
                     continue
-                seen_workspace_slugs.add(slug)
+                seen_workspace_slugs.add(ws_slug)
                 ws_paths = tuple(ws.files) if ws.files else (ws.path,)
                 rationale = (
-                    f"workspace anchor {slug!r} from monorepo "
+                    f"workspace anchor {ws_slug!r} from monorepo "
                     f"package {ws.path!r}"
                 )
                 if isinstance(ws.package_json, dict) and ws.package_json.get("name"):
                     rationale += f" (package.json name={ws.package_json['name']!r})"
                 out.append(
                     AnchorCandidate(
-                        name=slug,
+                        name=ws_slug,
                         paths=ws_paths,
                         source=self.name,
                         confidence_self=0.95,

@@ -54,7 +54,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from faultline.pipeline_v2.extractors.base import (
     AnchorCandidate,
@@ -63,7 +63,7 @@ from faultline.pipeline_v2.extractors.base import (
 from faultline.pipeline_v2.stage_0_intake import (
     ScanContext,
     Workspace,
-    _read_json,  # type: ignore[attr-defined]
+    _read_json,
     detect_stack,
 )
 from faultline.pipeline_v2.stage_1_extractors import (
@@ -324,9 +324,10 @@ def _merge_anchors_across_workspaces(
     errors: dict[str, str] = {}
 
     for ws_name, stage1_out in per_ws_results:
-        for ext_errs in [stage1_out.get("_errors") or {}]:
-            for k, v in ext_errs.items():
-                errors[f"{ws_name}:{k}"] = v
+        # "_errors" carries a dict[str, str] payload, not anchor candidates.
+        ext_errs = cast("dict[str, str]", stage1_out.get("_errors") or {})
+        for k, v in ext_errs.items():
+            errors[f"{ws_name}:{k}"] = v
         for source, candidates in stage1_out.items():
             if source == "_errors":
                 continue

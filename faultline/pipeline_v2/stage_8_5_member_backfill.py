@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, MutableMapping, Protocol, Sequence
 
 # Scale-invariant majority threshold. A developer feature is back-filled
 # into a product feature only when a strict majority of its OWN files are
@@ -160,9 +160,9 @@ def _best_product_feature(
 
 
 def run_stage_8_5_backfill(
-    features: list[_FeatureLike],
-    product_features: list[_FeatureLike],
-    dev_to_product_map: dict[str, list[str]] | None = None,
+    features: Sequence[_FeatureLike],
+    product_features: Sequence[_FeatureLike],
+    dev_to_product_map: MutableMapping[str, Any] | None = None,
     *,
     threshold: float | None = None,
     enabled: bool | None = None,

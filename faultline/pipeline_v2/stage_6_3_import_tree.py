@@ -936,7 +936,7 @@ def _traverse(
     max_symbols: int,
     log: "StageLogger | None",
     feature_name: str,
-) -> tuple[list[SymbolAttributionRecord], dict[str, int], int, int, int]:
+) -> tuple[list[SymbolAttributionRecord], dict[int, int], int, int, int]:
     """Run the BFS from ``seeds``.
 
     Returns ``(attributions, depth_distribution, cycles, depth_capped,
@@ -1162,7 +1162,7 @@ def _apply_to_feature(
         attributed = sum(max(r.line_end - r.line_start + 1, 1) for r in recs)
         # Use whole-file LOC when we have it; defensive 0 fallback.
         total = max(line_ranges, key=lambda x: x[1])[1] if line_ranges else 0
-        roles = {r.symbol: r.role for r in recs}
+        roles: dict[str, str] = {r.symbol: r.role for r in recs}
         new_attrs.append(PydanticSymbolAttribution(
             file_path=file,
             symbols=symbols,

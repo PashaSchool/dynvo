@@ -597,7 +597,7 @@ def build_call_graph(
                     rng_obj = _symbol_range_obj(csig, sym)
                     if rng_obj is not None and rng_obj.kind == "class":
                         continue  # never whole-class; see constructor path
-                    rng = (
+                    rng_lines = (
                         (rng_obj.start_line, rng_obj.end_line)
                         if rng_obj is not None
                         else None
@@ -606,7 +606,7 @@ def build_call_graph(
                         id=_node_id(cf, sym),
                         file=cf,
                         symbol=sym,
-                        lines=rng,
+                        lines=rng_lines,
                         depth=current.depth + 1,
                     )
 

@@ -103,8 +103,8 @@ try:  # pragma: no cover — import-time branch
     TREE_SITTER_AVAILABLE = True
 except Exception:  # noqa: BLE001 — any failure → degrade gracefully
     TREE_SITTER_AVAILABLE = False
-    Language = None  # type: ignore[assignment]
-    Parser = None  # type: ignore[assignment]
+    Language = None
+    Parser = None
 
 
 # Per-language module probes. Each lazily reports the language()
