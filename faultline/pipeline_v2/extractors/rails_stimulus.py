@@ -18,10 +18,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from faultline.pipeline_v2.extractors._rails import (
-    is_rails_app,
-    load_rails_config,
-)
+from faultline.pipeline_v2.extractors._rails import RailsPatternExtractor
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
     posix,
@@ -44,51 +41,61 @@ _DEFAULT_BASE_DIRS: tuple[str, ...] = (
 _DEFAULT_SUFFIX = "_controller.js"
 
 
-class RailsStimulusExtractor:
-    """Stimulus controller files → feature anchors."""
+class _Compiled:
+    """Compiled content pattern + scalars for the ``stimulus`` section."""
 
-    name = "rails-stimulus"
+    __slots__ = ("base_dirs", "suffix", "content_re", "confidence")
 
-    def __init__(self, config: dict | None = None) -> None:
-        self._config = config if config is not None else load_rails_config()
-
-    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        if not is_rails_app(ctx):
-            return []
-
-        cfg = self._config.get("stimulus") or {}
+    def __init__(self, config: dict) -> None:
+        cfg = config.get("stimulus") or {}
         if not isinstance(cfg, dict):
             cfg = {}
 
         base_dirs_raw = cfg.get("base_dirs") or list(_DEFAULT_BASE_DIRS)
-        base_dirs = tuple(
+        self.base_dirs = tuple(
             (d.rstrip("/") + "/")
             for d in base_dirs_raw
             if isinstance(d, str)
         )
-        if not base_dirs:
-            base_dirs = tuple(d + "/" for d in _DEFAULT_BASE_DIRS)
+        if not self.base_dirs:
+            self.base_dirs = tuple(d + "/" for d in _DEFAULT_BASE_DIRS)
 
         suffix = cfg.get("filename_suffix") or _DEFAULT_SUFFIX
         if not isinstance(suffix, str):
             suffix = _DEFAULT_SUFFIX
+        self.suffix = suffix
 
         content_re_raw = cfg.get("content_pattern")
-        content_re: re.Pattern[str] | None = None
+        self.content_re: re.Pattern[str] | None = None
         if isinstance(content_re_raw, str):
             try:
-                content_re = re.compile(content_re_raw)
+                self.content_re = re.compile(content_re_raw)
             except re.error:
-                content_re = None
+                self.content_re = None
 
-        confidence = float(cfg.get("confidence") or 0.80)
+        self.confidence = float(cfg.get("confidence") or 0.80)
+
+
+class RailsStimulusExtractor(RailsPatternExtractor):
+    """Stimulus controller files → feature anchors."""
+
+    name = "rails-stimulus"
+
+    def compile_patterns(self, config: dict) -> _Compiled:
+        return _Compiled(config)
+
+    def collect(
+        self, ctx: "ScanContext", compiled: _Compiled,
+    ) -> dict[str, set[str]]:
+        suffix = compiled.suffix
+        content_re = compiled.content_re
 
         # slug → set of paths
         buckets: dict[str, set[str]] = {}
 
         for raw in ctx.tracked_files:
             p = posix(raw)
-            if not any(p.startswith(b) for b in base_dirs):
+            if not any(p.startswith(b) for b in compiled.base_dirs):
                 continue
             basename = p.rsplit("/", 1)[-1]
             if not basename.endswith(suffix):
@@ -109,25 +116,28 @@ class RailsStimulusExtractor:
             if not slug or is_noise(slug):
                 continue
             buckets.setdefault(slug, set()).add(p)
+        return buckets
 
-        out: list[AnchorCandidate] = []
-        for slug, paths_set in buckets.items():
-            paths = tuple(sorted(paths_set))
-            if not paths:
-                continue
-            out.append(
-                AnchorCandidate(
-                    name=slug,
-                    paths=paths,
-                    source=self.name,
-                    confidence_self=confidence,
-                    rationale=(
-                        f"Stimulus controller {slug!r} "
-                        f"from {len(paths)} file(s)"
-                    ),
-                ),
-            )
-        return out
+    def emit(
+        self,
+        ctx: "ScanContext",
+        key: str,
+        bucket: set[str],
+        compiled: _Compiled,
+    ) -> AnchorCandidate | None:
+        paths = tuple(sorted(bucket))
+        if not paths:
+            return None
+        return AnchorCandidate(
+            name=key,
+            paths=paths,
+            source=self.name,
+            confidence_self=compiled.confidence,
+            rationale=(
+                f"Stimulus controller {key!r} "
+                f"from {len(paths)} file(s)"
+            ),
+        )
 
 
 __all__ = ["RailsStimulusExtractor"]
