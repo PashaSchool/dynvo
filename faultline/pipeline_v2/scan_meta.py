@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from faultline.models.types import SCHEMA_VERSION
 from faultline.pipeline_v2.stage_6_3_import_tree import (
     DEFAULT_MAX_FILES_PER_FEATURE as _IMPORT_TREE_MAX_FILES,
     DEFAULT_MAX_SYMBOLS_PER_FEATURE as _IMPORT_TREE_MAX_SYMBOLS,
@@ -276,6 +277,11 @@ def assemble_scan_meta(
     tooling; do not reorder or rename without checking consumers.
     """
     scan_meta: dict[str, Any] = {
+        # On-disk schema version (see SCHEMA_VERSION in models/types.py
+        # for the bump policy). Duplicated from FeatureMap.schema_version
+        # so consumers that only read scan_meta (without parsing the
+        # full map) can still detect the schema generation.
+        "schema_version": SCHEMA_VERSION,
         "pipeline_version": "v2",
         "run_id": ctx.run_id,
         "stack": ctx.stack,

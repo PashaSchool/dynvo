@@ -3,6 +3,26 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+SCHEMA_VERSION: int = 1
+"""Current FeatureMap JSON schema version, stamped on every new scan.
+
+Bump policy — increment ONLY on **breaking** changes to the on-disk
+schema:
+
+  - removing or renaming a field,
+  - changing the semantics of an existing field,
+  - removing an enum/literal value consumers may switch on.
+
+Additive optional fields (the normal evolution path — new fields with
+defaults so old JSONs rehydrate unchanged) do NOT bump the version.
+
+``FeatureMap.schema_version`` defaults to ``0``, meaning
+"pre-versioning scan": any JSON written before this constant existed
+deserializes with ``schema_version == 0``, distinguishable from a
+current scan (``1``). Keep this an ``int`` — consumers compare with
+``>=`` / ``==``, never parse it.
+"""
+
 
 class TimelinePoint(BaseModel):
     date: str          # ISO week label "YYYY-Www"
@@ -624,6 +644,12 @@ class UserFlow(BaseModel):
 
 
 class FeatureMap(BaseModel):
+    # On-disk schema version. Default 0 = "pre-versioning scan" so any
+    # JSON produced before this field existed rehydrates as 0, which is
+    # distinguishable from a freshly produced map (stamped with
+    # SCHEMA_VERSION at Stage 7 output assembly). See SCHEMA_VERSION's
+    # docstring for the bump policy (breaking changes only).
+    schema_version: int = 0
     repo_path: str
     remote_url: str = ""      # GitHub base URL, e.g. https://github.com/org/repo
     analyzed_at: datetime
