@@ -173,8 +173,6 @@ markers = [
 [tool.coverage.run]
 source = ["faultline"]
 omit = [
-    "faultline/llm/detector.py",
-    "faultline/llm/flow_detector.py",
     "faultline/cli.py",
     "faultline/digest/*",
     "faultline/integrations/*",

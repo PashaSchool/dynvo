@@ -13,8 +13,8 @@ This module provides a single ``CostTracker`` that:
   - serializes a summary for logs and the ``metadata.json`` baseline
 
 Nothing here calls an LLM or performs I/O. Adding a new model is a
-single line in ``_PRICING``. Used by ``sonnet_scanner`` and threaded
-through ``pipeline.run``.
+single line in ``_PRICING``. Used by the pipeline_v2 LLM stages and
+threaded through ``pipeline_v2.run``.
 """
 
 from __future__ import annotations
