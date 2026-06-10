@@ -168,10 +168,10 @@ def _load_coverage_provider(
     the provider could not be loaded — surfaced into ``scan_meta``.
     """
     try:
-        from faultlines_test_coverage import (  # type: ignore[import-not-found]
+        from faultlines_test_coverage import (
             BehavioralCoverageProvider,
         )
-        from faultlines_test_coverage.types import (  # type: ignore[import-not-found]
+        from faultlines_test_coverage.types import (
             Commit as CovCommit,
         )
     except ImportError as exc:
@@ -192,7 +192,7 @@ def _load_coverage_provider(
     for c in commits:
         try:
             date_val = c.date
-            ts = int(date_val.timestamp()) if hasattr(date_val, "timestamp") else int(date_val)
+            ts = int(date_val.timestamp()) if isinstance(date_val, datetime) else int(date_val)
             cov_commits.append(
                 CovCommit(
                     hash=c.sha,

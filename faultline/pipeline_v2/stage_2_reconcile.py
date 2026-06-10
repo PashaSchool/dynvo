@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
@@ -273,7 +274,7 @@ def _llm_pick_name(
     try:
         # Local import to keep ``anthropic`` from being a hard dep of
         # Stage 2 callers that don't enable the 2nd-opinion path.
-        from anthropic import Anthropic  # type: ignore[import-not-found]
+        from anthropic import Anthropic
     except ImportError:
         logger.warning("anthropic package not available; LLM reconcile skipped")
         return None
@@ -315,7 +316,7 @@ def _pick_canonical_name(
     group: list[AnchorCandidate],
     *,
     llm_reconcile: bool,
-    llm_call: callable = _llm_pick_name,
+    llm_call: Callable[[AnchorCandidate, AnchorCandidate], str | None] = _llm_pick_name,
 ) -> tuple[str, str | None]:
     """Choose the canonical slug for a merged group.
 
@@ -528,7 +529,7 @@ def stage_2_reconcile(
     *,
     llm_reconcile: bool = False,
     jaccard_threshold: float = 0.7,
-    _llm_call: callable = _llm_pick_name,
+    _llm_call: Callable[[AnchorCandidate, AnchorCandidate], str | None] = _llm_pick_name,
 ) -> Stage2Result:
     """Reconcile cross-extractor anchor candidates.
 

@@ -365,9 +365,10 @@ def derive_display_name(
     if ep is not None:
         entry_file = ep.path or None
         entry_symbol = ep.symbol or None
-    if entry_file is None and getattr(flow, "entry", None):
-        entry_file = flow.entry.get("file") or None
-        entry_symbol = entry_symbol or flow.entry.get("symbol")
+    entry_dict = getattr(flow, "entry", None)
+    if entry_file is None and entry_dict:
+        entry_file = entry_dict.get("file") or None
+        entry_symbol = entry_symbol or entry_dict.get("symbol")
     if entry_file is None:
         entry_file = flow.entry_point_file or None
     # Last resort for the symbol: the entry-role flow_symbol_attribution

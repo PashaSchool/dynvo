@@ -21,6 +21,11 @@ Two emission modes (both deterministic, no LLM):
      ``@google/generative-ai``, ``ai`` (Vercel) → ``ai``
    - ``next-i18next``, ``i18next``    → ``i18n``
 
+   The token tables live in the ``stage1_anchors`` section of
+   ``eval/dependency-anchors.yaml`` (runtime copy packaged at
+   ``faultline/pipeline_v2/data/``) — per the hard rule, dep-anchor
+   tables live in YAML, never hardcoded in Python.
+
 2) **Workspace-package anchors** (Sprint D3, 2026-05-20). Each
    declared monorepo workspace IS its own feature surface — the
    maintainer literally created a package boundary around it. We
@@ -61,6 +66,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from faultline.pipeline_v2.data import load_yaml
 from faultline.pipeline_v2.extractors._util import (
     posix,
     read_text,
@@ -72,10 +78,9 @@ if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext, Workspace
 
 
-# (match_predicate, anchor_slug, rationale_template). The predicate
-# receives the dependency name and returns ``True`` when it matches.
-# We use predicates rather than a flat dict so we can match families
-# like ``@stripe/*`` without enumerating every package.
+# (matcher_token, anchor_slug) pairs. We use token-prefix matching
+# rather than a flat dict so we can match families like ``@stripe/*``
+# without enumerating every package.
 
 _DepMatch = tuple[str, str]
 """(matcher_token, anchor_slug). matcher_token is matched in two ways:
@@ -85,85 +90,34 @@ _DepMatch = tuple[str, str]
    - dep name starts with ``matcher_token + "-"`` (covers ``next-auth-*``)
 """
 
-_JS_DEP_ANCHORS: tuple[_DepMatch, ...] = (
-    # ── Billing ──
-    ("stripe", "billing"),
-    ("@stripe", "billing"),
-    ("@paddle", "billing"),
-    ("paddle-sdk", "billing"),
-    ("lemonsqueezy.js", "billing"),
 
-    # ── Auth ──
-    ("next-auth", "auth"),
-    ("@auth", "auth"),
-    ("better-auth", "auth"),
-    ("lucia", "auth"),
-    ("@clerk", "auth"),
-    ("clerk", "auth"),
-    ("@workos-inc", "auth"),
-    ("@kinde-oss", "auth"),
+def _load_stage1_anchors(lang: str) -> tuple[_DepMatch, ...]:
+    """Read the Stage-1 anchor token table from dependency-anchors.yaml.
 
-    # ── Email ──
-    ("resend", "email"),
-    ("@sendgrid", "email"),
-    ("postmark", "email"),
-    ("nodemailer", "email"),
-    ("@aws-sdk/client-ses", "email"),
+    The ``stage1_anchors`` section is the verbatim externalization of
+    the historical in-Python tables. Order is preserved from the YAML
+    list — ``_match_anchors`` stops at the first token that matches a
+    dep, so list order carries first-match semantics.
 
-    # ── Background jobs ──
-    ("inngest", "background-jobs"),
-    ("bullmq", "background-jobs"),
-    ("bull", "background-jobs"),
-    ("@trigger.dev", "background-jobs"),
-    ("agenda", "background-jobs"),
+    Hermetic: resolves via ``importlib.resources`` (see
+    ``faultline.pipeline_v2.data``). A missing data file raises — a
+    packaging bug, never a silently-tolerated condition.
+    """
+    section = load_yaml("dependency-anchors.yaml").get("stage1_anchors") or {}
+    entries = section.get(lang) if isinstance(section, dict) else None
+    out: list[_DepMatch] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        token = entry.get("token")
+        slug = entry.get("slug")
+        if isinstance(token, str) and isinstance(slug, str) and token and slug:
+            out.append((token, slug))
+    return tuple(out)
 
-    # ── File uploads / storage ──
-    ("@uploadthing", "file-uploads"),
-    ("uploadthing", "file-uploads"),
-    ("@aws-sdk/client-s3", "file-uploads"),
-    ("@vercel/blob", "file-uploads"),
 
-    # ── Analytics ──
-    ("posthog-node", "analytics"),
-    ("posthog-js", "analytics"),
-    ("mixpanel", "analytics"),
-    ("@segment", "analytics"),
-
-    # ── Realtime ──
-    ("socket.io", "realtime"),
-    ("ws", "realtime"),
-    ("@pusher", "realtime"),
-    ("pusher", "realtime"),
-    ("ably", "realtime"),
-
-    # ── AI ──
-    ("openai", "ai"),
-    ("anthropic", "ai"),
-    ("@anthropic-ai", "ai"),
-    ("@google/generative-ai", "ai"),
-    ("ai", "ai"),
-
-    # ── i18n ──
-    ("next-i18next", "i18n"),
-    ("i18next", "i18n"),
-    ("react-i18next", "i18n"),
-    ("@lingui", "i18n"),
-)
-
-_PY_DEP_ANCHORS: tuple[_DepMatch, ...] = (
-    ("stripe", "billing"),
-    ("django-allauth", "auth"),
-    ("authlib", "auth"),
-    ("python-jose", "auth"),
-    ("celery", "background-jobs"),
-    ("rq", "background-jobs"),
-    ("dramatiq", "background-jobs"),
-    ("openai", "ai"),
-    ("anthropic", "ai"),
-    ("langchain", "ai"),
-    ("boto3", "file-uploads"),
-    ("sendgrid", "email"),
-)
+_JS_DEP_ANCHORS: tuple[_DepMatch, ...] = _load_stage1_anchors("js")
+_PY_DEP_ANCHORS: tuple[_DepMatch, ...] = _load_stage1_anchors("python")
 
 
 def _dep_matches(dep: str, token: str) -> bool:
@@ -358,26 +312,26 @@ class PackageAnchorExtractor:
         if ctx.monorepo and ctx.workspaces:
             seen_workspace_slugs: set[str] = set()
             for ws in ctx.workspaces:
-                slug = _workspace_slug(ws)
-                if not slug:
+                ws_slug = _workspace_slug(ws)
+                if not ws_slug:
                     continue
-                if slug in seen_workspace_slugs:
+                if ws_slug in seen_workspace_slugs:
                     # Two workspaces with the same slug — keep only the
                     # first. Stage 2 would merge them anyway, but
                     # skipping here keeps Stage 1 telemetry honest
                     # (extractor_hits["package"] == real anchor count).
                     continue
-                seen_workspace_slugs.add(slug)
+                seen_workspace_slugs.add(ws_slug)
                 ws_paths = tuple(ws.files) if ws.files else (ws.path,)
                 rationale = (
-                    f"workspace anchor {slug!r} from monorepo "
+                    f"workspace anchor {ws_slug!r} from monorepo "
                     f"package {ws.path!r}"
                 )
                 if isinstance(ws.package_json, dict) and ws.package_json.get("name"):
                     rationale += f" (package.json name={ws.package_json['name']!r})"
                 out.append(
                     AnchorCandidate(
-                        name=slug,
+                        name=ws_slug,
                         paths=ws_paths,
                         source=self.name,
                         confidence_self=0.95,

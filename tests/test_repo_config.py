@@ -7,14 +7,10 @@ from pathlib import Path
 import pytest
 
 from faultline.analyzer.repo_config import (
-    ForcedMerge,
-    RepoConfig,
-    apply_repo_config,
     auto_save_canonicals,
     find_repo_config,
     load_repo_config,
 )
-from faultline.llm.sonnet_scanner import DeepScanResult
 
 
 # ── find_repo_config ─────────────────────────────────────────────────
@@ -127,158 +123,6 @@ force_merges:
         (tmp_path / ".faultline.yaml").write_text("features: {}\n", encoding="utf-8")
         cfg = load_repo_config(tmp_path)
         assert ".faultline.yaml" in cfg.source_path
-
-
-# ── apply_repo_config ────────────────────────────────────────────────
-
-
-def _result(features, **kw) -> DeepScanResult:
-    return DeepScanResult(features=features, **kw)
-
-
-class TestApply:
-    def test_none_config_passthrough(self):
-        r = _result({"a": ["x.ts"]})
-        out = apply_repo_config(r, None)
-        assert "a" in out.features
-
-    def test_empty_config_passthrough(self):
-        r = _result({"a": ["x.ts"]})
-        out = apply_repo_config(r, RepoConfig())
-        assert "a" in out.features
-
-    def test_canonical_aliasing(self):
-        r = _result(
-            {"remix/embedded-signing-authoring": ["a.ts", "b.ts"]},
-            descriptions={"remix/embedded-signing-authoring": "src"},
-        )
-        from faultline.analyzer.repo_config import FeatureRule
-        cfg = RepoConfig(features=[FeatureRule(
-            canonical="embedded-signing",
-            description="Embedded signing SDK.",
-            variants=("remix/embedded-signing-authoring",),
-        )])
-        out = apply_repo_config(r, cfg)
-        assert "embedded-signing" in out.features
-        assert "remix/embedded-signing-authoring" not in out.features
-        assert sorted(out.features["embedded-signing"]) == ["a.ts", "b.ts"]
-        # Explicit description overrides
-        assert out.descriptions["embedded-signing"] == "Embedded signing SDK."
-
-    def test_alias_with_existing_canonical_unions_files(self):
-        from faultline.analyzer.repo_config import FeatureRule
-        r = _result({
-            "billing": ["a.ts"],
-            "lib/billing": ["b.ts"],
-            "ee/stripe-billing": ["c.ts"],
-        })
-        cfg = RepoConfig(features=[FeatureRule(
-            canonical="billing",
-            variants=("lib/billing", "ee/stripe-billing"),
-        )])
-        out = apply_repo_config(r, cfg)
-        assert "billing" in out.features
-        assert sorted(out.features["billing"]) == ["a.ts", "b.ts", "c.ts"]
-        assert "lib/billing" not in out.features
-        assert "ee/stripe-billing" not in out.features
-
-    def test_skip_features_drops(self):
-        r = _result({"a": ["x.ts"], "tsconfig": ["t.ts"]})
-        cfg = RepoConfig(skip_features=["tsconfig"])
-        out = apply_repo_config(r, cfg)
-        assert "tsconfig" not in out.features
-        assert "a" in out.features
-
-    def test_skip_missing_feature_silent(self):
-        r = _result({"a": ["x.ts"]})
-        cfg = RepoConfig(skip_features=["does-not-exist"])
-        # Should not raise
-        out = apply_repo_config(r, cfg)
-        assert "a" in out.features
-
-    def test_force_merge_basic(self):
-        r = _result({
-            "ui-primitives": ["a.ts"],
-            "ui/primitive-components": ["b.ts"],
-            "other": ["c.ts"],
-        })
-        cfg = RepoConfig(force_merges=[ForcedMerge(
-            into="design-system",
-            sources=("ui-primitives", "ui/primitive-components"),
-            description="Design system primitives.",
-        )])
-        out = apply_repo_config(r, cfg)
-        assert "design-system" in out.features
-        assert sorted(out.features["design-system"]) == ["a.ts", "b.ts"]
-        assert "ui-primitives" not in out.features
-        assert "ui/primitive-components" not in out.features
-        assert "other" in out.features
-
-    def test_force_merge_into_existing_unions(self):
-        r = _result({
-            "design-system": ["existing.ts"],
-            "ui-primitives": ["new.ts"],
-        })
-        cfg = RepoConfig(force_merges=[ForcedMerge(
-            into="design-system", sources=("ui-primitives",),
-        )])
-        out = apply_repo_config(r, cfg)
-        assert sorted(out.features["design-system"]) == ["existing.ts", "new.ts"]
-
-    def test_force_merge_no_live_sources_silent(self):
-        r = _result({"a": ["x.ts"]})
-        cfg = RepoConfig(force_merges=[ForcedMerge(
-            into="design-system", sources=("missing-1", "missing-2"),
-        )])
-        out = apply_repo_config(r, cfg)
-        assert "design-system" not in out.features
-        assert "a" in out.features
-
-    def test_alias_carries_flows_and_descriptions(self):
-        from faultline.analyzer.repo_config import FeatureRule
-        r = _result(
-            {"remix/embedded-signing-authoring": ["a.ts"]},
-            descriptions={"remix/embedded-signing-authoring": "Original."},
-            flows={"remix/embedded-signing-authoring": ["sign-doc"]},
-            flow_descriptions={
-                "remix/embedded-signing-authoring": {"sign-doc": "user signs"},
-            },
-        )
-        cfg = RepoConfig(features=[FeatureRule(
-            canonical="embedded-signing",
-            variants=("remix/embedded-signing-authoring",),
-        )])
-        out = apply_repo_config(r, cfg)
-        assert out.descriptions["embedded-signing"] == "Original."
-        assert "sign-doc" in out.flows["embedded-signing"]
-        assert out.flow_descriptions["embedded-signing"]["sign-doc"] == "user signs"
-
-    def test_combined_pipeline(self):
-        from faultline.analyzer.repo_config import FeatureRule
-        r = _result({
-            "lib/billing": ["b.ts"],
-            "ee/stripe-billing": ["s.ts"],
-            "ui-primitives": ["u.ts"],
-            "ui/primitive-components": ["p.ts"],
-            "tsconfig": ["t.ts"],
-        })
-        cfg = RepoConfig(
-            features=[FeatureRule(
-                canonical="billing",
-                variants=("lib/billing", "ee/stripe-billing"),
-            )],
-            skip_features=["tsconfig"],
-            force_merges=[ForcedMerge(
-                into="design-system",
-                sources=("ui-primitives", "ui/primitive-components"),
-            )],
-        )
-        out = apply_repo_config(r, cfg)
-        assert "billing" in out.features
-        assert sorted(out.features["billing"]) == ["b.ts", "s.ts"]
-        assert "design-system" in out.features
-        assert sorted(out.features["design-system"]) == ["p.ts", "u.ts"]
-        assert "tsconfig" not in out.features
 
 
 # ── auto_save_canonicals ──────────────────────────────────────────────
@@ -404,19 +248,3 @@ auto_aliases:
         names = cfg.all_canonical_names()
         assert "signing" in names
         assert "billing" in names
-
-    def test_apply_repo_config_uses_auto_aliases(self, tmp_path: Path):
-        # Both user features and auto_aliases participate in alias
-        # rewriting at apply time.
-        (tmp_path / ".faultline.yaml").write_text("""
-auto_aliases:
-  authentication:
-    description: User auth.
-    variants:
-      - api/auth
-""", encoding="utf-8")
-        cfg = load_repo_config(tmp_path)
-        result = DeepScanResult(features={"api/auth": ["x.ts"]})
-        out = apply_repo_config(result, cfg)
-        assert "authentication" in out.features
-        assert "api/auth" not in out.features

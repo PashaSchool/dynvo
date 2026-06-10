@@ -6,17 +6,13 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from faultline.cloud import event_buffer
 from faultline.cloud.sync import push_feature_map, send_mcp_events_batch
 
 
 @pytest.fixture(autouse=True)
-def _reset_buffer(monkeypatch):
+def _reset_env(monkeypatch):
     monkeypatch.delenv("FAULTLINE_API_KEY", raising=False)
     monkeypatch.delenv("FAULTLINE_API_BASE", raising=False)
-    # Drain any leftover queue between tests
-    while not event_buffer._buffer._queue.empty():
-        event_buffer._buffer._queue.get_nowait()
     yield
 
 
@@ -82,45 +78,3 @@ class TestSendMcpEventsBatch:
         assert count == 3
         body = mock_post.call_args.kwargs["json"]
         assert "events" in body and len(body["events"]) == 3
-
-
-class TestEventBuffer:
-    def test_enqueue_no_op_without_key(self) -> None:
-        event_buffer.record_mcp_event(tool_name="x", tokens_saved=10)
-        assert event_buffer._buffer._queue.qsize() == 0
-
-    def test_enqueue_when_api_key_set(self, monkeypatch) -> None:
-        monkeypatch.setenv("FAULTLINE_API_KEY", "fl_test")
-        # Stop the background thread so we don't actually try to flush
-        with patch.object(event_buffer._buffer, "_ensure_thread"):
-            event_buffer.record_mcp_event(
-                tool_name="find_feature",
-                query_arg="auth",
-                files_returned=5,
-                tokens_saved=27000,
-            )
-        assert event_buffer._buffer._queue.qsize() == 1
-        evt = event_buffer._buffer._queue.get_nowait()
-        assert evt["tool_name"] == "find_feature"
-        assert evt["query_arg"] == "auth"
-        assert evt["files_returned"] == 5
-        assert evt["tokens_saved"] == 27000
-        assert "occurred_at" in evt
-
-    def test_flush_once_sends_to_cloud(self, monkeypatch) -> None:
-        monkeypatch.setenv("FAULTLINE_API_KEY", "fl_test")
-        # Pre-populate the queue
-        for i in range(5):
-            event_buffer._buffer._queue.put_nowait({
-                "tool_name": f"tool_{i}",
-                "occurred_at": "2026-01-01",
-                "tokens_saved": 100,
-            })
-        with patch("faultline.cloud.sync.send_mcp_events_batch") as mock_send:
-            mock_send.return_value = 5
-            count = event_buffer._buffer._flush_once()
-        assert count == 5
-        assert event_buffer._buffer._queue.qsize() == 0
-
-    def test_flush_empty_returns_zero(self) -> None:
-        assert event_buffer._buffer._flush_once() == 0

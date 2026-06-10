@@ -15,6 +15,7 @@ Same codebase → same groups every time (100% deterministic).
 
 import os
 from collections import defaultdict
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 from faultline.analyzer.ast_extractor import FileSignature
@@ -443,7 +444,7 @@ def _business_domain_key(filepath: str) -> str:
 def _resolve_import(
     importer: str,
     import_path: str,
-    file_set: set[str],
+    file_set: AbstractSet[str],
     alias_map: dict[str, str] | None = None,
     monorepo_packages: set[str] | None = None,
     workspace_package_map: dict[str, str] | None = None,
@@ -516,7 +517,7 @@ def _resolve_import(
 
 def _resolve_monorepo_import(
     import_path: str,
-    file_set: set[str],
+    file_set: AbstractSet[str],
     package_names: set[str],
 ) -> str | None:
     """Resolves a bare monorepo import to a file in the project.
@@ -743,7 +744,7 @@ _PKG_ENTRY_FIELDS = ("module", "main")
 
 def _resolve_workspace_package_import(
     import_path: str,
-    file_set: set[str],
+    file_set: AbstractSet[str],
     workspace_package_map: dict[str, str],
     repo_root: str | None = None,
 ) -> str | None:
@@ -812,7 +813,7 @@ def _resolve_workspace_package_import(
 
 def _package_entry_file(
     pkgdir: str,
-    file_set: set[str],
+    file_set: AbstractSet[str],
     repo_root: str | None,
 ) -> str | None:
     """Resolve a workspace package's main entry file from its package.json.
@@ -877,7 +878,7 @@ _JS_TO_TS_SWAPS = {
 }
 
 
-def _try_extensions(base: str, file_set: set[str]) -> str | None:
+def _try_extensions(base: str, file_set: AbstractSet[str]) -> str | None:
     """Tries a path with common TS/JS extensions and as a directory index file.
 
     Also handles .js→.ts resolution for TypeScript projects that write

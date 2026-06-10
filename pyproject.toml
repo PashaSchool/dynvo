@@ -47,7 +47,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-analytics = ["httpx>=0.27.0"]
 # MCP support moved to the standalone `faultlines-mcp` package — install it
 # separately (`pip install faultlines-mcp`). It depends on this engine, so
 # both end up in your env; the engine no longer carries the `mcp` SDK dep.
@@ -132,6 +131,8 @@ store-mutation = "faultline.framework_linkers.store_mutation:StoreMutationLinker
 dependencies = [
     "pytest>=7.4.0",
     "pytest-cov",
+    "mypy",
+    "types-PyYAML",
 ]
 
 [tool.hatch.envs.default.scripts]
@@ -157,6 +158,14 @@ members = ["faultlines-mcp"]
 # path re-added these files at the SAME wheel location, producing duplicate ZIP
 # entries that PyPI rejects ("Duplicate filename in local headers") — removed.
 
+# Lenient, scoped type-checking: only pipeline_v2 is enforced (CI runs
+# `mypy faultline/pipeline_v2`). NOT strict mode — intentionally.
+[tool.mypy]
+python_version = "3.11"
+files = ["faultline/pipeline_v2"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+
 [tool.pytest.ini_options]
 addopts = [
     "--cov=faultline",
@@ -173,15 +182,11 @@ markers = [
 [tool.coverage.run]
 source = ["faultline"]
 omit = [
-    "faultline/llm/detector.py",
-    "faultline/llm/flow_detector.py",
     "faultline/cli.py",
     "faultline/digest/*",
-    "faultline/integrations/*",
     "faultline/output/reporter.py",
     "faultline/analyzer/evolve.py",
     "faultline/analyzer/incremental.py",
-    "faultline/analyzer/shared_files.py",
 ]
 
 [tool.coverage.report]

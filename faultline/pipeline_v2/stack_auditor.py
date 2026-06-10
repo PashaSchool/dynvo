@@ -523,11 +523,9 @@ def read_manifest_excerpts(ctx: "ScanContext") -> dict[str, Any]:
                 ]
             except OSError:
                 continue
-            parser = _MANIFEST_PARSERS.get(
-                manifest, _parse_generic_manifest,
-            )
+            parser = _MANIFEST_PARSERS.get(manifest)
             try:
-                if parser is _parse_generic_manifest:
+                if parser is None:
                     excerpt = _parse_generic_manifest(manifest, raw)
                 else:
                     excerpt = parser(raw)
@@ -1325,11 +1323,11 @@ def run_stack_auditor(
     # to surface the per-correction telemetry into ``scan_meta``).
     corrected, corrections = correct_auditor_verdict(verdict, ctx)
     if corrections and log is not None:
-        for entry in corrections:
+        for corr in corrections:
             log.warn(
                 f"auditor_correction: "
-                f"{entry['original']!r} → {entry['corrected']!r} "
-                f"({entry['reason']})",
+                f"{corr['original']!r} → {corr['corrected']!r} "
+                f"({corr['reason']})",
             )
 
     verdict = corrected
