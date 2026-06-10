@@ -1,0 +1,52 @@
+# Schema-format detection tables — consumed by the
+# SchemaDomainExtractor (faultline/pipeline_v2/extractors/schema.py).
+#
+# Persistent-storage schemas encode the product's nouns. Each format
+# block declares (a) how to recognise that format's schema FILES and
+# (b) the regex that pulls the declared model/table names out of them.
+#
+# Regex flags live in Python (prisma model/enum and the django class
+# pattern compile with re.MULTILINE); the pattern strings here are
+# copied verbatim from the historical schema.py constants.
+#
+# Mongoose / Ent / sqlc are documented in the schema-domain-extractor
+# skill but parked for a later iteration — they require deeper parsing.
+
+formats:
+  # Prisma: prisma/schema.prisma → ``model Foo { ... }`` (+ enums).
+  prisma:
+    file_suffixes: ["schema.prisma"]
+    patterns:
+      # compiled with re.MULTILINE
+      model: '^\s*model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{'
+      # compiled with re.MULTILINE
+      enum: '^\s*enum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{'
+
+  # Drizzle: ``export const foo = pgTable(...)`` / mysqlTable /
+  # sqliteTable. File conventions:
+  #   - single-file:    db/schema.ts, db/schema.js
+  #   - barrel file:    src/db/schema.ts
+  #   - split-by-table: any *.ts under a ``/schema/`` directory (the
+  #                     openstatus / cal.com / next-saas-starter pattern)
+  drizzle:
+    file_suffixes: ["/schema.ts", "/schema.js", "/db/schema.ts", "/db/schema.js"]
+    # Split-by-table pattern; restricted to .ts/.js files to avoid
+    # false positives on JSON schemas or markdown.
+    dir_segment: "/schema/"
+    dir_segment_suffixes: [".ts", ".js"]
+    patterns:
+      table: 'export\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:pgTable|mysqlTable|sqliteTable)\s*\('
+
+  # Rails: db/schema.rb → ``create_table "foos"`` (the rails_models
+  # extractor separately picks up app/models/*.rb).
+  rails:
+    file_suffixes: ["db/schema.rb"]
+    patterns:
+      create_table: 'create_table\s+["'']([^"'']+)["'']'
+
+  # Django: **/models.py → ``class Foo(models.Model):``.
+  django:
+    file_suffixes: ["models.py"]
+    patterns:
+      # compiled with re.MULTILINE
+      model_class: '^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*[^)]*models\.Model[^)]*\)\s*:'

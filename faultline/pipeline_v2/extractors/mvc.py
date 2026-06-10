@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
     posix,
@@ -38,20 +39,38 @@ if TYPE_CHECKING:
 
 # (suffix, strip_suffix) — file matches if its basename ends with
 # ``suffix``. ``strip_suffix`` is removed from the basename to produce
-# the slug source.
-_CONTROLLER_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("_controller.rb", "_controller.rb"),   # Rails
-    ("Controller.php", "Controller.php"),   # Laravel
-    ("_controller.ex", "_controller.ex"),   # Phoenix
-    ("Controller.cs", "Controller.cs"),     # ASP.NET
-    ("Controller.java", "Controller.java"),  # Spring (filename convention)
-    ("Controller.kt", "Controller.kt"),     # Spring (Kotlin)
-)
+# the slug source. The table lives in ``eval/stacks/mvc-controllers.yaml``
+# (runtime mirror packaged under ``faultline/pipeline_v2/data/stacks/``);
+# order matters — the FIRST suffix that matches wins.
+_PATTERNS_CACHE: tuple[tuple[str, str], ...] | None = None
+
+
+def _load_controller_patterns() -> tuple[tuple[str, str], ...]:
+    """Parse mvc-controllers.yaml once into the historical tuple shape.
+
+    Hermetic: resolves via ``importlib.resources`` (see
+    ``faultline.pipeline_v2.data``).
+    """
+    global _PATTERNS_CACHE
+    if _PATTERNS_CACHE is not None:
+        return _PATTERNS_CACHE
+
+    config = load_stack_yaml("mvc-controllers")
+    out: list[tuple[str, str]] = []
+    for entry in config.get("controller_patterns") or []:
+        if not isinstance(entry, dict):
+            continue
+        suffix = entry.get("suffix")
+        strip = entry.get("strip")
+        if isinstance(suffix, str) and isinstance(strip, str) and suffix:
+            out.append((suffix, strip))
+    _PATTERNS_CACHE = tuple(out)
+    return _PATTERNS_CACHE
 
 
 def _controller_slug_from(basename: str) -> str | None:
     """Apply each known suffix; return the stripped slug or ``None``."""
-    for suf, strip in _CONTROLLER_PATTERNS:
+    for suf, strip in _load_controller_patterns():
         if basename.endswith(suf):
             stem = basename[: -len(strip)]
             if not stem or is_noise(stem):
