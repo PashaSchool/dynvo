@@ -301,3 +301,100 @@ i18n:
     - language
     - intl
     - lang
+
+# ── Stage 1 package-anchor extractor token tables ────────────────────────
+#
+# Verbatim externalization of the extractor's historical
+# ``_JS_DEP_ANCHORS`` / ``_PY_DEP_ANCHORS`` tuples from
+# ``faultline/pipeline_v2/extractors/package.py``.
+#
+# ORDER MATTERS: the extractor's ``_match_anchors`` stops at the FIRST
+# token that matches a dependency name, so these lists preserve the
+# exact historical tuple order.
+#
+# Matching semantics (see ``_dep_matches`` in package.py): a token
+# matches a dep on exact equality, ``token + "/"`` prefix (scope
+# families) or ``token + "-"`` prefix (e.g. ``next-auth-*``).
+#
+# NOTE: these intentionally differ from the Layer-2 category lists
+# above; a semantic merge is a future task (would change behavior).
+# The Stage 6.5 loader (_load_dep_anchors) skips this section because
+# it carries no ``product_label`` / ``deps`` keys.
+stage1_anchors:
+  js:
+    # ── Billing ──
+    - {token: stripe, slug: billing}
+    - {token: "@stripe", slug: billing}
+    - {token: "@paddle", slug: billing}
+    - {token: paddle-sdk, slug: billing}
+    - {token: lemonsqueezy.js, slug: billing}
+
+    # ── Auth ──
+    - {token: next-auth, slug: auth}
+    - {token: "@auth", slug: auth}
+    - {token: better-auth, slug: auth}
+    - {token: lucia, slug: auth}
+    - {token: "@clerk", slug: auth}
+    - {token: clerk, slug: auth}
+    - {token: "@workos-inc", slug: auth}
+    - {token: "@kinde-oss", slug: auth}
+
+    # ── Email ──
+    - {token: resend, slug: email}
+    - {token: "@sendgrid", slug: email}
+    - {token: postmark, slug: email}
+    - {token: nodemailer, slug: email}
+    - {token: "@aws-sdk/client-ses", slug: email}
+
+    # ── Background jobs ──
+    - {token: inngest, slug: background-jobs}
+    - {token: bullmq, slug: background-jobs}
+    - {token: bull, slug: background-jobs}
+    - {token: "@trigger.dev", slug: background-jobs}
+    - {token: agenda, slug: background-jobs}
+
+    # ── File uploads / storage ──
+    - {token: "@uploadthing", slug: file-uploads}
+    - {token: uploadthing, slug: file-uploads}
+    - {token: "@aws-sdk/client-s3", slug: file-uploads}
+    - {token: "@vercel/blob", slug: file-uploads}
+
+    # ── Analytics ──
+    - {token: posthog-node, slug: analytics}
+    - {token: posthog-js, slug: analytics}
+    - {token: mixpanel, slug: analytics}
+    - {token: "@segment", slug: analytics}
+
+    # ── Realtime ──
+    - {token: socket.io, slug: realtime}
+    - {token: ws, slug: realtime}
+    - {token: "@pusher", slug: realtime}
+    - {token: pusher, slug: realtime}
+    - {token: ably, slug: realtime}
+
+    # ── AI ──
+    - {token: openai, slug: ai}
+    - {token: anthropic, slug: ai}
+    - {token: "@anthropic-ai", slug: ai}
+    - {token: "@google/generative-ai", slug: ai}
+    - {token: ai, slug: ai}
+
+    # ── i18n ──
+    - {token: next-i18next, slug: i18n}
+    - {token: i18next, slug: i18n}
+    - {token: react-i18next, slug: i18n}
+    - {token: "@lingui", slug: i18n}
+
+  python:
+    - {token: stripe, slug: billing}
+    - {token: django-allauth, slug: auth}
+    - {token: authlib, slug: auth}
+    - {token: python-jose, slug: auth}
+    - {token: celery, slug: background-jobs}
+    - {token: rq, slug: background-jobs}
+    - {token: dramatiq, slug: background-jobs}
+    - {token: openai, slug: ai}
+    - {token: anthropic, slug: ai}
+    - {token: langchain, slug: ai}
+    - {token: boto3, slug: file-uploads}
+    - {token: sendgrid, slug: email}

@@ -17,9 +17,11 @@ encodes the route. Per the ``route-file-extractor`` skill:
                             anchor per top-level resource)
 
 Stack-specific patterns are read from ``ctx.stack`` (and the per-
-workspace stack when monorepo). The mapping table below is the
-in-Python fallback used until ``eval/stacks/<stack>.yaml`` lands —
-the ``stack-pattern-library`` skill defines the YAML schema.
+workspace stack when monorepo). The routing-convention tables live in
+``eval/stacks/filesystem-routing.yaml`` (authoring copy) with the
+runtime copy packaged at ``faultline/pipeline_v2/data/stacks/`` —
+per the ``stack-pattern-library`` skill, conventions live in YAML,
+never hardcoded in Python.
 
 The extractor returns one :class:`AnchorCandidate` per top-level
 *route group* — not one per file. The first non-noise path segment
@@ -37,6 +39,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
     posix,
@@ -50,60 +53,54 @@ if TYPE_CHECKING:
 
 # ── Routing convention table ────────────────────────────────────────────────
 #
-# (routing_root_prefix, page_suffixes)
-#   - routing_root_prefix : every match must start with one of these,
-#                           after optional ``src/`` prefix removal.
-#   - page_suffixes       : file must end with one of these to count as
-#                           a page/handler.
+# Loaded from ``stacks/filesystem-routing.yaml`` in the packaged data
+# tree (authoring copy: ``eval/stacks/filesystem-routing.yaml``):
+#
+#   stack → (routing_roots, page_suffixes)
+#     - routing_roots : every match must start with one of these
+#                       (workspace prefix prepended for monorepos).
+#     - page_suffixes : file must end with one of these to count as
+#                       a page/handler.
+#
+#   python_routing_markers — marker filenames for Python web frameworks
+#   where routing lives in marker files, not file-system convention.
 #
 # All paths are POSIX. Tests build synthetic repos in ``tmp_path``
 # without git, so no normalisation other than slash flipping needed.
 
-_PAGE_TS_SUFFIXES = (
-    "/page.tsx", "/page.jsx", "/page.ts", "/page.js",
-    "/route.ts", "/route.js",  # App Router API
-)
+_RoutingTables = tuple[
+    dict[str, tuple[tuple[str, ...], tuple[str, ...]]],  # stack routing
+    tuple[str, ...],                                     # python markers
+]
 
-_STACK_ROUTING: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    # Next.js App Router — both ``app/`` and ``src/app/`` are valid
-    "next-app-router": (("app/", "src/app/"), _PAGE_TS_SUFFIXES),
-    # Pages Router — any ts/tsx file under pages/ counts; api/ included
-    "next-pages":      (("pages/", "src/pages/"), (".tsx", ".jsx", ".ts", ".js")),
-    # Remix — app/routes/**
-    "remix":           (("app/routes/",), (".tsx", ".jsx", ".ts", ".js")),
-    # Astro — src/pages/**.astro (and ts/tsx for islands API)
-    "astro":           (("src/pages/", "pages/"),
-                        (".astro", ".tsx", ".ts", ".js")),
-    # SvelteKit — src/routes/+page.svelte and +server.ts
-    "sveltekit":       (("src/routes/",), ("+page.svelte", "+server.ts",
-                                            "+server.js", "+page.ts")),
-    # Nuxt — pages/**/*.vue (Nuxt 3)
-    "nuxt":            (("pages/", "src/pages/"), (".vue",)),
-    # TanStack Router — file-based routes at src/routes/**, AND many
-    # apps use src/pages/** alongside an explicit route config. Match
-    # both so polyglot frontends like infisical's TanStack+Vite app
-    # produce anchor candidates.
-    "tanstack-router": (("src/routes/", "src/pages/"),
-                        (".tsx", ".jsx", ".ts", ".js")),
-    # Generic Vite SPA — most Vite apps mount a router (TanStack /
-    # react-router) over src/pages/** or src/routes/**. We use the
-    # same convention as TanStack since the file shape is what we
-    # actually grep on.
-    "vite":            (("src/pages/", "src/routes/"),
-                        (".tsx", ".jsx", ".ts", ".js")),
-}
+_ROUTING_CACHE: _RoutingTables | None = None
 
 
-# Python web frameworks — when present, routing lives in marker files
-# (not file-system convention). For these stacks the extractor emits
-# one anchor per *directory containing* the marker file. ``urls.py``
-# / ``router*.py`` are the conventional markers.
-_PYTHON_ROUTING_MARKERS = (
-    "urls.py",          # Django
-    "router.py",        # FastAPI convention
-    "routers.py",       # variant
-    "routes.py",        # Flask / FastAPI variant
-)
+def _load_routing_tables() -> _RoutingTables:
+    """Parse filesystem-routing.yaml once into the historical tuple shapes.
+
+    Hermetic: resolves via ``importlib.resources`` (see
+    ``faultline.pipeline_v2.data``). A missing data file raises — a
+    packaging bug, never a silently-tolerated condition.
+    """
+    global _ROUTING_CACHE
+    if _ROUTING_CACHE is not None:
+        return _ROUTING_CACHE
+
+    config = load_stack_yaml("filesystem-routing")
+    stack_routing: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+    for stack, entry in (config.get("stacks") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        roots = tuple(str(r) for r in (entry.get("roots") or []))
+        suffixes = tuple(str(s) for s in (entry.get("suffixes") or []))
+        if roots and suffixes:
+            stack_routing[str(stack)] = (roots, suffixes)
+    markers = tuple(
+        str(m) for m in (config.get("python_routing_markers") or [])
+    )
+    _ROUTING_CACHE = (stack_routing, markers)
+    return _ROUTING_CACHE
 
 
 def _strip_route_groups(segments: list[str]) -> list[str]:
@@ -266,7 +263,7 @@ def _emit_for_python_routing(files: list[str]) -> dict[str, list[str]]:
         fname = p.rsplit("/", 1)[-1]
         parent = p.rsplit("/", 1)[0] if "/" in p else ""
 
-        if fname in _PYTHON_ROUTING_MARKERS:
+        if fname in _load_routing_tables()[1]:
             if not parent:
                 continue
             # walk up until we hit a non-noise segment
@@ -316,7 +313,7 @@ def _select_routing_for_stack(
     """
     if not stack:
         return None
-    return _STACK_ROUTING.get(stack)
+    return _load_routing_tables()[0].get(stack)
 
 
 class RouteFileExtractor:
