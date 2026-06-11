@@ -74,7 +74,10 @@ import copy
 import logging
 import time
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if TYPE_CHECKING:
+    from faultline.pipeline_v2.git_snapshot import GitSnapshot
 
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.incremental_wiring import (
@@ -185,6 +188,7 @@ def run_pipeline_v2(
     lineage_jaccard_threshold: float | None = None,
     org_id: str | None = None,
     subpath: str | None = None,
+    git_snapshot: "GitSnapshot | None" = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -202,6 +206,13 @@ def run_pipeline_v2(
             experiments (``--run-id baseline`` then
             ``--run-id with-clustering``). Default ``None`` →
             ``<utc-ts>-<sha8>``.
+        git_snapshot: pre-fetched whole-repo git pass to consume instead
+            of Stage 0's own git calls (see
+            :mod:`faultline.pipeline_v2.git_snapshot`). Injected by
+            ``run_pipeline_multi`` so N sub-project scans share ONE
+            history parse. ``None`` (default) → identical to today.
+            When consumed, ``scan_meta.shared_git_pass`` is emitted
+            ``True`` (additive key; absent otherwise).
 
     Returns:
         A dict containing ``path`` (the written FeatureMap path) and
@@ -245,6 +256,7 @@ def run_pipeline_v2(
         model_id=model_id,
         tracker=tracker,
         cache_backend=cache_backend,
+        git_snapshot=git_snapshot,
     )
     ctx = intake.ctx
     verdict = intake.verdict
@@ -595,6 +607,12 @@ def run_pipeline_v2(
         stage_8_6_telemetry=stage_8_6_telemetry,
         shape_result=shape_result,
     )
+
+    # Multi-subpath engine telemetry — additive key, only emitted when
+    # this run consumed an injected shared git snapshot (no schema-
+    # version bump; consumers treat absence as "own git pass").
+    if git_snapshot is not None:
+        scan_meta["shared_git_pass"] = True
 
     # ── Finalize phase — Stage 6.8 / 3.5 / 6.9 / 6.7* / 7 ──────────
     # Straight-line body lives in :mod:`faultline.pipeline_v2.phase_finalize`
