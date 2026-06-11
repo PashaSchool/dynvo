@@ -1,0 +1,87 @@
+stack: express
+display_name: Express
+
+# How we know Express is in use. Stage 0 / the auditor own primary
+# classification; this block documents the markers the route extractor
+# also checks when deciding to activate (runtime dep or in-source
+# express.Router() usage). NestJS repos are explicitly excluded — Nest
+# wraps Express (`@nestjs/platform-express` pulls `express` into the
+# dependency tree) but declares routes via its own decorators, so
+# activating here would double-extract against NestJS conventions.
+detection:
+  any:
+    - dep: "express"
+    - source_marker: "express.Router("
+  none:
+    - dep_prefix: "@nestjs/"
+
+# Route extraction — Express registers routes in code as method calls
+# on an app/router object. The URL lives INSIDE the source, not the
+# file-system path. Patterns are regex applied per JS/TS file.
+route_extraction:
+  # Files to scan. Mirrors the fastify extractor's suffix set.
+  source_suffixes: [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"]
+
+  # Receiver identifiers that count as an Express app/router even
+  # without a visible `express.Router()` assignment in the same file.
+  default_receivers: ["app", "router", "server", "api"]
+
+  # `const v1 = express.Router()` / `let r = Router({ mergeParams: true })`
+  # / `const api: Router = express.Router()`. Group 1 = the variable the
+  # router is bound to; it is added to the per-file receiver set so
+  # aliased routers (`v1.get("/users", ...)`) are caught — a known
+  # weakness of the fastify extractor's fixed receiver list.
+  router_ctor_pattern: '(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.$<>\[\] ]+?)?\s*=\s*(?:express\s*\.\s*)?Router\s*\('
+
+  # `app.get("/users", handler)`, `router.post("/users/:id", ...)`,
+  # `v1.delete(`/projects/${"..."}`)`-style first-arg string literals.
+  # Group 1 = receiver, group 2 = HTTP method, group 3 = quote,
+  # group 4 = the URL literal. `\s*` after the paren tolerates the URL
+  # arg landing on its own line (multi-line calls). The receiver is
+  # captured loosely here and filtered in Python against the per-file
+  # receiver set, so unrelated `foo.get(...)` calls never match.
+  method_call_pattern: '\b([A-Za-z_$][\w$]*)\.(get|post|put|patch|delete|head|options|all)\s*\(\s*(["''`])([^"''`]+)\3'
+
+  # `app.route("/books").get(...).post(...)` — Express chained route.
+  # Group 1 = receiver, group 2 = quote, group 3 = the URL literal.
+  route_chain_pattern: '\b([A-Za-z_$][\w$]*)\.route\s*\(\s*(["''`])([^"''`]+)\2'
+
+  # `app.use("/api/v1/secrets", secretsRouter)` — a mount point. Only
+  # matches when the FIRST argument is a string literal (bare
+  # `app.use(express.json())` middleware never matches). Emitted as a
+  # route-prefix anchor. Group 1 = receiver, group 2 = quote,
+  # group 3 = the prefix literal.
+  mount_pattern: '\b([A-Za-z_$][\w$]*)\.use\s*\(\s*(["''`])([^"''`]+)\2'
+
+# Never treat these as route sources. Compiled / vendored / test
+# scaffolding would inflate hits.
+excludes:
+  - "/node_modules/"
+  - "/dist/"
+  - "/build/"
+  - "/out/"
+  - "/.next/"
+  - "/__tests__/"
+  - "/test/"
+  - "/tests/"
+  - "/__mocks__/"
+  - "/coverage/"
+  - "/vendor/"
+
+exclude_filename_suffixes:
+  - ".test.ts"
+  - ".test.js"
+  - ".test.mts"
+  - ".test.mjs"
+  - ".spec.ts"
+  - ".spec.js"
+  - ".spec.mts"
+  - ".spec.mjs"
+  - ".d.ts"
+
+# Confidence emitted on anchors: base + per_match × URL hits, capped.
+# Mirrors the fastify / go_router confidence model.
+confidence:
+  base: 0.6
+  per_match: 0.05
+  cap: 0.9

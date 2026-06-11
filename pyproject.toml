@@ -107,6 +107,9 @@ js-library     = "faultline.pipeline_v2.extractors.js_library:JsLibraryExtractor
 fastapi-route  = "faultline.pipeline_v2.extractors.fastapi:FastApiRouteExtractor"
 # Sprint S3.1 — Fastify code-based router. Self-skips on non-Fastify.
 route-fastify  = "faultline.pipeline_v2.extractors.fastify:FastifyRouteExtractor"
+# Express code-based router. Self-skips on non-Express (incl. NestJS,
+# which wraps Express but owns its own route conventions).
+route-express  = "faultline.pipeline_v2.extractors.express:ExpressRouteExtractor"
 # Sprint Rails — five Rails-app extractors. Each self-skips unless the
 # Stage 0.5 auditor labelled the repo ``rails-app``.
 rails-routes   = "faultline.pipeline_v2.extractors.rails_routes:RailsRoutesExtractor"
