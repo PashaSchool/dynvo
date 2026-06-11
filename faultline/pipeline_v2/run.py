@@ -100,6 +100,7 @@ from faultline.pipeline_v2.scan_meta import (
     extractor_hits_from_stage1 as _extractor_hits,
     workspace_anchor_telemetry as _workspace_anchor_telemetry,
 )
+from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.stage_2_reconcile import stage_2_reconcile
 from faultline.pipeline_v2.stage_3_flows import stage_3_flows
 from faultline.pipeline_v2.stage_4_residual import stage_4_residual
@@ -248,6 +249,13 @@ def run_pipeline_v2(
     # cost is the FULL LLM bill for this scan.
     tracker = CostTracker(max_cost=max_cost)
 
+    # One shared LLM-health state across EVERY LLM-bearing stage: the
+    # first auth-class failure (401/403 — dead key) flips a scan-level
+    # flag, every stage stops issuing further LLM calls, and the scan
+    # finishes VISIBLY degraded (``scan_meta.llm_degraded`` + warning)
+    # instead of silently hollow. See :mod:`faultline.pipeline_v2.llm_health`.
+    llm_health = LlmHealth()
+
     # ── Cache backend — constructed once, threaded via ctx ──────────
     # Env ``FAULTLINES_CACHE_BACKEND`` selects fs (default) or a lazily
     # injected DB backend (hosted workers). NOT a global singleton — the
@@ -268,6 +276,7 @@ def run_pipeline_v2(
         tracker=tracker,
         cache_backend=cache_backend,
         git_snapshot=git_snapshot,
+        llm_health=llm_health,
     )
     ctx = intake.ctx
     verdict = intake.verdict
@@ -298,6 +307,7 @@ def run_pipeline_v2(
         stage2 = stage_2_reconcile(
             _isolate(stage1_out), _isolate(ctx),
             llm_reconcile=llm_reconcile,
+            llm_health=llm_health,
         )
         deterministic_features = stage2.features
         unattributed = stage2.unattributed
@@ -370,6 +380,7 @@ def run_pipeline_v2(
         stage3 = stage_3_flows(
             _isolate(deterministic_features), _isolate(ctx),
             model=model_id, cost_tracker=tracker,
+            llm_health=llm_health,
         )
         for fwf in stage3.features_with_flows:
             log3.emit(
@@ -414,6 +425,7 @@ def run_pipeline_v2(
             _isolate(unattributed), _isolate(ctx),
             _isolate(deterministic_features),
             model=model_id, cost_tracker=tracker, log=log4,
+            llm_health=llm_health,
         )
         residual_features = stage4.residual_features
         for f in residual_features:
@@ -529,6 +541,7 @@ def run_pipeline_v2(
         run_dir=run_dir,
         incremental_layer2_noop=incremental_layer2_noop,
         incremental_base_scan=incremental_base_scan,
+        llm_health=llm_health,
     )
     features = layer2.features
     product_features = layer2.product_features
@@ -649,6 +662,7 @@ def run_pipeline_v2(
         out_path=out_path,
         days=days,
         feature_history=feature_history,
+        llm_health=llm_health,
     )
 
     # ── Flush any buffered cache writes (no-op for fs backend) ──────

@@ -854,6 +854,34 @@ def scan_v2(
         if result.get("warnings"):
             for w in result["warnings"]:
                 rprint(f"  [yellow]⚠[/yellow] {w}")
+        # Fail-LOUD block: the scan finished but the LLM stages died
+        # (dead key or rate-limit storm) — the result is deterministic-
+        # only. Absent on healthy scans. See pipeline_v2/llm_health.py.
+        degraded = result.get("llm_degraded")
+        if degraded:
+            from faultline.pipeline_v2.llm_health import (
+                LLM_AUTH_WARNING,
+                LLM_RATE_LIMIT_WARNING,
+            )
+
+            reason = degraded.get("reason", "unknown")
+            message = (
+                LLM_AUTH_WARNING
+                if reason == "auth_error"
+                else LLM_RATE_LIMIT_WARNING
+            )
+            rprint("")
+            rprint("[bold white on red]" + "═" * 64 + "[/bold white on red]")
+            rprint(
+                "[bold red]LLM DEGRADED SCAN[/bold red] "
+                f"[red](reason={reason}, "
+                f"first_stage={degraded.get('first_stage')})[/red]"
+            )
+            rprint(f"[red]{message}[/red]")
+            detail = degraded.get("detail")
+            if detail:
+                rprint(f"[red]detail: {detail}[/red]")
+            rprint("[bold white on red]" + "═" * 64 + "[/bold white on red]")
 
     # ── Multi-subpath: ONE shared git pass via run_pipeline_multi ──────
     # >1 subpath routes through the multi engine: the repo-level git
