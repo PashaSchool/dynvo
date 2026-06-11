@@ -119,6 +119,7 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (6, "user_flows"),
     (6, "uf_splitter"),
     (6, "uf_refiner"),
+    (6, "history"),
 ]
 
 
