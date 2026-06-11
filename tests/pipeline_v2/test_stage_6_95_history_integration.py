@@ -230,3 +230,53 @@ def test_history_stage_under_subpath(
         for pt in h["weekly"]:
             if pt["week"] == "2026-W06":
                 assert pt["bug_fixes"] == 0
+
+
+# ── Stage 6.96 wiring (impact-over-time, same feature_history gate) ─────
+
+
+def test_impact_stage_runs_by_default(
+    fixture_repo: Path, tmp_path: Path,
+) -> None:
+    out_path = tmp_path / "feature-map.json"
+    result = run_pipeline_v2(fixture_repo, model="haiku", out_path=out_path)
+
+    assert "stage_6_96_impact" in result
+    telemetry = result["stage_6_96_impact"]
+    assert telemetry.get("skipped") is not True
+    assert telemetry["impact_snapshots"] >= 1
+    assert telemetry["impact_budget_exceeded"] is False
+
+    data = json.loads(out_path.read_text())
+    assert data["scan_meta"]["stage_6_96_impact"] == telemetry
+    scored = [
+        pf for pf in data.get("product_features", []) if pf.get("history")
+    ]
+    assert scored
+    pf_with_impact = 0
+    for pf in scored:
+        impact = pf["history"].get("impact", [])
+        if impact:
+            pf_with_impact += 1
+        for point in impact:
+            assert point["week"].count("-W") == 1
+            assert point["reach"] >= 0
+            assert point["members_present"] >= 0
+    # entities_with_impact also counts user flows — PFs are a subset.
+    assert 1 <= pf_with_impact <= telemetry["entities_with_impact"]
+    # The fixture repo must end the run with no leftover worktrees.
+    listing = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=fixture_repo, capture_output=True, text=True, check=True,
+    ).stdout
+    assert listing.count("worktree ") == 1
+
+
+def test_impact_stage_skipped_with_history_flag(
+    fixture_repo: Path, tmp_path: Path,
+) -> None:
+    out_path = tmp_path / "feature-map.json"
+    result = run_pipeline_v2(
+        fixture_repo, model="haiku", out_path=out_path, feature_history=False,
+    )
+    assert result["stage_6_96_impact"] == {"skipped": True}
