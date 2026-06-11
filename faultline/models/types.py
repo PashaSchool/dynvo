@@ -446,6 +446,42 @@ class FlowLocEdge(BaseModel):
     call_site: dict[str, Any] | None = None  # {"path": str, "line": int | None}
 
 
+class MemberFile(BaseModel):
+    """One file-membership claim on a feature (Stage 2.6, 2026-06).
+
+    The ownership model is PRIMARY + SHARED: ``Feature.paths`` stays the
+    exclusive primary-membership list (back-compat — metrics, scoring
+    and commit attribution read it), while ``member_files`` carries the
+    full provenance of every claim, including non-primary ones. A file
+    may appear in many features' ``member_files`` but has at most ONE
+    primary owner across the scan (``primary=True`` exactly on the
+    feature whose ``paths`` carries it).
+
+    Roles:
+      - ``anchor``    — file attributed by a Stage 1/2 deterministic
+                        extractor (the feature's own declared surface).
+      - ``closure``   — file reached by the Stage 2.6 static-import BFS
+                        from the feature's anchor files.
+      - ``co-commit`` — file attached by the Stage 2.6 git co-commit
+                        signal (changes land together with the anchors).
+      - ``shared``    — file whose import fan-in marks it as shared
+                        infrastructure (claimed by many features); it is
+                        recorded for provenance but NOT attached to any
+                        claimant's ``paths``.
+
+    ``confidence`` ∈ (0, 1]: anchors are 1.0; closure claims decay with
+    import depth (1 / (1 + depth)); co-commit claims carry the observed
+    co-change share capped below the weakest direct-import claim.
+    ``evidence`` is a short human/agent-readable justification.
+    """
+
+    path: str
+    role: Literal["anchor", "closure", "co-commit", "shared"]
+    confidence: float
+    evidence: str = ""
+    primary: bool = False
+
+
 class FlowSymbolAttribution(BaseModel):
     """One line-range attribution for a flow (Sprint C2) or feature
     (Sprint C3b — feature-level ``Feature.symbol_attributions``).
@@ -746,6 +782,12 @@ class Feature(BaseModel):
     # zero attributed commits, and on every scan produced before this
     # field existed (old JSONs rehydrate unchanged). Additive.
     history: "EntityHistory | None" = None
+    # Stage 2.6 (2026-06) — file-membership provenance. ``paths`` stays
+    # the exclusive PRIMARY membership surface; this is the additive
+    # per-file claim ledger (anchor / closure / co-commit / shared)
+    # consumed by the dashboard + agents. Empty on scans produced
+    # before the stage existed and on Stage-4 residual features.
+    member_files: list["MemberFile"] = []
 
 
 class FeatureFlowEdge(BaseModel):
