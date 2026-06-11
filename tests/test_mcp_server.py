@@ -14,7 +14,10 @@ from unittest.mock import patch
 import pytest
 
 from faultlines_mcp.core import (
-    _savings_metadata,
+    TOOLS,
+    _score_feature,
+    _token_coverage,
+    _tokenize,
     find_feature,
     get_feature_files,
     get_feature_owners,
@@ -100,16 +103,42 @@ class TestLoadMap:
                 _load_map()
 
 
-class TestSavingsMetadata:
-    def test_returns_positive_savings_for_small_response(self) -> None:
-        m = _savings_metadata(files_returned=3)
-        assert m["estimated_tokens_saved"] > 0
-        assert m["files_returned"] == 3
-        assert m["baseline_tokens"] > 0
+class TestResponseMetadata:
+    """The old static formula (15 × 2500 − 500 = 37000 'saved') is gone:
+    metadata now reports only the measured size of the actual payload."""
 
-    def test_clamps_savings_to_zero_when_overshooting(self) -> None:
-        m = _savings_metadata(files_returned=999)
-        assert m["estimated_tokens_saved"] == 0
+    def test_no_static_savings_constant_in_response(self, scan: dict) -> None:
+        details = find_feature(scan, {"query": "payments"})["details"]
+        meta = details["_savings_metadata"]
+        assert "estimated_tokens_saved" not in meta
+        assert "baseline_tokens" not in meta
+        assert "37000" not in json.dumps(details)
+
+    def test_response_tokens_est_tracks_actual_payload(self, scan: dict) -> None:
+        details = find_feature(scan, {"query": "payments"})["details"]
+        meta = details["_savings_metadata"]
+        # ~len(json)/4 of the payload before the metadata block was added
+        without_meta = {k: v for k, v in details.items() if k != "_savings_metadata"}
+        expected = len(json.dumps(without_meta, default=str, separators=(",", ":"))) // 4
+        assert meta["response_tokens_est"] == max(1, expected)
+        assert meta["files_returned"] == 2
+
+    def test_empty_result_makes_no_savings_claim(self, scan: dict) -> None:
+        details = find_feature(scan, {"query": "zzz qqq"})["details"]
+        assert details["matched"] is False
+        assert "estimated_tokens_saved" not in json.dumps(details)
+        assert "_savings_metadata" not in details
+
+    def test_all_tools_report_no_fabricated_savings(self, scan: dict) -> None:
+        for name, spec in TOOLS.items():
+            args = {
+                "query": "payments", "feature_name": "payments",
+                "flow_name": "checkout-flow",
+                "changed_files": ["src/payments/charge.ts"],
+            }
+            payload = json.dumps(spec["fn"](scan, args))
+            assert "estimated_tokens_saved" not in payload, name
+            assert "baseline_tokens" not in payload, name
 
 
 class TestListFeatures:
@@ -123,6 +152,128 @@ class TestListFeatures:
     def test_includes_savings_metadata(self, scan: dict) -> None:
         details = list_features(scan, {})["details"]
         assert "_savings_metadata" in details
+
+
+class TestTokenizer:
+    def test_kebab_snake_parens_split(self) -> None:
+        # parens stripped, kebab split, "s"-fold ("base" keeps its 'e')
+        assert _tokenize("organization-knowledge-base-(rag)") == [
+            "organization", "knowledge", "base", "rag",
+        ]
+
+    def test_camel_case_split(self) -> None:
+        assert _tokenize("checkoutFlowV2") == ["checkout", "flow", "v2"]
+
+    def test_suffix_fold_plural(self) -> None:
+        assert _tokenize("payments") == _tokenize("payment")
+
+    def test_empty_and_punct_only(self) -> None:
+        assert _tokenize("") == []
+        assert _tokenize("()---") == []
+
+
+class TestTokenCoverage:
+    def test_exact_beats_prefix(self) -> None:
+        q = _tokenize("knowledge")
+        assert _token_coverage(q, _tokenize("knowledge-base")) == 1.0
+        assert _token_coverage(q, _tokenize("know-how")) == 0.5  # prefix only
+
+    def test_zero_when_no_overlap(self) -> None:
+        assert _token_coverage(_tokenize("zzz"), _tokenize("payments")) == 0.0
+
+    def test_name_field_outweighs_description(self) -> None:
+        by_name = _score_feature(_tokenize("billing"), {"name": "billing"})
+        by_desc = _score_feature(_tokenize("billing"), {"name": "x", "description": "billing"})
+        assert by_name > by_desc
+
+
+class TestFindFeatureTokenMatch:
+    """The review's headline case: space-separated query vs kebab+parens name."""
+
+    @pytest.fixture
+    def rag_scan(self) -> dict:
+        return {
+            "features": [
+                {"name": "organization-knowledge-base-(rag)",
+                 "description": "RAG over org docs", "paths": ["src/kb/rag.ts"],
+                 "flows": [], "health_score": 70},
+                {"name": "knowledge-export",
+                 "description": "Export knowledge articles", "paths": ["src/kb/export.ts"],
+                 "flows": [], "health_score": 80},
+                {"name": "billing", "description": "Stripe billing",
+                 "paths": ["src/billing.ts"], "flows": [], "health_score": 90},
+                {"name": "auth", "description": "knowledge of users",  # desc-only overlap
+                 "paths": ["src/auth.ts"], "flows": [], "health_score": 95},
+            ],
+        }
+
+    def test_space_query_matches_kebab_paren_name(self, rag_scan: dict) -> None:
+        details = find_feature(rag_scan, {"query": "knowledge RAG"})["details"]
+        assert details["matched"] is True
+        assert details["name"] == "organization-knowledge-base-(rag)"
+        assert details["match_score"] > 0
+
+    def test_top3_candidates_ranked_desc(self, rag_scan: dict) -> None:
+        details = find_feature(rag_scan, {"query": "knowledge"})["details"]
+        cands = details["candidates"]
+        assert 1 <= len(cands) <= 3
+        scores = [c["score"] for c in cands]
+        assert scores == sorted(scores, reverse=True)
+        # name-token matches outrank the description-only match ("auth")
+        assert cands[0]["name"] in ("knowledge-export", "organization-knowledge-base-(rag)")
+
+    def test_zero_overlap_returns_matched_false(self, rag_scan: dict) -> None:
+        details = find_feature(rag_scan, {"query": "qqq zzz"})["details"]
+        assert details["matched"] is False
+        assert details["candidates"] == []
+
+    def test_best_match_fields_preserved(self, rag_scan: dict) -> None:
+        # additive schema: historical flat fields still present
+        details = find_feature(rag_scan, {"query": "billing"})["details"]
+        for key in ("name", "description", "health", "files", "file_count", "owners", "flows"):
+            assert key in details
+
+
+class TestToolSchemas:
+    def test_every_tool_exposes_optional_repo_slug(self) -> None:
+        for name, spec in TOOLS.items():
+            schema = spec["inputSchema"]
+            props = schema["properties"]
+            assert "repo_slug" in props, name
+            assert props["repo_slug"]["type"] == "string", name
+            assert "session default" in props["repo_slug"]["description"], name
+            assert "repo_slug" not in schema.get("required", []), name
+
+
+class TestLoadMapRepoSlug:
+    def test_loads_newest_map_for_slug(self, tmp_path: Path) -> None:
+        fl = tmp_path / ".faultline"
+        fl.mkdir()
+        old = dict(_sample_map(), total_commits=1)
+        new = dict(_sample_map(), total_commits=2)
+        (fl / "feature-map-sample-2026-01-01.json").write_text(json.dumps(old))
+        (fl / "feature-map-sample-2026-02-01.json").write_text(json.dumps(new))
+        (fl / "feature-map-other-2026-03-01.json").write_text(json.dumps(_sample_map()))
+        with patch.object(Path, "home", return_value=tmp_path):
+            data = _load_map(repo_slug="sample")
+        assert data["total_commits"] == 2
+
+    def test_slug_overrides_env_path(self, tmp_path: Path) -> None:
+        fl = tmp_path / ".faultline"
+        fl.mkdir()
+        (fl / "feature-map-sample.json").write_text(json.dumps(_sample_map()))
+        env_map = tmp_path / "env-map.json"
+        env_map.write_text(json.dumps(dict(_sample_map(), repo_path="/env/map")))
+        with patch.dict("os.environ", {"FAULTLINE_MAP_PATH": str(env_map)}):
+            with patch.object(Path, "home", return_value=tmp_path):
+                assert _load_map(repo_slug="sample")["repo_path"] == "/tmp/sample"
+            assert _load_map()["repo_path"] == "/env/map"
+
+    def test_unknown_slug_raises(self, tmp_path: Path) -> None:
+        (tmp_path / ".faultline").mkdir()
+        with patch.object(Path, "home", return_value=tmp_path):
+            with pytest.raises(RuntimeError, match="repo slug 'nope'"):
+                _load_map(repo_slug="nope")
 
 
 class TestFindFeature:

@@ -29,34 +29,138 @@ of any tool's logic.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Callable
-
-# Per-request token-savings metadata. AI agents usually ignore this, but the
-# SaaS dashboard aggregates it across calls to show savings.
-_AVG_GREP_FILES_PER_QUERY = 15          # files an agent would read without MCP
-_AVG_TOKENS_PER_FILE = 2500             # ~10KB at 4 chars/token
-_AVG_MCP_RESPONSE_TOKENS = 500          # typical MCP response size
-
 
 # ---------------------------------------------------------------------------
 # Shared pure helpers
 # ---------------------------------------------------------------------------
 
-def _savings_metadata(files_returned: int) -> dict[str, Any]:
-    """Estimate tokens saved vs a naive grep-and-read-files workflow.
+def _attach_response_metadata(details: dict[str, Any], files_returned: int) -> dict[str, Any]:
+    """Attach honest per-response token accounting under ``_savings_metadata``.
 
-    Pure local computation — engine-independent. (Cloud telemetry is the
-    hosted dashboard's job; this package never imports the engine to report
-    it.)
+    DECISION (replaces the old static formula): the previous implementation
+    claimed a fixed ``15 files × 2500 tokens − 500 = 37000 tokens saved`` on
+    every call regardless of the result — fake precision. The scan JSON that
+    core.py receives carries file *paths* but no file sizes, so no grounded
+    counterfactual ("what would grep-and-read have cost?") is computable from
+    available data. Per the honesty rule, the savings claim is therefore
+    REMOVED entirely; we report only what we can actually measure:
+
+    * ``response_tokens_est`` — estimated token size of the actual returned
+      payload, ``len(json.dumps(details)) // 4`` (~4 chars/token), computed
+      BEFORE this metadata block is inserted.
+    * ``files_returned`` — how many files/items the response carries.
+
+    The ``_savings_metadata`` key name is kept so consumers that look for the
+    block keep finding one; the fabricated fields (``estimated_tokens_saved``,
+    ``baseline_tokens``) are gone.
     """
-    without_mcp = _AVG_GREP_FILES_PER_QUERY * _AVG_TOKENS_PER_FILE
-    with_mcp = _AVG_MCP_RESPONSE_TOKENS + (files_returned * _AVG_TOKENS_PER_FILE)
-    saved = max(0, without_mcp - with_mcp)
-    return {
-        "estimated_tokens_saved": saved,
+    payload = json.dumps(details, default=str, separators=(",", ":"))
+    details["_savings_metadata"] = {
+        "response_tokens_est": max(1, len(payload) // 4),
         "files_returned": files_returned,
-        "baseline_tokens": without_mcp,
     }
+    return details
+
+
+# --- find_feature tokenization / scoring -----------------------------------
+
+# Fixed suffix folds for trivial plural/gerund variants ("payments" ~
+# "payment", "billing" ~ "bill"). Deliberately tiny — prefix matching already
+# covers most variants; this is NOT a stemmer. Longest-first, applied once.
+_SUFFIX_FOLDS = ("ing", "es", "s")
+_MIN_PREFIX_LEN = 3  # shortest prefix that counts as a partial token match
+
+_CAMEL_SPLIT_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _fold_suffix(token: str) -> str:
+    """Fold a trivial trailing suffix (fixed list, once, never below 3 chars)."""
+    for suffix in _SUFFIX_FOLDS:
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    return token
+
+
+def _tokenize(text: str) -> list[str]:
+    """Split text into normalized tokens.
+
+    Handles kebab-case, snake_case, camelCase, spaces, and punctuation
+    (parens, dots, slashes — anything non-alphanumeric is a separator).
+    Tokens are lowercased and suffix-folded.
+    """
+    if not text:
+        return []
+    text = _CAMEL_SPLIT_RE.sub(" ", text)
+    return [_fold_suffix(t) for t in _NON_ALNUM_RE.split(text.lower()) if t]
+
+
+def _token_coverage(query_tokens: list[str], hay_tokens: list[str]) -> float:
+    """Fraction of query tokens found in the haystack tokens, in [0, 1].
+
+    Per query token, the best credit across hay tokens:
+      * 1.0 — exact token match (after fold)
+      * 0.5 — prefix match either direction, shorter side ≥ 3 chars
+        ("org" matches "organization"; "organizations" matches "organ")
+      * 0.0 — otherwise
+    """
+    if not query_tokens or not hay_tokens:
+        return 0.0
+    hay_set = set(hay_tokens)
+    total = 0.0
+    for q in query_tokens:
+        if q in hay_set:
+            total += 1.0
+            continue
+        for h in hay_tokens:
+            if len(q) >= _MIN_PREFIX_LEN and h.startswith(q):
+                total += 0.5
+                break
+            if len(h) >= _MIN_PREFIX_LEN and q.startswith(h):
+                total += 0.5
+                break
+    return total / len(query_tokens)
+
+
+def _score_feature(query_tokens: list[str], f: dict[str, Any]) -> float:
+    """Deterministic relevance score for one feature.
+
+    Formula (documented; weights are field trust, coverage is per-field
+    ``_token_coverage`` in [0, 1])::
+
+        score = 3 * name_coverage      # display_name + name tokens
+              + 2 * alias_coverage     # aliases + label names
+              + 1 * desc_coverage      # description
+
+    Max score 6.0. Zero means no token overlap anywhere.
+    """
+    name_tokens: list[str] = []
+    for key in ("display_name", "name"):
+        v = f.get(key)
+        if isinstance(v, str):
+            name_tokens.extend(_tokenize(v))
+
+    alias_tokens: list[str] = []
+    for v in f.get("aliases") or []:
+        if isinstance(v, str):
+            alias_tokens.extend(_tokenize(v))
+    for lab in f.get("labels") or []:
+        name = lab.get("name") if isinstance(lab, dict) else None
+        if isinstance(name, str):
+            alias_tokens.extend(_tokenize(name))
+
+    desc = f.get("description")
+    desc_tokens = _tokenize(desc) if isinstance(desc, str) else []
+
+    return round(
+        3 * _token_coverage(query_tokens, name_tokens)
+        + 2 * _token_coverage(query_tokens, alias_tokens)
+        + 1 * _token_coverage(query_tokens, desc_tokens),
+        3,
+    )
 
 
 def _features(scan: dict[str, Any]) -> list[dict[str, Any]]:
@@ -144,11 +248,10 @@ def list_features(scan: dict[str, Any], args: dict[str, Any],
             }
             for f in features
         ],
-        "_savings_metadata": _savings_metadata(0),
     }
     return {
         "summary": f"{len(features)} feature(s) detected, sorted by risk (worst first).",
-        "details": details,
+        "details": _attach_response_metadata(details, 0),
     }
 
 
@@ -157,65 +260,73 @@ def find_feature(scan: dict[str, Any], args: dict[str, Any],
     """Find a feature by semantic name, alias, label, or description.
 
     Use this BEFORE reading random files. Much faster than grep and returns
-    the full context: file list, health, ownership, flows. Matching is a
-    case-insensitive substring over display_name, name, aliases, labels, and
-    description.
+    the full context: file list, health, ownership, flows. Matching is
+    token-based (kebab/snake/camel split, punctuation stripped), so
+    "knowledge RAG" finds "organization-knowledge-base-(rag)". See
+    :func:`_score_feature` for the exact formula. The best match is returned
+    with the historical flat fields; up to 3 ranked ``candidates`` ride along
+    (additive — existing consumers keep working). ``matched: false`` only
+    when NO feature has any token overlap with the query.
 
     Args:
         query: Feature name, alias, or keyword (e.g. "payments", "auth").
     """
-    q = (args.get("query") or "").lower()
+    query = args.get("query") or ""
+    query_tokens = _tokenize(query)
 
-    def _haystacks(f: dict[str, Any]) -> list[str]:
-        out: list[str] = []
-        for key in ("display_name", "name"):
-            v = f.get(key)
-            if isinstance(v, str):
-                out.append(v.lower())
-        for v in f.get("aliases") or []:
-            if isinstance(v, str):
-                out.append(v.lower())
-        for lab in f.get("labels") or []:
-            name = lab.get("name") if isinstance(lab, dict) else None
-            if isinstance(name, str):
-                out.append(name.lower())
-        desc = f.get("description")
-        if isinstance(desc, str):
-            out.append(desc.lower())
-        return out
+    scored = [
+        (score, f)
+        for f in _features(scan)
+        if (score := _score_feature(query_tokens, f)) > 0
+    ]
+    # Deterministic: score desc, then name asc as a tie-break.
+    scored.sort(key=lambda sf: (-sf[0], (sf[1].get("display_name") or sf[1].get("name") or "")))
 
-    for f in _features(scan):
-        if any(q in hay for hay in _haystacks(f)):
-            display_name = f.get("display_name") or f["name"]
-            details = {
-                "name": display_name,
-                "original_name": f.get("original_name") or f.get("name"),
-                "aliases": f.get("aliases") or [],
-                "labels": f.get("labels") or [],
-                "description": f.get("description"),
-                "health": round(f.get("health_score", 0)),
-                "bug_fix_ratio": round(f.get("bug_fix_ratio", 0) * 100, 1),
-                "coverage_pct": f.get("coverage_pct"),
-                "files": f.get("paths", []),
-                "file_count": len(f.get("paths", [])),
-                "owners": f.get("authors", [])[:5],
-                "flows": [
-                    {"name": fl["name"], "health": round(fl.get("health_score", 0))}
-                    for fl in f.get("flows", [])
-                ],
-                "_savings_metadata": _savings_metadata(len(f.get("paths", []))),
-            }
-            return {
-                "summary": (
-                    f"Matched feature '{display_name}' "
-                    f"({len(f.get('paths', []))} file(s), health "
-                    f"{round(f.get('health_score', 0))})."
-                ),
-                "details": details,
-            }
+    if not scored:
+        return {
+            "summary": f"No feature matched query '{query}'.",
+            "details": {"matched": False, "query": args.get("query"), "candidates": []},
+        }
+
+    candidates = [
+        {
+            "name": f.get("display_name") or f.get("name"),
+            "score": score,
+            "description": f.get("description"),
+            "file_count": len(f.get("paths", [])),
+        }
+        for score, f in scored[:3]
+    ]
+    best_score, f = scored[0]
+    display_name = f.get("display_name") or f["name"]
+    details = {
+        "matched": True,
+        "name": display_name,
+        "match_score": best_score,
+        "original_name": f.get("original_name") or f.get("name"),
+        "aliases": f.get("aliases") or [],
+        "labels": f.get("labels") or [],
+        "description": f.get("description"),
+        "health": round(f.get("health_score", 0)),
+        "bug_fix_ratio": round(f.get("bug_fix_ratio", 0) * 100, 1),
+        "coverage_pct": f.get("coverage_pct"),
+        "files": f.get("paths", []),
+        "file_count": len(f.get("paths", [])),
+        "owners": f.get("authors", [])[:5],
+        "flows": [
+            {"name": fl["name"], "health": round(fl.get("health_score", 0))}
+            for fl in f.get("flows", [])
+        ],
+        "candidates": candidates,
+    }
     return {
-        "summary": f"No feature matched query '{args.get('query', '')}'.",
-        "details": {"matched": False, "query": args.get("query")},
+        "summary": (
+            f"Matched feature '{display_name}' "
+            f"({len(f.get('paths', []))} file(s), health "
+            f"{round(f.get('health_score', 0))}; "
+            f"{len(candidates)} candidate(s))."
+        ),
+        "details": _attach_response_metadata(details, len(f.get("paths", []))),
     }
 
 
@@ -241,11 +352,10 @@ def get_feature_files(scan: dict[str, Any], args: dict[str, Any],
                 h for fl in f.get("flows", [])
                 for h in fl.get("hotspot_files", [])
             ][:5],
-            "_savings_metadata": _savings_metadata(len(f.get("paths", []))),
         }
         return {
             "summary": f"{len(f.get('paths', []))} file(s) in feature '{resolved}'.",
-            "details": details,
+            "details": _attach_response_metadata(details, len(f.get("paths", []))),
         }
     return {
         "summary": f"Feature '{feature_name}' not found.",
@@ -283,14 +393,13 @@ def get_flow_files(scan: dict[str, Any], args: dict[str, Any],
                     "health": round(fl.get("health_score", 0)),
                     "bug_fix_ratio": round(fl.get("bug_fix_ratio", 0) * 100, 1),
                     "hotspot_files": fl.get("hotspot_files", []),
-                    "_savings_metadata": _savings_metadata(len(fl.get("paths", []))),
                 }
                 return {
                     "summary": (
                         f"{len(fl.get('paths', []))} file(s) in flow "
                         f"'{flow_name}' of feature '{feature_name}'."
                     ),
-                    "details": details,
+                    "details": _attach_response_metadata(details, len(fl.get("paths", []))),
                 }
     return {
         "summary": f"Flow '{flow_name}' in feature '{feature_name}' not found.",
@@ -327,14 +436,13 @@ def get_repo_summary(scan: dict[str, Any], args: dict[str, Any],
         "avg_health_score": round(avg_health, 1),
         "avg_coverage_pct": round(avg_coverage, 1) if avg_coverage is not None else None,
         "features_at_risk": at_risk,
-        "_savings_metadata": _savings_metadata(0),
     }
     return {
         "summary": (
             f"{len(features)} feature(s), {details['total_flows']} flow(s), "
             f"avg health {round(avg_health, 1)}, {at_risk} at risk."
         ),
-        "details": details,
+        "details": _attach_response_metadata(details, 0),
     }
 
 
@@ -368,7 +476,7 @@ def get_hotspots(scan: dict[str, Any], args: dict[str, Any],
         })
     return {
         "summary": f"Top {len(result)} riskiest feature(s) by health score.",
-        "details": {"hotspots": result, "_savings_metadata": _savings_metadata(limit)},
+        "details": _attach_response_metadata({"hotspots": result}, len(result)),
     }
 
 
@@ -395,8 +503,8 @@ def get_feature_owners(scan: dict[str, Any], args: dict[str, Any],
             "total_contributors": len(authors),
             "bus_factor": min_bus_factor,
             "at_risk": min_bus_factor == 1,
-            "_savings_metadata": _savings_metadata(1),
         }
+        details = _attach_response_metadata(details, 0)
         return {
             "summary": (
                 f"Feature '{resolved}' has {len(authors)} contributor(s), "
@@ -496,8 +604,8 @@ def analyze_change_impact(scan: dict[str, Any], args: dict[str, Any],
         "co_changed_but_missing": sorted(co_changed_missing),
         "recommendations": recommendations,
         "method": "path-overlap blast radius from the feature map (engine-free)",
-        "_savings_metadata": _savings_metadata(len(changed)),
     }
+    details = _attach_response_metadata(details, len(changed))
     return {
         "summary": (
             f"{risk.upper()} risk: {len(affected)} feature(s) affected, "
@@ -525,12 +633,11 @@ def get_regression_risk(scan: dict[str, Any], args: dict[str, Any],
     if not affected:
         return {
             "summary": "Low regression risk: changed files don't belong to any tracked feature.",
-            "details": {
+            "details": _attach_response_metadata({
                 "regression_probability": 0.0,
                 "risk_level": "low",
                 "reason": "Changed files don't belong to any tracked feature.",
-                "_savings_metadata": _savings_metadata(0),
-            },
+            }, 0),
         }
 
     total_weight = 0.0
@@ -562,8 +669,8 @@ def get_regression_risk(scan: dict[str, Any], args: dict[str, Any],
             f"{round(prob * 100)}% of historical changes to these features "
             f"resulted in bug fixes."
         ),
-        "_savings_metadata": _savings_metadata(len(affected)),
     }
+    details = _attach_response_metadata(details, 0)
     return {
         "summary": f"{risk.upper()} regression risk ({round(prob * 100)}% historical bug-fix rate).",
         "details": details,
@@ -614,10 +721,8 @@ def find_symbols_in_flow(scan: dict[str, Any], args: dict[str, Any],
                     ],
                     "fallback_files": fl.get("paths", []),
                     "hint": "Read only the symbols listed. Use deeplinks for direct GitHub navigation. Fall back to fallback_files when full context is needed.",
-                    "_savings_metadata": _savings_metadata(
-                        sum(len(a.get("symbols", [])) for a in attributions)
-                    ),
                 }
+                details = _attach_response_metadata(details, len(details["attributions"]))
                 return {
                     "summary": (
                         f"Symbol-level attribution for flow '{flow_name}' "
@@ -638,8 +743,8 @@ def find_symbols_in_flow(scan: dict[str, Any], args: dict[str, Any],
                     "Re-run with `faultlines analyze . --llm --flows --symbols` "
                     "for precise function-level context."
                 ),
-                "_savings_metadata": _savings_metadata(len(fl.get("paths", []))),
             }
+            details = _attach_response_metadata(details, len(fl.get("paths", [])))
             return {
                 "summary": (
                     f"File-level fallback for flow '{flow_name}' "
@@ -694,10 +799,8 @@ def find_symbols_for_feature(scan: dict[str, Any], args: dict[str, Any],
                 "all flows. For function-level attribution per flow, use "
                 "find_symbols_in_flow."
             ),
-            "_savings_metadata": _savings_metadata(
-                sum(len(a.get("symbols", [])) for a in shared)
-            ),
         }
+        details = _attach_response_metadata(details, len(details["shared_symbols"]))
         return {
             "summary": (
                 f"{len(details['shared_symbols'])} shared-symbol file(s) "
@@ -858,11 +961,26 @@ _WINDOW_PROP = {
         "description": "Lookback window (e.g. \"24h\", \"14d\"). Hosted-only.",
     },
 }
+# Every tool accepts an OPTIONAL repo_slug so multi-repo callers (and the
+# hosted layer) can disambiguate which scan to serve. Locally it selects the
+# matching ~/.faultline/feature-map-<slug>*.json; the hosted layer resolves
+# it before the scan ever reaches these pure functions.
+_REPO_SLUG_PROP = {
+    "repo_slug": {
+        "type": "string",
+        "description": "Repository slug; omit to use the session default.",
+    },
+}
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
-    """Build a minimal JSON Schema object for a tool's args."""
-    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    """Build a minimal JSON Schema object for a tool's args.
+
+    ``repo_slug`` is injected into EVERY tool's properties (always optional —
+    never appended to ``required``) so agents can target a specific repo
+    instead of hitting the hosted layer's repo-resolution error (-32097).
+    """
+    schema: dict[str, Any] = {"type": "object", "properties": {**properties, **_REPO_SLUG_PROP}}
     if required:
         schema["required"] = required
     return schema
