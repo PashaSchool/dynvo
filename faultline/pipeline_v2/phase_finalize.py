@@ -53,8 +53,9 @@ def run_finalize_phase(
     incremental_gate_meta: dict[str, Any],
     out_path: Path | None,
     days: int,
+    feature_history: bool = True,
 ) -> Path:
-    """Run Stage 6.8 → 3.5 → 6.9 → 6.7/6.7c/6.7b → 7 and write output.
+    """Run Stage 6.8 → 3.5 → 6.9 → 6.7/6.7c/6.7b → 6.95 → 7 and write output.
 
     Body moved verbatim from ``run_pipeline_v2``. Returns the written
     FeatureMap path.
@@ -323,6 +324,50 @@ def run_finalize_phase(
             run_dir=run_dir,
         )
     scan_meta["stage_6_7b_uf_refiner"] = dict(uf_refine_telemetry)
+
+    # ── Stage 6.95 — per-entity git-history timeline ────────────────
+    # Deterministic, pure, $0 LLM. Runs LAST before output by design:
+    # product-feature ``paths`` are final (Stage 8 + 8.5) and user-flow
+    # membership is final (6.7 + 6.7c). Buckets the IN-MEMORY commit
+    # list (no new git calls) into ISO-week series + events + a
+    # test-efficacy verdict per product feature / user flow. Additive —
+    # only the new ``history`` field is written. ``--no-feature-history``
+    # skips the stage entirely (telemetry records the skip).
+    from faultline.pipeline_v2.stage_6_95_history import stage_6_95_history
+    history_telemetry: dict[str, Any] = {"skipped": True}
+    with StageLogger(run_dir, 6, "history") as log6_95:
+        if feature_history:
+            history_telemetry = stage_6_95_history(
+                product_features,
+                user_flows,
+                list(bipartite.flows),
+                features,
+                ctx.commits,
+            )
+            log6_95.info(
+                "history: pf_scored=%d/%d uf_scored=%d/%d "
+                "gated(pf=%d uf=%d) verdicts=%s elapsed=%ss"
+                % (
+                    history_telemetry["product_features_scored"],
+                    history_telemetry["product_features_total"],
+                    history_telemetry["user_flows_scored"],
+                    history_telemetry["user_flows_total"],
+                    history_telemetry["product_features_gated"],
+                    history_telemetry["user_flows_gated"],
+                    history_telemetry["verdicts"],
+                    history_telemetry["elapsed_sec"],
+                ),
+            )
+        else:
+            log6_95.info("history: skipped via --no-feature-history")
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="history",
+            payload=history_telemetry,
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_95"] = dict(history_telemetry)
 
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
