@@ -189,6 +189,7 @@ def run_pipeline_v2(
     org_id: str | None = None,
     subpath: str | None = None,
     git_snapshot: "GitSnapshot | None" = None,
+    feature_history: bool = True,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -213,6 +214,10 @@ def run_pipeline_v2(
             history parse. ``None`` (default) → identical to today.
             When consumed, ``scan_meta.shared_git_pass`` is emitted
             ``True`` (additive key; absent otherwise).
+        feature_history: run Stage 6.95 (per-product-feature /
+            per-user-flow git-history timeline). Default ``True`` —
+            it is cheap ($0 LLM, one in-memory commit sweep). Set
+            ``False`` (CLI ``--no-feature-history``) to skip.
 
     Returns:
         A dict containing ``path`` (the written FeatureMap path) and
@@ -637,6 +642,7 @@ def run_pipeline_v2(
         incremental_gate_meta=incremental_gate_meta,
         out_path=out_path,
         days=days,
+        feature_history=feature_history,
     )
 
     # ── Flush any buffered cache writes (no-op for fs backend) ──────

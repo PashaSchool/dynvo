@@ -772,6 +772,17 @@ def scan_v2(
             "per subpath. Omit for a whole-repo scan (default)."
         ),
     ),
+    feature_history: bool = typer.Option(
+        True,
+        "--feature-history/--no-feature-history",
+        help=(
+            "Run Stage 6.95: per-product-feature / per-user-flow "
+            "git-history timeline (weekly commit/bug-fix/test series, "
+            "birth / first-test / test-wave / hotspot events, and a "
+            "test-efficacy verdict). $0 LLM, derived from the same "
+            "single git pass — ON by default."
+        ),
+    ),
 ):
     """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
 
@@ -886,6 +897,7 @@ def scan_v2(
                 base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
                 lineage_jaccard_threshold=lineage_jaccard_threshold,
                 subpath=scope,
+                feature_history=feature_history,
             )
         except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
             rprint(f"[red]Scan failed{scope_label}:[/red] {type(exc).__name__}: {exc}")
