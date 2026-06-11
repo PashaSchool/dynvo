@@ -136,6 +136,10 @@ def test_run_pipeline_v2_end_to_end_no_llm(
     assert isinstance(data["product_features"], list)
     assert data["scan_meta"]["pipeline_version"] == "v2"
     assert data["scan_meta"]["stack"] == "next-app-router"
+    # Schema versioning — stamped both at top level (FeatureMap field)
+    # and in scan_meta (for consumers that don't parse the full map).
+    assert data["schema_version"] == 1
+    assert data["scan_meta"]["schema_version"] == 1
 
     # Stage artifacts were written for stages 0..7 under the run dir.
     # Sprint A0: per-run isolation puts artifacts under

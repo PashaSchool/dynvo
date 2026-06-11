@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from faultline.models.types import (
+    SCHEMA_VERSION,
     Feature,
     FeatureFlowEdge,
     FeatureMap,
@@ -162,6 +163,7 @@ def build_feature_map(
     working without modification.
     """
     return FeatureMap(
+        schema_version=SCHEMA_VERSION,
         repo_path=str(ctx.repo_path),
         remote_url=_resolve_remote_url(ctx.repo_path),
         analyzed_at=datetime.now(tz=timezone.utc),
