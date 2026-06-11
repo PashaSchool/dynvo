@@ -491,3 +491,42 @@ def test_s1_intentional_suffix_without_base_survives(
     # No merge — both survive with their original names.
     assert "http2" in slugs
     assert "api-v2" in slugs
+
+
+# ── 2026-06 metric-honesty review: no internal-rationale leak ───────────────
+
+
+def test_internal_rationale_does_not_leak_into_description(tmp_path: Path) -> None:
+    """Stage-4 bookkeeping labels must never ship as a user-facing
+    feature description (review found "stage-4-residual" verbatim in
+    output JSON)."""
+    for internal in ("stage-4-residual", "stage-4-singleton-synth",
+                     "cost-cap-hit", "no-client", "llm-empty-or-failed",
+                     "timed-out"):
+        dev = _dev("billing", ("app/billing/page.tsx",))
+        dev.rationale = internal
+        features = stage_5_postprocess(
+            deterministic=[dev], residual=[], ctx=_ctx(tmp_path),
+        )
+        assert len(features) == 1
+        assert features[0].description is None, internal
+
+
+def test_human_readable_rationale_preserved_as_description(tmp_path: Path) -> None:
+    dev = _dev("billing", ("app/billing/page.tsx",))
+    dev.rationale = "[package] package anchor 'billing' from pnpm workspace"
+    features = stage_5_postprocess(
+        deterministic=[dev], residual=[], ctx=_ctx(tmp_path),
+    )
+    assert features[0].description == (
+        "[package] package anchor 'billing' from pnpm workspace"
+    )
+
+
+def test_empty_rationale_maps_to_none_description(tmp_path: Path) -> None:
+    features = stage_5_postprocess(
+        deterministic=[_dev("billing", ("app/billing/page.tsx",))],
+        residual=[],
+        ctx=_ctx(tmp_path),
+    )
+    assert features[0].description is None

@@ -200,6 +200,30 @@ def _flow_spec_to_flow(spec: FlowSpec) -> Flow:
     )
 
 
+# Internal pipeline-bookkeeping rationales that must never surface as a
+# user-facing ``Feature.description`` (2026-06 metric-honesty review:
+# "stage-4-residual" was shipping verbatim as a feature description).
+# Any rationale starting with "stage-" is internal by convention; the
+# explicit set covers the Stage 3 flow-failure markers that don't share
+# that prefix.
+_INTERNAL_RATIONALES: frozenset[str] = frozenset({
+    "cost-cap-hit",
+    "no-client",
+    "llm-empty-or-failed",
+    "timed-out",
+})
+
+
+def _public_description(rationale: str | None) -> str | None:
+    """Pass real human-readable rationales through; suppress internal
+    pipeline labels (``stage-4-residual``, ``cost-cap-hit``, ...)."""
+    if not rationale:
+        return None
+    if rationale.startswith("stage-") or rationale in _INTERNAL_RATIONALES:
+        return None
+    return rationale
+
+
 def _dev_feature_to_feature(
     dev: DeveloperFeature,
     flows: list[FlowSpec] | None = None,
@@ -212,7 +236,7 @@ def _dev_feature_to_feature(
     return Feature(
         name=dev.name,
         display_name=dev.display_name,
-        description=dev.rationale or None,
+        description=_public_description(dev.rationale),
         paths=list(dev.paths),
         authors=[],          # Stage 6 fills these.
         total_commits=0,
