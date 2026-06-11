@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
+    from faultline.pipeline_v2.git_snapshot import GitSnapshot
     from faultline.pipeline_v2.stage_0_6_shape import ClassificationResult
 
 from faultline.analyzer.git import (
@@ -604,6 +605,7 @@ def stage_0_intake(
     skip_git: bool = False,
     run_id: str | None = None,
     subpath: str | None = None,
+    git_snapshot: "GitSnapshot | None" = None,
 ) -> ScanContext:
     """Run Stage 0 against ``repo_path`` and return a ``ScanContext``.
 
@@ -629,6 +631,17 @@ def stage_0_intake(
             an existing directory under the repo root or if it yields an
             empty tracked-file set (fail loud — never silently scan the
             wrong tree). ``None`` → whole-repo (back-compat, unchanged).
+        git_snapshot: Optional pre-fetched whole-repo git pass
+            (:class:`~faultline.pipeline_v2.git_snapshot.GitSnapshot`).
+            When given, Stage 0 makes NO git calls of its own: the
+            tracked-file list + commit history come from the snapshot,
+            partitioned in-memory to ``subpath`` when one is set. The
+            multi-subpath engine (``run_pipeline_multi``) fetches one
+            snapshot and injects it into every per-subpath run so the
+            expensive history parse happens ONCE. All three fail-loud
+            subpath guards fire identically — the zero-tracked-files
+            guard checks the PARTITIONED view. ``None`` (default) →
+            behaviour identical to today. Ignored when ``skip_git``.
     """
     repo_path = Path(repo_path).resolve()
     if not repo_path.is_dir():
@@ -661,6 +674,34 @@ def stage_0_intake(
         all_files = _walk_tracked_files(repo_path)
         tracked_files = scope_files_to_subpath(all_files, norm_subpath)
         commits: list[Commit] = []
+    elif git_snapshot is not None:
+        # Injected shared git pass — partition in memory, NO git calls.
+        # ``partition_snapshot`` reproduces the scoped
+        # get_tracked_files/get_commits semantics exactly (see the
+        # equivalence notes in pipeline_v2/git_snapshot.py) and raises
+        # SnapshotNotPartitionable when it can't (truncated snapshot).
+        if git_snapshot.repo_path != repo_path:
+            raise ValueError(
+                f"git_snapshot was captured for {git_snapshot.repo_path}, "
+                f"not {repo_path} — refusing to partition the wrong repo"
+            )
+        if git_snapshot.days != days:
+            raise ValueError(
+                f"git_snapshot history window ({git_snapshot.days} days) "
+                f"does not match the requested days={days}"
+            )
+        if norm_subpath is not None:
+            from faultline.pipeline_v2.git_snapshot import partition_snapshot
+
+            view = partition_snapshot(git_snapshot, norm_subpath)
+            tracked_files = list(view.tracked_files)
+            commits = list(view.commits)
+        else:
+            tracked_files = list(git_snapshot.tracked_files)
+            # Copy each Commit so sequential runs sharing one snapshot
+            # can never see another run's mutations (the partitioned
+            # branch already returns fresh Commit objects).
+            commits = [c.model_copy(deep=True) for c in git_snapshot.commits]
     else:
         # load_repo uses search_parent_directories=True, so even when we
         # later set repo_path to the subtree it still finds the monorepo
