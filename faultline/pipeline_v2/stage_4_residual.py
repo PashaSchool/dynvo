@@ -65,6 +65,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 from faultline.llm.model_gateway import resolve_model as gateway_model
+from faultline.pipeline_v2.llm_health import LlmHealth
 
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -286,11 +287,16 @@ def _call_haiku(
     system: str,
     user: str,
     max_tokens: int,
+    llm_health: LlmHealth | None = None,
 ) -> tuple[str, int, int]:
     """One Haiku call. Returns ``(text, in_tokens, out_tokens)``.
 
     Empty string on failure; caller decides whether to skip the cluster.
+    Consults the shared :class:`LlmHealth`: after the first auth-class
+    failure anywhere in the scan the call is skipped (dead key).
     """
+    if llm_health is not None and not llm_health.should_call():
+        return "", 0, 0
     try:
         msg = client.messages.create(
             model=gateway_model(model),
@@ -300,8 +306,18 @@ def _call_haiku(
             **deterministic_params(model),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("stage_4_residual: Haiku call failed: %s", exc)
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_4_residual",
+        ):
+            logger.error(
+                "stage_4_residual: LLM authentication failed — skipping all "
+                "remaining LLM calls this scan: %s", exc,
+            )
+        else:
+            logger.warning("stage_4_residual: Haiku call failed: %s", exc)
         return "", 0, 0
+    if llm_health is not None:
+        llm_health.record_success()
     try:
         parts = [getattr(b, "text", "") for b in msg.content]
         text = "\n".join(p for p in parts if p)
@@ -419,6 +435,7 @@ def stage_4_residual(
     cost_cap_usd: float = DEFAULT_COST_CAP_USD,
     cost_tracker: CostTracker | None = None,
     client: Any | None = None,
+    llm_health: LlmHealth | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
     log: "StageLogger | None" = None,
 ) -> Stage4Result:
@@ -599,6 +616,18 @@ def stage_4_residual(
     cache_hits = 0
 
     for i, cluster in enumerate(llm_clusters):
+        # Auth guard — once any stage hit an auth-class LLM failure the
+        # key is dead for the whole scan; stop the cluster loop instead
+        # of issuing hundreds more doomed calls (see ``llm_health``).
+        if llm_health is not None and not llm_health.should_call():
+            warnings.append(
+                f"stage_4_residual: LLM auth failure — stopped after "
+                f"{clusters_processed}/{len(llm_clusters)} clusters",
+            )
+            if log is not None:
+                log.warn(warnings[-1])
+            break
+
         # Budget guard 1: shared tracker has its own cap → respect it.
         if (
             tracker.max_cost is not None
@@ -659,6 +688,7 @@ def stage_4_residual(
                 system=_SYSTEM_PROMPT,
                 user=prompt,
                 max_tokens=DEFAULT_MAX_TOKENS,
+                llm_health=llm_health,
             )
             llm_calls += 1
             if in_t or out_t:

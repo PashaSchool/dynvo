@@ -69,6 +69,7 @@ from faultline.analyzer.marketing_fetcher import (
     parse_llms_txt,
 )
 from faultline.llm.cost import CostTracker
+from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     Stage8Result,
     fetch_marketing_taxonomy,
@@ -466,6 +467,7 @@ def _call_sonnet(
     system: str,
     user: str,
     max_tokens: int = _ANALYST_MAX_TOKENS,
+    llm_health: LlmHealth | None = None,
 ) -> tuple[str, int, int, float]:
     """One Sonnet call. Returns ``(text, in_tokens, out_tokens, elapsed_s)``.
 
@@ -473,8 +475,13 @@ def _call_sonnet(
     sampling is fine at defaults for an open-ended analyst task. The
     Haiku clusterer uses deterministic params because it has to choose
     from a fixed label set; the analyst is generative.
+
+    Consults the shared :class:`LlmHealth`: after the first auth-class
+    failure anywhere in the scan the call is skipped (dead key).
     """
     t0 = time.time()
+    if llm_health is not None and not llm_health.should_call():
+        return "", 0, 0, time.time() - t0
     try:
         msg = client.messages.create(
             model=gateway_model(model),
@@ -483,8 +490,18 @@ def _call_sonnet(
             messages=[{"role": "user", "content": user}],
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("stage_8_analyst: Sonnet call failed: %s", exc)
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_8_analyst",
+        ):
+            logger.error(
+                "stage_8_analyst: LLM authentication failed — skipping all "
+                "remaining LLM calls this scan: %s", exc,
+            )
+        else:
+            logger.warning("stage_8_analyst: Sonnet call failed: %s", exc)
         return "", 0, 0, time.time() - t0
+    if llm_health is not None:
+        llm_health.record_success()
     try:
         parts = [getattr(b, "text", "") for b in msg.content]
         text = "\n".join(p for p in parts if p)
@@ -682,6 +699,7 @@ def run_stage_8_analyst(
     client: Any | None = None,
     model: str = DEFAULT_ANALYST_MODEL,
     cost_tracker: CostTracker | None = None,
+    llm_health: LlmHealth | None = None,
 ) -> Stage8Result:
     """Sonnet-as-analyst entry point.
 
@@ -741,6 +759,7 @@ def run_stage_8_analyst(
             source_breakdown_pre=source_breakdown_pre,
             log=log, client=None, model=model,
             cost_tracker=cost_tracker,
+            llm_health=llm_health,
             fallback_reason="no-client",
         )
 
@@ -756,6 +775,7 @@ def run_stage_8_analyst(
     user_prompt = build_user_prompt(payload)
     text, in_t, out_t, elapsed = _call_sonnet(
         client, model=model, system=SYSTEM_PROMPT, user=user_prompt,
+        llm_health=llm_health,
     )
     cost = 0.0
     if cost_tracker is not None and (in_t or out_t):
@@ -782,6 +802,7 @@ def run_stage_8_analyst(
             model=model,
             system=SYSTEM_PROMPT,
             user=user_prompt + _RETRY_SUFFIX,
+            llm_health=llm_health,
         )
         if cost_tracker is not None and (in2 or out2):
             rec2 = cost_tracker.record(
@@ -807,6 +828,7 @@ def run_stage_8_analyst(
             source_breakdown_pre=source_breakdown_pre,
             log=log, client=client, model=model,
             cost_tracker=cost_tracker,
+            llm_health=llm_health,
             fallback_reason="analyst-parse-failed",
             analyst_aux={
                 "analyst_cost_usd": round(cost, 6),
@@ -836,6 +858,7 @@ def run_stage_8_analyst(
             source_breakdown_pre=source_breakdown_pre,
             log=log, client=client, model=model,
             cost_tracker=cost_tracker,
+            llm_health=llm_health,
             fallback_reason="analyst-empty-output",
             analyst_aux={
                 "analyst_cost_usd": round(cost, 6),
@@ -907,6 +930,7 @@ def _fallback_to_haiku(
     cost_tracker: CostTracker | None,
     fallback_reason: str,
     analyst_aux: dict[str, Any] | None = None,
+    llm_health: LlmHealth | None = None,
 ) -> Stage8Result:
     """Invoke the legacy Haiku Stage 8 and stamp fallback telemetry."""
     # Haiku model — never use Sonnet here, it would defeat the cost
@@ -922,6 +946,7 @@ def _fallback_to_haiku(
         client=client,
         model=haiku_model,
         cost_tracker=cost_tracker,
+        llm_health=llm_health,
     )
     telemetry = dict(result.telemetry)
     telemetry["mode"] = "analyst"
