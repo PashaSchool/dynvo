@@ -536,7 +536,7 @@ class HistoryPoint(BaseModel):
 
 
 class HistoryEvent(BaseModel):
-    """A notable point on an entity's timeline (Stage 6.95).
+    """A notable point on an entity's timeline (Stage 6.95 / 6.96).
 
     ``kind`` values:
       - ``birth``           — first week any current member file was touched.
@@ -550,11 +550,43 @@ class HistoryEvent(BaseModel):
                               hotspot thresholds Stage 6 uses
                               (``HOTSPOT_BUG_RATIO_MIN`` /
                               ``HOTSPOT_COMMITS_MIN``).
+      - ``coupling_spike`` / ``decoupled`` — Stage 6.96: the entity's
+                              import-graph blast radius (``impact``
+                              series) jumped / fell between two
+                              consecutive snapshots by more than the
+                              scan's OWN pooled distribution of
+                              relative reach deltas allows — see
+                              ``stage_6_96_impact`` for the exact
+                              scale-invariant rule. ``detail`` carries
+                              ``reach a->b``. Additive enum values:
+                              old JSONs never contain them.
     """
 
-    kind: Literal["birth", "first_test", "test_wave", "hotspot_emerged"]
+    kind: Literal[
+        "birth", "first_test", "test_wave", "hotspot_emerged",
+        "coupling_spike", "decoupled",
+    ]
     week: str
     detail: str | None = None
+
+
+class ImpactPoint(BaseModel):
+    """One historical snapshot of an entity's import-graph blast radius
+    (Stage 6.96 — impact-over-time).
+
+    ``reach`` = number of source files OUTSIDE the entity's member set
+    that import >=1 member file, computed at the snapshot commit's file
+    tree with the SAME lean resolver at every snapshot (consistency
+    across the series matters more than absolute precision). The member
+    set is TODAY's entity paths projected retroactively — consistent
+    with Stage 6.95; ``members_present`` records how many of those
+    member files actually exist at the snapshot (the honesty counter
+    for that projection: members not yet born contribute nothing).
+    """
+
+    week: str               # ISO week label "YYYY-Www" of the snapshot commit
+    reach: int              # external importer files at this snapshot
+    members_present: int    # today's member files that exist at this snapshot
 
 
 class TestEfficacy(BaseModel):
@@ -613,6 +645,16 @@ class EntityHistory(BaseModel):
     events: list[HistoryEvent] = []
     test_efficacy: TestEfficacy
     history_confidence: float = 0.0
+    # Stage 6.96 (2026-06-11) — impact-over-time: the entity's
+    # import-graph blast radius at N historical git snapshots
+    # (default 8, evenly spaced over the scan window). Empty for scans
+    # produced before this field existed (old JSONs rehydrate
+    # unchanged) and when the snapshot runner was skipped. Additive.
+    impact: list[ImpactPoint] = []
+    # First-vs-last drift of the ``impact`` series, banded by the
+    # scan's own pooled per-step delta distribution (None when the
+    # series has < 2 points or on pre-6.96 scans). Additive.
+    impact_trend: Literal["growing", "shrinking", "stable"] | None = None
 
 
 class Feature(BaseModel):
