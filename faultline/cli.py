@@ -781,6 +781,14 @@ def scan_v2(
             "birth / first-test / test-wave / hotspot events, and a "
             "test-efficacy verdict). $0 LLM, derived from the same "
             "single git pass — ON by default."
+    max_cost: Optional[float] = typer.Option(
+        None,
+        "--max-cost",
+        help=(
+            "Hard USD ceiling for the scan's total LLM spend, shared "
+            "across all stages. When hit, LLM stages skip their "
+            "remaining calls with a warning instead of failing the "
+            "scan. Omit (default) for no ceiling."
         ),
     ),
 ):
@@ -898,6 +906,7 @@ def scan_v2(
                 lineage_jaccard_threshold=lineage_jaccard_threshold,
                 subpath=scope,
                 feature_history=feature_history,
+                max_cost=max_cost,
             )
         except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
             rprint(f"[red]Scan failed{scope_label}:[/red] {type(exc).__name__}: {exc}")

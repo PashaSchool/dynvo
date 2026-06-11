@@ -426,3 +426,56 @@ def test_wall_timeout_handles_zero_workers() -> None:
         MIN_WALL_TIMEOUT_S,
     )
     assert _compute_wall_timeout(100, 0) == MIN_WALL_TIMEOUT_S
+
+
+# ── Scan-wide cost cap (shared tracker max_cost) ───────────────────────────
+
+
+def test_cost_cap_skips_remaining_llm_calls(tmp_path: Path) -> None:
+    """When the shared tracker is already at its cap, features degrade
+    to ``flows=[]`` with rationale ``cost-cap-hit`` and NO LLM call is
+    made. Mirrors Stage 4's budget guard."""
+    _make_ts_file(
+        tmp_path, "app/billing/page.tsx",
+        "export function A() {}\nexport function B() {}\n"
+        "export function C() {}\n",
+    )
+    feature = _feature("billing", ("app/billing/page.tsx",))
+    ctx = _ctx(tmp_path, files=["app/billing/page.tsx"])
+    client = _FakeAnthropic(responses=['{"flows": []}'])
+
+    # Cap of $0.00 → total (0.0) >= max_cost (0.0) before the first call.
+    tracker = CostTracker(max_cost=0.0)
+    result = stage_3_flows(
+        [feature], ctx, client=client, max_workers=2, cost_tracker=tracker,
+    )
+
+    assert client.call_count == 0
+    assert result.llm_calls == 0
+    fwf = result.features_with_flows[0]
+    assert fwf.flows == []
+    assert fwf.rationale == "cost-cap-hit"
+    assert any("cost cap" in w for w in result.warnings)
+
+
+def test_cost_cap_none_does_not_gate(tmp_path: Path) -> None:
+    """A tracker without a cap (the default) never trips the guard."""
+    _make_ts_file(
+        tmp_path, "app/auth/page.tsx",
+        "export function D() {}\nexport function E() {}\n"
+        "export function F() {}\n",
+    )
+    feature = _feature("auth", ("app/auth/page.tsx",))
+    ctx = _ctx(tmp_path, files=["app/auth/page.tsx"])
+    client = _FakeAnthropic(
+        responses=['{"flows": [{"name": "sign-in-flow", "symbols": ["D"]}]}'],
+    )
+
+    tracker = CostTracker(max_cost=None)
+    result = stage_3_flows(
+        [feature], ctx, client=client, max_workers=2, cost_tracker=tracker,
+    )
+
+    assert client.call_count == 1
+    assert result.llm_calls == 1
+    assert not any("cost cap" in w for w in result.warnings)
