@@ -82,11 +82,53 @@ def _mk_ctx(repo_path: Path, commits: list[Commit]) -> ScanContext:
 
 
 def test_file_to_feature_index_builds_dir_fallback() -> None:
+    # 2026-06 metric-honesty review: index now returns a third element
+    # (ambiguous dirs) — unambiguous dirs still map as before.
     f = _mk_feature("billing", ["app/billing/page.tsx", "app/billing/route.ts"])
-    file_idx, dir_idx = _build_file_to_feature_index([f])
+    file_idx, dir_idx, ambiguous = _build_file_to_feature_index([f])
     assert file_idx["app/billing/page.tsx"] == "billing"
     # Parent dir fallback covers files that no longer exist in HEAD.
     assert dir_idx["app/billing"] == "billing"
+    assert ambiguous == set()
+
+
+def test_file_to_feature_index_shared_dir_is_ambiguous() -> None:
+    # 2026-06 metric-honesty review: a dir owned by 2+ features must
+    # NOT enter the fallback map (was setdefault → first feature won).
+    a = _mk_feature("invoices", ["app/billing/invoices.tsx"])
+    b = _mk_feature("payments", ["app/billing/payments.tsx"])
+    file_idx, dir_idx, ambiguous = _build_file_to_feature_index([a, b])
+    assert file_idx["app/billing/invoices.tsx"] == "invoices"
+    assert file_idx["app/billing/payments.tsx"] == "payments"
+    assert "app/billing" not in dir_idx
+    assert ambiguous == {"app/billing"}
+
+
+def test_commit_metrics_shared_dir_no_cross_attribution() -> None:
+    # Two features share app/billing. A commit touching a deleted file
+    # in that dir must not be attributed to EITHER feature (2026-06
+    # metric-honesty review: previously the first-registered feature
+    # absorbed all such commits, inflating its counters).
+    a = _mk_feature("invoices", ["app/billing/invoices.tsx"])
+    b = _mk_feature("payments", ["app/billing/payments.tsx"])
+    commits = [
+        _mk_commit("c1", ["app/billing/invoices.tsx"], author="alice"),
+        _mk_commit("c2", ["app/billing/payments.tsx"], author="bob"),
+        # Deleted file — dir is ambiguous, fallback must be skipped.
+        _mk_commit("c3", ["app/billing/old.tsx"], is_bug_fix=True),
+    ]
+    _attach_commit_metrics([a, b], commits)
+    assert a.total_commits == 1  # exact match only
+    assert b.total_commits == 1  # exact match only
+    assert a.bug_fixes == 0
+    assert b.bug_fixes == 0
+
+
+def test_commit_metrics_unambiguous_dir_still_attributes() -> None:
+    feat = _mk_feature("billing", ["app/billing/page.tsx"])
+    commits = [_mk_commit("c1", ["app/billing/deleted.tsx"])]
+    _attach_commit_metrics([feat], commits)
+    assert feat.total_commits == 1
 
 
 def test_commit_metrics_attribute_via_direct_and_dir_fallback(tmp_path: Path) -> None:
@@ -115,6 +157,48 @@ def test_commit_metrics_untouched_feature_stays_at_full_health(tmp_path: Path) -
     assert feat.bug_fix_ratio == 0.0
     assert feat.health_score == 100.0
     assert feat.authors == []
+    # 2026-06 metric-honesty review: the 100.0 placeholder must be
+    # flagged as evidence-free.
+    assert feat.health_confidence == "insufficient"
+
+
+def test_health_confidence_tiers() -> None:
+    # Floor = nearest-rank P25 of NONZERO per-feature commit counts.
+    # Counts here: [1, 5, 5, 5, 5] → P25 = 5 → the 1-commit feature is
+    # below the floor ("low"), the 5-commit features are "high", and a
+    # zero-commit feature is "insufficient".
+    sparse = _mk_feature("sparse", ["app/sparse/page.tsx"])
+    untouched = _mk_feature("untouched", ["app/untouched/page.tsx"])
+    active = [
+        _mk_feature(f"active{i}", [f"app/active{i}/page.tsx"])
+        for i in range(4)
+    ]
+    commits = [_mk_commit("s1", ["app/sparse/page.tsx"])]
+    for i in range(4):
+        commits.extend(
+            _mk_commit(f"a{i}{j}", [f"app/active{i}/page.tsx"])
+            for j in range(5)
+        )
+    _attach_commit_metrics([sparse, untouched, *active], commits)
+    assert untouched.health_confidence == "insufficient"
+    assert sparse.health_confidence == "low"
+    assert all(f.health_confidence == "high" for f in active)
+
+
+def test_health_confidence_single_active_feature_is_high() -> None:
+    feat = _mk_feature("billing", ["app/billing/page.tsx"])
+    _attach_commit_metrics([feat], [_mk_commit("c1", ["app/billing/page.tsx"])])
+    # Only nonzero count IS the P25 → at the floor → high.
+    assert feat.health_confidence == "high"
+
+
+def test_health_confidence_rehydrates_old_json_with_default() -> None:
+    # Scans serialized before health_confidence existed must rehydrate
+    # with the conservative default.
+    payload = _mk_feature("legacy", ["src/a.py"]).model_dump(mode="json")
+    payload.pop("health_confidence")
+    feat = Feature.model_validate(payload)
+    assert feat.health_confidence == "low"
 
 
 def test_commit_metrics_last_modified_is_max(tmp_path: Path) -> None:
