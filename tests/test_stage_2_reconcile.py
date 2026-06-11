@@ -404,3 +404,174 @@ def test_every_builtin_extractor_source_has_explicit_priority() -> None:
         f"structure = 3) or they default to 0 and lose every "
         f"file-ownership conflict."
     )
+
+
+# ── Cross-extractor fragment dedup (fix/stage2-dedup) ─────────────────────
+
+
+from faultline.pipeline_v2.stage_2_reconcile import (  # noqa: E402
+    _file_overlap_should_merge,
+    _normalized_tokens,
+    _should_merge,
+    _token_containment,
+)
+
+
+def test_stop_prefix_normalization() -> None:
+    """URL-structure tokens (api/internal/v1..v3) are stripped; a slug
+    made ONLY of structural tokens falls back to its raw token set."""
+    assert _normalized_tokens("api-org-knowledge") == frozenset({"org", "knowledge"})
+    assert _normalized_tokens("internal-billing-v2") == frozenset({"billing"})
+    # All-structural slug must NOT normalize to the empty set.
+    assert _normalized_tokens("api-v1") == frozenset({"api", "v1"})
+
+
+def test_should_merge_api_prefix_fragments() -> None:
+    """``api-org-knowledge`` ≡ ``org-knowledge`` after normalization
+    (raw Jaccard 0.667 < 0.7 — the original failure shape)."""
+    assert _should_merge("api-org-knowledge", "org-knowledge")
+
+
+def test_should_merge_token_containment() -> None:
+    """≥2-token strict subset merges regardless of Jaccard; 1-token
+    subsets do NOT (name-only containment is too weak)."""
+    assert _should_merge("org-knowledge", "org-knowledge-base")
+    assert not _should_merge("auth", "auth-tokens")
+    assert not _token_containment(frozenset({"auth"}), frozenset({"auth", "tokens"}))
+    assert _token_containment(
+        frozenset({"auth"}), frozenset({"auth", "tokens"}), min_subset_tokens=1,
+    )
+
+
+def test_soc0_shaped_fragment_triple_merges(tmp_path: Path) -> None:
+    """The Soc0 failure shape: fastapi-route emits ``api-org-knowledge``
+    and route emits ``org-knowledge`` over the same router file. They
+    must collapse into ONE feature named by the higher-priority claim,
+    with merge lineage recorded."""
+    shared = ("src/api/org_knowledge.py",)
+    cands = {
+        "fastapi-route": [_cand("api-org-knowledge", "fastapi-route", shared)],
+        "route":         [_cand("org-knowledge", "route", shared)],
+    }
+    ctx = _ctx(tmp_path, files=list(shared))
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert len(result.features) == 1
+    f = result.features[0]
+    # Both sources are priority 4; ranking tie-breaks by name asc →
+    # ``api-org-knowledge`` wins canonically; the loser is lineage.
+    assert set(f.merged_from) | {f.name} == {"api-org-knowledge", "org-knowledge"}
+    assert f.confidence == "high"
+    assert set(f.sources) == {"fastapi-route", "route"}
+    assert "merged_from:" in f.rationale
+
+
+def test_file_overlap_schema_route_do_not_merge(tmp_path: Path) -> None:
+    """Refuted-finding guard: a schema model and a route feature that
+    share files (one schema.prisma holds every model) are NOT the same
+    feature and must not merge via file overlap."""
+    cands = {
+        "schema": [_cand("document", "schema", ("prisma/schema.prisma",))],
+        "route":  [_cand(
+            "document-editor", "route",
+            ("prisma/schema.prisma", "app/editor/page.tsx"),
+        )],
+    }
+    ctx = _ctx(
+        tmp_path,
+        files=["prisma/schema.prisma", "app/editor/page.tsx"],
+    )
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert {f.name for f in result.features} == {"document", "document-editor"}
+
+
+def test_file_overlap_same_source_siblings_do_not_merge(tmp_path: Path) -> None:
+    """Same-source fragments sharing a file are usually genuinely
+    distinct routes declared in one module — never merged by overlap."""
+    shared = ("src/webhooks.ts",)
+    cands = {
+        "route": [
+            _cand("github-webhook", "route", shared),
+            _cand("gitlab-webhook", "route", shared),
+        ],
+    }
+    ctx = _ctx(tmp_path, files=["src/webhooks.ts"])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert {f.name for f in result.features} == {
+        "github-webhook", "gitlab-webhook",
+    }
+
+
+def test_file_overlap_cross_source_one_token_containment_merges(
+    tmp_path: Path,
+) -> None:
+    """Cross-source + shared anchor files + 1-token containment →
+    merge (the file evidence carries the weight the name lacks)."""
+    cands = {
+        "package": [_cand("auth", "package", ("packages/auth/index.ts",))],
+        "route":   [_cand(
+            "auth-tokens", "route",
+            ("packages/auth/index.ts", "app/auth/tokens/page.tsx"),
+        )],
+    }
+    ctx = _ctx(
+        tmp_path,
+        files=["packages/auth/index.ts", "app/auth/tokens/page.tsx"],
+    )
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert len(result.features) == 1
+    f = result.features[0]
+    assert f.name == "auth"  # package outranks route
+    assert f.merged_from == ["auth-tokens"]
+    assert set(f.paths) == {
+        "packages/auth/index.ts", "app/auth/tokens/page.tsx",
+    }
+
+
+def test_file_overlap_disjoint_names_do_not_merge() -> None:
+    """File overlap alone is NOT enough — a name signal must agree
+    (this is what distinguishes the rule from the refuted naive one)."""
+    a = _cand("billing", "route", ("app/billing/handler.ts",))
+    b = _cand("payments", "package", ("app/billing/handler.ts",))
+    assert not _file_overlap_should_merge(a, b)
+
+
+def test_file_overlap_requires_half_of_smaller_set() -> None:
+    """Path-overlap guard is containment-oriented and scale-invariant:
+    the shared files must cover ≥ half of the SMALLER path set."""
+    small = _cand("org-export", "route", ("a.py", "b.py"))
+    big = _cand(
+        "org", "package",
+        ("a.py", "x.py", "y.py", "z.py"),
+    )
+    # overlap=1, smaller=2 → 1*2 < 2 is False → passes the file guard,
+    # and 1-token containment ({org} ⊂ {org,export}) supplies the name
+    # signal → merges.
+    assert _file_overlap_should_merge(small, big)
+    tiny_overlap = _cand("org-export", "route", ("c.py", "d.py", "e.py", "f.py", "b.py"))
+    # overlap=0 with big → no merge.
+    assert not _file_overlap_should_merge(tiny_overlap, big)
+
+
+def test_no_merge_without_file_overlap_or_name_signal(tmp_path: Path) -> None:
+    """Cross-source candidates with weak-Jaccard names and NO shared
+    files stay separate (regression guard: the new predicates must not
+    loosen the disjoint case)."""
+    cands = {
+        "package": [_cand("workspace-settings", "package", ("packages/ws/index.ts",))],
+        "route":   [_cand("workspace-billing-portal", "route", ("app/billing/page.tsx",))],
+    }
+    ctx = _ctx(tmp_path, files=["packages/ws/index.ts", "app/billing/page.tsx"])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert {f.name for f in result.features} == {
+        "workspace-settings", "workspace-billing-portal",
+    }
