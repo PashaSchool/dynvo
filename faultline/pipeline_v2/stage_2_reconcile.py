@@ -55,14 +55,40 @@ from faultline.llm.model_gateway import resolve_model as gateway_model
 
 _SOURCE_PRIORITY: dict[str, int] = {
     "package":         5,
+    # Cargo workspace member names come straight from the Cargo.toml
+    # manifests (workspace members + per-crate ``name``) — the same
+    # stability class as ``package``. Added 2026-06 (metric-honesty
+    # review): missing sources defaulted to 0 and lost every
+    # file-ownership conflict.
+    "rust-workspace":  5,
     "route":           4,
     # Rails routes are the same shape as ``route`` (file-system /
     # declared HTTP entry points) — match its priority.
     "rails-routes":    4,
+    # Declared HTTP entry points parsed from source (decorators /
+    # router-registration calls) — same semantics as ``route`` /
+    # ``rails-routes``, so the same tier. All five added 2026-06
+    # (metric-honesty review): they were absent → priority 0 → they
+    # lost file ownership to every listed source, including ``config``.
+    "fastapi-route":   4,   # FastAPI @app/@router decorators
+    "route-fastify":   4,   # Fastify .get/.post route registrations
+    "route-express":   4,   # Express .get/.post route registrations
+    "go-router":       4,   # Go HTTP mux/handler registrations
+    "django-route":    4,   # Django/DRF urls.py urlpatterns + views
     "mvc":             3,
     # Rails models name the domain resource and are higher-precision
     # than the schema (which only has table names without methods).
     "rails-models":    3,
+    # Module/sub-package structure extractors. Their anchors are
+    # code-layout-derived (first-level dirs / src modules / exported
+    # submodules) — refactor-sensitive like controller names, so they
+    # sit at the ``mvc`` tier: above schema/config supporting evidence
+    # but below manifests and declared HTTP entry points. Added
+    # 2026-06 (metric-honesty review, same priority-0 hole as above).
+    "go-package":      3,   # Go cmd/internal/pkg first-level dirs
+    "rust-module":     3,   # Rust src/<m>.rs / src/<m>/ modules
+    "python-library":  3,   # Python top-level submodules
+    "js-library":      3,   # package.json#exports + lib/ submodules
     "schema":          2,
     # Views / jobs / Stimulus are supporting evidence for a resource
     # noun already named by routes / models — schema-tier priority so

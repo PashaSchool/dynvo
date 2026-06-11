@@ -671,6 +671,17 @@ class Feature(BaseModel):
     bug_fix_ratio: float      # bug_fixes / total_commits
     last_modified: datetime
     health_score: float       # 0-100, higher is better
+    # 2026-06 metric-honesty review — how much commit evidence backs
+    # ``health_score``. The score stays numeric (dashboard + MCP read
+    # it as a number), but a zero-commit feature scores 100.0 by
+    # construction, which is NOT the same as a battle-tested 100.
+    #   - "insufficient": 0 attributed commits — score is a placeholder
+    #   - "low":  fewer commits than the repo's P25 of nonzero
+    #     per-feature commit counts (scale-invariant floor, no magic N)
+    #   - "high": at or above that floor
+    # Defaults to "low" so scans serialized before this field existed
+    # rehydrate without loss and without over-claiming confidence.
+    health_confidence: Literal["high", "low", "insufficient"] = "low"
     flows: list[Flow] = []    # populated when --flows flag is used
     # Sprint 2026-05-28 — per-feature hotspot files (dict shape). Each
     # entry: path + bug_fix_ratio + bug_fixes + total_commits. Sorted

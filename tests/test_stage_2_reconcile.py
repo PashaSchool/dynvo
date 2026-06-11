@@ -369,3 +369,38 @@ def test_s4b_no_zero_path_drops_in_normal_case(tmp_path: Path) -> None:
 
     assert result.zero_path_drops_count == 0
     assert result.zero_path_drops_sample == []
+
+
+# ── 2026-06 metric-honesty review: source-priority completeness ────────────
+
+
+def test_every_builtin_extractor_source_has_explicit_priority() -> None:
+    """Every built-in extractor's emitted ``source`` string must have an
+    explicit entry in ``_SOURCE_PRIORITY``.
+
+    Regression guard for the 2026-06 metric-honesty review:
+    ``fastapi-route`` (and 9 other newer extractors) were missing from
+    the dict, silently defaulted to priority 0, and lost every
+    file-ownership conflict — even to ``config``. Extractors emit
+    ``source=self.name`` (contract documented on ``AnchorExtractor``),
+    so introspecting ``name`` covers the emitted source strings; if a
+    future extractor ever emits a different source string, this test
+    must be extended to map it.
+    """
+    from faultline.pipeline_v2.stage_1_extractors import (
+        _load_default_extractors,
+    )
+    from faultline.pipeline_v2.stage_2_reconcile import _SOURCE_PRIORITY
+
+    extractors = _load_default_extractors()
+    assert extractors, "no built-in extractors loaded — broken test env"
+    missing = sorted(
+        ex.name for ex in extractors if ex.name not in _SOURCE_PRIORITY
+    )
+    assert not missing, (
+        f"extractor sources without an explicit _SOURCE_PRIORITY entry: "
+        f"{missing} — add them at the tier matching their semantics "
+        f"(declared HTTP entry points = 4, manifests = 5, module "
+        f"structure = 3) or they default to 0 and lose every "
+        f"file-ownership conflict."
+    )

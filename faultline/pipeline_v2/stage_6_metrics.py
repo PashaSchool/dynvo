@@ -231,7 +231,7 @@ def _load_coverage_provider(
 
 def _build_file_to_feature_index(
     features: list[Feature],
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], set[str]]:
     """Build O(1) file→feature and directory→feature lookups.
 
     Mirrors the indexing pattern used by
@@ -240,16 +240,32 @@ def _build_file_to_feature_index(
     touches ``app/users/foo.tsx`` and the file no longer exists in
     HEAD, the parent dir ``app/users`` still routes that commit to
     the "users" feature.
+
+    The directory fallback only fires when the directory maps
+    UNAMBIGUOUSLY to a single feature. Before the 2026-06
+    metric-honesty review this was ``setdefault`` (first feature to
+    register a shared dir won), which made every unmatched commit in
+    a shared directory pile onto one arbitrary sibling — features
+    sharing a dir showed identical, inflated ``total_commits`` /
+    ``bug_fix_ratio``. Ambiguous dirs are returned as the third
+    element so the caller can count skipped fallback attributions.
     """
     file_to_feature: dict[str, str] = {}
-    dir_to_feature: dict[str, str] = {}
+    dir_owners: dict[str, set[str]] = defaultdict(set)
     for feat in features:
         for p in feat.paths:
             file_to_feature[p] = feat.name
             parent = str(Path(p).parent)
             if parent != ".":
-                dir_to_feature.setdefault(parent, feat.name)
-    return file_to_feature, dir_to_feature
+                dir_owners[parent].add(feat.name)
+    dir_to_feature: dict[str, str] = {}
+    ambiguous_dirs: set[str] = set()
+    for parent, owners in dir_owners.items():
+        if len(owners) == 1:
+            dir_to_feature[parent] = next(iter(owners))
+        else:
+            ambiguous_dirs.add(parent)
+    return file_to_feature, dir_to_feature, ambiguous_dirs
 
 
 def _attach_commit_metrics(
@@ -266,27 +282,93 @@ def _attach_commit_metrics(
     if not features:
         return
 
-    file_to_feature, dir_to_feature = _build_file_to_feature_index(features)
+    file_to_feature, dir_to_feature, ambiguous_dirs = (
+        _build_file_to_feature_index(features)
+    )
 
     feature_commits: dict[str, list[Commit]] = defaultdict(list)
     feature_authors: dict[str, set[str]] = defaultdict(set)
     feature_last_modified: dict[str, datetime] = {}
+    ambiguous_skipped = 0  # telemetry: commits with ≥1 file that lost
+    #                        its dir-fallback to an ambiguous directory
 
     for commit in commits:
         touched: set[str] = set()
+        hit_ambiguous = False
         for fp in commit.files_changed:
             feat_name = file_to_feature.get(fp)
             if feat_name is None:
                 parent = str(Path(fp).parent)
+                if parent in ambiguous_dirs:
+                    # Shared directory — exact file match failed and
+                    # the dir maps to 2+ features. Attributing to any
+                    # one of them would be a guess; skip the fallback.
+                    hit_ambiguous = True
+                    continue
                 feat_name = dir_to_feature.get(parent)
             if feat_name:
                 touched.add(feat_name)
+        if hit_ambiguous:
+            ambiguous_skipped += 1
         for feat_name in touched:
             feature_commits[feat_name].append(commit)
             feature_authors[feat_name].add(commit.author)
             existing = feature_last_modified.get(feat_name)
             if existing is None or commit.date > existing:
                 feature_last_modified[feat_name] = commit.date
+
+    if ambiguous_skipped:
+        logger.info(
+            "stage_6_metrics: %d commits had files whose dir-fallback "
+            "was skipped (%d ambiguous shared dirs — exact file matches "
+            "still attributed)", ambiguous_skipped, len(ambiguous_dirs),
+        )
+
+    _finalize_feature_metrics(features, feature_commits, feature_authors,
+                              feature_last_modified)
+
+
+def _health_confidence_floor(commit_counts: list[int]) -> int:
+    """Scale-invariant evidence floor for ``health_confidence``.
+
+    Returns the 25th percentile (nearest-rank) of the NONZERO
+    per-feature attributed-commit counts. Features at or above the
+    floor get ``"high"`` confidence; features below it (but with at
+    least one commit) get ``"low"``; zero-commit features are
+    ``"insufficient"`` regardless.
+
+    P25 of the repo's own distribution rather than a fixed count, per
+    the no-magic-number rule: a 50-commit hobby repo and a 50k-commit
+    monolith both flag their bottom quartile, not an arbitrary "< 5".
+    Zero counts are excluded from the percentile so a repo where most
+    features got no attribution doesn't drag the floor to 0 and mark
+    everything "high".
+    """
+    nonzero = sorted(c for c in commit_counts if c > 0)
+    if not nonzero:
+        return 1  # no evidence anywhere → every feature is below floor
+    # Nearest-rank P25: ceil(0.25 * n)-th smallest (1-indexed).
+    rank = max(1, -(-len(nonzero) // 4))
+    return nonzero[rank - 1]
+
+
+def _finalize_feature_metrics(
+    features: list[Feature],
+    feature_commits: dict[str, list[Commit]],
+    feature_authors: dict[str, set[str]],
+    feature_last_modified: dict[str, datetime],
+) -> None:
+    """Stamp commit-derived metric fields onto every feature.
+
+    ``health_score`` stays numeric for back-compat (dashboard + MCP
+    read it as a number), but since the 2026-06 metric-honesty review
+    every feature also carries ``health_confidence`` so a zero-commit
+    feature's 100.0 no longer reads as "perfectly healthy" next to a
+    battle-tested feature at 13.
+    """
+    floor = _health_confidence_floor(
+        [len(feature_commits.get(f.name, [])) for f in features],
+    )
 
     for feat in features:
         c_for_feat = feature_commits.get(feat.name, [])
@@ -306,6 +388,12 @@ def _attach_commit_metrics(
             if total > 0
             else 100.0
         )
+        if total == 0:
+            feat.health_confidence = "insufficient"
+        elif total < floor:
+            feat.health_confidence = "low"
+        else:
+            feat.health_confidence = "high"
 
 
 # ── Coverage enrichment ─────────────────────────────────────────────────
