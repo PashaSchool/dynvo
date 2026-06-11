@@ -19,7 +19,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from faultline.models.types import Commit, Feature, FeatureMap
+from faultline.models.types import SCHEMA_VERSION, Commit, Feature, FeatureMap
 from faultline.pipeline_v2.stage_0_intake import ScanContext
 from faultline.pipeline_v2.stage_7_output import (
     build_feature_map,
@@ -139,6 +139,48 @@ def test_write_stage_artifact_arbitrary_stage(tmp_path: Path, monkeypatch) -> No
     assert out.is_file()
     assert out.name == "03-stage-flows.json"
     assert json.loads(out.read_text()) == {"count": 5}
+
+
+def test_build_feature_map_stamps_schema_version(tmp_path: Path) -> None:
+    """Every NEW map built by Stage 7 carries the current schema version."""
+    fm = build_feature_map([_mk_feature("billing")], _mk_ctx(tmp_path), {})
+    assert fm.schema_version == SCHEMA_VERSION == 1
+
+
+def test_stage_7_output_json_carries_schema_version(tmp_path: Path) -> None:
+    """schema_version is present in the written JSON at top level."""
+    out_path = tmp_path / "feature-map.json"
+    stage_7_output([_mk_feature("billing")], _mk_ctx(tmp_path), {}, out_path=out_path)
+    data = json.loads(out_path.read_text())
+    assert data["schema_version"] == 1
+
+
+def test_legacy_json_without_schema_version_yields_zero(tmp_path: Path) -> None:
+    """Pre-versioning scans (no schema_version key) rehydrate as 0,
+    distinguishable from a freshly produced map (1)."""
+    out_path = tmp_path / "feature-map.json"
+    stage_7_output([_mk_feature("billing")], _mk_ctx(tmp_path), {}, out_path=out_path)
+    data = json.loads(out_path.read_text())
+    del data["schema_version"]  # simulate a scan written before versioning
+    legacy = FeatureMap.model_validate(data)
+    assert legacy.schema_version == 0
+    assert legacy.schema_version != SCHEMA_VERSION
+
+
+def test_schema_version_constant_documents_bump_policy() -> None:
+    """SCHEMA_VERSION is an int and its docstring states the bump
+    policy (breaking changes only; additive fields don't bump)."""
+    assert isinstance(SCHEMA_VERSION, int)
+    assert not isinstance(SCHEMA_VERSION, bool)
+    import inspect
+
+    from faultline.models import types as types_module
+
+    source = inspect.getsource(types_module)
+    constant_pos = source.index("SCHEMA_VERSION: int")
+    policy = source[constant_pos:constant_pos + 1200]
+    assert "breaking" in policy.lower()
+    assert "additive" in policy.lower()
 
 
 def test_stage_artifact_dir_creates_kebab_slug(tmp_path: Path, monkeypatch) -> None:
