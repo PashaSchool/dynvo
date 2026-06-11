@@ -34,7 +34,9 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.data import load_stack_yaml
+from faultline.pipeline_v2.extractors._pattern_base import PatternExtractor
 from faultline.pipeline_v2.extractors._util import (
+    is_any_stack,
     posix,
     read_text,
     slugify,
@@ -56,30 +58,20 @@ def _load_config() -> dict:
     return load_stack_yaml("go-http-router")
 
 
-# Compiled-regex cache. Keyed by id(config) so YAML reloads in tests
-# don't reuse stale compiled patterns.
-_COMPILED_CACHE: dict[int, tuple[
+_CompiledTables = tuple[
     tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...],
     tuple[str, ...],
     tuple[str, ...],
     dict[str, float],
-]] = {}
+]
 
 
-def _compile(config: dict) -> tuple[
-    tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...],
-    tuple[str, ...],
-    tuple[str, ...],
-    dict[str, float],
-]:
+def _compile(config: dict) -> _CompiledTables:
     """Compile router regex pairs + extract path excludes + confidence map.
 
     Returns ``(routers, excludes, exclude_suffixes, confidence_map)``.
+    Caching is handled by :class:`PatternExtractor`.
     """
-    key = id(config)
-    if key in _COMPILED_CACHE:
-        return _COMPILED_CACHE[key]
-
     routers_raw = config.get("router_patterns") or {}
     routers: list[tuple[str, re.Pattern[str], re.Pattern[str]]] = []
     for router_name, block in routers_raw.items():
@@ -117,9 +109,7 @@ def _compile(config: dict) -> tuple[
         ),
     }
 
-    out = (tuple(routers), excludes, exclude_suffixes, confidence)
-    _COMPILED_CACHE[key] = out
-    return out
+    return (tuple(routers), excludes, exclude_suffixes, confidence)
 
 
 # ── Activation gate ────────────────────────────────────────────────────────
@@ -127,18 +117,13 @@ def _compile(config: dict) -> tuple[
 
 def _is_go_repo(ctx: "ScanContext") -> bool:
     """``True`` if any signal indicates this repo is Go-shaped."""
-    audited = (ctx.audited_stack or "").lower()
-    if audited.startswith("go-") or audited == "go":
+    if is_any_stack(ctx, "go"):
         return True
-    if (ctx.stack or "").lower() == "go":
-        return True
-    secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
-    if "go" in secondaries:
+    if (ctx.audited_stack or "").lower().startswith("go-"):
         return True
     # ``go-server``, ``go-library``, etc. as secondary
-    if any(s.startswith("go-") for s in secondaries):
-        return True
-    return False
+    secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
+    return any(s.startswith("go-") for s in secondaries)
 
 
 # ── Path → slug helper ─────────────────────────────────────────────────────
@@ -183,7 +168,7 @@ def _is_excluded(path: str, prefixes: tuple[str, ...],
 # ── Extractor ──────────────────────────────────────────────────────────────
 
 
-class GoRouterExtractor:
+class GoRouterExtractor(PatternExtractor):
     """Go HTTP router parser. Emits one anchor per discovered route.
 
     Implements the :class:`AnchorExtractor` Protocol.
@@ -191,18 +176,21 @@ class GoRouterExtractor:
 
     name = "go-router"
 
-    def __init__(self, config: dict | None = None) -> None:
-        # ``config=None`` → load from YAML. Tests may pass a literal
-        # dict to keep the unit hermetic.
-        self._config = config if config is not None else _load_config()
+    def load_config(self) -> dict:
+        return _load_config()
 
-    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        if not _is_go_repo(ctx):
-            return []
+    def is_active(self, ctx: "ScanContext") -> bool:
+        return _is_go_repo(ctx)
 
-        routers, excludes, exclude_suffixes, confidence = _compile(self._config)
+    def compile_patterns(self, config: dict) -> _CompiledTables:
+        return _compile(config)
+
+    def collect(
+        self, ctx: "ScanContext", compiled: _CompiledTables,
+    ) -> dict[str, dict]:
+        routers, excludes, exclude_suffixes, _confidence = compiled
         if not routers:
-            return []
+            return {}
 
         # slug → {paths_set, with_ctor_flag, rationale_set}
         anchors: dict[str, dict] = defaultdict(
@@ -239,25 +227,30 @@ class GoRouterExtractor:
                         f"{router_name}:{route}",
                     )
 
-        out: list[AnchorCandidate] = []
-        for slug, data in anchors.items():
-            paths = tuple(sorted(data["paths"]))
-            conf = (
-                confidence["with_constructor_in_file"]
-                if data["with_ctor"]
-                else confidence["without_constructor_in_file"]
-            )
-            rationale_sample = ", ".join(sorted(data["rationales"])[:5])
-            out.append(
-                AnchorCandidate(
-                    name=slug,
-                    paths=paths,
-                    source=self.name,
-                    confidence_self=conf,
-                    rationale=f"go-router routes: {rationale_sample}",
-                ),
-            )
-        return out
+        return anchors
+
+    def emit(
+        self,
+        ctx: "ScanContext",
+        key: str,
+        bucket: dict,
+        compiled: _CompiledTables,
+    ) -> AnchorCandidate:
+        confidence = compiled[3]
+        paths = tuple(sorted(bucket["paths"]))
+        conf = (
+            confidence["with_constructor_in_file"]
+            if bucket["with_ctor"]
+            else confidence["without_constructor_in_file"]
+        )
+        rationale_sample = ", ".join(sorted(bucket["rationales"])[:5])
+        return AnchorCandidate(
+            name=key,
+            paths=paths,
+            source=self.name,
+            confidence_self=conf,
+            rationale=f"go-router routes: {rationale_sample}",
+        )
 
 
 __all__ = ["GoRouterExtractor"]

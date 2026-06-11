@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     posix,
     read_text,
@@ -40,52 +42,100 @@ if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
 
-# ── regex matchers ──────────────────────────────────────────────────────────
-
-_PRISMA_MODEL = re.compile(r"^\s*model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{", re.MULTILINE)
-_PRISMA_ENUM = re.compile(r"^\s*enum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{", re.MULTILINE)
-_DRIZZLE_TABLE = re.compile(
-    r"export\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
-    r"(?:pgTable|mysqlTable|sqliteTable)\s*\(",
-)
-_RAILS_CREATE_TABLE = re.compile(r"create_table\s+[\"']([^\"']+)[\"']")
-_DJANGO_MODEL_CLASS = re.compile(
-    r"^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*[^)]*models\.Model[^)]*\)\s*:",
-    re.MULTILINE,
-)
-
-# Filename markers for each source format.
-_PRISMA_SUFFIX = "schema.prisma"
-# Drizzle file conventions:
-#   - single-file:    db/schema.ts, db/schema.js
-#   - barrel file:    src/db/schema.ts
-#   - split-by-table: any *.ts under a ``/schema/`` directory (the
-#                     openstatus / cal.com / next-saas-starter pattern)
-_DRIZZLE_HINTS = ("/schema.ts", "/schema.js", "/db/schema.ts", "/db/schema.js")
-_DRIZZLE_DIR_SEGMENT = "/schema/"
-_RAILS_SCHEMA = "db/schema.rb"
-_DJANGO_MODELS = "models.py"
+# ── format tables (regexes + filename markers) ──────────────────────────────
+#
+# Loaded from ``stacks/schema-domains.yaml`` in the packaged data tree
+# (authoring copy: ``eval/stacks/schema-domains.yaml``). Pattern strings
+# live in YAML; the MULTILINE flags they historically compiled with stay
+# here in code.
 
 
-def _names_from_prisma(text: str) -> list[str]:
+@dataclass(frozen=True)
+class _Tables:
+    """Compiled regexes + filename markers for every schema format."""
+
+    prisma_model: re.Pattern[str]
+    prisma_enum: re.Pattern[str]
+    drizzle_table: re.Pattern[str]
+    rails_create_table: re.Pattern[str]
+    django_model_class: re.Pattern[str]
+    prisma_suffixes: tuple[str, ...]
+    drizzle_hints: tuple[str, ...]
+    drizzle_dir_segment: str
+    drizzle_dir_suffixes: tuple[str, ...]
+    rails_suffixes: tuple[str, ...]
+    django_suffixes: tuple[str, ...]
+
+
+_TABLES_CACHE: _Tables | None = None
+
+
+def _suffixes(block: dict, key: str = "file_suffixes") -> tuple[str, ...]:
+    return tuple(s for s in (block.get(key) or []) if isinstance(s, str))
+
+
+def _load_tables() -> _Tables:
+    """Parse schema-domains.yaml once into the historical structures.
+
+    Hermetic: resolves via ``importlib.resources`` (see
+    ``faultline.pipeline_v2.data``).
+    """
+    global _TABLES_CACHE
+    if _TABLES_CACHE is not None:
+        return _TABLES_CACHE
+
+    formats = load_stack_yaml("schema-domains").get("formats") or {}
+    prisma = formats.get("prisma") or {}
+    drizzle = formats.get("drizzle") or {}
+    rails = formats.get("rails") or {}
+    django = formats.get("django") or {}
+
+    def _pat(block: dict, key: str) -> str:
+        patterns = block.get("patterns") or {}
+        raw = patterns.get(key)
+        if not isinstance(raw, str) or not raw:
+            raise ValueError(
+                f"schema-domains.yaml missing pattern {key!r} — data bug"
+            )
+        return raw
+
+    _TABLES_CACHE = _Tables(
+        prisma_model=re.compile(_pat(prisma, "model"), re.MULTILINE),
+        prisma_enum=re.compile(_pat(prisma, "enum"), re.MULTILINE),
+        drizzle_table=re.compile(_pat(drizzle, "table")),
+        rails_create_table=re.compile(_pat(rails, "create_table")),
+        django_model_class=re.compile(
+            _pat(django, "model_class"), re.MULTILINE,
+        ),
+        prisma_suffixes=_suffixes(prisma),
+        drizzle_hints=_suffixes(drizzle),
+        drizzle_dir_segment=str(drizzle.get("dir_segment") or "/schema/"),
+        drizzle_dir_suffixes=_suffixes(drizzle, "dir_segment_suffixes"),
+        rails_suffixes=_suffixes(rails),
+        django_suffixes=_suffixes(django),
+    )
+    return _TABLES_CACHE
+
+
+def _names_from_prisma(text: str, t: _Tables) -> list[str]:
     names = []
-    for m in _PRISMA_MODEL.finditer(text):
+    for m in t.prisma_model.finditer(text):
         names.append(m.group(1))
-    for m in _PRISMA_ENUM.finditer(text):
+    for m in t.prisma_enum.finditer(text):
         names.append(m.group(1))
     return names
 
 
-def _names_from_drizzle(text: str) -> list[str]:
-    return [m.group(1) for m in _DRIZZLE_TABLE.finditer(text)]
+def _names_from_drizzle(text: str, t: _Tables) -> list[str]:
+    return [m.group(1) for m in t.drizzle_table.finditer(text)]
 
 
-def _names_from_rails(text: str) -> list[str]:
-    return [m.group(1) for m in _RAILS_CREATE_TABLE.finditer(text)]
+def _names_from_rails(text: str, t: _Tables) -> list[str]:
+    return [m.group(1) for m in t.rails_create_table.finditer(text)]
 
 
-def _names_from_django(text: str) -> list[str]:
-    return [m.group(1) for m in _DJANGO_MODEL_CLASS.finditer(text)]
+def _names_from_django(text: str, t: _Tables) -> list[str]:
+    return [m.group(1) for m in t.django_model_class.finditer(text)]
 
 
 # ── extractor class ─────────────────────────────────────────────────────────
@@ -99,6 +149,7 @@ class SchemaDomainExtractor:
     def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
         repo_path = ctx.repo_path
         files = list(ctx.tracked_files)
+        t = _load_tables()
 
         # source-file lists per format
         prisma_files: list[str] = []
@@ -108,22 +159,24 @@ class SchemaDomainExtractor:
 
         for raw in files:
             p = posix(raw)
-            if p.endswith(_PRISMA_SUFFIX):
+            if any(p.endswith(s) for s in t.prisma_suffixes):
                 prisma_files.append(p)
                 continue
-            if any(p.endswith(h) for h in _DRIZZLE_HINTS):
+            if any(p.endswith(h) for h in t.drizzle_hints):
                 drizzle_files.append(p)
                 continue
             # Split-by-table Drizzle pattern: ``packages/db/src/schema/
             # monitors/monitor.ts``. Restricted to .ts/.js files to
             # avoid false positives on JSON schemas or markdown.
-            if _DRIZZLE_DIR_SEGMENT in p and (p.endswith(".ts") or p.endswith(".js")):
+            if t.drizzle_dir_segment in p and any(
+                p.endswith(s) for s in t.drizzle_dir_suffixes
+            ):
                 drizzle_files.append(p)
                 continue
-            if p.endswith(_RAILS_SCHEMA):
+            if any(p.endswith(s) for s in t.rails_suffixes):
                 rails_files.append(p)
                 continue
-            if p.endswith(_DJANGO_MODELS):
+            if any(p.endswith(s) for s in t.django_suffixes):
                 django_files.append(p)
                 continue
 
@@ -136,7 +189,7 @@ class SchemaDomainExtractor:
             text = read_text(repo_path / fp)
             if text is None:
                 continue
-            for name in _names_from_prisma(text):
+            for name in _names_from_prisma(text, t):
                 slug = slugify(name)
                 if slug:
                     buckets[slug].append(fp)
@@ -146,7 +199,7 @@ class SchemaDomainExtractor:
             text = read_text(repo_path / fp)
             if text is None:
                 continue
-            for name in _names_from_drizzle(text):
+            for name in _names_from_drizzle(text, t):
                 slug = slugify(name)
                 if slug:
                     buckets[slug].append(fp)
@@ -156,7 +209,7 @@ class SchemaDomainExtractor:
             text = read_text(repo_path / fp)
             if text is None:
                 continue
-            for name in _names_from_rails(text):
+            for name in _names_from_rails(text, t):
                 # ``create_table "users"`` — already plural lowercase usually.
                 slug = slugify(name)
                 if slug:
@@ -167,7 +220,7 @@ class SchemaDomainExtractor:
             text = read_text(repo_path / fp)
             if text is None:
                 continue
-            for name in _names_from_django(text):
+            for name in _names_from_django(text, t):
                 slug = slugify(name)
                 if slug:
                     buckets[slug].append(fp)

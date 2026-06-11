@@ -29,14 +29,17 @@ _EVAL_STACKS = _REPO_ROOT / "eval" / "stacks"
 _EVAL_DEP_ANCHORS = _REPO_ROOT / "eval" / "dependency-anchors.yaml"
 
 _STACK_NAMES = [
+    "config-manifests",
     "django",
     "fastapi",
     "filesystem-routing",
     "go-http-router",
     "js-library",
+    "mvc-controllers",
     "python-library",
     "rails-app",
     "rust-workspace",
+    "schema-domains",
 ]
 
 
@@ -214,3 +217,95 @@ def test_stage_6_5_loader_tolerates_stage1_anchors_section() -> None:
     finally:
         s65._DEP_ANCHORS_CACHE = None
         s65._DEP_ALIASES_CACHE = None
+
+
+def test_mvc_controller_patterns_match_historical_table() -> None:
+    """mvc-controllers.yaml reproduces mvc.py's historical tuple."""
+    from faultline.pipeline_v2.extractors import mvc
+
+    # Exact historical table — order matters: the FIRST suffix that
+    # matches a basename wins in _controller_slug_from.
+    assert mvc._load_controller_patterns() == (
+        ("_controller.rb", "_controller.rb"),    # Rails
+        ("Controller.php", "Controller.php"),    # Laravel
+        ("_controller.ex", "_controller.ex"),    # Phoenix
+        ("Controller.cs", "Controller.cs"),      # ASP.NET
+        ("Controller.java", "Controller.java"),  # Spring
+        ("Controller.kt", "Controller.kt"),      # Spring (Kotlin)
+    )
+    # Behavior spot-checks against historical outputs.
+    assert mvc._controller_slug_from("UsersController.php") == "users"
+    assert mvc._controller_slug_from("orders_controller.rb") == "orders"
+    assert mvc._controller_slug_from("not_a_controller.py") is None
+
+
+def test_schema_domain_tables_match_historical_values() -> None:
+    """schema-domains.yaml reproduces schema.py's historical constants."""
+    from faultline.pipeline_v2.extractors import schema
+
+    t = schema._load_tables()
+
+    # Exact historical regex strings (flags applied in code).
+    assert t.prisma_model.pattern == (
+        r"^\s*model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{"
+    )
+    assert t.prisma_enum.pattern == (
+        r"^\s*enum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{"
+    )
+    assert t.drizzle_table.pattern == (
+        r"export\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+        r"(?:pgTable|mysqlTable|sqliteTable)\s*\("
+    )
+    assert t.rails_create_table.pattern == (
+        "create_table\\s+[\"']([^\"']+)[\"']"
+    )
+    assert t.django_model_class.pattern == (
+        r"^class\s+([A-Za-z_][A-Za-z0-9_]*)"
+        r"\s*\(\s*[^)]*models\.Model[^)]*\)\s*:"
+    )
+
+    # Exact historical filename markers (order preserved).
+    assert t.prisma_suffixes == ("schema.prisma",)
+    assert t.drizzle_hints == (
+        "/schema.ts", "/schema.js", "/db/schema.ts", "/db/schema.js",
+    )
+    assert t.drizzle_dir_segment == "/schema/"
+    assert t.drizzle_dir_suffixes == (".ts", ".js")
+    assert t.rails_suffixes == ("db/schema.rb",)
+    assert t.django_suffixes == ("models.py",)
+
+    # Behavior spot-checks against historical match semantics.
+    assert schema._names_from_prisma("model User {\n}", t) == ["User"]
+    assert schema._names_from_rails(
+        'create_table "documents" do', t,
+    ) == ["documents"]
+
+
+def test_config_manifest_tables_match_historical_values() -> None:
+    """config-manifests.yaml reproduces config.py's historical markers."""
+    from faultline.pipeline_v2.extractors import config as config_mod
+
+    t = config_mod._load_tables()
+
+    assert t.confidence == 0.85
+    assert t.tauri_filenames == ("tauri.conf.json",)
+    assert t.tauri_parent_keys == ("app", "tauri")       # 2.x before 1.x
+    assert t.tauri_window_label_keys == ("label", "title")
+    assert t.expo_filenames == ("app.json", "app.config.json")
+    assert t.expo_detect_keys == ("expo", "plugins", "scheme")
+    assert t.expo_plugin_prefix_trim == "expo-"
+    assert t.vscode_filenames == ("package.json",)
+    assert t.vscode_engines_key == "vscode"
+    assert t.chrome_filenames == ("manifest.json",)
+    assert t.chrome_manifest_version == 3
+    assert t.raycast_filenames == ("package.json",)
+    assert t.raycast_required_keys == ("author", "commands")
+
+    # Behavior spot-checks against historical outputs.
+    assert config_mod._emit_expo_anchors(
+        {"expo": {"plugins": ["expo-notifications"]}}, "app.json", t,
+    ) == [("notifications", "app.json", "expo plugin 'expo-notifications'")]
+    assert config_mod._emit_chrome_mv3_anchors(
+        {"manifest_version": 2, "permissions": ["tabs"]},
+        "manifest.json", t,
+    ) == []

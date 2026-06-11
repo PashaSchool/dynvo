@@ -1,0 +1,65 @@
+# Config-as-product manifest tables — consumed by the
+# ConfigAsProductExtractor (faultline/pipeline_v2/extractors/config.py).
+#
+# Several platform manifests declare user-facing surfaces directly;
+# each declared surface is an explicit product capability — no
+# inference required. This file holds the DATA (file names, JSON key
+# markers, prefixes, confidence); the JSON parsing CODE stays in
+# config.py.
+#
+# We don't parse YAML manifests in this first pass — the Slack and
+# Atlassian Forge entries below document the detection filenames only;
+# config.py yields no anchors for them yet.
+
+# Confidence emitted on every anchor — config declarations are explicit
+# author intent, high precision when present.
+confidence: 0.85
+
+# Tauri: tauri.conf.json — windows + app.cli.commands.
+tauri:
+  filenames: ["tauri.conf.json"]
+  # Tauri 2.x : top-level ``app.windows``. Tauri 1.x : ``tauri.windows``.
+  parent_keys: ["app", "tauri"]
+  # A window's slug source — first key present wins.
+  window_label_keys: ["label", "title"]
+
+# Expo: app.json / app.config.{js,ts} — scheme + plugins.
+expo:
+  filenames: ["app.json", "app.config.json"]
+  # An app.json only counts as Expo when one of these top-level keys
+  # is present (avoids matching unrelated app.json files).
+  detect_keys: ["expo", "plugins", "scheme"]
+  # Expo plugins are often scoped like ``expo-notifications``; the
+  # prefix is trimmed so the slug is the capability, not the platform.
+  plugin_prefix_trim: "expo-"
+
+# VS Code extension: package.json#contributes (commands, views, menus).
+# Detected by the presence of an ``engines.vscode`` field — not just
+# ``contributes``, since other package.json files happen to have a
+# ``contributes`` block on some projects.
+vscode:
+  filenames: ["package.json"]
+  engines_key: "vscode"
+
+# Chrome MV3: manifest.json — permissions + action. Detected by
+# manifest_version == 3 (most reliable signal).
+chrome_mv3:
+  filenames: ["manifest.json"]
+  manifest_version: 3
+
+# Raycast extension: package.json#commands. Heuristic detection: a
+# Raycast extension has an "author" field AND a top-level "commands"
+# list. VS Code extensions also have a "commands" key but it's nested
+# under contributes — so they won't match this check.
+raycast:
+  filenames: ["package.json"]
+  required_keys: ["author", "commands"]
+
+# Slack app: manifest.yaml (Slack-app declaration). Detection-only —
+# YAML manifests are not parsed yet.
+slack:
+  filenames: ["manifest.yaml"]
+
+# Atlassian Forge: manifest.yml. Detection-only — not parsed yet.
+forge:
+  filenames: ["manifest.yml"]

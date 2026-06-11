@@ -51,7 +51,7 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from faultline.pipeline_v2.extractors._util import posix, slugify
+from faultline.pipeline_v2.extractors._util import is_any_stack, posix, slugify
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
 
 if TYPE_CHECKING:
@@ -97,17 +97,12 @@ _EXCLUDED_SEGMENTS = frozenset({
 
 def _is_go_repo(ctx: "ScanContext") -> bool:
     """``True`` if any signal indicates this repo is Go-shaped."""
-    audited = (ctx.audited_stack or "").lower()
-    if audited.startswith("go-") or audited == "go":
+    if is_any_stack(ctx, "go"):
         return True
-    if (ctx.stack or "").lower() == "go":
+    if (ctx.audited_stack or "").lower().startswith("go-"):
         return True
     secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
-    if "go" in secondaries:
-        return True
-    if any(s.startswith("go-") for s in secondaries):
-        return True
-    return False
+    return any(s.startswith("go-") for s in secondaries)
 
 
 # ── Path classification ─────────────────────────────────────────────────────
