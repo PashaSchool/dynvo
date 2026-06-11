@@ -65,6 +65,8 @@ def run_pipeline_multi(
     base_scan_path: Path | str | None = None,
     lineage_jaccard_threshold: float | None = None,
     org_id: str | None = None,
+    max_cost: float | None = None,
+    feature_history: bool = True,
     on_subpath_start: Callable[[str], None] | None = None,
     on_subpath_end: Callable[[MultiScanResult], None] | None = None,
 ) -> list[MultiScanResult]:
@@ -72,7 +74,9 @@ def run_pipeline_multi(
 
     Args mirror :func:`run_pipeline_v2` (minus ``out_path`` — each
     subpath writes its own timestamped FeatureMap — and ``subpath``,
-    which is supplied per entry). ``on_subpath_start`` /
+    which is supplied per entry). ``max_cost`` applies PER SUBPATH —
+    each sub-project run gets its own CostTracker with this ceiling
+    (a batch-shared cap is a documented follow-up). ``on_subpath_start`` /
     ``on_subpath_end`` are optional progress hooks so callers (the CLI)
     can keep their per-scope progress lines exactly as before.
 
@@ -126,6 +130,8 @@ def run_pipeline_multi(
                 org_id=org_id,
                 subpath=sp,
                 git_snapshot=snapshot,
+                max_cost=max_cost,
+                feature_history=feature_history,
             )
             entry = MultiScanResult(
                 subpath=sp,

@@ -781,6 +781,8 @@ def scan_v2(
             "birth / first-test / test-wave / hotspot events, and a "
             "test-efficacy verdict). $0 LLM, derived from the same "
             "single git pass — ON by default."
+        ),
+    ),
     max_cost: Optional[float] = typer.Option(
         None,
         "--max-cost",
@@ -881,6 +883,8 @@ def scan_v2(
             since=since,
             base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
             lineage_jaccard_threshold=lineage_jaccard_threshold,
+            max_cost=max_cost,
+            feature_history=feature_history,
             on_subpath_start=_print_scope_start,
             on_subpath_end=_on_end,
         )
