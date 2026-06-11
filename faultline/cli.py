@@ -792,9 +792,9 @@ def scan_v2(
 
     # Normalise the repeatable --subpath into a list of scopes. ``[None]``
     # means a single whole-repo scan (the default, unchanged behaviour).
-    # Multiple subpaths run sequentially against the same clone — one
-    # FeatureMap per subpath. (Multi-subpath single-git-pass partitioning
-    # is a documented fast-follow; correctness-first here.)
+    # Multiple subpaths route through ``run_pipeline_multi``: ONE shared
+    # git pass partitioned in memory, one FeatureMap per subpath,
+    # keep-going on per-subpath failure.
     scopes: list[Optional[str]] = list(subpath) if subpath else [None]
 
     if since and not base_scan_path:
@@ -812,14 +812,67 @@ def scan_v2(
         )
         raise typer.Exit(code=2)
 
-    exit_code = 0
-    for scope in scopes:
+    def _print_scope_start(scope: Optional[str]) -> None:
         scope_label = f" subpath={scope}" if scope else ""
         rprint(
             f"[bold blue]faultline scan-v2[/bold blue] {repo}{scope_label} "
             f"(model={resolved_model}, llm_reconcile={llm_reconcile}, "
             f"days={days}, max_tree_depth={max_tree_depth})"
         )
+
+    def _print_scope_result(result: dict) -> None:
+        rprint(
+            f"[green]✓[/green] Wrote {result['path']}  "
+            f"(run_id={result.get('run_id')}, "
+            f"subpath={result.get('subpath')}, "
+            f"stack={result['stack']}, "
+            f"cost=${result['cost_usd']:.4f}, "
+            f"calls={result['calls']}, "
+            f"elapsed={result['elapsed_sec']}s)"
+        )
+        if result.get("warnings"):
+            for w in result["warnings"]:
+                rprint(f"  [yellow]⚠[/yellow] {w}")
+
+    # ── Multi-subpath: ONE shared git pass via run_pipeline_multi ──────
+    # >1 subpath routes through the multi engine: the repo-level git
+    # history parse runs once and is partitioned in memory per subpath.
+    # UX is unchanged — same per-scope progress/success/failure lines,
+    # keep-going on failure, non-zero exit when any subpath failed.
+    real_scopes = [s for s in scopes if s is not None]
+    if len(real_scopes) > 1:
+        from faultline.pipeline_v2.multi import MultiScanResult, run_pipeline_multi
+
+        def _on_end(entry: MultiScanResult) -> None:
+            if entry.error is not None:
+                rprint(
+                    f"[red]Scan failed subpath={entry.subpath}:[/red] {entry.error}"
+                )
+            elif entry.result is not None:
+                _print_scope_result(entry.result)
+
+        multi_results = run_pipeline_multi(
+            repo,
+            real_scopes,
+            model=resolved_model,
+            days=days,
+            llm_reconcile=llm_reconcile,
+            run_id=run_id,
+            max_tree_depth=max_tree_depth,
+            since=since,
+            base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
+            lineage_jaccard_threshold=lineage_jaccard_threshold,
+            on_subpath_start=_print_scope_start,
+            on_subpath_end=_on_end,
+        )
+        if any(r.error is not None for r in multi_results):
+            raise typer.Exit(code=1)
+        return
+
+    exit_code = 0
+    for scope in scopes:
+        scope_label = f" subpath={scope}" if scope else ""
+        _print_scope_start(scope)
         try:
             result = run_pipeline_v2(
                 repo,
@@ -843,18 +896,7 @@ def scan_v2(
                 raise typer.Exit(code=1) from exc
             continue
 
-        rprint(
-            f"[green]✓[/green] Wrote {result['path']}  "
-            f"(run_id={result.get('run_id')}, "
-            f"subpath={result.get('subpath')}, "
-            f"stack={result['stack']}, "
-            f"cost=${result['cost_usd']:.4f}, "
-            f"calls={result['calls']}, "
-            f"elapsed={result['elapsed_sec']}s)"
-        )
-        if result.get("warnings"):
-            for w in result["warnings"]:
-                rprint(f"  [yellow]⚠[/yellow] {w}")
+        _print_scope_result(result)
 
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
