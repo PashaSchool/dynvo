@@ -337,3 +337,45 @@ def test_scan_v2_multi_subpath_rejects_output_flag(
     )
     assert result.exit_code == 2
     assert "--output cannot be combined" in result.stdout
+
+
+# ── --max-cost flag ─────────────────────────────────────────────────
+
+
+def test_scan_v2_max_cost_flag_passed_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--max-cost 2.50`` reaches run_pipeline_v2; default is None."""
+    repo = tmp_path / "demo"
+    repo.mkdir()
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(
+        repo_path, *, model, days, out_path, llm_reconcile,
+        run_id=None, max_tree_depth=None, max_cost=None, **_kw,
+    ):
+        captured["max_cost"] = max_cost
+        return {
+            "path": str(tmp_path / "fm.json"),
+            "stack": None,
+            "cost_usd": 0.0,
+            "calls": 0,
+            "elapsed_sec": 0.0,
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        "faultline.pipeline_v2.run.run_pipeline_v2", _fake_run,
+    )
+    result = runner.invoke(
+        app, ["scan-v2", str(repo), "--max-cost", "2.50"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["max_cost"] == 2.50
+
+    # Default (no flag) → None (enforcement disabled).
+    captured.clear()
+    result = runner.invoke(app, ["scan-v2", str(repo)])
+    assert result.exit_code == 0, result.stdout
+    assert captured["max_cost"] is None
