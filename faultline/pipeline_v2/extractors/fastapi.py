@@ -39,7 +39,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.data import load_stack_yaml
+from faultline.pipeline_v2.extractors._pattern_base import PatternExtractor
 from faultline.pipeline_v2.extractors._util import (
+    is_any_stack,
     posix,
     read_text,
     slugify,
@@ -59,11 +61,6 @@ _HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
 def _load_config() -> dict:
     """Load fastapi.yaml from the packaged data tree (hermetic)."""
     return load_stack_yaml("fastapi")
-
-
-# Compiled-regex cache keyed by id(config) so test reloads don't reuse
-# stale patterns.
-_COMPILED_CACHE: dict[int, "_Compiled"] = {}
 
 
 class _Compiled:
@@ -109,15 +106,6 @@ class _Compiled:
         self.conf_decorator_only = float(conf.get("decorator_only", 0.75))
 
 
-def _compile(config: dict) -> _Compiled:
-    key = id(config)
-    cached = _COMPILED_CACHE.get(key)
-    if cached is None:
-        cached = _Compiled(config)
-        _COMPILED_CACHE[key] = cached
-    return cached
-
-
 # ── Activation gate ────────────────────────────────────────────────────────
 
 
@@ -145,13 +133,9 @@ def _has_fastapi_source(ctx: "ScanContext") -> bool:
 
 
 def _is_fastapi_repo(ctx: "ScanContext") -> bool:
-    audited = (ctx.audited_stack or "").lower()
-    if audited == "fastapi" or audited.startswith("fastapi"):
+    if is_any_stack(ctx, "fastapi"):
         return True
-    if (ctx.stack or "").lower() == "fastapi":
-        return True
-    secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
-    if "fastapi" in secondaries:
+    if (ctx.audited_stack or "").lower().startswith("fastapi"):
         return True
     # Python repo with inconclusive stack tag → confirm via source marker.
     stack = (ctx.stack or "").lower()
@@ -193,7 +177,7 @@ def _is_excluded(rel_path: str, excludes: tuple[str, ...]) -> bool:
 # ── Extractor ──────────────────────────────────────────────────────────────
 
 
-class FastApiRouteExtractor:
+class FastApiRouteExtractor(PatternExtractor):
     """FastAPI decorator-route parser. Emits anchors + explicit routes.
 
     Implements the :class:`AnchorExtractor` Protocol.
@@ -201,13 +185,19 @@ class FastApiRouteExtractor:
 
     name = "fastapi-route"
 
-    def __init__(self, config: dict | None = None) -> None:
-        self._config = config if config is not None else _load_config()
+    def load_config(self) -> dict:
+        return _load_config()
 
-    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        if not _is_fastapi_repo(ctx):
-            return []
-        c = _compile(self._config)
+    def is_active(self, ctx: "ScanContext") -> bool:
+        return _is_fastapi_repo(ctx)
+
+    def compile_patterns(self, config: dict) -> "_Compiled":
+        return _Compiled(config)
+
+    def collect(
+        self, ctx: "ScanContext", compiled: "_Compiled",
+    ) -> dict[str, dict]:
+        c = compiled
 
         # First pass — collect per-module routes + remember which files
         # declared a router constructor (for confidence) and gather
@@ -263,9 +253,9 @@ class FastApiRouteExtractor:
                 inc_mod = ref.split(".")[0]
                 include_prefix[inc_mod] = pm.group(1)
 
-        # Second pass — build one anchor per module, composing any
-        # include_router prefix onto each route.
-        out: list[AnchorCandidate] = []
+        # Second pass — compose any include_router prefix onto each
+        # route; one bucket per module (insertion order preserved).
+        buckets: dict[str, dict] = {}
         for mod, routes in module_routes.items():
             extra = include_prefix.get(mod, "")
             composed: list[tuple[str, str, str]] = []
@@ -274,33 +264,46 @@ class FastApiRouteExtractor:
                 final = _join_path(extra, pattern) if extra else pattern
                 composed.append((final, method, file_str))
                 files.add(file_str)
-            if not composed:
-                continue
+            buckets[mod] = {
+                "composed": composed,
+                "files": files,
+                "has_ctor": module_has_ctor.get(mod, False),
+            }
+        return buckets
 
-            # Name the anchor by the longest shared URL prefix (≈ the
-            # router's resource), falling back to the module stem.
-            slug = _route_to_slug(_common_prefix([p for p, _, _ in composed]))
-            if slug == "root":
-                slug = slugify(mod) or "root"
+    def emit(
+        self,
+        ctx: "ScanContext",
+        key: str,
+        bucket: dict,
+        compiled: "_Compiled",
+    ) -> AnchorCandidate | None:
+        composed: list[tuple[str, str, str]] = bucket["composed"]
+        files: set[str] = bucket["files"]
+        if not composed:
+            return None
 
-            conf = (
-                c.conf_with_ctor if module_has_ctor.get(mod)
-                else c.conf_decorator_only
-            )
-            sample = ", ".join(
-                f"{meth} {pat}" for pat, meth, _ in composed[:5]
-            )
-            out.append(
-                AnchorCandidate(
-                    name=slug,
-                    paths=tuple(sorted(files)),
-                    source=self.name,
-                    confidence_self=conf,
-                    rationale=f"fastapi routes: {sample}",
-                    routes=tuple(composed),
-                ),
-            )
-        return out
+        # Name the anchor by the longest shared URL prefix (≈ the
+        # router's resource), falling back to the module stem.
+        slug = _route_to_slug(_common_prefix([p for p, _, _ in composed]))
+        if slug == "root":
+            slug = slugify(key) or "root"
+
+        conf = (
+            compiled.conf_with_ctor if bucket["has_ctor"]
+            else compiled.conf_decorator_only
+        )
+        sample = ", ".join(
+            f"{meth} {pat}" for pat, meth, _ in composed[:5]
+        )
+        return AnchorCandidate(
+            name=slug,
+            paths=tuple(sorted(files)),
+            source=self.name,
+            confidence_self=conf,
+            rationale=f"fastapi routes: {sample}",
+            routes=tuple(composed),
+        )
 
 
 def _common_prefix(patterns: list[str]) -> str:

@@ -20,10 +20,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from faultline.pipeline_v2.extractors._rails import (
-    is_rails_app,
-    load_rails_config,
-)
+from faultline.pipeline_v2.extractors._rails import RailsPatternExtractor
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
     posix,
@@ -42,41 +39,50 @@ logger = logging.getLogger(__name__)
 _MODEL_PREFIX = "app/models/"
 
 
-class RailsModelsExtractor:
-    """ActiveRecord model files → feature anchors."""
+class _Compiled:
+    """Compiled patterns + scalar config for the ``models`` section."""
 
-    name = "rails-models"
+    __slots__ = ("class_re", "assoc_res", "confidence")
 
-    def __init__(self, config: dict | None = None) -> None:
-        self._config = config if config is not None else load_rails_config()
-
-    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        if not is_rails_app(ctx):
-            return []
-
-        cfg = self._config.get("models") or {}
+    def __init__(self, config: dict) -> None:
+        cfg = config.get("models") or {}
         if not isinstance(cfg, dict):
-            return []
+            cfg = {}
 
-        confidence = float(cfg.get("confidence") or 0.85)
+        self.confidence = float(cfg.get("confidence") or 0.85)
+        self.class_re: re.Pattern[str] | None = None
         class_re_raw = cfg.get("class_pattern")
-        if not isinstance(class_re_raw, str):
-            return []
-        try:
-            class_re = re.compile(class_re_raw)
-        except re.error as exc:
-            logger.warning("rails_models: bad class regex: %s", exc)
-            return []
+        if isinstance(class_re_raw, str):
+            try:
+                self.class_re = re.compile(class_re_raw)
+            except re.error as exc:
+                logger.warning("rails_models: bad class regex: %s", exc)
 
         assoc_cfg = cfg.get("association_patterns") or {}
-        assoc_res: dict[str, re.Pattern[str]] = {}
+        self.assoc_res: dict[str, re.Pattern[str]] = {}
         if isinstance(assoc_cfg, dict):
             for key, raw in assoc_cfg.items():
                 if isinstance(raw, str):
                     try:
-                        assoc_res[key] = re.compile(raw)
+                        self.assoc_res[key] = re.compile(raw)
                     except re.error:
                         continue
+
+
+class RailsModelsExtractor(RailsPatternExtractor):
+    """ActiveRecord model files → feature anchors."""
+
+    name = "rails-models"
+
+    def compile_patterns(self, config: dict) -> _Compiled:
+        return _Compiled(config)
+
+    def collect(
+        self, ctx: "ScanContext", compiled: _Compiled,
+    ) -> dict[str, dict]:
+        class_re = compiled.class_re
+        if class_re is None:
+            return {}
 
         # Walk tracked files under app/models/
         files = [
@@ -116,7 +122,7 @@ class RailsModelsExtractor:
             # Capture associations once per file (not per class) — they
             # contribute provenance to whichever model the file declared.
             file_assoc: set[str] = set()
-            for key, pattern in assoc_res.items():
+            for key, pattern in compiled.assoc_res.items():
                 for m in pattern.findall(text):
                     if isinstance(m, str) and m:
                         file_assoc.add(f"{key}:{m}")
@@ -127,29 +133,33 @@ class RailsModelsExtractor:
                 if slug in buckets:
                     buckets[slug]["assoc"].update(file_assoc)
 
-        out: list[AnchorCandidate] = []
-        for slug, bucket in buckets.items():
-            paths = tuple(sorted(bucket["paths"]))
-            if not paths:
-                continue
-            classnames = sorted(bucket["classnames"])
-            assoc_summary = (
-                f" associations={sorted(bucket['assoc'])[:5]}"
-                if bucket["assoc"] else ""
-            )
-            out.append(
-                AnchorCandidate(
-                    name=slug,
-                    paths=paths,
-                    source=self.name,
-                    confidence_self=confidence,
-                    rationale=(
-                        f"Rails model {classnames[0]!r} "
-                        f"from {len(paths)} file(s){assoc_summary}"
-                    ),
-                ),
-            )
-        return out
+        return buckets
+
+    def emit(
+        self,
+        ctx: "ScanContext",
+        key: str,
+        bucket: dict,
+        compiled: _Compiled,
+    ) -> AnchorCandidate | None:
+        paths = tuple(sorted(bucket["paths"]))
+        if not paths:
+            return None
+        classnames = sorted(bucket["classnames"])
+        assoc_summary = (
+            f" associations={sorted(bucket['assoc'])[:5]}"
+            if bucket["assoc"] else ""
+        )
+        return AnchorCandidate(
+            name=key,
+            paths=paths,
+            source=self.name,
+            confidence_self=compiled.confidence,
+            rationale=(
+                f"Rails model {classnames[0]!r} "
+                f"from {len(paths)} file(s){assoc_summary}"
+            ),
+        )
 
 
 __all__ = ["RailsModelsExtractor"]

@@ -34,11 +34,16 @@ No LLM. No network. Pure regex over text.
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from faultline.pipeline_v2.extractors._util import is_noise, posix, slugify
+from faultline.pipeline_v2.extractors._pattern_base import PatternExtractor
+from faultline.pipeline_v2.extractors._util import (
+    is_audited_stack,
+    is_noise,
+    posix,
+    slugify,
+)
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
 
 if TYPE_CHECKING:
@@ -122,11 +127,7 @@ def _has_fastify_dep(pkg: dict | None) -> bool:
 
 def _is_active(ctx: "ScanContext") -> bool:
     """Self-skip gate — see module docstring."""
-    audited = (ctx.audited_stack or "").lower()
-    if audited in {"fastify", "nestjs"}:
-        return True
-    secondary = {s.lower() for s in (ctx.secondary_stacks or ())}
-    if "fastify" in secondary or "nestjs" in secondary:
+    if is_audited_stack(ctx, "fastify") or is_audited_stack(ctx, "nestjs"):
         return True
     # Stage 0 may have tagged the root or a workspace ``"fastify"``.
     if (ctx.stack or "").lower() == "fastify":
@@ -188,7 +189,7 @@ def _candidate_files(ctx: "ScanContext") -> list[str]:
 # ── Extractor ───────────────────────────────────────────────────────────────
 
 
-class FastifyRouteExtractor:
+class FastifyRouteExtractor(PatternExtractor):
     """Code-based Fastify route extractor. Activation: see module doc."""
 
     name = "route-fastify"
@@ -198,13 +199,16 @@ class FastifyRouteExtractor:
     # blow up memory.
     _MAX_FILE_BYTES = 192 * 1024
 
-    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        if not _is_active(ctx):
-            return []
+    def is_active(self, ctx: "ScanContext") -> bool:
+        return _is_active(ctx)
 
+    def collect(
+        self, ctx: "ScanContext", compiled: None,
+    ) -> dict[str, dict]:
+        # Patterns are module-level constants (no YAML config), so the
+        # ``compiled`` slot is unused here.
         repo = Path(ctx.repo_path)
-        buckets: dict[str, list[str]] = defaultdict(list)
-        url_count: dict[str, int] = defaultdict(int)
+        buckets: dict[str, dict] = {}
 
         for rel in _candidate_files(ctx):
             try:
@@ -234,30 +238,36 @@ class FastifyRouteExtractor:
                 slug = slugify(seg)
                 if not slug:
                     continue
-                buckets[slug].append(rel)
-                url_count[slug] += 1
+                bucket = buckets.setdefault(slug, {"paths": [], "count": 0})
+                bucket["paths"].append(rel)
+                bucket["count"] += 1
 
-        out: list[AnchorCandidate] = []
-        for slug, paths in buckets.items():
-            unique = tuple(sorted(set(paths)))
-            # Confidence: more matched URLs → stronger signal, capped
-            # at 0.9 (router-instance present in the file). Mirrors the
-            # confidence model in ``go_router.py``.
-            confidence = min(0.6 + 0.05 * url_count[slug], 0.9)
-            out.append(
-                AnchorCandidate(
-                    name=slug,
-                    paths=unique,
-                    source=self.name,
-                    confidence_self=confidence,
-                    rationale=(
-                        f"fastify route slug '{slug}' from "
-                        f"{url_count[slug]} URL match(es) across "
-                        f"{len(unique)} file(s)"
-                    ),
-                ),
-            )
-        return out
+        return buckets
+
+    def emit(
+        self,
+        ctx: "ScanContext",
+        key: str,
+        bucket: dict,
+        compiled: None,
+    ) -> AnchorCandidate:
+        unique = tuple(sorted(set(bucket["paths"])))
+        count = bucket["count"]
+        # Confidence: more matched URLs → stronger signal, capped
+        # at 0.9 (router-instance present in the file). Mirrors the
+        # confidence model in ``go_router.py``.
+        confidence = min(0.6 + 0.05 * count, 0.9)
+        return AnchorCandidate(
+            name=key,
+            paths=unique,
+            source=self.name,
+            confidence_self=confidence,
+            rationale=(
+                f"fastify route slug '{key}' from "
+                f"{count} URL match(es) across "
+                f"{len(unique)} file(s)"
+            ),
+        )
 
 
 __all__ = ["FastifyRouteExtractor"]

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
+    is_audited_stack,
     is_noise,
     posix,
     read_text,
@@ -68,13 +69,11 @@ _APP_CALL_PATTERN = re.compile(
 def _is_python_library(ctx: "ScanContext") -> bool:
     """``True`` when the auditor labelled the repo python-library OR
     Stage 0 saw Python AND no app-entry markers are present."""
-    audited = (ctx.audited_stack or "").lower()
-    if audited == "python-library":
-        return True
-    secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
-    if "python-library" in secondaries:
+    if is_audited_stack(ctx, "python-library"):
         return True
 
+    audited = (ctx.audited_stack or "").lower()
+    secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
     is_python = (
         (ctx.stack or "").lower() in ("python", "fastapi", "django", "flask")
         or audited.startswith("python")

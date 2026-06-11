@@ -1,0 +1,27 @@
+# MVC controller filename conventions — consumed by the
+# MVCControllerExtractor (faultline/pipeline_v2/extractors/mvc.py).
+#
+# Schema:
+#   controller_patterns: ORDERED list — the first suffix that matches a
+#     file's basename wins (mirrors the historical tuple order in
+#     mvc.py's _CONTROLLER_PATTERNS).
+#       suffix: file matches if its basename ends with this
+#       strip:  removed from the basename to produce the slug source
+#
+# Convention is filename-based (not file-system routing) — see the
+# module docstring of mvc.py for the per-framework background.
+# Adding a new framework = add an entry here, no Python change.
+
+controller_patterns:
+  - suffix: "_controller.rb"      # Rails
+    strip: "_controller.rb"
+  - suffix: "Controller.php"      # Laravel
+    strip: "Controller.php"
+  - suffix: "_controller.ex"      # Phoenix
+    strip: "_controller.ex"
+  - suffix: "Controller.cs"       # ASP.NET
+    strip: "Controller.cs"
+  - suffix: "Controller.java"     # Spring (filename convention)
+    strip: "Controller.java"
+  - suffix: "Controller.kt"       # Spring (Kotlin)
+    strip: "Controller.kt"

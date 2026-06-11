@@ -14,10 +14,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from faultline.pipeline_v2.extractors._rails import (
-    is_rails_app,
-    load_rails_config,
-)
+from faultline.pipeline_v2.extractors._rails import RailsPatternExtractor
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
     posix,
@@ -44,32 +41,41 @@ def _strip_job_suffix(name: str) -> str:
     return name
 
 
-class RailsJobsExtractor:
+class _Compiled:
+    """Compiled class pattern + confidence for the ``jobs`` section."""
+
+    __slots__ = ("class_re", "confidence")
+
+    def __init__(self, config: dict) -> None:
+        cfg = config.get("jobs") or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+
+        self.class_re: re.Pattern[str] | None = None
+        class_re_raw = cfg.get("class_pattern")
+        if isinstance(class_re_raw, str):
+            try:
+                self.class_re = re.compile(class_re_raw)
+            except re.error as exc:
+                logger.warning("rails_jobs: bad class regex: %s", exc)
+
+        self.confidence = float(cfg.get("confidence") or 0.85)
+
+
+class RailsJobsExtractor(RailsPatternExtractor):
     """ActiveJob / Sidekiq class files → feature anchors."""
 
     name = "rails-jobs"
 
-    def __init__(self, config: dict | None = None) -> None:
-        self._config = config if config is not None else load_rails_config()
+    def compile_patterns(self, config: dict) -> _Compiled:
+        return _Compiled(config)
 
-    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        if not is_rails_app(ctx):
-            return []
-
-        cfg = self._config.get("jobs") or {}
-        if not isinstance(cfg, dict):
-            return []
-
-        class_re_raw = cfg.get("class_pattern")
-        if not isinstance(class_re_raw, str):
-            return []
-        try:
-            class_re = re.compile(class_re_raw)
-        except re.error as exc:
-            logger.warning("rails_jobs: bad class regex: %s", exc)
-            return []
-
-        confidence = float(cfg.get("confidence") or 0.85)
+    def collect(
+        self, ctx: "ScanContext", compiled: _Compiled,
+    ) -> dict[str, set[str]]:
+        class_re = compiled.class_re
+        if class_re is None:
+            return {}
 
         files = [
             posix(f) for f in ctx.tracked_files
@@ -94,25 +100,28 @@ class RailsJobsExtractor:
                 if not slug or is_noise(slug):
                     continue
                 buckets.setdefault(slug, set()).add(path)
+        return buckets
 
-        out: list[AnchorCandidate] = []
-        for slug, paths_set in buckets.items():
-            paths = tuple(sorted(paths_set))
-            if not paths:
-                continue
-            out.append(
-                AnchorCandidate(
-                    name=slug,
-                    paths=paths,
-                    source=self.name,
-                    confidence_self=confidence,
-                    rationale=(
-                        f"Rails background job {slug!r} "
-                        f"from {len(paths)} file(s)"
-                    ),
-                ),
-            )
-        return out
+    def emit(
+        self,
+        ctx: "ScanContext",
+        key: str,
+        bucket: set[str],
+        compiled: _Compiled,
+    ) -> AnchorCandidate | None:
+        paths = tuple(sorted(bucket))
+        if not paths:
+            return None
+        return AnchorCandidate(
+            name=key,
+            paths=paths,
+            source=self.name,
+            confidence_self=compiled.confidence,
+            rationale=(
+                f"Rails background job {key!r} "
+                f"from {len(paths)} file(s)"
+            ),
+        )
 
 
 __all__ = ["RailsJobsExtractor"]
