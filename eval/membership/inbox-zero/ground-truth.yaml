@@ -1,0 +1,429 @@
+version: 1
+repo: inbox-zero
+curated: '2026-06-11'
+method: 'hand-curated, code-grounded only: file-system routes, workspace package manifests,
+  domain-named server/util dirs, server actions. NO README/marketing prose. Test files, mocks
+  and prisma migrations excluded (engine strips tests by design).'
+features:
+- name: ai-assistant-rules
+  notes: "The AI personal-assistant automation engine: rules, conditions, rule chat UI, automation\
+    \ history. Evidence: assistant + automation route dirs (knowledge subdir excluded \u2014\
+    \ own feature), utils/rule + ai/rule + ai/choose-rule + ai/assistant domain dirs, rule\
+    \ server actions."
+  files:
+  - apps/web/app/(app)/[emailAccountId]/assistant/AIChatButton.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ActionAttachmentsField.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ActionSteps.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ActionSummaryCard.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/AddRuleDialog.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/AllRulesDisabledBanner.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/AssistantOnboarding.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/AssistantTabs.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/AvailableActionsPanel.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/BulkProcessActivityLog.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/BulkRunRules.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ConditionSteps.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ConditionSummaryCard.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/DateCell.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ExamplesList.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/FixWithChat.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/History.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/LearnedPatternExclusionHint.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/PersonaDialog.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/Process.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ProcessRules.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ResultDisplay.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleDialog.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleForm.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleLoader.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleNotFoundState.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleSectionCard.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleStep.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleSteps.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RuleTab.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/Rules.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RulesPromptNew.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RulesSelect.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/RulesTabNew.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/SetDateDropdown.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/TestCustomEmailForm.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/ThreadSkipHint.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/bulk-run-rules-reducer.ts
+  - apps/web/app/(app)/[emailAccountId]/assistant/constants.ts
+  - apps/web/app/(app)/[emailAccountId]/assistant/consts.ts
+  - apps/web/app/(app)/[emailAccountId]/assistant/draftReplyActions.ts
+  - apps/web/app/(app)/[emailAccountId]/assistant/examples.ts
+  - apps/web/app/(app)/[emailAccountId]/assistant/group/LearnedPatterns.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/group/ViewLearnedPatterns.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/rule-fetch-error.ts
+  - apps/web/app/(app)/[emailAccountId]/assistant/rule/[ruleId]/error.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/rule/[ruleId]/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/rule/create/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/AboutSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/DigestSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/DraftConfidenceSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/DraftKnowledgeSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/DraftReplies.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/FollowUpRemindersSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/HiddenAiDraftLinksSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/LearnedPatternsSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/MultiRuleSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/PersonalSignatureSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/ProactiveUpdatesSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/ReferralSignatureSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/RuleImportExportSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/SensitiveDataPolicySetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/SettingsTab.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/SyncToExtensionSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/settings/WritingStyleSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/automation/page.tsx
+  - apps/web/utils/actions/rule.ts
+  - apps/web/utils/actions/rule.validation.ts
+  - apps/web/utils/ai/assistant/chat-calendar-tools.ts
+  - apps/web/utils/ai/assistant/chat-folder-tools.ts
+  - apps/web/utils/ai/assistant/chat-inbox-tools.ts
+  - apps/web/utils/ai/assistant/chat-label-tools.ts
+  - apps/web/utils/ai/assistant/chat-memory-policy.ts
+  - apps/web/utils/ai/assistant/chat-memory-tools.ts
+  - apps/web/utils/ai/assistant/chat-provider-google.ts
+  - apps/web/utils/ai/assistant/chat-provider-microsoft.ts
+  - apps/web/utils/ai/assistant/chat-provider-shared.ts
+  - apps/web/utils/ai/assistant/chat-response-guard.ts
+  - apps/web/utils/ai/assistant/chat-rule-state.ts
+  - apps/web/utils/ai/assistant/chat-seen-rules-revision.ts
+  - apps/web/utils/ai/assistant/chat.ts
+  - apps/web/utils/ai/assistant/compact.ts
+  - apps/web/utils/ai/assistant/get-inbox-stats-for-chat-context.ts
+  - apps/web/utils/ai/assistant/get-recent-chat-memories.ts
+  - apps/web/utils/ai/assistant/inline-email-actions.ts
+  - apps/web/utils/ai/assistant/manage-inbox-actions.ts
+  - apps/web/utils/ai/assistant/tool-error-visibility.ts
+  - apps/web/utils/ai/assistant/tools/rules/add-to-knowledge-base-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/create-rule-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/get-learned-patterns-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/get-rule-execution-for-message-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/get-user-rules-and-settings-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/shared.ts
+  - apps/web/utils/ai/assistant/tools/rules/update-learned-patterns-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/update-personal-instructions-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/update-rule-actions-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/update-rule-conditions-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/update-rule-state-tool.ts
+  - apps/web/utils/ai/assistant/tools/rules/update-rule-tool.ts
+  - apps/web/utils/ai/assistant/tools/settings/get-assistant-capabilities-tool.ts
+  - apps/web/utils/ai/assistant/tools/settings/shared.ts
+  - apps/web/utils/ai/assistant/tools/settings/update-assistant-settings-tool.ts
+  - apps/web/utils/ai/choose-rule/NOTES.md
+  - apps/web/utils/ai/choose-rule/ai-choose-args.ts
+  - apps/web/utils/ai/choose-rule/ai-choose-rule.ts
+  - apps/web/utils/ai/choose-rule/ai-detect-recurring-pattern.ts
+  - apps/web/utils/ai/choose-rule/bulk-process-emails.ts
+  - apps/web/utils/ai/choose-rule/choose-args.ts
+  - apps/web/utils/ai/choose-rule/draft-management.ts
+  - apps/web/utils/ai/choose-rule/execute.ts
+  - apps/web/utils/ai/choose-rule/match-rules.ts
+  - apps/web/utils/ai/choose-rule/run-rules.ts
+  - apps/web/utils/ai/choose-rule/selection-metadata-summary.ts
+  - apps/web/utils/ai/choose-rule/types.ts
+  - apps/web/utils/ai/rule/action-availability.ts
+  - apps/web/utils/ai/rule/create-rule-schema.ts
+  - apps/web/utils/ai/rule/prompt-to-rules.ts
+  - apps/web/utils/ai/rule/rule-condition-descriptions.ts
+  - apps/web/utils/condition.ts
+  - apps/web/utils/rule/check-sender-rule-history.ts
+  - apps/web/utils/rule/classification-feedback.ts
+  - apps/web/utils/rule/consts.ts
+  - apps/web/utils/rule/email-from-pattern.ts
+  - apps/web/utils/rule/learned-patterns.ts
+  - apps/web/utils/rule/mapRulesToExtensionTabs.ts
+  - apps/web/utils/rule/recipient-validation.ts
+  - apps/web/utils/rule/record-label-removal-learning.ts
+  - apps/web/utils/rule/rule-history.ts
+  - apps/web/utils/rule/rule-to-text.ts
+  - apps/web/utils/rule/rule.ts
+  - apps/web/utils/rule/sender-scope-overlap.ts
+  - apps/web/utils/rule/sort.ts
+  - apps/web/utils/rule/static-from-risk.ts
+  - apps/web/utils/rule/types.ts
+- name: billing-premium
+  notes: 'Premium plans/seats via Stripe + Lemon Squeezy. Evidence: premium route dir, stripe
+    + lemon-squeezy webhook API routes, ee/billing implementation, utils/premium domain dir,
+    premium server actions.'
+  files:
+  - apps/web/app/(app)/premium/AppPricingLazy.tsx
+  - apps/web/app/(app)/premium/ManageSubscription.tsx
+  - apps/web/app/(app)/premium/PremiumModal.tsx
+  - apps/web/app/(app)/premium/Pricing.tsx
+  - apps/web/app/(app)/premium/PricingFrequencyToggle.tsx
+  - apps/web/app/(app)/premium/PricingLazy.tsx
+  - apps/web/app/(app)/premium/config.ts
+  - apps/web/app/(app)/premium/page.tsx
+  - apps/web/app/api/lemon-squeezy/webhook/route.ts
+  - apps/web/app/api/lemon-squeezy/webhook/types.ts
+  - apps/web/app/api/stripe/success/route.ts
+  - apps/web/app/api/stripe/webhook/cancellation-initiated.ts
+  - apps/web/app/api/stripe/webhook/route.ts
+  - apps/web/app/api/stripe/webhook/trial-conversion.ts
+  - apps/web/ee/billing/apple/index.ts
+  - apps/web/ee/billing/apple/root-certificates.ts
+  - apps/web/ee/billing/lemon/index.ts
+  - apps/web/ee/billing/stripe/ai-overage.ts
+  - apps/web/ee/billing/stripe/index.ts
+  - apps/web/ee/billing/stripe/loops-events.ts
+  - apps/web/ee/billing/stripe/payments.ts
+  - apps/web/ee/billing/stripe/posthog-events.ts
+  - apps/web/ee/billing/stripe/refunds.ts
+  - apps/web/ee/billing/stripe/sync-stripe.ts
+  - apps/web/utils/actions/premium.ts
+  - apps/web/utils/actions/premium.validation.ts
+  - apps/web/utils/premium/create-premium.ts
+  - apps/web/utils/premium/index.ts
+  - apps/web/utils/premium/limits.ts
+  - apps/web/utils/premium/seats.ts
+  - apps/web/utils/premium/server.ts
+- name: bulk-unsubscribe
+  notes: 'Bulk newsletter unsubscriber. Evidence: bulk-unsubscribe route dir, one-click unsubscribe
+    API route, unsubscriber server actions, unsubscribe link parsing + sender helpers.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/ArchiveProgress.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/BulkActions.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/BulkUnsubscribeDesktop.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/BulkUnsubscribeSection.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/BulkUnsubscribeSkeleton.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/ResubscribeDialog.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/SearchBar.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/ShortcutTooltip.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/common.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/hooks.ts
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/bulk-unsubscribe/types.ts
+  - apps/web/app/api/unsubscribe/route.ts
+  - apps/web/utils/actions/unsubscriber.ts
+  - apps/web/utils/actions/unsubscriber.validation.ts
+  - apps/web/utils/parse/unsubscribe.ts
+  - apps/web/utils/senders/unsubscribe.ts
+  - apps/web/utils/unsubscribe.ts
+- name: cold-email-blocker
+  notes: 'Cold-email detection and blocking. Evidence: cold-email-blocker route dir, utils/cold-email
+    domain dir, cold-email server actions.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailContent.tsx
+  - apps/web/app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailList.tsx
+  - apps/web/app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailRejected.tsx
+  - apps/web/app/(app)/[emailAccountId]/cold-email-blocker/ColdEmailTest.tsx
+  - apps/web/app/(app)/[emailAccountId]/cold-email-blocker/TestRules.tsx
+  - apps/web/app/(app)/[emailAccountId]/cold-email-blocker/page.tsx
+  - apps/web/utils/actions/cold-email.ts
+  - apps/web/utils/actions/cold-email.validation.ts
+  - apps/web/utils/cold-email/cold-email-blocker-enabled.ts
+  - apps/web/utils/cold-email/cold-email-rule.ts
+  - apps/web/utils/cold-email/is-cold-email.ts
+  - apps/web/utils/cold-email/prompt.ts
+  - apps/web/utils/cold-email/send-notification.ts
+- name: email-analytics
+  notes: 'Email stats dashboards. Evidence: stats route dir, api/user/stats handlers, Tinybird
+    workspace package (analytics pipes), usage tracking helpers.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/stats/ActionBar.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/BarChart.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/BarListCard.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/DetailedStatsFilter.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/EmailActionsAnalytics.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/EmailAnalytics.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/EmailsToIncludeFilter.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/LoadProgress.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/LoadStatsButton.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/MainStatChart.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/NewsletterModal.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/ResponseTimeAnalytics.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/RuleStatsChart.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/Stats.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/StatsOnboarding.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/StatsSummary.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/stats/params.ts
+  - apps/web/app/(app)/[emailAccountId]/stats/useExpanded.tsx
+  - apps/web/app/api/user/stats/by-period/controller.ts
+  - apps/web/app/api/user/stats/by-period/route.ts
+  - apps/web/app/api/user/stats/by-period/validation.ts
+  - apps/web/app/api/user/stats/email-actions/route.ts
+  - apps/web/app/api/user/stats/helpers.ts
+  - apps/web/app/api/user/stats/newsletters/helpers.ts
+  - apps/web/app/api/user/stats/newsletters/route.ts
+  - apps/web/app/api/user/stats/newsletters/summary/route.ts
+  - apps/web/app/api/user/stats/recipients/route.ts
+  - apps/web/app/api/user/stats/response-time/calculate.ts
+  - apps/web/app/api/user/stats/response-time/controller.ts
+  - apps/web/app/api/user/stats/response-time/route.ts
+  - apps/web/app/api/user/stats/response-time/validation.ts
+  - apps/web/app/api/user/stats/rule-stats/route.ts
+  - apps/web/app/api/user/stats/sender-emails/route.ts
+  - apps/web/app/api/user/stats/senders/route.ts
+  - apps/web/utils/stats.ts
+  - apps/web/utils/usage.ts
+  - packages/tinybird/README.md
+  - packages/tinybird/datasources/email.datasource
+  - packages/tinybird/datasources/email_action.datasource
+  - packages/tinybird/package.json
+  - packages/tinybird/pipes/get_email_actions_by_period.pipe
+  - packages/tinybird/src/client.ts
+  - packages/tinybird/src/delete.ts
+  - packages/tinybird/src/index.ts
+  - packages/tinybird/src/publish.ts
+  - packages/tinybird/src/query.ts
+  - packages/tinybird/tsconfig.json
+- name: email-cleaner
+  notes: 'AI inbox cleaner (bulk archive/mark-read of old mail). Evidence: clean route dir,
+    api/clean handlers, utils/ai/clean prompts, clean server actions, cleaner feature flag.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/clean/ActionSelectionStep.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/CleanHistory.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/CleanInstructionsStep.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/CleanRun.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/CleanStats.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/ConfirmationStep.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/EmailFirehose.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/EmailFirehoseItem.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/IntroStep.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/PreviewBatch.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/TimeRangeStep.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/consts.ts
+  - apps/web/app/(app)/[emailAccountId]/clean/helpers.ts
+  - apps/web/app/(app)/[emailAccountId]/clean/history/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/loading.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/onboarding/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/run/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/clean/types.ts
+  - apps/web/app/(app)/[emailAccountId]/clean/useEmailStream.ts
+  - apps/web/app/(app)/[emailAccountId]/clean/useSkipSettings.ts
+  - apps/web/app/(app)/[emailAccountId]/clean/useStep.tsx
+  - apps/web/app/api/clean/gmail/route.ts
+  - apps/web/app/api/clean/history/route.ts
+  - apps/web/app/api/clean/route.ts
+  - apps/web/utils/actions/clean.ts
+  - apps/web/utils/actions/clean.validation.ts
+  - apps/web/utils/ai/clean/ai-clean.ts
+  - apps/web/utils/cleaner-feature.ts
+- name: email-digest
+  notes: 'Scheduled digest emails summarising handled mail. Evidence: api/ai/digest + digest-preview
+    + resend/digest + user/digest-* routes, utils/digest domain dir, ai digest summariser.'
+  files:
+  - apps/web/app/api/ai/digest/queue/route.ts
+  - apps/web/app/api/ai/digest/route.ts
+  - apps/web/app/api/ai/digest/validation.ts
+  - apps/web/app/api/digest-preview/route.ts
+  - apps/web/app/api/digest-preview/validation.ts
+  - apps/web/app/api/resend/digest/all/route.ts
+  - apps/web/app/api/resend/digest/queue/route.ts
+  - apps/web/app/api/resend/digest/route.ts
+  - apps/web/app/api/resend/digest/validation.ts
+  - apps/web/app/api/user/digest-schedule/route.ts
+  - apps/web/app/api/user/digest-settings/route.ts
+  - apps/web/utils/ai/digest/summarize-email-for-digest.ts
+  - apps/web/utils/digest/digest-enabled.ts
+  - apps/web/utils/digest/format.ts
+  - apps/web/utils/digest/index.ts
+  - apps/web/utils/digest/schedule.ts
+  - apps/web/utils/digest/send-digest.ts
+  - apps/web/utils/digest/summary-limit.ts
+- name: knowledge-base
+  notes: 'User knowledge base feeding AI drafts. Evidence: assistant/knowledge UI components,
+    api/knowledge route, ai/knowledge extraction prompts, knowledge server actions.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/assistant/knowledge/KnowledgeBase.tsx
+  - apps/web/app/(app)/[emailAccountId]/assistant/knowledge/KnowledgeForm.tsx
+  - apps/web/app/api/knowledge/route.ts
+  - apps/web/utils/actions/knowledge.ts
+  - apps/web/utils/actions/knowledge.validation.ts
+  - apps/web/utils/ai/knowledge/extract-from-email-history.ts
+  - apps/web/utils/ai/knowledge/extract.ts
+  - apps/web/utils/ai/knowledge/persona.ts
+  - apps/web/utils/ai/knowledge/writing-style.ts
+- name: meeting-briefs
+  notes: 'AI meeting briefs from calendar + email context. Evidence: briefs + onboarding-brief
+    route dirs, api/meeting-briefs + api/user/meeting-briefs routes, ai/meeting-briefs prompts,
+    meeting-briefs server actions.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/briefs/DeliveryChannelsSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/briefs/IntegrationsSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/briefs/Onboarding.tsx
+  - apps/web/app/(app)/[emailAccountId]/briefs/TimeDurationSetting.tsx
+  - apps/web/app/(app)/[emailAccountId]/briefs/UpcomingMeetings.tsx
+  - apps/web/app/(app)/[emailAccountId]/briefs/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/onboarding-brief/MeetingBriefsOnboardingContent.tsx
+  - apps/web/app/(app)/[emailAccountId]/onboarding-brief/StepConnectCalendar.tsx
+  - apps/web/app/(app)/[emailAccountId]/onboarding-brief/StepReady.tsx
+  - apps/web/app/(app)/[emailAccountId]/onboarding-brief/StepSendTestBrief.tsx
+  - apps/web/app/(app)/[emailAccountId]/onboarding-brief/page.tsx
+  - apps/web/app/api/meeting-briefs/route.ts
+  - apps/web/app/api/user/meeting-briefs/history/route.ts
+  - apps/web/app/api/user/meeting-briefs/route.ts
+  - apps/web/utils/actions/meeting-briefs.ts
+  - apps/web/utils/actions/meeting-briefs.validation.ts
+  - apps/web/utils/ai/meeting-briefs/generate-briefing.ts
+- name: reply-zero
+  notes: 'Reply tracker (to-reply / awaiting labels, AI drafts). Evidence: reply-zero route
+    dir, utils/reply-tracker domain dir, api/reply-tracker route, ai/reply prompts, reply-tracking
+    server action.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/AwaitingReply.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/EnableReplyTracker.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/NeedsAction.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/NeedsReply.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/ReplyTrackerEmails.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/Resolved.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/TimeRangeFilter.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/date-filter.ts
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/fetch-trackers.ts
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/onboarding/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/reply-zero/page.tsx
+  - apps/web/app/api/reply-tracker/disable-unused-auto-draft/disable-unused-auto-drafts.ts
+  - apps/web/app/api/reply-tracker/disable-unused-auto-draft/route.ts
+  - apps/web/utils/actions/reply-tracking.ts
+  - apps/web/utils/ai/reply/determine-thread-status.ts
+  - apps/web/utils/ai/reply/draft-attribution.ts
+  - apps/web/utils/ai/reply/draft-confidence.ts
+  - apps/web/utils/ai/reply/draft-context-metadata.ts
+  - apps/web/utils/ai/reply/draft-follow-up.ts
+  - apps/web/utils/ai/reply/draft-reply.ts
+  - apps/web/utils/ai/reply/extract-reply-memories.ts
+  - apps/web/utils/ai/reply/generate-nudge.ts
+  - apps/web/utils/ai/reply/reply-context-collector.ts
+  - apps/web/utils/ai/reply/reply-memory.ts
+  - apps/web/utils/ai/reply/summarize-learned-writing-style.ts
+  - apps/web/utils/reply-tracker/check-sender-reply-history.ts
+  - apps/web/utils/reply-tracker/conversation-status-config.ts
+  - apps/web/utils/reply-tracker/draft-tracking.ts
+  - apps/web/utils/reply-tracker/error-logging.ts
+  - apps/web/utils/reply-tracker/generate-draft.ts
+  - apps/web/utils/reply-tracker/handle-conversation-status.ts
+  - apps/web/utils/reply-tracker/handle-outbound.ts
+  - apps/web/utils/reply-tracker/label-helpers.ts
+  - apps/web/utils/reply-tracker/outbound.ts
+  - apps/web/utils/reply-tracker/sender-reply-examples.ts
+  - apps/web/utils/reply-tracker/thread-status-context.ts
+- name: smart-categories
+  notes: 'AI sender categorisation. Evidence: smart-categories route dir, utils/categorize
+    domain dir, ai/categorize-sender prompts, categorize server actions.'
+  files:
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/CategorizeProgress.tsx
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/CategorizeWithAiButton.tsx
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/CreateCategoryButton.tsx
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/Uncategorized.tsx
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/page.tsx
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/setup/SetUpCategories.tsx
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/setup/SmartCategoriesOnboarding.tsx
+  - apps/web/app/(app)/[emailAccountId]/smart-categories/setup/page.tsx
+  - apps/web/utils/actions/categorize.ts
+  - apps/web/utils/actions/categorize.validation.ts
+  - apps/web/utils/ai/categorize-sender/ai-categorize-senders.ts
+  - apps/web/utils/ai/categorize-sender/ai-categorize-single-sender.ts
+  - apps/web/utils/ai/categorize-sender/format-categories.ts
+  - apps/web/utils/categories.ts
+  - apps/web/utils/categorize/senders/archive-category.ts
+  - apps/web/utils/categorize/senders/categorize.ts
+  - apps/web/utils/categorize/senders/get-category-overview.ts
+  - apps/web/utils/categorize/senders/start-bulk-categorization.ts
+  - apps/web/utils/category.server.ts
