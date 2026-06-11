@@ -64,6 +64,7 @@ from faultline.analyzer.marketing_fetcher import (
     rank_sitemap_urls_by_product_likelihood,
 )
 from faultline.llm.cost import CostTracker, deterministic_params
+from faultline.pipeline_v2.llm_health import LlmHealth
 
 if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
@@ -495,8 +496,15 @@ def _call_haiku(
     system: str,
     user: str,
     max_tokens: int,
+    llm_health: LlmHealth | None = None,
 ) -> tuple[str, int, int]:
-    """One Haiku call. Mirrors :func:`stage_4_residual._call_haiku`."""
+    """One Haiku call. Mirrors :func:`stage_4_residual._call_haiku`.
+
+    Consults the shared :class:`LlmHealth`: after the first auth-class
+    failure anywhere in the scan the call is skipped (dead key).
+    """
+    if llm_health is not None and not llm_health.should_call():
+        return "", 0, 0
     try:
         msg = client.messages.create(
             model=gateway_model(model),
@@ -506,8 +514,18 @@ def _call_haiku(
             **deterministic_params(model),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("stage_8: Haiku call failed: %s", exc)
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_8_marketing_clusterer",
+        ):
+            logger.error(
+                "stage_8: LLM authentication failed — skipping all "
+                "remaining LLM calls this scan: %s", exc,
+            )
+        else:
+            logger.warning("stage_8: Haiku call failed: %s", exc)
         return "", 0, 0
+    if llm_health is not None:
+        llm_health.record_success()
     try:
         parts = [getattr(b, "text", "") for b in msg.content]
         text = "\n".join(p for p in parts if p)
@@ -525,6 +543,7 @@ def cluster_via_haiku(
     client: Any,
     model: str,
     cost_tracker: CostTracker | None = None,
+    llm_health: LlmHealth | None = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """Single Haiku call: map each dev feature to a taxonomy label.
 
@@ -543,6 +562,7 @@ def cluster_via_haiku(
         system=_SYSTEM_PROMPT,
         user=user,
         max_tokens=_HAIKU_MAX_TOKENS,
+        llm_health=llm_health,
     )
     cost = 0.0
     if cost_tracker is not None and (in_tokens or out_tokens):
@@ -671,6 +691,7 @@ def run_stage_8(
     client: Any | None = None,
     model: str = "claude-haiku-4-5-20251001",
     cost_tracker: CostTracker | None = None,
+    llm_health: LlmHealth | None = None,
 ) -> Stage8Result:
     """Cascade entry point for Sprint E1.
 
@@ -744,6 +765,7 @@ def run_stage_8(
         mapping, haiku_telemetry = cluster_via_haiku(
             developer_features, taxonomy,
             client=client, model=model, cost_tracker=cost_tracker,
+            llm_health=llm_health,
         )
         if mapping:
             product_features = _emit_product_features(

@@ -59,6 +59,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Callable
 
 from faultline.llm.cost import CostTracker, deterministic_params
+from faultline.pipeline_v2.llm_health import LlmHealth
 
 if TYPE_CHECKING:
     from faultline.models.types import Flow, UserFlow
@@ -298,8 +299,15 @@ def _call_haiku(
     system: str,
     user: str,
     max_tokens: int,
+    llm_health: LlmHealth | None = None,
 ) -> tuple[str, int, int]:
-    """One Haiku call. Returns ``(text, in_tokens, out_tokens)``."""
+    """One Haiku call. Returns ``(text, in_tokens, out_tokens)``.
+
+    Consults the shared :class:`LlmHealth`: after the first auth-class
+    failure anywhere in the scan the call is skipped (dead key).
+    """
+    if llm_health is not None and not llm_health.should_call():
+        return "", 0, 0
     try:
         msg = client.messages.create(
             model=gateway_model(model),
@@ -309,8 +317,18 @@ def _call_haiku(
             **deterministic_params(model),
         )
     except Exception as exc:  # noqa: BLE001 — non-fatal at scan-time
-        logger.warning("uf_refiner: Haiku call failed: %s", exc)
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_6_7b_uf_refiner",
+        ):
+            logger.error(
+                "uf_refiner: LLM authentication failed — skipping all "
+                "remaining LLM calls this scan: %s", exc,
+            )
+        else:
+            logger.warning("uf_refiner: Haiku call failed: %s", exc)
         return "", 0, 0
+    if llm_health is not None:
+        llm_health.record_success()
     try:
         text_parts = []
         for block in msg.content:
@@ -422,6 +440,7 @@ def refine_user_flows(
     cost_tracker: CostTracker | None = None,
     log: "StageLogger | None" = None,
     domain_allowlist: set[str | None] | None = None,
+    llm_health: LlmHealth | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Refine ``user_flows`` in place via one Haiku call per domain.
@@ -519,6 +538,7 @@ def refine_user_flows(
             system=_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=DEFAULT_MAX_TOKENS,
+            llm_health=llm_health,
         )
 
         call_cost = 0.0

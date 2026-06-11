@@ -34,6 +34,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
+from faultline.pipeline_v2.llm_health import LlmHealth
 
 if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext
@@ -262,6 +263,7 @@ _HAIKU_MODEL_ID = "claude-haiku-4-5-20251001"
 def _llm_pick_name(
     candidate_a: AnchorCandidate,
     candidate_b: AnchorCandidate,
+    llm_health: LlmHealth | None = None,
 ) -> str | None:
     """Ask Haiku which of two ambiguous candidate names to keep.
 
@@ -270,7 +272,11 @@ def _llm_pick_name(
 
     This is the only LLM call Stage 2 ever makes, and it only fires
     when ``llm_reconcile=True`` AND the slug Jaccard sits in 0.3..0.6.
+    Consults the shared :class:`LlmHealth`: after the first auth-class
+    failure anywhere in the scan the call is skipped (dead key).
     """
+    if llm_health is not None and not llm_health.should_call():
+        return None
     try:
         # Local import to keep ``anthropic`` from being a hard dep of
         # Stage 2 callers that don't enable the 2nd-opinion path.
@@ -301,11 +307,21 @@ def _llm_pick_name(
         # validate it kebab-cases cleanly.
         first = text.splitlines()[0].strip().split()[0] if text else ""
         first = first.strip("`\"' .").lower()
+        if llm_health is not None:
+            llm_health.record_success()
         if first in {candidate_a.name, candidate_b.name}:
             return first
         return None
     except Exception as exc:  # noqa: BLE001 — LLM failure is non-fatal
-        logger.warning("LLM 2nd-opinion failed: %s", exc)
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_2_reconcile",
+        ):
+            logger.error(
+                "stage_2_reconcile: LLM authentication failed — skipping "
+                "all remaining LLM calls this scan: %s", exc,
+            )
+        else:
+            logger.warning("LLM 2nd-opinion failed: %s", exc)
         return None
 
 
@@ -529,6 +545,7 @@ def stage_2_reconcile(
     *,
     llm_reconcile: bool = False,
     jaccard_threshold: float = 0.7,
+    llm_health: LlmHealth | None = None,
     _llm_call: Callable[[AnchorCandidate, AnchorCandidate], str | None] = _llm_pick_name,
 ) -> Stage2Result:
     """Reconcile cross-extractor anchor candidates.
@@ -551,6 +568,25 @@ def stage_2_reconcile(
         :class:`Stage2Result` with the merged features and the
         unattributed file list.
     """
+    # Bind the shared LLM-health state into the call helper (the
+    # injectable ``_llm_call`` keeps its 2-arg test contract). Once any
+    # stage has hit an auth-class failure the 2nd-opinion call is
+    # skipped — the priority rule resolves the tie deterministically.
+    if llm_health is not None:
+        _base_llm_call = _llm_call
+        _health = llm_health
+
+        def _guarded_llm_call(
+            a: AnchorCandidate, b: AnchorCandidate,
+        ) -> str | None:
+            if not _health.should_call():
+                return None
+            if _base_llm_call is _llm_pick_name:
+                return _llm_pick_name(a, b, llm_health=_health)
+            return _base_llm_call(a, b)
+
+        _llm_call = _guarded_llm_call
+
     # Drop the sentinel ``_errors`` key before processing.
     flat: list[AnchorCandidate] = []
     for source, cands in candidates_by_source.items():
