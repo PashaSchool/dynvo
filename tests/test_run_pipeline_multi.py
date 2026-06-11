@@ -331,3 +331,31 @@ def test_multi_progress_hooks_fire_in_order(
         ("start", "apps/web"), ("end", "apps/web"),
         ("start", "apps/worker"), ("end", "apps/worker"),
     ]
+
+
+def test_multi_forwards_max_cost_and_feature_history(
+    monorepo: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--max-cost / --feature-history reach every per-subpath run.
+
+    Regression guard: run_pipeline_multi has an explicit kwarg list (no
+    **kwargs), so new run_pipeline_v2 knobs are silently dropped in
+    multi mode unless forwarded here.
+    """
+    import faultline.pipeline_v2.multi as multi_mod
+
+    captured: list[dict] = []
+
+    def _fake_run(repo_path, **kw):
+        captured.append(kw)
+        return {"path": "x.json", "run_id": "r", "warnings": []}
+
+    monkeypatch.setattr(multi_mod, "run_pipeline_v2", _fake_run)
+    multi_mod.run_pipeline_multi(
+        monorepo, ["apps/web", "apps/api"],
+        max_cost=2.5, feature_history=False,
+    )
+    assert len(captured) == 2
+    for kw in captured:
+        assert kw["max_cost"] == 2.5
+        assert kw["feature_history"] is False

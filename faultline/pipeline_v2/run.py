@@ -190,11 +190,17 @@ def run_pipeline_v2(
     subpath: str | None = None,
     git_snapshot: "GitSnapshot | None" = None,
     feature_history: bool = True,
+    max_cost: float | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
     Args:
         repo_path: scan target.
+        max_cost: hard USD ceiling for the scan's total LLM spend,
+            shared across every stage. When the ceiling is reached,
+            LLM-bearing stages degrade gracefully (skip remaining
+            calls with a warning) instead of aborting the scan.
+            ``None`` (default) disables enforcement.
         model: Haiku model id or alias (``"haiku"`` / ``"sonnet"`` /
             fully-qualified). Used for both Stage 3 and Stage 4.
         days: history window for git intake (Stage 0).
@@ -240,7 +246,7 @@ def run_pipeline_v2(
 
     # One shared CostTracker across Stage 3 + Stage 4 so the reported
     # cost is the FULL LLM bill for this scan.
-    tracker = CostTracker(max_cost=None)
+    tracker = CostTracker(max_cost=max_cost)
 
     # ── Cache backend — constructed once, threaded via ctx ──────────
     # Env ``FAULTLINES_CACHE_BACKEND`` selects fs (default) or a lazily
