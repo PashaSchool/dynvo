@@ -224,3 +224,22 @@ def test_orchestrator_adds_third_party_entry_point_extractor(
     names = {ex.name for ex in mod._discover_extractors()}
     assert "custom-stub" in names          # third-party added
     assert "route" in names                # built-ins still present
+
+
+def test_orchestrator_results_follow_registry_order(tmp_path: Path) -> None:
+    """``results`` keys must follow registry order, not completion order.
+
+    Regression test for the nondeterministic ``developer_features[]``
+    ordering: collecting via ``as_completed`` built the results dict in
+    thread-completion order, so two identical runs could emit features
+    in different array positions. The slowest extractor is registered
+    FIRST — under completion-order collection it would reliably land
+    LAST, flipping the dict order.
+    """
+    extractors = [
+        _SleepyExtractor("slowest", 0.30),
+        _SleepyExtractor("middle", 0.15),
+        _SleepyExtractor("fastest", 0.0),
+    ]
+    results = stage_1_extractors(_ctx(repo_path=tmp_path), extractors)
+    assert list(results.keys()) == ["slowest", "middle", "fastest"]
