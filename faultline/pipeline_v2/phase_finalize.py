@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from faultline.llm.cost import CostTracker
+from faultline.pipeline_v2.llm_health import LlmHealth, stamp_llm_degraded
 from faultline.pipeline_v2.incremental_wiring import (
     apply_incremental_bookkeeping,
     plan_uf_domain_allowlist,
@@ -54,6 +55,7 @@ def run_finalize_phase(
     out_path: Path | None,
     days: int,
     feature_history: bool = True,
+    llm_health: LlmHealth | None = None,
 ) -> Path:
     """Run Stage 6.8 → 3.5 → 6.9 → 6.7/6.7c/6.7b → 6.95 → 7 and write output.
 
@@ -272,6 +274,7 @@ def run_finalize_phase(
             bipartite.flows,
             cost_tracker=tracker,
             log=log6_7c,
+            llm_health=llm_health,
         )
         write_stage_artifact(
             ctx.repo_path,
@@ -312,6 +315,7 @@ def run_finalize_phase(
             cost_tracker=tracker,
             log=log6_7b,
             domain_allowlist=uf_domain_allowlist,
+            llm_health=llm_health,
         )
         write_stage_artifact(
             ctx.repo_path,
@@ -368,6 +372,15 @@ def run_finalize_phase(
             run_dir=run_dir,
         )
     scan_meta["stage_6_95"] = dict(history_telemetry)
+
+    # ── LLM-health stamp (fail LOUD on auth-dead scans) ────────────
+    # Must run AFTER the last LLM-bearing stage (6.7b above) and BEFORE
+    # Stage 7 writes the artifact, so ``scan_meta.llm_degraded`` + the
+    # warning land in the persisted JSON. Additive — absent on healthy
+    # scans. See ``llm_health`` module docstring for the
+    # degrade-visibly-never-abort decision.
+    if llm_health is not None:
+        stamp_llm_degraded(scan_meta, llm_health)
 
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import

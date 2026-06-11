@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from faultline.pipeline_v2.git_snapshot import GitSnapshot
+    from faultline.pipeline_v2.llm_health import LlmHealth
 
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.run_logger import StageLogger
@@ -50,6 +51,7 @@ def run_intake_phase(
     tracker: CostTracker,
     cache_backend: Any,
     git_snapshot: "GitSnapshot | None" = None,
+    llm_health: "LlmHealth | None" = None,
 ) -> IntakeResult:
     """Run Stage 0 (intake) + 0.5 (stack auditor) + 0.6 (shape classifier).
 
@@ -116,6 +118,7 @@ def run_intake_phase(
             model=model_id,
             cost_tracker=tracker,
             log=log_aud,
+            llm_health=llm_health,
         )
         if verdict.confidence >= MIN_CONFIDENCE_TO_APPLY:
             ctx = ctx.with_audited_stack(

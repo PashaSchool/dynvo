@@ -19,6 +19,7 @@ from typing import Any
 
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.incremental_wiring import reuse_base_layer2
+from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stage_7_output import write_stage_artifact
 from faultline.pipeline_v2.stage_8_5_member_backfill import (
@@ -68,6 +69,7 @@ def run_layer2_phase(
     run_dir: Path,
     incremental_layer2_noop: bool,
     incremental_base_scan: dict[str, Any] | None,
+    llm_health: LlmHealth | None = None,
 ) -> Layer2Result:
     """Run Stage 8 → rollup → 8.5 → 8.6 over the enriched feature set.
 
@@ -123,6 +125,7 @@ def run_layer2_phase(
                 client=s8_client,
                 model=_STAGE_8_ANALYST_MODEL,
                 cost_tracker=tracker,
+                llm_health=llm_health,
             )
         else:
             log8.info(f"mode=haiku-clusterer model={model_id}")
@@ -136,6 +139,7 @@ def run_layer2_phase(
                 client=s8_client,
                 model=model_id,
                 cost_tracker=tracker,
+                llm_health=llm_health,
             )
         # Apply Stage 8 overrides — replace product_features and the
         # legacy single-valued ``product_feature_id`` stamp.

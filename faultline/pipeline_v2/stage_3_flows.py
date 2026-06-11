@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 from faultline.llm.model_gateway import resolve_model as gateway_model
+from faultline.pipeline_v2.llm_health import LlmHealth
 
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -408,11 +409,17 @@ def _call_haiku(
     system: str,
     user: str,
     max_tokens: int,
+    llm_health: LlmHealth | None = None,
 ) -> tuple[str, int, int]:
     """Single Haiku call. Returns ``(text, in_tokens, out_tokens)``.
 
     On failure returns ``("", 0, 0)`` (caller decides what to do).
+    Consults the shared :class:`LlmHealth`: once any stage has hit an
+    auth-class error the call is skipped entirely (dead key — no point
+    firing hundreds more doomed requests).
     """
+    if llm_health is not None and not llm_health.should_call():
+        return "", 0, 0
     try:
         msg = client.messages.create(
             model=gateway_model(model),
@@ -422,8 +429,18 @@ def _call_haiku(
             **deterministic_params(model),
         )
     except Exception as exc:  # noqa: BLE001 — non-fatal, swallow
-        logger.warning("stage_3_flows: Haiku call failed: %s", exc)
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_3_flows",
+        ):
+            logger.error(
+                "stage_3_flows: LLM authentication failed — skipping all "
+                "remaining LLM calls this scan: %s", exc,
+            )
+        else:
+            logger.warning("stage_3_flows: Haiku call failed: %s", exc)
         return "", 0, 0
+    if llm_health is not None:
+        llm_health.record_success()
 
     # The Anthropic SDK returns ``content`` as a list of blocks.
     try:
@@ -453,6 +470,7 @@ def stage_3_flows(
     timeout: float | None = None,
     cost_tracker: CostTracker | None = None,
     client: Any | None = None,
+    llm_health: LlmHealth | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> Stage3Result:
     """Detect user-action flows per developer feature, in parallel.
@@ -553,6 +571,7 @@ def stage_3_flows(
             system=_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=DEFAULT_MAX_TOKENS,
+            llm_health=llm_health,
         )
         with llm_call_lock:
             llm_calls += 1

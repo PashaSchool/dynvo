@@ -40,6 +40,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Callable
 
 from faultline.llm.cost import CostTracker, deterministic_params
+from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.llm.model_gateway import resolve_model as gateway_model
 
 if TYPE_CHECKING:
@@ -115,9 +116,16 @@ def _is_mega(uf: "UserFlow", flow_by_key: dict[str, "Flow"]) -> bool:
 
 
 def _call_llm(
-    client: Any, model: str, user: str, cost_tracker: CostTracker
+    client: Any, model: str, user: str, cost_tracker: CostTracker,
+    llm_health: LlmHealth | None = None,
 ) -> list[dict] | None:
-    """One partition call. Returns the journeys list or None on any failure."""
+    """One partition call. Returns the journeys list or None on any failure.
+
+    Consults the shared :class:`LlmHealth`: after the first auth-class
+    failure anywhere in the scan the call is skipped (dead key).
+    """
+    if llm_health is not None and not llm_health.should_call():
+        return None
     try:
         msg = client.messages.create(
             model=gateway_model(model),
@@ -127,8 +135,18 @@ def _call_llm(
             **deterministic_params(model),
         )
     except Exception as exc:  # noqa: BLE001 — non-fatal at scan-time (incl. budget)
-        logger.warning("uf_splitter: LLM call failed: %s", exc)
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_6_7c_uf_splitter",
+        ):
+            logger.error(
+                "uf_splitter: LLM authentication failed — skipping all "
+                "remaining LLM calls this scan: %s", exc,
+            )
+        else:
+            logger.warning("uf_splitter: LLM call failed: %s", exc)
         return None
+    if llm_health is not None:
+        llm_health.record_success()
     in_tok = int(getattr(getattr(msg, "usage", None), "input_tokens", 0) or 0)
     out_tok = int(getattr(getattr(msg, "usage", None), "output_tokens", 0) or 0)
     try:
@@ -236,6 +254,7 @@ def split_mega_user_flows(
     model: str = DEFAULT_MODEL,
     cost_tracker: CostTracker | None = None,
     log: "StageLogger | None" = None,
+    llm_health: LlmHealth | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Split mega-mixed UFs into per-journey sub-UFs via one LLM call each.
@@ -279,7 +298,7 @@ def split_mega_user_flows(
             f"domain: {uf.domain}\nflow names:\n"
             + "\n".join(f"- {n}" for n in names[:MAX_NAMES_IN_PROMPT])
         )
-        journeys = _call_llm(client, model, prompt, tracker)
+        journeys = _call_llm(client, model, prompt, tracker, llm_health)
         subs = _split_one(uf, journeys, flow_by_key) if journeys else []
         if subs:
             split_results[uf.id] = subs
