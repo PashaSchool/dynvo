@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from faultline.pipeline_v2.git_snapshot import GitSnapshot
 
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.run_logger import StageLogger
@@ -46,6 +49,7 @@ def run_intake_phase(
     model_id: str,
     tracker: CostTracker,
     cache_backend: Any,
+    git_snapshot: "GitSnapshot | None" = None,
 ) -> IntakeResult:
     """Run Stage 0 (intake) + 0.5 (stack auditor) + 0.6 (shape classifier).
 
@@ -60,8 +64,15 @@ def run_intake_phase(
     # ``subpath`` scopes the whole scan to a monorepo sub-project. Stage 0
     # raises ``SubpathScopeError`` (a ValueError) if scoping can't be
     # applied — we let it propagate (fail loud), never silently scan the
-    # wrong tree.
-    ctx = stage_0_intake(repo_path, days=days, run_id=run_id, subpath=subpath)
+    # wrong tree. ``git_snapshot`` (multi-subpath engine) replaces Stage
+    # 0's own git calls with an in-memory partition of one shared pass.
+    ctx = stage_0_intake(
+        repo_path,
+        days=days,
+        run_id=run_id,
+        subpath=subpath,
+        git_snapshot=git_snapshot,
+    )
     ctx.cache_backend = cache_backend
     run_dir = ctx.run_dir
     assert run_dir is not None, "Stage 0 must populate ctx.run_dir"

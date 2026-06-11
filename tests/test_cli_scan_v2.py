@@ -215,3 +215,125 @@ def test_scan_v2_max_tree_depth_flag_passed_through(
     result = runner.invoke(app, ["scan-v2", str(repo)])
     assert result.exit_code == 0, result.stdout
     assert captured["max_tree_depth"] == 8
+
+
+# ── Multi-subpath routing (shared single git pass) ──────────────────
+
+
+def test_scan_v2_multi_subpath_routes_through_run_pipeline_multi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """>1 --subpath calls run_pipeline_multi once (not the per-scope loop)."""
+    repo = tmp_path / "mono"
+    repo.mkdir()
+
+    captured: dict[str, object] = {}
+
+    def _fake_multi(repo_path, subpaths, *, on_subpath_start=None,
+                    on_subpath_end=None, **kw):
+        from faultline.pipeline_v2.multi import MultiScanResult
+        captured["subpaths"] = list(subpaths)
+        captured["kw"] = kw
+        out = []
+        for sp in subpaths:
+            if on_subpath_start:
+                on_subpath_start(sp)
+            entry = MultiScanResult(
+                subpath=sp,
+                out_path=tmp_path / f"fm-{sp.replace('/', '_')}.json",
+                result={
+                    "path": str(tmp_path / f"fm-{sp.replace('/', '_')}.json"),
+                    "run_id": "r1",
+                    "subpath": sp,
+                    "stack": "next-app-router",
+                    "cost_usd": 0.0,
+                    "calls": 0,
+                    "elapsed_sec": 1.0,
+                    "warnings": [],
+                    "shared_git_pass": True,
+                },
+                error=None,
+            )
+            if on_subpath_end:
+                on_subpath_end(entry)
+            out.append(entry)
+        return out
+
+    def _fail_single(*a, **kw):  # the single-scope path must NOT run
+        raise AssertionError("run_pipeline_v2 called for a multi-subpath scan")
+
+    monkeypatch.setattr("faultline.pipeline_v2.multi.run_pipeline_multi", _fake_multi)
+    monkeypatch.setattr("faultline.pipeline_v2.run.run_pipeline_v2", _fail_single)
+
+    result = runner.invoke(
+        app,
+        ["scan-v2", str(repo), "--subpath", "apps/web", "--subpath", "apps/worker"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert captured["subpaths"] == ["apps/web", "apps/worker"]
+    # Per-scope progress + success lines preserved.
+    assert result.stdout.count("scan-v2") >= 2
+    assert "subpath=apps/web" in result.stdout
+    assert "subpath=apps/worker" in result.stdout
+
+
+def test_scan_v2_multi_subpath_failure_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "mono"
+    repo.mkdir()
+
+    def _fake_multi(repo_path, subpaths, *, on_subpath_start=None,
+                    on_subpath_end=None, **kw):
+        from faultline.pipeline_v2.multi import MultiScanResult
+        out = []
+        for sp in subpaths:
+            if on_subpath_start:
+                on_subpath_start(sp)
+            ok = sp != "apps/nope"
+            entry = MultiScanResult(
+                subpath=sp,
+                out_path=(tmp_path / "fm.json") if ok else None,
+                result={
+                    "path": str(tmp_path / "fm.json"),
+                    "run_id": "r1",
+                    "subpath": sp,
+                    "stack": "go",
+                    "cost_usd": 0.0,
+                    "calls": 0,
+                    "elapsed_sec": 1.0,
+                    "warnings": [],
+                } if ok else None,
+                error=None if ok else "SubpathScopeError: no such dir",
+            )
+            if on_subpath_end:
+                on_subpath_end(entry)
+            out.append(entry)
+        return out
+
+    monkeypatch.setattr("faultline.pipeline_v2.multi.run_pipeline_multi", _fake_multi)
+
+    result = runner.invoke(
+        app,
+        ["scan-v2", str(repo), "--subpath", "apps/web", "--subpath", "apps/nope"],
+    )
+    assert result.exit_code == 1
+    assert "Scan failed subpath=apps/nope" in result.stdout
+    assert "SubpathScopeError" in result.stdout
+
+
+def test_scan_v2_multi_subpath_rejects_output_flag(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "mono"
+    repo.mkdir()
+    result = runner.invoke(
+        app,
+        [
+            "scan-v2", str(repo),
+            "--subpath", "apps/web", "--subpath", "apps/worker",
+            "--output", str(tmp_path / "out.json"),
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--output cannot be combined" in result.stdout
