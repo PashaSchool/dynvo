@@ -516,6 +516,105 @@ class FlowSymbolAttribution(BaseModel):
     ]
 
 
+class HistoryPoint(BaseModel):
+    """One ISO-week bucket of an entity's git-history timeline (Stage 6.95).
+
+    Sparse series — weeks with zero attributed commits are OMITTED from
+    ``EntityHistory.weekly`` (the dashboard interpolates gaps). All
+    counts are over the commits ATTRIBUTED to the entity's resolved
+    file set (current member paths applied retroactively — a known and
+    accepted approximation, see ``EntityHistory.history_confidence``).
+    """
+
+    week: str               # ISO week label "YYYY-Www" (same convention as TimelinePoint.date)
+    commits: int            # attributed commits this week
+    bug_fixes: int          # attributed commits with Commit.is_bug_fix
+    bugfix_share: float     # bug_fixes / commits, rounded to 3 dp
+    test_commits: int       # attributed commits touching >=1 of the entity's test files
+    files_touched: int      # distinct entity files touched this week
+    health_lite: float      # git-only trailing composite — see EntityHistory docstring
+
+
+class HistoryEvent(BaseModel):
+    """A notable point on an entity's timeline (Stage 6.95).
+
+    ``kind`` values:
+      - ``birth``           — first week any current member file was touched.
+      - ``first_test``      — first week with >=1 test commit.
+      - ``test_wave``       — start week of a contiguous run of weeks whose
+                              ``test_commits`` exceed the entity's OWN
+                              75th percentile of nonzero weekly test
+                              activity (scale-invariant by construction).
+      - ``hotspot_emerged`` — first week a member file's cumulative
+                              bug-fix ratio crosses the SAME universal
+                              hotspot thresholds Stage 6 uses
+                              (``HOTSPOT_BUG_RATIO_MIN`` /
+                              ``HOTSPOT_COMMITS_MIN``).
+    """
+
+    kind: Literal["birth", "first_test", "test_wave", "hotspot_emerged"]
+    week: str
+    detail: str | None = None
+
+
+class TestEfficacy(BaseModel):
+    """Correlation (NOT causation) between test introduction and the
+    entity's bug-fix share (Stage 6.95).
+
+    Compares ``bugfix_share`` over the attributed commits BEFORE the
+    ``first_test`` week vs AFTER (pivot week inclusive in the after
+    window). The verdict is gated scale-invariantly: entities below the
+    median total-commit count among scored entities of the same kind
+    (product feature vs user flow), or with an empty before/after
+    window, emit ``insufficient_data``. ``improved`` / ``worsened``
+    require the share delta to exceed the pooled two-proportion
+    standard error — a sample-size-aware band instead of a tuned
+    magic threshold. This field says "bug-fix share dropped after
+    tests appeared", never "tests caused the drop".
+    """
+
+    verdict: Literal["improved", "worsened", "no_change", "insufficient_data"]
+    bugfix_share_before: float | None = None
+    bugfix_share_after: float | None = None
+    commits_before: int = 0
+    commits_after: int = 0
+    pivot_week: str | None = None     # the first_test week the windows split on
+    reason: str | None = None         # populated for insufficient_data
+
+
+class EntityHistory(BaseModel):
+    """Per-entity git-history timeline (Stage 6.95, v1 slice).
+
+    Derived ENTIRELY from the single git pass already in memory
+    (``ScanContext.commits``) — no historical checkouts, no LLM, no
+    cross-run persistence (cold-scan rule). Attached to product
+    features and user flows.
+
+    ``weekly[*].health_lite`` is a GIT-ONLY composite and must not be
+    confused with the full ``health_score``: it reuses the same
+    logistic curve over bug-fix share (centred at 0.55, steepness 8)
+    and the same activity damping, but computes them over a TRAILING
+    13-ISO-week (one calendar quarter) window ending at each emitted
+    week, and omits the full formula's scan-time age-decay (recency
+    relative to "now" is meaningless for a historical point — the
+    trailing window IS the recency element).
+
+    ``history_confidence`` is the share of current member files whose
+    FIRST touch in the scan window falls within the first quarter
+    (birth → birth + 25% of the active span) of the timeline. Files
+    present in HEAD but never touched inside the window predate it and
+    count as existing. Low values mean the entity's current file set
+    mostly did not exist early on, so early-timeline buckets are a
+    retroactive approximation — read them with care.
+    """
+
+    birth_week: str
+    weekly: list[HistoryPoint] = []
+    events: list[HistoryEvent] = []
+    test_efficacy: TestEfficacy
+    history_confidence: float = 0.0
+
+
 class Feature(BaseModel):
     name: str
     # Title Case display label derived from ``name`` (or set explicitly
@@ -588,6 +687,12 @@ class Feature(BaseModel):
     previous_names: list[str] = []
     split_from: str | None = None
     merged_from: list[str] = []
+    # Stage 6.95 (2026-06-11) — per-entity git-history timeline.
+    # Populated ONLY on product (Layer 2) features by the history
+    # stage; ``None`` on developer features, on product features with
+    # zero attributed commits, and on every scan produced before this
+    # field existed (old JSONs rehydrate unchanged). Additive.
+    history: "EntityHistory | None" = None
 
 
 class FeatureFlowEdge(BaseModel):
@@ -641,6 +746,10 @@ class UserFlow(BaseModel):
     coverage_pct: float | None = None    # mean of members' coverage_pct
     ui_tier: str | None = None           # full-page|panel|settings|admin|no-ui (Stage 6.7b)
     refined: bool = False                # True when Stage 6.7b LLM refined this UF
+    # Stage 6.95 (2026-06-11) — per-entity git-history timeline. None
+    # for UFs with zero attributed commits and for scans produced
+    # before this field existed (old JSONs rehydrate unchanged).
+    history: "EntityHistory | None" = None
 
 
 class FeatureMap(BaseModel):
