@@ -373,6 +373,56 @@ def run_finalize_phase(
         )
     scan_meta["stage_6_95"] = dict(history_telemetry)
 
+    # ── Stage 6.96 — impact-over-time (import-graph blast radius) ───
+    # Sibling of 6.95, same ``feature_history`` gate (no new CLI flag).
+    # Materialises N evenly-spaced historical snapshots via short-lived
+    # ``git worktree`` checkouts and records each history-bearing
+    # entity's external-importer count per snapshot
+    # (``history.impact``), plus coupling_spike / decoupled events and
+    # an impact_trend — all scale-invariant, deterministic, $0 LLM.
+    # Failure-proof by contract: per-snapshot failures and the wall
+    # budget degrade to fewer points, never a failed scan.
+    from faultline.pipeline_v2.stage_6_96_impact import stage_6_96_impact
+    impact_telemetry: dict[str, Any] = {"skipped": True}
+    with StageLogger(run_dir, 6, "impact") as log6_96:
+        if feature_history:
+            impact_telemetry = stage_6_96_impact(
+                product_features,
+                user_flows,
+                list(bipartite.flows),
+                features,
+                ctx.commits,
+                repo_path,
+                subpath=getattr(ctx, "subpath", None),
+                log=log6_96,
+            )
+            log6_96.info(
+                "impact: snapshots=%s/%s entities=%s/%s "
+                "spikes=%s decoupled=%s trends=%s "
+                "budget_exceeded=%s elapsed=%ss"
+                % (
+                    impact_telemetry.get("impact_snapshots", 0),
+                    impact_telemetry.get("planned_snapshots", 0),
+                    impact_telemetry.get("entities_with_impact", 0),
+                    impact_telemetry.get("entities_total", 0),
+                    impact_telemetry.get("coupling_spike_events", 0),
+                    impact_telemetry.get("decoupled_events", 0),
+                    impact_telemetry.get("trends"),
+                    impact_telemetry.get("impact_budget_exceeded", False),
+                    impact_telemetry.get("elapsed_sec"),
+                ),
+            )
+        else:
+            log6_96.info("impact: skipped via --no-feature-history")
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="impact",
+            payload=impact_telemetry,
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_96_impact"] = dict(impact_telemetry)
+
     # ── LLM-health stamp (fail LOUD on auth-dead scans) ────────────
     # Must run AFTER the last LLM-bearing stage (6.7b above) and BEFORE
     # Stage 7 writes the artifact, so ``scan_meta.llm_degraded`` + the

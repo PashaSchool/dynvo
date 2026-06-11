@@ -170,8 +170,11 @@ def _normalize(doc: dict[str, Any]) -> str:
     sm = doc.get("scan_meta") or {}
     for key in _VOLATILE_SCAN_META:
         sm.pop(key, None)
-    # Nested elapsed inside stage_6_3 / stage_6_4 / stage_6_6 blocks.
-    for block in ("stage_6_3", "stage_6_4", "stage_6_6"):
+    # Nested elapsed inside per-stage telemetry blocks.
+    for block in (
+        "stage_6_3", "stage_6_4", "stage_6_6",
+        "stage_6_95", "stage_6_96_impact",
+    ):
         if isinstance(sm.get(block), dict):
             sm[block].pop("elapsed_sec", None)
 
