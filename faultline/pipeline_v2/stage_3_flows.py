@@ -480,6 +480,7 @@ def stage_3_flows(
     warnings: list[str] = []
     llm_calls = 0
     llm_call_lock = threading.Lock()
+    cost_cap_warned = False
 
     # Scale wall-time cap to feature count when caller didn't pin it.
     effective_timeout = (
@@ -513,7 +514,7 @@ def stage_3_flows(
     out: dict[int, FeatureWithFlows] = {}
 
     def _process(idx: int, feature: "DeveloperFeature") -> FeatureWithFlows:
-        nonlocal llm_calls
+        nonlocal llm_calls, cost_cap_warned
         exports, routes, sym_loc = _enumerate_candidates(feature, repo_path_str)
         if len(exports) < MIN_EXPORTS_FOR_FLOW_DETECTION:
             return FeatureWithFlows(
@@ -521,6 +522,26 @@ def stage_3_flows(
                 flows=[],
                 rationale=f"skipped: {len(exports)} exports < "
                           f"{MIN_EXPORTS_FOR_FLOW_DETECTION}",
+            )
+
+        # Budget guard: a shared tracker may carry a scan-wide cost
+        # cap (see Stage 4's identical guard). Already-submitted
+        # threads may still complete their in-flight call; everything
+        # not yet sent to the API degrades to flows=[].
+        if (
+            tracker.max_cost is not None
+            and tracker.total_cost_usd >= tracker.max_cost
+        ):
+            with llm_call_lock:
+                if not cost_cap_warned:
+                    cost_cap_warned = True
+                    warnings.append(
+                        f"stage_3_flows: shared cost cap "
+                        f"${tracker.max_cost:.2f} hit; remaining "
+                        f"features default to flows=[]",
+                    )
+            return FeatureWithFlows(
+                feature=feature, flows=[], rationale="cost-cap-hit",
             )
 
         user_prompt = _build_user_prompt(

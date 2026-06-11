@@ -783,6 +783,16 @@ def scan_v2(
             "single git pass — ON by default."
         ),
     ),
+    max_cost: Optional[float] = typer.Option(
+        None,
+        "--max-cost",
+        help=(
+            "Hard USD ceiling for the scan's total LLM spend, shared "
+            "across all stages. When hit, LLM stages skip their "
+            "remaining calls with a warning instead of failing the "
+            "scan. Omit (default) for no ceiling."
+        ),
+    ),
 ):
     """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
 
@@ -873,6 +883,8 @@ def scan_v2(
             since=since,
             base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
             lineage_jaccard_threshold=lineage_jaccard_threshold,
+            max_cost=max_cost,
+            feature_history=feature_history,
             on_subpath_start=_print_scope_start,
             on_subpath_end=_on_end,
         )
@@ -898,6 +910,7 @@ def scan_v2(
                 lineage_jaccard_threshold=lineage_jaccard_threshold,
                 subpath=scope,
                 feature_history=feature_history,
+                max_cost=max_cost,
             )
         except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
             rprint(f"[red]Scan failed{scope_label}:[/red] {type(exc).__name__}: {exc}")
