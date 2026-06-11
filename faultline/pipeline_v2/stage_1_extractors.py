@@ -124,6 +124,11 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     # Sprint S3.1 — Fastify code-based router. Self-skips unless the
     # auditor / Stage 0 / a workspace package.json signals fastify.
     _try("faultline.pipeline_v2.extractors.fastify",         "FastifyRouteExtractor")
+    # Express code-based router. Self-skips unless the auditor / Stage 0
+    # / a package.json RUNTIME dep signals express. Never activates on
+    # NestJS repos (Nest wraps Express but owns its own route
+    # conventions — extracting both would double-count).
+    _try("faultline.pipeline_v2.extractors.express",         "ExpressRouteExtractor")
     # Django / DRF URLConf + view extractor. Parses urls.py urlpatterns
     # (path/re_path/url + include), DRF ViewSets/APIViews, and Django CBVs
     # into explicit routes with view-symbol attribution. Self-skips unless
