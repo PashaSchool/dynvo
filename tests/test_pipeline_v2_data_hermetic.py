@@ -31,6 +31,7 @@ _EVAL_DEP_ANCHORS = _REPO_ROOT / "eval" / "dependency-anchors.yaml"
 _STACK_NAMES = [
     "config-manifests",
     "django",
+    "express",
     "fastapi",
     "filesystem-routing",
     "go-http-router",
