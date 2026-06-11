@@ -23,6 +23,8 @@ import re
 from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.data import load_stack_yaml
+from faultline.pipeline_v2.extractors._pattern_base import PatternExtractor
+from faultline.pipeline_v2.extractors._util import is_audited_stack
 
 if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext
@@ -54,11 +56,22 @@ def is_rails_app(ctx: "ScanContext") -> bool:
     files and structural signals already, and a false positive here
     floods 5 extractors with empty work on non-Rails repos.
     """
-    audited = (ctx.audited_stack or "").lower()
-    if audited == "rails-app":
-        return True
-    secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
-    return "rails-app" in secondaries
+    return is_audited_stack(ctx, "rails-app")
+
+
+class RailsPatternExtractor(PatternExtractor):
+    """Shared scaffold for the five rails-app extractors.
+
+    All five gate on :func:`is_rails_app` and read sections of the same
+    ``rails-app.yaml``; subclasses only implement ``compile_patterns`` /
+    ``collect`` / ``emit``.
+    """
+
+    def load_config(self) -> dict:
+        return load_rails_config()
+
+    def is_active(self, ctx: "ScanContext") -> bool:
+        return is_rails_app(ctx)
 
 
 # ── Inflector (singular ↔ plural) ─────────────────────────────────────────
@@ -184,6 +197,7 @@ def rails_canonical_noun(slug: str) -> str:
 
 
 __all__ = [
+    "RailsPatternExtractor",
     "is_rails_app",
     "load_rails_config",
     "singularize",

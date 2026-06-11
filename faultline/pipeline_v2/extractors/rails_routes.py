@@ -20,10 +20,7 @@ import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from faultline.pipeline_v2.extractors._rails import (
-    is_rails_app,
-    load_rails_config,
-)
+from faultline.pipeline_v2.extractors._rails import RailsPatternExtractor
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
     posix,
@@ -57,33 +54,40 @@ def _compile_patterns(cfg_patterns: dict) -> dict[str, re.Pattern[str]]:
     return out
 
 
-class RailsRoutesExtractor:
+class _Compiled:
+    """Compiled patterns + scalar config for one rails-app.yaml dict."""
+
+    __slots__ = ("route_file", "patterns", "confidence")
+
+    def __init__(self, config: dict) -> None:
+        routes_cfg = config.get("routes") or {}
+        if not isinstance(routes_cfg, dict):
+            routes_cfg = {}
+            self.patterns: dict[str, re.Pattern[str]] = {}
+        else:
+            self.patterns = _compile_patterns(routes_cfg.get("patterns") or {})
+        self.route_file = routes_cfg.get("file") or "config/routes.rb"
+        self.confidence = float(routes_cfg.get("confidence") or 0.95)
+
+
+class RailsRoutesExtractor(RailsPatternExtractor):
     """Parse ``config/routes.rb`` → one anchor per declared resource/path."""
 
     name = "rails-routes"
 
-    def __init__(self, config: dict | None = None) -> None:
-        self._config = config if config is not None else load_rails_config()
+    def compile_patterns(self, config: dict) -> _Compiled:
+        return _Compiled(config)
 
-    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        if not is_rails_app(ctx):
-            return []
+    def collect(
+        self, ctx: "ScanContext", compiled: _Compiled,
+    ) -> dict[str, set[str]]:
+        if not compiled.patterns:
+            return {}
 
-        routes_cfg = self._config.get("routes") or {}
-        if not isinstance(routes_cfg, dict):
-            return []
-
-        route_file = routes_cfg.get("file") or "config/routes.rb"
-        patterns = _compile_patterns(routes_cfg.get("patterns") or {})
-        confidence = float(routes_cfg.get("confidence") or 0.95)
-
-        if not patterns:
-            return []
-
-        full_path = ctx.repo_path / route_file
+        full_path = ctx.repo_path / compiled.route_file
         text = read_text(full_path)
         if not text:
-            return []
+            return {}
 
         # Bucket: slug → set of pattern keys that fired (for rationale).
         buckets: dict[str, set[str]] = defaultdict(set)
@@ -93,7 +97,7 @@ class RailsRoutesExtractor:
             stripped = line.split("#", 1)[0]
             if not stripped.strip():
                 continue
-            for key, pattern in patterns.items():
+            for key, pattern in compiled.patterns.items():
                 for m in pattern.finditer(stripped):
                     if not m.groups():
                         continue
@@ -108,23 +112,26 @@ class RailsRoutesExtractor:
                     if not slug or is_noise(slug):
                         continue
                     buckets[slug].add(key)
+        return buckets
 
-        out: list[AnchorCandidate] = []
-        route_file_posix = posix(route_file)
-        for slug, keys in buckets.items():
-            out.append(
-                AnchorCandidate(
-                    name=slug,
-                    paths=(route_file_posix,),
-                    source=self.name,
-                    confidence_self=confidence,
-                    rationale=(
-                        f"Rails route {slug!r} declared in {route_file} "
-                        f"via {sorted(keys)}"
-                    ),
-                ),
-            )
-        return out
+    def emit(
+        self,
+        ctx: "ScanContext",
+        key: str,
+        bucket: set[str],
+        compiled: _Compiled,
+    ) -> AnchorCandidate:
+        route_file = compiled.route_file
+        return AnchorCandidate(
+            name=key,
+            paths=(posix(route_file),),
+            source=self.name,
+            confidence_self=compiled.confidence,
+            rationale=(
+                f"Rails route {key!r} declared in {route_file} "
+                f"via {sorted(bucket)}"
+            ),
+        )
 
 
 __all__ = ["RailsRoutesExtractor"]

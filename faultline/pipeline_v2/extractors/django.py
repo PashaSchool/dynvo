@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
+    is_any_stack,
     is_noise,
     posix,
     read_text,
@@ -232,13 +233,12 @@ def _has_django_source(ctx: "ScanContext", c: "_Compiled") -> bool:
 
 def _is_django_app(ctx: "ScanContext", c: "_Compiled") -> bool:
     """Activation gate — True iff the repo/workspace looks like Django."""
-    audited = (ctx.audited_stack or "").lower()
-    if audited in ("django-app", "django") or audited.startswith("django"):
+    if is_any_stack(ctx, "django-app", "django"):
         return True
-    if (ctx.stack or "").lower() in ("django-app", "django"):
+    if (ctx.audited_stack or "").lower().startswith("django"):
         return True
     secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
-    if any(s in ("django-app", "django") or s.startswith("django") for s in secondaries):
+    if any(s.startswith("django") for s in secondaries):
         return True
     if _hint_mentions_django(ctx):
         return True

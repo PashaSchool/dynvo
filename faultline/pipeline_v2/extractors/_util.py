@@ -10,6 +10,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from faultline.pipeline_v2.stage_0_intake import ScanContext
 
 
 # ── slug helpers ────────────────────────────────────────────────────────────
@@ -57,6 +61,45 @@ def is_noise(token: str) -> bool:
     return token.lower() in _NOISE_TOKENS
 
 
+# ── activation-gate helpers ─────────────────────────────────────────────────
+#
+# Most Stage 1 extractors gate on the same three context fields — the
+# Stage 0.5 auditor's primary tag (``ctx.audited_stack``), the Stage 0
+# heuristic tag (``ctx.stack``), and the auditor's secondary tags
+# (``ctx.secondary_stacks``). These helpers centralise the exact-match
+# checks; prefix-style checks (``startswith("go-")``) stay local to the
+# extractors that need them.
+
+
+def is_audited_stack(ctx: "ScanContext", stack: str) -> bool:
+    """``True`` iff the auditor declared ``stack`` (primary OR secondary).
+
+    Exact match only — does not consult the Stage 0 heuristic
+    ``ctx.stack`` tag. Use :func:`is_any_stack` when the Stage 0 tag
+    should also count.
+    """
+    wanted = stack.lower()
+    if (ctx.audited_stack or "").lower() == wanted:
+        return True
+    return any(
+        s.lower() == wanted for s in (ctx.secondary_stacks or ())
+    )
+
+
+def is_any_stack(ctx: "ScanContext", *stacks: str) -> bool:
+    """``True`` iff ANY of ``stacks`` matches the audited primary tag,
+    the Stage 0 heuristic tag, or an audited secondary tag (exact,
+    case-insensitive)."""
+    wanted = {s.lower() for s in stacks}
+    if (ctx.audited_stack or "").lower() in wanted:
+        return True
+    if (ctx.stack or "").lower() in wanted:
+        return True
+    return any(
+        s.lower() in wanted for s in (ctx.secondary_stacks or ())
+    )
+
+
 # ── manifest readers ────────────────────────────────────────────────────────
 
 def read_json(path: Path) -> dict | list | None:
@@ -91,6 +134,8 @@ def has_any_suffix(file_path: str, suffixes: tuple[str, ...]) -> bool:
 __all__ = [
     "slugify",
     "is_noise",
+    "is_audited_stack",
+    "is_any_stack",
     "read_json",
     "read_text",
     "posix",
