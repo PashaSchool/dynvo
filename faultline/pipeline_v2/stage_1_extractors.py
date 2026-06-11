@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import entry_points  # module-level binding so tests can monkeypatch
 from typing import TYPE_CHECKING, Any
 
@@ -284,10 +284,16 @@ def stage_1_extractors(
     errors: dict[str, str] = {}
 
     with ThreadPoolExecutor(max_workers=pool_size) as pool:
-        futures = {
-            pool.submit(_safe_extract, ex, ctx): ex.name for ex in extractors
-        }
-        for fut in as_completed(futures):
+        # Collect in REGISTRY order, not completion order. Iterating
+        # ``as_completed`` here used to build ``results`` in thread-
+        # completion order, which made every downstream consumer of
+        # ``results.items()`` — and ultimately the emitted
+        # ``developer_features[]`` array — nondeterministic across
+        # identical runs. ``.result()`` in submission order keeps the
+        # extraction fully parallel while making the dict order (and
+        # everything derived from it) stable.
+        futures = [(ex.name, pool.submit(_safe_extract, ex, ctx)) for ex in extractors]
+        for _name, fut in futures:
             source, candidates, error = fut.result()
             if error is not None:
                 errors[source] = error
