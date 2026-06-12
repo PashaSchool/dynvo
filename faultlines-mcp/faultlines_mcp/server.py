@@ -141,14 +141,33 @@ def _git_freshness(fm: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _load_map() -> dict[str, Any]:
+def _load_map(repo_slug: str | None = None) -> dict[str, Any]:
     """Loads the most recent feature-map JSON.
 
     Precedence:
-        1. ``FAULTLINE_MAP_PATH`` environment variable (explicit path)
-        2. Most recent ``~/.faultline/feature-map-*.json``
-        3. Raises RuntimeError with install instructions
+        1. ``repo_slug`` arg (per-call override) — newest
+           ``~/.faultline/feature-map-<slug>*.json``
+        2. ``FAULTLINE_MAP_PATH`` environment variable (explicit path)
+        3. Most recent ``~/.faultline/feature-map-*.json``
+        4. Raises RuntimeError with install instructions
     """
+    if repo_slug:
+        home_dir = Path.home() / ".faultline"
+        candidates = (
+            sorted(home_dir.glob(f"feature-map-{repo_slug}.json"))
+            + sorted(home_dir.glob(f"feature-map-{repo_slug}-*.json"))
+        ) if home_dir.exists() else []
+        if not candidates:
+            raise RuntimeError(
+                f"No feature map found for repo slug '{repo_slug}' under "
+                f"~/.faultline/. Run `faultlines analyze /path/to/{repo_slug}` first, "
+                f"or omit repo_slug to use the session default."
+            )
+        latest = candidates[-1]
+        data = json.loads(latest.read_text())
+        _maybe_auto_refresh(latest, data)
+        return data
+
     explicit = os.environ.get("FAULTLINE_MAP_PATH")
     if explicit:
         p = Path(explicit).expanduser()
@@ -224,14 +243,17 @@ def _serve(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     response shape local users already depend on — with the warning fields
     merged in. ``runtime=None`` always: the local package has no Sentry/
     PostHog connection.
+
+    ``repo_slug`` (optional, accepted by every tool) selects which local
+    feature map to load; the pure fns ignore it.
     """
-    fm = _load_map()
+    fm = _load_map(repo_slug=args.get("repo_slug") or None)
     result = core.call_tool(tool_name, fm, args, runtime=None)
     return _inject_warning(dict(result["details"]), fm)
 
 
 @mcp.tool()
-def list_features() -> dict[str, Any]:
+def list_features(repo_slug: str | None = None) -> dict[str, Any]:
     """List all features detected in the codebase with health scores.
 
     Use this when the user asks "what's in this codebase" or "show me
@@ -239,29 +261,29 @@ def list_features() -> dict[str, Any]:
     the riskiest code is visible first. For details on a specific
     feature, follow up with ``find_feature``.
     """
-    return _serve("list_features", {})
+    return _serve("list_features", {"repo_slug": repo_slug})
 
 
 @mcp.tool()
-def find_feature(query: str) -> dict[str, Any] | None:
+def find_feature(query: str, repo_slug: str | None = None) -> dict[str, Any] | None:
     """Find a feature by semantic name, alias, label, or description.
 
     Use this BEFORE reading random files. Much faster than grep and
     returns the full context: file list, health, ownership, flows.
 
-    Matching order (case-insensitive substring):
-      1. custom `display_name` set by the team (dashboard overrides)
-      2. original LLM `name`
-      3. user-authored `aliases` (e.g. team uses "labels" for what
-         the LLM named "tags")
-      4. `labels` (e.g. "core", "billing", "beta")
-      5. `description`
+    Matching is token-based (kebab/snake/camel split, punctuation
+    stripped), weighted by field trust:
+      1. custom `display_name` / LLM `name` (weight 3)
+      2. user-authored `aliases` + `labels` (weight 2)
+      3. `description` (weight 1)
+    So "knowledge RAG" finds "organization-knowledge-base-(rag)".
+    Up to 3 ranked `candidates` are returned alongside the best match.
 
     Args:
         query: Feature name, alias, or keyword (e.g. "payments",
             "auth", "checkout", "rich text editor", "labels")
     """
-    result = _serve("find_feature", {"query": query})
+    result = _serve("find_feature", {"query": query, "repo_slug": repo_slug})
     # Preserve the historical contract: a miss returns ``None``, not a dict.
     if result.get("matched") is False:
         return None
@@ -269,7 +291,7 @@ def find_feature(query: str) -> dict[str, Any] | None:
 
 
 @mcp.tool()
-def get_feature_files(feature_name: str) -> dict[str, Any]:
+def get_feature_files(feature_name: str, repo_slug: str | None = None) -> dict[str, Any]:
     """Get the exact list of files that belong to a feature.
 
     Use this to scope a refactor or code review to the files that
@@ -279,11 +301,11 @@ def get_feature_files(feature_name: str) -> dict[str, Any]:
     Args:
         feature_name: Exact feature name from ``list_features``
     """
-    return _serve("get_feature_files", {"feature_name": feature_name})
+    return _serve("get_feature_files", {"feature_name": feature_name, "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def get_hotspots(limit: int = 5) -> dict[str, Any]:
+def get_hotspots(limit: int = 5, repo_slug: str | None = None) -> dict[str, Any]:
     """Get the riskiest features in the codebase.
 
     Use this when the user asks "where are the bugs", "what should I
@@ -294,11 +316,11 @@ def get_hotspots(limit: int = 5) -> dict[str, Any]:
     Args:
         limit: Max features to return (default 5)
     """
-    return _serve("get_hotspots", {"limit": limit})
+    return _serve("get_hotspots", {"limit": limit, "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def get_feature_owners(feature_name: str) -> dict[str, Any]:
+def get_feature_owners(feature_name: str, repo_slug: str | None = None) -> dict[str, Any]:
     """Get the people who maintain a feature.
 
     Use this when the user asks "who owns X", "who should review this
@@ -309,11 +331,11 @@ def get_feature_owners(feature_name: str) -> dict[str, Any]:
     Args:
         feature_name: Exact feature name from ``list_features``
     """
-    return _serve("get_feature_owners", {"feature_name": feature_name})
+    return _serve("get_feature_owners", {"feature_name": feature_name, "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def get_flow_files(feature_name: str, flow_name: str) -> dict[str, Any]:
+def get_flow_files(feature_name: str, flow_name: str, repo_slug: str | None = None) -> dict[str, Any]:
     """Get files belonging to a specific user-facing flow.
 
     Use this for PR reviews or targeted refactoring. A flow is a
@@ -324,22 +346,25 @@ def get_flow_files(feature_name: str, flow_name: str) -> dict[str, Any]:
         feature_name: Parent feature name
         flow_name: Flow name from ``find_feature`` results
     """
-    return _serve("get_flow_files", {"feature_name": feature_name, "flow_name": flow_name})
+    return _serve("get_flow_files",
+                  {"feature_name": feature_name, "flow_name": flow_name,
+                   "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def get_repo_summary() -> dict[str, Any]:
+def get_repo_summary(repo_slug: str | None = None) -> dict[str, Any]:
     """High-level stats about the repo: features, commits, health, risk.
 
     Use this for "give me an overview of this codebase" or when
     starting work on an unfamiliar repo. Returns aggregated metrics
     without file-level detail.
     """
-    return _serve("get_repo_summary", {})
+    return _serve("get_repo_summary", {"repo_slug": repo_slug})
 
 
 @mcp.tool()
-def analyze_change_impact(changed_files: list[str], repo_path: str = ".") -> dict[str, Any]:
+def analyze_change_impact(changed_files: list[str], repo_path: str = ".",
+                          repo_slug: str | None = None) -> dict[str, Any]:
     """Blast radius for a set of files you are about to change.
 
     Use this BEFORE submitting a PR or making a refactor. Returns which
@@ -352,11 +377,12 @@ def analyze_change_impact(changed_files: list[str], repo_path: str = ".") -> dic
         repo_path: Accepted for compatibility; unused (data comes from the map).
     """
     return _serve("analyze_change_impact",
-                  {"changed_files": changed_files, "repo_path": repo_path})
+                  {"changed_files": changed_files, "repo_path": repo_path,
+                   "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def get_regression_risk(changed_files: list[str]) -> dict[str, Any]:
+def get_regression_risk(changed_files: list[str], repo_slug: str | None = None) -> dict[str, Any]:
     """Quick check: how likely is this change to cause a regression?
 
     Returns a probability (0.0-1.0) based on how buggy the affected
@@ -366,11 +392,12 @@ def get_regression_risk(changed_files: list[str]) -> dict[str, Any]:
     Args:
         changed_files: Files being changed (relative to repo root).
     """
-    return _serve("get_regression_risk", {"changed_files": changed_files})
+    return _serve("get_regression_risk", {"changed_files": changed_files, "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def find_symbols_in_flow(feature_name: str, flow_name: str) -> dict[str, Any]:
+def find_symbols_in_flow(feature_name: str, flow_name: str,
+                         repo_slug: str | None = None) -> dict[str, Any]:
     """Get precise symbols (functions, classes) that belong to a flow.
 
     Returns a list of symbols grouped by file, so the AI agent can read
@@ -382,11 +409,12 @@ def find_symbols_in_flow(feature_name: str, flow_name: str) -> dict[str, Any]:
         flow_name: Flow name (from find_feature or get_flow_files).
     """
     return _serve("find_symbols_in_flow",
-                  {"feature_name": feature_name, "flow_name": flow_name})
+                  {"feature_name": feature_name, "flow_name": flow_name,
+                   "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def find_symbols_for_feature(feature_name: str) -> dict[str, Any]:
+def find_symbols_for_feature(feature_name: str, repo_slug: str | None = None) -> dict[str, Any]:
     """Get the feature's shared symbols (types, interfaces, enums).
 
     Returns types and interfaces that are shared across all flows in
@@ -396,11 +424,13 @@ def find_symbols_for_feature(feature_name: str) -> dict[str, Any]:
     Args:
         feature_name: Feature name from list_features.
     """
-    return _serve("find_symbols_for_feature", {"feature_name": feature_name})
+    return _serve("find_symbols_for_feature",
+                  {"feature_name": feature_name, "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def get_feature_errors(feature_name: str, window: str = "24h") -> dict[str, Any]:
+def get_feature_errors(feature_name: str, window: str = "24h",
+                       repo_slug: str | None = None) -> dict[str, Any]:
     """Production errors (Sentry) mapped to a feature.
 
     Hosted MCP queries the org's Sentry integration and maps issues to
@@ -413,11 +443,14 @@ def get_feature_errors(feature_name: str, window: str = "24h") -> dict[str, Any]
         feature_name: Feature name from ``list_features``.
         window: Lookback window (e.g. "24h", "14d"). Hosted-only.
     """
-    return _serve("get_feature_errors", {"feature_name": feature_name, "window": window})
+    return _serve("get_feature_errors",
+                  {"feature_name": feature_name, "window": window,
+                   "repo_slug": repo_slug})
 
 
 @mcp.tool()
-def get_feature_pageviews(feature_name: str, window: str = "24h") -> dict[str, Any]:
+def get_feature_pageviews(feature_name: str, window: str = "24h",
+                          repo_slug: str | None = None) -> dict[str, Any]:
     """Product usage / pageviews (PostHog) for a feature.
 
     Hosted MCP queries the org's PostHog integration and maps events to
@@ -430,7 +463,9 @@ def get_feature_pageviews(feature_name: str, window: str = "24h") -> dict[str, A
         feature_name: Feature name from ``list_features``.
         window: Lookback window (e.g. "24h", "14d"). Hosted-only.
     """
-    return _serve("get_feature_pageviews", {"feature_name": feature_name, "window": window})
+    return _serve("get_feature_pageviews",
+                  {"feature_name": feature_name, "window": window,
+                   "repo_slug": repo_slug})
 
 
 def main() -> None:
