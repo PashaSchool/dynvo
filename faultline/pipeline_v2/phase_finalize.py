@@ -369,7 +369,8 @@ def run_finalize_phase(
             )
             log6_95.info(
                 "history: pf_scored=%d/%d uf_scored=%d/%d "
-                "gated(pf=%d uf=%d) verdicts=%s elapsed=%ss"
+                "gated(pf=%d uf=%d) verdicts=%s "
+                "cross_cut(events=%d entities=%d capped=%d) elapsed=%ss"
                 % (
                     history_telemetry["product_features_scored"],
                     history_telemetry["product_features_total"],
@@ -378,6 +379,9 @@ def run_finalize_phase(
                     history_telemetry["product_features_gated"],
                     history_telemetry["user_flows_gated"],
                     history_telemetry["verdicts"],
+                    history_telemetry["cross_cut_events_emitted"],
+                    history_telemetry["cross_cut_entities_affected"],
+                    history_telemetry["cross_cut_capped_out"],
                     history_telemetry["elapsed_sec"],
                 ),
             )
