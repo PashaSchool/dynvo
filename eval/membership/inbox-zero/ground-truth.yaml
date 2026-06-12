@@ -3,9 +3,16 @@ repo: inbox-zero
 curated: '2026-06-11'
 method: 'hand-curated, code-grounded only: file-system routes, workspace package manifests,
   domain-named server/util dirs, server actions. NO README/marketing prose. Test files, mocks
-  and prisma migrations excluded (engine strips tests by design).'
+  and prisma migrations excluded (engine strips tests by design). display_name/aliases derived
+  from in-app nav/page-title strings parsed from source (SideNav.tsx, PageHeader title=,
+  dialog titles like "Welcome to Sender Categories") plus route/dir names — still NO README.'
 features:
 - name: ai-assistant-rules
+  display_name: Assistant
+  aliases:
+  - AI Assistant
+  - Rules
+  - Automation
   notes: "The AI personal-assistant automation engine: rules, conditions, rule chat UI, automation\
     \ history. Evidence: assistant + automation route dirs (knowledge subdir excluded \u2014\
     \ own feature), utils/rule + ai/rule + ai/choose-rule + ai/assistant domain dirs, rule\
@@ -147,6 +154,10 @@ features:
   - apps/web/utils/rule/static-from-risk.ts
   - apps/web/utils/rule/types.ts
 - name: billing-premium
+  display_name: Premium
+  aliases:
+  - Billing
+  - Pricing
   notes: 'Premium plans/seats via Stripe + Lemon Squeezy. Evidence: premium route dir, stripe
     + lemon-squeezy webhook API routes, ee/billing implementation, utils/premium domain dir,
     premium server actions.'
@@ -183,6 +194,7 @@ features:
   - apps/web/utils/premium/seats.ts
   - apps/web/utils/premium/server.ts
 - name: bulk-unsubscribe
+  display_name: Bulk Unsubscribe
   notes: 'Bulk newsletter unsubscriber. Evidence: bulk-unsubscribe route dir, one-click unsubscribe
     API route, unsubscriber server actions, unsubscribe link parsing + sender helpers.'
   files:
@@ -205,6 +217,7 @@ features:
   - apps/web/utils/senders/unsubscribe.ts
   - apps/web/utils/unsubscribe.ts
 - name: cold-email-blocker
+  display_name: Cold Email Blocker
   notes: 'Cold-email detection and blocking. Evidence: cold-email-blocker route dir, utils/cold-email
     domain dir, cold-email server actions.'
   files:
@@ -222,6 +235,10 @@ features:
   - apps/web/utils/cold-email/prompt.ts
   - apps/web/utils/cold-email/send-notification.ts
 - name: email-analytics
+  display_name: Email Analytics
+  aliases:
+  - Analytics
+  - Stats
   notes: 'Email stats dashboards. Evidence: stats route dir, api/user/stats handlers, Tinybird
     workspace package (analytics pipes), usage tracking helpers.'
   files:
@@ -274,6 +291,10 @@ features:
   - packages/tinybird/src/query.ts
   - packages/tinybird/tsconfig.json
 - name: email-cleaner
+  display_name: Deep Clean
+  aliases:
+  - Clean
+  - Email Cleaner
   notes: 'AI inbox cleaner (bulk archive/mark-read of old mail). Evidence: clean route dir,
     api/clean handlers, utils/ai/clean prompts, clean server actions, cleaner feature flag.'
   files:
@@ -307,6 +328,9 @@ features:
   - apps/web/utils/ai/clean/ai-clean.ts
   - apps/web/utils/cleaner-feature.ts
 - name: email-digest
+  display_name: Digest
+  aliases:
+  - Email Digest
   notes: 'Scheduled digest emails summarising handled mail. Evidence: api/ai/digest + digest-preview
     + resend/digest + user/digest-* routes, utils/digest domain dir, ai digest summariser.'
   files:
@@ -329,6 +353,9 @@ features:
   - apps/web/utils/digest/send-digest.ts
   - apps/web/utils/digest/summary-limit.ts
 - name: knowledge-base
+  display_name: Knowledge Base
+  aliases:
+  - Knowledge
   notes: 'User knowledge base feeding AI drafts. Evidence: assistant/knowledge UI components,
     api/knowledge route, ai/knowledge extraction prompts, knowledge server actions.'
   files:
@@ -342,6 +369,9 @@ features:
   - apps/web/utils/ai/knowledge/persona.ts
   - apps/web/utils/ai/knowledge/writing-style.ts
 - name: meeting-briefs
+  display_name: Meeting Briefs
+  aliases:
+  - Briefs
   notes: 'AI meeting briefs from calendar + email context. Evidence: briefs + onboarding-brief
     route dirs, api/meeting-briefs + api/user/meeting-briefs routes, ai/meeting-briefs prompts,
     meeting-briefs server actions.'
@@ -364,6 +394,9 @@ features:
   - apps/web/utils/actions/meeting-briefs.validation.ts
   - apps/web/utils/ai/meeting-briefs/generate-briefing.ts
 - name: reply-zero
+  display_name: Reply Zero
+  aliases:
+  - Reply Tracker
   notes: 'Reply tracker (to-reply / awaiting labels, AI drafts). Evidence: reply-zero route
     dir, utils/reply-tracker domain dir, api/reply-tracker route, ai/reply prompts, reply-tracking
     server action.'
@@ -405,6 +438,9 @@ features:
   - apps/web/utils/reply-tracker/sender-reply-examples.ts
   - apps/web/utils/reply-tracker/thread-status-context.ts
 - name: smart-categories
+  display_name: Sender Categories
+  aliases:
+  - Smart Categories
   notes: 'AI sender categorisation. Evidence: smart-categories route dir, utils/categorize
     domain dir, ai/categorize-sender prompts, categorize server actions.'
   files:

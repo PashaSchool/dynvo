@@ -159,3 +159,14 @@ def test_curated_ground_truth_shape(slug: str) -> None:
         assert files == sorted(files), f"{feat['name']} files not sorted"
         assert len(files) == len(set(files))
         assert len(files) >= 4, f"{feat['name']} suspiciously small"
+        # name-quality reference labels (see score_names.py)
+        display = feat["display_name"]
+        assert isinstance(display, str) and display.strip(), (
+            f"{feat['name']} missing display_name"
+        )
+        aliases = feat.get("aliases") or []
+        assert isinstance(aliases, list)
+        assert len(aliases) == len(set(aliases)), f"{feat['name']} dup aliases"
+        for a in aliases:
+            assert isinstance(a, str) and a.strip()
+            assert a != display, f"{feat['name']} alias duplicates display_name"
