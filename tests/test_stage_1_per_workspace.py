@@ -375,3 +375,55 @@ def test_telemetry_reports_per_workspace_breakdown(tmp_path: Path) -> None:
     # ``frontend`` should have inferred stack ``vite``
     assert by_name.get("frontend") is not None
     assert by_name["frontend"].inferred_stack == "vite"
+
+
+def test_activation_fires_on_undeclared_multi_app_monorepo(tmp_path: Path) -> None:
+    """The infisical shape (2026-06-12): no workspace manifest at the
+    root, but conventional app dirs carry their own manifests with
+    DIFFERENT stacks. The synthesis probe must activate dispatch —
+    before this fix synthesise_workspaces() was unreachable (it lived
+    inside the dispatch this gate never enabled), so such repos scanned
+    with zero route/package anchors → no flows → no LOC downstream.
+    """
+    (tmp_path / "package.json").write_text(json.dumps({"name": "root"}))
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "package.json").write_text(json.dumps({
+        "name": "backend", "dependencies": {"fastify": "^4.0.0"},
+    }))
+    (backend / "src").mkdir()
+    (backend / "src" / "server.ts").write_text(
+        'import fastify from "fastify";\nconst app = fastify();\n'
+        'app.get("/api/secrets", h);\n',
+    )
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text(json.dumps({
+        "name": "frontend", "dependencies": {"@tanstack/react-router": "^1.0.0"},
+    }))
+    (frontend / "src" / "routes").mkdir(parents=True)
+    (frontend / "src" / "routes" / "index.tsx").write_text(
+        "export default function Page(){return null}",
+    )
+    ctx = stage_0_intake(tmp_path, skip_git=True)
+    assert not ctx.workspaces  # precondition: undeclared
+    assert should_activate_per_workspace(ctx) is True
+
+
+def test_activation_skipped_for_undeclared_same_stack_dirs(tmp_path: Path) -> None:
+    """Two conventional dirs with the SAME stack must NOT activate —
+    the gate still requires stack diversity, synthetic or declared."""
+    (tmp_path / "package.json").write_text(json.dumps({"name": "root"}))
+    for name in ("backend", "api"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "package.json").write_text(json.dumps({
+            "name": name, "dependencies": {"fastify": "^4.0.0"},
+        }))
+        (d / "src").mkdir()
+        (d / "src" / "server.ts").write_text(
+            'import fastify from "fastify";\nconst app = fastify();\n'
+            'app.get("/x", h);\n',
+        )
+    ctx = stage_0_intake(tmp_path, skip_git=True)
+    assert should_activate_per_workspace(ctx) is False

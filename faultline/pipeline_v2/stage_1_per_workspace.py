@@ -135,6 +135,19 @@ class WorkspaceExtractionReport:
 # ── Activation ────────────────────────────────────────────────────────────
 
 
+_NOISE_STACKS = {"js-generic", "python-lib", "ruby", "unknown", ""}
+
+
+def _distinct_interesting_stacks(workspaces: list[Workspace]) -> int:
+    stacks = {
+        (w.stack or "").lower()
+        for w in workspaces
+        if (w.stack or "").strip()
+    }
+    # Filter out the noise stacks that don't change extractor activation.
+    return len(stacks - _NOISE_STACKS)
+
+
 def should_activate_per_workspace(ctx: ScanContext) -> bool:
     """Return True when per-workspace dispatch should replace global Stage 1.
 
@@ -143,22 +156,28 @@ def should_activate_per_workspace(ctx: ScanContext) -> bool:
       2. ``ctx.monorepo`` is True AND ``ctx.workspaces`` contains ≥2
          workspaces with DIFFERENT non-empty stack slugs (proper
          polyglot monorepo even without auditor verdict).
+      3. UNDECLARED multi-app monorepo (the infisical shape, 2026-06-12):
+         no declared workspaces at all, but :func:`synthesise_workspaces`
+         finds ≥2 conventional app dirs (backend/, frontend/, ...) with
+         their own manifests AND ≥2 distinct non-noise stacks among them.
+         Without this probe the synthesis fallback was unreachable —
+         it lived inside the dispatch that this gate never enabled, so
+         repos like infisical scanned with ZERO route/package anchors
+         (and therefore no flows and no LOC downstream).
     """
     audited = (ctx.audited_stack or "").lower()
     if audited == "monorepo-polyglot":
         return True
 
-    if not ctx.monorepo or not ctx.workspaces:
-        return False
+    if ctx.workspaces:
+        if not ctx.monorepo:
+            return False
+        return _distinct_interesting_stacks(list(ctx.workspaces)) >= 2
 
-    stacks = {
-        (w.stack or "").lower()
-        for w in ctx.workspaces
-        if (w.stack or "").strip()
-    }
-    # Filter out the noise stacks that don't change extractor activation.
-    interesting = stacks - {"js-generic", "python-lib", "ruby", "unknown", ""}
-    return len(interesting) >= 2
+    # No declared workspaces — probe the conservative synthesis list.
+    # Cheap: walks only whitelisted top-level dirs that carry manifests.
+    synthetic = synthesise_workspaces(ctx)
+    return len(synthetic) >= 2 and _distinct_interesting_stacks(synthetic) >= 2
 
 
 # ── Workspace synthesis fallback ──────────────────────────────────────────
