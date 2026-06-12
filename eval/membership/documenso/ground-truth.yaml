@@ -3,9 +3,12 @@ repo: documenso
 curated: '2026-06-11'
 method: 'hand-curated, code-grounded only: file-system routes, workspace package manifests,
   domain-named server/util dirs, server actions. NO README/marketing prose. Test files, mocks
-  and prisma migrations excluded (engine strips tests by design).'
+  and prisma migrations excluded (engine strips tests by design). display_name/aliases derived
+  from in-app nav/page-title strings parsed from source (app-nav-desktop.tsx, settings-nav
+  <Trans> labels, admin _layout.tsx) plus route-group/dir names — still NO README.'
 features:
 - name: admin-panel
+  display_name: Admin Panel
   notes: 'Instance admin console: users, orgs, docs, claims, site settings, stats. Evidence:
     _authenticated+/admin+ route group, tRPC admin-router, server-only/admin + site-settings.'
   files:
@@ -112,6 +115,10 @@ features:
   - packages/trpc/server/admin-router/update-user.ts
   - packages/trpc/server/admin-router/update-user.types.ts
 - name: authentication
+  display_name: Authentication
+  aliases:
+  - Security
+  - Sign In
   notes: 'Sign-in/up, password reset, email verification, 2FA, passkeys, sessions. Evidence:
     packages/auth workspace package, tRPC auth-router, _unauthenticated+ route group, server-only/2fa,
     settings security.* routes.'
@@ -201,6 +208,9 @@ features:
   - packages/trpc/server/auth-router/update-passkey.ts
   - packages/trpc/server/auth-router/update-passkey.types.ts
 - name: billing-subscription
+  display_name: Billing
+  aliases:
+  - Subscription
   notes: 'Stripe billing/plans/claims. Evidence: server-only/stripe + subscription, billing
     settings routes (personal + org), Stripe webhook API route.'
   files:
@@ -212,6 +222,10 @@ features:
   - packages/lib/server-only/stripe/stripe.d.ts
   - packages/lib/server-only/subscription/get-active-subscriptions-by-user-id.ts
 - name: document-management
+  display_name: Documents
+  aliases:
+  - Document Management
+  - Envelopes
   notes: 'Core document lifecycle (create/send/track). Evidence: team-scoped Remix routes
     t.$teamUrl/documents.*, tRPC document-router + envelope-router (envelope = the unified
     internal document model that backs document CRUD/editing), server-only/document + server-only/envelope*
@@ -400,6 +414,9 @@ features:
   - packages/trpc/server/envelope-router/use-envelope.ts
   - packages/trpc/server/envelope-router/use-envelope.types.ts
 - name: embedding
+  display_name: Embedding
+  aliases:
+  - Embed
   notes: 'Embedded signing/authoring SDK surface. Evidence: embed+ route group (v0/v1/v2 +
     playground), tRPC embedding-router, server-only/embedding-presign.'
   files:
@@ -441,6 +458,7 @@ features:
   - packages/trpc/server/embedding-router/verify-embedding-presign-token.ts
   - packages/trpc/server/embedding-router/verify-embedding-presign-token.types.ts
 - name: folders
+  display_name: Folders
   notes: 'Folder organisation for documents/templates. Evidence: folder-router, server-only/folder,
     *.folders / f.$folderId route files.'
   files:
@@ -458,6 +476,10 @@ features:
   - packages/trpc/server/folder-router/router.ts
   - packages/trpc/server/folder-router/schema.ts
 - name: organisations
+  display_name: Organisations
+  aliases:
+  - Organizations
+  - Organisation Settings
   notes: 'Organisation workspace: settings, member groups, SSO, email domains. Evidence: o.$orgUrl.*
     routes (incl. settings.groups/members/sso/email-domains), organisation invite/decline
     token routes counted under authentication''s route group are excluded; tRPC organisation-router
@@ -568,6 +590,10 @@ features:
   - packages/trpc/server/organisation-router/update-organisation.ts
   - packages/trpc/server/organisation-router/update-organisation.types.ts
 - name: public-api
+  display_name: Public API
+  aliases:
+  - API Tokens
+  - API
   notes: 'Versioned public REST API + API tokens. Evidence: packages/api workspace package
     (OpenAPI v1/v2), tRPC api-token-router, server-only/public-api, tokens settings routes.'
   files:
@@ -603,6 +629,10 @@ features:
   - packages/trpc/server/api-token-router/get-api-tokens.types.ts
   - packages/trpc/server/api-token-router/router.ts
 - name: recipient-signing
+  display_name: Document Signing
+  aliases:
+  - Signing
+  - Recipient Signing
   notes: 'The recipient-facing signing ceremony (sign.$token / d.$token pages), recipients,
     signature fields and cryptographic sealing. Evidence: _recipient+ route group, recipient-router
     + field-router, server-only/recipient + field + cert, packages/signing (sealing implementation).'
@@ -653,6 +683,9 @@ features:
   - packages/trpc/server/recipient-router/router.ts
   - packages/trpc/server/recipient-router/schema.ts
 - name: teams
+  display_name: Teams
+  aliases:
+  - Team Settings
   notes: 'Teams inside an organisation: team settings/members/branding. Evidence: t.$teamUrl
     settings.* routes, tRPC team-router, server-only/team.'
   files:
@@ -722,6 +755,7 @@ features:
   - packages/trpc/server/team-router/update-team.ts
   - packages/trpc/server/team-router/update-team.types.ts
 - name: templates
+  display_name: Templates
   notes: 'Reusable document templates + direct links. Evidence: t.$teamUrl/templates.* routes,
     tRPC template-router, server-only/template domain dir.'
   files:
@@ -751,6 +785,7 @@ features:
   - packages/trpc/server/template-router/search-template.ts
   - packages/trpc/server/template-router/search-template.types.ts
 - name: webhooks
+  display_name: Webhooks
   notes: 'User-configurable outbound webhooks. Evidence: tRPC webhook-router, server-only/webhooks,
     webhook trigger API route, webhooks settings routes (personal + team).'
   files:
