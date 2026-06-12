@@ -670,8 +670,16 @@ def _file_loc(cache: _SourceCache, file: str) -> int:
 _RE_IDENT = re.compile(r"\b([A-Za-z_$][\w$]*)\b")
 
 
-def _identifiers_in(body: str) -> set[str]:
-    return set(_RE_IDENT.findall(body))
+def _identifiers_in(body: str) -> list[str]:
+    """Unique identifiers in FIRST-OCCURRENCE order.
+
+    Must be deterministic: the caller feeds these into the BFS queue,
+    and under the per-feature file/symbol caps the traversal order
+    decides WHICH files make the cut. A ``set`` here made identical
+    scans emit different ``feature.paths`` across runs
+    (PYTHONHASHSEED).
+    """
+    return list(dict.fromkeys(_RE_IDENT.findall(body)))
 
 
 # ── Seed phase ───────────────────────────────────────────────────────────

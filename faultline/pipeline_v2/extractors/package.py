@@ -168,9 +168,17 @@ def _match_anchors(
     deps: set[str],
     matchers: tuple[_DepMatch, ...],
 ) -> dict[str, list[str]]:
-    """For each anchor matcher firing, group the dep names that fired."""
+    """For each anchor matcher firing, group the dep names that fired.
+
+    Iterates ``deps`` SORTED: dep names arrive as a set, and the
+    insertion order of ``hits`` flows all the way into the emitted
+    ``developer_features[]`` order (Stage 2 preserves candidate order;
+    Stage 6.3's per-feature caps are order-sensitive). Unsorted
+    iteration made identical scans differ across runs via
+    PYTHONHASHSEED.
+    """
     hits: dict[str, list[str]] = defaultdict(list)
-    for dep in deps:
+    for dep in sorted(deps):
         for token, slug in matchers:
             if _dep_matches(dep, token):
                 hits[slug].append(dep)

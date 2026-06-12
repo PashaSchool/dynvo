@@ -124,11 +124,14 @@ def test_filesystem_routing_yaml_matches_historical_tables() -> None:
 
     stack_routing, markers = route._load_routing_tables()
 
-    # Exact historical key set.
+    # Exact historical key set (+ react-router, the RRv7 framework-mode
+    # successor to remix, added for nested-monorepo route roots).
     assert set(stack_routing) == {
-        "next-app-router", "next-pages", "remix", "astro",
-        "sveltekit", "nuxt", "tanstack-router", "vite",
+        "next-app-router", "next-pages", "remix", "react-router",
+        "astro", "sveltekit", "nuxt", "tanstack-router", "vite",
     }
+    # RRv7 framework mode keeps the remix convention.
+    assert stack_routing["react-router"] == stack_routing["remix"]
     # Pin exact entries (order matters for root/suffix matching).
     assert stack_routing["next-app-router"] == (
         ("app/", "src/app/"),
