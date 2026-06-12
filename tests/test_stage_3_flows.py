@@ -50,11 +50,13 @@ def _ctx(tmp_path: Path, files: list[str]) -> ScanContext:
     )
 
 
-def _feature(name: str, paths: tuple[str, ...]) -> DeveloperFeature:
+def _feature(
+    name: str, paths: tuple[str, ...], sources: tuple[str, ...] = ("route",),
+) -> DeveloperFeature:
     return DeveloperFeature(
         name=name,
         paths=paths,
-        sources=["route"],
+        sources=list(sources),
         confidence="medium",
     )
 
@@ -237,7 +239,9 @@ def test_features_under_min_exports_skip_llm(tmp_path: Path) -> None:
     _make_ts_file(
         tmp_path, "lib/utils.ts", "export const ONE = 1;\n",
     )
-    feature = _feature("utils", ("lib/utils.ts",))
+    # js-library source: the export floor still applies (the 2026-06-12
+    # route-anchor bypass exempts only declared-route features).
+    feature = _feature("utils", ("lib/utils.ts",), sources=("js-library",))
     ctx = _ctx(tmp_path, files=["lib/utils.ts"])
     client = _FakeAnthropic(responses=['{"flows": [{"name": "x-flow"}]}'])
 
@@ -479,3 +483,37 @@ def test_cost_cap_none_does_not_gate(tmp_path: Path) -> None:
     assert client.call_count == 1
     assert result.llm_calls == 1
     assert not any("cost cap" in w for w in result.warnings)
+
+
+
+def test_route_anchored_feature_bypasses_export_floor(tmp_path: Path) -> None:
+    """A declared-route feature with a single export MUST reach the LLM —
+    route files are entry points by definition. Regression for the
+    infisical incident (2026-06-12): 340/416 route-anchored features
+    were silently skipped (1-2 exports each) → no flows → no LOC."""
+    _make_ts_file(
+        tmp_path, "src/routes/secret.ts",
+        'import f from "fastify";\nexport default async function routes(app){ app.get("/api/secrets", h); }\n',
+    )
+    feature = _feature("secrets", ("src/routes/secret.ts",), sources=("route-fastify",))
+    ctx = _ctx(tmp_path, files=["src/routes/secret.ts"])
+    client = _FakeAnthropic(responses=['{"flows": []}'])
+
+    result = stage_3_flows([feature], ctx, client=client, max_workers=2)
+
+    assert client.call_count == 1
+    assert result.llm_calls == 1
+
+
+def test_route_anchored_zero_export_zero_route_still_skipped(tmp_path: Path) -> None:
+    """The bypass needs at least SOME candidate (export or route) —
+    an empty route-sourced feature stays skipped."""
+    _make_ts_file(tmp_path, "src/empty.css", "body{}\n")
+    feature = _feature("empty", ("src/empty.css",), sources=("route",))
+    ctx = _ctx(tmp_path, files=["src/empty.css"])
+    client = _FakeAnthropic(responses=[])
+
+    result = stage_3_flows([feature], ctx, client=client, max_workers=2)
+
+    assert client.call_count == 0
+    assert result.features_with_flows[0].flows == []
