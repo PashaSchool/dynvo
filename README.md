@@ -63,19 +63,19 @@ A **two-layer feature map**:
 
 …each broken into **flows** (real user journeys), scored, attributed down to the **function and line range**, and served to humans *and* AI agents.
 
-## ✨ Features
+## Features
 
-- 🧭 **Feature & flow detection** — from git history + code structure, on **any stack** (Next.js, Rails, Django, FastAPI, Express, Spring, Laravel, Phoenix, and more).
-- 🔥 **Bug hotspots & health scores** — find what's rotting before it pages you.
-- 🎯 **Behavioral test coverage** — coverage *per user flow*, inferred from history even when there's no `lcov`.
-- 💥 **Change-impact / blast radius** — "if I touch these files, here's what breaks and who to add as reviewer."
-- 🔬 **Symbol-level attribution** — functions, classes and **line ranges** per flow, not just file lists.
-- 👥 **Ownership & bus-factor** — who maintains each feature, and where the knowledge is dangerously concentrated.
-- 🤖 **MCP server for AI agents** — 13 typed tools your coding agent calls instead of grepping.
-- 📡 **Runtime overlays** — map **Sentry** errors and **PostHog** usage onto features (which features actually fail and get used).
-- 🔒 **Local-first & private** — runs on your machine; your source code never has to leave it.
+- **Feature & flow detection** — from git history + code structure, on **any stack** (Next.js, Rails, Django, FastAPI, Express, Spring, Laravel, Phoenix, and more).
+- **Bug hotspots & health scores** — find what's rotting before it pages you.
+- **Behavioral test coverage** — coverage *per user flow*, inferred from history even when there's no `lcov`.
+- **Change-impact / blast radius** — "if I touch these files, here's what breaks and who to add as reviewer."
+- **Symbol-level attribution** — functions, classes and **line ranges** per flow, not just file lists.
+- **Ownership & bus-factor** — who maintains each feature, and where the knowledge is dangerously concentrated.
+- **MCP server for AI agents** — 13 typed tools your coding agent calls instead of grepping.
+- **Runtime overlays** — map **Sentry** errors and **PostHog** usage onto features (which features actually fail and get used).
+- **Local-first & private** — runs on your machine; your source code never has to leave it.
 
-## 🚀 Quick start
+## Quick start
 
 ```bash
 pip install faultlines
@@ -96,7 +96,7 @@ faultlines /path/to/your/repo --model sonnet
 
 That writes a versioned **feature-map JSON** to `~/.faultline/`. Explore it, diff it across runs, ship it to CI, or hand it to your AI agent (below).
 
-## 🤖 Built for AI coding agents
+## Built for AI coding agents
 
 This is the wedge. Install the companion MCP server and your agent stops guessing:
 
@@ -121,14 +121,14 @@ Now Cursor / Claude Code / Cline / Windsurf can call **13 tools**:
 
 | | Tools |
 |---|---|
-| 🔎 **Discover** | `list_features` · `find_feature` · `get_repo_summary` |
-| 📁 **Files & symbols** | `get_feature_files` · `get_flow_files` · `find_symbols_in_flow` · `find_symbols_for_feature` |
-| ⚠️ **Risk & impact** | `get_hotspots` · `get_feature_owners` · `analyze_change_impact` · `get_regression_risk` |
-| 📡 **Runtime** | `get_feature_errors` (Sentry) · `get_feature_pageviews` (PostHog) |
+| **Discover** | `list_features` · `find_feature` · `get_repo_summary` |
+| **Files & symbols** | `get_feature_files` · `get_flow_files` · `find_symbols_in_flow` · `find_symbols_for_feature` |
+| **Risk & impact** | `get_hotspots` · `get_feature_owners` · `analyze_change_impact` · `get_regression_risk` |
+| **Runtime** | `get_feature_errors` (Sentry) · `get_feature_pageviews` (PostHog) |
 
 > Typical result: **~90% fewer tokens** per query than a naive grep-and-read loop — your agent reads the *right* functions, with line ranges, on the first try.
 
-## 📊 The metrics — and why they matter
+## The metrics — and why they matter
 
 | Metric | What it tells you | Why you care |
 |---|---|---|
@@ -139,7 +139,7 @@ Now Cursor / Claude Code / Cline / Windsurf can call **13 tools**:
 | **Coverage** | Behavioral test coverage **per flow** | Find untested user journeys, not just untested lines |
 | **Ownership / bus factor** | Who holds the knowledge | Spot single-points-of-failure before they leave |
 
-## 🧠 How it works
+## How it works
 
 ```
  git history ─┐
@@ -154,14 +154,14 @@ Now Cursor / Claude Code / Cline / Windsurf can call **13 tools**:
 
 **Deterministic-first.** The structure comes from your routing conventions, configs, schemas and git co-change patterns — no LLM required. When `ANTHROPIC_API_KEY` is set, an Anthropic (Haiku by default, `--model sonnet|opus`) pass adds human-readable names and flow detection automatically. The output is a single versioned JSON — the stable contract every consumer reads.
 
-## 🔌 Integrations
+## Integrations
 
 - **GitHub** — PR comments with risk, coverage gaps and runtime signal on the exact features a diff touches.
 - **Sentry** — production errors mapped to features.
 - **PostHog** — real usage & traffic per feature.
 - **Slack** — weekly digest of top risks, coverage gaps and hotspots.
 
-## 🆚 Why not just…
+## Why not just…
 
 - **…grep / read the files?** Burns context and misses cross-boundary, runtime and historical coupling that static analysis can't see.
 - **…SonarQube / linters?** Great for line-level issues; blind to *features*, *flows* and *blast radius*.
@@ -169,7 +169,7 @@ Now Cursor / Claude Code / Cline / Windsurf can call **13 tools**:
 
 Faultlines is the only layer that joins **structure + git history + runtime** into one map — and serves it to your AI agent.
 
-## 🗺️ Roadmap
+## Roadmap
 
 - [x] Two-layer feature/flow map on any stack
 - [x] Behavioral test coverage & health scoring
@@ -179,17 +179,17 @@ Faultlines is the only layer that joins **structure + git history + runtime** in
 - [x] Incremental, sub-second re-scans on every commit
 - [x] Native plugins for more agents & IDEs
 
-## 🤝 Contributing
+## Contributing
 
 Issues, ideas and PRs are welcome. Faultlines is built to map *any* codebase — if it mis-reads your stack, that's a bug we want to hear about.
 
-## 📄 License
+## License
 
 MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 
-**[⭐ Star this repo](https://github.com/PashaSchool/faultlines)** if Faultlines helps you (or your agent) understand a codebase faster.
+**[Star this repo](https://github.com/PashaSchool/faultlines)** if Faultlines helps you (or your agent) understand a codebase faster.
 
 Made for engineers and the AI agents that work alongside them · [faultlines.dev](https://faultlines.dev)
 
