@@ -571,6 +571,37 @@ class HistoryPoint(BaseModel):
     health_lite: float      # git-only trailing composite — see EntityHistory docstring
 
 
+class CrossCutNote(BaseModel):
+    """Correlation note (NOT causation) attached to a
+    ``cross_cut_emerged`` event (Stage 6.95).
+
+    Compares the entity's ``bugfix_share`` over attributed commits
+    BEFORE the emergence week vs AFTER (emergence week inclusive in the
+    after window), using the SAME pooled two-proportion standard-error
+    band as ``TestEfficacy`` — sample-size-aware, no tuned threshold.
+    Verdict values are deliberately descriptive ("the share moved"),
+    never causal ("the cross-cut broke it"): the emergence week itself
+    is a retroactive projection of TODAY's file sets, so this field
+    only says "bug-fix share was higher / lower after that week",
+    nothing more.
+
+    ``insufficient_data`` discipline mirrors ``TestEfficacy``: an empty
+    window on either side of the emergence week yields no verdict.
+    Additive — events serialized before this field existed rehydrate
+    with ``correlation_note=None``.
+    """
+
+    verdict: Literal[
+        "bugfix_share_up", "bugfix_share_down", "no_change",
+        "insufficient_data",
+    ]
+    bugfix_share_before: float | None = None
+    bugfix_share_after: float | None = None
+    commits_before: int = 0
+    commits_after: int = 0
+    reason: str | None = None         # populated for insufficient_data
+
+
 class HistoryEvent(BaseModel):
     """A notable point on an entity's timeline (Stage 6.95 / 6.96).
 
@@ -596,14 +627,36 @@ class HistoryEvent(BaseModel):
                               scale-invariant rule. ``detail`` carries
                               ``reach a->b``. Additive enum values:
                               old JSONs never contain them.
+      - ``cross_cut_emerged`` — Stage 6.95: the week a TODAY-cross-cutting
+                              flow's relationship with this entity
+                              MATERIALIZED historically — the latest
+                              first-touch week among the files the flow
+                              shares with the entity (i.e. when the
+                              shared file-set first fully existed; the
+                              week that completes it is by construction
+                              also a co-touch week). Shared files never
+                              touched inside the scan window predate it
+                              and resolve to the birth week — the same
+                              convention ``history_confidence`` uses.
+                              Retroactive projection of TODAY's
+                              bipartite store (Stage 5.5), like
+                              everything in history v1. ``detail``
+                              names the flow; ``correlation_note``
+                              carries the SE-gated before/after
+                              bug-fix-share comparison. Additive enum
+                              value: old JSONs never contain it.
     """
 
     kind: Literal[
         "birth", "first_test", "test_wave", "hotspot_emerged",
-        "coupling_spike", "decoupled",
+        "coupling_spike", "decoupled", "cross_cut_emerged",
     ]
     week: str
     detail: str | None = None
+    # Stage 6.95 (2026-06-12) — populated ONLY for
+    # ``cross_cut_emerged`` events. None for every other kind and for
+    # events serialized before this field existed (additive).
+    correlation_note: "CrossCutNote | None" = None
 
 
 class ImpactPoint(BaseModel):
