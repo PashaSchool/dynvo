@@ -464,19 +464,28 @@ class MemberFile(BaseModel):
                         from the feature's anchor files.
       - ``co-commit`` — file attached by the Stage 2.6 git co-commit
                         signal (changes land together with the anchors).
+      - ``url-link``  — frontend file attached by the Stage 2.6
+                        URL-literal linker: its fetch/axios/api-client
+                        string literals match the feature's backend
+                        route templates (cross-language — no import
+                        edge exists).
       - ``shared``    — file whose import fan-in marks it as shared
                         infrastructure (claimed by many features); it is
                         recorded for provenance but NOT attached to any
-                        claimant's ``paths``.
+                        claimant's ``paths``. URL-channel shared files
+                        are shared API CLIENTS (they call many
+                        features' routes).
 
     ``confidence`` ∈ (0, 1]: anchors are 1.0; closure claims decay with
     import depth (1 / (1 + depth)); co-commit claims carry the observed
-    co-change share capped below the weakest direct-import claim.
+    co-change share capped below the weakest direct-import claim;
+    url-link claims are fixed at 0.4 (textual match — below a direct
+    import AND below the co-commit cap).
     ``evidence`` is a short human/agent-readable justification.
     """
 
     path: str
-    role: Literal["anchor", "closure", "co-commit", "shared"]
+    role: Literal["anchor", "closure", "co-commit", "url-link", "shared"]
     confidence: float
     evidence: str = ""
     primary: bool = False

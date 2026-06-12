@@ -361,10 +361,13 @@ def run_pipeline_v2(
     # residual pool (junk-drawers shrink organically) and (b) the
     # enriched ``paths`` feed Stage 6 metrics, Stage 6.5 clustering and
     # Stage 8 Layer-2. See stage_2_6_membership_closure.py docstring.
+    # ``extractor_signals`` feeds the URL-literal frontend→backend
+    # linker channel (route table from explicit + filesystem routes).
     with StageLogger(run_dir, 2, "membership_closure") as log2_6:
         closure = run_membership_closure(
             _isolate(deterministic_features), _isolate(unattributed),
             _isolate(ctx), log=log2_6,
+            extractor_signals=_isolate(stage1_out),
         )
         deterministic_features = closure.features
         unattributed = closure.unattributed

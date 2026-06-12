@@ -69,6 +69,21 @@ For each anchor-sourced feature (sources intersecting
      highest source priority (Stage 2's ``_SOURCE_PRIORITY``), then
      feature name ascending (deterministic). Losing claimants keep a
      non-primary ``role="closure"`` provenance record.
+  3b. **URL-literal cross-language linker** (2026-06, review item 1.2 —
+     "the main differentiator"): frontend files whose fetch / axios /
+     api-client URL literals match a backend feature's route templates
+     attach to that feature — the call edge no import can express
+     (``fetch("/api/org-knowledge/" + id)`` in a React component vs the
+     FastAPI router serving it). Extraction, normalization and matching
+     live in :mod:`faultline.pipeline_v2.url_linker`; the claims join
+     THIS stage's pool under the same guards: the exact-ownership
+     shield, the workspace-grained reclaim, a fan-in cap (a file
+     calling many features' routes is a shared api-client,
+     ``role="shared"``), and a primary election (most matched routes →
+     source priority → name; full ties skip — ambiguous beats wrong).
+     Confidence is fixed at ``URL_LINK_CONFIDENCE`` (0.4): textual
+     evidence ranks below a direct import (0.5) and below the
+     co-commit cap (0.45).
   4. **Co-commit secondary signal** (cheap — ``ctx.commits`` is already
      in memory): a still-unattributed file F attaches to feature A when
      F co-occurs with A's anchor files in ≥ k commits AND that is a
@@ -116,6 +131,14 @@ from faultline.pipeline_v2.stage_6_3_import_tree import (
     _suffix,
     _SLICEABLE_EXTENSIONS,
     _TS_EXTS,
+)
+from faultline.pipeline_v2.url_linker import (
+    URL_LINK_CONFIDENCE,
+    URL_SOURCE_EXTENSIONS,
+    RouteEntry,
+    build_route_table,
+    extract_url_refs,
+    match_url,
 )
 
 if TYPE_CHECKING:
@@ -179,6 +202,12 @@ class ClosureTelemetry:
     closure_attached: int = 0
     co_commit_attached: int = 0
     shared_infra_files: int = 0
+    # URL-literal linker channel (review item 1.2).
+    backend_routes: int = 0
+    urls_extracted: int = 0
+    urls_matched: int = 0
+    files_linked: int = 0
+    shared_api_clients: int = 0
     reclaimed_dir_grained: int = 0
     unattributed_before: int = 0
     unattributed_after: int = 0
@@ -194,6 +223,11 @@ class ClosureTelemetry:
             "closure_attached": self.closure_attached,
             "co_commit_attached": self.co_commit_attached,
             "shared_infra_files": self.shared_infra_files,
+            "backend_routes": self.backend_routes,
+            "urls_extracted": self.urls_extracted,
+            "urls_matched": self.urls_matched,
+            "files_linked": self.files_linked,
+            "shared_api_clients": self.shared_api_clients,
             "reclaimed_dir_grained": self.reclaimed_dir_grained,
             "unattributed_before": self.unattributed_before,
             "unattributed_after": self.unattributed_after,
@@ -459,6 +493,166 @@ def _co_commit_claims(
     return out
 
 
+# ── URL-literal linker phase (review item 1.2) ──────────────────────────
+
+
+def _url_ext(rel: str) -> str:
+    i = rel.rfind(".")
+    return rel[i:].lower() if i >= 0 else ""
+
+
+def _run_url_link_phase(
+    *,
+    by_name: dict[str, DeveloperFeature],
+    route_table: list[RouteEntry],
+    tracked_files: frozenset[str],
+    exact_owned: set[str],
+    grained_listers: dict[str, set[str]],
+    already_attached: set[str],
+    unattributed_set: set[str],
+    cache: _SourceCache,
+    telemetry: ClosureTelemetry,
+    url_linked_by_feature: dict[str, int],
+) -> set[str]:
+    """Attach frontend files to backend features via URL-literal claims.
+
+    Same pool rules as the closure channel: only files NOT explicitly
+    owned by a focused feature are claimable (workspace-/repo-grained
+    listers lose reclaimed files from their ``paths``); a fan-in cap
+    turns many-feature callers into ``role="shared"`` api-clients; the
+    primary election is (matched routes desc, source priority desc,
+    name asc) with full-tie skip. Mutates features + telemetry in
+    place; returns the set of newly attached files.
+    """
+    route_files = {e.file for e in route_table}
+    candidates = sorted(
+        fp for fp in tracked_files
+        if _url_ext(fp) in URL_SOURCE_EXTENSIONS
+        and not _is_vendor_or_test(fp)
+        and fp not in exact_owned
+        and fp not in already_attached
+        and fp not in route_files
+    )
+
+    # file → feature → sorted matched "(METHOD pattern ← template)" set.
+    claims: dict[str, dict[str, list[str]]] = {}
+    for fp in candidates:
+        text = cache.text(fp)
+        if not text:
+            continue
+        refs = extract_url_refs(text)
+        if not refs:
+            continue
+        telemetry.urls_extracted += len(refs)
+        per_feature: dict[str, dict[str, str]] = defaultdict(dict)
+        for ref in refs:
+            hit = False
+            for entry in route_table:
+                if match_url(ref, entry):
+                    hit = True
+                    per_feature[entry.feature].setdefault(
+                        ref.template,
+                        f"{entry.method} {entry.pattern} ← {ref.template}",
+                    )
+            if hit:
+                telemetry.urls_matched += 1
+        if per_feature:
+            claims[fp] = {
+                fname: sorted(tpls.values())
+                for fname, tpls in per_feature.items()
+            }
+
+    if not claims:
+        return set()
+
+    # Fan-in cap over the URL channel's OWN claim distribution: a file
+    # calling routes of many distinct features is a shared api-client.
+    # Same scale-invariant form as the closure cap.
+    feature_counts = sorted(len(v) for v in claims.values())
+    url_fan_in = max(_FAN_IN_FLOOR, _nearest_rank(feature_counts, 0.90))
+
+    attached: set[str] = set()
+    for fp in sorted(claims):
+        by_feat = claims[fp]
+        n_features = len(by_feat)
+        if n_features >= url_fan_in:
+            telemetry.shared_api_clients += 1
+            for fname in sorted(by_feat):
+                by_name[fname].member_files.append(_member_file(
+                    fp, "shared", URL_LINK_CONFIDENCE,
+                    f"shared api-client: calls routes of {n_features} "
+                    f"features (threshold {url_fan_in}); "
+                    f"e.g. {by_feat[fname][0]}",
+                    False,
+                ))
+            continue
+        # Primary election: most matched route templates, then source
+        # priority, then name. A full tie between the top two is
+        # ambiguous — record provenance, attach nothing.
+        ranked = sorted(
+            by_feat.items(),
+            key=lambda kv: (
+                -len(kv[1]),
+                -_max_source_priority(by_name[kv[0]]),
+                kv[0],
+            ),
+        )
+        if len(ranked) > 1:
+            (n0, p0) = (len(ranked[0][1]),
+                        _max_source_priority(by_name[ranked[0][0]]))
+            (n1, p1) = (len(ranked[1][1]),
+                        _max_source_priority(by_name[ranked[1][0]]))
+            if (n0, p0) == (n1, p1):
+                for fname, tpls in ranked:
+                    by_name[fname].member_files.append(_member_file(
+                        fp, "url-link", URL_LINK_CONFIDENCE,
+                        f"url match ({len(tpls)} route(s), e.g. {tpls[0]}); "
+                        f"tied election — not attached",
+                        False,
+                    ))
+                continue
+        winner_name, winner_tpls = ranked[0]
+        winner = by_name[winner_name]
+        winner.paths = tuple(winner.paths) + (fp,)
+        winner.member_files.append(_member_file(
+            fp, "url-link", URL_LINK_CONFIDENCE,
+            f"calls {len(winner_tpls)} backend route(s) of this feature "
+            f"(e.g. {winner_tpls[0]})",
+            True,
+        ))
+        attached.add(fp)
+        url_linked_by_feature[winner_name] += 1
+        if fp not in unattributed_set:
+            telemetry.reclaimed_dir_grained += 1
+        # Same exclusive-primary rule as the closure channel: grained
+        # listers lose the reclaimed file from their ``paths``.
+        for loser_name in sorted(grained_listers.get(fp, ())):
+            if loser_name == winner_name:
+                continue
+            loser = by_name[loser_name]
+            loser.paths = tuple(q for q in loser.paths if q != fp)
+            for m in loser.member_files:
+                if m.path == fp and m.primary:
+                    m.primary = False
+                    m.evidence += (
+                        f"; reclaimed by url-link "
+                        f"(primary={winner_name})"
+                    )
+        for fname, tpls in ranked[1:]:
+            by_name[fname].member_files.append(_member_file(
+                fp, "url-link", URL_LINK_CONFIDENCE,
+                f"url match ({len(tpls)} route(s), e.g. {tpls[0]}); "
+                f"primary={winner_name}",
+                False,
+            ))
+        if len(telemetry.attached_sample) < 10:
+            telemetry.attached_sample.append({
+                "file": fp, "feature": winner_name, "role": "url-link",
+            })
+    telemetry.files_linked = len(attached)
+    return attached
+
+
 # ── Public entry point ───────────────────────────────────────────────────
 
 
@@ -470,12 +664,17 @@ def run_membership_closure(
     log: "StageLogger | None" = None,
     max_depth: int = DEFAULT_MAX_DEPTH,
     max_new_files_per_feature: int = DEFAULT_MAX_FILES_PER_FEATURE,
+    extractor_signals: dict[str, list[Any]] | None = None,
 ) -> ClosureResult:
     """Run the Stage 2.6 import-closure membership pass.
 
     Mutates ``features`` in place (paths + member_files) and returns
     the shrunken unattributed pool. See the module docstring for the
     full rule set.
+
+    ``extractor_signals`` (the Stage 1 output dict) feeds the
+    URL-literal linker's backend route table; when ``None`` the
+    url-link channel is a no-op (back-compat for existing callers).
     """
     t0 = time.monotonic()
     telemetry = ClosureTelemetry()
@@ -557,7 +756,14 @@ def run_membership_closure(
         f for f in features if ANCHOR_SOURCES & set(f.sources)
     ]
     telemetry.anchor_features = len(anchor_features)
-    if not anchor_features:
+
+    # Backend route table for the URL-literal linker (cheap + pure —
+    # built even when there are no closure anchors, since explicit
+    # extractor routes can be owned by any feature).
+    route_table = build_route_table(extractor_signals, features)
+    telemetry.backend_routes = len(route_table)
+
+    if not anchor_features and not route_table:
         telemetry.unattributed_after = len(unattributed)
         telemetry.elapsed_sec = round(time.monotonic() - t0, 3)
         return ClosureResult(features, list(unattributed), telemetry)
@@ -671,6 +877,25 @@ def run_membership_closure(
     telemetry.closure_attached = len(attached)
     unattributed_set -= attached
 
+    # ── Phase 2.5 — URL-literal cross-language linker ────────────────
+    # Frontend → backend call edges no import expresses. Claims join
+    # the same pool with the same guards; see _run_url_link_phase.
+    url_linked_by_feature: dict[str, int] = defaultdict(int)
+    if route_table:
+        url_attached = _run_url_link_phase(
+            by_name=by_name,
+            route_table=route_table,
+            tracked_files=tracked_files,
+            exact_owned=exact_owned,
+            grained_listers=grained_listers,
+            already_attached=attached,
+            unattributed_set=unattributed_set,
+            cache=cache,
+            telemetry=telemetry,
+            url_linked_by_feature=url_linked_by_feature,
+        )
+        unattributed_set -= url_attached
+
     # ── Phase 3 — co-commit secondary signal ─────────────────────────
     co_claims = _co_commit_claims(
         anchor_features=anchor_features,
@@ -699,22 +924,38 @@ def run_membership_closure(
     new_unattributed = [p for p in unattributed if p in unattributed_set]
     telemetry.unattributed_after = len(new_unattributed)
     telemetry.elapsed_sec = round(time.monotonic() - t0, 3)
+    per_feature_names = {f.name for f in anchor_features}
     for f in anchor_features:
         n_closure = closure_attached_by_feature.get(f.name, 0)
+        n_url = url_linked_by_feature.get(f.name, 0)
         n_total = len(f.paths)
         telemetry.per_feature.append({
             "name": f.name,
             "anchor_files": len(anchor_files_by_feature.get(f.name, ())),
             "closure_reached": len(closure_by_feature.get(f.name, {})),
             "closure_attached": n_closure,
+            "url_linked": n_url,
             "paths_total": n_total,
         })
-        if log and n_closure:
+        if log and (n_closure or n_url):
             log.emit(
                 f.name,
-                f"closure attached {n_closure} file(s) "
-                f"(paths now {n_total})",
+                f"closure attached {n_closure} file(s), "
+                f"url-linked {n_url} (paths now {n_total})",
             )
+    # Non-anchor features can own explicit routes and receive url-links.
+    for fname in sorted(url_linked_by_feature):
+        if fname in per_feature_names:
+            continue
+        f = by_name[fname]
+        telemetry.per_feature.append({
+            "name": fname,
+            "anchor_files": 0,
+            "closure_reached": 0,
+            "closure_attached": 0,
+            "url_linked": url_linked_by_feature[fname],
+            "paths_total": len(f.paths),
+        })
     if log:
         log.info(
             f"closure: anchor_features={telemetry.anchor_features} "
@@ -723,6 +964,11 @@ def run_membership_closure(
             f"attached={telemetry.closure_attached} "
             f"co_commit={telemetry.co_commit_attached} "
             f"shared_infra={telemetry.shared_infra_files} "
+            f"url: routes={telemetry.backend_routes} "
+            f"extracted={telemetry.urls_extracted} "
+            f"matched={telemetry.urls_matched} "
+            f"linked={telemetry.files_linked} "
+            f"shared_api_clients={telemetry.shared_api_clients} "
             f"unattributed {telemetry.unattributed_before}"
             f"→{telemetry.unattributed_after}",
         )
