@@ -753,26 +753,6 @@ def _extract_model_names_from_schema(
     return out
 
 
-def _find_dominant_symbol(
-    file: str, cache: _SourceCache,
-) -> tuple[str, int, int] | None:
-    """Return the FIRST exported / top-level function in ``file``.
-
-    Heuristic — Stage 3 already uses ``_enumerate_functions``; we
-    pick the first one whose span is > 3 lines (skips trivial
-    re-exports). Returns ``None`` for files with no detectable
-    function.
-    """
-    fns = cache.functions(file)
-    for fn in fns:
-        if (fn.line_end - fn.line_start) >= 2:
-            return (fn.name, fn.line_start, fn.line_end)
-    if fns:
-        first = fns[0]
-        return (first.name, first.line_start, first.line_end)
-    return None
-
-
 def _determine_seeds(
     feature: "Feature",
     ctx: "ScanContext",
@@ -884,17 +864,29 @@ def _determine_seeds(
             return (seeds, "schema-source", [])
 
     # CASE E — structural fallback for everything else.
+    #
+    # 2026-06 membership review: seed from ALL functions of each file,
+    # not the first/dominant one. The old single-seed shape meant a
+    # route file whose first function had no imports killed the whole
+    # traversal at depth 1 even when its real handler (second function)
+    # imported half the service layer. Files with no detectable
+    # function seed as ``<file>`` so their import statements still walk
+    # (the BFS slices the whole file body for ``<file>`` symbols).
     for path in feature.paths[:3]:
         if not path or _suffix(path) not in _SLICEABLE_EXTENSIONS:
             continue
         if _is_vendor_or_test(path):
             continue
-        dominant = _find_dominant_symbol(path, cache)
-        if dominant is None:
-            continue
-        seeds.append(ImportTreeSeed(
-            file=path, symbol=dominant[0], role="structural",
-        ))
+        fns = cache.functions(path)
+        if fns:
+            for fn in fns:
+                seeds.append(ImportTreeSeed(
+                    file=path, symbol=fn.name, role="structural",
+                ))
+        else:
+            seeds.append(ImportTreeSeed(
+                file=path, symbol="<file>", role="structural",
+            ))
     if seeds:
         return (seeds, "structural", [])
 

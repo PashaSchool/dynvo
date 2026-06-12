@@ -382,6 +382,18 @@ def _merge_features(
     for m in members:
         shared_participants.extend(m.shared_participants)
 
+    # Stage 2.6 provenance — union members' member_files, dedup by
+    # (path, role); first member wins on duplicates (deterministic).
+    member_files: list = []
+    seen_member_keys: set[tuple[str, str]] = set()
+    for m in members:
+        for mf in m.member_files:
+            key = (mf.path, mf.role)
+            if key in seen_member_keys:
+                continue
+            seen_member_keys.add(key)
+            member_files.append(mf)
+
     primary = members[0]
     return Feature(
         name=name,
@@ -403,6 +415,7 @@ def _merge_features(
         shared_participants=shared_participants,
         layer=primary.layer,
         product_feature_id=primary.product_feature_id,
+        member_files=member_files,
     )
 
 
