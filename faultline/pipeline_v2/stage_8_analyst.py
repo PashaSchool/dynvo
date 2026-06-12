@@ -70,6 +70,7 @@ from faultline.analyzer.marketing_fetcher import (
 )
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.llm_health import LlmHealth
+from faultline.pipeline_v2.nav_taxonomy import pin_nav_labels
 from faultline.pipeline_v2.naming_validator import (
     EvidenceBundle,
     retry_prohibition,
@@ -411,6 +412,7 @@ def build_analyst_payload(
     developer_features: list["Feature"],
     top_flows: list["Flow"] | None = None,
     product_strings: ProductStringIndex | None = None,
+    nav_taxonomy_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assemble the full analyst payload from prior pipeline stages.
 
@@ -450,6 +452,11 @@ def build_analyst_payload(
         "taxonomy_size": taxonomy_size,
         "product_strings_files": len(product_strings.by_file),
         "product_strings_total": product_strings.total_strings,
+        # In-repo nav taxonomy (vendor-declared) — labels the matcher
+        # already pinned to dev features. Shown to the analyst so its
+        # synthesis aligns with (and never contradicts) the vendor's
+        # own framing; the deterministic pin happens post-emission.
+        "nav_taxonomy_labels": sorted(set((nav_taxonomy_map or {}).values())),
     }
 
 
@@ -470,6 +477,16 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "filling member_flows):\n"
             + json.dumps(flows, indent=2) + "\n\n"
         )
+    nav_labels = payload.get("nav_taxonomy_labels") or []
+    nav_section = ""
+    if nav_labels:
+        nav_section = (
+            "IN-REPO NAV TAXONOMY (the vendor's OWN nav/sidebar + route "
+            "hierarchy — the author's product framing, versioned with the "
+            "code; HIGHER trust than marketing surfaces. Use these labels "
+            "verbatim when a product feature corresponds to one):\n"
+            + "\n".join("- " + lab for lab in nav_labels) + "\n\n"
+        )
     return (
         "REPO SLUG: " + payload["slug"] + "\n"
         "STACK (audited): " + payload["audited_stack"] + "\n"
@@ -487,6 +504,7 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
         "appear in NO feature's evidence):\n"
         + json.dumps(payload["developer_features"], indent=2) + "\n\n"
         + flows_section
+        + nav_section
         + "MARKETING SURFACES (fetched from public web; NOT repo README):\n"
         + payload["marketing_text"] + "\n\n"
         "Now emit the Layer 2 product_features JSON per the system prompt rules."
@@ -885,8 +903,15 @@ def _validate_pf_names(
     cost_tracker: CostTracker | None,
     llm_health: LlmHealth | None,
     log: "StageLogger | None",
+    pinned_slugs: set[str] | None = None,
 ) -> dict[str, Any]:
     """Anti-hallucination pass over the analyst's PF names (review №2).
+
+    ``pinned_slugs`` — PFs carrying a vendor label pinned from the
+    in-repo nav taxonomy. They are exempt: the label is structural
+    evidence by construction (it is literally declared in the repo's
+    nav registry / route tree), so token-checking it against the PF's
+    member-file bundle would punish exactly the highest-trust names.
 
     Contract: every content token of a PF name must appear in that PF's
     evidence bundle. Failures get ONE batched retry with an explicit
@@ -911,6 +936,8 @@ def _validate_pf_names(
     bundles: dict[str, EvidenceBundle] = {}
     failing: list[dict[str, Any]] = []
     for pf in product_features:
+        if pinned_slugs and pf.name in pinned_slugs:
+            continue
         bundle = _bundle_for_pf(
             pf,
             contrib_by_slug.get(pf.name, []),
@@ -1035,6 +1062,7 @@ def run_stage_8_analyst(
     model: str = DEFAULT_ANALYST_MODEL,
     cost_tracker: CostTracker | None = None,
     llm_health: LlmHealth | None = None,
+    nav_taxonomy_map: dict[str, str] | None = None,
 ) -> Stage8Result:
     """Sonnet-as-analyst entry point.
 
@@ -1096,6 +1124,7 @@ def run_stage_8_analyst(
             cost_tracker=cost_tracker,
             llm_health=llm_health,
             fallback_reason="no-client",
+            nav_taxonomy_map=nav_taxonomy_map,
         )
 
     product_strings = collect_index_for_features(
@@ -1103,6 +1132,7 @@ def run_stage_8_analyst(
     )
     payload = build_analyst_payload(
         ctx, developer_features, top_flows, product_strings,
+        nav_taxonomy_map,
     )
     if log is not None:
         log.info(
@@ -1172,6 +1202,7 @@ def run_stage_8_analyst(
             cost_tracker=cost_tracker,
             llm_health=llm_health,
             fallback_reason="analyst-parse-failed",
+            nav_taxonomy_map=nav_taxonomy_map,
             analyst_aux={
                 "analyst_cost_usd": round(cost, 6),
                 "prompt_input_tokens": in_t,
@@ -1202,6 +1233,7 @@ def run_stage_8_analyst(
             cost_tracker=cost_tracker,
             llm_health=llm_health,
             fallback_reason="analyst-empty-output",
+            nav_taxonomy_map=nav_taxonomy_map,
             analyst_aux={
                 "analyst_cost_usd": round(cost, 6),
                 "prompt_input_tokens": in_t,
@@ -1210,23 +1242,36 @@ def run_stage_8_analyst(
             },
         )
 
+    # In-repo nav taxonomy pin (vendor-declared Layer 2) — matched
+    # clusters get the VENDOR'S label (renamed / created PFs,
+    # name_confidence="high"); the analyst's synthesis survives for
+    # unmatched clusters and its descriptions are kept as refinement.
+    pinned_slugs, pin_telemetry = pin_nav_labels(
+        product_features, dev_map, member_flows_map,
+        nav_taxonomy_map or {}, developer_features,
+    )
+
     # Anti-hallucination name validation (naming review №2) — every PF
     # name token must be evidenced; one retry, then deterministic slug
     # fallback + name_confidence="low". Mutates the three structures in
-    # place so slugs stay consistent.
+    # place so slugs stay consistent. Nav-pinned PFs are exempt (their
+    # labels are structural evidence by construction).
     validator_telemetry = _validate_pf_names(
         ctx, product_features, dev_map, member_flows_map,
         developer_features, payload, product_strings,
         client=client, model=model, cost_tracker=cost_tracker,
-        llm_health=llm_health, log=log,
+        llm_health=llm_health, log=log, pinned_slugs=pinned_slugs,
     )
 
     # Degraded-scan stamp (naming review №6): when the key died mid-scan
     # the analyst output may be partial / unvalidated — mark every PF
     # name low-confidence. Deterministic fallbacks already are.
+    # Nav-pinned PFs stay "high": their labels are deterministic
+    # structural evidence, unaffected by LLM health.
     if llm_health is not None and llm_health.auth_failed:
         for pf in product_features:
-            pf.name_confidence = "low"
+            if pf.name not in pinned_slugs:
+                pf.name_confidence = "low"
 
     # Phantom-count estimate: emitted PFs whose member dev features
     # account for ≤1 unique path — likely orphan/junk. Universal
@@ -1262,6 +1307,8 @@ def run_stage_8_analyst(
         "confidence": 0.90,
         "product_strings_files": payload["product_strings_files"],
         "product_strings_total": payload["product_strings_total"],
+        "nav_taxonomy_pinned_pfs": len(pinned_slugs),
+        **pin_telemetry,
         **validator_telemetry,
         **aux,
     }
@@ -1294,6 +1341,7 @@ def _fallback_to_haiku(
     fallback_reason: str,
     analyst_aux: dict[str, Any] | None = None,
     llm_health: LlmHealth | None = None,
+    nav_taxonomy_map: dict[str, str] | None = None,
 ) -> Stage8Result:
     """Invoke the legacy Haiku Stage 8 and stamp fallback telemetry."""
     # Haiku model — never use Sonnet here, it would defeat the cost
@@ -1310,6 +1358,7 @@ def _fallback_to_haiku(
         model=haiku_model,
         cost_tracker=cost_tracker,
         llm_health=llm_health,
+        nav_taxonomy_map=nav_taxonomy_map,
     )
     telemetry = dict(result.telemetry)
     telemetry["mode"] = "analyst"
