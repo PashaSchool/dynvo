@@ -70,6 +70,15 @@ from faultline.analyzer.marketing_fetcher import (
 )
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.llm_health import LlmHealth
+from faultline.pipeline_v2.naming_validator import (
+    EvidenceBundle,
+    retry_prohibition,
+    validate_name,
+)
+from faultline.pipeline_v2.product_strings import (
+    ProductStringIndex,
+    collect_product_strings,
+)
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     Stage8Result,
     fetch_marketing_taxonomy,
@@ -104,6 +113,11 @@ _MAX_PATHS_PER_FEATURE = 5
 # Maximum description length per dev feature (truncate long LLM-
 # generated descriptions to keep the prompt bounded).
 _MAX_DESCRIPTION_CHARS = 240
+
+# Product strings shown per dev feature in the analyst payload.
+# Matches the _MAX_PATHS_PER_FEATURE per-feature evidence budget —
+# same structural scale, not corpus-tuned.
+_MAX_PRODUCT_STRINGS_PER_FEATURE = 5
 
 # Maximum workspace packages enumerated in the payload.
 _MAX_WORKSPACE_PACKAGES = 60
@@ -221,27 +235,51 @@ def _read_root_package(repo_path: Path) -> dict[str, Any]:
     }
 
 
+def _anchor_paths_of(feature: "Feature") -> list[str]:
+    """Anchor files of a feature — Stage 2.6 ``member_files`` with role
+    ``anchor`` when present, else the head of ``paths`` (pre-closure
+    scans). Anchor-first evidence ordering (naming review №3)."""
+    anchors = [
+        mf.path for mf in (feature.member_files or []) if mf.role == "anchor"
+    ]
+    return anchors or list(feature.paths or [])[:1]
+
+
 def _compact_dev_features(
     developer_features: list["Feature"],
+    product_strings: ProductStringIndex | None = None,
 ) -> list[dict[str, Any]]:
     """Project the top-N dev features into a lean payload shape.
 
     Sorted by path count descending — the assumption is that
     higher-path features are more important / more grounded.
+
+    Naming-evidence core (2026-06): each feature additionally carries
+    ``product_strings`` — the human-facing strings (nav labels, page
+    titles, default-locale i18n copy) collected from ITS OWN member
+    files, anchor files first. Empty list when the repo carries none.
     """
     sorted_df = sorted(
         developer_features, key=lambda f: -len(f.paths or []),
     )[:_MAX_DEV_FEATURES_IN_PAYLOAD]
-    return [
-        {
+    out: list[dict[str, Any]] = []
+    for f in sorted_df:
+        strings: list[str] = []
+        if product_strings is not None:
+            strings = product_strings.bundle_for(
+                f.paths or [],
+                anchor_paths=_anchor_paths_of(f),
+                cap=_MAX_PRODUCT_STRINGS_PER_FEATURE,
+            )
+        out.append({
             "name": f.name,
             "display_name": f.display_name,
             "description": (f.description or "")[:_MAX_DESCRIPTION_CHARS],
             "n_paths": len(f.paths or []),
             "sample_paths": list(f.paths or [])[:_MAX_PATHS_PER_FEATURE],
-        }
-        for f in sorted_df
-    ]
+            "product_strings": strings,
+        })
+    return out
 
 
 def _compact_flows(
@@ -354,10 +392,25 @@ def _harvest_marketing_text(
     return text[:_MAX_MARKETING_CONTEXT_CHARS], marketing_url, taxonomy_size
 
 
+def collect_index_for_features(
+    repo_path: Path,
+    developer_features: list["Feature"],
+) -> ProductStringIndex:
+    """Collect the product-string index over every member file of every
+    dev feature (paths + Stage 2.6 member_files closure). Deterministic;
+    README/prose docs structurally excluded inside the collector."""
+    candidates: set[str] = set()
+    for f in developer_features:
+        candidates.update(f.paths or [])
+        candidates.update(mf.path for mf in (f.member_files or []))
+    return collect_product_strings(repo_path, candidates)
+
+
 def build_analyst_payload(
     ctx: "ScanContext",
     developer_features: list["Feature"],
     top_flows: list["Flow"] | None = None,
+    product_strings: ProductStringIndex | None = None,
 ) -> dict[str, Any]:
     """Assemble the full analyst payload from prior pipeline stages.
 
@@ -376,6 +429,10 @@ def build_analyst_payload(
     marketing_text, marketing_url, taxonomy_size = _harvest_marketing_text(
         ctx.repo_path, slug, cache_backend=getattr(ctx, "cache_backend", None),
     )
+    if product_strings is None:
+        product_strings = collect_index_for_features(
+            ctx.repo_path, developer_features,
+        )
     return {
         "slug": slug,
         "audited_stack": ctx.audited_stack or ctx.stack or "",
@@ -384,11 +441,15 @@ def build_analyst_payload(
         "root_package": root_pkg,
         "auditor_hints": list(ctx.extractor_hints or ()),
         "workspace_packages": workspace_packages,
-        "developer_features": _compact_dev_features(developer_features),
+        "developer_features": _compact_dev_features(
+            developer_features, product_strings,
+        ),
         "flows": _compact_flows(top_flows),
         "marketing_text": marketing_text,
         "marketing_url": marketing_url,
         "taxonomy_size": taxonomy_size,
+        "product_strings_files": len(product_strings.by_file),
+        "product_strings_total": product_strings.total_strings,
     }
 
 
@@ -419,7 +480,11 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
         + "\n".join("- " + h for h in payload["auditor_hints"]) + "\n\n"
         "WORKSPACE PACKAGES (detected from monorepo manifest):\n"
         + json.dumps(payload["workspace_packages"], indent=2) + "\n\n"
-        "DEVELOPER FEATURES (top by path count, deterministic Layer 1):\n"
+        "DEVELOPER FEATURES (top by path count, deterministic Layer 1; "
+        "each feature's product_strings are human-facing nav labels / "
+        "page titles / i18n copy extracted from ITS OWN files — prefer "
+        "this vocabulary when naming, and never use product words that "
+        "appear in NO feature's evidence):\n"
         + json.dumps(payload["developer_features"], indent=2) + "\n\n"
         + flows_section
         + "MARKETING SURFACES (fetched from public web; NOT repo README):\n"
@@ -684,6 +749,276 @@ def _emit_product_features_from_analyst(
     return out, dev_map, member_flows_map, aux
 
 
+# ── Post-LLM name validation (anti-hallucination, deterministic) ────────
+
+
+_RENAME_SYSTEM_PROMPT = (
+    "You fix product-feature names that contain unsupported words. "
+    "For each entry you get the offending name, the prohibited words "
+    "(no evidence in the feature's files/strings/history), and the "
+    "feature's actual evidence (member dev features, sample paths, "
+    "product strings). Re-name each entry using ONLY vocabulary present "
+    "in its evidence. Keep names specific and product-grain. "
+    'Output STRICT JSON only: {"renames": [{"old": "...", "new": "..."}]}'
+)
+
+# Evidence rows shown per failing name in the rename-retry prompt.
+_MAX_RETRY_EVIDENCE_ROWS = 10
+
+
+def _file_commit_tokens(commits: list[Any]) -> dict[str, set[str]]:
+    """One-pass map of file → tokens of every commit message touching it.
+
+    Commit messages are legitimate naming evidence (the namers already
+    see them); per-FILE attachment keeps the vendor-domination rule
+    honest (a vendor mentioned in one commit grounds only the files of
+    that commit). Token sets are shared per commit — cheap."""
+    from faultline.pipeline_v2.naming_validator import _tokenize_evidence_text
+
+    out: dict[str, set[str]] = {}
+    for c in commits or []:
+        msg = getattr(c, "message", "") or ""
+        files = getattr(c, "files_changed", None) or []
+        if not msg or not files:
+            continue
+        toks = _tokenize_evidence_text(msg)
+        for fp in files:
+            out.setdefault(fp, set()).update(toks)
+    return out
+
+
+def _bundle_for_pf(
+    pf: Any,
+    contrib: list["Feature"],
+    *,
+    product_strings: ProductStringIndex | None,
+    marketing_text: str,
+    workspace_packages: list[str],
+    commit_tokens: dict[str, set[str]] | None,
+) -> EvidenceBundle:
+    """Evidence bundle for one emitted product feature: member-file
+    paths (+ their product strings + commit-message tokens) per file;
+    dev-feature names/descriptions, workspace packages and the external
+    marketing surface (allowed grounding) as global evidence."""
+    b = EvidenceBundle()
+    for p in pf.paths or []:
+        b.add_file(p)
+        if product_strings is not None:
+            for row in product_strings.strings_for_file(p):
+                b.add_file(p, row.text)
+        if commit_tokens is not None and p in commit_tokens:
+            b.add_file_tokens(p, commit_tokens[p])
+    for df in contrib:
+        b.add_global(df.name, df.display_name or "", df.description or "")
+        for sa in (df.symbol_attributions or [])[:200]:
+            b.add_global(getattr(sa, "symbol", "") or "")
+    b.add_global(*workspace_packages)
+    if marketing_text:
+        b.add_global(marketing_text)
+    return b
+
+
+def _call_rename_retry(
+    client: Any,
+    *,
+    model: str,
+    failing: list[dict[str, Any]],
+    cost_tracker: CostTracker | None,
+    llm_health: LlmHealth | None,
+) -> dict[str, str]:
+    """ONE retry call for the failing names. Returns ``{old: new}``
+    (empty on any failure — caller falls back deterministically)."""
+    prohibitions = {
+        e["name"]: list(e["prohibited"]) for e in failing
+    }
+    user = (
+        "ENTRIES TO RENAME:\n"
+        + json.dumps(failing, indent=2)
+        + "\n"
+        + retry_prohibition(prohibitions)
+    )
+    text, in_t, out_t, _ = _call_sonnet(
+        client, model=model, system=_RENAME_SYSTEM_PROMPT, user=user,
+        max_tokens=2000, llm_health=llm_health,
+    )
+    if cost_tracker is not None and (in_t or out_t):
+        cost_tracker.record(
+            provider="anthropic", model=model,
+            input_tokens=in_t, output_tokens=out_t,
+            label="stage_8_name_validator_retry",
+        )
+    if not text:
+        return {}
+    try:
+        obj = json.loads(_strip_code_fences(text))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    out: dict[str, str] = {}
+    for row in obj.get("renames") or []:
+        if (
+            isinstance(row, dict)
+            and isinstance(row.get("old"), str)
+            and isinstance(row.get("new"), str)
+            and row["new"].strip()
+        ):
+            out[row["old"]] = row["new"].strip()
+    return out
+
+
+def _slugify(label: str) -> str:
+    return label.lower().replace(" ", "-").replace("/", "-")
+
+
+def _validate_pf_names(
+    ctx: "ScanContext",
+    product_features: list["Feature"],
+    dev_map: dict[str, tuple[str, ...]],
+    member_flows_map: dict[str, list[str]],
+    developer_features: list["Feature"],
+    payload: dict[str, Any],
+    product_strings: ProductStringIndex | None,
+    *,
+    client: Any | None,
+    model: str,
+    cost_tracker: CostTracker | None,
+    llm_health: LlmHealth | None,
+    log: "StageLogger | None",
+) -> dict[str, Any]:
+    """Anti-hallucination pass over the analyst's PF names (review №2).
+
+    Contract: every content token of a PF name must appear in that PF's
+    evidence bundle. Failures get ONE batched retry with an explicit
+    prohibition; names still failing fall back to the deterministic slug
+    of the PF's largest member dev feature with ``name_confidence="low"``.
+    Mutates ``product_features`` / ``dev_map`` / ``member_flows_map``
+    in place (slug renames must stay consistent across all three).
+    """
+    by_name = {f.name: f for f in developer_features}
+    contrib_by_slug: dict[str, list["Feature"]] = defaultdict(list)
+    for dev, slugs in dev_map.items():
+        df = by_name.get(dev)
+        if df is None:
+            continue
+        for s in slugs:
+            contrib_by_slug[s].append(df)
+
+    commit_tokens = _file_commit_tokens(getattr(ctx, "commits", None) or [])
+    workspace_packages = list(payload.get("workspace_packages") or [])
+    marketing_text = payload.get("marketing_text") or ""
+
+    bundles: dict[str, EvidenceBundle] = {}
+    failing: list[dict[str, Any]] = []
+    for pf in product_features:
+        bundle = _bundle_for_pf(
+            pf,
+            contrib_by_slug.get(pf.name, []),
+            product_strings=product_strings,
+            marketing_text=marketing_text,
+            workspace_packages=workspace_packages,
+            commit_tokens=commit_tokens,
+        )
+        bundles[pf.name] = bundle
+        if bundle.is_poor:
+            pf.name_confidence = "low"
+            continue
+        label = pf.display_name or pf.name
+        verdict = validate_name(label, bundle)
+        if verdict.ok:
+            continue
+        contrib = contrib_by_slug.get(pf.name, [])
+        strings: list[str] = []
+        if product_strings is not None:
+            strings = product_strings.bundle_for(
+                pf.paths or [], cap=_MAX_RETRY_EVIDENCE_ROWS,
+            )
+        failing.append({
+            "name": label,
+            "slug": pf.name,
+            "prohibited": verdict.all_violations,
+            "member_dev_features": [
+                d.name for d in contrib
+            ][:_MAX_RETRY_EVIDENCE_ROWS],
+            "sample_paths": list(pf.paths or [])[:_MAX_RETRY_EVIDENCE_ROWS],
+            "product_strings": strings,
+        })
+
+    telemetry: dict[str, Any] = {
+        "pf_names_checked": len(product_features),
+        "pf_names_invalid": len(failing),
+        "pf_names_renamed": 0,
+        "pf_names_fallback": 0,
+        "validator_retry_called": False,
+    }
+    if not failing:
+        return telemetry
+
+    renames: dict[str, str] = {}
+    if client is not None and (llm_health is None or llm_health.should_call()):
+        telemetry["validator_retry_called"] = True
+        renames = _call_rename_retry(
+            client, model=model, failing=failing,
+            cost_tracker=cost_tracker, llm_health=llm_health,
+        )
+
+    used_slugs = {pf.name for pf in product_features}
+
+    def _reslug(pf: "Feature", new_label: str) -> None:
+        """Apply a new label + slug, keeping the maps consistent."""
+        old_slug = pf.name
+        new_slug = _slugify(new_label)
+        if new_slug != old_slug and new_slug in used_slugs:
+            i = 2
+            while f"{new_slug}-{i}" in used_slugs:
+                i += 1
+            new_slug = f"{new_slug}-{i}"
+        used_slugs.discard(old_slug)
+        used_slugs.add(new_slug)
+        pf.name = new_slug
+        pf.display_name = new_label
+        if old_slug != new_slug:
+            for dev, slugs in dev_map.items():
+                if old_slug in slugs:
+                    dev_map[dev] = tuple(
+                        new_slug if s == old_slug else s for s in slugs
+                    )
+            if old_slug in member_flows_map:
+                member_flows_map[new_slug] = member_flows_map.pop(old_slug)
+
+    pf_by_slug: dict[str, "Feature"] = {
+        pf.name: pf for pf in product_features
+    }
+    for entry in failing:
+        pf_obj = pf_by_slug.get(entry["slug"])
+        if pf_obj is None:
+            continue
+        new_label = renames.get(entry["name"])
+        if new_label:
+            verdict = validate_name(new_label, bundles[entry["slug"]])
+            if verdict.ok:
+                _reslug(pf_obj, new_label)
+                telemetry["pf_names_renamed"] += 1
+                continue
+        # Second failure (or no/invalid retry) → deterministic slug of
+        # the largest member dev feature; never synthesize.
+        contrib = contrib_by_slug.get(entry["slug"], [])
+        fallback_df = max(
+            contrib, key=lambda d: (len(d.paths or []), d.name), default=None,
+        )
+        if fallback_df is not None:
+            _reslug(pf_obj, fallback_df.display_name or fallback_df.name)
+        pf_obj.name_confidence = "low"
+        telemetry["pf_names_fallback"] += 1
+        if log is not None:
+            log.warn(
+                f"name-validator-fallback pf={entry['name']!r} "
+                f"prohibited={entry['prohibited']}",
+            )
+
+    return telemetry
+
+
 # ── Public entry point ──────────────────────────────────────────────────
 
 
@@ -763,13 +1098,20 @@ def run_stage_8_analyst(
             fallback_reason="no-client",
         )
 
-    payload = build_analyst_payload(ctx, developer_features, top_flows)
+    product_strings = collect_index_for_features(
+        ctx.repo_path, developer_features,
+    )
+    payload = build_analyst_payload(
+        ctx, developer_features, top_flows, product_strings,
+    )
     if log is not None:
         log.info(
             f"analyst-payload-built dev_features={len(payload['developer_features'])} "
             f"flows={len(payload['flows'])} "
             f"workspace_packages={len(payload['workspace_packages'])} "
-            f"taxonomy_size={payload['taxonomy_size']}",
+            f"taxonomy_size={payload['taxonomy_size']} "
+            f"product_strings={payload['product_strings_total']}"
+            f"/{payload['product_strings_files']}f",
         )
 
     user_prompt = build_user_prompt(payload)
@@ -868,6 +1210,24 @@ def run_stage_8_analyst(
             },
         )
 
+    # Anti-hallucination name validation (naming review №2) — every PF
+    # name token must be evidenced; one retry, then deterministic slug
+    # fallback + name_confidence="low". Mutates the three structures in
+    # place so slugs stay consistent.
+    validator_telemetry = _validate_pf_names(
+        ctx, product_features, dev_map, member_flows_map,
+        developer_features, payload, product_strings,
+        client=client, model=model, cost_tracker=cost_tracker,
+        llm_health=llm_health, log=log,
+    )
+
+    # Degraded-scan stamp (naming review №6): when the key died mid-scan
+    # the analyst output may be partial / unvalidated — mark every PF
+    # name low-confidence. Deterministic fallbacks already are.
+    if llm_health is not None and llm_health.auth_failed:
+        for pf in product_features:
+            pf.name_confidence = "low"
+
     # Phantom-count estimate: emitted PFs whose member dev features
     # account for ≤1 unique path — likely orphan/junk. Universal
     # heuristic, not corpus-tuned.
@@ -900,6 +1260,9 @@ def run_stage_8_analyst(
             1 for f in developer_features if not dev_map.get(f.name)
         ),
         "confidence": 0.90,
+        "product_strings_files": payload["product_strings_files"],
+        "product_strings_total": payload["product_strings_total"],
+        **validator_telemetry,
         **aux,
     }
     if log is not None:
@@ -986,5 +1349,6 @@ __all__ = [
     "Stage8Result",
     "build_analyst_payload",
     "build_user_prompt",
+    "collect_index_for_features",
     "run_stage_8_analyst",
 ]

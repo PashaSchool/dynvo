@@ -246,9 +246,12 @@ def test_same_name_multimember_clusters_merge_into_one_uf():
     }
     r = cluster_user_flows(scan)
     names = [u["name"] for u in r["user_flows"]]
-    # exactly one browse UF and one author UF — no name appears twice
-    assert names.count("Browse & filter organizations") == 1
-    assert names.count("Create & edit organizations") == 1
+    # exactly one browse UF and one author UF — no name appears twice.
+    # Slot-resolution fix (naming review №5): the rendered resource now
+    # comes from the PRIMARY member flow ("list-booking-flow" → bookings)
+    # instead of the cross-member domain vote ("organizations").
+    assert names.count("Browse & filter bookings") == 1
+    assert names.count("Create & edit bookings") == 1
     assert len(names) == len(set(names)), f"duplicate UF names: {names}"
     browse = next(u for u in r["user_flows"] if u["intent"] == "browse")
     # all 6 browse members (3 resources × 2) folded into the one browse UF
@@ -345,9 +348,10 @@ def test_none_domain_clusters_not_blindly_merged():
     }
     r = cluster_user_flows(scan)
     # distinct resources (alpha, beta), domain None → distinct names → 2 UFs
+    # (labels are pluralized by the slot-consistent renderer)
     assert len(r["user_flows"]) == 2
     names = sorted(u["name"] for u in r["user_flows"])
-    assert names == ["alpha", "beta"]
+    assert names == ["alphas", "betas"]
 
 
 def test_uf_ids_deterministic_and_ordered():
@@ -724,3 +728,95 @@ def test_filters_do_not_change_total_flows_layer1_intact():
     r = cluster_user_flows(scan)
     assert r["total_flows"] == 6
     assert r["unique_flows"] == 6
+
+
+# ── Slot-resolution fix (naming review №5) ──────────────────────────────
+# Verb + resource of the rendered UF name must come from the SAME member
+# flow (the primary one) — never verb-from-one-endpoint +
+# resource-from-another ("Run admins").
+
+
+def test_slot_fix_no_mixed_verb_resource():
+    # REGRESSION: domain "admin" comes from the pfid head-noun while the
+    # member flows are report/export executions. The old renderer mixed
+    # the slots into "Run admins"; the fix takes the resource from the
+    # primary member flow ("run-report-flow", most paths) → "Run reports".
+    devs = [{"name": "admin-feat",
+             "product_feature_id": "admins-&-user-management"}]
+    scan = {
+        "flows": [
+            _flow("run-report-flow", primary_feature="admin-feat",
+                  paths=["src/reports/run.ts", "src/reports/render.ts"]),
+            _flow("generate-export-flow", primary_feature="admin-feat",
+                  paths=["src/exports/generate.ts"]),
+        ],
+        "developer_features": devs,
+    }
+    r = cluster_user_flows(scan)
+    names = [u["name"] for u in r["user_flows"]]
+    assert "Run admins" not in names
+    assert "Run reports" in names
+    # cluster key (domain) is untouched — only the rendered name changed
+    assert {u["domain"] for u in r["user_flows"]} == {"admin"}
+
+
+def test_slot_fix_prefers_nav_label_from_anchor_file():
+    from faultline.pipeline_v2.product_strings import (
+        ProductString,
+        ProductStringIndex,
+    )
+
+    idx = ProductStringIndex(by_file={
+        "app/rooms/page.tsx": [
+            ProductString(
+                text="Data Rooms (/rooms)", source="nav",
+                file="app/rooms/page.tsx",
+            ),
+        ],
+    })
+    scan = {
+        "flows": [
+            _flow("list-room-flow",
+                  entry_point_file="app/rooms/page.tsx",
+                  paths=["app/rooms/page.tsx"]),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan, product_strings=idx)
+    uf = r["user_flows"][0]
+    # nav label of the PRIMARY flow's anchor file wins (href stripped)
+    assert uf["name"] == "Browse & filter Data Rooms"
+    assert uf["name_confidence"] == "high"
+
+
+def test_slot_fix_name_confidence_low_on_weak_resource():
+    # No noun in the flow name, no product strings → label falls back to
+    # the anchor basename and the UF is stamped low-confidence.
+    scan = {
+        "flows": [
+            _flow("frobnicate-flow",
+                  entry_point_file="src/admin/tools.ts",
+                  paths=["src/admin/tools.ts"]),
+        ],
+        "developer_features": [],
+    }
+    r = cluster_user_flows(scan)
+    uf = r["user_flows"][0]
+    assert uf["name_confidence"] == "low"
+
+
+def test_slot_fix_primary_is_deterministic_on_ties():
+    # Equal path counts → primary by name ascending; scanning twice gives
+    # identical names (determinism gate).
+    scan = {
+        "flows": [
+            _flow("view-zebra-flow"),
+            _flow("view-apple-flow"),
+        ],
+        "developer_features": [],
+    }
+    r1 = cluster_user_flows(scan)
+    r2 = cluster_user_flows(scan)
+    assert [u["name"] for u in r1["user_flows"]] == [
+        u["name"] for u in r2["user_flows"]
+    ]

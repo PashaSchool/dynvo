@@ -312,9 +312,19 @@ def test_emit_product_features_skips_invented_dev_features() -> None:
 def test_run_stage_8_analyst_happy_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Paths carry every content token of the analyst's PF names so the
+    # post-LLM anti-hallucination validator passes without a retry —
+    # this test exercises the HAPPY path (one call, no retry).
     feats = [
-        _feat("auth-handlers", ["packages/core/auth.ts"]),
-        _feat("billing", ["apps/billing/stripe.ts"]),
+        _feat("auth-handlers", [
+            "packages/core/auth.ts",
+            "packages/core/oauth.ts",
+            "packages/core/email-login.ts",
+        ]),
+        _feat("billing", [
+            "apps/billing/stripe.ts",
+            "apps/billing/subscriptions.ts",
+        ]),
         _feat("survey-builder", ["apps/web/surveys/builder.tsx"]),
     ]
     pre_products = [_product("legacy-pf", ["apps/billing/stripe.ts"])]
