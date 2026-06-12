@@ -37,6 +37,13 @@ stacks:
     roots: ["app/routes/"]
     suffixes: [".tsx", ".jsx", ".ts", ".js"]
 
+  # React Router v7 framework mode — the Remix successor, same
+  # ``app/routes/**`` convention (flat-route filenames with dot
+  # segments, optional remix-flat-routes ``folder+`` groups).
+  react-router:
+    roots: ["app/routes/"]
+    suffixes: [".tsx", ".jsx", ".ts", ".js"]
+
   # Astro — src/pages/**.astro (and ts/tsx for islands API)
   astro:
     roots: ["src/pages/", "pages/"]
