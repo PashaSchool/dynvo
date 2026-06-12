@@ -710,6 +710,80 @@ def _uf_name(domain: str | None, intent: str, resource: str) -> str:
     return NAME_TMPL[intent].format(r=label)
 
 
+def _pluralise(word: str) -> str:
+    if word.endswith(("s", "x", "z")):
+        return word
+    if word.endswith("y") and len(word) > 2 and word[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    return word + "s"
+
+
+def _primary_member(members: list[dict]) -> dict:
+    """The cluster's PRIMARY flow — the highest-confidence member.
+
+    Structural definition: most member paths (broadest grounded reach),
+    ties broken by name ascending for determinism. Both name slots
+    (verb + resource) are read from THIS flow only — never mixed across
+    members (naming-evidence review №5: "Run admins" was verb-from-one
+    endpoint + resource-from-another).
+    """
+    return sorted(
+        members,
+        key=lambda m: (-len(m.get("paths") or []), m.get("name") or ""),
+    )[0]
+
+
+def _slot_consistent_label(
+    members: list[dict],
+    product_strings: Any | None = None,
+) -> tuple[str, bool]:
+    """Resource label for the UF name, taken from ONE member flow.
+
+    Slot-resolution fix (review №5): verb and resource must come from
+    the SAME member flow. The cluster intent already classes the verb
+    (every member shares it by cluster-key construction); the resource
+    label here is derived ONLY from the primary member:
+
+      1. product-string vocabulary of the primary flow's anchor file —
+         a nav label / page title is the maintainer's own name for the
+         surface (strongest);
+      2. the noun span of the primary flow's own name (which Stage 3
+         derived from that flow's route path + handler);
+      3. last resort: the anchor file's basename stem.
+
+    Returns ``(label, grounded)`` — ``grounded`` is False only on the
+    basename last-resort with no product-string vocabulary, which the
+    caller surfaces as ``name_confidence="low"``.
+    """
+    primary = _primary_member(members)
+    anchor = primary.get("entry_point_file") or (
+        (primary.get("paths") or [None])[0] or "")
+
+    # 1. Nav label / page title on the primary anchor file.
+    if product_strings is not None and anchor:
+        rows = product_strings.strings_for_file(anchor)
+        for row in rows:
+            if row.source in ("nav", "title"):
+                # Strip the "(href)" context suffix nav entries carry.
+                label = re.sub(r"\s*\([^)]*\)\s*$", "", row.text).strip()
+                if label:
+                    return label, True
+
+    # 2. Noun span of the primary flow's OWN name (same-flow slot).
+    _, resource = _split_name(primary.get("name") or "")
+    if resource and resource != "item":
+        return _pluralise(resource.replace("-", " ")), True
+
+    # 3. Anchor basename stem (weak — flagged low-confidence).
+    if anchor:
+        base = anchor.rsplit("/", 1)[-1]
+        stem = base.rsplit(".", 1)[0] if "." in base else base
+        stem = re.sub(r"[_\-]+", " ", stem).strip()
+        if stem and stem not in ("index", "page", "route", "layout"):
+            return _pluralise(stem), False
+    return "items", False
+
+
 def _merge_singleton_noise(
     clusters: dict[tuple, list],
     cluster_resources: dict[tuple, Counter],
@@ -852,6 +926,7 @@ def _merge_same_name_clusters(
 def cluster_user_flows(
     scan: dict,
     routes_index: list[dict] | None = None,
+    product_strings: Any | None = None,
 ) -> dict:
     """Core deterministic clusterer — dict in, dict out (mirrors prototype).
 
@@ -980,9 +1055,18 @@ def cluster_user_flows(
         for m in members:
             flow_to_uf[_flow_key(m)] = uf_id
             name_to_uf[m["name"]] = uf_id
+        # Slot-resolution fix (naming review №5) — the RENDERED name takes
+        # both slots from the SAME primary member flow (verb class via the
+        # shared cluster intent, resource label via _slot_consistent_label),
+        # never the cross-member domain vote. Clustering above is untouched
+        # (the merge passes still key on the legacy _uf_name signature).
+        slot_label, slot_grounded = _slot_consistent_label(
+            members, product_strings,
+        )
         user_flows.append({
             "id": uf_id,
-            "name": _uf_name(domain, intent, label_resource),
+            "name": NAME_TMPL[intent].format(r=slot_label),
+            "name_confidence": "high" if slot_grounded else "low",
             "domain": domain,
             "product_feature_id": pfid,
             "intent": intent,
@@ -1009,6 +1093,7 @@ def cluster_user_flows(
 def run_user_flow_rollup(
     flows: list["Flow"], features: list["Feature"],
     routes_index: list[dict] | None = None,
+    product_strings: Any | None = None,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Engine adapter — cluster typed Flow/Feature objects, set
     ``Flow.user_flow_id`` in place, and return ``(user_flows, telemetry)``.
@@ -1029,7 +1114,9 @@ def run_user_flow_rollup(
             for f in features
         ],
     }
-    result = cluster_user_flows(scan, routes_index=routes_index)
+    result = cluster_user_flows(
+        scan, routes_index=routes_index, product_strings=product_strings,
+    )
     flow_to_uf = result["flow_to_uf"]
     name_to_uf = result["name_to_uf"]
     for f in flows:

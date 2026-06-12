@@ -228,12 +228,30 @@ def run_finalize_phase(
     # after product_features (6.5) + bipartite store + test_strip so
     # domains, cross-links, and the final flow set all exist. Additive —
     # mirrors the developer_feature → product_feature model for flows.
+    from faultline.pipeline_v2.product_strings import collect_product_strings
     from faultline.pipeline_v2.stage_6_7_user_flows import run_user_flow_rollup
+
+    # Naming-evidence core (2026-06) — collect the product-string index
+    # ONCE over every member file (features + flows) and share it with
+    # Stage 6.7 (slot-consistent resource labels) and Stage 6.7b (UF
+    # refiner evidence + name validation). Deterministic, $0 LLM,
+    # README structurally excluded inside the collector.
+    ps_candidates: set[str] = set()
+    for f in features:
+        ps_candidates.update(f.paths or [])
+        ps_candidates.update(mf.path for mf in (f.member_files or []))
+    for fl in bipartite.flows:
+        ps_candidates.update(fl.paths or [])
+        if fl.entry_point_file:
+            ps_candidates.add(fl.entry_point_file)
+    product_strings = collect_product_strings(repo_path, ps_candidates)
+
     user_flows: list = []
     with StageLogger(run_dir, 6, "user_flows") as log6_7:
         user_flows, uf_telemetry = run_user_flow_rollup(
             bipartite.flows, features,
             routes_index=lineage_result.routes_index,
+            product_strings=product_strings,
         )
         log6_7.info(
             "user_flows: %d flows -> %d unique -> %d UF, %d domains, "
@@ -316,6 +334,7 @@ def run_finalize_phase(
             log=log6_7b,
             domain_allowlist=uf_domain_allowlist,
             llm_health=llm_health,
+            product_strings=product_strings,
         )
         write_stage_artifact(
             ctx.repo_path,

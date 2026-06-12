@@ -65,6 +65,10 @@ from faultline.analyzer.marketing_fetcher import (
 )
 from faultline.llm.cost import CostTracker, deterministic_params
 from faultline.pipeline_v2.llm_health import LlmHealth
+from faultline.pipeline_v2.product_strings import (
+    ProductStringIndex,
+    collect_product_strings,
+)
 
 if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
@@ -96,6 +100,9 @@ _MIN_TAXONOMY_SIZE = 3
 # Haiku call constraints.
 _MAX_DEV_FEATURES_IN_PROMPT = 80
 _MAX_PATHS_PER_FEATURE = 5
+# Product strings per feature line — same per-feature evidence budget
+# as _MAX_PATHS_PER_FEATURE (structural, not corpus-tuned).
+_MAX_PRODUCT_STRINGS_PER_FEATURE = 5
 _MAX_TAXONOMY_ENTRIES_IN_PROMPT = 25
 _HAIKU_MAX_TOKENS = 2000
 
@@ -423,15 +430,28 @@ _SYSTEM_PROMPT = (
 def _build_user_prompt(
     developer_features: list["Feature"],
     taxonomy: MarketingTaxonomy,
+    product_strings: "ProductStringIndex | None" = None,
 ) -> str:
-    """Build the per-call user prompt — feature list + taxonomy."""
+    """Build the per-call user prompt — feature list + taxonomy.
+
+    Naming-evidence core (2026-06): when a product-string index is
+    supplied, each feature line additionally carries the human-facing
+    strings (nav labels / page titles / i18n copy) found in ITS OWN
+    files — the in-repo product vocabulary that makes the mapping
+    choice evidence-grounded rather than path-guessed.
+    """
     feature_lines: list[str] = []
     for f in developer_features[:_MAX_DEV_FEATURES_IN_PROMPT]:
         paths = list(f.paths or [])[:_MAX_PATHS_PER_FEATURE]
         path_summary = ", ".join(paths) if paths else "(no paths)"
-        feature_lines.append(
-            f"- {f.name}: {path_summary}"
-        )
+        line = f"- {f.name}: {path_summary}"
+        if product_strings is not None:
+            strings = product_strings.bundle_for(
+                f.paths or [], cap=_MAX_PRODUCT_STRINGS_PER_FEATURE,
+            )
+            if strings:
+                line += " | product strings: " + "; ".join(strings)
+        feature_lines.append(line)
     taxonomy_lines = [
         f"- {label}"
         for label in taxonomy.product_features[:_MAX_TAXONOMY_ENTRIES_IN_PROMPT]
@@ -544,6 +564,7 @@ def cluster_via_haiku(
     model: str,
     cost_tracker: CostTracker | None = None,
     llm_health: LlmHealth | None = None,
+    product_strings: "ProductStringIndex | None" = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """Single Haiku call: map each dev feature to a taxonomy label.
 
@@ -551,11 +572,17 @@ def cluster_via_haiku(
     ``{dev_name: product_label}`` — entries the model said were
     ``null`` are dropped from the mapping (they remain orphan and the
     deterministic Stage 6.5 result wins for those features).
+
+    Naming-evidence note: emitted PF names are constrained to the
+    fetched marketing taxonomy (invented labels are rejected below), and
+    the external marketing surface is an ALLOWED grounding source — so
+    the anti-hallucination validator's contract is satisfied
+    structurally on this path; no separate token check is needed.
     """
     if not developer_features or not taxonomy.product_features:
         return {}, {"called": False, "reason": "empty-input"}
 
-    user = _build_user_prompt(developer_features, taxonomy)
+    user = _build_user_prompt(developer_features, taxonomy, product_strings)
     text, in_tokens, out_tokens = _call_haiku(
         client,
         model=model,
@@ -762,10 +789,22 @@ def run_stage_8(
                 f"marketing-taxonomy-fetched url={taxonomy.source_url} "
                 f"size={len(taxonomy.product_features)}",
             )
+        # Naming-evidence core (2026-06) — in-repo product vocabulary
+        # for the mapping prompt. Deterministic; README excluded.
+        ps_candidates: set[str] = set()
+        for f in developer_features:
+            ps_candidates.update(f.paths or [])
+            ps_candidates.update(
+                mf.path for mf in (f.member_files or [])
+            )
+        product_strings = collect_product_strings(
+            ctx.repo_path, ps_candidates,
+        )
         mapping, haiku_telemetry = cluster_via_haiku(
             developer_features, taxonomy,
             client=client, model=model, cost_tracker=cost_tracker,
             llm_health=llm_health,
+            product_strings=product_strings,
         )
         if mapping:
             product_features = _emit_product_features(
@@ -842,6 +881,11 @@ def run_stage_8(
                 "cache_hit": cached_before is not None,
                 "haiku_called": True,
             }
+            # Degraded-scan stamp (naming review №6) — a dead key mid-
+            # scan means names may be partial; mark them low-confidence.
+            if llm_health is not None and llm_health.auth_failed:
+                for pf in product_features:
+                    pf.name_confidence = "low"
             if log is not None:
                 log.info(
                     f"marketing+haiku: mapped={telemetry['developer_features_mapped']} "
@@ -889,6 +933,14 @@ def run_stage_8(
         "haiku_called": False,
         "fallback_reason": reason,
     }
+    # Degraded-scan stamp (naming review №6): when the key died mid-scan
+    # we KEEP the deterministic Stage 6.5 slugs (never synthesize) and
+    # mark them low-confidence. A deliberately keyless scan (client is
+    # None, no auth failure) keeps the default — deterministic slugs are
+    # accurate names, just not LLM-refined.
+    if llm_health is not None and llm_health.auth_failed:
+        for pf in product_features_pre:
+            pf.name_confidence = "low"
     return Stage8Result(
         product_features=list(product_features_pre),
         dev_to_product_map=base_map,

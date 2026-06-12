@@ -60,9 +60,15 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from faultline.llm.cost import CostTracker, deterministic_params
 from faultline.pipeline_v2.llm_health import LlmHealth
+from faultline.pipeline_v2.naming_validator import (
+    EvidenceBundle,
+    retry_prohibition,
+    validate_name,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Flow, UserFlow
+    from faultline.pipeline_v2.product_strings import ProductStringIndex
     from faultline.pipeline_v2.run_logger import StageLogger
 
 logger = logging.getLogger(__name__)
@@ -221,13 +227,38 @@ def _member_flows_for(uf: "UserFlow", flows_by_key: dict[str, "Flow"]) -> list["
     return out
 
 
+def _uf_product_strings(
+    members: list["Flow"],
+    product_strings: "ProductStringIndex | None",
+) -> list[str]:
+    """Anchor-first product strings for a UF's member flows. Anchors are
+    the members' entry-point files; remaining member paths follow."""
+    if product_strings is None:
+        return []
+    paths: list[str] = []
+    anchors: list[str] = []
+    for m in members:
+        ep = getattr(m, "entry_point_file", None)
+        if ep:
+            anchors.append(ep)
+            paths.append(ep)
+        paths.extend(getattr(m, "paths", None) or [])
+    return product_strings.bundle_for(
+        paths, anchor_paths=anchors, cap=MAX_UI_LABELS,
+    )
+
+
 def _uf_payload(
-    uf: "UserFlow", members: list["Flow"]
+    uf: "UserFlow", members: list["Flow"],
+    product_strings: "ProductStringIndex | None" = None,
 ) -> dict[str, Any]:
     """Code-grounded context for one UF handed to the LLM.
 
-    Only names / routes / frontend labels / tested-member count — the
-    allowed code-grounded sources. No prose, no .ai/specs.
+    Only names / routes / frontend labels / product strings /
+    tested-member count — the allowed code-grounded sources. No prose,
+    no .ai/specs. ``product_strings`` (naming-evidence core, 2026-06)
+    carries nav labels / page titles / i18n copy from the member flows'
+    OWN files — the in-repo product vocabulary.
     """
     names: list[str] = []
     for m in members[:MAX_MEMBER_NAMES]:
@@ -244,9 +275,33 @@ def _uf_payload(
         "member_flow_names": names,
         "routes": routes,
         "frontend_labels": ui_labels,
+        "product_strings": _uf_product_strings(members, product_strings),
         "tested_member_count": len(tested),
         "default_ui_tier": _default_ui_tier(members),
     }
+
+
+def _uf_evidence_bundle(
+    uf: "UserFlow",
+    members: list["Flow"],
+    product_strings: "ProductStringIndex | None",
+) -> EvidenceBundle:
+    """Evidence a refined UF name may draw vocabulary from: member flow
+    names + routes + frontend labels (global), member files (+ their
+    product strings) per file."""
+    b = EvidenceBundle()
+    for m in members:
+        b.add_global(getattr(m, "display_name", None) or m.name)
+        b.add_global(getattr(m, "description", "") or "")
+        for p in (getattr(m, "paths", None) or []):
+            b.add_file(p)
+            if product_strings is not None:
+                for row in product_strings.strings_for_file(p):
+                    b.add_file(p, row.text)
+    b.add_global(*uf.routes)
+    b.add_global(*_ui_surface(members))
+    b.add_global(uf.resource or "", str(uf.domain or ""))
+    return b
 
 
 _SYSTEM_PROMPT = (
@@ -380,6 +435,7 @@ def _apply_refinement(
     uf: "UserFlow",
     row: dict,
     members: list["Flow"],
+    name_ok: bool = True,
 ) -> bool:
     """Stamp one refinement onto a UF in place. Returns True if applied.
 
@@ -387,13 +443,21 @@ def _apply_refinement(
     deterministic value for that field (partial refine still counts).
     AC list is bounded to the count of test-reached members (the LLM is
     asked for exactly that many, but we enforce it structurally).
+
+    ``name_ok=False`` (anti-hallucination validator verdict after the
+    one allowed retry) keeps the deterministic Stage-6.7 name and stamps
+    ``name_confidence="low"``; the other fields still apply.
     """
     applied = False
 
     name = row.get("name")
     if isinstance(name, str) and name.strip():
-        uf.name = name.strip()
-        applied = True
+        if name_ok:
+            uf.name = name.strip()
+            uf.name_confidence = "high"
+            applied = True
+        else:
+            uf.name_confidence = "low"
 
     desc = row.get("description")
     if isinstance(desc, str) and desc.strip():
@@ -441,6 +505,7 @@ def refine_user_flows(
     log: "StageLogger | None" = None,
     domain_allowlist: set[str | None] | None = None,
     llm_health: LlmHealth | None = None,
+    product_strings: "ProductStringIndex | None" = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Refine ``user_flows`` in place via one Haiku call per domain.
@@ -482,6 +547,10 @@ def refine_user_flows(
         "acceptance_total": 0,
         "cost_usd": 0.0,
         "fallback_reason": None,
+        "uf_names_invalid": 0,
+        "uf_names_recovered_on_retry": 0,
+        "uf_names_fallback": 0,
+        "validator_retries": 0,
     }
     if not user_flows:
         return user_flows, telemetry
@@ -529,7 +598,10 @@ def refine_user_flows(
         members_by_uf = {
             uf.id: _member_flows_for(uf, flows_by_key) for uf in ufs
         }
-        payloads = [_uf_payload(uf, members_by_uf[uf.id]) for uf in ufs]
+        payloads = [
+            _uf_payload(uf, members_by_uf[uf.id], product_strings)
+            for uf in ufs
+        ]
         user_prompt = _build_user_prompt(domain, payloads)
 
         text, in_tok, out_tok = _call_haiku(
@@ -575,11 +647,78 @@ def refine_user_flows(
                 )
             continue
 
+        # ── Anti-hallucination name validation (naming review №2) ──
+        # Every content token of a refined name must be evidenced in
+        # the UF's bundle (member flow names, routes, frontend labels,
+        # member files + their product strings). ONE retry per domain
+        # with an explicit prohibition; second failure keeps the
+        # deterministic Stage-6.7 name + name_confidence="low".
+        bundles = {
+            uf.id: _uf_evidence_bundle(
+                uf, members_by_uf[uf.id], product_strings,
+            )
+            for uf in ufs
+        }
+        name_ok: dict[str, bool] = {}
+        violations: dict[str, list[str]] = {}
+        failing_ids: list[str] = []
+        for uf in ufs:
+            row = parsed.get(uf.id)
+            nm = row.get("name") if row else None
+            if not (isinstance(nm, str) and nm.strip()):
+                continue
+            verdict = validate_name(nm, bundles[uf.id])
+            name_ok[uf.id] = verdict.ok
+            if not verdict.ok:
+                violations[nm] = verdict.all_violations
+                failing_ids.append(uf.id)
+        if violations:
+            telemetry["uf_names_invalid"] += len(failing_ids)
+            if llm_health is None or llm_health.should_call():
+                telemetry["validator_retries"] += 1
+                retry_text, r_in, r_out = _call_haiku(
+                    client,
+                    model=model,
+                    system=_SYSTEM_PROMPT,
+                    user=user_prompt + "\n" + retry_prohibition(violations),
+                    max_tokens=DEFAULT_MAX_TOKENS,
+                    llm_health=llm_health,
+                )
+                if r_in or r_out:
+                    entry = tracker.record(
+                        provider="anthropic",
+                        model=model,
+                        input_tokens=r_in,
+                        output_tokens=r_out,
+                        label="stage-6.7b-uf-refiner-name-retry",
+                    )
+                    total_cost += float(
+                        getattr(entry, "cost_usd", 0.0) or 0.0,
+                    )
+                retry_parsed = _parse_refinement(retry_text) or {}
+                for uf_id in failing_ids:
+                    row2 = retry_parsed.get(uf_id)
+                    nm2 = row2.get("name") if row2 else None
+                    if isinstance(nm2, str) and nm2.strip() and validate_name(
+                        nm2, bundles[uf_id],
+                    ).ok:
+                        # Adopt the grounded rename into the first
+                        # response's row; other fields keep the first
+                        # (already-parsed) values.
+                        parsed[uf_id] = {**parsed.get(uf_id, {}), "name": nm2}
+                        name_ok[uf_id] = True
+                        telemetry["uf_names_recovered_on_retry"] += 1
+            telemetry["uf_names_fallback"] += sum(
+                1 for uf_id in failing_ids if not name_ok.get(uf_id, True)
+            )
+
         refined_here = 0
         for uf in ufs:
             row = parsed.get(uf.id)
             members = members_by_uf[uf.id]
-            if row and _apply_refinement(uf, row, members):
+            if row and _apply_refinement(
+                uf, row, members, name_ok=name_ok.get(uf.id, True),
+            ):
                 uf.refined = True
                 refined_here += 1
             elif uf.ui_tier is None:
@@ -589,6 +728,11 @@ def refine_user_flows(
 
     telemetry["cost_usd"] = round(total_cost, 6)
     telemetry["domains_reused"] = domains_reused
+    # Degraded-scan stamp (naming review №6): a dead key mid-scan means
+    # names were not (or only partially) LLM-validated this run.
+    if llm_health is not None and llm_health.auth_failed:
+        for uf in user_flows:
+            uf.name_confidence = "low"
     telemetry["intent_other_after"] = sum(
         1 for uf in user_flows if uf.intent == "other"
     )
