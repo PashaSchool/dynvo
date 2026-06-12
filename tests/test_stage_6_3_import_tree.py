@@ -516,3 +516,33 @@ export function Widget() {
         key = (a.file, a.symbol)
         assert key not in seen, f"duplicate (file, symbol) in feature.symbol_attributions: {key}"
         seen.add(key)
+
+
+def test_structural_fallback_seeds_all_functions(tmp_path: Path) -> None:
+    """2026-06 membership fix: CASE E must seed EVERY function of the
+    file, not the first one. Here the first function has no imports —
+    the old single-seed shape died at depth 1 and never reached the
+    handler imported by the SECOND function."""
+    _w(tmp_path / "tsconfig.json", json.dumps({
+        "compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./*"]}},
+    }))
+    _w(tmp_path / "api/route.ts", """\
+export function OPTIONS(_: Request) {
+  return new Response(null, {status: 204});
+}
+
+import {handler} from "@/lib/handler";
+
+export async function POST(req: Request) {
+  return handler(req);
+}
+""")
+    _w(tmp_path / "lib/handler.ts",
+       "export function handler(_: Request){return new Response('ok');}")
+    ctx = _ctx(tmp_path)
+    feature = _new_feature("api", ["api/route.ts"])  # no flows, no description
+    res = enrich_with_import_tree(ctx, [feature])
+    # Both functions seeded.
+    assert res.total_seeds >= 2
+    # The SECOND function's import chain is reached.
+    assert "lib/handler.ts" in feature.paths

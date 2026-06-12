@@ -102,6 +102,9 @@ from faultline.pipeline_v2.scan_meta import (
 )
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.stage_2_reconcile import stage_2_reconcile
+from faultline.pipeline_v2.stage_2_6_membership_closure import (
+    run_membership_closure,
+)
 from faultline.pipeline_v2.stage_3_flows import stage_3_flows
 from faultline.pipeline_v2.stage_4_residual import stage_4_residual
 from faultline.pipeline_v2.stage_6_metrics import (
@@ -346,6 +349,30 @@ def run_pipeline_v2(
                 "zero_path_drops_count": stage2.zero_path_drops_count,
                 "zero_path_drops_sample": stage2.zero_path_drops_sample,
             },
+            run_dir=run_dir,
+        )
+
+    # ── Stage 2.6 — import-closure membership (deterministic) ──────
+    # Pull the service / util / component files each ANCHOR feature
+    # (route / fastapi / mvc / …) statically imports into that
+    # feature's membership, guarded by the scale-invariant fan-in cap,
+    # plus a conservative co-commit secondary signal. Runs BEFORE
+    # Stage 3/4 so (a) attached files are EXCLUDED from Stage 4's
+    # residual pool (junk-drawers shrink organically) and (b) the
+    # enriched ``paths`` feed Stage 6 metrics, Stage 6.5 clustering and
+    # Stage 8 Layer-2. See stage_2_6_membership_closure.py docstring.
+    with StageLogger(run_dir, 2, "membership_closure") as log2_6:
+        closure = run_membership_closure(
+            _isolate(deterministic_features), _isolate(unattributed),
+            _isolate(ctx), log=log2_6,
+        )
+        deterministic_features = closure.features
+        unattributed = closure.unattributed
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=2,
+            stage_name="membership_closure",
+            payload=closure.telemetry.as_dict(),
             run_dir=run_dir,
         )
 
@@ -631,6 +658,18 @@ def run_pipeline_v2(
         stage_8_6_telemetry=stage_8_6_telemetry,
         shape_result=shape_result,
     )
+
+    # Stage 2.6 membership-closure telemetry — additive key (consumers
+    # treat absence as "stage not present"). Per-feature detail and
+    # wall-clock timing stay in the 02-stage-membership_closure.json
+    # artifact; scan_meta carries only run-stable counts so two
+    # equivalent scans serialize identically (multi-subpath
+    # equivalence gate).
+    scan_meta["membership_closure"] = {
+        k: v
+        for k, v in closure.telemetry.as_dict().items()
+        if k not in {"per_feature", "attached_sample", "elapsed_sec"}
+    }
 
     # Multi-subpath engine telemetry — additive key, only emitted when
     # this run consumed an injected shared git snapshot (no schema-

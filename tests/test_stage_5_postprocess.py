@@ -530,3 +530,34 @@ def test_empty_rationale_maps_to_none_description(tmp_path: Path) -> None:
         ctx=_ctx(tmp_path),
     )
     assert features[0].description is None
+
+
+# ── Stage 2.6 member_files carry-through ───────────────────────────────────
+
+
+def test_member_files_carry_through_to_public_feature(tmp_path: Path) -> None:
+    """Stage 2.6 provenance must survive the DeveloperFeature →
+    Feature conversion (the schema piece of the ownership model)."""
+    from faultline.models.types import MemberFile
+
+    dev = _dev("billing", ("app/billing/page.tsx", "lib/billing.ts"))
+    dev.member_files = [
+        MemberFile(path="app/billing/page.tsx", role="anchor",
+                   confidence=1.0, evidence="stage-2 anchor", primary=True),
+        MemberFile(path="lib/billing.ts", role="closure",
+                   confidence=0.5, evidence="import depth 1", primary=True),
+        MemberFile(path="lib/shared.ts", role="shared",
+                   confidence=0.33, evidence="fan-in", primary=False),
+    ]
+    features = stage_5_postprocess(
+        deterministic=[dev], residual=[], ctx=_ctx(tmp_path),
+    )
+    assert len(features) == 1
+    mf = features[0].member_files
+    assert [(m.path, m.role, m.primary) for m in mf] == [
+        ("app/billing/page.tsx", "anchor", True),
+        ("lib/billing.ts", "closure", True),
+        ("lib/shared.ts", "shared", False),
+    ]
+    # paths stays the primary surface only (back-compat).
+    assert features[0].paths == ["app/billing/page.tsx", "lib/billing.ts"]

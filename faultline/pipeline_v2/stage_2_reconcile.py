@@ -37,6 +37,7 @@ from faultline.pipeline_v2.extractors.base import AnchorCandidate
 from faultline.pipeline_v2.llm_health import LlmHealth
 
 if TYPE_CHECKING:
+    from faultline.models.types import MemberFile
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
 
@@ -141,6 +142,12 @@ class DeveloperFeature:
     rationale: str = ""
     # Per-source confidence_self values, kept for downstream tie-breaks.
     source_confidences: dict[str, float] = field(default_factory=dict)
+    # Stage 2.6 (2026-06) — per-file membership provenance. Populated
+    # by the import-closure membership pass with pydantic
+    # ``faultline.models.types.MemberFile`` records (anchor / closure /
+    # co-commit / shared). Stage 5 forwards it onto the public
+    # ``Feature.member_files``. Empty until Stage 2.6 runs.
+    member_files: list["MemberFile"] = field(default_factory=list)
 
 
 @dataclass

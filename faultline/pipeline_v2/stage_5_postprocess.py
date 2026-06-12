@@ -247,6 +247,10 @@ def _dev_feature_to_feature(
         flows=[_flow_spec_to_flow(f) for f in (flows or [])],
         layer="developer",
         product_feature_id=None,
+        # Stage 2.6 — file-membership provenance (anchor / closure /
+        # co-commit / shared). Empty for features that predate the
+        # closure pass (e.g. Stage 4 residual features).
+        member_files=list(dev.member_files),
     )
 
 
@@ -488,6 +492,23 @@ def _shares_workspace_token(
     return False
 
 
+def _union_member_files(a: list, b: list) -> list:
+    """Union two ``member_files`` lists, dedup by ``(path, role)``.
+
+    Order: all of ``a`` first, then new entries from ``b``
+    (deterministic).
+    """
+    seen: set[tuple[str, str]] = {(m.path, m.role) for m in a}
+    out = list(a)
+    for m in b:
+        key = (m.path, m.role)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(m)
+    return out
+
+
 def _merge_two_features(primary: Feature, sibling: Feature) -> Feature:
     """Fold ``sibling`` into ``primary``, returning the merged Feature.
 
@@ -552,6 +573,12 @@ def _merge_two_features(primary: Feature, sibling: Feature) -> Feature:
         layer=primary.layer,
         product_feature_id=(
             primary.product_feature_id or sibling.product_feature_id
+        ),
+        # Stage 2.6 provenance — union, dedup by (path, role). The two
+        # features' paths are disjoint (guard above), so primary flags
+        # cannot conflict.
+        member_files=_union_member_files(
+            primary.member_files, sibling.member_files,
         ),
     )
 
