@@ -3,7 +3,8 @@
     {
       "name": "health",
       "paths": [
-        "app/main.py"
+        "app/main.py",
+        "app/routers/__init__.py"
       ]
     },
     {

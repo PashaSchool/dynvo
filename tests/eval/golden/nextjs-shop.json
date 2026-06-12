@@ -13,12 +13,6 @@
       ]
     },
     {
-      "name": "db",
-      "paths": [
-        "lib/db.ts"
-      ]
-    },
-    {
       "name": "next-config",
       "paths": [
         "next.config.js"

@@ -101,6 +101,7 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (0, "auditor"),
     (1, "extractors"),
     (2, "reconcile"),
+    (2, "membership_closure"),
     (3, "flows"),
     (4, "residual"),
     (5, "postprocess"),
