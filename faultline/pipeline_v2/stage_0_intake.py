@@ -347,6 +347,33 @@ def _detect_js_stack(
         signals.append("package.json depends on @remix-run/*")
         return "remix", signals
 
+    # React Router v7 framework mode (the Remix successor — Remix
+    # apps migrate ``@remix-run/*`` → ``@react-router/*`` plus a
+    # ``react-router.config.*`` file, keeping the ``app/routes/**``
+    # convention). Framework mode is identified by the scoped
+    # ``@react-router/`` packages (runtime OR dev — ``@react-router/dev``
+    # is a devDependency by convention) or the config file — NEVER by
+    # the plain ``react-router`` dep alone, which is library-mode SPA
+    # routing with no file-system convention. This check MUST come
+    # before the backend-framework loop: RRv7 apps commonly carry a
+    # runtime server adapter (hono / express) that would otherwise
+    # mis-tag the workspace as a backend (documenso's apps/remix was
+    # tagged ``hono`` and produced zero route anchors).
+    has_rr_config = any(
+        (root / f"react-router.config.{ext}").exists()
+        for ext in ("ts", "js", "mjs", "cjs", "mts", "cts")
+    )
+    if (
+        has_rr_config
+        or has_dep("@react-router/")
+        or _matches(dev_deps, "@react-router/")
+    ):
+        signals.append(
+            "React Router framework mode (@react-router/* dep "
+            "or react-router.config.*)"
+        )
+        return "react-router", signals
+
     # SvelteKit
     if has_dep("@sveltejs/kit") or (root / "svelte.config.js").exists():
         signals.append("SvelteKit signals (dep or svelte.config.js)")
