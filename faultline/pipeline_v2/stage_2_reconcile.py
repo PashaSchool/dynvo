@@ -10,7 +10,21 @@ Algorithm (per the ``pipeline-architecture`` skill):
 
   1. **Merge by name overlap**: candidates whose slugs are
      token-set-identical OR have Jaccard similarity ≥ 0.7 are merged
-     into one feature.
+     into one feature. Before comparison, slugs are normalized by
+     stripping a short fixed list of URL-structure stop tokens
+     (``api``/``internal``/``v1``..``v3``), and a strict token-subset
+     (containment) of ≥2 tokens also merges — see
+     :func:`_normalized_tokens` / :func:`_token_containment`.
+  1b. **Guarded file-overlap merge** (2026-06): cross-extractor
+     fragments of the same feature that miss the name bar but claim
+     the same anchor files are merged under FOUR simultaneous guards —
+     see :func:`_file_overlap_should_merge`. This deliberately
+     implements the narrow surviving conditions of the REFUTED naive
+     "identical path-set ⇒ merge" experiment (memory
+     finding-pathset-merge-refuted-2026-06-01): naive file-set merging
+     cratered precision on JS/Prisma stacks, so schema-sourced
+     candidates never merge by file overlap and a name signal is still
+     required.
   2. **Name priority on conflict**: when merged candidates disagree on
      slug, pick by ``package > route > mvc > schema > config``.
   3. **Primary path attribution**: each file belongs to exactly one
@@ -149,6 +163,15 @@ class DeveloperFeature:
     # ``Feature.member_files``. Empty until Stage 2.6 runs.
     member_files: list["MemberFile"] = field(default_factory=list)
 
+    # In-scan merge lineage: the LOSING candidate slugs absorbed into
+    # this feature (canonical name excluded), sorted. NOTE: this is
+    # deliberately NOT stamped onto the public ``Feature.merged_from``
+    # — that field carries CROSS-SCAN lineage UUIDs owned by Stage 6.8
+    # (see ``faultline/pipeline_v2/lineage.py``). The in-scan dedup
+    # convention (mirroring Stage 5's ``dedup_merged_from:`` drop-log
+    # tag) is a ``merged_from:`` rationale entry plus this field.
+    merged_from: list[str] = field(default_factory=list)
+
 
 @dataclass
 class Stage2Result:
@@ -182,6 +205,65 @@ def _slug_tokens(slug: str) -> frozenset[str]:
     return frozenset(t for t in slug.split("-") if t)
 
 
+# Universal URL-structure stop tokens stripped before slug comparison.
+#
+# Each entry is a STRUCTURAL marker of how an HTTP surface is mounted,
+# never product vocabulary — that's the justification for hardcoding
+# them (house rule: structural constants OK, tuned magic numbers NOT):
+#
+#   - ``api``       — the universal transport mount prefix (``/api/...``,
+#                     ``api-`` route groups). Names the wire, not the
+#                     feature: ``api-org-knowledge`` IS ``org-knowledge``.
+#   - ``v1``/``v2``/``v3`` — URL version segments (``/api/v1/...``).
+#                     Pure routing plumbing in every framework.
+#   - ``internal``  — visibility-scoping mount segment
+#                     (``/internal/...``, ``internal-`` admin surfaces).
+#
+# Deliberately NOT included: domain-ish words (``admin``, ``app``,
+# ``web``) — those routinely ARE the feature — and NO stemming or
+# alias folding (``org`` ↔ ``organization`` was considered and
+# REJECTED: it is a vocabulary equivalence, not a structural one, and
+# a partial alias table would be exactly the per-repo tuning the house
+# rule forbids).
+_STOP_PREFIX_TOKENS: frozenset[str] = frozenset(
+    {"api", "internal", "v1", "v2", "v3"},
+)
+
+
+def _normalized_tokens(slug: str) -> frozenset[str]:
+    """Token set with URL-structure stop tokens stripped.
+
+    Falls back to the RAW token set when stripping would leave nothing
+    (a slug made entirely of structural tokens, e.g. ``api`` or
+    ``api-v1``, must not normalize to the universally-matching empty
+    set).
+    """
+    raw = _slug_tokens(slug)
+    stripped = raw - _STOP_PREFIX_TOKENS
+    return stripped or raw
+
+
+def _token_containment(
+    a: frozenset[str],
+    b: frozenset[str],
+    *,
+    min_subset_tokens: int = 2,
+) -> bool:
+    """``True`` when one token set is a STRICT subset of the other.
+
+    ``min_subset_tokens`` guards the weak end: a single-token subset
+    (``auth`` ⊂ ``auth-tokens`` ⊂ ``auth-sessions`` …) carries no
+    compound-noun specificity and would transitively collapse whole
+    families via union-find, so name-only containment requires the
+    subset to keep ≥2 tokens. The file-overlap rule relaxes this to 1
+    because there the shared-anchor-file evidence carries the weight.
+    """
+    if a == b:
+        return False
+    smaller, larger = (a, b) if len(a) <= len(b) else (b, a)
+    return len(smaller) >= min_subset_tokens and smaller < larger
+
+
 def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     if not a and not b:
         return 1.0
@@ -192,13 +274,90 @@ def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
 
 
 def _should_merge(a: str, b: str, *, threshold: float = 0.7) -> bool:
-    """``True`` if two slugs should merge into one feature."""
+    """``True`` if two slugs should merge into one feature.
+
+    Order of checks (cheapest first):
+
+      1. literal / token-set equality on RAW tokens;
+      2. raw-token Jaccard ≥ ``threshold`` (the original rule);
+      3. equality on NORMALIZED tokens (stop-prefix-stripped) —
+         ``api-org-knowledge`` ≡ ``org-knowledge``;
+      4. strict token containment on normalized tokens (≥2-token
+         subset) — ``org-knowledge`` ⊂ ``org-knowledge-base``;
+      5. normalized-token Jaccard ≥ ``threshold``.
+    """
     if a == b:
         return True
     ta, tb = _slug_tokens(a), _slug_tokens(b)
     if ta == tb:
         return True
-    return _jaccard(ta, tb) >= threshold
+    if _jaccard(ta, tb) >= threshold:
+        return True
+    na, nb = _normalized_tokens(a), _normalized_tokens(b)
+    if na == nb:
+        return True
+    if _token_containment(na, nb):
+        return True
+    return _jaccard(na, nb) >= threshold
+
+
+# ── Guarded file-overlap merge (2026-06) ───────────────────────────────────
+#
+# Sources whose candidates may NOT participate in a file-overlap merge.
+# This is the load-bearing guard from the refuted path-set-merge
+# experiment (finding-pathset-merge-refuted-2026-06-01): schema-derived
+# features (Prisma models etc.) legitimately share files with route
+# features — one ``schema.prisma`` holds every model — without being
+# the same feature, and merging them cratered precision −13/−20pp on
+# JS/Prisma stacks. ``rails-models`` is the same signal class (model
+# declarations naming a data resource), so it is excluded too.
+
+_FILE_OVERLAP_EXCLUDED_SOURCES: frozenset[str] = frozenset(
+    {"schema", "rails-models"},
+)
+
+
+def _file_overlap_should_merge(
+    a: AnchorCandidate,
+    b: AnchorCandidate,
+    *,
+    threshold: float = 0.7,
+) -> bool:
+    """Second merge predicate: cross-extractor fragments sharing files.
+
+    Merges ONLY when ALL of the following hold (each guard answers the
+    refuted naive "share files ⇒ merge" finding):
+
+      1. **cross-source** — same-source siblings sharing a file are
+         usually genuinely distinct routes declared in one module;
+      2. **neither schema-sourced** — see
+         :data:`_FILE_OVERLAP_EXCLUDED_SOURCES`;
+      3. **anchor-file containment** — the path-set overlap covers at
+         least HALF of the SMALLER candidate's path set
+         (scale-invariant ratio, no absolute file counts);
+      4. **a name signal still agrees** — normalized-token containment
+         (1-token subsets allowed here: the file evidence carries the
+         weight) OR normalized-token Jaccard ≥ ``threshold``.
+    """
+    if a.source == b.source:
+        return False
+    if (
+        a.source in _FILE_OVERLAP_EXCLUDED_SOURCES
+        or b.source in _FILE_OVERLAP_EXCLUDED_SOURCES
+    ):
+        return False
+    pa, pb = frozenset(a.paths), frozenset(b.paths)
+    if not pa or not pb:
+        return False
+    overlap = len(pa & pb)
+    if overlap * 2 < min(len(pa), len(pb)):
+        return False
+    na, nb = _normalized_tokens(a.name), _normalized_tokens(b.name)
+    if na == nb:
+        return True
+    if _token_containment(na, nb, min_subset_tokens=1):
+        return True
+    return _jaccard(na, nb) >= threshold
 
 
 # ── Rails cross-extractor merger (H2) ──────────────────────────────────────
@@ -278,6 +437,10 @@ def _build_merge_groups(
                 uf.union(i, j)
             elif rails_merge and _rails_should_merge(
                 candidates[i].name, candidates[j].name,
+            ):
+                uf.union(i, j)
+            elif _file_overlap_should_merge(
+                candidates[i], candidates[j], threshold=jaccard_threshold,
             ):
                 uf.union(i, j)
     groups: dict[int, list[int]] = {}
@@ -458,6 +621,13 @@ def _build_feature_from_group(
     if rationale_extra:
         rationale = (rationale + " | " + rationale_extra) if rationale else rationale_extra
 
+    # In-scan merge lineage: losing slugs absorbed into the canonical
+    # name (Stage 5 ``dedup_merged_from:`` convention).
+    merged_from = sorted({c.name for c in group} - {canonical_name})
+    if merged_from:
+        merge_note = f"merged_from:{','.join(merged_from)}"
+        rationale = (rationale + " | " + merge_note) if rationale else merge_note
+
     return DeveloperFeature(
         name=canonical_name,
         paths=tuple(sorted(paths)),
@@ -466,6 +636,7 @@ def _build_feature_from_group(
         display_name=display_name,
         rationale=rationale,
         source_confidences=source_conf,
+        merged_from=merged_from,
     )
 
 
@@ -564,6 +735,7 @@ def _attribute_paths(
                 display_name=f.display_name,
                 rationale=f.rationale,
                 source_confidences=f.source_confidences,
+                merged_from=f.merged_from,
             ),
         )
     return rebuilt
