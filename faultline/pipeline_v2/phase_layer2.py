@@ -93,6 +93,12 @@ def run_layer2_phase(
         s8_pre_breakdown: dict[str, int] = product_telemetry.get(
             "product_clusterer_source_breakdown", {},
         )
+        # In-repo nav taxonomy matches (Stage 6.5 rule 2.5) — the
+        # vendor's own labels rank ABOVE external marketing, so both
+        # Stage 8 modes receive the map and preserve those labels.
+        s8_nav_map: dict[str, str] = product_telemetry.get(
+            "nav_taxonomy_map", {},
+        ) or {}
         # Sprint M4 dispatcher — ``FAULTLINE_STAGE_8_MODE`` selects
         # between the Sonnet analyst ("analyst", default since
         # 2026-05-21 corpus validation: avg L2 P 40.8 → 87.9, R 43.9 →
@@ -126,6 +132,7 @@ def run_layer2_phase(
                 model=_STAGE_8_ANALYST_MODEL,
                 cost_tracker=tracker,
                 llm_health=llm_health,
+                nav_taxonomy_map=s8_nav_map,
             )
         else:
             log8.info(f"mode=haiku-clusterer model={model_id}")
@@ -140,6 +147,7 @@ def run_layer2_phase(
                 model=model_id,
                 cost_tracker=tracker,
                 llm_health=llm_health,
+                nav_taxonomy_map=s8_nav_map,
             )
         # Apply Stage 8 overrides — replace product_features and the
         # legacy single-valued ``product_feature_id`` stamp.
