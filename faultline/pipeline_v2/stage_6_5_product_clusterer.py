@@ -60,6 +60,11 @@ import yaml
 
 from faultline.pipeline_v2.data import load_data_text
 from faultline.pipeline_v2.domain_noun import extract_domain_noun
+from faultline.pipeline_v2.nav_taxonomy import match_features_to_taxonomy
+from faultline.pipeline_v2.product_strings import (
+    build_nav_taxonomy,
+    collect_product_strings,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -85,6 +90,12 @@ _WORKSPACE_CONCENTRATION_MIN = 0.70
 # without touching the YAML.
 _CONF_WORKSPACE = 0.6
 _CONF_DEP_ANCHOR = 0.75
+# In-repo nav taxonomy — the vendor's OWN nav/sidebar + route hierarchy
+# (see ``nav_taxonomy.py``). Above dep-anchor (0.75) AND above the
+# domain-noun ceiling (0.85): an explicit vendor-declared label beats
+# every inferred one. Below customer-yaml (1.0) — the customer's
+# explicit override is absolute.
+_CONF_NAV_TAXONOMY = 0.9
 _CONF_CUSTOMER_YAML = 1.0
 
 # When multiple dep anchors fire on the same dev feature, the
@@ -661,6 +672,66 @@ def _apply_dep_anchor_rule(
     return votes_cast
 
 
+# ── Rule 2.5 — in-repo nav taxonomy (vendor-declared) ───────────────────
+
+
+def _apply_nav_taxonomy_rule(
+    ctx: "ScanContext",
+    developer_features: list["Feature"],
+    state: _ClustererState,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Match dev features against the repo's OWN nav taxonomy.
+
+    The nav/sidebar registry + route hierarchy are the maintainer's
+    declared list of user-facing surfaces (see
+    ``product_strings.build_nav_taxonomy``). Matched features vote for
+    the VENDOR'S label verbatim at ``_CONF_NAV_TAXONOMY`` — matched,
+    not synthesized. Unmatched features fall through to the other
+    rules / Stage 8 synthesis unchanged.
+
+    Returns ``(nav_map, telemetry)`` where ``nav_map`` is
+    ``{dev_feature_name: vendor_label}`` (threaded to Stage 8 so the
+    LLM modes preserve vendor labels) and ``telemetry`` carries the
+    taxonomy/matching counters.
+    """
+    candidates: set[str] = set()
+    for f in developer_features:
+        candidates.update(f.paths or [])
+        candidates.update(mf.path for mf in (f.member_files or []))
+    index = collect_product_strings(ctx.repo_path, candidates)
+    taxonomy = build_nav_taxonomy(index, candidates)
+    flat_count = sum(len(e.flatten()) for e in taxonomy)
+
+    matches = match_features_to_taxonomy(
+        developer_features, taxonomy, index,
+    )
+    via_counts: dict[str, int] = defaultdict(int)
+    nav_map: dict[str, str] = {}
+    for dev_name in sorted(matches):
+        m = matches[dev_name]
+        via_counts[m.via] += 1
+        nav_map[dev_name] = m.label
+        state.votes[dev_name].append(
+            _Vote(
+                product_label=m.label,
+                rule="nav-taxonomy",
+                confidence=_CONF_NAV_TAXONOMY,
+                anchor_signal=f"nav:{m.via}:{m.href or m.label}",
+                weight=1.0,
+            ),
+        )
+
+    telemetry: dict[str, Any] = {
+        "nav_taxonomy_entries": flat_count,
+        "nav_taxonomy_clusters_matched": len(matches),
+        "nav_taxonomy_matched_via": dict(sorted(via_counts.items())),
+        "nav_taxonomy_clusters_unmatched": (
+            len(developer_features) - len(matches)
+        ),
+    }
+    return nav_map, telemetry
+
+
 # ── Rule 3 — customer YAML override ─────────────────────────────────────
 
 
@@ -861,6 +932,11 @@ def run_product_clusterer(
     # ── Rule 2 — dep-anchor (higher confidence) ──
     dep_votes = _apply_dep_anchor_rule(ctx, developer_features, state)
 
+    # ── Rule 2.5 — in-repo nav taxonomy (vendor-declared, higher still) ──
+    nav_map, nav_telemetry = _apply_nav_taxonomy_rule(
+        ctx, developer_features, state,
+    )
+
     # ── Rule 3 — customer YAML override (absolute) ──
     customer_votes = _apply_customer_yaml_rule(ctx, state)
 
@@ -1001,9 +1077,15 @@ def run_product_clusterer(
             "workspace": workspace_votes,
             "workspace+domain": domain_refined_votes,
             "dep-anchor": dep_votes,
+            "nav-taxonomy": len(nav_map),
             "customer-yaml": customer_votes,
         },
         "domain_noun_extraction_rate": domain_rate,
+        # In-repo nav taxonomy (vendor-declared Layer 2) — counters +
+        # the dev→vendor-label map Stage 8 uses to PIN vendor labels
+        # through the LLM modes (nav ranks above external marketing).
+        **nav_telemetry,
+        "nav_taxonomy_map": dict(sorted(nav_map.items())),
     }
 
     if log is not None:

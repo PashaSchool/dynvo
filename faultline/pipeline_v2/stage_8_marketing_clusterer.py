@@ -719,6 +719,7 @@ def run_stage_8(
     model: str = "claude-haiku-4-5-20251001",
     cost_tracker: CostTracker | None = None,
     llm_health: LlmHealth | None = None,
+    nav_taxonomy_map: dict[str, str] | None = None,
 ) -> Stage8Result:
     """Cascade entry point for Sprint E1.
 
@@ -728,6 +729,12 @@ def run_stage_8(
       2. Else try marketing-grounded Haiku cluster:
          fetch homepage → extract taxonomy → ask Haiku → apply.
       3. Else fall back to Stage 6.5 deterministic result.
+
+    ``nav_taxonomy_map`` (in-repo nav taxonomy, Stage 6.5 rule 2.5) —
+    ``{dev_feature_name: vendor_label}``. The vendor's own nav labels
+    rank ABOVE the external marketing taxonomy, so they override the
+    Haiku mapping for matched dev features; unmatched features keep
+    the marketing/haiku synthesis path unchanged.
 
     Returns :class:`Stage8Result` carrying the (possibly refined)
     product feature list + dev→product mapping + telemetry to be
@@ -807,9 +814,22 @@ def run_stage_8(
             product_strings=product_strings,
         )
         if mapping:
+            # In-repo nav taxonomy overrides the marketing mapping for
+            # matched dev features — the vendor's own nav label is the
+            # higher-trust source (matched, not synthesized).
+            nav_overrides = 0
+            valid_devs = {f.name for f in developer_features}
+            for dev, label in (nav_taxonomy_map or {}).items():
+                if dev in valid_devs and mapping.get(dev) != label:
+                    mapping[dev] = label
+                    nav_overrides += 1
             product_features = _emit_product_features(
                 developer_features, mapping, source="marketing+haiku",
             )
+            nav_labels = set((nav_taxonomy_map or {}).values())
+            for pf in product_features:
+                if pf.name in nav_labels:
+                    pf.name_confidence = "high"
             new_dev_map: dict[str, tuple[str, ...]] = {
                 dev: (label,) for dev, label in mapping.items()
             }
@@ -880,6 +900,7 @@ def run_stage_8(
                 "confidence": _CONF_MARKETING_HAIKU,
                 "cache_hit": cached_before is not None,
                 "haiku_called": True,
+                "nav_taxonomy_overrides": nav_overrides,
             }
             # Degraded-scan stamp (naming review №6) — a dead key mid-
             # scan means names may be partial; mark them low-confidence.
