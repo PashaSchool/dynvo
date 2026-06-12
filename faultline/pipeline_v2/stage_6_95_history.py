@@ -74,6 +74,43 @@ Scale-invariance of every gate (project hard rule)
   - ``health_lite`` trailing window: 13 ISO weeks = one calendar
     quarter (calendar-derived, not corpus-tuned).
 
+``cross_cut_emerged`` events (retroactive projection, like all of v1)
+=====================================================================
+TODAY's bipartite store (Stage 5.5, deterministic) knows which flows
+cross-cut which features (``Flow.cross_cutting`` /
+``Flow.secondary_features``). For each entity with history we project
+that TODAY relationship backwards and ask "when did it materialize?":
+
+  - A candidate is a cross-cutting flow (``flow.cross_cutting``) that
+    shares >=1 file with the entity's source set AND is FOREIGN to the
+    entity — for a product feature, the flow's primary developer
+    feature maps to a DIFFERENT product feature (or to none — Layer 2
+    linkage missing is treated as foreign); for a user flow, the flow
+    is not one of its ``member_flow_ids``. The entity's own flows are
+    not "cross-cuts into it".
+  - Emergence week = the LATEST first-touch week among the shared
+    files — the week the shared file-set first fully existed (the
+    max of the per-file birth signals; the week that completes the set
+    is by construction also a co-touch week, since first-touch IS a
+    touch). Shared files never touched inside the scan window predate
+    it and resolve to the entity's birth week — the same convention
+    ``history_confidence`` uses. This is honest about what we can see:
+    we project TODAY's file sets backwards, we do not re-run flow
+    detection in the past.
+  - Cap: at most ``CROSS_CUT_EVENTS_CAP`` events per entity, top-N by
+    shared-file count (ties broken by flow id then name). A structural
+    presentation cap — an entity sharing files with 40 flows is a
+    hub, and 40 timeline glyphs carry no extra information; the count
+    of capped-out flows is reported in telemetry, not lost silently.
+  - Each event carries a ``correlation_note`` comparing bugfix_share
+    before vs after the emergence week with the SAME pooled
+    two-proportion SE band as ``test_efficacy`` (shared helper, not
+    duplicated). Correlation, never causation — see ``CrossCutNote``.
+
+Keyless scans run no Stage 3 LLM → no flows → no cross-cutting flows
+→ no ``cross_cut_emerged`` events. The feature is additive and simply
+absent there.
+
 ``health_lite`` vs ``health_score``
 ===================================
 ``health_lite`` reuses the git-derivable core of
@@ -98,6 +135,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 from faultline.models.types import (
     Commit,
+    CrossCutNote,
     EntityHistory,
     Feature,
     Flow,
@@ -126,6 +164,7 @@ __all__ = [
     "HEALTH_LITE_TRAILING_WEEKS",
     "TEST_WAVE_PERCENTILE",
     "BIRTH_CONFIDENCE_SPAN_SHARE",
+    "CROSS_CUT_EVENTS_CAP",
 ]
 
 # One calendar quarter, expressed in ISO weeks. Calendar-derived (not
@@ -143,6 +182,15 @@ TEST_WAVE_PERCENTILE: float = 0.75
 # active week) considered "early timeline". 25% = first quarter of the
 # entity's own life — a ratio of its own span, not an absolute window.
 BIRTH_CONFIDENCE_SPAN_SHARE: float = 0.25
+
+# Maximum ``cross_cut_emerged`` events per entity. A structural
+# PRESENTATION cap (not a detection threshold — nothing is tuned on a
+# corpus): events are ranked by shared-file count (strongest
+# relationships first, ties broken by flow id then name) and an entity
+# sharing files with dozens of flows is a hub where extra timeline
+# glyphs carry no information. Capped-out candidates are counted in
+# telemetry, never lost silently.
+CROSS_CUT_EVENTS_CAP: int = 5
 
 
 # ── ISO-week helpers ─────────────────────────────────────────────────────
@@ -447,7 +495,7 @@ def _build_history(acc: _EntityAccumulator, *, gated: bool) -> EntityHistory | N
             )
             hotspot_done = True
 
-    events.sort(key=lambda e: (_week_index(e.week), e.kind))
+    events.sort(key=lambda e: (_week_index(e.week), e.kind, e.detail or ""))
 
     # ── test_efficacy ────────────────────────────────────────────────
     efficacy = _test_efficacy(points, first_test_week, gated=gated)
@@ -503,28 +551,44 @@ def _test_efficacy(
             commits_after=after_n,
             reason="empty window on one side of first_test",
         )
+    shift = _share_shift(before_bugs, before_n, after_bugs, after_n)
+    verdict = {
+        "down": "improved", "up": "worsened", "no_change": "no_change",
+    }[shift]
+    return TestEfficacy(
+        verdict=verdict,  # type: ignore[arg-type]
+        bugfix_share_before=round(before_bugs / before_n, 3),
+        bugfix_share_after=round(after_bugs / after_n, 3),
+        commits_before=before_n,
+        commits_after=after_n,
+        pivot_week=pivot_week,
+    )
+
+
+def _share_shift(
+    before_bugs: int, before_n: int, after_bugs: int, after_n: int,
+) -> str:
+    """Direction of the bug-fix-share move across a pivot, banded by the
+    pooled two-proportion standard error (sample-size-aware, no tuned
+    threshold). SHARED by ``test_efficacy`` and the ``cross_cut_emerged``
+    correlation note — the single implementation of the SE gate.
+
+    Returns ``"down"`` / ``"up"`` / ``"no_change"``; callers map the
+    direction onto their own (non-causal) verdict vocabulary. Both
+    window sizes must be > 0.
+    """
     share_before = before_bugs / before_n
     share_after = after_bugs / after_n
-    # Pooled two-proportion standard error — sample-size-aware band.
     pooled = (before_bugs + after_bugs) / (before_n + after_n)
     se = math.sqrt(
         max(pooled * (1.0 - pooled), 1e-12) * (1.0 / before_n + 1.0 / after_n),
     )
     delta = share_before - share_after
     if delta > se:
-        verdict = "improved"
-    elif -delta > se:
-        verdict = "worsened"
-    else:
-        verdict = "no_change"
-    return TestEfficacy(
-        verdict=verdict,  # type: ignore[arg-type]
-        bugfix_share_before=round(share_before, 3),
-        bugfix_share_after=round(share_after, 3),
-        commits_before=before_n,
-        commits_after=after_n,
-        pivot_week=pivot_week,
-    )
+        return "down"
+    if -delta > se:
+        return "up"
+    return "no_change"
 
 
 def _history_confidence(
@@ -545,6 +609,131 @@ def _history_confidence(
         if acc.first_touch.get(p, birth_wi) <= cutoff
     )
     return round(existing / len(acc.source_set), 3)
+
+
+# ── cross_cut_emerged events ─────────────────────────────────────────────
+
+
+def _cross_cut_candidates(
+    accs: list[_EntityAccumulator],
+    flows: list[Flow],
+    developer_features: list[Feature],
+) -> dict[int, list[tuple[Flow, frozenset[str]]]]:
+    """Per entity index: TODAY-cross-cutting flows that are FOREIGN to
+    the entity and share >=1 file with its source set (see module
+    docstring). Deterministic: flows are walked in input order and the
+    shared sets are frozen."""
+    pf_of_dev: dict[str, str | None] = {
+        df.name: df.product_feature_id for df in developer_features
+    }
+    out: dict[int, list[tuple[Flow, frozenset[str]]]] = defaultdict(list)
+    for flow in flows:
+        if not flow.cross_cutting or not flow.paths:
+            continue
+        flow_paths = set(flow.paths)
+        primary_pf = pf_of_dev.get(flow.primary_feature or "")
+        for acc in accs:
+            shared = flow_paths & acc.source_set
+            if not shared:
+                continue
+            if acc.kind == "product_feature":
+                # The entity's OWN flow is not a cross-cut into it. A
+                # flow whose primary dev feature has no Layer 2 link
+                # (primary_pf None) is treated as foreign.
+                if primary_pf is not None and primary_pf == acc.obj.name:
+                    continue
+            else:  # user_flow
+                members = set(acc.obj.member_flow_ids)
+                if flow.uuid in members or flow.name in members:
+                    continue
+            out[acc.idx].append((flow, frozenset(shared)))
+    return out
+
+
+def _cross_cut_note(
+    points: list[HistoryPoint],
+    emergence_week: str,
+) -> CrossCutNote:
+    """Before/after bugfix_share comparison around the emergence week
+    (emergence week inclusive in the AFTER window — it carries the
+    co-touch that completed the shared set). Same pooled-SE band and
+    insufficient_data discipline as ``test_efficacy``; verdict
+    vocabulary is descriptive correlation, never causation."""
+    pivot_wi = _week_index(emergence_week)
+    before_n = before_bugs = after_n = after_bugs = 0
+    for pt in points:
+        if _week_index(pt.week) < pivot_wi:
+            before_n += pt.commits
+            before_bugs += pt.bug_fixes
+        else:
+            after_n += pt.commits
+            after_bugs += pt.bug_fixes
+    if before_n == 0 or after_n == 0:
+        return CrossCutNote(
+            verdict="insufficient_data",
+            commits_before=before_n,
+            commits_after=after_n,
+            reason="empty window on one side of the emergence week",
+        )
+    shift = _share_shift(before_bugs, before_n, after_bugs, after_n)
+    verdict = {
+        "down": "bugfix_share_down",
+        "up": "bugfix_share_up",
+        "no_change": "no_change",
+    }[shift]
+    return CrossCutNote(
+        verdict=verdict,  # type: ignore[arg-type]
+        bugfix_share_before=round(before_bugs / before_n, 3),
+        bugfix_share_after=round(after_bugs / after_n, 3),
+        commits_before=before_n,
+        commits_after=after_n,
+    )
+
+
+def _attach_cross_cut_events(
+    acc: _EntityAccumulator,
+    history: EntityHistory,
+    candidates: list[tuple[Flow, frozenset[str]]],
+) -> tuple[int, int, dict[str, int]]:
+    """Append capped, deterministic ``cross_cut_emerged`` events to
+    ``history.events``. Returns ``(emitted, capped_out, verdict
+    counts)`` for telemetry. Emergence-week rule + cap: module
+    docstring."""
+    week_by_index = {_week_index(w): w for w in acc.weeks}
+    birth_wi = _week_index(history.birth_week)
+    ranked = sorted(
+        candidates,
+        key=lambda c: (-len(c[1]), c[0].id or "", c[0].name),
+    )
+    kept = ranked[:CROSS_CUT_EVENTS_CAP]
+    capped_out = len(ranked) - len(kept)
+    verdicts: dict[str, int] = defaultdict(int)
+    label = "feature" if acc.kind == "product_feature" else "user flow"
+    for flow, shared in kept:
+        # Latest first-touch among the shared files = the week the
+        # shared set first fully existed. Untouched-in-window files
+        # predate the window → birth week (history_confidence parity).
+        emergence_wi = max(
+            acc.first_touch.get(p, birth_wi) for p in sorted(shared)
+        )
+        week = week_by_index.get(emergence_wi, history.birth_week)
+        note = _cross_cut_note(history.weekly, week)
+        history.events.append(
+            HistoryEvent(
+                kind="cross_cut_emerged",
+                week=week,
+                detail=(
+                    f"flow '{flow.name}' began sharing "
+                    f"{len(shared)} file(s) with this {label}"
+                ),
+                correlation_note=note,
+            ),
+        )
+        verdicts[note.verdict] += 1
+    history.events.sort(
+        key=lambda e: (_week_index(e.week), e.kind, e.detail or ""),
+    )
+    return len(kept), capped_out, dict(verdicts)
 
 
 # ── Public entry points ──────────────────────────────────────────────────
@@ -659,6 +848,10 @@ def stage_6_95_history(
                 else (totals[mid - 1] + totals[mid]) / 2.0
             )
 
+    # Cross-cut candidates per entity — derived from TODAY's bipartite
+    # store (Stage 5.5). Keyless scans have no flows → empty everywhere.
+    cross_cut = _cross_cut_candidates(accs, flows, developer_features)
+
     telemetry: dict[str, Any] = {
         "product_features_total": len(product_features),
         "user_flows_total": len(user_flows),
@@ -668,6 +861,13 @@ def stage_6_95_history(
         "user_flows_gated": 0,
         "verdicts": {
             "improved": 0, "worsened": 0,
+            "no_change": 0, "insufficient_data": 0,
+        },
+        "cross_cut_events_emitted": 0,
+        "cross_cut_entities_affected": 0,
+        "cross_cut_capped_out": 0,
+        "cross_cut_note_verdicts": {
+            "bugfix_share_up": 0, "bugfix_share_down": 0,
             "no_change": 0, "insufficient_data": 0,
         },
     }
@@ -684,5 +884,16 @@ def stage_6_95_history(
             telemetry["verdicts"][history.test_efficacy.verdict] += 1
             if gated:
                 telemetry[f"{short}_gated"] += 1
+            candidates = cross_cut.get(acc.idx, [])
+            if candidates:
+                emitted, capped_out, note_verdicts = _attach_cross_cut_events(
+                    acc, history, candidates,
+                )
+                telemetry["cross_cut_events_emitted"] += emitted
+                telemetry["cross_cut_capped_out"] += capped_out
+                if emitted:
+                    telemetry["cross_cut_entities_affected"] += 1
+                for verdict, n in note_verdicts.items():
+                    telemetry["cross_cut_note_verdicts"][verdict] += n
     telemetry["elapsed_sec"] = round(time.monotonic() - t0, 3)
     return telemetry
