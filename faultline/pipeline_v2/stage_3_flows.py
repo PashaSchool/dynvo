@@ -87,6 +87,26 @@ MIN_WALL_TIMEOUT_S = 300
 PER_CALL_BUDGET_S = 15
 MIN_EXPORTS_FOR_FLOW_DETECTION = 3
 
+# Features anchored by a DECLARED-route extractor are entry points by
+# definition — the export-count heuristic misjudges them (a typical
+# FastAPI/fastify route file has 1-2 exports, so before 2026-06-12 a
+# repo like infisical silently got flows=[] on 340 of its 416 features
+# and the dashboard lost flows + LOC entirely). Such features bypass
+# the MIN_EXPORTS floor whenever they carry at least one export or one
+# declared route. The floor still guards everything else (LLM cost).
+_ROUTE_ANCHOR_SOURCES = frozenset({
+    "route", "fastapi-route", "route-fastify", "route-express",
+    "django-route", "rails-routes", "go-router", "mvc",
+})
+
+
+def _passes_flow_gate(feature, exports, routes) -> bool:
+    if len(exports) >= MIN_EXPORTS_FOR_FLOW_DETECTION:
+        return True
+    if not (set(getattr(feature, "sources", ()) or ()) & _ROUTE_ANCHOR_SOURCES):
+        return False
+    return bool(exports) or bool(routes)
+
 
 def _compute_wall_timeout(n_features: int, max_workers: int) -> int:
     """Universal wall-time cap that scales with feature count."""
@@ -513,6 +533,7 @@ def stage_3_flows(
         client = _client_factory()
     if client is None and any(
         len(_safe_exports(f, ctx)) >= MIN_EXPORTS_FOR_FLOW_DETECTION
+        or (set(getattr(f, "sources", ()) or ()) & _ROUTE_ANCHOR_SOURCES)
         for f in features
     ):
         warnings.append(
@@ -534,12 +555,13 @@ def stage_3_flows(
     def _process(idx: int, feature: "DeveloperFeature") -> FeatureWithFlows:
         nonlocal llm_calls, cost_cap_warned
         exports, routes, sym_loc = _enumerate_candidates(feature, repo_path_str)
-        if len(exports) < MIN_EXPORTS_FOR_FLOW_DETECTION:
+        if not _passes_flow_gate(feature, exports, routes):
             return FeatureWithFlows(
                 feature=feature,
                 flows=[],
                 rationale=f"skipped: {len(exports)} exports < "
-                          f"{MIN_EXPORTS_FOR_FLOW_DETECTION}",
+                          f"{MIN_EXPORTS_FOR_FLOW_DETECTION} and no "
+                          f"route anchor",
             )
 
         # Budget guard: a shared tracker may carry a scan-wide cost
