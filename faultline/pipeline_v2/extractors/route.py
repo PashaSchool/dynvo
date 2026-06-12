@@ -116,16 +116,31 @@ def _first_meaningful_segment(segments: list[str]) -> str | None:
     """Return the first segment that is not noise / not a route group.
 
     Used to derive an anchor slug from a routing path. Dynamic segments
-    like ``[id]`` or ``[...slug]`` are skipped — they describe params,
-    not features.
+    like ``[id]`` / ``[...slug]`` (Next) or ``$id`` / ``$`` (Remix /
+    React Router) are skipped — they describe params, not features.
+    Remix-flat-routes folder groups carry a trailing ``+``
+    (``admin+/``) which is stripped before the checks; segments with a
+    leading underscore (``_authenticated``) are pathless layouts in
+    Remix / React Router and private (non-routed) folders in Next App
+    Router — organisational only, never a feature name.
     """
     for seg in segments:
+        # remix-flat-routes folder convention: ``admin+/`` routes as
+        # ``admin`` — the ``+`` only marks "this folder is a flat-route
+        # group".
+        seg = seg.rstrip("+")
         if not seg:
             continue
         # Dynamic segments are not features.
         if seg.startswith("[") and seg.endswith("]"):
             continue
+        if seg.startswith("$"):
+            continue
         if seg.startswith("(") and seg.endswith(")"):
+            continue
+        # Pathless layout (Remix ``_auth``) / private folder (Next
+        # ``_components``) — organisational, not part of the URL.
+        if seg.startswith("_"):
             continue
         if is_noise(seg):
             continue
@@ -189,6 +204,7 @@ def _emit_for_fs_routing(
         stem_is_marker = (not stem) or stem in {
             "page", "route", "layout", "index",
             "+page", "+server", "_app", "_document",
+            "_index", "_layout", "_route",
         }
 
         # Capture original (pre-strip) segments so we can recover a
@@ -225,9 +241,17 @@ def _emit_for_fs_routing(
             # Pages Router top-level file: stem is the slug source.
             # Prepend a meaningful directory if one exists (so
             # ``pages/users/[id].tsx`` → ``users`` from the dir).
-            first_dir = _first_meaningful_segment(dir_segments)
-            slug_source = first_dir if first_dir else stem
-            if is_noise(slug_source):
+            #
+            # Remix / React Router flat routes encode nested URL
+            # segments in the FILENAME with dots
+            # (``users.$id.edit.tsx`` → ``/users/:id/edit``) — split
+            # the stem and pick the first meaningful sub-segment so
+            # the param/pathless parts don't pollute the slug.
+            slug_source: str | None = _first_meaningful_segment(dir_segments)
+            if slug_source is None:
+                stem_segments = [s for s in stem.split(".") if s]
+                slug_source = _first_meaningful_segment(stem_segments)
+            if slug_source is None or is_noise(slug_source):
                 continue
             slug = slugify(slug_source)
         if not slug:

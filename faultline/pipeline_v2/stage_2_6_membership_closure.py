@@ -498,14 +498,48 @@ def run_membership_closure(
     # package-anchor that swallowed a whole workspace), not specific
     # ownership — its claims must not shield files from the closure.
     # Structural majority rule, scale-invariant by construction.
+    #
+    # The SAME majority rule applies per WORKSPACE in monorepos: a
+    # workspace-package feature that explicitly lists half (or more) of
+    # ITS workspace's files (documenso's ``remix`` feature = all 513
+    # files of apps/remix) is workspace-grained ownership — the subtree
+    # enumerated, not specific evidence — and must not shield those
+    # files either. Without this, no single workspace ever crosses the
+    # repo-level half mark in a many-workspace monorepo and the closure
+    # attaches nothing (candidate_files=0 on documenso). Files a
+    # closure winner reclaims from a workspace-grained lister are
+    # REMOVED from the loser's ``paths`` (and its anchor provenance
+    # flipped to non-primary) so primary ownership stays exclusive.
     half_repo = len(tracked_files) / 2
-    exact_owned: set[str] = {
-        p
-        for f in features
-        if sum(1 for q in f.paths if q in tracked_files) < half_repo
-        for p in f.paths
-        if p in tracked_files
-    }
+    ws_file_sets: list[frozenset[str]] = []
+    for ws in ctx.workspaces or []:
+        ws_prefix = ws.path.replace("\\", "/").rstrip("/") + "/"
+        ws_set = frozenset(p for p in tracked_files if p.startswith(ws_prefix))
+        if ws_set:
+            ws_file_sets.append(ws_set)
+
+    exact_owned: set[str] = set()
+    # file → feature names whose explicit listing of it is repo- or
+    # workspace-grained (claimable; loser paths pruned on reclaim).
+    grained_listers: dict[str, set[str]] = defaultdict(set)
+    for f in features:
+        explicit = {q for q in f.paths if q in tracked_files}
+        if not explicit:
+            continue
+        if len(explicit) >= half_repo:
+            for q in explicit:
+                grained_listers[q].add(f.name)
+            continue
+        shield = set(explicit)
+        for ws_set in ws_file_sets:
+            cover = explicit & ws_set
+            if cover and len(cover) * 2 >= len(ws_set):
+                shield -= cover
+                for q in cover:
+                    grained_listers[q].add(f.name)
+        exact_owned |= shield
+    # A file specifically listed by ANY focused feature stays settled —
+    # only files whose every explicit listing is grained are claimable.
 
     # ── Anchor provenance for EVERY deterministic feature ────────────
     for f in features:
@@ -607,6 +641,21 @@ def run_membership_closure(
         attached.add(fp)
         if fp not in unattributed_set:
             telemetry.reclaimed_dir_grained += 1
+        # Primary ownership stays EXCLUSIVE: a repo-/workspace-grained
+        # lister loses the reclaimed file from its ``paths``; its anchor
+        # provenance record is kept but flipped to non-primary.
+        for loser_name in sorted(grained_listers.get(fp, ())):
+            if loser_name == winner_name:
+                continue
+            loser = by_name[loser_name]
+            loser.paths = tuple(q for q in loser.paths if q != fp)
+            for m in loser.member_files:
+                if m.path == fp and m.primary:
+                    m.primary = False
+                    m.evidence += (
+                        f"; reclaimed by import closure "
+                        f"(primary={winner_name})"
+                    )
         for fname, depth in ranked[1:]:
             by_name[fname].member_files.append(_member_file(
                 fp, "closure", _closure_confidence(depth),

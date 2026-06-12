@@ -511,3 +511,57 @@ def test_majority_claim_drawer_does_not_shield_files(tmp_path: Path) -> None:
     m = _member(route, "lib/service.ts")
     assert m is not None and m.role == "closure" and m.primary
     assert res.telemetry.reclaimed_dir_grained == 1
+
+
+def test_workspace_grained_lister_does_not_shield_files(
+    tmp_path: Path,
+) -> None:
+    """The majority-claim guard applies per WORKSPACE in monorepos.
+
+    Regression for documenso: each workspace-package feature
+    (``remix`` = all 513 files of apps/remix, ``lib`` = all 493 of
+    packages/lib) sat below the repo-level half mark, so exact
+    ownership shielded the whole monorepo and the closure attached
+    nothing (candidate_files=0) even after route anchors appeared.
+    A feature listing >= half of one workspace's files is
+    workspace-grained — claimable; on reclaim it LOSES the file from
+    ``paths`` (primary stays exclusive) but keeps non-primary
+    provenance.
+    """
+    _w(tmp_path / "apps/web/app/routes/billing.tsx",
+       'import {charge} from "../lib/charge";\n'
+       "export default function Billing() { return charge(); }\n")
+    _w(tmp_path / "apps/web/app/lib/charge.ts",
+       "export function charge() { return 1; }\n")
+    _w(tmp_path / "packages/lib/util.ts", "export const u = 1;\n")
+    route = _feat("billing", ("apps/web/app/routes/billing.tsx",))
+    # Workspace feature explicitly lists ALL files of apps/web
+    # (2 of 3 tracked files — BELOW the repo half mark of 1.5? no:
+    # 2 >= 1.5, so keep a 4th file to stay below repo-half).
+    _w(tmp_path / "packages/lib/extra.ts", "export const e = 1;\n")
+    ws_feat = _feat(
+        "web",
+        ("apps/web/app/routes/billing.tsx", "apps/web/app/lib/charge.ts"),
+        sources=["package"],
+    )
+    ctx = _ctx(tmp_path)
+    ctx.monorepo = True
+    ctx.workspaces = [
+        SimpleNamespace(name="web", path="apps/web", stack="remix"),
+        SimpleNamespace(name="lib", path="packages/lib", stack=None),
+    ]
+
+    res = run_membership_closure([route, ws_feat], [], ctx)
+
+    assert "apps/web/app/lib/charge.ts" in route.paths
+    m = _member(route, "apps/web/app/lib/charge.ts")
+    assert m is not None and m.role == "closure" and m.primary
+    # Workspace-grained lister loses the reclaimed file from paths…
+    assert "apps/web/app/lib/charge.ts" not in ws_feat.paths
+    # …but its own anchor file that the route ALSO explicitly lists
+    # stays (the route's listing is focused → settled).
+    assert "apps/web/app/routes/billing.tsx" in ws_feat.paths
+    # Non-primary provenance retained on the loser.
+    lm = _member(ws_feat, "apps/web/app/lib/charge.ts")
+    assert lm is not None and lm.primary is False
+    assert res.telemetry.reclaimed_dir_grained == 1
