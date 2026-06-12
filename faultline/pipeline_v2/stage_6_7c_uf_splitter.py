@@ -37,7 +37,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from faultline.llm.cost import CostTracker, deterministic_params
 from faultline.pipeline_v2.llm_health import LlmHealth
@@ -207,7 +207,12 @@ def _split_one(
         if not ids:
             continue
         subs.append(
-            _make_sub(uf, f"{uf.id}-{len(subs) + 1}", name, ids)
+            # Naming-evidence core (2026-06): an LLM-synthesized journey
+            # name is not yet evidence-validated — marked low-confidence
+            # until Stage 6.7b's validator confirms (it lifts to "high"
+            # only when the validated name is applied).
+            _make_sub(uf, f"{uf.id}-{len(subs) + 1}", name, ids,
+                      name_confidence="low")
         )
 
     if not subs:
@@ -215,12 +220,16 @@ def _split_one(
 
     residual = [m for m in uf.member_flow_ids if m not in placed]
     if residual:
-        subs.append(_make_sub(uf, f"{uf.id}-{len(subs) + 1}", uf.name, residual))
+        subs.append(_make_sub(
+            uf, f"{uf.id}-{len(subs) + 1}", uf.name, residual,
+            name_confidence=uf.name_confidence,
+        ))
     return subs
 
 
 def _make_sub(
-    parent: "UserFlow", sub_id: str, name: str, member_ids: list[str]
+    parent: "UserFlow", sub_id: str, name: str, member_ids: list[str],
+    name_confidence: Literal["high", "low"] = "high",
 ) -> "UserFlow":
     """A sub-UF inherits the parent's domain/intent/resource/pf-link; 6.7b
     refines name/description/ui_tier/acceptance downstream."""
@@ -243,6 +252,7 @@ def _make_sub(
         coverage_pct=None,
         ui_tier=None,
         refined=False,
+        name_confidence=name_confidence,
     )
 
 
