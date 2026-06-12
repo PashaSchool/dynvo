@@ -788,6 +788,13 @@ class Feature(BaseModel):
     # consumed by the dashboard + agents. Empty on scans produced
     # before the stage existed and on Stage-4 residual features.
     member_files: list["MemberFile"] = []
+    # Naming-evidence core (2026-06) — how trustworthy ``name`` /
+    # ``display_name`` are. "low" when the anti-hallucination validator
+    # fell back to a deterministic slug, when the evidence bundle was
+    # structurally poor, or when the scan ran LLM-degraded (see
+    # ``scan_meta.llm_degraded``). Defaults to "high" so old JSONs
+    # rehydrate unchanged — "low" is an explicit degradation marker.
+    name_confidence: Literal["high", "low"] = "high"
 
 
 class FeatureFlowEdge(BaseModel):
@@ -845,6 +852,13 @@ class UserFlow(BaseModel):
     # for UFs with zero attributed commits and for scans produced
     # before this field existed (old JSONs rehydrate unchanged).
     history: "EntityHistory | None" = None
+    # Naming-evidence core (2026-06) — see ``Feature.name_confidence``.
+    # "low" when the UF name was assembled from a structurally poor
+    # evidence bundle (no route / nav-label / product-string vocabulary
+    # for the primary member flow), when the Stage 6.7b validator fell
+    # back to the deterministic template name, or when the scan ran
+    # LLM-degraded. Defaults to "high" for old-JSON rehydration.
+    name_confidence: Literal["high", "low"] = "high"
 
 
 class FeatureMap(BaseModel):
