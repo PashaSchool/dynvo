@@ -126,3 +126,45 @@ def test_retry_prohibition_lists_names_and_tokens() -> None:
     assert '"Document Telemetry": prohibited words: telemetry' in text
     assert '"Stripe Billing": prohibited words: stripe' in text
     assert "Do NOT use the prohibited words" in text
+
+
+# ── _singular over-singularisation regression (2026-06) ─────────────────────
+
+import pytest  # noqa: E402
+
+from faultline.pipeline_v2.naming_validator import _singular as _singular_nv  # noqa: E402
+from faultline.pipeline_v2.nav_taxonomy import _singular as _singular_nav  # noqa: E402
+
+
+@pytest.mark.parametrize("singular", [_singular_nv, _singular_nav])
+@pytest.mark.parametrize(
+    "word,expected",
+    [
+        # the observed garbage tokens — must NOT lose their tail
+        ("status", "status"),
+        ("focus", "focus"),
+        ("analysis", "analysis"),
+        ("address", "address"),
+        ("various", "various"),
+        ("this", "this"),
+        # the -ses bug: cases must become case, not cas
+        ("cases", "case"),
+        ("phases", "phase"),
+        ("releases", "release"),
+        # genuine sibilant -es plurals still collapse to the stem
+        ("classes", "class"),
+        ("matches", "match"),
+        ("boxes", "box"),
+        ("dishes", "dish"),
+        # ordinary plurals
+        ("users", "user"),
+        ("keys", "key"),
+        ("findings", "finding"),
+        ("categories", "category"),
+        # already-singular / too short
+        ("user", "user"),
+        ("api", "api"),
+    ],
+)
+def test_singular_does_not_over_strip(singular, word: str, expected: str) -> None:
+    assert singular(word) == expected
