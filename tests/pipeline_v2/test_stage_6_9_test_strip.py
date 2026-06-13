@@ -342,3 +342,45 @@ def test_tolerant_to_dict_and_string_entries() -> None:
     stats = strip_test_paths([], [fl])
     assert [n["path"] for n in fl.loc_nodes] == ["app/a.ts"]
     assert stats["paths_removed"] == 2
+
+
+# ── finalize-phase Layer-2 reconcile (phantom PF after test-strip) ──────────
+
+
+def test_phantom_pf_dropped_after_test_strip_empties_its_only_member() -> None:
+    """A product feature whose ONLY developer member is a test-only feature
+    becomes a phantom once Stage 6.9 strips it. The finalize phase re-applies
+    the deterministic phantom drop so it doesn't reach output.
+
+    Reproduces the infisical "Integrations" cluster (paths only under e2e/ +
+    tests/): Stage 8.6's phantom drop ran BEFORE test-strip, so this case
+    needs the post-strip pass.
+    """
+    from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
+        drop_phantom_product_features,
+    )
+
+    test_only = _feature(
+        "integration-suite",
+        ["e2e/tests/saml.spec.ts", "backend/tests/db_test.go"],
+        product_feature_id="integrations",
+    )
+    real = _feature(
+        "secrets-core",
+        ["backend/src/secret.ts"],
+        product_feature_id="secrets",
+    )
+    pf_integrations = _feature("integrations", ["e2e/tests/saml.spec.ts"], layer="product")
+    pf_secrets = _feature("secrets", ["backend/src/secret.ts"], layer="product")
+
+    features = [test_only, real]
+    telem = strip_test_paths(features, [])
+    # the test-only feature is gone; the real one survives
+    assert telem["features_dropped"] == 1
+    assert {f.name for f in features} == {"secrets-core"}
+
+    # now the finalize reconcile drops the orphaned product feature
+    product_features = [pf_integrations, pf_secrets]
+    kept, dropped = drop_phantom_product_features(features, product_features)
+    assert dropped == 1
+    assert {pf.name for pf in kept} == {"secrets"}
