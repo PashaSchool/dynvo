@@ -231,7 +231,46 @@ def reconcile_product_features(
     return kept_pfs, {"recomputed": recomputed, "dropped_empty": dropped_empty}
 
 
+def drop_phantom_product_features(
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+) -> tuple[list["Feature"], int]:
+    """Drop product features that have ZERO developer-feature members.
+
+    A product feature is *derived from* the developer features that vote for
+    it (Stage 6.5 / Stage 8), so one with no surviving member is an artifact:
+    the analyst named a cluster whose members were later merged or renamed
+    away, leaving a content-less row whose ``paths`` are already owned by the
+    product features its (vanished) members actually belong to. Such a row has
+    no LOC, no flows and no symbol attributions — it is pure duplication.
+
+    :func:`reconcile_product_features` already removes these, but only runs
+    when some non-source developer features were dropped; on a clean repo
+    (nothing non-source to drop) the phantom product features survived to
+    output. This function applies the SAME emptiness rule — membership via
+    ``developer_feature.product_feature_id == product_feature.name`` — but is
+    deterministic, path-preserving and safe to run on EVERY scan.
+
+    Returns ``(kept_product_features, dropped_count)``.
+    """
+    member_pf_ids: set[str] = set()
+    for f in developer_features:
+        pid = getattr(f, "product_feature_id", None)
+        if pid:
+            member_pf_ids.add(pid)
+
+    kept: list["Feature"] = []
+    dropped = 0
+    for pf in product_features:
+        if pf.name in member_pf_ids:
+            kept.append(pf)
+        else:
+            dropped += 1
+    return kept, dropped
+
+
 __all__ = [
     "drop_all_nonsource_features",
     "reconcile_product_features",
+    "drop_phantom_product_features",
 ]

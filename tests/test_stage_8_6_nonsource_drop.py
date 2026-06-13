@@ -15,6 +15,7 @@ from faultline.models.types import Feature
 from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
     _path_is_source,
     drop_all_nonsource_features,
+    drop_phantom_product_features,
     reconcile_product_features,
 )
 
@@ -142,3 +143,62 @@ def test_reconcile_recomputes_paths_and_drops_empty() -> None:
     assert p1_out.paths == ["alpha/core.ts"]
     assert telem["recomputed"] == 1
     assert telem["dropped_empty"] == 1
+
+
+# ── drop_phantom_product_features (always-on empty-PF drop) ──────────────────
+
+
+def test_phantom_pf_with_no_members_is_dropped() -> None:
+    # "P1" has a dev member; "P2" (a phantom) has none — its paths are already
+    # owned by P1's member. P2 must be dropped, P1 kept untouched.
+    dev = _feat("alpha", ["alpha/core.ts"], product_feature_id="P1")
+    p1 = _feat("P1", ["alpha/core.ts"], layer="product")
+    p2 = _feat("P2", ["alpha/core.ts", "beta/x.ts"], layer="product")
+
+    kept, dropped = drop_phantom_product_features([dev], [p1, p2])
+    assert {pf.name for pf in kept} == {"P1"}
+    assert dropped == 1
+    # Paths of the survivor are NOT recomputed (path-preserving, unlike reconcile).
+    assert next(pf for pf in kept if pf.name == "P1").paths == ["alpha/core.ts"]
+
+
+def test_phantom_drop_keeps_all_when_every_pf_has_members() -> None:
+    d1 = _feat("alpha", ["alpha/core.ts"], product_feature_id="P1")
+    d2 = _feat("beta", ["beta/core.ts"], product_feature_id="P2")
+    p1 = _feat("P1", ["alpha/core.ts"], layer="product")
+    p2 = _feat("P2", ["beta/core.ts"], layer="product")
+
+    kept, dropped = drop_phantom_product_features([d1, d2], [p1, p2])
+    assert {pf.name for pf in kept} == {"P1", "P2"}
+    assert dropped == 0
+
+
+def test_phantom_drop_handles_no_dev_features() -> None:
+    # No developer features at all → every product feature is phantom.
+    p1 = _feat("P1", ["x.ts"], layer="product")
+    kept, dropped = drop_phantom_product_features([], [p1])
+    assert kept == []
+    assert dropped == 1
+
+
+def test_phantom_drop_ignores_dev_features_without_pfid() -> None:
+    # A dev feature with no product_feature_id can't keep any PF alive.
+    orphan = _feat("alpha", ["alpha/core.ts"], product_feature_id=None)
+    p1 = _feat("P1", ["alpha/core.ts"], layer="product")
+    kept, dropped = drop_phantom_product_features([orphan], [p1])
+    assert kept == []
+    assert dropped == 1
+
+
+def test_phantom_drop_is_path_preserving_and_order_stable() -> None:
+    # Two real PFs + one phantom interleaved — survivors keep original order.
+    d1 = _feat("a", ["a.ts"], product_feature_id="P1")
+    d2 = _feat("b", ["b.ts"], product_feature_id="P3")
+    p1 = _feat("P1", ["a.ts", "z.ts"], layer="product")
+    p2 = _feat("P2", ["ghost.ts"], layer="product")
+    p3 = _feat("P3", ["b.ts"], layer="product")
+    kept, dropped = drop_phantom_product_features([d1, d2], [p1, p2, p3])
+    assert [pf.name for pf in kept] == ["P1", "P3"]
+    assert dropped == 1
+    # original (non-recomputed) paths retained
+    assert next(pf for pf in kept if pf.name == "P1").paths == ["a.ts", "z.ts"]
