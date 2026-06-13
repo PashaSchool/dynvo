@@ -1,0 +1,306 @@
+{
+  "scans": [
+    {
+      "label": "axios",
+      "total_files": 68,
+      "n_dev_features": 35,
+      "n_product_features": 4,
+      "max_feature_share": 0.8088,
+      "top3_share": 0.8235,
+      "gini": 0.4125,
+      "median_feature_files": 33.0,
+      "largest_feature": "scripts-axios-build-instance",
+      "blob_count": 19,
+      "files_under_blobs_pct": 0.8529,
+      "dev_features_with_pf_pct": 0.2286,
+      "blobs": [
+        {
+          "name": "scripts-axios-build-instance",
+          "files": 55,
+          "share": 0.8088,
+          "top_dir": "lib",
+          "top_dir_share": 0.964,
+          "is_blob": true
+        },
+        {
+          "name": "scripts-update-readme-sponsors",
+          "files": 55,
+          "share": 0.8088,
+          "top_dir": "lib",
+          "top_dir_share": 0.964,
+          "is_blob": true
+        },
+        {
+          "name": "axios-error",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "axios-headers",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "cancel-token",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "canceled-error",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "http-status-code",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "version",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "all",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "form-to-json",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "get-adapter",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "is-cancel",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "merge-config",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "spread",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "to-form-data",
+          "files": 54,
+          "share": 0.7941,
+          "top_dir": "lib",
+          "top_dir_share": 0.981,
+          "is_blob": true
+        },
+        {
+          "name": "axios",
+          "files": 53,
+          "share": 0.7794,
+          "top_dir": "lib",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        },
+        {
+          "name": "lib-adapters-http",
+          "files": 33,
+          "share": 0.4853,
+          "top_dir": "lib",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        },
+        {
+          "name": "unsafe-adapters-http",
+          "files": 33,
+          "share": 0.4853,
+          "top_dir": "lib",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        },
+        {
+          "name": "adapters",
+          "files": 32,
+          "share": 0.4706,
+          "top_dir": "lib",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        }
+      ]
+    },
+    {
+      "label": "dify",
+      "total_files": 5102,
+      "n_dev_features": 83,
+      "n_product_features": 38,
+      "max_feature_share": 0.8142,
+      "top3_share": 0.8614,
+      "gini": 0.8333,
+      "median_feature_files": 4.0,
+      "largest_feature": "dify-web",
+      "blob_count": 1,
+      "files_under_blobs_pct": 0.8142,
+      "dev_features_with_pf_pct": 0.9518,
+      "blobs": [
+        {
+          "name": "dify-web",
+          "files": 4154,
+          "share": 0.8142,
+          "top_dir": "web",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        }
+      ]
+    },
+    {
+      "label": "documenso",
+      "total_files": 2189,
+      "n_dev_features": 125,
+      "n_product_features": 35,
+      "max_feature_share": 0.1635,
+      "top3_share": 0.4376,
+      "gini": 0.4299,
+      "median_feature_files": 101.0,
+      "largest_feature": "trpc",
+      "blob_count": 1,
+      "files_under_blobs_pct": 0.1421,
+      "dev_features_with_pf_pct": 0.928,
+      "blobs": [
+        {
+          "name": "lib",
+          "files": 311,
+          "share": 0.1421,
+          "top_dir": "packages",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        }
+      ]
+    },
+    {
+      "label": "fastapi",
+      "total_files": 379,
+      "n_dev_features": 33,
+      "n_product_features": 3,
+      "max_feature_share": 0.3219,
+      "top3_share": 0.5963,
+      "gini": 0.4224,
+      "median_feature_files": 27.0,
+      "largest_feature": "tutorial001-py310",
+      "blob_count": 0,
+      "files_under_blobs_pct": 0.0,
+      "dev_features_with_pf_pct": 1.0,
+      "blobs": []
+    },
+    {
+      "label": "gin",
+      "total_files": 39,
+      "n_dev_features": 19,
+      "n_product_features": 6,
+      "max_feature_share": 0.4103,
+      "top3_share": 0.8205,
+      "gini": 0.5205,
+      "median_feature_files": 1.0,
+      "largest_feature": "binding",
+      "blob_count": 0,
+      "files_under_blobs_pct": 0.0,
+      "dev_features_with_pf_pct": 0.4737,
+      "blobs": []
+    },
+    {
+      "label": "inbox-zero",
+      "total_files": 1914,
+      "n_dev_features": 172,
+      "n_product_features": 52,
+      "max_feature_share": 0.4953,
+      "top3_share": 0.5491,
+      "gini": 0.3514,
+      "median_feature_files": 101.0,
+      "largest_feature": "inbox-zero-ai",
+      "blob_count": 1,
+      "files_under_blobs_pct": 0.4953,
+      "dev_features_with_pf_pct": 0.9826,
+      "blobs": [
+        {
+          "name": "inbox-zero-ai",
+          "files": 948,
+          "share": 0.4953,
+          "top_dir": "apps",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        }
+      ]
+    },
+    {
+      "label": "infisical",
+      "total_files": 6849,
+      "n_dev_features": 127,
+      "n_product_features": 24,
+      "max_feature_share": 0.5347,
+      "top3_share": 0.9886,
+      "gini": 0.6507,
+      "median_feature_files": 62.0,
+      "largest_feature": "frontend-v2",
+      "blob_count": 2,
+      "files_under_blobs_pct": 0.9886,
+      "dev_features_with_pf_pct": 0.9606,
+      "blobs": [
+        {
+          "name": "frontend-v2",
+          "files": 3662,
+          "share": 0.5347,
+          "top_dir": "frontend",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        },
+        {
+          "name": "backend",
+          "files": 3109,
+          "share": 0.4539,
+          "top_dir": "backend",
+          "top_dir_share": 1.0,
+          "is_blob": true
+        }
+      ]
+    }
+  ]
+}
