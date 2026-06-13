@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faultlines"
-version = "1.27.0"
+version = "1.28.0"
 description = "Map features in any codebase from git history alone. No Jira required."
 readme = "README.md"
 license = { text = "MIT" }
