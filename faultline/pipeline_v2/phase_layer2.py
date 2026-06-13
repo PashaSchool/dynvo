@@ -27,6 +27,7 @@ from faultline.pipeline_v2.stage_8_5_member_backfill import (
 )
 from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
     drop_all_nonsource_features,
+    drop_phantom_product_features,
     reconcile_product_features,
 )
 from faultline.pipeline_v2.stage_8_analyst import (
@@ -283,28 +284,38 @@ def run_layer2_phase(
             product_features, pf_recon = reconcile_product_features(
                 features, product_features,
             )
-            # Keep dev_to_product_map consistent with surviving features +
-            # product features (drop entries for vanished members / PFs).
-            surviving_pf_names = {pf.name for pf in product_features}
-            surviving_feat_names = {f.name for f in features}
-            dev_to_product_map = {
-                k: tuple(v for v in vals if v in surviving_pf_names)
-                for k, vals in dev_to_product_map.items()
-                if k in surviving_feat_names
-            }
         else:
             pf_recon = {"recomputed": 0, "dropped_empty": 0}
+        # Always drop phantom product features (zero developer members),
+        # independent of the non-source drop above. reconcile_product_features
+        # only runs when non-source features were dropped, so on a clean repo a
+        # phantom PF (a named cluster whose members merged/renamed away) would
+        # otherwise survive to output as a content-less, duplicate row.
+        product_features, pf_phantom_dropped = drop_phantom_product_features(
+            features, product_features,
+        )
+        # Keep dev_to_product_map consistent with surviving features +
+        # product features (drop entries for vanished members / PFs).
+        surviving_pf_names = {pf.name for pf in product_features}
+        surviving_feat_names = {f.name for f in features}
+        dev_to_product_map = {
+            k: tuple(v for v in vals if v in surviving_pf_names)
+            for k, vals in dev_to_product_map.items()
+            if k in surviving_feat_names
+        }
         stage_8_6_telemetry = {
             "dropped": len(nonsource_dropped),
             "dropped_sample": list(nonsource_dropped[:20]),
             "pf_recomputed": pf_recon["recomputed"],
             "pf_dropped_empty": pf_recon["dropped_empty"],
+            "pf_dropped_phantom": pf_phantom_dropped,
         }
         log8_ns.info(
             f"nonsource_drop features {features_before_ns}->{len(features)} "
             f"dropped={len(nonsource_dropped)} "
             f"pf_recomputed={pf_recon['recomputed']} "
-            f"pf_dropped_empty={pf_recon['dropped_empty']}",
+            f"pf_dropped_empty={pf_recon['dropped_empty']} "
+            f"pf_dropped_phantom={pf_phantom_dropped}",
         )
         write_stage_artifact(
             ctx.repo_path,
