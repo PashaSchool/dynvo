@@ -222,6 +222,22 @@ def run_finalize_phase(
         )
     scan_meta["stage_6_9_test_strip"] = dict(test_strip_telemetry)
 
+    # Reconcile Layer-2 after test-strip. A product feature whose only member
+    # was a test-only developer feature is now empty — test-strip dropped that
+    # feature here in the finalize phase, AFTER Stage 8.6's phantom drop ran.
+    # Re-apply the same deterministic, path-preserving rule now that the
+    # developer-feature set is final, so a content-less duplicate row (e.g. an
+    # "Integrations" cluster pointing only at e2e/ + tests/ paths) never reaches
+    # output. No-op when test-strip dropped nothing.
+    if test_strip_telemetry.get("features_dropped"):
+        from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
+            drop_phantom_product_features,
+        )
+        product_features, pf_phantom_post = drop_phantom_product_features(
+            features, product_features,
+        )
+        scan_meta["stage_6_9_test_strip"]["pf_dropped_phantom"] = pf_phantom_post
+
     # ── Stage 6.7 — User-Flow rollup (Layer-2-for-flows, $0 LLM) ────
     # Deterministic post-pass: rolls the code-grain flow store up into
     # product-grain user_flows[] and stamps Flow.user_flow_id. Runs
