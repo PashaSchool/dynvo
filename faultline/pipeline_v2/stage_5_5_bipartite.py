@@ -125,6 +125,37 @@ def _flow_id(primary: str, flow_name: str) -> str:
     return f"{primary}::{_slugify(flow_name)}"
 
 
+def _dedup_identical_flows(features: list[Feature]) -> int:
+    """Collapse provably-identical duplicate flows within each feature, IN PLACE.
+
+    Two flows are duplicates only when their ``(name, entry_point_file,
+    entry_point_line)`` match exactly — same journey, same entry point. The
+    first occurrence (stable order) is kept; later copies are dropped. Flows
+    with no resolved entry point are never merged on entry alone, so an
+    entry-less flow only collapses against another entry-less flow of the SAME
+    name (key = (name, None, None)).
+
+    Returns the number of dropped duplicate flows (telemetry).
+    """
+    dropped = 0
+    for feat in features:
+        flows = getattr(feat, "flows", None)
+        if not flows:
+            continue
+        seen: set[tuple[str, str | None, int | None]] = set()
+        kept: list[Flow] = []
+        for fl in flows:
+            key = (fl.name, fl.entry_point_file, fl.entry_point_line)
+            if key in seen:
+                dropped += 1
+                continue
+            seen.add(key)
+            kept.append(fl)
+        if len(kept) != len(flows):
+            feat.flows = kept
+    return dropped
+
+
 def _build_path_to_features(features: Iterable[Feature]) -> dict[str, set[str]]:
     """Reverse-index ``Feature.paths`` + ``Feature.shared_attributions``
     so we can ask "who reaches into path P?".
@@ -185,6 +216,18 @@ def stage_5_5_bipartite(
         enrichment still hangs off the containment view. We do NOT
         strip it.
     """
+    # ── Step 0 — collapse provably-identical duplicate flows ────────
+    # Feature-merge stages upstream (sibling collapse, multi-workspace /
+    # multi-subpath union) concatenate flow lists, so a single feature can end
+    # up with the SAME flow many times — identical name AND entry point. Stage
+    # 3's entry-point dedup only runs per raw LLM response, so it never sees
+    # these post-merge copies. Collapse them here, BEFORE ids/uuids are stamped,
+    # so each distinct flow gets exactly one id (and one row in the top-level
+    # projection below). Only provably-identical flows are merged
+    # (name + entry_point_file + entry_point_line); same entry / different name
+    # is left alone.
+    dropped_dupes = _dedup_identical_flows(features)
+
     # ── Step 1 — reverse-index paths to feature names ───────────────
     path_to_features = _build_path_to_features(features)
 
@@ -318,6 +361,7 @@ def stage_5_5_bipartite(
         "bipartite_edges_secondary": edges_secondary,
         "cross_cutting_flows_count": cross_cutting_flows,
         "flows_total": len(all_flows),
+        "duplicate_flows_dropped": dropped_dupes,
         "max_shared_with_flows": max_shared_with_flows,
         "max_shared_with_features": max_shared_with_features,
     }
