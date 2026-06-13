@@ -109,12 +109,29 @@ _MIN_STEM_LEN = 4
 
 
 def _singular(word: str) -> str:
+    """Light, dependency-free singularisation for name-token comparison.
+
+    Conservative on the cases that produced garbage tokens before:
+      * ``-us`` / ``-is`` / ``-ss`` words are ALREADY singular — never strip
+        (status→status, focus→focus, analysis→analysis, address→address).
+        Naively stripping the trailing ``s`` gave ``statu`` / ``focu`` which
+        no consumer matches.
+      * ``-es`` only collapses to its stem when the stem ends in a sibilant
+        (classes→class, boxes→box, matches→match); plain ``-?es`` words keep
+        their ``e`` (cases→case, phases→phase). The old ``-ses`` rule wrongly
+        ate the ``e`` (cases→cas).
+    Kept in sync with the identical helper in ``nav_taxonomy._singular``.
+    """
+    if len(word) <= 3:
+        return word
     if word.endswith("ies") and len(word) > 4:
-        return word[:-3] + "y"
-    if word.endswith("ses") or word.endswith("xes"):
-        return word[:-2]
-    if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
-        return word[:-1]
+        return word[:-3] + "y"          # categories → category
+    if word.endswith(("ss", "us", "is", "ous", "ius")):
+        return word                     # status, focus, analysis, address
+    if word.endswith(("sses", "shes", "ches", "xes", "zzes")):
+        return word[:-2]                # classes → class, matches → match
+    if word.endswith("s"):
+        return word[:-1]                # cases → case, users → user, keys → key
     return word
 
 
