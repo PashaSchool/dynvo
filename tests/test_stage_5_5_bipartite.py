@@ -286,3 +286,64 @@ def test_flow_top_level_list_sorted_by_id():
     )
     result = stage_5_5_bipartite([a, b])
     assert [f.id for f in result.flows] == ["alpha::a-flow", "zeta::z-flow"]
+
+
+# ── Step 0 — dedup provably-identical flows ─────────────────────────────────
+
+
+def _flow_at(name: str, paths: list[str], entry_file: str, entry_line: int) -> Flow:
+    f = _flow(name, paths)
+    f.entry_point_file = entry_file
+    f.entry_point_line = entry_line
+    return f
+
+
+def test_dedup_identical_flows_within_feature() -> None:
+    """Flows with identical (name, entry_point_file, entry_point_line) inside one
+    feature collapse to ONE before id/uuid stamping (the infisical route-flow
+    duplication: feature-merge stages concatenate the same flow N times)."""
+    routes = _feat(
+        "server-v1-routes",
+        paths=["backend/routes/index.ts"],
+        flows=[
+            _flow_at("authenticate-integration-flow", ["a.ts"], "backend/routes/auth.ts", 13),
+            _flow_at("authenticate-integration-flow", ["a.ts"], "backend/routes/auth.ts", 13),  # dup
+            _flow_at("authenticate-integration-flow", ["a.ts"], "backend/routes/auth.ts", 13),  # dup
+            _flow_at("register-project-flow", ["b.ts"], "backend/routes/project.ts", 86),
+        ],
+    )
+    result = stage_5_5_bipartite([routes])
+    feat = result.features[0]
+    names = [f.name for f in feat.flows]
+    assert names == ["authenticate-integration-flow", "register-project-flow"]
+    assert len(result.flows) == 2
+    assert result.telemetry["duplicate_flows_dropped"] == 2
+    # the surviving flow got exactly one id
+    assert len({f.id for f in result.flows}) == 2
+
+
+def test_dedup_keeps_same_entry_different_name() -> None:
+    """Two DIFFERENTLY-named flows sharing an entry point are NOT duplicates."""
+    feat = _feat(
+        "f",
+        paths=["x.ts"],
+        flows=[
+            _flow_at("view-x-flow", ["x.ts"], "x.ts", 1),
+            _flow_at("edit-x-flow", ["x.ts"], "x.ts", 1),  # same entry, different name
+        ],
+    )
+    result = stage_5_5_bipartite([feat])
+    assert len(result.features[0].flows) == 2
+    assert result.telemetry["duplicate_flows_dropped"] == 0
+
+
+def test_dedup_entryless_flows_collapse_only_by_name() -> None:
+    """Entry-less flows collapse only against a same-name entry-less flow."""
+    feat = _feat(
+        "f",
+        paths=["x.ts"],
+        flows=[_flow("a-flow", ["x.ts"]), _flow("a-flow", ["x.ts"]), _flow("b-flow", ["x.ts"])],
+    )
+    result = stage_5_5_bipartite([feat])
+    assert {f.name for f in result.features[0].flows} == {"a-flow", "b-flow"}
+    assert result.telemetry["duplicate_flows_dropped"] == 1
