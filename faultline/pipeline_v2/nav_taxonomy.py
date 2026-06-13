@@ -70,11 +70,22 @@ _SPLIT_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
 def _singular(word: str) -> str:
+    """Light singularisation — kept in sync with ``naming_validator._singular``.
+
+    Never strips ``-us`` / ``-is`` / ``-ss`` (status, focus, analysis,
+    address are already singular); only collapses ``-es`` to its stem when the
+    stem is a sibilant (classes→class), so plain words keep their ``e``
+    (cases→case, not cas).
+    """
+    if len(word) <= 3:
+        return word
     if word.endswith("ies") and len(word) > 4:
         return word[:-3] + "y"
-    if word.endswith(("ses", "xes")):
+    if word.endswith(("ss", "us", "is", "ous", "ius")):
+        return word
+    if word.endswith(("sses", "shes", "ches", "xes", "zzes")):
         return word[:-2]
-    if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+    if word.endswith("s"):
         return word[:-1]
     return word
 
