@@ -22,6 +22,7 @@ Spec: faultlines-app/docs/specs/flow-to-user-flow-rollup.md
 
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any
@@ -939,6 +940,37 @@ def _member_trigger(member: dict, file_trigger: dict[str, str]) -> str | None:
     return None
 
 
+# Framework / plumbing path segments dropped when naming a flow-less system
+# route, so sibling routes of ONE journey collapse to the same resource
+# (``cron/automation-jobs`` + ``automation-jobs/execute`` → ``automation-jobs``).
+_SYS_ROUTE_DROP = frozenset({
+    "api", "cron", "route", "all", "execute", "simple", "queue", "batch",
+    "jobs", "job", "tasks", "task", "workers", "worker", "v1", "v2",
+})
+
+
+def _system_route_resource(file_path: str, pattern: str) -> str:
+    """Resource slug (journey noun) for a system route that has no flow.
+
+    Keeps a provider prefix on webhook/event handlers (``google/webhook`` →
+    ``google-webhook``) so distinct integrations stay distinct; otherwise the
+    last meaningful segment names the journey.
+    """
+    src = pattern or file_path.replace("apps/web/app/", "")
+    raw = [s for s in src.split("/") if s]
+    if raw and "." in raw[-1]:           # strip a trailing filename (route.ts)
+        raw = raw[:-1]
+    segs = [
+        s for s in raw
+        if s not in _SYS_ROUTE_DROP and not (s.startswith("(") and s.endswith(")"))
+    ]
+    if not segs:
+        return "job"
+    if segs[-1] in ("webhook", "webhooks", "events", "event", "watch") and len(segs) >= 2:
+        return f"{segs[-2]}-{segs[-1]}"
+    return segs[-1]
+
+
 def cluster_user_flows(
     scan: dict,
     routes_index: list[dict] | None = None,
@@ -1148,6 +1180,49 @@ def cluster_user_flows(
                 "ui_tier": None,
                 "category": section_category,
                 "trigger": uf_trigger,
+            })
+
+    # ── Stage 6.7d (env-gated) — synthesise THIN system UFs for system routes
+    # that Stage 3 left with NO flow. OUTPUT-ONLY: appends to user_flows[] and
+    # NEVER touches flows[] / edges / features, so the flow graph (coverage,
+    # symbols, health) is byte-identical and zero-risk. member_flow_ids=[] —
+    # the 6.7b refiner and 6.95 history both no-op on empty members. Surfaces
+    # background jobs (webhooks / crons / queues) that Stage 3's flow gate drops,
+    # which would otherwise be invisible journeys. Kill-switch:
+    # FAULTLINE_SEED_SYSTEM_UFS=0.
+    if file_trigger and os.environ.get("FAULTLINE_SEED_SYSTEM_UFS", "1") != "0":
+        anchored = {
+            p
+            for fl in flows
+            for p in [fl.get("entry_point_file"), *(fl.get("paths") or [])]
+            if p
+        }
+        groups: dict[str, dict[str, Any]] = {}
+        for r in (routes_index or []):
+            trig = r.get("trigger")
+            fp = str(r.get("file") or "")
+            if not fp or not trig or trig == "interactive" or fp in anchored:
+                continue  # interactive, or a real flow already covers this route
+            resource = _system_route_resource(fp, str(r.get("pattern") or ""))
+            g = groups.setdefault(resource, {"trig": Counter(), "routes": set()})
+            g["trig"][trig] += 1
+            g["routes"].add(str(r.get("pattern") or fp))
+        for resource, g in sorted(groups.items()):
+            uf_seq += 1
+            user_flows.append({
+                "id": f"UF-{uf_seq:03d}",
+                "name": NAME_TMPL["execute"].format(r=resource.replace("-", " ")),
+                "name_confidence": "low",
+                "domain": resource,
+                "product_feature_id": None,
+                "intent": "execute",
+                "resource": resource,
+                "member_flow_ids": [],
+                "member_count": 0,
+                "routes": sorted(g["routes"]),
+                "ui_tier": "no-ui",
+                "category": "system",
+                "trigger": g["trig"].most_common(1)[0][0],
             })
     return {
         "user_flows": user_flows,
