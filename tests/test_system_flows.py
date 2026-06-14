@@ -132,6 +132,45 @@ def test_uf_system_splits_from_same_domain_interactive() -> None:
     assert cats.count("system") == 1 and cats.count("interactive") == 1
 
 
+def test_synthesised_system_uf_for_flowless_route() -> None:
+    # A system route with NO flow → a thin synthetic system UF (member_count=0).
+    # Sibling routes of one journey dedup; the flow graph is never touched.
+    scan = {
+        "flows": [_flow("browse-settings-flow", "s1", "apps/web/app/(app)/settings/page.tsx", "settings")],
+        "developer_features": [{"name": "settings"}],
+    }
+    ridx = [
+        {"file": "apps/web/app/(app)/settings/page.tsx", "pattern": "/settings", "trigger": "interactive"},
+        {"file": "apps/web/app/api/google/webhook/route.ts", "pattern": "/api/google/webhook", "trigger": "webhook"},
+        {"file": "apps/web/app/api/cron/automation-jobs/route.ts", "pattern": "/api/cron/automation-jobs", "trigger": "scheduled"},
+        {"file": "apps/web/app/api/automation-jobs/execute/route.ts", "pattern": "/api/automation-jobs/execute", "trigger": "queue"},
+    ]
+    res = cluster_user_flows(scan, routes_index=ridx)
+    syn = [u for u in res["user_flows"] if u["category"] == "system" and u["member_count"] == 0]
+    assert len(syn) == 2  # google-webhook + automation-jobs (cron + execute deduped)
+    autojobs = [u for u in syn if u["resource"] == "automation-jobs"]
+    assert len(autojobs) == 1 and len(autojobs[0]["routes"]) == 2
+
+
+def test_synthesis_kill_switch(monkeypatch) -> None:
+    monkeypatch.setenv("FAULTLINE_SEED_SYSTEM_UFS", "0")
+    scan = {"flows": [], "developer_features": []}
+    ridx = [{"file": "apps/web/app/api/google/webhook/route.ts", "pattern": "/api/google/webhook", "trigger": "webhook"}]
+    res = cluster_user_flows(scan, routes_index=ridx)
+    assert not [u for u in res["user_flows"] if u["category"] == "system" and u["member_count"] == 0]
+
+
+def test_synthesis_skips_routes_that_already_have_a_flow() -> None:
+    # A system route that DOES have a flow must not also be synthesised (no dup).
+    scan = {
+        "flows": [_flow("process-webhook-flow", "w1", "apps/web/app/api/google/webhook/route.ts", "google")],
+        "developer_features": [{"name": "google"}],
+    }
+    ridx = [{"file": "apps/web/app/api/google/webhook/route.ts", "pattern": "/api/google/webhook", "trigger": "webhook"}]
+    res = cluster_user_flows(scan, routes_index=ridx)
+    assert not [u for u in res["user_flows"] if u["member_count"] == 0]  # covered by the real flow
+
+
 def test_uf_no_routes_index_all_interactive() -> None:
     scan = {
         "flows": [_flow("browse-settings-flow", "f2", "apps/web/app/(app)/settings/page.tsx", "settings")],
