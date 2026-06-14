@@ -112,6 +112,26 @@ def test_uf_system_labeling_and_infra_exemption() -> None:
     assert len(by_cat.get("interactive", [])) >= 1
 
 
+def test_uf_system_splits_from_same_domain_interactive() -> None:
+    # A system flow (stripe webhook) and an interactive flow (billing page) share
+    # the `billing` domain. They must produce TWO UFs — the webhook journey is
+    # NOT folded into the interactive billing UF (the dilution fix).
+    scan = {
+        "flows": [
+            _flow("manage-billing-flow", "b1", "apps/web/app/(app)/billing/page.tsx", "billing"),
+            _flow("process-billing-flow", "b2", "apps/web/app/api/stripe/webhook/route.ts", "billing"),
+        ],
+        "developer_features": [{"name": "billing"}],
+    }
+    ridx = [
+        {"file": "apps/web/app/(app)/billing/page.tsx", "pattern": "/billing", "trigger": "interactive"},
+        {"file": "apps/web/app/api/stripe/webhook/route.ts", "pattern": "/api/stripe/webhook", "trigger": "webhook"},
+    ]
+    res = cluster_user_flows(scan, routes_index=ridx)
+    cats = [u["category"] for u in res["user_flows"]]
+    assert cats.count("system") == 1 and cats.count("interactive") == 1
+
+
 def test_uf_no_routes_index_all_interactive() -> None:
     scan = {
         "flows": [_flow("browse-settings-flow", "f2", "apps/web/app/(app)/settings/page.tsx", "settings")],
