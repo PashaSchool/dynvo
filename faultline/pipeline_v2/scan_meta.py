@@ -271,6 +271,7 @@ def assemble_scan_meta(
     shape_result: Any,
     stage_8_7_telemetry: dict[str, Any] | None = None,
     stage_8_8_telemetry: dict[str, Any] | None = None,
+    stage_8_6_5_telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the ``scan_meta`` dict from the per-stage results.
 
@@ -447,6 +448,10 @@ def assemble_scan_meta(
         # path-set was non-source, plus Layer-2 reconcile counters.
         "stage_8_6_nonsource_drops": stage_8_6_telemetry["dropped"],
         "stage_8_6_nonsource_drop": dict(stage_8_6_telemetry),
+        # Stage 8.6.5 — shared-scaffold filter. High-fan-in scaffold files
+        # (lib/ui/utils/i18n/hooks/components) demoted from specific features'
+        # primary paths (they stay on the workspace anchor as residual).
+        "stage_8_6_5_scaffold_filter": dict(stage_8_6_5_telemetry or {}),
         # Stage 8.7 — workspace-anchor de-sink. Workspace anchors that
         # released paths claimed by a more-specific feature (the blob
         # double-claim), plus the affected product features resynced.
