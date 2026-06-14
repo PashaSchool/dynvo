@@ -581,6 +581,7 @@ def run_pipeline_v2(
     stage_8_5_backfill_telemetry = layer2.stage_8_5_backfill_telemetry
     stage_8_6_telemetry = layer2.stage_8_6_telemetry
     stage_8_6_5_telemetry = layer2.stage_8_6_5_telemetry
+    stage_8_6_7_telemetry = layer2.stage_8_6_7_telemetry
     stage_8_7_telemetry = layer2.stage_8_7_telemetry
     stage_8_8_telemetry = layer2.stage_8_8_telemetry
 
@@ -663,6 +664,7 @@ def run_pipeline_v2(
         stage_8_5_backfill_telemetry=stage_8_5_backfill_telemetry,
         stage_8_6_telemetry=stage_8_6_telemetry,
         stage_8_6_5_telemetry=stage_8_6_5_telemetry,
+        stage_8_6_7_telemetry=stage_8_6_7_telemetry,
         stage_8_7_telemetry=stage_8_7_telemetry,
         stage_8_8_telemetry=stage_8_8_telemetry,
         shape_result=shape_result,
