@@ -1,0 +1,55 @@
+# Dependency-injection reference patterns (authoring copy).
+#
+# Runtime copy packaged at faultline/pipeline_v2/data/di-patterns.yaml — keep
+# the two byte-identical (manual dual-commit, same convention as eval/stacks/).
+#
+# WHY: services wired via dependency injection (a registry the framework
+# decorates onto a request/app object) are referenced from feature code BY NAME
+# (`server.services.secretService`), NOT by import. Static import-following
+# can't cross that boundary, so the service files fall to the workspace/platform
+# bucket. Stage 8.6.7 (di_attribution) reads these patterns to follow the NAMED
+# reference instead: it maps each referenced service token to its file(s) and
+# attributes them to the feature(s) whose own code references them.
+#
+# Each pattern self-detects via `detection` (deterministic, no LLM) and applies
+# only when it holds — so a repo on a different framework is a no-op. Per
+# stack-pattern-library: anything hardcoded in Python is a bug; the patterns
+# live here.
+#
+# Scale-invariant (rule-no-magic-tuning): the fan-in guard is a percentile + a
+# structural floor, never a corpus-tuned absolute. No repo-specific paths
+# (rule-no-repo-specific-paths): globs + path-segment templates only.
+
+patterns:
+  fastify-services:
+    display_name: "Fastify server.services decorator"
+    # Activation — ALL keys must hold (dep present AND the named-reference marker
+    # appears in some tracked file). NestJS wraps Fastify but uses constructor
+    # injection, so exclude it to avoid mis-firing.
+    detection:
+      dep: "fastify"
+      source_marker: "server.services."
+      none_dep_prefix: "@nestjs/"
+    # How feature/handler code references an injected service. Capture group 1 is
+    # the service TOKEN (e.g. `secret` from `server.services.secret.createSecret`).
+    reference_pattern: 'server\.services\.([A-Za-z][A-Za-z0-9]*)'
+    # Files whose references are counted and mapped to their owning feature.
+    consumer_glob: "**/server/routes/**"
+    # token -> service file(s). dir-convention: the camelCase token maps to a
+    # kebab-case directory; a file is a service file for the token when its path
+    # contains "/<template-with-dir>/". The plain "services/{dir}" segment also
+    # matches nested layouts like ".../ee/services/<dir>/" (substring match), so
+    # no enterprise/edition-specific path is hardcoded.
+    service_file_map:
+      kind: dir-convention
+      token_to_dir: camel-to-kebab        # auditLog -> audit-log
+      dir_templates: ["services/{dir}"]
+      file_suffix: ".ts"
+    # A service referenced by more than max(floor, P{percentile}) DISTINCT
+    # features is shared infrastructure (stays on the platform bucket); at or
+    # below the cap it is attributed to the DOMINANT referencing feature. P90
+    # resolves to the structural floor on a well-decomposed reference graph (the
+    # same shape Stage 2.6 / 8.6.5 use).
+    fan_in:
+      percentile: 90
+      floor: 3

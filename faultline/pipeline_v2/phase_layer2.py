@@ -33,6 +33,9 @@ from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
 from faultline.pipeline_v2.stage_8_6_5_scaffold_filter import (
     filter_shared_scaffold,
 )
+from faultline.pipeline_v2.stage_8_6_7_di_attribution import (
+    attribute_di_services,
+)
 from faultline.pipeline_v2.stage_8_7_anchor_desink import (
     desink_workspace_anchors,
 )
@@ -65,6 +68,7 @@ class Layer2Result:
     stage_8_5_backfill_telemetry: dict[str, Any]
     stage_8_6_telemetry: dict[str, Any]
     stage_8_6_5_telemetry: dict[str, Any]
+    stage_8_6_7_telemetry: dict[str, Any]
     stage_8_7_telemetry: dict[str, Any]
     stage_8_8_telemetry: dict[str, Any]
 
@@ -368,6 +372,36 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 8.6.7 — DI service attribution ───────────────────────
+    # Services wired through dependency injection (a registry the framework
+    # decorates onto a request object — ``server.services.secretService`` in
+    # Fastify) are referenced from feature code BY NAME, never by import, so
+    # static import-following can't reach them and they fall to the platform
+    # bucket. Driven by eval/di-patterns.yaml (patterns in YAML, not Python),
+    # this stage follows the NAMED reference: per detected pattern it maps each
+    # referenced service token to its file(s) and attributes them to the
+    # DOMINANT referencing feature under a scale-invariant fan-in cap (a service
+    # used by too many features stays platform). Runs BEFORE de-sink so the moved
+    # services are off the anchor. Validated on eval/membership/infisical
+    # (machine-identities recall 0.17→0.64, platform_share −8pp, precision held).
+    # Deterministic, no LLM. Default ON; disable via
+    # FAULTLINE_STAGE_8_6_7_DI_ATTRIBUTION=0.
+    with StageLogger(run_dir, 8, "di_attribution") as log8_67:
+        di_result = attribute_di_services(ctx, features)
+        stage_8_6_7_telemetry = di_result.as_telemetry()
+        log8_67.info(
+            f"di_attribution enabled={di_result.enabled} "
+            f"files_moved={di_result.files_moved} "
+            f"patterns={[p.pattern for p in di_result.patterns if p.detected]}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="di_attribution",
+            payload=stage_8_6_7_telemetry,
+            run_dir=run_dir,
+        )
+
     # ── Stage 8.7 — workspace-anchor de-sink ───────────────────────
     # A workspace-anchor feature (``backend``, ``frontend-v2``,
     # ``packages/lib``) claims the WHOLE workspace tree as a fallback
@@ -440,6 +474,7 @@ def run_layer2_phase(
         stage_8_5_backfill_telemetry=stage_8_5_backfill_telemetry,
         stage_8_6_telemetry=stage_8_6_telemetry,
         stage_8_6_5_telemetry=stage_8_6_5_telemetry,
+        stage_8_6_7_telemetry=stage_8_6_7_telemetry,
         stage_8_7_telemetry=stage_8_7_telemetry,
         stage_8_8_telemetry=stage_8_8_telemetry,
     )
