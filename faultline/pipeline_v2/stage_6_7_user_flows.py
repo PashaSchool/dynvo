@@ -1190,7 +1190,7 @@ def cluster_user_flows(
     # background jobs (webhooks / crons / queues) that Stage 3's flow gate drops,
     # which would otherwise be invisible journeys. Kill-switch:
     # FAULTLINE_SEED_SYSTEM_UFS=0.
-    if file_trigger and os.environ.get("FAULTLINE_SEED_SYSTEM_UFS", "1") != "0":
+    if os.environ.get("FAULTLINE_SEED_SYSTEM_UFS", "1") != "0":
         anchored = {
             p
             for fl in flows
@@ -1207,6 +1207,24 @@ def cluster_user_flows(
             g = groups.setdefault(resource, {"trig": Counter(), "routes": set()})
             g["trig"][trig] += 1
             g["routes"].add(str(r.get("pattern") or fp))
+        # ALSO surface BACKGROUND-JOB files (inngest / celery / tasks / workers)
+        # that Stage 3 left flow-less. These are NOT routes (no routes_index
+        # entry), so the route loop above misses them entirely — e.g. Soc0's 11
+        # `backend/inngest_functions/*.py` jobs (chat, cases, crons …), 0 of
+        # which currently become a flow or a UF. _JOBS_DIR_RE gives the job name.
+        for df in (scan.get("developer_features") or []):
+            for p in (df.get("paths") or []):
+                if not isinstance(p, str) or p in anchored or "test" in p.lower():
+                    continue
+                m = _JOBS_DIR_RE.search(p)
+                if not m:
+                    continue
+                resource = m.group(1)
+                if resource in ("__init__", "init", "base", "utils", "helpers", "main"):
+                    continue
+                g = groups.setdefault(resource, {"trig": Counter(), "routes": set()})
+                g["trig"]["queue"] += 1
+                g["routes"].add(p)
         for resource, g in sorted(groups.items()):
             uf_seq += 1
             user_flows.append({
@@ -1258,7 +1276,8 @@ def run_user_flow_rollup(
     scan = {
         "flows": [_flow_view(f) for f in flows],
         "developer_features": [
-            {"name": f.name, "product_feature_id": f.product_feature_id}
+            {"name": f.name, "product_feature_id": f.product_feature_id,
+             "paths": list(f.paths)}  # paths → Stage 6.7d job-file synthesis
             for f in features
         ],
     }
