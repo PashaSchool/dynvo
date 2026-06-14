@@ -994,6 +994,12 @@ def cluster_user_flows(
     # different user tasks even though both are "author" intent).
     clusters: dict[tuple, list] = defaultdict(list)
     cluster_resources: dict[tuple, Counter] = defaultdict(Counter)
+    # System/background-flow clusters live in a PARALLEL namespace so a system
+    # journey (cron / queue / webhook) never merges into a same-domain
+    # interactive UF — a billing webhook is a different journey from the billing
+    # settings page. The interactive clustering path below stays unchanged.
+    sys_clusters: dict[tuple, list] = defaultdict(list)
+    sys_cluster_resources: dict[tuple, Counter] = defaultdict(Counter)
     excluded = {"ui_primitive": 0, "infra_domain": 0}
     plugin_collapsed = 0
     for idx, f in enumerate(uniq):
@@ -1014,13 +1020,14 @@ def cluster_user_flows(
             cluster_resources[key][resource] += 1
             plugin_collapsed += 1
             continue
-        # System/background-flow exemption (Stage 6.8b) — a flow anchored on a
+        # System/background-flow routing (Stage 6.8b) — a flow anchored on a
         # scheduled / queue / webhook route is a real SYSTEM journey (a cron job,
-        # a queue consumer, an inbound webhook), so the infra-domain / UI-primitive
-        # filters below (which target interactive-surface noise like barrel files
-        # and DI tokens) must NOT drop it. It seeds a UF under its product
-        # resource, falling back to the trigger when the path domain is weak.
-        # Stage 6.7's output pass then labels it ``category="system"``.
+        # a queue consumer, an inbound webhook). It goes into the PARALLEL system
+        # cluster namespace, which (1) bypasses the infra-domain / UI-primitive
+        # filters below (a cron handler under api/ would otherwise be dropped as
+        # noise), and (2) keeps it from merging with a same-domain INTERACTIVE
+        # journey. Weak path domains fall back to the resource / trigger so the
+        # journey still names sensibly.
         if _member_trigger(f, file_trigger) is not None:
             verb, resource = _split_name(f["name"])
             intent = INTENT.get(verb, "other")
@@ -1031,8 +1038,8 @@ def cluster_user_flows(
                 else (resource or _member_trigger(f, file_trigger))
             )
             key = (sys_domain, resource, intent)
-            clusters[key].append(f)
-            cluster_resources[key][resource] += 1
+            sys_clusters[key].append(f)
+            sys_cluster_resources[key][resource] += 1
             continue
         # A domain is STRONG when it is a real product noun — not None, not a
         # primitive widget token, not an infra/version/artifact token. A strong
@@ -1079,64 +1086,69 @@ def cluster_user_flows(
     # name-collision gap _merge_singleton_noise leaves for multi-member
     # clusters (e.g. 11× "Browse & filter organizations" on cal.com).
     clusters = _merge_same_name_clusters(clusters, cluster_resources)
+    # Same singleton / name-collision collapse for the system namespace (kept
+    # separate so a system journey is never folded into an interactive one).
+    sys_clusters = _merge_singleton_noise(sys_clusters, sys_cluster_resources)
+    sys_clusters = _merge_same_name_clusters(sys_clusters, sys_cluster_resources)
 
     user_flows: list[dict] = []
     flow_to_uf: dict[str, str] = {}
     name_to_uf: dict[str, str] = {}
-    ordered = sorted(
-        clusters.items(),
-        key=lambda kv: (str(kv[0][0]), str(kv[0][1]), str(kv[0][2])),
-    )
-    for i, ((domain, resource, intent), members) in enumerate(ordered):
-        uf_id = f"UF-{i + 1:03d}"
-        counts = cluster_resources[(domain, resource, intent)]
-        label_resource = counts.most_common(1)[0][0] if counts else str(domain)
-        # product_feature_id is the Layer-2 grouping LINK, resolved
-        # independently of the (code-grain) domain by majority vote over
-        # members. Decoupling these two is the fix: domain is the cluster
-        # key (a short code token), product_feature_id is the marketing
-        # roll-up link — they must not be the same string.
-        pfid = _pfid_of(members, df_by_name)
-        enriched = _enrich(members, pfid, df_by_name)
-        for m in members:
-            flow_to_uf[_flow_key(m)] = uf_id
-            name_to_uf[m["name"]] = uf_id
-        # Slot-resolution fix (naming review №5) — the RENDERED name takes
-        # both slots from the SAME primary member flow (verb class via the
-        # shared cluster intent, resource label via _slot_consistent_label),
-        # never the cross-member domain vote. Clustering above is untouched
-        # (the merge passes still key on the legacy _uf_name signature).
-        slot_label, slot_grounded = _slot_consistent_label(
-            members, product_strings,
+    # Emit interactive clusters first, then the parallel system clusters; each
+    # section stamps its own ``category``. UF ids run sequentially across both.
+    uf_seq = 0
+    for section_clusters, section_resources, section_category in (
+        (clusters, cluster_resources, "interactive"),
+        (sys_clusters, sys_cluster_resources, "system"),
+    ):
+        ordered = sorted(
+            section_clusters.items(),
+            key=lambda kv: (str(kv[0][0]), str(kv[0][1]), str(kv[0][2])),
         )
-        # System/background classification (Stage 6.8b inheritance): a UF is
-        # "system" when at least half its member flows are anchored on a
-        # scheduled/queue/webhook route. The dominant sub-type becomes its
-        # ``trigger``. No threshold tuning — the half-rule is a structural
-        # majority (rule-no-magic-tuning).
-        member_trigs = [
-            t for t in (_member_trigger(m, file_trigger) for m in members) if t
-        ]
-        if member_trigs and len(member_trigs) * 2 >= len(members):
-            uf_category = "system"
-            uf_trigger: str | None = Counter(member_trigs).most_common(1)[0][0]
-        else:
-            uf_category, uf_trigger = "interactive", None
-        user_flows.append({
-            "id": uf_id,
-            "name": NAME_TMPL[intent].format(r=slot_label),
-            "name_confidence": "high" if slot_grounded else "low",
-            "domain": domain,
-            "product_feature_id": pfid,
-            "intent": intent,
-            "resource": label_resource,
-            "member_flow_ids": [_flow_key(m) for m in members],
-            "member_count": len(members),
-            **enriched,
-            "ui_tier": None,
-            "category": uf_category,
-            "trigger": uf_trigger,
-        })
+        for (domain, resource, intent), members in ordered:
+            uf_seq += 1
+            uf_id = f"UF-{uf_seq:03d}"
+            counts = section_resources[(domain, resource, intent)]
+            label_resource = counts.most_common(1)[0][0] if counts else str(domain)
+            # product_feature_id is the Layer-2 grouping LINK, resolved
+            # independently of the (code-grain) domain by majority vote over
+            # members. domain is the cluster key (a short code token);
+            # product_feature_id is the marketing roll-up link — never the same.
+            pfid = _pfid_of(members, df_by_name)
+            enriched = _enrich(members, pfid, df_by_name)
+            for m in members:
+                flow_to_uf[_flow_key(m)] = uf_id
+                name_to_uf[m["name"]] = uf_id
+            # Slot-resolution fix (naming review №5) — the RENDERED name takes
+            # both slots from the SAME primary member flow (verb class via the
+            # shared cluster intent, resource label via _slot_consistent_label),
+            # never the cross-member domain vote.
+            slot_label, slot_grounded = _slot_consistent_label(
+                members, product_strings,
+            )
+            # System UFs carry the dominant member trigger as their sub-type.
+            uf_trigger: str | None = None
+            if section_category == "system":
+                trigs = [
+                    t for t in (_member_trigger(m, file_trigger) for m in members) if t
+                ]
+                if trigs:
+                    uf_trigger = Counter(trigs).most_common(1)[0][0]
+            user_flows.append({
+                "id": uf_id,
+                "name": NAME_TMPL[intent].format(r=slot_label),
+                "name_confidence": "high" if slot_grounded else "low",
+                "domain": domain,
+                "product_feature_id": pfid,
+                "intent": intent,
+                "resource": label_resource,
+                "member_flow_ids": [_flow_key(m) for m in members],
+                "member_count": len(members),
+                **enriched,
+                "ui_tier": None,
+                "category": section_category,
+                "trigger": uf_trigger,
+            })
     return {
         "user_flows": user_flows,
         "flow_to_uf": flow_to_uf,
