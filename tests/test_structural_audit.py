@@ -5,8 +5,11 @@ from __future__ import annotations
 from eval.structural_audit import (
     _gini,
     _is_container_name,
+    _is_platform_feature,
     audit_scan,
 )
+
+_WS = "[package] workspace anchor 'frontend' from monorepo package 'frontend'"
 
 
 def _scan(features: list[tuple[str, list[str]]], pfs: list[str] | None = None) -> dict:
@@ -105,3 +108,58 @@ def test_pf_attribution_pct() -> None:
     }
     audit = audit_scan(scan)
     assert audit.dev_features_with_pf_pct == 0.5
+
+
+# ── platform-bucket reframe ─────────────────────────────────────────────────
+
+
+def test_is_platform_feature() -> None:
+    assert _is_platform_feature({"description": _WS})
+    assert _is_platform_feature(
+        {"description": "[route] slug 'x' | [package] workspace anchor 'backend'"}
+    )
+    # dep-category package anchor is NOT a platform bucket
+    assert not _is_platform_feature(
+        {"description": "[package] package anchor 'billing' from deps ['stripe']"}
+    )
+    assert not _is_platform_feature({"description": "[route] route slug 'auth'"})
+    assert not _is_platform_feature({"description": None})
+
+
+def test_platform_bucket_excluded_from_concentration() -> None:
+    # A workspace-anchor platform bucket holds the whole frontend tree; the real
+    # features are small. The bucket must NOT be a blob and must NOT dominate
+    # max_feature_share — it is reported as platform_share instead.
+    scan = {
+        "developer_features": [
+            {"name": "frontend", "description": _WS,
+             "paths": [f"frontend/src/f{i}.ts" for i in range(80)]},
+            {"name": "billing", "description": "[route] slug 'billing'",
+             "paths": ["frontend/src/billing/a.ts", "frontend/src/billing/b.ts"]},
+            {"name": "auth", "description": "[route] slug 'auth'",
+             "paths": ["frontend/src/auth/login.ts"]},
+        ],
+        "product_features": [],
+    }
+    a = audit_scan(scan)
+    assert a.n_platform_features == 1
+    assert a.n_dev_features == 2          # real features only
+    assert a.blob_count == 0             # platform recognised, not a blob
+    assert a.platform_share > 0.9        # 80 of ~83 files are platform
+    # max_feature_share is over the REAL features (billing=2 of 3 real files)
+    assert a.max_feature_share < 0.8
+    assert a.largest_feature in {"billing", "auth"}
+    assert a.total_files == 83           # real ∪ platform
+
+
+def test_platform_share_zero_when_no_anchor() -> None:
+    scan = {
+        "developer_features": [
+            {"name": "a", "description": "[route] slug 'a'", "paths": ["x.ts"]},
+            {"name": "b", "description": "[route] slug 'b'", "paths": ["y.ts"]},
+        ],
+        "product_features": [],
+    }
+    a = audit_scan(scan)
+    assert a.platform_share == 0.0
+    assert a.n_platform_features == 0

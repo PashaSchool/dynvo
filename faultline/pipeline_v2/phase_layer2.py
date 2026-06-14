@@ -30,6 +30,9 @@ from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
     drop_phantom_product_features,
     reconcile_product_features,
 )
+from faultline.pipeline_v2.stage_8_6_5_scaffold_filter import (
+    filter_shared_scaffold,
+)
 from faultline.pipeline_v2.stage_8_7_anchor_desink import (
     desink_workspace_anchors,
 )
@@ -61,6 +64,7 @@ class Layer2Result:
     stage_8_rollup_telemetry: dict[str, Any]
     stage_8_5_backfill_telemetry: dict[str, Any]
     stage_8_6_telemetry: dict[str, Any]
+    stage_8_6_5_telemetry: dict[str, Any]
     stage_8_7_telemetry: dict[str, Any]
     stage_8_8_telemetry: dict[str, Any]
 
@@ -333,6 +337,37 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 8.6.5 — shared-scaffold filter ───────────────────────
+    # Shared workspace scaffold (packages/lib, packages/ui, i18n, utils,
+    # hooks, shared components) leaks into SPECIFIC features' primary paths
+    # via Stage 6.3 expansion (which has no fan-in guard). This stage demotes
+    # a file from a specific feature's paths when it is BOTH under a structural
+    # scaffold dir AND claimed by >= max(3, P90) specific features — top-decile
+    # fan-in of the repo's own distribution. Runs BEFORE de-sink so the file
+    # stays on its workspace anchor as residual (and surfaces as a role="shared"
+    # member via Stage 8.8). The location restriction keeps high-fan-in DOMAIN
+    # files (models/services) that a feature legitimately owns → precision rises
+    # with recall protected (validated: documenso + inbox-zero recall flat-or-up,
+    # inbox-zero micro precision +10pp). Scale-invariant, deterministic, no LLM.
+    # Default ON; disable via FAULTLINE_STAGE_8_6_5_SCAFFOLD_FILTER=0.
+    with StageLogger(run_dir, 8, "scaffold_filter") as log8_65:
+        scaffold_result = filter_shared_scaffold(features)
+        stage_8_6_5_telemetry = scaffold_result.as_telemetry()
+        log8_65.info(
+            f"scaffold_filter enabled={scaffold_result.enabled} "
+            f"fan_in_threshold={scaffold_result.fan_in_threshold} "
+            f"shared_scaffold_files={scaffold_result.shared_scaffold_files} "
+            f"paths_removed={scaffold_result.paths_removed} "
+            f"features_trimmed={scaffold_result.features_trimmed}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="scaffold_filter",
+            payload=stage_8_6_5_telemetry,
+            run_dir=run_dir,
+        )
+
     # ── Stage 8.7 — workspace-anchor de-sink ───────────────────────
     # A workspace-anchor feature (``backend``, ``frontend-v2``,
     # ``packages/lib``) claims the WHOLE workspace tree as a fallback
@@ -404,6 +439,7 @@ def run_layer2_phase(
         stage_8_rollup_telemetry=stage_8_rollup_telemetry,
         stage_8_5_backfill_telemetry=stage_8_5_backfill_telemetry,
         stage_8_6_telemetry=stage_8_6_telemetry,
+        stage_8_6_5_telemetry=stage_8_6_5_telemetry,
         stage_8_7_telemetry=stage_8_7_telemetry,
         stage_8_8_telemetry=stage_8_8_telemetry,
     )
