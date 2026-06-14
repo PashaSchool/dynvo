@@ -95,7 +95,7 @@ jobs:
     # environment name `testpypi` to match this job's OIDC claim.
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/faultlines/
+      url: https://test.pypi.org/project/dynvo/
     permissions:
       id-token: write   # OIDC token for TestPyPI Trusted Publishing
     outputs:
@@ -115,7 +115,7 @@ jobs:
         run: python -m pip install --upgrade build
 
       # --- Version bump (working tree only; committed in the prod job) ---
-      - name: Bump engine (faultlines) minor version
+      - name: Bump engine (dynvo) minor version
         id: engine
         if: ${{ needs.detect.outputs.engine == 'true' }}
         run: echo "version=$(python scripts/bump_minor_version.py pyproject.toml)" >> "$GITHUB_OUTPUT"
@@ -182,7 +182,7 @@ jobs:
     # trusted publishers must use environment name `pypi`.
     environment:
       name: pypi
-      url: https://pypi.org/project/faultlines/
+      url: https://pypi.org/project/dynvo/
     permissions:
       contents: write   # push the version-bump commit + tags back to main
       id-token: write   # OIDC token for PyPI Trusted Publishing
@@ -255,7 +255,7 @@ jobs:
           summary=""
           if [ "${{ needs.detect.outputs.engine }}" = "true" ]; then
             python scripts/bump_minor_version.py pyproject.toml >/dev/null
-            summary="faultlines v${{ needs.stage.outputs.engine_version }}"
+            summary="dynvo v${{ needs.stage.outputs.engine_version }}"
           fi
           if [ "${{ needs.detect.outputs.mcp }}" = "true" ]; then
             python scripts/bump_minor_version.py faultlines-mcp/pyproject.toml >/dev/null
@@ -267,7 +267,7 @@ jobs:
           git commit -m "chore(release): $summary [skip ci]"
 
           if [ "${{ needs.detect.outputs.engine }}" = "true" ]; then
-            git tag -a "faultlines-v${{ needs.stage.outputs.engine_version }}" -m "faultlines v${{ needs.stage.outputs.engine_version }}"
+            git tag -a "dynvo-v${{ needs.stage.outputs.engine_version }}" -m "dynvo v${{ needs.stage.outputs.engine_version }}"
           fi
           if [ "${{ needs.detect.outputs.mcp }}" = "true" ]; then
             git tag -a "faultlines-mcp-v${{ needs.stage.outputs.mcp_version }}" -m "faultlines-mcp v${{ needs.stage.outputs.mcp_version }}"
