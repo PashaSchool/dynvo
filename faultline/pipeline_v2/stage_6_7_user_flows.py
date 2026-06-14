@@ -923,6 +923,22 @@ def _merge_same_name_clusters(
     return merged
 
 
+def _member_trigger(member: dict, file_trigger: dict[str, str]) -> str | None:
+    """System trigger of a member flow via its entry file / paths, else None.
+
+    A flow is system-triggered when the route it is anchored on was tagged
+    scheduled/queue/webhook by Stage 6.8b. ``entry_point_file`` is the primary
+    anchor; ``paths`` is the fallback for flows without an explicit entry.
+    """
+    ept = member.get("entry_point_file")
+    if ept and ept in file_trigger:
+        return file_trigger[ept]
+    for p in (member.get("paths") or []):
+        if p in file_trigger:
+            return file_trigger[p]
+    return None
+
+
 def cluster_user_flows(
     scan: dict,
     routes_index: list[dict] | None = None,
@@ -947,6 +963,16 @@ def cluster_user_flows(
     """
     flows = scan.get("flows") or []
     df_by_name = {f["name"]: f for f in (scan.get("developer_features") or [])}
+
+    # file -> system trigger (scheduled|queue|webhook), from the Stage 6.8b
+    # route classification. Interactive routes are omitted, so a lookup miss
+    # means "interactive". Lets each UF inherit system/background status from
+    # the routes its member flows are anchored on.
+    file_trigger = {
+        str(r.get("file")): str(r.get("trigger") or "")
+        for r in (routes_index or [])
+        if r.get("file") and r.get("trigger") and r.get("trigger") != "interactive"
+    }
 
     uniq = _dedup_by_name(flows)
 
@@ -987,6 +1013,26 @@ def cluster_user_flows(
             clusters[key].append(f)
             cluster_resources[key][resource] += 1
             plugin_collapsed += 1
+            continue
+        # System/background-flow exemption (Stage 6.8b) — a flow anchored on a
+        # scheduled / queue / webhook route is a real SYSTEM journey (a cron job,
+        # a queue consumer, an inbound webhook), so the infra-domain / UI-primitive
+        # filters below (which target interactive-surface noise like barrel files
+        # and DI tokens) must NOT drop it. It seeds a UF under its product
+        # resource, falling back to the trigger when the path domain is weak.
+        # Stage 6.7's output pass then labels it ``category="system"``.
+        if _member_trigger(f, file_trigger) is not None:
+            verb, resource = _split_name(f["name"])
+            intent = INTENT.get(verb, "other")
+            sys_domain = (
+                domain
+                if domain and not _is_infra_domain(domain)
+                and not _is_primitive_domain(domain)
+                else (resource or _member_trigger(f, file_trigger))
+            )
+            key = (sys_domain, resource, intent)
+            clusters[key].append(f)
+            cluster_resources[key][resource] += 1
             continue
         # A domain is STRONG when it is a real product noun — not None, not a
         # primitive widget token, not an infra/version/artifact token. A strong
@@ -1063,6 +1109,19 @@ def cluster_user_flows(
         slot_label, slot_grounded = _slot_consistent_label(
             members, product_strings,
         )
+        # System/background classification (Stage 6.8b inheritance): a UF is
+        # "system" when at least half its member flows are anchored on a
+        # scheduled/queue/webhook route. The dominant sub-type becomes its
+        # ``trigger``. No threshold tuning — the half-rule is a structural
+        # majority (rule-no-magic-tuning).
+        member_trigs = [
+            t for t in (_member_trigger(m, file_trigger) for m in members) if t
+        ]
+        if member_trigs and len(member_trigs) * 2 >= len(members):
+            uf_category = "system"
+            uf_trigger: str | None = Counter(member_trigs).most_common(1)[0][0]
+        else:
+            uf_category, uf_trigger = "interactive", None
         user_flows.append({
             "id": uf_id,
             "name": NAME_TMPL[intent].format(r=slot_label),
@@ -1075,6 +1134,8 @@ def cluster_user_flows(
             "member_count": len(members),
             **enriched,
             "ui_tier": None,
+            "category": uf_category,
+            "trigger": uf_trigger,
         })
     return {
         "user_flows": user_flows,
