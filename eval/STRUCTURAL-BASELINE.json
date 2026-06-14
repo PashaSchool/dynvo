@@ -15,6 +15,9 @@
       "blob_count": 16,
       "files_under_blobs_pct": 0.7857,
       "dev_features_with_pf_pct": 0.25,
+      "service_residual_pct": 0.0,
+      "largest_sink_share": 0.0233,
+      "routes_in_platform_pct": 0.0,
       "blobs": [
         {
           "name": "scripts-axios-build-instance",
@@ -161,6 +164,9 @@
       "blob_count": 1,
       "files_under_blobs_pct": 0.0878,
       "dev_features_with_pf_pct": 0.9518,
+      "service_residual_pct": 0.4138,
+      "largest_sink_share": 1.0,
+      "routes_in_platform_pct": 0.0,
       "blobs": [
         {
           "name": "apps",
@@ -187,6 +193,9 @@
       "blob_count": 0,
       "files_under_blobs_pct": 0.0,
       "dev_features_with_pf_pct": 0.928,
+      "service_residual_pct": 0.4694,
+      "largest_sink_share": 1.0,
+      "routes_in_platform_pct": 0.0069,
       "blobs": []
     },
     {
@@ -204,6 +213,9 @@
       "blob_count": 0,
       "files_under_blobs_pct": 0.0,
       "dev_features_with_pf_pct": 1.0,
+      "service_residual_pct": 0.0,
+      "largest_sink_share": 0.7951,
+      "routes_in_platform_pct": 0.0,
       "blobs": []
     },
     {
@@ -221,6 +233,9 @@
       "blob_count": 0,
       "files_under_blobs_pct": 0.0,
       "dev_features_with_pf_pct": 0.4737,
+      "service_residual_pct": 0.0,
+      "largest_sink_share": 1.0,
+      "routes_in_platform_pct": 0.0,
       "blobs": []
     },
     {
@@ -238,6 +253,9 @@
       "blob_count": 0,
       "files_under_blobs_pct": 0.0,
       "dev_features_with_pf_pct": 0.9826,
+      "service_residual_pct": 0.5,
+      "largest_sink_share": 1.0,
+      "routes_in_platform_pct": 0.0508,
       "blobs": []
     },
     {
@@ -255,6 +273,9 @@
       "blob_count": 0,
       "files_under_blobs_pct": 0.0,
       "dev_features_with_pf_pct": 0.9606,
+      "service_residual_pct": 0.4677,
+      "largest_sink_share": 1.0,
+      "routes_in_platform_pct": 0.0,
       "blobs": []
     }
   ]

@@ -26,6 +26,25 @@ the REAL (non-platform) product features are decomposed**.
 | `gini` | inequality of REAL feature sizes | — | informational, **not gated** |
 | `blob_count` | REAL features that are oversized **and** path-concentrated **and** container-named-or-≥40% | ↓ better | reported |
 | `dev_features_with_pf_pct` | dev features that roll up into a product feature (keyed scans only) | ↑ better | reported |
+| `service_residual_pct` | backend service/model/job/agent files held ONLY by a platform bucket, not a real feature (backend→feature rollup lever) | ↓ better | tracked, **not gated** |
+| `largest_sink_share` | the single biggest feature's EXCLUSIVE-file share — a catch-all "sink" owning files no other feature touches (residual mega-blob lever) | ↓ better | tracked, **not gated** |
+| `routes_in_platform_pct` | routes whose owning feature is a platform bucket (route-in-blob proxy) | ↓ better | tracked, **not gated** |
+
+### Lever metrics (2026-06-14, Soc0 audit)
+
+The last three are **lever** metrics: they exist to catch the failure mode where a
+release **renames features on the periphery** without moving any structural lever
+(the Soc0 audit caught two consecutive scans doing exactly this — recall flat at
+~24%, the mega-blob merely relabelled). They are universal + golden-free (backend-
+layer dir vocabulary, path-exclusivity, route ownership — no repo-specific paths,
+`rule-soc0-not-golden` / `rule-no-repo-specific-paths`). Soc0 (keyless) reads
+`service_residual_pct≈99%`, `largest_sink_share≈100%` — the two untouched levers.
+
+**Caveat — lever 3 is keyed:** `routes_in_platform_pct` is only the *keyless*
+route-in-blob proxy. `0` does NOT mean entry-points are fine: Soc0's routes ARE
+attributed to real features (`main.py`→`main`) yet still don't surface as user-
+flows. That entry-point→UF blindspot is a **keyed** signal — measure it with the
+UF scorer, not here.
 
 All thresholds are scale-invariant ratios (fair-share multiples, share floors),
 not corpus-tuned constants — see `rule-no-magic-tuning`.

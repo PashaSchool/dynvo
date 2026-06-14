@@ -163,3 +163,52 @@ def test_platform_share_zero_when_no_anchor() -> None:
     a = audit_scan(scan)
     assert a.platform_share == 0.0
     assert a.n_platform_features == 0
+
+
+# ── lever metrics (Soc0 audit) ───────────────────────────────────────────────
+
+
+def test_service_residual_pct() -> None:
+    # Service/model files held ONLY by the platform anchor (not a real feature)
+    # are residual; a service file ALSO claimed by a real feature is not. main.py
+    # is not a backend-layer file, so it doesn't count.
+    scan = {
+        "developer_features": [
+            {"name": "backend", "description": _WS,
+             "paths": ["backend/services/a.py", "backend/services/b.py",
+                       "backend/models/c.py", "backend/main.py"]},
+            {"name": "auth", "description": "[route] slug 'auth'",
+             "paths": ["backend/services/a.py"]},
+        ],
+        "product_features": [],
+    }
+    a = audit_scan(scan)
+    assert a.service_residual_pct == round(2 / 3, 4)  # b.py + c.py residual; a.py in a real feat
+
+
+def test_largest_sink_share() -> None:
+    # The biggest feature owns files no other feature touches → sink share = 1.0.
+    scan = {
+        "developer_features": [
+            {"name": "blob", "description": _WS, "paths": [f"frontend/x{i}.ts" for i in range(10)]},
+            {"name": "small", "description": "[route] slug 's'", "paths": ["frontend/shared.ts"]},
+        ],
+        "product_features": [],
+    }
+    assert audit_scan(scan).largest_sink_share == 1.0
+
+
+def test_routes_in_platform_pct() -> None:
+    scan = {
+        "developer_features": [
+            {"name": "backend", "uuid": "PLAT", "description": _WS, "paths": ["backend/main.py"]},
+            {"name": "auth", "uuid": "REAL", "description": "[route] slug 'auth'", "paths": ["backend/auth.py"]},
+        ],
+        "product_features": [],
+        "routes_index": [
+            {"file": "backend/main.py", "pattern": "/a", "feature_uuid": "PLAT"},
+            {"file": "backend/main.py", "pattern": "/b", "feature_uuid": "PLAT"},
+            {"file": "backend/auth.py", "pattern": "/login", "feature_uuid": "REAL"},
+        ],
+    }
+    assert audit_scan(scan).routes_in_platform_pct == round(2 / 3, 4)

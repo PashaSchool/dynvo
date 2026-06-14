@@ -171,6 +171,24 @@ class ScanAudit:
     # Attribution completeness — only meaningful on a keyed scan (a keyless scan
     # has no product clustering, so this reads 0 and is ignored in --compare).
     dev_features_with_pf_pct: float
+    # ── Lever metrics (Soc0 audit) — universal, golden-free, TRACKED-not-gated.
+    # They detect whether a release MOVED a structural lever vs merely renamed
+    # labels on the periphery (the failure mode the Soc0 verdict caught).
+    #  service_residual_pct  — backend service/model/job/agent files stuck in a
+    #    platform bucket instead of a real feature (the backend→feature rollup
+    #    lever; Soc0: 99% of 381 layer files only in the `backend` anchor).
+    #  largest_sink_share    — the single biggest feature's EXCLUSIVE-file share:
+    #    a catch-all "sink" owning files no other feature touches (the residual
+    #    mega-blob lever; Soc0 frontend ≈ 95%).
+    #  routes_in_platform_pct— routes whose owning feature is a platform bucket
+    #    (routes stuck in the blob can't decompose into per-route flows). NOTE:
+    #    0 does NOT mean entry-points are fine — Soc0's routes ARE attributed to
+    #    real features (main.py → `main`) yet still don't surface as UFs. That
+    #    entry-point→UF blindspot (lever 3) is a KEYED signal (UF scorer); this
+    #    is only the keyless route-in-blob proxy.
+    service_residual_pct: float
+    largest_sink_share: float
+    routes_in_platform_pct: float
     blobs: list[FeatureAudit] = field(default_factory=list)
 
 
@@ -246,6 +264,46 @@ def audit_scan(scan: dict[str, Any], label: str = "") -> ScanAudit:
 
     median = float(sorted(s for _, s in ((nm, len(p)) for nm, p in per_feature))[n // 2]) if n else 0.0
 
+    # ── Lever metrics (see ScanAudit docstring). Keyless-measurable, universal —
+    # backend-layer dir vocabulary + path-exclusivity + route ownership. No
+    # repo-specific paths, no magic thresholds (rule-no-repo-specific-paths /
+    # rule-no-magic-tuning).
+    _LAYER_DIRS = (
+        "/services/", "/service/", "/models/", "/model/", "/jobs/", "/job/",
+        "/tasks/", "/task/", "/workers/", "/worker/", "/inngest_functions/",
+        "/inngest/", "/agent/", "/agents/",
+    )
+    residual = platform_files - real_files  # files owned ONLY by a platform bucket
+    layer = {
+        p for p in all_files
+        if "test" not in p.lower() and any(s in p for s in _LAYER_DIRS)
+    }
+    service_residual_pct = round(len(layer & residual) / len(layer), 4) if layer else 0.0
+
+    feat_paths = [
+        {p for p in (f.get("paths") or []) if isinstance(p, str) and p} for f in dev
+    ]
+    if feat_paths:
+        big_i = max(range(len(feat_paths)), key=lambda i: len(feat_paths[i]))
+        others: set[str] = set()
+        for i, fp in enumerate(feat_paths):
+            if i != big_i:
+                others |= fp
+        big = feat_paths[big_i]
+        largest_sink_share = round(len(big - others) / len(big), 4) if big else 0.0
+    else:
+        largest_sink_share = 0.0
+
+    plat_uuids = {
+        str(f.get("uuid") or "") for f in dev
+        if _is_platform_feature(f) and f.get("uuid")
+    }
+    routes = scan.get("routes_index") or []
+    routes_in_platform_pct = (
+        round(sum(1 for r in routes if str(r.get("feature_uuid") or "") in plat_uuids) / len(routes), 4)
+        if routes else 0.0
+    )
+
     return ScanAudit(
         label=label,
         total_files=len(all_files),
@@ -261,6 +319,9 @@ def audit_scan(scan: dict[str, Any], label: str = "") -> ScanAudit:
         blob_count=len(blobs),
         files_under_blobs_pct=round(len(blob_files) / total, 4) if total else 0.0,
         dev_features_with_pf_pct=round(with_pf / n_dev, 4) if n_dev else 0.0,
+        service_residual_pct=service_residual_pct,
+        largest_sink_share=largest_sink_share,
+        routes_in_platform_pct=routes_in_platform_pct,
         blobs=sorted(blobs, key=lambda b: -b.files),
     )
 
@@ -279,6 +340,9 @@ def _fmt_table(audits: list[ScanAudit]) -> str:
         ("gini", lambda a: f"{a.gini:.2f}"),
         ("blobs", lambda a: str(a.blob_count)),
         ("blob%", lambda a: f"{a.files_under_blobs_pct:.0%}"),
+        ("svc-res%", lambda a: f"{a.service_residual_pct:.0%}"),
+        ("sink%", lambda a: f"{a.largest_sink_share:.0%}"),
+        ("rt-plat%", lambda a: f"{a.routes_in_platform_pct:.0%}"),
         ("largest", lambda a: a.largest_feature[:30]),
     ]
     widths = [max(len(h), *(len(fn(a)) for a in audits)) if audits else len(h) for h, fn in cols]
@@ -323,6 +387,13 @@ def _compare(curr: list[ScanAudit], baseline: dict[str, Any]) -> int:
         if "platform_share" in b and abs(a.platform_share - b["platform_share"]) > _TOL_MAX_SHARE:
             arrow = "↑" if a.platform_share > b["platform_share"] else "↓"
             print(f"  platform_share {arrow} {a.label}: {b['platform_share']:.3f} → {a.platform_share:.3f} (tracked, not gated)")
+        # Lever metrics — TRACKED, not gated. Surface notable moves so a release
+        # is judged on whether it MOVED a lever, not on renamed labels.
+        for metric in ("service_residual_pct", "largest_sink_share", "routes_in_platform_pct"):
+            if metric in b and abs(getattr(a, metric) - b[metric]) > _TOL_MAX_SHARE:
+                now, was = getattr(a, metric), b[metric]
+                arrow = "↓" if now < was else "↑"
+                print(f"  {metric} {arrow} {a.label}: {was:.3f} → {now:.3f} (tracked, not gated)")
     if regressions:
         print("\n".join(regressions))
         return 1
