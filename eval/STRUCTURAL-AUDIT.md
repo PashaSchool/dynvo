@@ -60,7 +60,7 @@ features; `plat%` is the recognised-platform footprint (the blob signal).
 |---|---|---|---|---|---|---|
 | dify | 5090 | 77 | **81%** | 15% | 35% | datasets (1) |
 | documenso | 2144 | 109 | **64%** | 20% | 44% | — |
-| infisical | 6849 | 125 | **59%** | 24% | 56% | — |
+| infisical | 6849 | 125 | **51%** | 20% | 56% | — |
 | inbox-zero | 1879 | 162 | **34%** | 11% | 21% | — |
 | axios | 56 | 32 | 0% | 77% | 79% | 16 (flat lib — no workspaces; known hard) |
 | fastapi | 379 | 33 | 0% | 32% | 60% | — |
@@ -68,12 +68,15 @@ features; `plat%` is the recognised-platform footprint (the blob signal).
 
 **`plat%`** is the package-node-blob signal (replaces platform-inclusive
 `max%`): the share of the repo held by recognised workspace anchors. de-sink
-(Stage 8.7) lowers it (infisical 53→34 of platform-inclusive max, i.e. the
-anchor shrank); the shared-scaffold filter (Stage 8.6.5) raises it slightly
-(scaffold consolidates onto the anchor) — tracked, not gated. **`max%`/`top3%`**
-now measure REAL-feature decomposition and are healthy everywhere a workspace
-exists (dify 15%, infisical 24%, inbox-zero 11%), confirming the engine
-decomposes the real product features well once the platform bucket is split out.
+(Stage 8.7) lowers it (the anchor shrank); the shared-scaffold filter (Stage
+8.6.5) raises it slightly (scaffold consolidates onto the anchor); **DI service
+attribution (Stage 8.6.7)** lowers it again by re-homing DI-referenced services
+to their owning features (infisical 59→51, gated on `eval/membership/infisical`:
+machine-identities recall 0.17→0.64, precision held). Tracked, not gated.
+**`max%`/`top3%`** now measure REAL-feature decomposition and are healthy
+everywhere a workspace exists (dify 15%, infisical 20%, inbox-zero 11%),
+confirming the engine decomposes the real product features well once the
+platform bucket is split out.
 The genuine remaining work is **lowering `plat%`** — DI-service attribution
 (re-home the service/db long-tail) — and curating ground truth for the flat-lib
 case (axios). Blobs are now REAL-feature blobs only (platform excluded); flat
