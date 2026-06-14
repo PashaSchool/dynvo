@@ -42,7 +42,10 @@ _SECONDS_PER_COMMIT = 0.008
 _SECONDS_PER_FLOW_FEATURE = 4
 # Rough estimate of features for flow duration estimate (before actual detection)
 _ESTIMATED_FLOW_FEATURES = 20
-DEFAULT_MAX_COMMITS = 5_000
+# Commit-window cap. Raised 5k→7k (2026-06-14) so a busy repo's history window is
+# not truncated before the Stage 6.95 feature-timeline is computed (infisical hit
+# the old 5k cap over 365d). Paired with the worker's 180-day default window.
+DEFAULT_MAX_COMMITS = 7_000
 
 
 def is_bug_fix(message: str) -> bool:
