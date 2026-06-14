@@ -33,6 +33,9 @@ from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
 from faultline.pipeline_v2.stage_8_7_anchor_desink import (
     desink_workspace_anchors,
 )
+from faultline.pipeline_v2.stage_8_8_shared_members import (
+    enrich_shared_members,
+)
 from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
     run_stage_8_analyst,
@@ -59,6 +62,7 @@ class Layer2Result:
     stage_8_5_backfill_telemetry: dict[str, Any]
     stage_8_6_telemetry: dict[str, Any]
     stage_8_7_telemetry: dict[str, Any]
+    stage_8_8_telemetry: dict[str, Any]
 
 
 def run_layer2_phase(
@@ -362,6 +366,36 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 8.8 — shared-member enrichment of the de-sink residual ──
+    # The de-sink residual (anchor-only files: shared services / models / UI)
+    # is reached only by the anchor's own closure — the specific features that
+    # actually USE it never claim it. This stage records that usage: for each
+    # residual file, attach it as an N:M role="shared" member_file on every
+    # specific feature whose own code DIRECTLY IMPORTS it (1-hop, the strongest
+    # signal). NEVER touches feature.paths, so the paths-based gates
+    # (structural max-share + membership) cannot regress by construction.
+    # Honest: a shared <Button> shows on every feature that imports it;
+    # genuinely-shared leaves with no importer stay residual. Deterministic, no
+    # LLM. Default ON; disable via FAULTLINE_STAGE_8_8_SHARED_MEMBERS=0.
+    with StageLogger(run_dir, 8, "shared_members") as log8_8:
+        shared_result = enrich_shared_members(ctx, features)
+        stage_8_8_telemetry = shared_result.as_telemetry()
+        log8_8.info(
+            f"shared_members enabled={shared_result.enabled} "
+            f"residual={shared_result.residual_files} "
+            f"attached={shared_result.residual_attached} "
+            f"coverage={shared_result.coverage_pct:.1%} "
+            f"edges={shared_result.edges} "
+            f"features_enriched={shared_result.features_enriched}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="shared_members",
+            payload=stage_8_8_telemetry,
+            run_dir=run_dir,
+        )
+
     return Layer2Result(
         features=features,
         product_features=product_features,
@@ -371,6 +405,7 @@ def run_layer2_phase(
         stage_8_5_backfill_telemetry=stage_8_5_backfill_telemetry,
         stage_8_6_telemetry=stage_8_6_telemetry,
         stage_8_7_telemetry=stage_8_7_telemetry,
+        stage_8_8_telemetry=stage_8_8_telemetry,
     )
 
 
