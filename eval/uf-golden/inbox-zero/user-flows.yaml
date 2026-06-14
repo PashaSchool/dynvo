@@ -1,0 +1,821 @@
+# UF ground truth for inbox-zero
+# Curated by: uf-spec-curator
+# Source date: 2026-06-14
+#
+# Product: Inbox Zero — open-source AI email assistant / inbox cleaner
+# (by Elie Steinbock). Next.js 15 App Router monorepo; web app at apps/web/.
+#
+# Confidence levels:
+#   external  = derived from product website / pricing / docs (highest)
+#   route     = derived from code routes / nav components (medium)
+#   inferred  = LLM-inferred from schema + code structure (lowest)
+#
+# Category (custom field for this repo — lets the scorer split the two worlds):
+#   interactive = a human-driven UI journey (has a page / panel / settings UI)
+#   system      = a background / async / scheduled / webhook-triggered flow
+#                 (no user-facing page; ui_tier: no-ui). inbox-zero runs these
+#                 via vercel.json crons + Upstash QStash queues + inbound
+#                 provider webhooks. NOTE: this repo does NOT use Inngest
+#                 (the brief assumed Inngest) — the real background-job stack
+#                 is QStash (Upstash) + BullMQ + Vercel Cron. Each meaningful
+#                 job below is grounded in a concrete cron entry, a
+#                 withQstashOrInternal-guarded route, or a verified webhook
+#                 handler.
+
+meta:
+  slug: inbox-zero
+  product_url: https://www.getinboxzero.com
+  docs_url: https://docs.getinboxzero.com
+  sources_used:
+    - external_site          # getinboxzero.com homepage + /pricing
+    - external_docs          # docs.getinboxzero.com sidebar
+    - next_app_router        # apps/web/app/(app)/**/page.tsx + app/api/**/route.ts
+    - nav_component          # apps/web/components/SideNav.tsx (Manage/Cleanup/Tools groups)
+    - prisma_schema          # apps/web/prisma/schema.prisma (60+ models)
+    - vercel_cron            # apps/web/vercel.json crons[] (8 scheduled jobs)
+  curator_notes: |
+    Strong, well-triangulated signal. Four independent sources agreed on the
+    product taxonomy: the marketing site + pricing page, the public docs
+    sidebar, the App-Router routes, and the in-app SideNav component (which
+    groups features into Manage / Cleanup / Tools — the author's own UX
+    taxonomy). Marketing names map almost 1:1 onto code routes (e.g.
+    /bulk-unsubscribe, /cold-email-blocker, /reply-zero, /smart-categories,
+    /clean, /briefs, /drive, /stats), so most interactive flows are
+    confidence=external or route with high certainty.
+
+    BACKGROUND / SYSTEM FLOWS (the focus of this curation): inbox-zero is a
+    background-heavy product. The brief asked for Inngest functions, but this
+    repo does NOT use Inngest — it uses **Upstash QStash** (HTTP queues),
+    **BullMQ**, and **Vercel Cron**. I enumerated system flows from three
+    grounded code sources rather than from any single library:
+      (1) vercel.json `crons[]` — 8 explicit author-declared schedules;
+      (2) routes guarded by `withQstashOrInternal` (utils/qstash.ts) — these
+          are async job *consumers* invoked by QStash (or internal fallback);
+      (3) verified inbound webhook handlers (Gmail/Outlook history push,
+          Slack/Telegram/Teams chat events, Stripe/Lemon Squeezy/Apple billing).
+    Each system flow carries its trigger (cron schedule, queue topic, or
+    webhook source) in its rationale so the scorer can verify grounding.
+
+    Deliberate exclusions:
+      - Pure dev/debug pages (app/(app)/[emailAccountId]/debug/**), the
+        (redirects) route group (legacy URL forwarders), and (landing)
+        component-preview pages — not customer flows.
+      - Low-level CRUD-only JSON endpoints under /api/user/** that merely back
+        a page already represented (e.g. /api/user/rules backs the Assistant
+        rule editor) — folded into the parent UF, not split out, per the
+        marketing-grain rule.
+      - Admin-only pages (/admin, /config) — represented as a single thin
+        "platform administration" flow; no external signal for sub-journeys.
+
+    Known gaps vs likely engine output: the engine works at engineering grain
+    and will almost certainly emit far more UFs than this list (per-endpoint
+    splits of stats/*, drive/*, categorize/senders/*, organization stats
+    buckets, the v1 public API, MCP integration OAuth, calendar/drive OAuth
+    callbacks). Per [[rule-no-truth-recuration-to-fit-engine]] that gap is the
+    measurement, not a curation defect — this spec stays at marketing grain.
+
+domains:
+  # =====================================================================
+  # 1. ONBOARDING & MAILBOX CONNECTION
+  # =====================================================================
+  - name: onboarding
+    aliases: [setup, welcome, get-started, connect-mailbox, mailbox-connection]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-onboarding-1
+        name: "Connect email mailbox"
+        description: "New user connects a Gmail or Microsoft/Outlook mailbox to grant access."
+        intent: onboard
+        resource: emailAccount
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "(landing)/connect-mailbox/page.tsx + 'Get started free' CTA; pricing requires connecting an account; permissions/consent route."
+      - id: UF-onboarding-2
+        name: "Complete onboarding wizard"
+        description: "User walks through initial setup to configure the assistant and inbox preferences."
+        intent: onboard
+        resource: user
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "(app)/[emailAccountId]/onboarding/page.tsx, /setup/page.tsx, (landing)/welcome/page.tsx; SetupProgressCard in SideNav."
+      - id: UF-onboarding-3
+        name: "Grant provider permissions"
+        description: "User authorizes OAuth scopes for email, calendar, and drive access."
+        intent: configure
+        resource: emailAccount
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "(app)/[emailAccountId]/permissions/consent/page.tsx; google/outlook linking + calendar + drive auth-url/callback routes."
+
+  # =====================================================================
+  # 2. AUTHENTICATION & ACCOUNT
+  # =====================================================================
+  - name: authentication
+    aliases: [auth, login, sign-in, sso, logout]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-auth-1
+        name: "Log in"
+        description: "Existing user signs in (Google/Microsoft OAuth or email)."
+        intent: onboard
+        resource: session
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "'Log in' nav item; (landing)/login/page.tsx; api/auth/[...all] (better-auth)."
+      - id: UF-auth-2
+        name: "Sign in with SSO"
+        description: "Enterprise user authenticates via organization SSO / SAML."
+        intent: onboard
+        resource: ssoProvider
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Enterprise plan lists SSO/SCIM; (landing)/login/sso/page.tsx; api/sso/signin; SsoProvider + ScimProvider models."
+      - id: UF-auth-3
+        name: "Manage connected accounts"
+        description: "User adds, switches between, or removes multiple connected email accounts."
+        intent: configure
+        resource: emailAccount
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "(app)/accounts/page.tsx; AccountSwitcher in SideNav; Plus plan '2 email accounts per user'; /api/user/email-accounts."
+
+  # =====================================================================
+  # 3. AI ASSISTANT (rules / automation) — core product
+  # =====================================================================
+  - name: ai-assistant
+    aliases: [assistant, automation, ai-assistant, personal-assistant, rules]
+    confidence: external
+    source_url: https://docs.getinboxzero.com
+    user_flows:
+      - id: UF-assistant-1
+        name: "Set up AI assistant"
+        description: "User configures the AI personal assistant that sorts, labels, and acts on email."
+        intent: configure
+        resource: rule
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Docs 'AI Personal Assistant'; pricing 'Sorts and labels every email'; (app)/[emailAccountId]/automation/page.tsx; SideNav 'Assistant'."
+      - id: UF-assistant-2
+        name: "Create automation rule"
+        description: "User creates a plain-English rule describing how to handle matching emails."
+        intent: create
+        resource: rule
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "(app)/[emailAccountId]/assistant/rule/create/page.tsx; homepage 'Plain English customization rules'; Rule + Action models."
+      - id: UF-assistant-3
+        name: "Edit automation rule"
+        description: "User edits an existing rule's conditions and actions."
+        intent: update
+        resource: rule
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "(app)/[emailAccountId]/assistant/rule/[ruleId]/page.tsx; RuleHistory model tracks edits."
+      - id: UF-assistant-4
+        name: "Review rule run history"
+        description: "User inspects which emails the assistant acted on and why."
+        intent: monitor
+        resource: executedRule
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "ExecutedRule + ExecutedAction models; /api/user/executed-rules/history; rule-history debug views; ClassificationFeedback."
+      - id: UF-assistant-5
+        name: "Chat with assistant"
+        description: "User chats with the AI to triage email and trigger actions conversationally."
+        intent: run
+        resource: chat
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Docs 'AI Chat'; SideNav 'Chat' → /assistant; Chat/ChatMessage/ChatMemory models; api/chat + api/chats."
+
+  # =====================================================================
+  # 4. REPLY ZERO (reply tracking / drafts)
+  # =====================================================================
+  - name: reply-zero
+    aliases: [reply-tracker, reply-zero, replies, awaiting-reply, follow-up]
+    confidence: external
+    source_url: https://docs.getinboxzero.com
+    user_flows:
+      - id: UF-reply-1
+        name: "Track replies needed"
+        description: "User views emails awaiting their reply and emails they're awaiting a reply on."
+        intent: monitor
+        resource: threadTracker
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Docs 'Reply Zero'; (app)/[emailAccountId]/reply-zero/page.tsx tabs 'To Reply' / 'awaitingReply'; ThreadTracker model."
+      - id: UF-reply-2
+        name: "Use AI-drafted replies"
+        description: "User reviews and sends AI-pre-drafted replies written in their voice."
+        intent: run
+        resource: draftSendLog
+        ui_tier: panel
+        confidence: external
+        category: interactive
+        rationale: "Pricing 'Drafts replies in your voice'; DraftSendLog model; ai/compose-autocomplete; reply-zero onboarding route."
+
+  # =====================================================================
+  # 5. BULK UNSUBSCRIBE
+  # =====================================================================
+  - name: bulk-unsubscribe
+    aliases: [unsubscribe, bulk-unsubscriber, newsletters, newsletter-cleaner]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-unsubscribe-1
+        name: "Bulk unsubscribe from senders"
+        description: "User reviews high-volume senders and unsubscribes or auto-archives them in bulk."
+        intent: bulk
+        resource: newsletter
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Pricing 'Bulk unsubscribe'; docs 'Bulk Unsubscriber'; SideNav 'Bulk Unsubscribe' → /bulk-unsubscribe; Newsletter model; /api/unsubscribe."
+
+  # =====================================================================
+  # 6. BULK ARCHIVE
+  # =====================================================================
+  - name: bulk-archive
+    aliases: [archive, bulk-archive, quick-archive]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-archive-1
+        name: "Bulk archive emails"
+        description: "User archives large groups of emails by sender or category in one action."
+        intent: bulk
+        resource: thread
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Pricing 'Bulk ... archive emails'; SideNav 'Bulk Archive' → /bulk-archive; /quick-bulk-archive page; /api/threads/[id]/archive."
+
+  # =====================================================================
+  # 7. COLD EMAIL BLOCKER
+  # =====================================================================
+  - name: cold-email-blocker
+    aliases: [cold-email, cold-email-blocker, cold-emails]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-coldemail-1
+        name: "Block cold emails"
+        description: "User enables and tunes automatic detection and blocking of unsolicited cold emails."
+        intent: configure
+        resource: coldEmail
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Pricing 'Blocks cold emails'; docs 'Cold Email Blocker'; (app)/[emailAccountId]/cold-email-blocker/page.tsx; ColdEmail model; /api/user/cold-email."
+
+  # =====================================================================
+  # 8. SMART CATEGORIES (sender categorization)
+  # =====================================================================
+  - name: smart-categories
+    aliases: [categories, smart-categories, categorization, sender-categories]
+    confidence: route
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-categories-1
+        name: "Set up smart categories"
+        description: "User defines categories and runs AI categorization of their senders."
+        intent: configure
+        resource: category
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "Homepage 'Smart email categorization'; (app)/[emailAccountId]/smart-categories/page.tsx + /setup; Category + Newsletter models."
+      - id: UF-categories-2
+        name: "Review categorized senders"
+        description: "User reviews and corrects which category each sender was assigned to."
+        intent: monitor
+        resource: category
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "/api/user/categorize/senders/categorized + /uncategorized + /progress; ClassificationFeedback model."
+
+  # =====================================================================
+  # 9. DEEP CLEAN (Cleaner / inbox bankruptcy)
+  # =====================================================================
+  - name: cleaner
+    aliases: [clean, deep-clean, cleaner, cleanup, bulk-clean]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-clean-1
+        name: "Run deep clean"
+        description: "User mass-cleans an overloaded inbox by archiving or marking old email read in bulk."
+        intent: run
+        resource: cleanupJob
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "SideNav 'Deep Clean' (beta) → /clean; clean/onboarding + clean/run + clean/history pages; CleanupJob + CleanupThread models."
+
+  # =====================================================================
+  # 10. EMAIL ANALYTICS / STATS
+  # =====================================================================
+  - name: analytics
+    aliases: [stats, analytics, statistics, metrics, insights]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-analytics-1
+        name: "View email analytics"
+        description: "User explores inbox metrics: volume by period, top senders, response time, and clog."
+        intent: monitor
+        resource: responseTime
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Pricing 'Email analytics'; docs 'Analytics'; SideNav 'Analytics' → /stats; many /api/user/stats/* endpoints; ResponseTime model."
+
+  # =====================================================================
+  # 11. EMAIL DIGESTS
+  # =====================================================================
+  - name: digest
+    aliases: [digests, email-digest, digest-settings]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-digest-1
+        name: "Configure email digest"
+        description: "User sets up a periodic digest of low-priority email and its schedule."
+        intent: configure
+        resource: digest
+        ui_tier: settings
+        confidence: external
+        category: interactive
+        rationale: "Plus plan 'Email digests'; /api/user/digest-settings + /digest-schedule; Digest + DigestItem + Schedule models."
+
+  # =====================================================================
+  # 12. MEETING BRIEFS
+  # =====================================================================
+  - name: meeting-briefs
+    aliases: [briefs, meeting-briefs, meeting-briefings, pre-meeting-briefings]
+    confidence: external
+    source_url: https://docs.getinboxzero.com
+    user_flows:
+      - id: UF-briefs-1
+        name: "View meeting briefs"
+        description: "User reads AI-generated pre-meeting briefings ahead of calendar events."
+        intent: monitor
+        resource: meetingBriefing
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Pricing 'Pre-meeting briefings'; docs 'Meeting Briefs'; SideNav 'Meeting Briefs' → /briefs; MeetingBriefing model; /onboarding-brief page."
+
+  # =====================================================================
+  # 13. CALENDARS
+  # =====================================================================
+  - name: calendars
+    aliases: [calendar, calendars, calendar-integration]
+    confidence: external
+    source_url: https://docs.getinboxzero.com
+    user_flows:
+      - id: UF-calendar-1
+        name: "Connect calendar"
+        description: "User connects Google/Outlook calendars so the assistant can use meeting context."
+        intent: configure
+        resource: calendarConnection
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Docs 'Calendar Integration'; homepage 'Calendar integration'; SideNav 'Calendars' → /calendars; google/outlook calendar auth-url + callback; CalendarConnection + Calendar models."
+
+  # =====================================================================
+  # 14. ATTACHMENTS / DRIVE (auto-file attachments)
+  # =====================================================================
+  - name: attachments
+    aliases: [drive, attachments, auto-file, file-attachments, document-filing]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-attachments-1
+        name: "Auto-file attachments"
+        description: "User sets up automatic filing of email attachments into cloud storage folders."
+        intent: configure
+        resource: documentFiling
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Plus plan 'Auto-file attachments'; docs 'Auto-File Attachments'; SideNav 'Attachments' → /drive; DriveConnection + FilingFolder + DocumentFiling models; google/outlook drive OAuth."
+
+  # =====================================================================
+  # 15. INTEGRATIONS (MCP) + MESSAGING CHANNELS (Slack/Telegram/Teams)
+  # =====================================================================
+  - name: integrations
+    aliases: [integrations, channels, mcp, connections, messaging-channels]
+    confidence: external
+    source_url: https://docs.getinboxzero.com
+    user_flows:
+      - id: UF-integrations-1
+        name: "Connect Slack/Telegram channel"
+        description: "User links a Slack, Telegram, or Teams workspace to receive and act on email there."
+        intent: configure
+        resource: messagingChannel
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "Plus plan 'Slack integration'; docs 'Slack Integration'; SideNav 'Channels' → /channels; slack/auth-url + callback; MessagingChannel + MessagingRoute models."
+      - id: UF-integrations-2
+        name: "Connect MCP integration"
+        description: "User connects external MCP tools/data sources for the assistant to use."
+        intent: configure
+        resource: mcpIntegration
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "SideNav 'Integrations' (beta) → /integrations; api/mcp/[integration]/auth-url + callback; McpIntegration + McpConnection + McpTool models."
+
+  # =====================================================================
+  # 16. KNOWLEDGE BASE
+  # =====================================================================
+  - name: knowledge
+    aliases: [knowledge, knowledge-base, memory]
+    confidence: external
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-knowledge-1
+        name: "Manage knowledge base"
+        description: "User adds reference content the assistant draws on when drafting replies."
+        intent: configure
+        resource: knowledge
+        ui_tier: settings
+        confidence: external
+        category: interactive
+        rationale: "Plus plan 'Unlimited knowledge base'; homepage 'Knowledge base support'; /api/knowledge; Knowledge + ReplyMemory + ReplyMemorySource models."
+
+  # =====================================================================
+  # 17. MAIL CLIENT (read/triage/compose)
+  # =====================================================================
+  - name: mail
+    aliases: [inbox, mail, email-client, threads, compose]
+    confidence: route
+    source_url: https://www.getinboxzero.com
+    user_flows:
+      - id: UF-mail-1
+        name: "Read and triage inbox"
+        description: "User browses Inbox/Drafts/Sent/Archived and category folders to read and act on mail."
+        intent: browse
+        resource: thread
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "(app)/[emailAccountId]/mail/page.tsx; SideNav MailNav (Inbox/Drafts/Sent/Archived + category folders + labels); /api/threads + /api/messages."
+      - id: UF-mail-2
+        name: "Compose email"
+        description: "User composes and sends a new email from the in-app composer."
+        intent: create
+        resource: emailMessage
+        ui_tier: panel
+        confidence: route
+        category: interactive
+        rationale: "SideNav 'Compose' button (ComposeModalProvider, shortcut C); EmailMessage model."
+
+  # =====================================================================
+  # 18. CALENDAR BOOKING (public booking links)
+  # =====================================================================
+  - name: booking
+    aliases: [booking, booking-links, book, scheduling]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-booking-1
+        name: "Manage booking links"
+        description: "User creates shareable scheduling links with availability windows."
+        intent: create
+        resource: bookingLink
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "/api/user/booking-links; BookingLink + BookingWindow models; book/[slug] public page; BookingSidebar."
+      - id: UF-booking-2
+        name: "Book a meeting slot"
+        description: "An external invitee picks an available slot on a public booking link."
+        intent: create
+        resource: booking
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "app/book/[slug]/page.tsx + book/cancel/[id]; api/public/booking-links/[slug]/availability; api/public/bookings; Booking model."
+
+  # =====================================================================
+  # 19. BILLING / PREMIUM
+  # =====================================================================
+  - name: billing
+    aliases: [premium, billing, subscription, upgrade, pricing, payments]
+    confidence: external
+    source_url: https://www.getinboxzero.com/pricing
+    user_flows:
+      - id: UF-billing-1
+        name: "Upgrade to premium plan"
+        description: "User views plans and subscribes to Starter/Plus/Professional."
+        intent: configure
+        resource: premium
+        ui_tier: full-page
+        confidence: external
+        category: interactive
+        rationale: "/pricing page (Starter/Plus/Professional/Enterprise); (app)/premium/page.tsx + welcome-upgrade; Premium + Payment models; stripe/success."
+      - id: UF-billing-2
+        name: "Manage usage and license"
+        description: "User checks AI usage/credits and seat license assignment."
+        intent: monitor
+        resource: premium
+        ui_tier: settings
+        confidence: route
+        category: interactive
+        rationale: "(app)/[emailAccountId]/usage/page.tsx; (app)/license/page.tsx + early-access; /api/user/api-keys; ApiKey model."
+
+  # =====================================================================
+  # 20. ORGANIZATION / TEAM
+  # =====================================================================
+  - name: organization
+    aliases: [organization, org, team, members, teams]
+    confidence: external
+    source_url: https://www.getinboxzero.com/pricing
+    user_flows:
+      - id: UF-org-1
+        name: "Manage organization members"
+        description: "Admin creates an organization and invites/manages team members and seats."
+        intent: configure
+        resource: organization
+        ui_tier: admin
+        confidence: external
+        category: interactive
+        rationale: "Professional plan 'Team-wide'; (app)/[emailAccountId]/organization/page.tsx + /create; organization invitations accept page; Organization + Member + Invitation models."
+      - id: UF-org-2
+        name: "View team-wide analytics"
+        description: "Admin reviews aggregated email statistics across all team members."
+        intent: monitor
+        resource: organization
+        ui_tier: admin
+        confidence: external
+        category: interactive
+        rationale: "Professional plan 'Team-wide analytics'; (app)/organization/[organizationId]/stats/page.tsx; api/organizations/[organizationId]/stats/{totals,email-buckets,rules-buckets}."
+
+  # =====================================================================
+  # 21. SETTINGS
+  # =====================================================================
+  - name: settings
+    aliases: [settings, preferences, account-settings, persona]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-settings-1
+        name: "Manage account settings"
+        description: "User edits profile, persona, multi-account, and assistant preferences."
+        intent: configure
+        resource: user
+        ui_tier: settings
+        confidence: route
+        category: interactive
+        rationale: "(app)/settings/page.tsx + (app)/[emailAccountId]/settings/page.tsx; /api/user/settings/multi-account + /persona; /config page."
+
+  # =====================================================================
+  # 22. REFERRALS
+  # =====================================================================
+  - name: referrals
+    aliases: [refer, referrals, referral-program]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-referrals-1
+        name: "Refer a friend"
+        description: "User shares a referral code and tracks referral rewards."
+        intent: create
+        resource: referral
+        ui_tier: full-page
+        confidence: route
+        category: interactive
+        rationale: "(app)/refer/page.tsx; /api/referrals/code + /referrals/stats; Referral model."
+
+  # =====================================================================
+  # 23. PLATFORM ADMINISTRATION (internal admin)
+  # =====================================================================
+  - name: admin
+    aliases: [admin, platform-admin, internal-admin]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-admin-1
+        name: "Administer platform"
+        description: "Internal admin inspects users, spenders, and platform-wide configuration."
+        intent: monitor
+        resource: user
+        ui_tier: admin
+        confidence: route
+        category: interactive
+        rationale: "(app)/admin/page.tsx; /api/admin/top-spenders. No external signal for sub-journeys — kept as one thin flow."
+
+  # =====================================================================
+  # ===========  SYSTEM / BACKGROUND (no-UI) FLOWS  =====================
+  # =====================================================================
+  # All grounded in vercel.json crons[], QStash-guarded routes
+  # (withQstashOrInternal), or verified webhook handlers. No Inngest in
+  # this repo — the stack is Upstash QStash + BullMQ + Vercel Cron.
+
+  # --- 24. Inbound email sync (provider push → rule processing) ----------
+  - name: email-sync
+    aliases: [webhook, email-webhook, watch, history-sync, push-notifications]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-sync-1
+        name: "Process Gmail push webhook"
+        description: "On a Gmail push notification, fetch new history and run the assistant on new mail."
+        intent: run
+        resource: emailMessage
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "WEBHOOK app/api/google/webhook/route.ts → processHistoryForUser; Gmail Pub/Sub push. Background job."
+      - id: UF-sync-2
+        name: "Process Outlook push webhook"
+        description: "On a Microsoft Graph notification, fetch new mail and run the assistant on it."
+        intent: run
+        resource: emailMessage
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "WEBHOOK app/api/outlook/webhook/route.ts → processHistoryForUser + processOutlookLifecycleNotification. Background job."
+      - id: UF-sync-3
+        name: "Renew mailbox watch subscriptions"
+        description: "Hourly cron re-registers Gmail/Outlook push subscriptions before they expire."
+        intent: run
+        resource: emailAccount
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/watch/all @ '0 * * * *' → ensureEmailAccountsWatched; also /api/outlook/watch/all, /api/watch + /unwatch."
+
+  # --- 25. Background email cleanup (deep clean / categorization) ---------
+  - name: background-cleanup
+    aliases: [clean-job, background-clean, categorize-job, bulk-job]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-bgclean-1
+        name: "Process deep-clean batch"
+        description: "Queue consumer archives or marks-read a batch of threads during a deep-clean run."
+        intent: run
+        resource: cleanupThread
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "QSTASH app/api/clean/route.ts + /api/clean/gmail (withQstashOrInternal); publishToQstash fan-out per thread; CleanupJob/CleanupThread."
+      - id: UF-bgclean-2
+        name: "Process sender categorization batch"
+        description: "Queue consumer AI-categorizes a batch of senders into smart categories."
+        intent: run
+        resource: category
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "QSTASH app/api/user/categorize/senders/batch/route.ts (withQstashOrInternal); publishToAiCategorizeSendersQueue; AI categorization job."
+
+  # --- 26. Scheduled actions & automation jobs --------------------------
+  - name: scheduled-jobs
+    aliases: [scheduled-actions, automation-jobs, cron-jobs, delayed-actions]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-scheduled-1
+        name: "Run due scheduled actions"
+        description: "Per-minute cron enqueues and executes delayed/snoozed email actions that are now due."
+        intent: run
+        resource: scheduledAction
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/cron/scheduled-actions @ '* * * * *' → processScheduledActions; QSTASH /api/scheduled-actions/execute; ScheduledAction model."
+      - id: UF-scheduled-2
+        name: "Run due automation jobs"
+        description: "Cron enqueues recurring assistant automation jobs and a queue consumer executes each run."
+        intent: run
+        resource: automationJob
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/cron/automation-jobs @ '*/15 * * * *' → enqueueDueAutomationJobs; QSTASH /api/automation-jobs/execute; AutomationJob + AutomationJobRun."
+
+  # --- 27. Digest delivery (background) ---------------------------------
+  - name: digest-delivery
+    aliases: [digest-job, send-digest, resend-digest]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-digestjob-1
+        name: "Send scheduled email digests"
+        description: "Hourly cron finds accounts whose digest is due and dispatches each via the queue."
+        intent: run
+        resource: digest
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/resend/digest/all @ '0 * * * *' → sendDigestAllUpdate; QSTASH /api/resend/digest + /api/ai/digest summarization; Digest model."
+
+  # --- 28. Meeting-brief generation (background) ------------------------
+  - name: meeting-brief-job
+    aliases: [brief-job, generate-briefs, meeting-briefings-job]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-briefjob-1
+        name: "Generate meeting briefs"
+        description: "Cron generates AI pre-meeting briefings for upcoming calendar events."
+        intent: run
+        resource: meetingBriefing
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/meeting-briefs @ '*/15 * * * *' → processAllMeetingBriefings; MeetingBriefing model."
+
+  # --- 29. Follow-up reminders (background) -----------------------------
+  - name: follow-up-job
+    aliases: [follow-up-reminders, reminder-job, reply-reminders]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-followup-1
+        name: "Send follow-up reminders"
+        description: "Hourly cron finds threads needing follow-up and fans out per-account reminder jobs."
+        intent: run
+        resource: threadTracker
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/follow-up-reminders @ '0 * * * *' → eligible accounts; QSTASH topic 'follow-up-reminders-account' → /api/follow-up-reminders/account."
+
+  # --- 30. Retention & cleanup maintenance crons -----------------------
+  - name: maintenance-jobs
+    aliases: [retention, cleanup-cron, draft-cleanup, reasoning-retention, maintenance]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-maint-1
+        name: "Clean up unused AI drafts"
+        description: "Daily cron deletes stale AI-generated drafts that were never sent."
+        intent: run
+        resource: draftSendLog
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/cron/draft-cleanup @ '0 4 * * *' → cleanupConfiguredAIDrafts; also /api/reply-tracker/disable-unused-auto-draft."
+      - id: UF-maint-2
+        name: "Enforce reasoning data retention"
+        description: "Daily cron purges AI reasoning/log data past its retention window for privacy."
+        intent: run
+        resource: executedRule
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "CRON vercel.json /api/cron/reasoning-retention @ '0 3 * * *' → reasoning-retention utils; privacy/data-retention job."
+
+  # --- 31. Chat/messaging webhooks (Slack / Telegram / Teams) ----------
+  - name: chat-webhooks
+    aliases: [chat-events, slack-events, telegram-events, teams-events, messaging-webhook]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-chatwh-1
+        name: "Handle chat platform events"
+        description: "Inbound Slack/Telegram/Teams events are processed so users can triage email from chat."
+        intent: run
+        resource: messagingChannel
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "WEBHOOKS app/api/slack/events + /slack/commands + /telegram/events + /teams/events → handleMessagingWebhookRoute; MessagingRoute model."
+
+  # --- 32. Billing webhooks (Stripe / Lemon Squeezy / Apple) -----------
+  - name: billing-webhooks
+    aliases: [billing-events, stripe-webhook, lemon-squeezy-webhook, apple-webhook, payment-webhook]
+    confidence: route
+    source_url: null
+    user_flows:
+      - id: UF-billwh-1
+        name: "Process billing webhook"
+        description: "Inbound Stripe/Lemon Squeezy/Apple events sync subscription and entitlement state."
+        intent: run
+        resource: payment
+        ui_tier: no-ui
+        confidence: route
+        category: system
+        rationale: "WEBHOOKS app/api/stripe/webhook + /lemon-squeezy/webhook + /apple/webhook (+ apple/subscription/sync); Premium + Payment models."

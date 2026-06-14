@@ -1,0 +1,76 @@
+# System / background-flow classification patterns (authoring copy).
+#
+# Runtime copy packaged at faultline/pipeline_v2/data/system-flow-patterns.yaml —
+# keep the two byte-identical (manual dual-commit, same convention as
+# eval/stacks/ and di-patterns.yaml).
+#
+# WHY: a product's user-facing journeys (interactive flows) and its
+# scheduled / queue / webhook-triggered jobs (system flows) are BOTH detected as
+# routes/flows, but only the interactive ones are user journeys. Without a
+# discriminator a cron job ("renew mailbox watch subscriptions") and an
+# interactive page ("compose email") look identical in user_flows[]. This config
+# lets a deterministic pass (Stage 6.8) tag each route — and through it each
+# user_flow — with a `trigger`, so background jobs are separated from the
+# interactive UF surface (dashboards, UF-coverage scoring, acceptance drafting).
+#
+# Deterministic, no LLM. SELF-DETECTING: a repo with no cron manifest and no job
+# markers tags everything `interactive` (a clean no-op). UNIVERSAL across stacks,
+# NOT repo-specific (rule-no-repo-specific-paths): path-segment globs + library
+# markers + framework cron-manifest declarations only — never a hardcoded app
+# path or project-specific wrapper name. No magic numbers (rule-no-magic-tuning):
+# membership is a pattern match, not a tuned threshold.
+#
+# Precedence when several signals fire: cron_manifest > path_glob > content_marker;
+# within a tier, scheduled > queue > webhook. The coarse axis is what matters
+# (system vs interactive); the sub-trigger is best-effort provenance.
+
+# 1. Cron manifests — framework-native declarations mapping a schedule to a route
+#    pattern. A route whose URL pattern is declared here is `scheduled`. This is
+#    the AUTHORITATIVE cron signal (a cron job's handler often carries no marker
+#    and may live outside any cron/ directory).
+cron_manifests:
+  vercel:                         # Vercel `crons[]` — Next.js / SvelteKit / Astro
+    file_glob: "**/vercel.json"
+    crons_key: "crons"
+    path_key: "path"
+
+# 2. Path-segment conventions — a route FILE under one of these segments is a job.
+path_globs:
+  scheduled:
+    - "(?:^|/)api/cron(?:/|$)"
+    - "(?:^|/)cron(?:/|$)"
+    - "(?:^|/)scheduled[_-]?actions?(?:/|$)"
+  queue:
+    - "(?:^|/)jobs?(?:/|$)"
+    - "(?:^|/)tasks?(?:/|$)"
+    - "(?:^|/)workers?(?:/|$)"
+    - "(?:^|/)inngest[_-]?functions?(?:/|$)"
+  webhook:
+    - "(?:^|/)webhooks?(?:/|$)"
+    - "(?:^|/)events(?:/|$)"
+
+# 3. Library / signature markers grepped from the handler file content. A project
+#    wrapper (e.g. `withQstashOrInternal`) is caught by the underlying library
+#    substring (`qstash`), so no project-specific name is encoded.
+content_markers:
+  queue:
+    - "qstash"                    # Upstash QStash
+    - "Receiver("
+    - "bullmq"                    # BullMQ
+    - "new Queue("
+    - "new Worker("
+    - "createFunction"            # Inngest
+    - "@shared_task"              # Celery
+    - "@app.task"
+    - "sidekiq"                   # Sidekiq (Ruby)
+  webhook:
+    - "constructEvent"            # Stripe
+    - "svix"                      # generic webhook delivery
+    - "verifySignature"
+    - "x-goog"                    # Google push notifications
+    - "x-slack-signature"
+    - "x-hub-signature"           # GitHub / Meta
+  scheduled:
+    - "CRON_SECRET"
+    - "hasCronSecret"
+    - "verifyCron"

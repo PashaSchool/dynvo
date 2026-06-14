@@ -909,6 +909,13 @@ class UserFlow(BaseModel):
     acceptance: list[str] = []           # "AC-n" first-draft observable assertions (Stage 6.7b)
     coverage_pct: float | None = None    # mean of members' coverage_pct
     ui_tier: str | None = None           # full-page|panel|settings|admin|no-ui (Stage 6.7b)
+    # Stage 6.8b (2026-06-14) — system/background-flow classification. A UF is
+    # "system" when its member flows are predominantly triggered by a scheduler,
+    # queue/worker, or inbound webhook rather than interactive navigation;
+    # ``trigger`` carries the dominant system sub-type. Deterministic, from
+    # eval/system-flow-patterns.yaml. Old JSONs rehydrate as "interactive".
+    category: Literal["interactive", "system"] = "interactive"
+    trigger: str | None = None           # scheduled|queue|webhook when category="system"
     refined: bool = False                # True when Stage 6.7b LLM refined this UF
     # Stage 6.95 (2026-06-11) — per-entity git-history timeline. None
     # for UFs with zero attributed commits and for scans produced
