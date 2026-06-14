@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dynvo"
-version = "1.36.0"
+version = "1.37.0"
 description = "Map features in any codebase from git history alone. No Jira required."
 readme = "README.md"
 license = { text = "MIT" }
