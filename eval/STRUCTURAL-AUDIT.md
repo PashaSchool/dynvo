@@ -37,19 +37,26 @@ eval/run_structural_corpus.sh --compare
 python -m eval.structural_audit scan.json --json out.json
 ```
 
-## Baseline (keyless, 2026-06-13) — the blob problem is universal
+## Baseline (keyless, 2026-06-14) — after workspace-anchor de-sink (Stage 8.7)
 
 | repo | files | feats | max% | top3% | gini | blobs |
 |---|---|---|---|---|---|---|
-| dify | 5102 | 83 | **81%** | 86% | 0.83 | dify-web (81%) |
-| axios | 68 | 35 | 81% | 82% | 0.41 | (tiny library — known hard) |
-| infisical | 6849 | 127 | **53%** | 99% | 0.65 | frontend-v2 (53%), backend (45%) |
-| inbox-zero | 1914 | 172 | **50%** | 55% | 0.35 | inbox-zero-ai (50%) |
+| dify | 5102 | 83 | **76%** | 82% | 0.83 | dify-web (76%) |
+| axios | 68 | 35 | 81% | 82% | 0.41 | (tiny flat library — no workspaces; known hard) |
+| infisical | 6849 | 127 | **34%** | 69% | 0.58 | backend (34%), frontend-v2 (25%) |
+| inbox-zero | 1914 | 172 | **26%** | 39% | 0.33 | — (blob cleared) |
 | gin | 39 | 19 | 41% | 82% | 0.52 | — |
 | fastapi | 379 | 33 | 32% | 60% | 0.42 | — |
-| documenso | 2189 | 125 | **16%** | 44% | 0.43 | lib (14%) |
+| documenso | 2189 | 125 | **16%** | 39% | 0.42 | lib (11%) |
 
-documenso is the well-decomposed control (16% max). The target of the
-attribution work is to pull dify / infisical / inbox-zero toward that shape by
-attributing service/model/long-tail files to real features instead of the
-package node — which shows up here as a falling `max_feature_share`.
+documenso is the well-decomposed control (16% max, unchanged). **Stage 8.7
+workspace-anchor de-sink** (2026-06-14) released the files a workspace anchor
+double-claims with a more-specific feature back to that feature, dropping the
+concentration on every monorepo blob with no membership recall cost
+(`eval/membership` precision rose, recall flat): infisical max 53%→34%,
+inbox-zero 50%→26% (blob cleared), dify 81%→76% (only its import-reachable
+slice — dify-web's remaining bulk is the dependency-injected / component
+long-tail that needs DI-aware attribution, a separate lever). Flat libraries
+with no declared workspaces (axios, fastapi, gin) have no workspace anchor and
+are untouched. The remaining concentration is the genuine residual the next
+levers (DI-service attribution, shared-scaffold filtering) must re-home.

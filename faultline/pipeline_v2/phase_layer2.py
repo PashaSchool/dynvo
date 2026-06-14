@@ -30,6 +30,9 @@ from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
     drop_phantom_product_features,
     reconcile_product_features,
 )
+from faultline.pipeline_v2.stage_8_7_anchor_desink import (
+    desink_workspace_anchors,
+)
 from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
     run_stage_8_analyst,
@@ -55,6 +58,7 @@ class Layer2Result:
     stage_8_rollup_telemetry: dict[str, Any]
     stage_8_5_backfill_telemetry: dict[str, Any]
     stage_8_6_telemetry: dict[str, Any]
+    stage_8_7_telemetry: dict[str, Any]
 
 
 def run_layer2_phase(
@@ -325,6 +329,39 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 8.7 — workspace-anchor de-sink ───────────────────────
+    # A workspace-anchor feature (``backend``, ``frontend-v2``,
+    # ``packages/lib``) claims the WHOLE workspace tree as a fallback
+    # container; Stage 6.3 then re-expands the specific route/mvc/schema
+    # features inside it, so the anchor and those features double-claim
+    # every import-reachable file → the anchor is a structural blob. This
+    # stage releases the double-claim: the anchor keeps only the residual
+    # (paths no specific feature claims), the rest stay attributed to the
+    # specific owner. Pure precision (eval/structural_audit max-share
+    # drops), no membership recall cost (eval/membership). Zero-path
+    # protection keeps a fully-claimed anchor whole. Resyncs the affected
+    # product features' path union itself (the Stage 8.6 reconcile above
+    # is conditional). Deterministic, no LLM, scale-invariant. Default ON;
+    # disable via FAULTLINE_STAGE_8_7_DESINK=0.
+    with StageLogger(run_dir, 8, "anchor_desink") as log8_7:
+        desink_result = desink_workspace_anchors(features, product_features)
+        stage_8_7_telemetry = desink_result.as_telemetry()
+        log8_7.info(
+            f"anchor_desink enabled={desink_result.enabled} "
+            f"anchors={desink_result.anchors_total} "
+            f"desunk={desink_result.anchors_desunk} "
+            f"protected={desink_result.anchors_protected} "
+            f"paths_removed={desink_result.paths_removed} "
+            f"pf_resynced={desink_result.product_features_resynced}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="anchor_desink",
+            payload=stage_8_7_telemetry,
+            run_dir=run_dir,
+        )
+
     return Layer2Result(
         features=features,
         product_features=product_features,
@@ -333,6 +370,7 @@ def run_layer2_phase(
         stage_8_rollup_telemetry=stage_8_rollup_telemetry,
         stage_8_5_backfill_telemetry=stage_8_5_backfill_telemetry,
         stage_8_6_telemetry=stage_8_6_telemetry,
+        stage_8_7_telemetry=stage_8_7_telemetry,
     )
 
 
