@@ -272,6 +272,7 @@ def assemble_scan_meta(
     stage_8_7_telemetry: dict[str, Any] | None = None,
     stage_8_8_telemetry: dict[str, Any] | None = None,
     stage_8_6_5_telemetry: dict[str, Any] | None = None,
+    stage_8_6_7_telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the ``scan_meta`` dict from the per-stage results.
 
@@ -452,6 +453,9 @@ def assemble_scan_meta(
         # (lib/ui/utils/i18n/hooks/components) demoted from specific features'
         # primary paths (they stay on the workspace anchor as residual).
         "stage_8_6_5_scaffold_filter": dict(stage_8_6_5_telemetry or {}),
+        # Stage 8.6.7 — DI service attribution (named-reference services moved
+        # off the platform bucket to their owning feature).
+        "stage_8_6_7_di_attribution": dict(stage_8_6_7_telemetry or {}),
         # Stage 8.7 — workspace-anchor de-sink. Workspace anchors that
         # released paths claimed by a more-specific feature (the blob
         # double-claim), plus the affected product features resynced.

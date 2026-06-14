@@ -116,6 +116,7 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (8, "member_backfill"),
     (8, "nonsource_drop"),
     (8, "scaffold_filter"),
+    (8, "di_attribution"),
     (8, "anchor_desink"),
     (8, "shared_members"),
     (3, "flow_expansion"),
