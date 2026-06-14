@@ -115,6 +115,7 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (8, "marketing_clusterer"),
     (8, "member_backfill"),
     (8, "nonsource_drop"),
+    (8, "anchor_desink"),
     (3, "flow_expansion"),
     (6, "test_strip"),
     (6, "user_flows"),

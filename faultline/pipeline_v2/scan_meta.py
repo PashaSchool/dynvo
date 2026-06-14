@@ -269,6 +269,7 @@ def assemble_scan_meta(
     stage_8_5_backfill_telemetry: dict[str, Any],
     stage_8_6_telemetry: dict[str, Any],
     shape_result: Any,
+    stage_8_7_telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the ``scan_meta`` dict from the per-stage results.
 
@@ -445,6 +446,10 @@ def assemble_scan_meta(
         # path-set was non-source, plus Layer-2 reconcile counters.
         "stage_8_6_nonsource_drops": stage_8_6_telemetry["dropped"],
         "stage_8_6_nonsource_drop": dict(stage_8_6_telemetry),
+        # Stage 8.7 — workspace-anchor de-sink. Workspace anchors that
+        # released paths claimed by a more-specific feature (the blob
+        # double-claim), plus the affected product features resynced.
+        "stage_8_7_anchor_desink": dict(stage_8_7_telemetry or {}),
         # Sprint S6.1 — Stage 0.6 deterministic shape classifier.
         # Used by the Stage 8 flow-rollup dispatcher to pick the per-
         # shape attribution strategy. Universal-residual is the safe
