@@ -152,6 +152,26 @@ def test_synthesised_system_uf_for_flowless_route() -> None:
     assert len(autojobs) == 1 and len(autojobs[0]["routes"]) == 2
 
 
+def test_synthesises_uf_for_flowless_job_file() -> None:
+    # A background-job FILE (inngest/celery/tasks/workers) with no flow → a thin
+    # system UF, even though it is NOT a route. Soc0's backend/inngest_functions/
+    # *.py jobs were 0/flows, 0/UFs; the route-only synthesis missed them.
+    scan = {
+        "flows": [],
+        "developer_features": [
+            {"name": "backend", "paths": [
+                "backend/inngest_functions/chat.py",
+                "backend/inngest_functions/cases.py",
+                "backend/inngest_functions/__init__.py",  # plumbing, skipped
+            ]},
+        ],
+    }
+    res = cluster_user_flows(scan, routes_index=[])
+    syn = {u["resource"] for u in res["user_flows"] if u["category"] == "system" and not u["member_count"]}
+    assert "chat" in syn and "cases" in syn
+    assert "__init__" not in syn
+
+
 def test_synthesis_kill_switch(monkeypatch) -> None:
     monkeypatch.setenv("FAULTLINE_SEED_SYSTEM_UFS", "0")
     scan = {"flows": [], "developer_features": []}
