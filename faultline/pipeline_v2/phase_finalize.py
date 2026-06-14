@@ -100,6 +100,18 @@ def run_finalize_phase(
         related_threshold=_RELATED_THRESHOLD,
     )
 
+    # ── Stage 6.8b — system/background-flow classification (deterministic) ──
+    # Tag every route's ``trigger`` (scheduled|queue|webhook|interactive) from
+    # eval/system-flow-patterns.yaml: framework cron manifests + path-segment
+    # conventions + job-library markers. Lets Stage 6.7 separate background jobs
+    # (cron / queue / webhook) from interactive user journeys. No LLM; reads only
+    # the cloned repo. SELF-DETECTING — a repo with no jobs tags everything
+    # ``interactive`` (a clean no-op), so non-job repos are byte-identical.
+    from faultline.pipeline_v2.system_flows import classify_routes
+    scan_meta["system_flow_routes"] = classify_routes(
+        lineage_result.routes_index, repo_path,
+    )
+
     # ── Incremental scan bookkeeping ───────────────────────────────
     # Head SHA + Stage 6 metric carry-forward for untouched features —
     # see ``incremental_wiring.apply_incremental_bookkeeping``.
