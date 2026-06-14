@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "faultlines"
+name = "dynvo"
 version = "1.32.0"
 description = "Map features in any codebase from git history alone. No Jira required."
 readme = "README.md"
@@ -81,7 +81,7 @@ Repository = "https://github.com/PashaSchool/faultlines"
 Issues = "https://github.com/PashaSchool/faultlines/issues"
 
 [project.scripts]
-faultlines = "faultline.cli:main"
+dynvo = "faultline.cli:main"
 # The `faultlines-mcp` console script is now provided by the separate
 # `faultlines-mcp` package (this repo's `faultlines-mcp/` workspace member).
 # Install it with `pip install faultlines-mcp`.
