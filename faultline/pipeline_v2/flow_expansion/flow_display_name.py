@@ -116,10 +116,18 @@ def _singularize(word: str) -> str:
     low = word.lower()
     if low in _PLURAL_OVERRIDES:
         return _PLURAL_OVERRIDES[low]
+    # Already-singular Latinate ``-us`` / ``-is`` endings — never strip the
+    # tail (status→statu, focus→focu, analysis→analysi all regressed here).
+    # ``-ss`` is guarded by the final rule below.
+    if low.endswith(("us", "is", "ous", "ius")):
+        return word
     if low.endswith("ies") and len(low) > 3:
         return word[:-3] + "y"
-    if low.endswith("ses") and len(low) > 3:
-        return word[:-2]  # "addresses" → "address"
+    # Sibilant ``-es`` collapses to its stem (addresses→address,
+    # classes→class, boxes→box); plain ``-es`` keeps its ``e`` below
+    # (cases→case, not cas — the #59 over-strip).
+    if low.endswith(("sses", "shes", "ches", "xes", "zzes")):
+        return word[:-2]
     if low.endswith("s") and not low.endswith("ss") and len(low) > 1:
         return word[:-1]
     return word

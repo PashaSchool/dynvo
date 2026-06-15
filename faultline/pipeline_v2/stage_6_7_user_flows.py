@@ -377,11 +377,24 @@ def _is_infra_package_flow(flow: dict) -> bool:
 
 
 def _singular(word: str) -> str:
-    if word.endswith("ies"):
+    """Light singularisation for domain/resource tokens — kept in sync with
+    ``naming_validator._singular`` and ``nav_taxonomy._singular``.
+
+    Never strips ``-us`` / ``-is`` / ``-ss`` (status, focus, analysis,
+    address are already singular — naive ``-s`` stripping produced
+    ``statu`` / ``focu`` that no consumer matches); only collapses ``-es``
+    to its stem when the stem is a sibilant (classes→class), so plain words
+    keep their ``e`` (cases→case, not cas).
+    """
+    if len(word) <= 3:
+        return word
+    if word.endswith("ies") and len(word) > 4:
         return word[:-3] + "y"
-    if word.endswith("ses") or word.endswith("xes"):
+    if word.endswith(("ss", "us", "is", "ous", "ius")):
+        return word
+    if word.endswith(("sses", "shes", "ches", "xes", "zzes")):
         return word[:-2]
-    if word.endswith("s") and not word.endswith("ss"):
+    if word.endswith("s"):
         return word[:-1]
     return word
 
