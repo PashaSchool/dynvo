@@ -42,6 +42,9 @@ from faultline.pipeline_v2.stage_8_7_anchor_desink import (
 from faultline.pipeline_v2.stage_8_8_shared_members import (
     enrich_shared_members,
 )
+from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
+    subdecompose_workspace_anchors,
+)
 from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
     run_stage_8_analyst,
@@ -71,6 +74,7 @@ class Layer2Result:
     stage_8_6_7_telemetry: dict[str, Any]
     stage_8_7_telemetry: dict[str, Any]
     stage_8_8_telemetry: dict[str, Any]
+    stage_8_9_telemetry: dict[str, Any]
 
 
 def run_layer2_phase(
@@ -465,6 +469,34 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 8.9 — workspace-anchor sub-decomposition ────────────────
+    # The de-sink residual can still be a structural blob (one anchor owns
+    # 20-25 % of the repo). This stage splits it along the repository's OWN
+    # module structure (modules/ features/ services/ … → per-domain
+    # developer sub-features), surfacing the real product capabilities the
+    # blob hid and lifting feature recall. Each file lands in exactly ONE
+    # domain bucket (no shared-file contention → zero attribution risk);
+    # sub-features inherit the anchor's product_feature_id so product paths
+    # are byte-stable. Deterministic, no LLM, scale-invariant (grain floor =
+    # repo median feature size). Default ON; FAULTLINE_STAGE_8_9_SUBDECOMPOSE=0.
+    with StageLogger(run_dir, 8, "anchor_subdecompose") as log8_9:
+        subdecompose_result = subdecompose_workspace_anchors(features)
+        stage_8_9_telemetry = subdecompose_result.as_telemetry()
+        log8_9.info(
+            f"anchor_subdecompose enabled={subdecompose_result.enabled} "
+            f"anchors={subdecompose_result.anchors_total} "
+            f"split={subdecompose_result.anchors_split} "
+            f"subfeatures={subdecompose_result.subfeatures_created} "
+            f"paths_moved={subdecompose_result.paths_moved}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="anchor_subdecompose",
+            payload=stage_8_9_telemetry,
+            run_dir=run_dir,
+        )
+
     return Layer2Result(
         features=features,
         product_features=product_features,
@@ -477,6 +509,7 @@ def run_layer2_phase(
         stage_8_6_7_telemetry=stage_8_6_7_telemetry,
         stage_8_7_telemetry=stage_8_7_telemetry,
         stage_8_8_telemetry=stage_8_8_telemetry,
+        stage_8_9_telemetry=stage_8_9_telemetry,
     )
 
 
