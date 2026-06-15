@@ -19,9 +19,11 @@ from faultline.pipeline_v2.stage_0_intake import ScanContext
 from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL,
     Stage8Result,
+    _anchor_blob_owner,
     _emit_product_features_from_analyst,
     _parse_analyst_response,
     _strip_code_fences,
+    _validate_pf_names,
     build_analyst_payload,
     build_user_prompt,
     run_stage_8_analyst,
@@ -533,3 +535,159 @@ def test_sonnet_500_falls_back_to_haiku(
     assert result.telemetry["fallback_used"] is True
     # Pre-products are preserved.
     assert result.product_features == pre_products
+
+
+# ── Workspace-anchor blob name guard (lever 2) ──────────────────────────
+
+# Real marker text set by PackageAnchorExtractor (see stage_8_7_anchor_desink).
+_WS_MARK = "workspace anchor 'soc0-frontend' from monorepo package 'frontend/'"
+_PKG_MARK = "package anchor 'auth' from dependency '@clerk/nextjs'"
+
+
+def _dev_desc(name: str, paths: list[str], desc: str) -> Feature:
+    f = _feat(name, paths)
+    f.description = desc
+    return f
+
+
+def test_anchor_blob_owner_returns_dominant_workspace_anchor() -> None:
+    anchor = _dev_desc(
+        "soc0-frontend",
+        [f"frontend/src/f{i}.tsx" for i in range(450)],
+        _WS_MARK,
+    )
+    specific = _dev_desc("date-range", ["frontend/src/DateRange.tsx"], "")
+    # sole contributor, and anchor-dominated when a minority feature joins
+    assert _anchor_blob_owner([anchor]) is anchor
+    assert _anchor_blob_owner([anchor, specific]) is anchor
+
+
+def test_anchor_blob_owner_none_when_specific_feature_dominates() -> None:
+    anchor = _dev_desc(
+        "soc0-frontend", ["frontend/src/a.tsx", "frontend/src/b.tsx"], _WS_MARK,
+    )
+    billing = _dev_desc(
+        "billing", [f"frontend/src/billing/f{i}.tsx" for i in range(10)], "",
+    )
+    assert _anchor_blob_owner([anchor, billing]) is None
+
+
+def test_anchor_blob_owner_ignores_package_anchors() -> None:
+    # Package anchors legitimately own their consumers → never guarded.
+    pkg = _dev_desc(
+        "auth", [f"frontend/src/auth/f{i}.tsx" for i in range(98)], _PKG_MARK,
+    )
+    other = _dev_desc("x", ["frontend/src/x.tsx"], "")
+    assert _anchor_blob_owner([pkg, other]) is None
+
+
+def test_anchor_blob_owner_requires_strict_majority() -> None:
+    # Tie (anchor == others combined) is NOT a strict majority → keep name.
+    anchor = _dev_desc("soc0-frontend", ["a.tsx", "b.tsx"], _WS_MARK)
+    other = _dev_desc("x", ["c.tsx", "d.tsx"], "")
+    assert _anchor_blob_owner([anchor, other]) is None
+
+
+def test_anchor_blob_owner_none_without_anchor() -> None:
+    a = _dev_desc("page-a", ["src/a.tsx"], "")
+    b = _dev_desc("page-b", ["src/b.tsx"], "")
+    assert _anchor_blob_owner([a, b]) is None
+
+
+def test_validate_pf_names_guards_anchor_blob(tmp_path: Path) -> None:
+    """A workspace-anchor-dominated PF is reslugged to the anchor (honest
+    structural name) and the rename propagates into dev_map / member_flows_map,
+    without any LLM retry."""
+    anchor = _dev_desc(
+        "soc0-frontend",
+        [f"frontend/src/f{i}.tsx" for i in range(50)],
+        _WS_MARK,
+    )
+    blob = _product("custom-date-range-and-preset-filters", list(anchor.paths))
+    blob.name_confidence = "high"
+    dev_map = {"soc0-frontend": ("custom-date-range-and-preset-filters",)}
+    member_flows_map = {"custom-date-range-and-preset-filters": ["flow-1"]}
+
+    telem = _validate_pf_names(
+        _ctx(tmp_path),
+        [blob],
+        dev_map,
+        member_flows_map,
+        [anchor],
+        {"workspace_packages": ["frontend/"], "marketing_text": ""},
+        None,
+        client=None,
+        model="m",
+        cost_tracker=None,
+        llm_health=None,
+        log=None,
+    )
+
+    assert telem["pf_names_anchor_guarded"] == 1
+    assert telem["validator_retry_called"] is False
+    assert blob.name == "soc0-frontend"
+    assert blob.name_confidence == "low"
+    # slug rename kept the maps consistent
+    assert dev_map["soc0-frontend"] == ("soc0-frontend",)
+    assert member_flows_map.get("soc0-frontend") == ["flow-1"]
+    assert "custom-date-range-and-preset-filters" not in member_flows_map
+
+
+def test_validate_pf_names_leaves_real_product_feature(tmp_path: Path) -> None:
+    """A PF with several specific contributors and no anchor dominance keeps
+    its LLM name (guard does not fire)."""
+    a = _dev_desc("cases-page", [f"frontend/src/cases/f{i}.tsx" for i in range(12)], "")
+    b = _dev_desc("bulk-actions", [f"frontend/src/bulk/f{i}.tsx" for i in range(10)], "")
+    pf = _product("case-management-with-bulk-actions", a.paths + b.paths)
+    pf.name_confidence = "high"
+    dev_map = {
+        "cases-page": ("case-management-with-bulk-actions",),
+        "bulk-actions": ("case-management-with-bulk-actions",),
+    }
+    telem = _validate_pf_names(
+        _ctx(tmp_path),
+        [pf],
+        dev_map,
+        {},
+        [a, b],
+        {"workspace_packages": [], "marketing_text": ""},
+        None,
+        client=None,
+        model="m",
+        cost_tracker=None,
+        llm_health=None,
+        log=None,
+    )
+    assert telem["pf_names_anchor_guarded"] == 0
+    assert pf.name == "case-management-with-bulk-actions"
+
+
+def test_validate_pf_names_anchor_guard_kill_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``FAULTLINE_PF_ANCHOR_NAME_GUARD=0`` disables the guard entirely."""
+    monkeypatch.setenv("FAULTLINE_PF_ANCHOR_NAME_GUARD", "0")
+    anchor = _dev_desc(
+        "soc0-frontend",
+        [f"frontend/src/f{i}.tsx" for i in range(50)],
+        _WS_MARK,
+    )
+    blob = _product("custom-date-range-and-preset-filters", list(anchor.paths))
+    dev_map = {"soc0-frontend": ("custom-date-range-and-preset-filters",)}
+    telem = _validate_pf_names(
+        _ctx(tmp_path),
+        [blob],
+        dev_map,
+        {},
+        [anchor],
+        {"workspace_packages": ["frontend/"], "marketing_text": ""},
+        None,
+        client=None,
+        model="m",
+        cost_tracker=None,
+        llm_health=None,
+        log=None,
+    )
+    # Guard did not fire (the env switch is off). Any rename now would come
+    # only from the orthogonal token-validation fallback, not this guard.
+    assert telem["pf_names_anchor_guarded"] == 0
