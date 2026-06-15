@@ -134,9 +134,17 @@ import pytest  # noqa: E402
 
 from faultline.pipeline_v2.naming_validator import _singular as _singular_nv  # noqa: E402
 from faultline.pipeline_v2.nav_taxonomy import _singular as _singular_nav  # noqa: E402
+from faultline.pipeline_v2.stage_6_7_user_flows import _singular as _singular_uf  # noqa: E402
+from faultline.pipeline_v2.flow_expansion.flow_display_name import (  # noqa: E402
+    _singularize as _singularize_fdn,
+)
 
 
-@pytest.mark.parametrize("singular", [_singular_nv, _singular_nav])
+# All four helpers must agree on the garbage-token guard. ``stage_6_7`` and
+# ``flow_display_name`` regressed independently of #59's fix to the first two.
+@pytest.mark.parametrize(
+    "singular", [_singular_nv, _singular_nav, _singular_uf]
+)
 @pytest.mark.parametrize(
     "word,expected",
     [
@@ -168,3 +176,31 @@ from faultline.pipeline_v2.nav_taxonomy import _singular as _singular_nav  # noq
 )
 def test_singular_does_not_over_strip(singular, word: str, expected: str) -> None:
     assert singular(word) == expected
+
+
+@pytest.mark.parametrize(
+    "word,expected",
+    [
+        # the observed garbage tokens — must NOT lose their tail
+        ("status", "status"),
+        ("focus", "focus"),
+        ("analysis", "analysis"),
+        ("address", "address"),
+        # the -ses bug: cases must become case, not cas
+        ("cases", "case"),
+        ("phases", "phase"),
+        # genuine sibilant -es plurals still collapse to the stem
+        ("addresses", "address"),
+        ("classes", "class"),
+        ("boxes", "box"),
+        # ordinary plurals + mass-noun overrides
+        ("detectors", "detector"),
+        ("categories", "category"),
+        ("settings", "settings"),
+        ("analytics", "analytics"),
+    ],
+)
+def test_flow_display_singularize_does_not_over_strip(
+    word: str, expected: str
+) -> None:
+    assert _singularize_fdn(word) == expected
