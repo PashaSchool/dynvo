@@ -80,6 +80,7 @@ from faultline.pipeline_v2.product_strings import (
     ProductStringIndex,
     collect_product_strings,
 )
+from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     Stage8Result,
     fetch_marketing_taxonomy,
@@ -889,6 +890,39 @@ def _slugify(label: str) -> str:
     return label.lower().replace(" ", "-").replace("/", "-")
 
 
+def _anchor_blob_owner(contrib: list["Feature"]) -> "Feature | None":
+    """Return the workspace-anchor developer feature that *dominates* this
+    product feature's membership, or ``None``.
+
+    A monorepo **workspace anchor** (``soc0-frontend`` / ``backend`` — the
+    package-ROOT catch-all, marked ``"workspace anchor"`` in its
+    ``description``) is never a single product capability: it is the whole
+    app. When the analyst groups such an anchor under a product feature and
+    that anchor owns MORE files than every other contributor combined, the
+    product feature simply *is* the catch-all bucket — and any specific
+    marketing label the LLM coined for it (``custom-date-range-and-preset-
+    filters`` over 546 frontend files) is unrepresentative of the 80-95 %
+    of files it never describes. The name-token validator misses this: a
+    minority feature's tokens DO appear in the bundle, so the name grounds
+    even though it is not representative.
+
+    Dominance is a strict majority of contributing-feature paths — a
+    scale-invariant structural test, no tuned cutoff (rule-no-magic-tuning).
+    Dependency-category **package anchors** (``auth`` / ``i18n`` /
+    ``stripe``) are deliberately excluded: those legitimately own their
+    consumers and map to a coherent product feature, so ``_is_workspace_
+    anchor`` (which matches only the ``"workspace anchor"`` marker, never
+    ``"package anchor"``) is the right discriminator.
+    """
+    anchors = [d for d in contrib if _is_workspace_anchor(d)]
+    if not anchors:
+        return None
+    anchor = max(anchors, key=lambda d: len(d.paths or []))
+    anchor_paths = len(anchor.paths or [])
+    other_paths = sum(len(d.paths or []) for d in contrib if d is not anchor)
+    return anchor if anchor_paths > other_paths else None
+
+
 def _validate_pf_names(
     ctx: "ScanContext",
     product_features: list["Feature"],
@@ -932,12 +966,53 @@ def _validate_pf_names(
     commit_tokens = _file_commit_tokens(getattr(ctx, "commits", None) or [])
     workspace_packages = list(payload.get("workspace_packages") or [])
     marketing_text = payload.get("marketing_text") or ""
+    # Default ON; disable via ``FAULTLINE_PF_ANCHOR_NAME_GUARD=0``.
+    anchor_guard_on = (
+        os.environ.get("FAULTLINE_PF_ANCHOR_NAME_GUARD", "1") != "0"
+    )
+
+    used_slugs = {pf.name for pf in product_features}
+
+    def _reslug(pf: "Feature", new_label: str) -> None:
+        """Apply a new label + slug, keeping the maps consistent."""
+        old_slug = pf.name
+        new_slug = _slugify(new_label)
+        if new_slug != old_slug and new_slug in used_slugs:
+            i = 2
+            while f"{new_slug}-{i}" in used_slugs:
+                i += 1
+            new_slug = f"{new_slug}-{i}"
+        used_slugs.discard(old_slug)
+        used_slugs.add(new_slug)
+        pf.name = new_slug
+        pf.display_name = new_label
+        if old_slug != new_slug:
+            for dev, slugs in dev_map.items():
+                if old_slug in slugs:
+                    dev_map[dev] = tuple(
+                        new_slug if s == old_slug else s for s in slugs
+                    )
+            if old_slug in member_flows_map:
+                member_flows_map[new_slug] = member_flows_map.pop(old_slug)
 
     bundles: dict[str, EvidenceBundle] = {}
     failing: list[dict[str, Any]] = []
+    anchor_guarded = 0
     for pf in product_features:
         if pinned_slugs and pf.name in pinned_slugs:
             continue
+        # Workspace-anchor blob guard: a product feature whose membership is
+        # dominated by a package-root catch-all is renamed to that anchor (an
+        # honest structural name) instead of keeping the LLM's specific — and
+        # unrepresentative — marketing label. Token validation is skipped: the
+        # anchor name is structural evidence by construction.
+        if anchor_guard_on:
+            anchor = _anchor_blob_owner(contrib_by_slug.get(pf.name, []))
+            if anchor is not None:
+                _reslug(pf, anchor.display_name or anchor.name)
+                pf.name_confidence = "low"
+                anchor_guarded += 1
+                continue
         bundle = _bundle_for_pf(
             pf,
             contrib_by_slug.get(pf.name, []),
@@ -976,6 +1051,7 @@ def _validate_pf_names(
         "pf_names_invalid": len(failing),
         "pf_names_renamed": 0,
         "pf_names_fallback": 0,
+        "pf_names_anchor_guarded": anchor_guarded,
         "validator_retry_called": False,
     }
     if not failing:
@@ -988,30 +1064,6 @@ def _validate_pf_names(
             client, model=model, failing=failing,
             cost_tracker=cost_tracker, llm_health=llm_health,
         )
-
-    used_slugs = {pf.name for pf in product_features}
-
-    def _reslug(pf: "Feature", new_label: str) -> None:
-        """Apply a new label + slug, keeping the maps consistent."""
-        old_slug = pf.name
-        new_slug = _slugify(new_label)
-        if new_slug != old_slug and new_slug in used_slugs:
-            i = 2
-            while f"{new_slug}-{i}" in used_slugs:
-                i += 1
-            new_slug = f"{new_slug}-{i}"
-        used_slugs.discard(old_slug)
-        used_slugs.add(new_slug)
-        pf.name = new_slug
-        pf.display_name = new_label
-        if old_slug != new_slug:
-            for dev, slugs in dev_map.items():
-                if old_slug in slugs:
-                    dev_map[dev] = tuple(
-                        new_slug if s == old_slug else s for s in slugs
-                    )
-            if old_slug in member_flows_map:
-                member_flows_map[new_slug] = member_flows_map.pop(old_slug)
 
     pf_by_slug: dict[str, "Feature"] = {
         pf.name: pf for pf in product_features
