@@ -143,6 +143,7 @@ from faultline.pipeline_v2.url_linker import (
 
 if TYPE_CHECKING:
     from faultline.models.types import Commit, MemberFile
+    from faultline.pipeline_v2.profiles.base import FrameworkProfile
     from faultline.pipeline_v2.run_logger import StageLogger
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
@@ -665,6 +666,7 @@ def run_membership_closure(
     max_depth: int = DEFAULT_MAX_DEPTH,
     max_new_files_per_feature: int = DEFAULT_MAX_FILES_PER_FEATURE,
     extractor_signals: dict[str, list[Any]] | None = None,
+    profile: "FrameworkProfile | None" = None,
 ) -> ClosureResult:
     """Run the Stage 2.6 import-closure membership pass.
 
@@ -685,6 +687,31 @@ def run_membership_closure(
     unattributed_set = set(unattributed)
 
     by_name = {f.name: f for f in features}
+
+    # ── Profile-driven fan-out policy (P4 framework-awareness) ───────
+    # The active FrameworkProfile may declare that files of certain
+    # structural roles (e.g. LIB / COMPONENT) are genuinely cross-cutting
+    # and should FAN OUT (blast-radius, provenance-only) rather than
+    # collapse into a single primary owner — even when their import
+    # fan-in is below the statistical threshold. ``max_fanout`` caps the
+    # number of features such a shared file attaches to. For the
+    # DefaultProfile / None this set is EMPTY and ``_fanout_cap`` is
+    # None, so the branch below never fires and behaviour is byte-for-
+    # byte identical (regression guard).
+    from faultline.pipeline_v2.profiles._attribution import (
+        max_fanout as _profile_max_fanout,
+        role_of as _profile_role_of,
+        shared_roles as _profile_shared_roles,
+    )
+
+    _profile_shared = _profile_shared_roles(profile)
+    _fanout_cap = _profile_max_fanout(profile)
+
+    def _is_profile_shared(path: str) -> bool:
+        """True when the profile classifies ``path`` as a fan-out role."""
+        if not _profile_shared:
+            return False
+        return _profile_role_of(profile, path) in _profile_shared
 
     # Files some feature lists EXPLICITLY (exact path entry, not via a
     # directory prefix). Explicitly-listed files are settled ownership;
@@ -814,14 +841,35 @@ def run_membership_closure(
     for fp in sorted(claimants_by_file):
         claims = claimants_by_file[fp]
         n_claims = len(claims)
-        if n_claims >= fan_in_threshold:
+        # A file is treated as shared (fan-out, provenance-only, stays
+        # orphan) when EITHER the statistical import fan-in threshold
+        # fires OR the active profile declares this file's role a shared
+        # (cross-cutting) role. The profile clause is empty for the
+        # DefaultProfile, so this is a no-op on the legacy path.
+        profile_shared = _is_profile_shared(fp)
+        if n_claims >= fan_in_threshold or profile_shared:
             # Shared infrastructure — provenance only, stays orphan.
+            # ``max_fanout`` (when the profile sets it) caps how many
+            # features a shared file attaches to: keep the strongest
+            # (lowest-depth) claims. ``None`` == unbounded (legacy).
             telemetry.shared_infra_files += 1
-            for fname, depth in sorted(claims):
+            shared_claims = sorted(claims)
+            if profile_shared and _fanout_cap is not None:
+                # Rank by closure depth (asc = strongest), then name, and
+                # keep at most ``_fanout_cap`` attachments.
+                shared_claims = sorted(
+                    claims, key=lambda c: (c[1], c[0]),
+                )[: _fanout_cap]
+            reason = (
+                "profile shared-role fan-out"
+                if profile_shared
+                else f"import fan-in: claimed by {n_claims} features "
+                f"(threshold {fan_in_threshold})"
+            )
+            for fname, depth in shared_claims:
                 by_name[fname].member_files.append(_member_file(
                     fp, "shared", _closure_confidence(depth),
-                    f"import fan-in: claimed by {n_claims} features "
-                    f"(threshold {fan_in_threshold}), depth {depth}",
+                    f"{reason}, depth {depth}",
                     False,
                 ))
             continue

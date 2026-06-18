@@ -61,6 +61,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 from faultline.llm.model_gateway import resolve_model as gateway_model
 from faultline.pipeline_v2.llm_health import LlmHealth
+from faultline.pipeline_v2.profiles._flow_lines import resolve_handler_line
+
+if TYPE_CHECKING:
+    from faultline.pipeline_v2.profiles.base import FrameworkProfile
 
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -293,6 +297,14 @@ def _enumerate_candidates(
                 (sr.start_line for sr in sig.symbol_ranges if sr.name == sym),
                 1,
             )
+            # Wrapped-handler fix (P4): when ``sym`` is a thin
+            # higher-order wrapper export (``export const POST =
+            # withAuth(handler)``) the start line points at the 2-LOC
+            # wrapper, not the real handler body — the Formbricks
+            # 449/449-flows-at-0-LOC bug. Resolve to the inner local
+            # handler's definition line. No-op (identity) when ``sym`` is
+            # not a wrapper, so non-wrapped flows are untouched.
+            start_line = resolve_handler_line(sig, sym, start_line)
             symbol_to_loc[sym] = (rel, start_line)
         for r in sig.routes:
             if r not in routes:
@@ -478,6 +490,112 @@ def _call_haiku(
     return text, in_tokens, out_tokens
 
 
+# ── Profile-driven flow seeding (P4 framework-awareness) ───────────────────
+
+
+def _slug_flow_name(kind: str, route: str, symbol: str, path: str) -> str:
+    """Deterministic kebab ``*-flow`` name for a profile FlowEntry.
+
+    Prefers the route pattern, then the symbol, then the file stem —
+    so two entries describing the SAME capability (same route) collapse
+    to one name (the reset-password-flow x17 fix is UPSTREAM: one entry
+    per capability + one stable name, not downstream name-dedup).
+    """
+    import re as _re
+
+    basis = route or symbol or path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    slug = _re.sub(r"[^a-z0-9]+", "-", basis.lower()).strip("-")
+    slug = slug or "flow"
+    if not slug.endswith("-flow"):
+        slug = f"{slug}-flow"
+    return slug
+
+
+def _profile_flows_by_feature(
+    profile: "FrameworkProfile | None",
+    ctx: "ScanContext",
+    features: list["DeveloperFeature"],
+) -> dict[str, list[FlowSpec]]:
+    """Seed deterministic flows from ``profile.flow_entries`` per feature.
+
+    Returns ``{feature_name: [FlowSpec, ...]}``. Empty for the
+    DefaultProfile / None (``flow_entries`` returns ``[]``), so the
+    LLM path is fully in charge and behaviour is unchanged.
+
+    DEDUP DISCIPLINE: entries are collapsed to ONE flow per
+    ``(owning_feature, flow_name)`` — the profile's ``flow_entries`` +
+    naming are the source of truth for "this is the same capability".
+    This kills duplicate flows (e.g. reset-password-flow x17) at the
+    SOURCE rather than via a downstream name-dedup pass.
+
+    Line ranges resolve to the REAL handler body via
+    :func:`resolve_handler_line` using ``FlowEntry.symbol`` — fixing the
+    wrapped-handler 0-LOC bug for the deterministic path too.
+    """
+    from faultline.pipeline_v2.profiles._attribution import is_active
+
+    if not is_active(profile):
+        return {}
+    assert profile is not None
+    entries = profile.flow_entries(ctx)
+    if not entries:
+        return {}
+
+    # path -> owning feature name (primary attribution from Stage 2/2.6).
+    owner_by_path: dict[str, str] = {}
+    for f in features:
+        for p in f.paths:
+            owner_by_path.setdefault(p, f.name)
+
+    repo_path_str = str(ctx.repo_path)
+    # Cache FileSignature per entry path so we resolve lines once.
+    sig_cache: dict[str, FileSignature] = {}
+
+    out: dict[str, list[FlowSpec]] = {}
+    seen: set[tuple[str, str]] = set()  # (feature, flow_name)
+    for entry in entries:
+        owner = owner_by_path.get(entry.path)
+        if owner is None:
+            # The profile named an entry whose file no feature owns —
+            # leave it to the LLM/residual path; do not invent a flow.
+            continue
+        flow_name = _slug_flow_name(
+            entry.kind, entry.route, entry.symbol, entry.path,
+        )
+        key = (owner, flow_name)
+        if key in seen:
+            continue  # one flow per capability per feature
+        seen.add(key)
+
+        entry_line: int | None = None
+        if entry.symbol:
+            if entry.path not in sig_cache:
+                sigs = extract_signatures([entry.path], repo_path_str)
+                sig = sigs.get(entry.path)
+                if sig is not None:
+                    sig_cache[entry.path] = sig
+            sig = sig_cache.get(entry.path)
+            if sig is not None:
+                start = next(
+                    (r.start_line for r in sig.symbol_ranges
+                     if r.name == entry.symbol),
+                    None,
+                )
+                if start is not None:
+                    entry_line = resolve_handler_line(sig, entry.symbol, start)
+
+        out.setdefault(owner, []).append(
+            FlowSpec(
+                name=flow_name,
+                description=entry.route or entry.kind or "",
+                entry_point_file=entry.path,
+                entry_point_line=entry_line,
+                symbol_names=[entry.symbol] if entry.symbol else [],
+            ),
+        )
+    return out
+
+
 # ── Public entry point ─────────────────────────────────────────────────────
 
 
@@ -491,6 +609,7 @@ def stage_3_flows(
     cost_tracker: CostTracker | None = None,
     client: Any | None = None,
     llm_health: LlmHealth | None = None,
+    profile: "FrameworkProfile | None" = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> Stage3Result:
     """Detect user-action flows per developer feature, in parallel.
@@ -520,6 +639,11 @@ def stage_3_flows(
     llm_call_lock = threading.Lock()
     cost_cap_warned = False
 
+    # Profile-driven deterministic flow seeding (P4). Empty for the
+    # DefaultProfile / None, so the LLM path stays fully in charge and
+    # the legacy behaviour is byte-for-byte preserved (regression guard).
+    profile_flows = _profile_flows_by_feature(profile, ctx, features)
+
     # Scale wall-time cap to feature count when caller didn't pin it.
     effective_timeout = (
         timeout if timeout is not None
@@ -531,11 +655,42 @@ def stage_3_flows(
     # all of them.
     if client is None:
         client = _client_factory()
-    if client is None and any(
-        len(_safe_exports(f, ctx)) >= MIN_EXPORTS_FOR_FLOW_DETECTION
-        or (set(getattr(f, "sources", ()) or ()) & _ROUTE_ANCHOR_SOURCES)
-        for f in features
-    ):
+    # Features the LLM would need to inspect (no deterministic profile
+    # seed). Profile-seeded features are handled WITHOUT a client, so the
+    # no-client short-circuit must not suppress them.
+    needs_llm = [
+        f for f in features
+        if not profile_flows.get(f.name)
+        and (
+            len(_safe_exports(f, ctx)) >= MIN_EXPORTS_FOR_FLOW_DETECTION
+            or (set(getattr(f, "sources", ()) or ()) & _ROUTE_ANCHOR_SOURCES)
+        )
+    ]
+    if client is None and needs_llm:
+        if profile_flows:
+            # Some features are profile-seeded (no client needed); only the
+            # LLM-needing remainder default to flows=[].
+            warnings.append(
+                "no Anthropic client available; non-profile-seeded features "
+                "default to flows=[]"
+            )
+            return Stage3Result(
+                features_with_flows=[
+                    FeatureWithFlows(
+                        feature=f,
+                        flows=list(profile_flows[f.name]),
+                        rationale=f"profile-seeded {len(profile_flows[f.name])} "
+                                  f"flow(s) (profile="
+                                  f"{getattr(profile, 'name', 'default')})",
+                    )
+                    if profile_flows.get(f.name)
+                    else FeatureWithFlows(feature=f, flows=[], rationale="no-client")
+                    for f in features
+                ],
+                cost_usd=0.0,
+                llm_calls=0,
+                warnings=warnings,
+            )
         warnings.append(
             "no Anthropic client available; all features default to flows=[]"
         )
@@ -554,6 +709,18 @@ def stage_3_flows(
 
     def _process(idx: int, feature: "DeveloperFeature") -> FeatureWithFlows:
         nonlocal llm_calls, cost_cap_warned
+        # P4: when the active profile deterministically seeded flows for
+        # this feature, use them and SKIP the LLM. This is the upstream
+        # dedup fix (one flow per capability) AND a cost saving. No-op
+        # under the DefaultProfile (``profile_flows`` is empty).
+        seeded = profile_flows.get(feature.name)
+        if seeded:
+            return FeatureWithFlows(
+                feature=feature,
+                flows=list(seeded),
+                rationale=f"profile-seeded {len(seeded)} flow(s) "
+                          f"(profile={getattr(profile, 'name', 'default')})",
+            )
         exports, routes, sym_loc = _enumerate_candidates(feature, repo_path_str)
         if not _passes_flow_gate(feature, exports, routes):
             return FeatureWithFlows(

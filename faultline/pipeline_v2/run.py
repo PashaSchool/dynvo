@@ -286,6 +286,20 @@ def run_pipeline_v2(
     shape_result = intake.shape_result
     run_dir = intake.run_dir
 
+    # ── Framework Knowledge Layer — select the active profile (P4) ──
+    # Highest-``detects`` profile wins; the DefaultProfile (positive
+    # floor, null-object) wins when no concrete profile matches, so this
+    # is always non-None and a no-op for unknown stacks. Selection is
+    # deterministic, LLM-free, network-free. The selected profile is
+    # threaded (not stashed on ScanContext — its schema stays stable)
+    # into the attribution + flow stages, and its name is surfaced in
+    # ``scan_meta.framework_profile``.
+    from faultline.pipeline_v2.profiles import select_profile as _select_profile
+
+    framework_profile = _select_profile(ctx)
+    framework_profile_name = getattr(framework_profile, "name", "default")
+    logger.info("framework_profile selected: %s", framework_profile_name)
+
     # ════════════════════════════════════════════════════════════════
     # PHASE SEAM (engine(repo, subpaths[]) groundwork):
     # Everything ABOVE this line is the repo-level INTAKE phase
@@ -311,6 +325,7 @@ def run_pipeline_v2(
             _isolate(stage1_out), _isolate(ctx),
             llm_reconcile=llm_reconcile,
             llm_health=llm_health,
+            profile=framework_profile,
         )
         deterministic_features = stage2.features
         unattributed = stage2.unattributed
@@ -368,6 +383,7 @@ def run_pipeline_v2(
             _isolate(deterministic_features), _isolate(unattributed),
             _isolate(ctx), log=log2_6,
             extractor_signals=_isolate(stage1_out),
+            profile=framework_profile,
         )
         deterministic_features = closure.features
         unattributed = closure.unattributed
@@ -411,6 +427,7 @@ def run_pipeline_v2(
             _isolate(deterministic_features), _isolate(ctx),
             model=model_id, cost_tracker=tracker,
             llm_health=llm_health,
+            profile=framework_profile,
         )
         for fwf in stage3.features_with_flows:
             log3.emit(
@@ -634,6 +651,7 @@ def run_pipeline_v2(
     scan_meta: dict[str, Any] = assemble_scan_meta(
         ctx=ctx,
         verdict=verdict,
+        framework_profile=framework_profile_name,
         model_id=model_id,
         extractor_hits=extractor_hits,
         workspace_telemetry=workspace_telemetry,
