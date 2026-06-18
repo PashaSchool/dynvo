@@ -130,6 +130,18 @@ nextjs-server-actions = "faultline.framework_linkers.nextjs_server_actions:Nextj
 trpc-procedure = "faultline.framework_linkers.trpc_procedure:TrpcProcedureLinker"
 store-mutation = "faultline.framework_linkers.store_mutation:StoreMutationLinker"
 
+# Framework Knowledge Layer (Phase 1) — per-framework structural-profile
+# plugin group. The registry at
+# ``faultline.pipeline_v2.profiles._registry`` discovers profiles via
+# this group; adding a framework = one module implementing
+# ``FrameworkProfile`` + one line here, with ZERO core changes (OCP).
+# The built-in ``DefaultProfile`` is injected unconditionally by the
+# registry, so it is intentionally NOT listed here.
+[project.entry-points."faultlines.profiles"]
+# (Phase 1 ships only the abstraction + default profile. Deterministic
+# per-framework profiles — next-app-router, nestjs, remix, ... — register
+# here in Phase 2.)
+
 [tool.hatch.envs.default]
 dependencies = [
     "pytest>=7.4.0",
