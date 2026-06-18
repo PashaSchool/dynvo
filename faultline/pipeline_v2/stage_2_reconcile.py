@@ -52,6 +52,7 @@ from faultline.pipeline_v2.llm_health import LlmHealth
 
 if TYPE_CHECKING:
     from faultline.models.types import MemberFile
+    from faultline.pipeline_v2.profiles.base import FrameworkProfile
     from faultline.pipeline_v2.stage_0_intake import ScanContext
 
 
@@ -751,6 +752,7 @@ def stage_2_reconcile(
     llm_reconcile: bool = False,
     jaccard_threshold: float = 0.7,
     llm_health: LlmHealth | None = None,
+    profile: "FrameworkProfile | None" = None,
     _llm_call: Callable[[AnchorCandidate, AnchorCandidate], str | None] = _llm_pick_name,
 ) -> Stage2Result:
     """Reconcile cross-extractor anchor candidates.
@@ -832,6 +834,39 @@ def stage_2_reconcile(
         if llm_note:
             notes.append(llm_note)
         features.append(_build_feature_from_group(group, canonical, llm_note))
+
+    # 2.9) Profile-driven attribution (P4 framework-awareness).
+    #      The active FrameworkProfile gets the FIRST say over which
+    #      feature a file belongs to — route-group / feature-folder
+    #      semantics override generic path-proximity, which is what kills
+    #      the physical-container blob. Files the profile does not claim
+    #      fall through to the conflict-resolution step below UNCHANGED.
+    #      No-op for the DefaultProfile / None (regression guard): the
+    #      input list is returned by identity, so the legacy path is
+    #      byte-for-byte preserved when no concrete profile wins.
+    if profile is not None:
+        from faultline.pipeline_v2.profiles._attribution import (
+            apply_profile_attribution,
+            is_active,
+        )
+
+        if is_active(profile):
+            def _rehome(f: DeveloperFeature, new_paths: tuple[str, ...]) -> DeveloperFeature:
+                return DeveloperFeature(
+                    name=f.name,
+                    paths=new_paths,
+                    sources=f.sources,
+                    confidence=f.confidence,
+                    display_name=f.display_name,
+                    rationale=f.rationale,
+                    source_confidences=f.source_confidences,
+                    merged_from=f.merged_from,
+                )
+
+            features = apply_profile_attribution(
+                features, profile, ctx, rebuild=_rehome,
+            )
+            notes.append(f"profile-attribution applied (profile={profile.name})")
 
     # 3) Resolve cross-feature file conflicts.
     features = _attribute_paths(features)

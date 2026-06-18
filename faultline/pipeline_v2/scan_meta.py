@@ -238,6 +238,7 @@ def assemble_scan_meta(
     *,
     ctx: Any,
     verdict: Any,
+    framework_profile: str = "default",
     model_id: str,
     extractor_hits: dict[str, int],
     workspace_telemetry: dict[str, Any],
@@ -320,6 +321,11 @@ def assemble_scan_meta(
         # Sprint S3.1 — deterministic correction overrides applied
         # AFTER the LLM verdict. Empty list when no rule fired.
         "auditor_corrections": list(verdict.corrections),
+        # P4 framework-awareness — the active FrameworkProfile that drove
+        # attribution + flow seeding. ``"default"`` means the null-object
+        # profile won (no concrete framework profile registered/matched),
+        # i.e. behaviour is identical to pre-P4.
+        "framework_profile": framework_profile,
         "model": model_id,
         "extractor_hits": extractor_hits,
         # Sprint D3 — workspace package telemetry. Exposed at top of
