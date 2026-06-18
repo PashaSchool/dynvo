@@ -28,6 +28,7 @@ from faultline.pipeline_v2.stage_3_flows import (
     FlowSpec,
     Stage3Result,
     _enumerate_candidates,
+    _merge_seed_and_llm_flows,
     _parse_response_text,
     _validate_and_attach_lines,
     stage_3_flows,
@@ -216,6 +217,134 @@ def test_validate_dedups_flows_sharing_entry_point() -> None:
     assert valid[1].entry_point_line == 5
     # Note recorded.
     assert any("deduped 2 flow" in n for n in notes)
+
+
+# ── D2 — profile seed AUGMENTS the LLM (merge + dedup, no replace) ──────────
+
+
+def test_merge_seed_passthrough_when_no_seed() -> None:
+    """No seed -> LLM flows returned unchanged (DefaultProfile path)."""
+    llm = [
+        FlowSpec(name="a-flow", entry_point_file="a.ts", entry_point_line=10),
+        FlowSpec(name="b-flow", entry_point_file="b.ts", entry_point_line=20),
+    ]
+    assert _merge_seed_and_llm_flows([], llm) == llm
+
+
+def test_merge_seed_dedups_against_llm_llm_name_wins() -> None:
+    """On an entry-point collision the LLM flow WINS (its semantic name is
+    what naming + UF recall are scored on); the seed copy is dropped. The
+    result is still ONE flow per entry-point -> the dup-flow kill holds."""
+    seed = [
+        # Mechanical route-derived seed for the same page the LLM detected.
+        FlowSpec(name="get-app-page-flow", entry_point_file="app/page.tsx",
+                 entry_point_line=5),
+    ]
+    llm = [
+        # Same capability, semantic name -> WINS, seed copy dropped.
+        FlowSpec(name="view-dashboard-flow", entry_point_file="app/page.tsx",
+                 entry_point_line=5),
+    ]
+    merged = _merge_seed_and_llm_flows(seed, llm)
+    # LLM-primary: the semantic name survives, the mechanical seed name does not.
+    assert [f.name for f in merged] == ["view-dashboard-flow"]
+
+
+def test_merge_appends_seed_only_capability() -> None:
+    """A seeded flow whose entry-point the LLM never produced is genuinely-
+    additional deterministic COVERAGE and must be appended (the augment
+    gain), AFTER the LLM-primary flows."""
+    seed = [
+        # LLM missed this filesystem route entirely.
+        FlowSpec(name="delete-api-teams-saml-flow",
+                 entry_point_file="app/api/teams/saml/route.ts",
+                 entry_point_line=3),
+    ]
+    llm = [
+        FlowSpec(name="view-dashboard-flow", entry_point_file="app/page.tsx",
+                 entry_point_line=5),
+    ]
+    merged = _merge_seed_and_llm_flows(seed, llm)
+    names = [f.name for f in merged]
+    # LLM flow first (primary), then the seed-only gap-fill.
+    assert names == ["view-dashboard-flow", "delete-api-teams-saml-flow"]
+
+
+def test_merge_appends_seed_without_entry_key() -> None:
+    """A seed flow with no entry-point key cannot be deduped against the
+    LLM, so it is always appended (never silently dropped)."""
+    seed = [
+        FlowSpec(name="background-sync-flow", entry_point_file=None,
+                 entry_point_line=None),
+    ]
+    llm = [
+        FlowSpec(name="view-dashboard-flow", entry_point_file="app/page.tsx",
+                 entry_point_line=5),
+    ]
+    merged = _merge_seed_and_llm_flows(seed, llm)
+    assert [f.name for f in merged] == ["view-dashboard-flow",
+                                        "background-sync-flow"]
+
+
+class _SeedProfile:
+    """Minimal active FrameworkProfile that seeds one flow per feature."""
+
+    name = "test-profile"
+
+    def __init__(self, entries: list[Any]) -> None:
+        self._entries = entries
+
+    def flow_entries(self, ctx: Any) -> list[Any]:  # noqa: ANN401
+        return self._entries
+
+
+def test_seeded_feature_still_runs_llm_and_merges(tmp_path: Path) -> None:
+    """D2 regression guard: a profile-seeded feature must NOT skip the LLM.
+    The LLM still runs; its duplicate of the seeded entry collapses, its
+    extra flow survives -> net AUGMENT, never REPLACE."""
+    from faultline.pipeline_v2.profiles.base import FlowEntry
+
+    _make_ts_file(
+        tmp_path, "app/dash/page.tsx",
+        textwrap.dedent(
+            """\
+            export default function DashPage() {
+              const x = loadDash();
+              return null;
+            }
+            export function loadDash() { return 1; }
+            export function exportReport() { return 2; }
+            """
+        ),
+    )
+    feature = _feature("dash", ("app/dash/page.tsx",))
+    ctx = _ctx(tmp_path, ["app/dash/page.tsx"])
+    profile = _SeedProfile([
+        FlowEntry(path="app/dash/page.tsx", symbol="DashPage",
+                  kind="page", route="/dash"),
+    ])
+    # LLM emits the SAME page (dup, collapses) + one EXTRA flow.
+    llm_json = json.dumps({"flows": [
+        {"name": "view-dash-flow", "symbols": ["DashPage"]},
+        {"name": "export-report-flow", "symbols": ["exportReport"]},
+    ]})
+    client = _FakeAnthropic([llm_json])
+
+    result = stage_3_flows(feature_list := [feature], ctx,
+                           client=client, profile=profile)
+
+    # The LLM WAS called for the seeded feature (augment, not skip).
+    assert client.call_count == 1
+    fwf = result.features_with_flows[0]
+    names = [f.name for f in fwf.flows]
+    # LLM-primary: the LLM's flow for the seeded page ("view-dash-flow",
+    # entry symbol DashPage) WINS; the seed's mechanical "dash-flow" copy
+    # of the same entry-point collapses against it (the dup-flow kill).
+    assert "view-dash-flow" in names
+    assert "dash-flow" not in names
+    # The LLM's genuinely-EXTRA flow survives (augment).
+    assert "export-report-flow" in names
+    assert "merged" in fwf.rationale
 
 
 def test_validate_does_not_dedup_flows_without_entry_point() -> None:

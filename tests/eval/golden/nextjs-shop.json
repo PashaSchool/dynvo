@@ -13,6 +13,12 @@
       ]
     },
     {
+      "name": "db",
+      "paths": [
+        "lib/db.ts"
+      ]
+    },
+    {
       "name": "next-config",
       "paths": [
         "next.config.js"
@@ -32,6 +38,11 @@
       ]
     }
   ],
-  "flows": [],
+  "flows": [
+    "cart-flow",
+    "post-api-checkout-flow",
+    "pricing-flow",
+    "products-flow"
+  ],
   "stack": "next-app-router"
 }

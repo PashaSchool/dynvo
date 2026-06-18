@@ -251,6 +251,43 @@ def _symbol_line_range(
     return None
 
 
+def _entry_range_containing_line(
+    sig: FileSignature | None,
+    entry_line: int,
+) -> tuple[int, int] | None:
+    """Expand an entry to the symbol body whose range CONTAINS ``entry_line``.
+
+    D1 — flow-LOC 1-line placeholder fix. When a flow's entry resolves to
+    a ``page.tsx`` / ``route.ts`` whose symbol could not be matched BY
+    NAME (filesystem-routed pages have an anonymous-ish default export, a
+    component the by-name lookup misses, or no symbol at all) the caller
+    used to collapse the entry node to ``(entry_line, entry_line)`` — a
+    one-line span that makes the whole flow render at 0 real LOC.
+
+    Here we recover the REAL multi-line body span using the same
+    regex-AST ``symbol_ranges`` already on the signature: pick the
+    INNERMOST (smallest) range whose ``[start_line, end_line]`` brackets
+    ``entry_line``. Returns ``None`` when no range brackets the line, so
+    the caller keeps its existing 1-line fallback (graceful degrade).
+
+    Deterministic, no LLM, no magic number, no repo-specific path. It
+    only fires when the by-NAME lookup already failed, so flows that
+    already resolve correctly are byte-for-byte untouched (regression
+    guard).
+    """
+    if sig is None:
+        return None
+    best: tuple[int, int] | None = None
+    best_span = -1
+    for rng in sig.symbol_ranges:
+        if rng.start_line <= entry_line <= rng.end_line and rng.end_line > rng.start_line:
+            span = rng.end_line - rng.start_line
+            if best is None or span < best_span:
+                best = (rng.start_line, rng.end_line)
+                best_span = span
+    return best
+
+
 def _file_exports(sig: FileSignature | None) -> tuple[str, ...]:
     """Stable tuple of exported symbol names; empty when unknown."""
     if sig is None:
@@ -397,6 +434,14 @@ def build_call_graph(
         if entry_symbol
         else None
     )
+    # D1 — by-NAME lookup missed (anonymous/default-export page, route
+    # handler the regex named differently, or no symbol). Before falling
+    # back to a 1-line placeholder, expand to the real body span of the
+    # innermost symbol whose range brackets ``entry_line`` (same
+    # symbol_ranges, deterministic). Flows that resolved by name above
+    # never reach this branch (regression guard).
+    if entry_range is None and entry_line is not None:
+        entry_range = _entry_range_containing_line(entry_sig, entry_line)
     if entry_range is None and entry_line is not None:
         entry_range = (entry_line, entry_line)
 
