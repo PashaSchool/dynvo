@@ -88,7 +88,13 @@ DEFAULT_MAX_WORKERS = max(
 # 24-repo corpus) and MIN_WALL_TIMEOUT_S = 300s (small repos still get
 # a generous floor). Caller can override via explicit `timeout=`.
 MIN_WALL_TIMEOUT_S = 300
-PER_CALL_BUDGET_S = 15
+# Default stays 15s — the Haiku 4.5 p99 latency observed across the 24-repo
+# corpus, the value production scans run at. The subscription-proxy DEV env
+# observes much higher per-call latency (Max-subscription queueing + overload
+# backoff), so dev sets FAULTLINE_FLOW_PER_CALL_BUDGET_S to size the wall-time
+# to that latency and stop big repos silently defaulting to flows=[]. The env
+# override is the only knob; the in-code default is unchanged from production.
+PER_CALL_BUDGET_S = int(os.environ.get("FAULTLINE_FLOW_PER_CALL_BUDGET_S", "15"))
 MIN_EXPORTS_FOR_FLOW_DETECTION = 3
 
 # Features anchored by a DECLARED-route extractor are entry points by
@@ -311,6 +317,68 @@ def _enumerate_candidates(
                 routes.append(r)
 
     return exports, routes, symbol_to_loc
+
+
+def _merge_seed_and_llm_flows(
+    seeded: list[FlowSpec],
+    llm_flows: list[FlowSpec],
+) -> list[FlowSpec]:
+    """AUGMENT the LLM's flows with a feature's profile seed (gap-fill).
+
+    The LLM is the PRIMARY source of a flow's *name and description* — its
+    semantic, capability-level names ("accept-invitation-flow",
+    "freeze-dataroom-flow") are what downstream naming + user-flow recall
+    are scored against, and they outperform the seed's mechanical,
+    route-derived names ("delete-api-teams-teamid-saml-flow"). So on a
+    collision the LLM flow WINS and the seed copy is dropped — but it is
+    still exactly ONE flow per entry-point, so the dup-flow kill is
+    preserved (two LLM variants of one page collapse against each other
+    upstream; a seed copy of an LLM-detected page collapses here).
+
+    The seed's value is COVERAGE, not naming: capabilities the LLM never
+    surfaced (a filesystem route with no LLM-emitted flow) are real and
+    must not be lost. We therefore:
+
+      1. Keep ALL LLM flows (they win on name -> naming + UF recall).
+      2. Append only the seeded flows whose ``(entry_point_file,
+         entry_point_line)`` was NOT already produced by the LLM — the
+         genuinely-additional deterministic coverage.
+
+    This is the true AUGMENT: dedup direction is LLM-primary (recovers the
+    pre-profile semantic names that the old seed-wins/skip-LLM gate
+    regressed), seed-secondary (adds only the gaps). Line-span accuracy is
+    handled uniformly downstream by the call-graph LOC stage (D1), so it
+    is not a reason to prefer the seed copy here.
+
+    Universal: the only key is the deterministic ``(file, line)`` pair
+    that BOTH paths resolve through the SAME ``resolve_handler_line``
+    helper — no profile name, no repo path, no magic number. Identical
+    for every profile; never reached under the DefaultProfile (which
+    seeds nothing, so this function is never called with a non-empty
+    ``seeded``).
+    """
+    if not seeded:
+        return llm_flows
+    llm_keys: set[tuple[str, int]] = {
+        (f.entry_point_file, f.entry_point_line)
+        for f in llm_flows
+        if f.entry_point_file is not None and f.entry_point_line is not None
+    }
+    merged: list[FlowSpec] = list(llm_flows)
+    for flow in seeded:
+        if (
+            flow.entry_point_file is not None
+            and flow.entry_point_line is not None
+            and (flow.entry_point_file, flow.entry_point_line) in llm_keys
+        ):
+            # The LLM already produced a flow for this entry-point — its
+            # semantic name wins; drop the seed copy (the dup-flow kill).
+            continue
+        # Seed-only capability (no LLM flow at this entry-point) OR a seed
+        # flow without an entry-point key (cannot be deduped) — append it
+        # as genuinely-additional deterministic coverage.
+        merged.append(flow)
+    return merged
 
 
 # ── LLM invocation ─────────────────────────────────────────────────────────
@@ -655,16 +723,17 @@ def stage_3_flows(
     # all of them.
     if client is None:
         client = _client_factory()
-    # Features the LLM would need to inspect (no deterministic profile
-    # seed). Profile-seeded features are handled WITHOUT a client, so the
-    # no-client short-circuit must not suppress them.
+    # Features the LLM would inspect. D2: profile-seeded features are NOW
+    # also LLM-eligible — the seed AUGMENTS the LLM (merge+dedup) rather
+    # than replacing it, so we never skip the LLM just because a seed
+    # exists. A feature only skips the LLM when it has neither a seed nor
+    # enough structural surface; seeded-but-LLM-eligible features both run
+    # the LLM AND keep their seed (merged downstream). The no-client
+    # short-circuit below still preserves seeds with zero LLM cost.
     needs_llm = [
         f for f in features
-        if not profile_flows.get(f.name)
-        and (
-            len(_safe_exports(f, ctx)) >= MIN_EXPORTS_FOR_FLOW_DETECTION
-            or (set(getattr(f, "sources", ()) or ()) & _ROUTE_ANCHOR_SOURCES)
-        )
+        if len(_safe_exports(f, ctx)) >= MIN_EXPORTS_FOR_FLOW_DETECTION
+        or (set(getattr(f, "sources", ()) or ()) & _ROUTE_ANCHOR_SOURCES)
     ]
     if client is None and needs_llm:
         if profile_flows:
@@ -709,20 +778,25 @@ def stage_3_flows(
 
     def _process(idx: int, feature: "DeveloperFeature") -> FeatureWithFlows:
         nonlocal llm_calls, cost_cap_warned
-        # P4: when the active profile deterministically seeded flows for
-        # this feature, use them and SKIP the LLM. This is the upstream
-        # dedup fix (one flow per capability) AND a cost saving. No-op
-        # under the DefaultProfile (``profile_flows`` is empty).
-        seeded = profile_flows.get(feature.name)
-        if seeded:
-            return FeatureWithFlows(
-                feature=feature,
-                flows=list(seeded),
-                rationale=f"profile-seeded {len(seeded)} flow(s) "
-                          f"(profile={getattr(profile, 'name', 'default')})",
-            )
+        # D2: the profile seed AUGMENTS the LLM, it does NOT replace it.
+        # When the active profile seeded flows for this feature we still
+        # run the LLM and MERGE (seed + LLM, deduped on entry-point) so
+        # the dup-flow kill comes from the merge — not from suppressing
+        # the richer LLM flows. ``seeded`` is empty under the
+        # DefaultProfile, so the legacy LLM-only path is byte-identical.
+        seeded = profile_flows.get(feature.name) or []
         exports, routes, sym_loc = _enumerate_candidates(feature, repo_path_str)
         if not _passes_flow_gate(feature, exports, routes):
+            # No LLM surface. If the profile seeded flows we still emit
+            # them (deterministic, authoritative); otherwise flows=[].
+            if seeded:
+                return FeatureWithFlows(
+                    feature=feature,
+                    flows=list(seeded),
+                    rationale=f"profile-seeded {len(seeded)} flow(s), "
+                              f"no LLM surface "
+                              f"(profile={getattr(profile, 'name', 'default')})",
+                )
             return FeatureWithFlows(
                 feature=feature,
                 flows=[],
@@ -747,8 +821,13 @@ def stage_3_flows(
                         f"${tracker.max_cost:.2f} hit; remaining "
                         f"features default to flows=[]",
                     )
+            # Seed survives a budget-cap degrade (deterministic, free).
             return FeatureWithFlows(
-                feature=feature, flows=[], rationale="cost-cap-hit",
+                feature=feature,
+                flows=list(seeded),
+                rationale="cost-cap-hit"
+                          + (f"; kept {len(seeded)} seeded flow(s)"
+                             if seeded else ""),
             )
 
         user_prompt = _build_user_prompt(
@@ -773,17 +852,32 @@ def stage_3_flows(
                 label="stage-3-flows",
             )
         if not text:
+            # LLM empty/failed — fall back to the seed (never lose it).
             return FeatureWithFlows(
-                feature=feature, flows=[], rationale="llm-empty-or-failed",
+                feature=feature,
+                flows=list(seeded),
+                rationale="llm-empty-or-failed"
+                          + (f"; kept {len(seeded)} seeded flow(s)"
+                             if seeded else ""),
             )
 
         raw_flows = _parse_response_text(text)
         valid, drop_notes = _validate_and_attach_lines(raw_flows, sym_loc)
-        rationale = f"detected {len(valid)} flows"
+        # D2: AUGMENT — merge seed (source of truth) with LLM flows,
+        # deduping LLM duplicates against the seed's entry-points. No-op
+        # passthrough of ``valid`` when there is no seed (default path).
+        merged = _merge_seed_and_llm_flows(seeded, valid)
+        if seeded:
+            rationale = (
+                f"profile-seeded {len(seeded)} + LLM {len(valid)} "
+                f"-> merged {len(merged)} flow(s)"
+            )
+        else:
+            rationale = f"detected {len(valid)} flows"
         if drop_notes:
             rationale += f" ({'; '.join(drop_notes)})"
         return FeatureWithFlows(
-            feature=feature, flows=valid, rationale=rationale,
+            feature=feature, flows=merged, rationale=rationale,
         )
 
     if not features:

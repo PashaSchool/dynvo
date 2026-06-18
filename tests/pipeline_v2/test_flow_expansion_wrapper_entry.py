@@ -266,3 +266,121 @@ def test_non_wrapper_entry_unaffected(tmp_path: Path) -> None:
     rctx = _reach_context(repo, ["route.ts"])
     res = build_call_graph(rctx, "route.ts", "POST", None)
     assert "helper" in {n.symbol for n in res.nodes}
+
+
+# ── D1: page/route entry expands from a 1-line placeholder to the real
+#        body span when the entry symbol can't be matched BY NAME ─────────
+
+
+def test_entry_line_expands_to_containing_body_no_symbol(tmp_path: Path) -> None:
+    """D1: a filesystem-routed page whose entry_symbol is None (the
+    default-export component name could not be extracted) but with a known
+    entry_line must expand to the body range that BRACKETS the line, not
+    collapse to a 1-line placeholder span."""
+    repo = tmp_path / "d1a"
+    repo.mkdir()
+    _write(
+        repo,
+        "app/page.tsx",
+        """
+        const PageComponent = () => {
+          const a = 1;
+          const b = 2;
+          const c = 3;
+          return null;
+        };
+        export default PageComponent;
+        export const meta = { title: "x" };
+        """,
+    )
+    rctx = _reach_context(repo, ["app/page.tsx"])
+    # entry_symbol is None (default export name not extracted -> filesystem
+    # routing); entry_line points INTO the component body (line 3).
+    res = build_call_graph(rctx, "app/page.tsx", None, 3)
+    entry = res.nodes[0]
+    assert entry.lines is not None
+    start, end = entry.lines
+    # Expanded to the PageComponent body (1..6), NOT (3, 3).
+    assert end > start, f"expected multi-line span, got ({start}, {end})"
+    assert start <= 3 <= end
+
+
+def test_entry_line_arrow_default_export_expands(tmp_path: Path) -> None:
+    """D1: arrow default-export page whose entry_symbol the by-name lookup
+    missed (wrong/stale name) still expands via the bracketing entry_line."""
+    repo = tmp_path / "d1b"
+    repo.mkdir()
+    _write(
+        repo,
+        "app/dash/page.tsx",
+        """
+        const DashPage = () => {
+          const x = 1;
+          const y = 2;
+          return null;
+        };
+        export default DashPage;
+        export const revalidate = 60;
+        """,
+    )
+    rctx = _reach_context(repo, ["app/dash/page.tsx"])
+    # Simulate a by-NAME miss: pass a symbol that isn't in the ranges, but
+    # an entry_line inside the arrow body (line 3).
+    res = build_call_graph(rctx, "app/dash/page.tsx", "NotMatchedName", 3)
+    entry = res.nodes[0]
+    assert entry.lines is not None
+    start, end = entry.lines
+    assert end > start, f"expected multi-line span, got ({start}, {end})"
+    # Specifically the arrow body range (1..6) brackets line 3.
+    assert start <= 3 <= end
+
+
+def test_entry_by_name_resolution_unchanged_regression_guard(tmp_path: Path) -> None:
+    """D1 regression guard: when the entry symbol DOES resolve by name, the
+    range is the by-name range — the D1 expansion branch never runs and
+    behaviour is byte-identical."""
+    repo = tmp_path / "d1c"
+    repo.mkdir()
+    _write(
+        repo,
+        "app/page.tsx",
+        """
+        export default function HomePage() {
+          const a = 1;
+          const b = 2;
+          return null;
+        }
+        """,
+    )
+    rctx = _reach_context(repo, ["app/page.tsx"])
+    res = build_call_graph(rctx, "app/page.tsx", "HomePage", 1)
+    entry = res.nodes[0]
+    assert entry.lines is not None
+    start, end = entry.lines
+    # By-name range: HomePage spans 1..5.
+    assert start == 1
+    assert end >= 5
+
+
+def test_entry_no_bracketing_range_falls_back_to_one_line(tmp_path: Path) -> None:
+    """D1 graceful degrade: when no symbol range brackets the entry_line
+    (e.g. a line in module-scope outside any body), keep the legacy
+    1-line placeholder rather than inventing a span."""
+    repo = tmp_path / "d1d"
+    repo.mkdir()
+    _write(
+        repo,
+        "app/page.tsx",
+        """
+        const TOP = 1;
+        export default function HomePage() {
+          return null;
+        }
+        """,
+    )
+    rctx = _reach_context(repo, ["app/page.tsx"])
+    # entry_line 1 is a module-scope const (single-line range) with no
+    # multi-line body bracketing it.
+    res = build_call_graph(rctx, "app/page.tsx", None, 1)
+    entry = res.nodes[0]
+    assert entry.lines == (1, 1)
