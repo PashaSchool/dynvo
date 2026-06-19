@@ -52,6 +52,7 @@ tuned magic numbers (the one structural cap is justified inline).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.extractors._util import is_noise, posix, slugify
@@ -106,6 +107,28 @@ _ACTION_DIRS = frozenset({"actions"})
 # Test / config markers (universal, stack-neutral).
 _TEST_MARKERS = (".test.", ".spec.", "/__tests__/", "/test/", "/tests/", "/e2e/")
 _CONFIG_MARKERS = (".config.", "config.")
+
+# ── feature-folder conventions (sub-decomposition boundaries) ─────────────────
+#
+# Beyond filesystem routing, the dominant Next/React large-app convention
+# is to group a capability's code under a *named domain folder*: a
+# "feature-sliced" or "modular" layout. These container directory names
+# are ecosystem-standard (feature-sliced-design, the Next "modules"
+# pattern, the bulletproof-react "features" pattern). A path
+# ``modules/billing/...`` / ``features/billing/...`` declares ``billing``
+# as a capability exactly the way ``app/billing/...`` does. We treat the
+# segment immediately *after* one of these container names as a feature
+# boundary. Universal convention names — NOT any repo's paths.
+_FEATURE_CONTAINER_DIRS = frozenset({
+    "modules", "features",
+})
+# ``components/<domain>/`` is a feature boundary ONLY when the immediate
+# child is itself a named domain folder holding a subtree — a top-level
+# ``components/Button.tsx`` is a shared primitive, not a feature. We keep
+# this container separate because its children are more often shared UI;
+# the boundary fires only when the existing route/module evidence is
+# absent (see ``_owning_boundary``'s precedence).
+_DOMAIN_COMPONENT_CONTAINER = "components"
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -168,68 +191,152 @@ def _is_skipped_segment(seg: str) -> bool:
     return False
 
 
-def _meaningful_segments(segments_under_app: list[str]) -> list[str]:
-    """The ordered list of meaningful (URL-bearing) segments, kebab-slugged.
+# ── sub-decomposition boundary (kills the workspace-anchor blob) ──────────────
+#
+# Attribution model (CONSERVATIVE, leaf-based): a routing file is owned by
+# its OWN (deepest) meaningful URL segment — NOT a first-meaningful
+# ancestor. Distinct named segments are distinct capabilities, so a SAML
+# handler under ``auth/saml`` keeps its own ``saml`` key instead of
+# folding up into an ``auth`` blob. Route groups own a file only when no
+# real child segment follows (group-level layouts / colocated files).
+# The :func:`_route_boundary` resolver below encodes this; synthesis
+# (``synthesize_features``) creates the leaf as a feature only when it
+# owns ≥ ``_MIN_BOUNDARY_FILES`` source files, so one-off deep segments
+# keep their richer LLM names (re-home no-ops on a name nothing holds).
 
-    Drops everything that is NOT a distinct named capability segment:
-    route groups, private folders, parallel slots, intercepting markers,
-    dynamic params, and framework-noise tokens (``api`` etc.). What
-    survives is the sequence of *author-named* path segments — each of
-    which is a candidate capability name.
+
+@dataclass(frozen=True)
+class SynthFeature:
+    """A profile-synthesised capability the deterministic extractors miss.
+
+    Returned by :meth:`NextAppRouterProfile.synthesize_features` and
+    consumed by the generic attribution wiring, which CREATES a feature
+    with this ``name`` (if one does not already exist) so the profile's
+    :meth:`feature_of` re-home can move ``paths`` off the package
+    workspace anchor onto it. ``prefix`` is the owning directory (debug /
+    dedup). Public (no leading underscore) because the wiring imports it
+    structurally via ``getattr`` — it is part of the profile's optional
+    synthesis contract.
     """
-    out: list[str] = []
-    for seg in segments_under_app:
+
+    name: str
+    paths: tuple[str, ...]
+    prefix: str = ""
+
+
+@dataclass(frozen=True)
+class _Boundary:
+    """A synthesised feature boundary: a named capability folder.
+
+    ``slug`` is the kebab feature key (matches what the route extractor /
+    Stage-2 would surface). ``prefix`` is the POSIX directory prefix
+    (``apps/web/app/(dashboard)`` / ``apps/web/modules/billing``) that
+    OWNS every source file beneath it. ``kind`` records which convention
+    produced it (debug / precedence only). Two boundaries are equal iff
+    their prefix is equal — a path resolves to exactly one owner.
+    """
+
+    slug: str
+    prefix: str
+    kind: str
+
+
+def _route_boundary(segs: list[str], app_idx: int) -> _Boundary | None:
+    """The file's nearest owning ROUTE capability under ``app/``, or ``None``.
+
+    The owner is the file's *deepest meaningful URL segment* — the segment
+    that directly names the capability the file serves. A route GROUP
+    (``(area)``) is organisational and is the owner ONLY when it is the
+    deepest meaningful thing on the path (a group-level ``layout`` /
+    colocated file with no child route segment); the moment a real named
+    child segment exists, THAT segment owns the file. This is the
+    leaf-conservative rule that keeps distinct sibling capabilities
+    (``(shop)/cart`` vs ``(shop)/products``) separate instead of melting
+    them into one ``shop`` blob, while still pulling every routed file off
+    the workspace anchor onto a real per-capability feature.
+
+    Returns the boundary at the deepest meaningful segment. ``prefix`` is
+    the directory up to and including that segment — every file beneath it
+    that has no DEEPER meaningful segment shares the owner (the page, its
+    layout/loading/error, and colocated components/lib under it).
+    """
+    deepest: _Boundary | None = None
+    for i in range(app_idx + 1, len(segs)):
+        seg = segs[i]
+        if seg.startswith("(") and seg.endswith(")") and len(seg) > 2:
+            # A route group: meaningful only as a fallback owner (when no
+            # real segment follows). Record it but keep scanning for a
+            # deeper named segment that should win.
+            inner = seg[1:-1]
+            if inner.startswith("."):  # intercepting overlay marker
+                continue
+            slug = slugify(inner)
+            if slug and not is_noise(slug):
+                deepest = _Boundary(slug, "/".join(segs[: i + 1]), "route-group")
+            continue
         if _is_skipped_segment(seg):
             continue
         slug = slugify(seg)
         if slug and not is_noise(slug):
-            out.append(slug)
-    return out
+            deepest = _Boundary(slug, "/".join(segs[: i + 1]), "route-segment")
+    return deepest
 
 
-def _leaf_feature_slug(segments_under_app: list[str]) -> str | None:
-    """The file's OWN (deepest) meaningful segment → kebab slug, or ``None``.
+def _container_boundary(segs: list[str]) -> _Boundary | None:
+    """A ``modules/<domain>`` / ``features/<domain>`` ancestor → ``<domain>``.
 
-    CONSERVATIVE attribution. A routing file sits inside a chain of named
-    segments (``auth/saml``, ``integrations/slack``, ``teams/[id]/saml``).
-    The *first* meaningful segment is an organisational ANCESTOR — folding
-    a file up into it erases the distinct child capability (the SAML
-    handler becomes part of ``auth``; the Slack installer becomes part of
-    a generic ``integrations`` blob). That over-consolidation is the
-    flip-side of the blob fix.
-
-    Distinct named segments = distinct capabilities. So we return the
-    *deepest* meaningful segment — the one that directly owns the routing
-    file — NOT the first. By the re-home contract (a path is only re-homed
-    when the returned name already exists in the Stage-2 feature set) this
-    is strictly safe:
-
-      * When the file is shallow (its own segment IS the first meaningful
-        one, e.g. ``settings/page.tsx`` → ``settings``), leaf == first, so
-        a genuinely-colocated capability still groups under its anchor.
-      * When the file lives in a DISTINCT deeper segment (``saml`` /
-        ``slack`` / ``scim``) the route extractor never surfaced that
-        deep segment as an anchor, so the leaf slug does not exist → no
-        re-home → the LLM's richer capability name SURVIVES (the desired
-        conservative behaviour: ``None``-equivalent for re-home).
-
-    Falls back to a leaf route-group's inner name when stripping removes
-    every segment (``app/(home)/page.tsx`` → ``home``), matching the
-    extractor's Sprint-D3 recovery — but only when there is no meaningful
-    URL segment at all (a root-level group page), never to OVERRIDE a real
-    named segment.
+    The feature-sliced / modular convention: code for a capability lives
+    under a named domain folder inside a container directory. The segment
+    immediately after the FIRST container name on the path is the owner.
+    Works with or without a ``src/`` prefix and with a monorepo prefix
+    because we scan the whole segment list for the container name.
     """
-    meaningful = _meaningful_segments(segments_under_app)
-    if meaningful:
-        return meaningful[-1]
-    # Recovery: a leaf route group carries a meaningful name (only when no
-    # real URL segment exists).
-    for seg in reversed(segments_under_app):
-        if seg.startswith("(") and seg.endswith(")") and len(seg) > 2:
-            slug = slugify(seg[1:-1])
+    for i, seg in enumerate(segs):
+        if seg in _FEATURE_CONTAINER_DIRS and i + 1 < len(segs):
+            domain = segs[i + 1]
+            if _is_skipped_segment(domain):
+                continue
+            slug = slugify(domain)
             if slug and not is_noise(slug):
-                return slug
+                return _Boundary(slug, "/".join(segs[: i + 2]), "module")
     return None
+
+
+def _owning_boundary(path: str) -> _Boundary | None:
+    """The file's nearest owning capability folder, or ``None`` (shared).
+
+    Precedence (most-specific structural truth first):
+
+      1. **Route capability** ``app/.../<segment>`` — the deepest
+         meaningful URL segment under the App Router tree owns the file
+         (a route group owns it only when no real child segment follows).
+         This is leaf-conservative: distinct sibling capabilities stay
+         distinct instead of melting into one area blob.
+      2. **Module / feature folder** ``modules/<d>`` / ``features/<d>`` —
+         the modular-layout capability boundary, valid anywhere OUTSIDE
+         ``app/`` (so it never collides with (1)).
+
+    Returns ``None`` for files with no owning boundary: the root
+    ``app/layout.tsx``, top-level shared ``components/`` / ``lib/`` /
+    ``hooks/`` primitives, and anything outside these conventions. Those
+    stay shared / fall through to the generic path — they must NEVER be
+    glued to one feature (that is the blob).
+    """
+    segs, _fname = _split(path)
+    app_idx = _app_index(segs)
+
+    if app_idx is not None:
+        under_app = segs[app_idx + 1:]
+        if under_app:
+            route = _route_boundary(segs, app_idx)
+            if route is not None:
+                return route
+        # A file directly at ``app/`` (root layout/page), or an app tree
+        # with only noise/dynamic segments — no owner.
+        return None
+
+    # Not under an app tree — only a module / feature container can own it.
+    return _container_boundary(segs)
 
 
 # ── the profile ──────────────────────────────────────────────────────────────
@@ -366,42 +473,98 @@ class NextAppRouterProfile:
     # ── feature attribution ────────────────────────────────────────────────────
 
     def feature_of(self, path: str, ctx: "ScanContext") -> str | None:
-        """The route-segment feature this App Router file serves, or ``None``.
+        """The capability feature this file serves, or ``None`` (shared).
 
-        CONSERVATIVE: returns the kebab slug of the file's OWN (deepest)
-        meaningful URL segment under ``app/`` — NOT the first-meaningful
-        ancestor. Distinct named segments are distinct capabilities, so a
-        SAML handler under ``auth/saml`` or a Slack installer under
-        ``integrations/slack`` keeps its own segment key instead of being
-        folded up into the ancestor route feature (``auth`` /
-        ``integrations``) — which would erase the capability and turn the
-        ancestor into a blob.
+        Returns the kebab slug of the file's nearest owning boundary
+        (:func:`_owning_boundary`):
 
-        By the re-home contract (a path is re-homed only when the returned
-        name already EXISTS in the Stage-2 feature set) this is strictly
-        safe in both directions:
-          * shallow files (own segment == first meaningful) group under
-            their existing route anchor exactly as before;
-          * files in a distinct deeper segment return a leaf slug the
-            route extractor never surfaced, so no re-home fires and the
-            LLM's richer capability name SURVIVES (None-equivalent).
+          * a routed file → its OWN (deepest) meaningful URL segment under
+            ``app/`` (a route group owns it only when no real child segment
+            follows). This is leaf-CONSERVATIVE: distinct named segments
+            are distinct capabilities, so a SAML handler under ``auth/saml``
+            or a Slack installer under ``integrations/slack`` keeps its own
+            segment key instead of folding up into ``auth`` /
+            ``integrations`` (which would erase the capability and blob the
+            ancestor);
+          * a modular-layout file → its ``modules/<d>`` / ``features/<d>``
+            domain.
 
-        Files NOT under an app tree (shared libs, top-level components)
-        return ``None`` so they fall through to the generic residual /
-        fan-out path UNCHANGED — they must not be force-homed into one
-        route feature (that is the blob).
+        By the re-home contract a path is re-homed only when this name
+        EXISTS in the working feature set — either because an extractor
+        surfaced it OR because :meth:`synthesize_features` created it for a
+        genuine multi-file capability folder. Single-file deep segments are
+        NOT synthesised, so they return a slug nothing else holds → no
+        re-home → the LLM's richer name survives (None-equivalent). Net:
+        multi-file capability folders are pulled off the workspace anchor
+        (blob killed) while one-off deep segments keep their rich names.
+
+        Files NOT under any capability boundary (root ``app/layout.tsx``,
+        top-level shared ``components/`` / ``lib/`` / ``hooks/``) return
+        ``None`` so they fall through to the generic residual / fan-out
+        path UNCHANGED — they must not be force-homed into one feature.
         """
-        segs, _fname = _split(path)
-        idx = _app_index(segs)
-        if idx is None:
-            return None
-        under_app = segs[idx + 1:]
-        if not under_app:
-            # A file directly at ``app/`` (root layout/page) — the root
-            # capability; no segment slug to attach to. Let it fall
-            # through rather than invent a name.
-            return None
-        return _leaf_feature_slug(under_app)
+        boundary = _owning_boundary(path)
+        return boundary.slug if boundary is not None else None
+
+    # ── feature synthesis (sub-decompose the workspace anchor) ──────────────────
+
+    def synthesize_features(self, ctx: "ScanContext") -> list["SynthFeature"]:
+        """Capability features the extractors miss inside a single package.
+
+        The blob: a single-package Next app becomes ONE ``[package]``
+        workspace-anchor feature owning every file, because the route /
+        page extractors gate on export counts and miss the capability
+        FOLDERS the author drew — the per-segment leaves under a route
+        group (``app/(shop)/cart`` vs ``app/(shop)/products``) and the
+        modular-layout domains (``modules/billing``). Those boundaries are
+        never created as features, so :meth:`feature_of`'s re-home (which
+        only moves a path onto a feature that ALREADY exists) has nothing
+        to land on and the files stay glued to the anchor.
+
+        This method emits one :class:`SynthFeature` per genuine capability
+        boundary (the file's nearest owning route-leaf / module — see
+        :func:`_owning_boundary`) so the generic attribution wiring can
+        CREATE it, after which :meth:`feature_of` re-homes the boundary's
+        files off the package anchor onto it. Universal across
+        single-package and multi-package monorepos: boundaries are located
+        structurally, so a monorepo prefix (``apps/web/...``) resolves
+        transparently. Idempotent against extractor-surfaced features — the
+        wiring skips any synth name that already exists, so the route
+        extractor's own anchors are never duplicated.
+
+        Gating (structural, scale-invariant — see ``rule-no-magic-tuning``):
+        a boundary is synthesised only when it owns at least
+        :data:`_MIN_BOUNDARY_FILES` distinct tracked source files. A lone
+        file under a named segment / folder is not a multi-file capability
+        (it keeps its richer LLM name instead); two or more co-located
+        source files is the smallest non-trivial capability slice. No
+        corpus-tuned size, no per-repo path.
+        """
+        # boundary prefix -> (slug, owned source-file set). Keyed by the
+        # full prefix so two distinct leaves that happen to slugify the
+        # same (rare) stay separate scopes for the file-count floor.
+        boundaries: dict[str, tuple[str, set[str]]] = {}
+        for f in ctx.tracked_files:
+            if not _is_source(f):
+                continue
+            boundary = _owning_boundary(f)
+            if boundary is None:
+                continue
+            slug, owned = boundaries.setdefault(
+                boundary.prefix, (boundary.slug, set()),
+            )
+            owned.add(posix(f))
+
+        out: list[SynthFeature] = []
+        for prefix, (slug, owned) in sorted(boundaries.items()):
+            if len(owned) < _MIN_BOUNDARY_FILES:
+                continue
+            out.append(SynthFeature(
+                name=slug,
+                paths=tuple(sorted(owned)),
+                prefix=prefix,
+            ))
+        return out
 
     # ── flow entries ───────────────────────────────────────────────────────────
 
@@ -568,4 +731,29 @@ def _read(repo_root, rel_path: str) -> str | None:
 _SHARED_FANOUT_CAP = 3
 
 
-__all__ = ["NextAppRouterProfile"]
+# A capability folder must own at least this many distinct source files
+# to be synthesised as a feature. A single file under a named folder is
+# not a multi-file capability; two co-located source files is the
+# smallest non-trivial feature slice. Structural floor (the "more than a
+# trivial leaf" rule), NOT a corpus-tuned size — identical behaviour on a
+# 3-route app and a 300-route monorepo.
+_MIN_BOUNDARY_FILES = 2
+
+# Source-code extensions that count toward a boundary's file population.
+# Non-source assets (markdown, json, images, css) live under capability
+# folders too but shouldn't, on their own, constitute a feature.
+_SOURCE_EXTS = frozenset({
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+})
+
+
+def _is_source(path: str) -> bool:
+    """True when ``path`` is a JS/TS source file (not an asset / doc)."""
+    p = posix(path)
+    dot = p.rfind(".")
+    if dot == -1:
+        return False
+    return p[dot:].lower() in _SOURCE_EXTS
+
+
+__all__ = ["NextAppRouterProfile", "SynthFeature"]

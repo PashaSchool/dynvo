@@ -863,8 +863,26 @@ def stage_2_reconcile(
                     merged_from=f.merged_from,
                 )
 
+            def _make_feature(name: str, paths: tuple[str, ...]) -> DeveloperFeature:
+                # Profile-synthesised capability boundary (route group /
+                # module folder). Sourced as ``route`` so Stage 2.6's
+                # import-closure (which seeds from ANCHOR_SOURCES features)
+                # pulls the boundary's colocated component/service/lib
+                # files into it — without that the boundary would only own
+                # its directly re-homed routing files. It is a declared
+                # entry-point boundary, so ``route`` is the accurate source.
+                return DeveloperFeature(
+                    name=name,
+                    paths=paths,
+                    sources=["route"],
+                    confidence="medium",
+                    rationale="profile-synthesised capability boundary "
+                              f"(profile={profile.name})",
+                )
+
             features = apply_profile_attribution(
                 features, profile, ctx, rebuild=_rehome,
+                make_feature=_make_feature,
             )
             notes.append(f"profile-attribution applied (profile={profile.name})")
 
