@@ -61,6 +61,36 @@ def is_active(profile: "FrameworkProfile | None") -> bool:
     return profile is not None and getattr(profile, "name", "default") != "default"
 
 
+def synth_features(
+    profile: "FrameworkProfile | None",
+    ctx: "ScanContext",
+) -> list["_SynthFeature"]:
+    """Capability features the profile wants CREATED before re-homing.
+
+    Optional synthesis contract: a profile MAY implement
+    ``synthesize_features(ctx) -> list`` to declare capability boundaries
+    the deterministic extractors miss (e.g. Next route groups / module
+    folders inside a single workspace package). The wiring creates a
+    feature per returned item whose ``name`` does not already exist, then
+    the normal re-home (:func:`apply_profile_attribution`) moves the
+    boundary's files onto it.
+
+    Duck-typed via ``getattr`` so profiles WITHOUT the method (the
+    DefaultProfile and any stack that doesn't sub-decompose) are a strict
+    no-op — guaranteeing byte-for-byte regression safety. Returns ``[]``
+    for the default / ``None`` profile and for any profile lacking the
+    method.
+    """
+    if not is_active(profile):
+        return []
+    assert profile is not None
+    method = getattr(profile, "synthesize_features", None)
+    if method is None:
+        return []
+    result = method(ctx)
+    return list(result) if result else []
+
+
 def profile_claims(
     profile: "FrameworkProfile | None",
     paths: list[str],
@@ -128,6 +158,7 @@ def apply_profile_attribution(
     ctx: "ScanContext",
     *,
     rebuild: "RebuildFn",
+    make_feature: "MakeFeatureFn | None" = None,
 ) -> list[_HasNamePaths]:
     """Re-home claimed paths to the feature the profile names — no-op for default.
 
@@ -136,6 +167,14 @@ def apply_profile_attribution(
     is removed from every OTHER feature — UNLESS the path's role is a
     declared shared role, in which case it is left in place (fan-out is
     handled by the membership stage, not here).
+
+    Before re-homing, the profile's optional :func:`synth_features` are
+    materialised: a feature is CREATED for each synthesised boundary whose
+    name does not already exist, so the re-home has a landing target. This
+    is what lets the Next profile sub-decompose a single-package
+    workspace anchor (route groups / module folders) — without it those
+    boundaries are never features and the blob persists. The default /
+    ``None`` profile synthesises nothing → byte-for-byte no-op.
 
     This runs BEFORE the generic conflict-resolution strip so the
     framework's structural truth wins over path-proximity. Paths the
@@ -151,14 +190,40 @@ def apply_profile_attribution(
             supplies so this module never imports the concrete
             ``DeveloperFeature`` (keeps the wiring decoupled). It must
             return a copy of ``feature`` with ``paths`` replaced.
+        make_feature: optional callback ``(name, paths) -> feature`` used
+            to materialise synthesised boundary features. When ``None``,
+            synthesis is skipped (older callers keep their exact
+            behaviour); the new caller supplies it so sub-decomposition
+            lands.
 
     Returns:
-        A new feature list with claimed paths re-homed. When the profile
-        is the default / ``None``, the input list is returned unchanged
-        (identity), guaranteeing zero regression.
+        A new feature list with synthesised boundaries created + claimed
+        paths re-homed. When the profile is the default / ``None``, the
+        input list is returned unchanged (identity), guaranteeing zero
+        regression.
     """
     if not is_active(profile):
         return features
+
+    # Materialise synthesised boundary features (route groups / module
+    # folders) the extractors missed, so the re-home below has a target.
+    # Only CREATE a name that does not already exist — never overwrite an
+    # extractor-surfaced feature.
+    if make_feature is not None:
+        existing_names = {f.name for f in features}
+        created: list[_HasNamePaths] = []
+        for synth in synth_features(profile, ctx):
+            name = getattr(synth, "name", "")
+            if not name or name in existing_names:
+                continue
+            existing_names.add(name)
+            # Seed with no paths; the re-home pass below pulls the
+            # boundary's files onto it from the workspace anchor. This
+            # keeps a single source of truth (feature_of) for which file
+            # lands where, and lets _attribute_paths arbitrate cleanly.
+            created.append(make_feature(name, ()))
+        if created:
+            features = list(features) + created
 
     all_paths = [p for f in features for p in f.paths]
     claims = profile_claims(profile, all_paths, ctx)
@@ -216,6 +281,26 @@ class RebuildFn(Protocol):
         ...
 
 
+class MakeFeatureFn(Protocol):
+    """Caller-supplied construct-new-feature callback (avoids a hard import).
+
+    Builds a fresh feature record with the given name + paths so this
+    module never imports the concrete ``DeveloperFeature`` — the synthesis
+    of profile boundaries stays decoupled (DIP), exactly like
+    :class:`RebuildFn`.
+    """
+
+    def __call__(self, name: str, paths: tuple[str, ...]) -> _HasNamePaths:
+        ...
+
+
+class _SynthFeature(Protocol):
+    """Minimal shape of a profile-synthesised boundary (structural typing)."""
+
+    name: str
+    paths: tuple[str, ...]
+
+
 __all__ = [
     "apply_profile_attribution",
     "is_active",
@@ -223,4 +308,5 @@ __all__ = [
     "profile_claims",
     "role_of",
     "shared_roles",
+    "synth_features",
 ]
