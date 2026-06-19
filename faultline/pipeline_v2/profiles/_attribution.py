@@ -230,17 +230,26 @@ def apply_profile_attribution(
     if not claims:
         return features
 
-    shared = shared_roles(profile)
     by_name = {f.name: f for f in features}
 
     # A path is re-homed only when the claimed feature actually exists in
-    # this scope (the profile may name a capability that no extractor
-    # surfaced; in that case we leave the path alone rather than invent a
-    # feature — that synthesis is a later-phase concern).
+    # this scope (created above from synthesis, or surfaced by an
+    # extractor). A profile CLAIM (``feature_of`` non-None) is an
+    # ownership statement: the file is COLOCATED inside that capability
+    # boundary (a route-segment / route-group / module folder), so it
+    # belongs to it even when its role is component/hook/lib — colocation
+    # inside a feature folder beats the generic "shared primitive" rule.
+    # Genuinely-shared files (repo-level ``components/`` / ``lib/`` with no
+    # owning boundary) are NEVER claimed (``feature_of`` → ``None``), so
+    # the fan-out policy (:func:`shared_roles`) applies to them downstream
+    # in the membership stage, not here. Re-homing a claimed colocated
+    # component is exactly what strips it off the workspace anchor (the
+    # blob fix); excluding shared-role claims here re-glued module-owned
+    # components to the anchor.
     rehome: dict[str, str] = {
         path: key
         for path, key in claims.items()
-        if key in by_name and not _is_shared(profile, path, shared)
+        if key in by_name
     }
     if not rehome:
         return features
@@ -261,17 +270,6 @@ def apply_profile_attribution(
         else:
             rebuilt.append(rebuild(f, new_paths))
     return rebuilt
-
-
-def _is_shared(
-    profile: "FrameworkProfile | None",
-    path: str,
-    shared: frozenset[FileRole],
-) -> bool:
-    """True when ``path``'s role is a declared shared (fan-out) role."""
-    if not shared:
-        return False
-    return role_of(profile, path) in shared
 
 
 class RebuildFn(Protocol):

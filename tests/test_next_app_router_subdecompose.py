@@ -240,6 +240,48 @@ def test_stage_2_subdecomposes_workspace_anchor() -> None:
     assert "apps/web/lib/db.ts" in web_paths
 
 
+def test_colocated_component_inside_module_rehomes() -> None:
+    """A component INSIDE a module folder is OWNED by it, not glued to anchor.
+
+    Regression for the formbricks bug: ``modules/survey/components/x.tsx``
+    classifies COMPONENT, but it is colocated inside the ``survey``
+    capability and MUST re-home off the ``web`` anchor — colocation beats
+    the generic shared-primitive fan-out rule. Only repo-level shared
+    ``components/`` (no owning boundary) fans out.
+    """
+    files = [
+        "apps/web/modules/survey/components/form-input.tsx",
+        "apps/web/modules/survey/components/recall-select.tsx",
+        "apps/web/modules/survey/service.ts",
+        "apps/web/components/Button.tsx",  # repo-level shared → stays
+    ]
+    profile = NextAppRouterProfile()
+    # The component IS classified COMPONENT (shared role)...
+    from faultline.pipeline_v2.profiles.base import FileRole
+    assert profile.classify_file(files[0]) == FileRole.COMPONENT
+    # ...but feature_of still CLAIMS it for the module (ownership).
+    assert profile.feature_of(files[0], _ctx(files)) == "survey"
+
+    cands = {
+        "package": [
+            AnchorCandidate(
+                name="web", paths=list(files),
+                source="package", confidence_self=0.95,
+            ),
+        ],
+    }
+    result = stage_2_reconcile(cands, _ctx(files), profile=profile)
+    by_name = {f.name: f for f in result.features}
+    survey_paths = set(by_name["survey"].paths)
+    assert "apps/web/modules/survey/components/form-input.tsx" in survey_paths
+    assert "apps/web/modules/survey/components/recall-select.tsx" in survey_paths
+    # The web anchor must NOT keep the survey component (blob killed).
+    web_paths = set(by_name.get("web", _make_feature("web", ())).paths)
+    assert "apps/web/modules/survey/components/form-input.tsx" not in web_paths
+    # Repo-level shared component (no boundary) stays with the anchor.
+    assert "apps/web/components/Button.tsx" in web_paths
+
+
 def test_synth_wiring_noop_for_default_profile() -> None:
     # The wiring's synthesis hook is a strict no-op under DefaultProfile.
     assert synth_features(DefaultProfile(), _ctx(["a.ts"])) == []
