@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
+
+from faultline.llm.stage_context import current_stage
 
 # ── Pricing table ─────────────────────────────────────────────────────────
 #
@@ -76,15 +78,24 @@ def supports_temperature(model: str) -> bool:
     return not any(model.startswith(prefix) for prefix in _NO_TEMPERATURE_MODELS)
 
 
-def deterministic_params(model: str) -> dict[str, float]:
-    """Return the kwargs to splat into ``messages.create`` for determinism.
+def deterministic_params(model: str) -> dict[str, Any]:
+    """Return the kwargs to splat into ``messages.create``.
 
-    Empty dict when the model no longer supports ``temperature`` — the
-    API call still succeeds, just without a hard determinism guarantee.
+    ``temperature=0`` for determinism (omitted on models that dropped it),
+    plus — when a pipeline stage is active — an ``extra_headers`` marker so the
+    local dev proxy can attribute each LLM call to the exact stage that issued
+    it. Harmless in prod: the real Anthropic API ignores the unknown header.
     """
+    params: dict[str, Any] = {}
     if supports_temperature(model):
-        return {"temperature": 0}
-    return {}
+        params["temperature"] = 0
+    stage = current_stage()
+    if stage:
+        params["extra_headers"] = {
+            "x-faultline-stage": str(stage.get("name", "")),
+            "x-faultline-stage-num": str(stage.get("num", "")),
+        }
+    return params
 
 
 def lookup_pricing(model: str) -> tuple[float, float]:

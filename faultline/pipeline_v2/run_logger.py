@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +31,26 @@ from types import TracebackType
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# ── Structured stage-lifecycle events (local dev observability) ─────────
+# Besides the per-stage .log artifacts, emit one JSON line per stage start/end
+# to an append-only stream the local watcher tails (scripts/llm-subscription-
+# proxy/watcher.py in faultlines-app). Pure local disk, fully guarded — a
+# failure here NEVER affects a scan. Path from FAULTLINE_STAGE_EVENTS (default
+# ~/.faultline/stage-events.jsonl); set it to "0" or "" to disable.
+def _emit_stage_event(record: dict[str, Any]) -> None:
+    raw = os.environ.get("FAULTLINE_STAGE_EVENTS", "~/.faultline/stage-events.jsonl")
+    if not raw or raw == "0":
+        return
+    try:
+        path = Path(raw).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record.setdefault("ts", datetime.now(tz=timezone.utc).isoformat())
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(record, default=str) + "\n")
+    except OSError:
+        pass  # observability must never break a scan
 
 
 _VALID_EVENTS = frozenset({"emit", "drop", "warn", "cluster", "info"})
@@ -79,6 +101,8 @@ class StageLogger:
         self._stage_name = stage_name
         self._buffer: list[_LogRecord] = []
         self._closed = False
+        self._t0 = time.monotonic()
+        self._stage_ctx_token: int | None = None
         # Ensure the directory exists; cheap idempotent call.
         self._run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -129,6 +153,14 @@ class StageLogger:
     # ── Context manager ─────────────────────────────────────────────
 
     def __enter__(self) -> "StageLogger":
+        self._t0 = time.monotonic()
+        self._lifecycle("stage_start")
+        # Mark this stage current so LLM call sites can tag their requests.
+        try:
+            from faultline.llm.stage_context import push_stage
+            self._stage_ctx_token = push_stage(self._stage_num, self._stage_name)
+        except Exception:  # noqa: BLE001 — marker is best-effort, never break a scan
+            self._stage_ctx_token = None
         return self
 
     def __exit__(
@@ -137,7 +169,32 @@ class StageLogger:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        self._lifecycle(
+            "stage_end",
+            dur_s=round(time.monotonic() - self._t0, 3),
+            status="error" if exc_type else "ok",
+            error=(str(exc_val)[:300] if exc_val else None),
+        )
+        if self._stage_ctx_token is not None:
+            try:
+                from faultline.llm.stage_context import pop_stage
+                pop_stage(self._stage_ctx_token)
+            except Exception:  # noqa: BLE001
+                pass
         self.close()
+
+    def _lifecycle(self, event: str, **extra: Any) -> None:
+        """Emit a structured stage-lifecycle event to the watcher stream."""
+        rd = self._run_dir
+        _emit_stage_event({
+            "event": event,
+            "stage": self._stage_num,
+            "stage_name": self._stage_name,
+            "slug": rd.parent.name,
+            "run_id": rd.name,
+            "run_dir": str(rd),
+            **extra,
+        })
 
     # ── Internal ────────────────────────────────────────────────────
 
