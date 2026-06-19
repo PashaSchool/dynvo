@@ -138,9 +138,9 @@ store-mutation = "faultline.framework_linkers.store_mutation:StoreMutationLinker
 # The built-in ``DefaultProfile`` is injected unconditionally by the
 # registry, so it is intentionally NOT listed here.
 [project.entry-points."faultlines.profiles"]
-# (Phase 1 ships only the abstraction + default profile. Deterministic
-# per-framework profiles — next-app-router, nestjs, remix, ... — register
-# here in Phase 2.)
+# Deterministic per-framework profiles register here (Phase 2+). One line
+# per stack; the core never changes (OCP).
+next-app-router = "faultline.pipeline_v2.profiles.next_app_router:NextAppRouterProfile"
 
 [tool.hatch.envs.default]
 dependencies = [

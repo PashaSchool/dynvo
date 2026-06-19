@@ -232,4 +232,8 @@ def test_discover_tolerates_broken_entry_point(
         registry_mod, "entry_points", lambda group=None: [_BadEP()]
     )
     names = [p.name for p in discover_profiles()]
-    assert names == ["default"]  # broken one skipped, default survives
+    # broken entry-point skipped; built-ins survive (default + the
+    # in-tree deterministic profiles registered in _load_default_profiles).
+    assert "default" in names
+    assert "broken" not in names
+    assert "next-app-router" in names

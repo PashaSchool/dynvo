@@ -63,10 +63,11 @@ def _load_default_profiles() -> list[FrameworkProfile]:
                 import_path, class_name, exc,
             )
 
-    # Phase 2+ deterministic profiles register here, e.g.:
-    #   _try("faultline.pipeline_v2.profiles.next_app_router",
-    #        "NextAppRouterProfile")
-    # (intentionally none yet — Phase 1 ships only the abstraction.)
+    # Phase 2+ deterministic profiles register here (built-in fallback so
+    # the profile is active even without an editable reinstall picking up
+    # the entry-point; a colliding entry-point is ignored — in-tree wins).
+    _try("faultline.pipeline_v2.profiles.next_app_router",
+         "NextAppRouterProfile")
 
     return out
 
