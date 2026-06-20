@@ -26,9 +26,11 @@ from faultline.pipeline_v2.stage_8_5_member_backfill import (
     run_stage_8_5_backfill,
 )
 from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
+    deown_anchor_scaffold,
     drop_all_nonsource_features,
     drop_phantom_product_features,
     reconcile_product_features,
+    strip_nonsource_members,
 )
 from faultline.pipeline_v2.stage_8_6_5_scaffold_filter import (
     filter_shared_scaffold,
@@ -314,6 +316,21 @@ def run_layer2_phase(
         product_features, pf_phantom_dropped = drop_phantom_product_features(
             features, product_features,
         )
+        # Increment-4 LEVER A — workspace-anchor deflation (member-level).
+        # (1) Strip non-source MEMBER files (static assets / locale-JSON /
+        #     video) from any source/non-source-mix feature — a feature
+        #     shouldn't OWN .png/.mp4/locale-json. (2) De-own shared-scaffold
+        #     members (lib/utils/types/hooks/...) from WORKSPACE-ANCHOR
+        #     features by flipping them to role="shared"/primary=False so they
+        #     stop counting toward owned_max_feature_share. Both run AFTER
+        #     flows/UFs are built (Stage 6.7) => flow-immune; the path stays in
+        #     member_files (de-own) so phantom-dup / name dedup are unchanged.
+        #     Deterministic, scale-invariant, reuses _path_is_source + a
+        #     documented subset of the Stage-8.6.5 scaffold vocabulary.
+        #     Default ON; FAULTLINE_STAGE_8_6_NONSOURCE_STRIP=0 /
+        #     FAULTLINE_STAGE_8_6_ANCHOR_SCAFFOLD_DEOWN=0 disable them.
+        nonsource_strip_result = strip_nonsource_members(features)
+        anchor_scaffold_result = deown_anchor_scaffold(features)
         # Keep dev_to_product_map consistent with surviving features +
         # product features (drop entries for vanished members / PFs).
         surviving_pf_names = {pf.name for pf in product_features}
@@ -329,13 +346,20 @@ def run_layer2_phase(
             "pf_recomputed": pf_recon["recomputed"],
             "pf_dropped_empty": pf_recon["dropped_empty"],
             "pf_dropped_phantom": pf_phantom_dropped,
+            "nonsource_member_strip": nonsource_strip_result.as_telemetry(),
+            "anchor_scaffold_deown": anchor_scaffold_result.as_telemetry(),
         }
         log8_ns.info(
             f"nonsource_drop features {features_before_ns}->{len(features)} "
             f"dropped={len(nonsource_dropped)} "
             f"pf_recomputed={pf_recon['recomputed']} "
             f"pf_dropped_empty={pf_recon['dropped_empty']} "
-            f"pf_dropped_phantom={pf_phantom_dropped}",
+            f"pf_dropped_phantom={pf_phantom_dropped} "
+            f"nonsource_members_stripped={nonsource_strip_result.members_removed}"
+            f"(feats={nonsource_strip_result.features_trimmed}) "
+            f"anchor_scaffold_deowned="
+            f"{anchor_scaffold_result.members_reclassified}"
+            f"(anchors={anchor_scaffold_result.anchors_deowned})",
         )
         write_stage_artifact(
             ctx.repo_path,
