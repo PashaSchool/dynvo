@@ -18,6 +18,7 @@ from faultline.models.types import Feature, MemberFile
 from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
 from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
     _domain_key,
+    _is_component_name,
     _is_terminal,
     _is_transparent,
     _owned_paths,
@@ -430,7 +431,12 @@ def test_terminal_segments_stop_recursion() -> None:
 
 
 def test_transparent_layers_are_not_terminal() -> None:
-    for seg in ("src", "app", "modules", "lib", "services", "components",
+    # Genuine architectural layers (and version dirs) stay transparent — the
+    # recursion descends THROUGH them to the domain beneath. NOTE: ``components``
+    # is NO LONGER here — it is now a TERMINAL component-collection dir (see
+    # test_component_collection_dirs_are_terminal). ``pages`` STAYS transparent
+    # (routing root). Same for the python-ish layers below.
+    for seg in ("src", "app", "modules", "lib", "services", "pages",
                 "api", "server", "client", "v1", "v2", "v10"):
         assert not _is_terminal(seg), seg
         assert _is_transparent(seg), seg
@@ -505,3 +511,181 @@ def test_scale_invariance_grain_floor_folds_below_median() -> None:
     assert minted == {"big", "big2"}
     assert "small" not in minted
     assert "modules/small/a.ts" in set(anchor.paths)  # folded to residual
+
+
+# ── PRECISION GUARD: per-component over-shatter (the sprint) ──────────────
+#
+# Root cause being guarded: infisical's UI lives at
+# ``frontend/src/components/v2/Accordion`` and ``…/pages/MfaSessionPage``.
+# The depth-recurse used to descend THROUGH ``components`` (a transparent
+# layer) and ``v2`` (a version dir) and mint each component dir (``Accordion``,
+# ``Button``) as a "domain" — 360 per-component junk sub-features. Three
+# guards stop that without breaking real layer-transparent domains:
+#   3a components/ui/widgets/… are TERMINAL (stop recursion)
+#   3b a PascalCase component-leaf is not a domain (catches pages/<View>)
+#   3d anti-shatter cap (a feature can't mint more domains than the repo
+#      has other features)
+
+
+# ── 3a: component-collection dirs are TERMINAL ────────────────────────────
+
+
+def test_component_collection_dirs_are_terminal() -> None:
+    # The exact over-shatter vocabulary: components / ui / widgets / … are
+    # terminal containers now — recursion stops, the subtree is residual.
+    for seg in ("components", "component", "ui", "widgets", "widget",
+                "primitives", "primitive", "elements", "element",
+                "fragments", "fragment", "partials", "partial",
+                "layouts", "layout"):
+        assert _is_terminal(seg), seg
+        assert not _is_transparent(seg), seg
+
+
+def test_components_v2_accordion_does_not_mint_accordion() -> None:
+    # THE bug: descend src → components → v2 → Accordion. With ``components``
+    # terminal the recursion stops at it → the whole UI subtree is residual,
+    # so NO ``accordion`` / ``button`` / ``card`` feature is minted.
+    for p in (
+        "frontend/src/components/v2/Accordion/Accordion.tsx",
+        "frontend/src/components/v2/Button/Button.tsx",
+        "frontend/src/components/v3/generic/Card/Card.tsx",
+        "src/components/announcements/AnnouncementModal.tsx",
+    ):
+        assert _domain_key(p) is None, p
+
+
+def test_component_collection_dir_mints_no_per_component_feature() -> None:
+    # END-TO-END: an oversized frontend whose owned files are ALL UI
+    # components under ``components/v2/<Name>`` mints ZERO sub-features (the
+    # whole collection is residual), even though there are many distinct
+    # component dirs each above the file floor.
+    comp_files = [
+        f"web/src/components/v2/{name}/{name}.tsx"
+        for name in ("Accordion", "Button", "Card", "Checkbox", "Alert")
+        for _ in range(3)  # 3 files each, ≥ floor — would have minted before
+    ]
+    # add an index so the residual exists / zero-path protection is moot
+    junk = _ws("frontend", [*comp_files, "web/src/index.ts"], uuid="u")
+    feats = [*_peers(), junk]
+    res = subdecompose_oversized_features(feats)
+    assert res.oversized_total == 1          # it IS oversized (gate fires)
+    assert res.features_split == 0           # but yields NO promotable domain
+    assert res.subfeatures_created == 0
+    minted = {f.name for f in feats} - {p.name for p in _peers()} - {"frontend"}
+    assert minted == set()                   # no Accordion/Button/… junk
+
+
+def test_real_domain_under_modules_still_mints_feature() -> None:
+    # CONTROL for 3a: a real kebab/lowercase domain dir under a transparent
+    # layer (NOT a component collection) STILL decomposes — the guard is
+    # surgical, it does not suppress genuine domains.
+    anchor = _ws("frontend", [
+        "web/src/modules/billing/a.ts", "web/src/modules/billing/b.ts",
+        "web/src/modules/reporting/a.ts", "web/src/modules/reporting/b.ts",
+        "web/src/index.ts",
+    ], uuid="u")
+    feats = [*_peers(), anchor]
+    res = subdecompose_oversized_features(feats)
+    assert res.features_split == 1
+    assert {f.name for f in feats if f.split_from == "u"} == {"billing", "reporting"}
+
+
+# ── 3b: PascalCase component-leaf guard ───────────────────────────────────
+
+
+def test_is_component_name_separates_views_from_domains() -> None:
+    # mixed-case, no separator → component/view identifier (True)
+    for seg in ("Accordion", "Button", "MfaSessionPage", "AccessManagementPage",
+                "DataTable", "aiEditor", "EmptyState"):
+        assert _is_component_name(seg), seg
+    # kebab / lowercase / SCREAMING domain dirs → real domain (False)
+    for seg in ("reverseproxy", "app-connection", "content-manager", "mail",
+                "billing", "auth", "secret-sync", "v2", "API", "UI"):
+        assert not _is_component_name(seg), seg
+
+
+def test_pascalcase_view_under_routing_root_is_residual() -> None:
+    # ``pages`` STAYS transparent (it is a Pages-Router routing root), but a
+    # PascalCase VIEW dir beneath it (``pages/MfaSessionPage``) is a single
+    # view component, not a domain → residual (3b). A kebab/lowercase route
+    # under the SAME ``pages`` root still promotes. (Route names here avoid the
+    # workspace-container words ``admin``/``dashboard`` which are transparent.)
+    assert _domain_key("web/src/pages/MfaSessionPage/MfaSessionPage.tsx") is None
+    assert _domain_key("web/src/pages/SettingsPage/Tab.tsx") is None  # PascalCase view
+    assert _domain_key("web/src/pages/billing/invoices.tsx") == "web/src/pages/billing"
+    assert _domain_key("web/src/pages/reporting/charts.tsx") == "web/src/pages/reporting"
+
+
+def test_pages_router_real_routes_still_decompose() -> None:
+    # CONTROL for 3b: a genuine Pages-Router app with kebab route dirs under
+    # ``pages/`` decomposes into those route domains (the routing root is NOT
+    # broken by the component guard). ``billing``/``reporting`` are real route
+    # domains; ``MfaSessionPage`` (PascalCase view) folds to residual.
+    anchor = _ws("web", [
+        "src/pages/billing/index.tsx", "src/pages/billing/invoices.tsx",
+        "src/pages/reporting/index.tsx", "src/pages/reporting/charts.tsx",
+        "src/pages/MfaSessionPage/MfaSessionPage.tsx",  # view → residual
+        "src/pages/index.tsx",  # loose residual
+    ], uuid="u")
+    feats = [*_peers(), anchor]
+    res = subdecompose_oversized_features(feats)
+    assert res.features_split == 1
+    minted = {f.name for f in feats if f.split_from == "u"}
+    assert minted == {"billing", "reporting"}
+    assert "mfasessionpage" not in minted  # PascalCase view never minted
+
+
+# ── 3d: anti-shatter cap (scale-invariant) ────────────────────────────────
+
+
+def test_plan_split_cap_coarsens_long_tail() -> None:
+    # 5 promotable domains but a cap of 3 → keep the 3 LARGEST, fold the 2
+    # smallest into residual. File conservation holds.
+    paths = (
+        [f"m/big/{i}.ts" for i in range(6)]      # 6
+        + [f"m/mid1/{i}.ts" for i in range(5)]   # 5
+        + [f"m/mid2/{i}.ts" for i in range(4)]   # 4
+        + [f"m/small1/{i}.ts" for i in range(3)] # 3
+        + [f"m/small2/{i}.ts" for i in range(3)] # 3
+    )
+    domains, residual = _plan_split(paths, floor=2, max_domains=3)
+    assert set(domains) == {"m/big", "m/mid1", "m/mid2"}   # 3 largest kept
+    # tail folded to residual, nothing lost
+    flat = [p for fs in domains.values() for p in fs] + residual
+    assert sorted(flat) == sorted(paths)
+    assert any("small1" in p for p in residual)
+    assert any("small2" in p for p in residual)
+
+
+def test_plan_split_no_cap_keeps_all_domains() -> None:
+    # max_domains=None (default) → no coarsening; all promotable domains kept.
+    paths = [f"m/d{d}/{i}.ts" for d in range(5) for i in range(2)]
+    domains, _ = _plan_split(paths, floor=2)
+    assert len(domains) == 5
+
+
+def test_anti_shatter_cap_is_repo_grain_relative() -> None:
+    # End-to-end: a tiny repo (few features) caps a fat feature's domain count
+    # at the repo's other-feature count; a large repo lets the same shape mint
+    # many domains. Same RELATIVE rule, no magic constant (rule-no-magic-tuning).
+    # Domains live under a recognised transparent layer (``modules``) — the
+    # real-world shape — plus a loose residual under that layer so the common
+    # prefix stays the layer and every domain dir is detected.
+    def anchor(uuid: str):
+        paths = [f"modules/d{d}/{i}.ts" for d in range(10) for i in range(2)]
+        paths.append("modules/index.ts")  # loose residual under the layer
+        return _ws("frontend", paths, uuid=uuid)
+
+    # Tiny: 3 peers (median 2) + anchor → n_devs = 4 → cap = max(2, 3) = 3.
+    tiny = [*_peers(3), anchor("t")]
+    rt = subdecompose_oversized_features(tiny)
+    assert rt.features_split == 1
+    minted_tiny = sum(1 for f in tiny if f.split_from == "t")
+    assert minted_tiny == 3  # capped at n_other_dev_features = 3
+
+    # Large: 40 peers + the SAME 10-domain anchor → cap = 40 > 10, so all 10
+    # domains promote (no coarsening) — the rule scales with the repo.
+    big = [*_peers(40), anchor("b")]
+    subdecompose_oversized_features(big)
+    minted_big = sum(1 for f in big if f.split_from == "b")
+    assert minted_big == 10  # uncapped at this scale
