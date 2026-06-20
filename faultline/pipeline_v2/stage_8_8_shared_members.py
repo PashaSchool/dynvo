@@ -41,6 +41,7 @@ Default ON; disable via ``FAULTLINE_STAGE_8_8_SHARED_MEMBERS=0``.
 
 from __future__ import annotations
 
+import math
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -68,6 +69,48 @@ if TYPE_CHECKING:
 # primary closure claim — this is N:M provenance, never primary ownership.
 _SHARED_IMPORT_CONFIDENCE = 0.5
 
+# ── Barrel / hub conduit guard (Phase-3 framework-awareness) ─────────────
+#
+# A barrel (``index.ts`` re-exporting many modules) or a high-fan-in hub
+# (e.g. ``prisma.module.ts``, ``app.module.ts``, ``withMiddleware.ts``,
+# a shared ``constants/index.ts``) sits on the import path of nearly every
+# feature. When such a file is part of the de-sink residual, this stage
+# would otherwise attach its WHOLE residual closure as a ``shared`` member
+# of EVERY importing feature — producing identical phantom member-sets
+# (cal-com: 10 enum features each carrying the same 140 files; 92 more
+# carrying an identical 133-file set). That is the duplicate / phantom
+# feature generator the framework-awareness mission targets.
+#
+# The guard: a residual file imported by an OUTLIER number of features is
+# platform infra, not a per-feature member. It is left as honest residual
+# on the workspace anchor (its existing role) and NOT propagated N:M.
+#
+# Threshold is scale-invariant by construction (per rule-no-magic-tuning):
+#
+#     T = max(_FANOUT_FLOOR, P90, ceil(_FANOUT_MIN_FRAC * n_features))
+#
+#   * ``_FANOUT_FLOOR`` (3) — three independent claimants before a share is
+#     even a candidate for "infrastructure" (same convention as Stage 2.6 /
+#     Stage 4 SAT_WINDOW). A pairwise share is a legitimate attachment.
+#   * ``P90`` of the repo's OWN per-file importer-count distribution — a
+#     file in the top decile of fan-in is statistically a hub for THIS repo,
+#     whatever its absolute size.
+#   * ``ceil(_FANOUT_MIN_FRAC * n_features)`` — a structural floor that
+#     prevents P90 from stripping legitimate low-fan-in shares on repos with
+#     NO conduit (e.g. documenso P90=4: without this floor a benign
+#     4-importer util would be dropped). 10% of all features is the
+#     "touched by a meaningful slice of the product" boundary.
+#
+# Measured (cached cold scans, member_files is post-LLM additive so this
+# filter is faithfully simulable): cal-com phantom dup-features 102→0,
+# trigger.dev 56→0, infisical 42→7; documenso / openstatus / supabase
+# (no conduit symptom) byte-unchanged. uf_recall / naming / dup_flow read
+# flows + names, never member_files, so they cannot regress; owned-blob
+# (the workspace-anchor gate) is untouched because these files are already
+# role="shared" / primary=False.
+_FANOUT_FLOOR = 3
+_FANOUT_MIN_FRAC = 0.10
+
 
 @dataclass
 class SharedMemberResult:
@@ -77,6 +120,8 @@ class SharedMemberResult:
     edges: int = 0                      # total (feature, file) shared claims
     features_enriched: int = 0
     coverage_pct: float = 0.0
+    fanout_cap: int = 0                 # barrel/hub conduit threshold
+    conduit_files: int = 0             # residual files skipped as conduits
     sample: list[dict[str, Any]] = field(default_factory=list)
 
     def as_telemetry(self) -> dict[str, Any]:
@@ -87,12 +132,35 @@ class SharedMemberResult:
             "edges": self.edges,
             "features_enriched": self.features_enriched,
             "coverage_pct": self.coverage_pct,
+            "fanout_cap": self.fanout_cap,
+            "conduit_files": self.conduit_files,
             "sample": list(self.sample[:20]),
         }
 
 
 def _is_enabled() -> bool:
     return os.environ.get("FAULTLINE_STAGE_8_8_SHARED_MEMBERS", "1") != "0"
+
+
+def _nearest_rank(sorted_values: list[int], pct: float) -> int:
+    """Nearest-rank percentile of a pre-sorted nonempty int list."""
+    if not sorted_values:
+        return 0
+    n = len(sorted_values)
+    rank = max(1, math.ceil(pct * n))
+    return sorted_values[min(rank, n) - 1]
+
+
+def _fanout_cap(importer_counts: list[int], n_features: int) -> int:
+    """Scale-invariant fan-out cap for the barrel/hub conduit guard.
+
+    ``importer_counts`` is the per-residual-file importer-count distribution.
+    See the module-level constants for the rationale of each prong.
+    """
+    sorted_counts = sorted(importer_counts)
+    p90 = _nearest_rank(sorted_counts, 0.90)
+    frac_floor = math.ceil(_FANOUT_MIN_FRAC * n_features)
+    return max(_FANOUT_FLOOR, p90, frac_floor)
 
 
 def _resolve_one(
@@ -167,6 +235,21 @@ def enrich_shared_members(
                     imports_by_feature[f.name].add(tgt)
                     importers_by_file[tgt].add(f.name)
 
+    # ── Barrel / hub conduit guard ───────────────────────────────────
+    # A residual file imported by an outlier number of features is a
+    # barrel/hub conduit (platform infra), not a per-feature member.
+    # Skip its N:M propagation; it stays honest residual on the anchor.
+    fanout_cap = _fanout_cap(
+        [len(v) for v in importers_by_file.values()],
+        len(features),
+    )
+    conduit_files = {
+        fp for fp, importers in importers_by_file.items()
+        if len(importers) >= fanout_cap
+    }
+    result.fanout_cap = fanout_cap
+    result.conduit_files = len(conduit_files)
+
     feat_by_name = {f.name: f for f in specifics}
     edges = 0
     enriched = 0
@@ -176,6 +259,8 @@ def enrich_shared_members(
         added = 0
         for fp in sorted(files):
             if fp in existing:
+                continue
+            if fp in conduit_files:
                 continue
             n_importers = len(importers_by_file[fp])
             feat.member_files.append(MemberFile(
@@ -193,14 +278,15 @@ def enrich_shared_members(
         if added:
             enriched += 1
 
-    result.residual_attached = len(importers_by_file)
+    attached_files = [fp for fp in importers_by_file if fp not in conduit_files]
+    result.residual_attached = len(attached_files)
     result.edges = edges
     result.features_enriched = enriched
-    result.coverage_pct = round(len(importers_by_file) / len(residual), 4)
+    result.coverage_pct = round(len(attached_files) / len(residual), 4)
     result.sample = [
         {"file": fp, "importers": sorted(importers_by_file[fp])[:5],
          "n_importers": len(importers_by_file[fp])}
-        for fp in sorted(importers_by_file, key=lambda x: -len(importers_by_file[x]))[:20]
+        for fp in sorted(attached_files, key=lambda x: -len(importers_by_file[x]))[:20]
     ]
     return result
 
