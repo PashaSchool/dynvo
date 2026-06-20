@@ -65,14 +65,18 @@ def test_two_sources_same_name_merge_to_high_confidence(tmp_path: Path) -> None:
 
 
 def test_single_source_yields_medium_confidence(tmp_path: Path) -> None:
+    # Single NON-schema source → medium confidence. (A schema-only
+    # single source is now suppressed as a phantom — see
+    # test_schema_only_feature_is_suppressed — so we use ``config`` here
+    # to isolate the confidence rule from the suppression rule.)
     cands = {
-        "schema": [_cand("subscription", "schema", ("db/schema.ts",))],
+        "config": [_cand("subscription", "config", ("billing.config.ts",))],
     }
-    ctx = _ctx(tmp_path, files=["db/schema.ts"])
+    ctx = _ctx(tmp_path, files=["billing.config.ts"])
     result = stage_2_reconcile(cands, ctx)
     assert len(result.features) == 1
     assert result.features[0].confidence == "medium"
-    assert result.features[0].sources == ["schema"]
+    assert result.features[0].sources == ["config"]
 
 
 def test_conflicting_slugs_pick_by_priority(tmp_path: Path) -> None:
@@ -470,7 +474,16 @@ def test_soc0_shaped_fragment_triple_merges(tmp_path: Path) -> None:
 def test_file_overlap_schema_route_do_not_merge(tmp_path: Path) -> None:
     """Refuted-finding guard: a schema model and a route feature that
     share files (one schema.prisma holds every model) are NOT the same
-    feature and must not merge via file overlap."""
+    feature and must not merge via file overlap.
+
+    Post-suppression: because the slugs differ (``document`` model vs
+    ``document-editor`` route) they do NOT name-merge, so ``document``
+    stays a bare schema-only feature and is then SUPPRESSED as a
+    phantom. The load-bearing assertion for this guard is that they did
+    not fuse into a single ``document-editor`` feature carrying the
+    schema source — they were resolved independently. The route feature
+    survives intact.
+    """
     cands = {
         "schema": [_cand("document", "schema", ("prisma/schema.prisma",))],
         "route":  [_cand(
@@ -485,7 +498,10 @@ def test_file_overlap_schema_route_do_not_merge(tmp_path: Path) -> None:
 
     result = stage_2_reconcile(cands, ctx)
 
-    assert {f.name for f in result.features} == {"document", "document-editor"}
+    # No merge: the route feature is alone (not fused with the schema
+    # model), and the bare schema model is suppressed as a phantom.
+    assert {f.name for f in result.features} == {"document-editor"}
+    assert result.schema_only_suppressed_sample == ["document"]
 
 
 def test_file_overlap_same_source_siblings_do_not_merge(tmp_path: Path) -> None:
@@ -575,3 +591,178 @@ def test_no_merge_without_file_overlap_or_name_signal(tmp_path: Path) -> None:
     assert {f.name for f in result.features} == {
         "workspace-settings", "workspace-billing-portal",
     }
+
+
+# ── Schema-only phantom suppression (2026-06) ──────────────────────────────
+
+
+def test_schema_only_feature_is_suppressed(tmp_path: Path) -> None:
+    """A bare Prisma model with no owning code (anchor = only the shared
+    schema file) must NOT be emitted as a standalone developer feature.
+
+    This is the cal.com host-group/credential/... phantom-dup root
+    cause: dozens of schema-only models that each spawn a feature and
+    then get the same import-closure cloned onto them.
+    """
+    cands = {
+        "schema": [
+            _cand("host-group", "schema", ("packages/prisma/schema.prisma",)),
+            _cand("credential", "schema", ("packages/prisma/schema.prisma",)),
+            _cand("organization-settings", "schema",
+                  ("packages/prisma/schema.prisma",)),
+        ],
+    }
+    ctx = _ctx(tmp_path, files=["packages/prisma/schema.prisma"])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert result.features == []
+    assert result.schema_only_suppressed_count == 3
+    assert set(result.schema_only_suppressed_sample) == {
+        "host-group", "credential", "organization-settings",
+    }
+    assert any("schema-only phantom" in n for n in result.notes)
+
+
+def test_schema_model_with_own_route_survives(tmp_path: Path) -> None:
+    """A model that ALSO has its own route name-merges with the route
+    candidate and gains a non-schema source → it survives.
+
+    ``booking`` (Prisma model) + ``booking`` (route on a real page) is a
+    real product feature, not a bare data entity.
+    """
+    cands = {
+        "schema": [_cand("booking", "schema", ("packages/prisma/schema.prisma",))],
+        "route":  [_cand("booking", "route",
+                         ("apps/web/app/booking/[uid]/page.tsx",))],
+    }
+    ctx = _ctx(tmp_path, files=[
+        "packages/prisma/schema.prisma",
+        "apps/web/app/booking/[uid]/page.tsx",
+    ])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert len(result.features) == 1
+    f = result.features[0]
+    assert f.name == "booking"
+    assert "route" in f.sources  # gained a code source → not a phantom
+    assert result.schema_only_suppressed_count == 0
+
+
+def test_schema_model_with_own_module_survives(tmp_path: Path) -> None:
+    """A model with its own feature module (package source) survives —
+    the package candidate carries the owning code, so the merged feature
+    is not schema-only."""
+    cands = {
+        "schema":  [_cand("membership", "schema",
+                          ("packages/prisma/schema.prisma",))],
+        "package": [_cand("membership", "package",
+                          ("packages/features/membership/index.ts",))],
+    }
+    ctx = _ctx(tmp_path, files=[
+        "packages/prisma/schema.prisma",
+        "packages/features/membership/index.ts",
+    ])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert {f.name for f in result.features} == {"membership"}
+    assert result.schema_only_suppressed_count == 0
+
+
+def test_rails_models_only_suppressed_but_with_routes_survives(
+    tmp_path: Path,
+) -> None:
+    """``rails-models`` is the same schema-declaration class as Prisma.
+
+    A models-only resource (no controller/route/view) is suppressed; a
+    resource whose model name-merges with a ``rails-routes`` candidate
+    survives.
+    """
+    bare = {
+        "rails-models": [_cand("audit-log", "rails-models",
+                              ("app/models/audit_log.rb",))],
+    }
+    ctx = _ctx(tmp_path, files=["app/models/audit_log.rb"])
+    res_bare = stage_2_reconcile(bare, ctx)
+    assert res_bare.features == []
+    assert res_bare.schema_only_suppressed_count == 1
+
+    real = {
+        "rails-models": [_cand("invoice", "rails-models",
+                              ("app/models/invoice.rb",))],
+        "rails-routes": [_cand("invoice", "rails-routes",
+                              ("app/controllers/invoices_controller.rb",))],
+    }
+    ctx2 = _ctx(tmp_path, files=[
+        "app/models/invoice.rb",
+        "app/controllers/invoices_controller.rb",
+    ])
+    res_real = stage_2_reconcile(real, ctx2)
+    assert {f.name for f in res_real.features} == {"invoice"}
+    assert res_real.schema_only_suppressed_count == 0
+
+
+def test_schema_plus_js_library_not_suppressed(tmp_path: Path) -> None:
+    """A Prisma ENUM re-exported through a js-library barrel carries a
+    ``js-library`` source → NOT a schema-only phantom, so this rule
+    leaves it alone (the Stage 8.8 barrel guard owns that fan-out)."""
+    cands = {
+        "schema":     [_cand("period-type", "schema",
+                            ("packages/prisma/schema.prisma",))],
+        "js-library": [_cand("period-type", "js-library",
+                            ("packages/platform/libraries/index.ts",))],
+    }
+    ctx = _ctx(tmp_path, files=[
+        "packages/prisma/schema.prisma",
+        "packages/platform/libraries/index.ts",
+    ])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert {f.name for f in result.features} == {"period-type"}
+    assert result.schema_only_suppressed_count == 0
+
+
+def test_no_op_when_no_schema_only_features(tmp_path: Path) -> None:
+    """A repo with only real (code-anchored) features is untouched — the
+    suppression is a no-op and the count is 0."""
+    cands = {
+        "route":   [_cand("dashboard", "route", ("app/dashboard/page.tsx",))],
+        "package": [_cand("billing", "package", ("packages/billing/index.ts",))],
+    }
+    ctx = _ctx(tmp_path, files=[
+        "app/dashboard/page.tsx", "packages/billing/index.ts",
+    ])
+
+    result = stage_2_reconcile(cands, ctx)
+
+    assert {f.name for f in result.features} == {"dashboard", "billing"}
+    assert result.schema_only_suppressed_count == 0
+    assert result.schema_only_suppressed_sample == []
+
+
+def test_suppression_scale_invariant_tiny_and_large(tmp_path: Path) -> None:
+    """No magic numbers: the rule fires identically for a 1-model schema
+    and a 200-model schema. Structural, not count-based."""
+    # Tiny: a single schema-only model is suppressed.
+    tiny = {"schema": [_cand("widget", "schema", ("db/schema.prisma",))]}
+    r_tiny = stage_2_reconcile(tiny, _ctx(tmp_path, files=["db/schema.prisma"]))
+    assert r_tiny.features == []
+    assert r_tiny.schema_only_suppressed_count == 1
+
+    # Large: 200 schema-only models all suppressed; the one with a route
+    # survives — proving the rule is per-feature structural, not a
+    # corpus-tuned threshold.
+    big_cands = {
+        "schema": [
+            _cand(f"model-{i}", "schema", ("db/schema.prisma",))
+            for i in range(200)
+        ],
+        "route": [_cand("model-7", "route", ("app/model7/page.tsx",))],
+    }
+    ctx = _ctx(tmp_path, files=["db/schema.prisma", "app/model7/page.tsx"])
+    r_big = stage_2_reconcile(big_cands, ctx)
+    assert {f.name for f in r_big.features} == {"model-7"}
+    assert r_big.schema_only_suppressed_count == 199

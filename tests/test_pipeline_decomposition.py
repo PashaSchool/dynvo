@@ -238,7 +238,12 @@ def test_assemble_scan_meta_keys() -> None:
             "filesystem_missing": 0, "anchor_duplicate": 0, "junk_name": 0,
         },
     )
-    stage2 = SimpleNamespace(zero_path_drops_count=0, zero_path_drops_sample=[])
+    stage2 = SimpleNamespace(
+        zero_path_drops_count=0,
+        zero_path_drops_sample=[],
+        schema_only_suppressed_count=0,
+        schema_only_suppressed_sample=[],
+    )
     stage3 = SimpleNamespace(cost_usd=0.0, reach_telemetry={})
     stage4 = SimpleNamespace(
         cost_usd=0.0,

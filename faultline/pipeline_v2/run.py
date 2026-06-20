@@ -341,6 +341,11 @@ def run_pipeline_v2(
                 f"zero_path_drops: {stage2.zero_path_drops_count} "
                 f"sample={stage2.zero_path_drops_sample}",
             )
+        if stage2.schema_only_suppressed_count:
+            log2.info(
+                f"schema_only_suppressed: {stage2.schema_only_suppressed_count} "
+                f"sample={stage2.schema_only_suppressed_sample}",
+            )
         for note in stage2.notes:
             log2.info(note)
         write_stage_artifact(
@@ -363,6 +368,9 @@ def run_pipeline_v2(
                 # Sprint S4b — zero-path defensive drop telemetry.
                 "zero_path_drops_count": stage2.zero_path_drops_count,
                 "zero_path_drops_sample": stage2.zero_path_drops_sample,
+                # Schema-only phantom suppression telemetry.
+                "schema_only_suppressed_count": stage2.schema_only_suppressed_count,
+                "schema_only_suppressed_sample": stage2.schema_only_suppressed_sample,
             },
             run_dir=run_dir,
         )
