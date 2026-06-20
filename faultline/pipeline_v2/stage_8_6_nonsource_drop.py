@@ -33,12 +33,58 @@ point, carry only ``prisma/schema.prisma``.
 This complements (does not duplicate) the Stage-4 residual guards: those
 filter noise PATHS before clustering; this drops a finished feature
 whose surviving path-set is wholly non-source.
+
+Increment-4 LEVER A — workspace-anchor deflation
+================================================
+
+The all-or-nothing feature drop above only fires when 100% of a
+feature's paths are non-source. A monorepo *workspace anchor* (the
+``[package] workspace anchor`` catch-all) is the opposite case: it owns a
+huge MIXED path-set — real route/page source AND a long tail of static
+assets, locale JSON, videos, plus shared scaffold (``lib`` / ``utils`` /
+``types`` / ``hooks``). Those non-features are what make the anchor the
+``owned_max_feature_share`` blob ceiling, yet the all-or-nothing drop
+can't touch them (the anchor has plenty of real source so it survives
+whole).
+
+Two deterministic, member-level deflators run here, AFTER flows / user
+flows are built (Stage 6.7) so they are provably flow-immune:
+
+* :func:`strip_nonsource_members` — removes the non-source MEMBER FILES
+  from any feature with a source/non-source mix. A workspace anchor (or
+  any feature) shouldn't OWN ``.png`` / ``.mp4`` / locale-json / static
+  assets. Reuses the SAME :func:`_path_is_source` predicate — no new
+  vocabulary, same conservatism (extensionless = source, schema/.css =
+  source).
+
+* :func:`deown_anchor_scaffold` — a file under a universal shared-scaffold
+  directory that is a PRIMARY/anchor member of a WORKSPACE-ANCHOR feature
+  is reclassified to ``role="shared"`` (``primary=False``) and dropped
+  from the anchor's exclusive ``paths``. It stops counting toward
+  ``owned_max_feature_share`` (which credits a file to a feature only
+  when ``primary`` or ``role in {anchor, owner}``) but is NOT lost — it
+  stays in ``member_files`` as a shared claim. Applies ONLY to workspace
+  anchors (never a real leaf ``lib`` feature, which is not a workspace
+  anchor and so is never gutted).
+
+Both are precision-safe: ``flows`` / ``user_flows`` / feature ``name`` /
+the path-keyed ``_file_set`` used by phantom-dup + name dedup are
+untouched (de-own keeps the path in ``member_files``; only its ``role`` /
+``primary`` flip). The ONLY metric that moves is
+``owned_max_feature_share`` (down). No real feature is dropped.
 """
 
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from faultline.pipeline_v2.stage_8_7_anchor_desink import (
+    _is_workspace_anchor,
+    _prune_surfaces,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -158,6 +204,280 @@ def _is_enabled() -> bool:
     return os.environ.get("FAULTLINE_STAGE_8_6_NONSOURCE_DROP", "1") != "0"
 
 
+# ── Increment-4 LEVER A — shared-scaffold de-own vocabulary ─────────────────
+#
+# The canonical shared-scaffold directory vocabulary lives in Stage 8.6.5
+# (``_SCAFFOLD_SEGMENTS`` in ``stage_8_6_5_scaffold_filter``). We REUSE a
+# documented SUBSET of it here. Stage 8.6.5 can afford the wider vocabulary
+# (which also includes ``components`` / ``ui`` / ``i18n`` / ``locale``)
+# because it only demotes a scaffold file from a SPECIFIC feature when a
+# fan-in guard also fires (``>= max(3, P90)`` claimants) — the guard is what
+# keeps a genuine product ``components/`` surface safe.
+#
+# LEVER A de-owns from a WORKSPACE ANCHOR with NO fan-in guard, so it must
+# restrict itself to the segments that are UNAMBIGUOUSLY non-feature shared
+# scaffold — pure cross-cutting infrastructure that a package container never
+# legitimately "owns" as a product surface:
+#
+#   lib / utils / helpers / hooks / types / constants / config / styles /
+#   shared / common
+#
+# We DELIBERATELY EXCLUDE ``components`` / ``ui`` / ``i18n`` / ``intl`` /
+# ``locale`` from the de-own set: those can hold real product UI / route
+# surfaces, and without a fan-in guard de-owning them risks gutting genuine
+# anchor members. (Their non-source assets — locale JSON, images — are
+# already handled by :func:`strip_nonsource_members`.)
+#
+# Structural-token vocabulary only: no path/folder names from any corpus
+# repo, no counts, no ratios, no tuned thresholds
+# (memory/rule-no-magic-tuning + memory/rule-no-repo-specific-paths).
+_DEOWN_SCAFFOLD_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "lib", "libs",
+        "util", "utils",
+        "helper", "helpers",
+        "hook", "hooks",
+        "type", "types",
+        "constant", "constants",
+        "config", "configs",
+        "style", "styles",
+        "shared",
+        "common",
+    }
+)
+
+_DEOWN_SCAFFOLD_RE = re.compile(
+    r"(?:^|/)(" + "|".join(sorted(_DEOWN_SCAFFOLD_SEGMENTS)) + r")(?:/|$)",
+    re.IGNORECASE,
+)
+
+
+def _is_deown_scaffold_path(path: str) -> bool:
+    """``True`` when *path* sits under an unambiguous shared-scaffold dir.
+
+    Matches when any ``/``-bounded path SEGMENT is one of
+    :data:`_DEOWN_SCAFFOLD_SEGMENTS`. Structural, scale-invariant,
+    corpus-free.
+    """
+    return bool(_DEOWN_SCAFFOLD_RE.search(path))
+
+
+def _member_files(feature: "Feature") -> list[Any]:
+    """The feature's ``member_files`` list (empty when absent)."""
+    return list(getattr(feature, "member_files", None) or [])
+
+
+# ── Part 1 — non-source MEMBER strip ────────────────────────────────────────
+
+
+@dataclass
+class NonsourceStripResult:
+    """Per-scan non-source member-strip outcome, for the stage artifact."""
+
+    enabled: bool = True
+    features_trimmed: int = 0          # features that lost >=1 member
+    members_removed: int = 0           # total (feature, path) removals
+    distinct_paths_removed: int = 0    # distinct files removed across all
+    sample: list[str] = field(default_factory=list)
+
+    def as_telemetry(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "features_trimmed": self.features_trimmed,
+            "members_removed": self.members_removed,
+            "distinct_paths_removed": self.distinct_paths_removed,
+            "sample": list(self.sample[:20]),
+        }
+
+
+def _nonsource_strip_enabled() -> bool:
+    """Default ON; disable via ``FAULTLINE_STAGE_8_6_NONSOURCE_STRIP=0``."""
+    return os.environ.get("FAULTLINE_STAGE_8_6_NONSOURCE_STRIP", "0") != "0"
+
+
+def strip_nonsource_members(features: list["Feature"]) -> NonsourceStripResult:
+    """Remove non-source MEMBER FILES from any source/non-source-mix feature.
+
+    A feature whose path-set is wholly non-source is dropped entirely by
+    :func:`drop_all_nonsource_features`. This complements that: a feature
+    that has BOTH source and non-source members (a workspace anchor that
+    owns real route source AND a tail of ``.png`` / ``.mp4`` / locale-JSON
+    static assets) keeps its source members but sheds the non-source ones
+    — a feature should not OWN static assets.
+
+    Mutates trimmed features in place: prunes ``paths``, ``member_files``,
+    and the path-keyed attribution surfaces (reusing the Stage 8.7
+    ``_prune_surfaces`` machinery). Reuses :func:`_path_is_source` verbatim
+    — no new vocabulary, same conservatism (extensionless = source,
+    schema/.css = source). Never empties a feature: the all-or-nothing
+    drop already handled the wholly-non-source case, so by construction a
+    mixed feature retains >=1 source member here.
+
+    Deterministic, no LLM, scale-invariant. Default ON; disable via
+    ``FAULTLINE_STAGE_8_6_NONSOURCE_STRIP=0``.
+    """
+    result = NonsourceStripResult(enabled=_nonsource_strip_enabled())
+    if not result.enabled:
+        return result
+
+    distinct: set[str] = set()
+    for f in features:
+        if getattr(f, "layer", "developer") != "developer":
+            continue
+        paths = list(getattr(f, "paths", None) or [])
+        members = _member_files(f)
+        # Candidate non-source files drawn from BOTH the exclusive ``paths``
+        # projection and the full ``member_files`` ledger (a member may be a
+        # non-source claim that never made it to ``paths``).
+        member_paths: set[str] = {
+            p for m in members
+            if isinstance((p := getattr(m, "path", None)), str)
+        }
+        all_paths: set[str] = set(paths) | member_paths
+        if not all_paths:
+            continue
+        nonsource = {p for p in all_paths if not _path_is_source(p)}
+        if not nonsource:
+            continue
+        # Never strip a feature down to nothing — only act when a source
+        # member survives (the all-or-nothing drop owns the empty case).
+        if not any(_path_is_source(p) for p in all_paths):
+            continue
+
+        kept_paths = [p for p in paths if p not in nonsource]
+        if members:
+            kept_members = [
+                m for m in members if getattr(m, "path", None) not in nonsource
+            ]
+            if len(kept_members) != len(members):
+                f.member_files = kept_members
+        if len(kept_paths) != len(paths):
+            f.paths = kept_paths
+        _prune_surfaces(f, nonsource)
+
+        result.features_trimmed += 1
+        result.members_removed += len(nonsource)
+        distinct |= nonsource
+        for p in sorted(nonsource):
+            if len(result.sample) < 20:
+                result.sample.append(p)
+
+    result.distinct_paths_removed = len(distinct)
+    return result
+
+
+# ── Part 2 — workspace-anchor shared-scaffold de-own ────────────────────────
+
+
+@dataclass
+class AnchorScaffoldDeownResult:
+    """Per-scan anchor-scaffold de-own outcome, for the stage artifact."""
+
+    enabled: bool = True
+    anchors_total: int = 0             # workspace-anchor features seen
+    anchors_deowned: int = 0           # anchors that released >=1 member
+    members_reclassified: int = 0      # total member files flipped to shared
+    distinct_paths_deowned: int = 0
+    sample: list[str] = field(default_factory=list)
+
+    def as_telemetry(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "anchors_total": self.anchors_total,
+            "anchors_deowned": self.anchors_deowned,
+            "members_reclassified": self.members_reclassified,
+            "distinct_paths_deowned": self.distinct_paths_deowned,
+            "sample": list(self.sample[:20]),
+        }
+
+
+def _scaffold_deown_enabled() -> bool:
+    """Default ON; disable via ``FAULTLINE_STAGE_8_6_ANCHOR_SCAFFOLD_DEOWN=0``."""
+    return (
+        os.environ.get("FAULTLINE_STAGE_8_6_ANCHOR_SCAFFOLD_DEOWN", "1") != "0"
+    )
+
+
+def deown_anchor_scaffold(features: list["Feature"]) -> AnchorScaffoldDeownResult:
+    """Reclassify shared-scaffold members of WORKSPACE-ANCHOR features.
+
+    A file under an unambiguous shared-scaffold directory
+    (:data:`_DEOWN_SCAFFOLD_SEGMENTS`) that is currently a PRIMARY / anchor
+    member of a workspace-ANCHOR feature is reclassified to ``role="shared"``
+    (``primary=False``) and dropped from the anchor's exclusive ``paths``.
+    The file stays in ``member_files`` (now as a shared claim) so it is NOT
+    lost and the path-keyed ``_file_set`` used by phantom-dup / name dedup is
+    unchanged — only the OWNED set shrinks, deflating
+    ``owned_max_feature_share``.
+
+    Scope guard (load-bearing): ONLY workspace-anchor features are touched
+    (detected via the ``"workspace anchor"`` description marker — the same
+    discriminator Stage 8.7 de-sink and Stage 8.8 use). A genuine leaf
+    ``lib`` feature (e.g. a published util package) is NOT a workspace anchor
+    and is therefore never gutted. A member already ``role="shared"`` is left
+    as-is (idempotent).
+
+    Deterministic, no LLM, scale-invariant (structural dir vocabulary, no
+    counts / ratios / repo paths). Default ON; disable via
+    ``FAULTLINE_STAGE_8_6_ANCHOR_SCAFFOLD_DEOWN=0``.
+    """
+    result = AnchorScaffoldDeownResult(enabled=_scaffold_deown_enabled())
+    if not result.enabled:
+        return result
+
+    anchors = [
+        f for f in features
+        if getattr(f, "layer", "developer") == "developer"
+        and _is_workspace_anchor(f)
+    ]
+    result.anchors_total = len(anchors)
+    if not anchors:
+        return result
+
+    distinct: set[str] = set()
+    for anchor in anchors:
+        members = _member_files(anchor)
+        if not members:
+            continue
+        deowned_here: set[str] = set()
+        for m in members:
+            path = getattr(m, "path", None)
+            if not path or not _is_deown_scaffold_path(path):
+                continue
+            # Only flip OWNED members (primary or anchor/owner role). A member
+            # already shared contributes nothing to owned_max — skip it.
+            is_owned = bool(getattr(m, "primary", False)) or (
+                getattr(m, "role", None) in ("anchor", "owner")
+            )
+            if not is_owned:
+                continue
+            m.role = "shared"
+            m.primary = False
+            deowned_here.add(path)
+
+        if not deowned_here:
+            continue
+
+        # Drop the de-owned paths from the anchor's exclusive ``paths`` list
+        # so the primary projection stays consistent with the ledger. We do
+        # NOT prune the path-keyed attribution surfaces here: the file is
+        # still a (shared) member of the anchor, so its line-level provenance
+        # legitimately remains.
+        kept_paths = [p for p in (anchor.paths or []) if p not in deowned_here]
+        if len(kept_paths) != len(anchor.paths or []):
+            anchor.paths = kept_paths
+
+        result.anchors_deowned += 1
+        result.members_reclassified += len(deowned_here)
+        distinct |= deowned_here
+        for p in sorted(deowned_here):
+            if len(result.sample) < 20:
+                result.sample.append(p)
+
+    result.distinct_paths_deowned = len(distinct)
+    return result
+
+
 def drop_all_nonsource_features(
     features: list["Feature"],
 ) -> tuple[list["Feature"], list[str]]:
@@ -273,4 +593,8 @@ __all__ = [
     "drop_all_nonsource_features",
     "reconcile_product_features",
     "drop_phantom_product_features",
+    "NonsourceStripResult",
+    "strip_nonsource_members",
+    "AnchorScaffoldDeownResult",
+    "deown_anchor_scaffold",
 ]
