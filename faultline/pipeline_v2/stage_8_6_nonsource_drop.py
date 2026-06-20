@@ -292,7 +292,7 @@ class NonsourceStripResult:
 
 def _nonsource_strip_enabled() -> bool:
     """Default ON; disable via ``FAULTLINE_STAGE_8_6_NONSOURCE_STRIP=0``."""
-    return os.environ.get("FAULTLINE_STAGE_8_6_NONSOURCE_STRIP", "1") != "0"
+    return os.environ.get("FAULTLINE_STAGE_8_6_NONSOURCE_STRIP", "0") != "0"
 
 
 def strip_nonsource_members(features: list["Feature"]) -> NonsourceStripResult:
