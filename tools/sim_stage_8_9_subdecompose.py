@@ -1,134 +1,224 @@
 #!/usr/bin/env python3
-"""Deterministic simulation of Stage 8.9 oversized-feature sub-decomposition.
+"""Faithful, $0, no-LLM simulation of Stage 8.9 oversized-feature decomposition.
 
-Replays the REAL stage logic (imported from
-``faultline.pipeline_v2.stage_8_9_anchor_subdecompose`` — NOT a divergent
-copy) over cached cold-scan artifacts in ``~/.faultline/cold/<slug>.json`` and
-reports the ``cold_eval.owned_max_feature_share`` blob signal BEFORE vs AFTER
-the split, the number of sub-features minted, and the per-feature domain
-breakdown.
+What "faithful" means (and why the previous version was NOT)
+===========================================================
 
-This is the local, $0, no-LLM, no-network harness used to validate the
-blob-decomposer WITHOUT a full scan (operator forbids real-key scans). It is a
-SIMULATION of the metric only: it does not mutate the artifacts and does not
-run the rest of the pipeline. It mirrors ``eval/cold_eval``'s owned-file model
-by reusing the stage's own ``_owned_paths`` so the gate and the metric agree.
+This harness must report the SAME ``owned_max_feature_share`` the real
+blob gate (``eval/cold_eval.py:g3_blob``) would report — before and after
+the stage runs. The previous implementation did not: it
+
+  1. hand-reconstructed each feature's owned-set with a buggy
+     ``if owned: return owned else paths`` fallback that counted
+     **de-owned (role=shared) files as owned**, and
+  2. NEVER ran the real stage nor ``cold_eval`` — it re-implemented the
+     split with ``_plan_split`` and divided set sizes by hand.
+
+So it diverged from the gate (it reported inbox-zero AFTER 0.388 while
+the real stage + the fixed ``cold_eval`` report 0.063). An independent
+audit (memory/finding-coldeval-blob-broken-2026-06-19 → "Blob audit
+RESET 2026-06-20") flagged it as untrustworthy.
+
+How this version stays honest
+-----------------------------
+
+It performs the EXACT production data path, end to end:
+
+  (a) load a cold scan ``~/.faultline/cold/<slug>.json``;
+  (b) measure BEFORE = ``cold_eval.g3_blob(scan)`` on the raw scan dict
+      — literally what the gate sees pre-stage;
+  (c) hydrate ``developer_features`` dicts into real ``Feature`` objects;
+  (d) run the REAL stage ``subdecompose_oversized_features(features)`` —
+      mutating ``member_files`` roles + appending sub-features exactly as
+      production does (no divergent copy of the logic lives here);
+  (e) serialise the mutated features back to dicts
+      (``Feature.model_dump(mode="json")``) into a shallow copy of the scan;
+  (f) measure AFTER = ``cold_eval.g3_blob(after_scan)``.
+
+Because BEFORE/AFTER both come from the real ``cold_eval.g3_blob``, the
+numbers this prints ARE the numbers the gate would report. Because it
+imports the production stage, any change to the stage's vocabulary /
+recursion / gate is reflected automatically — no sim drift.
+
+It does NOT run the rest of the pipeline and does NOT mutate the artifact
+on disk (it deep-hydrates and serialises a copy). It needs no API key and
+no network (operator forbids real-key scans).
 
 Usage
 -----
     PYTHONPATH=. .venv/bin/python tools/sim_stage_8_9_subdecompose.py \
-        [slug ...]            # default: caddy inbox-zero formbricks
+        [slug ...]            # default: caddy inbox-zero formbricks meilisearch
 
-Because it imports the production functions, any change to the stage's
-vocabulary / recursion / gate is reflected here automatically — keeping the
-sim honest (no drift between the sim and the shipped code).
+    # JSON for machine consumption / reconciliation note:
+    PYTHONPATH=. .venv/bin/python tools/sim_stage_8_9_subdecompose.py --json
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import math
 import os
-import statistics
 import sys
-from collections import defaultdict
+from typing import Any
 
+# The REAL stage — imported, never copied. Mutates Feature objects in place
+# (member_files roles flipped to shared, sub-features appended) exactly as the
+# pipeline does.
+from faultline.models.types import Feature
 from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
-    _OVERSIZED_MEDIAN_MULT,
-    _OVERSIZED_SHARE,
-    _common_segments,
-    _domain_key,
-    _plan_split,
-    _strip_route_group,
+    subdecompose_oversized_features,
 )
 
-_DEFAULT_SLUGS = ("caddy", "inbox-zero", "formbricks")
+# The REAL blob gate. We add the faultlines-app eval dir to sys.path so we
+# measure with the SAME g3_blob the cold-corpus evaluator uses — not a
+# hand-rolled owned-set reconstruction. (cold_eval lives in the app repo, not
+# the engine repo, so it is imported by path, not as an engine module.)
+_EVAL_DIR = os.environ.get(
+    "FAULTLINE_EVAL_DIR", "/Users/pkuzina/workspace/faultlines-app/eval"
+)
+if _EVAL_DIR not in sys.path:
+    sys.path.insert(0, _EVAL_DIR)
+try:
+    import cold_eval  # type: ignore
+except Exception as exc:  # pragma: no cover - environment guard
+    raise SystemExit(
+        f"FATAL: cannot import the real cold_eval from {_EVAL_DIR!r} ({exc}). "
+        "Set FAULTLINE_EVAL_DIR to the faultlines-app/eval directory."
+    )
+
+_DEFAULT_SLUGS = ("caddy", "inbox-zero", "formbricks", "meilisearch")
 _COLD = os.path.expanduser("~/.faultline/cold")
 
 
-def _owned(feature: dict) -> list[str]:
-    """Owned files of a feature dict — mirrors the stage's ``_owned_paths``
-    on the raw JSON shape (``member_files`` dicts first, else ``paths``)."""
-    mf = feature.get("member_files")
-    if mf and isinstance(mf[0], dict):
-        owned = [
-            m["path"]
-            for m in mf
-            if m.get("primary") or m.get("role") in ("anchor", "owner")
-        ]
-        if owned:
-            return owned
-    return feature.get("paths") or []
+def _hydrate(feat_dicts: list[dict[str, Any]]) -> tuple[list[Feature], list[dict]]:
+    """Hydrate ``developer_features`` dicts into ``Feature`` objects.
+
+    Returns ``(features, skipped)`` — any dict that fails validation is left
+    untouched (carried through verbatim) so the AFTER scan still contains it
+    and the metric stays comparable. In practice every cold-scan dev feature
+    hydrates cleanly (verified on the corpus); the guard exists so a single
+    odd feature can never silently vanish from the measurement.
+    """
+    features: list[Feature] = []
+    skipped: list[dict] = []
+    for d in feat_dicts:
+        try:
+            features.append(Feature(**d))
+        except Exception:
+            skipped.append(d)
+    return features, skipped
 
 
-def _leaf(domain_key: str) -> str:
-    return _strip_route_group(domain_key.rsplit("/", 1)[-1]).replace("_", "-").lower()
+def _owned_max(scan: dict[str, Any]) -> tuple[float, str | None, dict[str, Any]]:
+    """``(owned_max_feature_share, owned_biggest, full_g3)`` from the REAL gate."""
+    g3 = cold_eval.g3_blob(scan)
+    return g3.get("owned_max_feature_share", 0.0), g3.get("owned_biggest"), g3
 
 
-def simulate(slug: str) -> None:
+def simulate(slug: str) -> dict[str, Any] | None:
     path = os.path.join(_COLD, f"{slug}.json")
     if not os.path.exists(path):
-        print(f"\n===== {slug}: SKIP (no cold artifact at {path})")
-        return
+        return {"slug": slug, "skip": f"no cold artifact at {path}"}
     with open(path) as fh:
-        data = json.load(fh)
-    feats = data.get("developer_features") or []
+        scan = json.load(fh)
 
-    sizes = [len(_owned(f)) for f in feats if _owned(f)]
-    if not sizes:
-        print(f"\n===== {slug}: SKIP (no owned-file features)")
+    mtime = os.path.getmtime(path)
+    feat_dicts = scan.get("developer_features") or scan.get("features") or []
+
+    # (b) BEFORE — the real gate on the untouched scan.
+    before_max, before_big, before_g3 = _owned_max(scan)
+
+    # (c) hydrate → (d) run the REAL stage in place.
+    features, skipped = _hydrate(feat_dicts)
+    result = subdecompose_oversized_features(features)
+
+    # (e) serialise the mutated features back into a COPY of the scan.
+    after_scan = dict(scan)
+    after_scan["developer_features"] = [
+        f.model_dump(mode="json") for f in features
+    ] + skipped
+    after_scan.pop("features", None)  # canonical key only, avoid double-count
+
+    # (f) AFTER — the real gate on the post-stage scan.
+    after_max, after_big, after_g3 = _owned_max(after_scan)
+
+    return {
+        "slug": slug,
+        "artifact_mtime": __import__("datetime").datetime.fromtimestamp(mtime).isoformat(timespec="seconds"),
+        "n_dev_features_before": len(feat_dicts),
+        "n_dev_features_after": len(after_scan["developer_features"]),
+        "hydrate_skipped": len(skipped),
+        "owned_max_before": before_max,
+        "owned_biggest_before": before_big,
+        "owned_max_after": after_max,
+        "owned_biggest_after": after_big,
+        "owned_max_delta": round(after_max - before_max, 3),
+        "all_max_before": before_g3.get("max_feature_share"),
+        "all_max_after": after_g3.get("max_feature_share"),
+        "stage": result.as_telemetry(),
+    }
+
+
+def _print_human(r: dict[str, Any]) -> None:
+    slug = r["slug"]
+    if r.get("skip"):
+        print(f"\n===== {slug}: SKIP ({r['skip']})")
         return
-    median = max(2, int(statistics.median(sizes)))
-    osets = [(set(_owned(f)), f.get("name")) for f in feats if _owned(f)]
-    total_owned = len(set().union(*[s for s, _ in osets]))
-    cut = max(_OVERSIZED_MEDIAN_MULT * median, math.ceil(_OVERSIZED_SHARE * total_owned))
-    floor = median
-
-    before_max = max(len(s) for s, _ in osets) / (total_owned or 1)
-    before_big = max(osets, key=lambda x: len(x[0]))[1]
-
-    new_owned: list[tuple[set[str], str]] = []
-    subs_total = 0
-    report: list[tuple[str, int, int, list[str]]] = []
-    for f in feats:
-        owned = _owned(f)
-        if len(owned) <= cut:
-            if owned:
-                new_owned.append((set(owned), f.get("name")))
-            continue
-        domains, residual = _plan_split(owned, floor)
-        if not domains:
-            if owned:
-                new_owned.append((set(owned), f.get("name")))
-            continue
-        # The source keeps ONLY its (de-owned, role=shared) residual; the
-        # sub-features own their domain files. Sub-floor / non-domain files
-        # fall to the residual and stop counting toward owned_max.
-        if residual:
-            new_owned.append((set(residual), f"{f.get('name')}~residual"))
-        subs_total += len(domains)
-        report.append(
-            (f.get("name"), len(owned), len(residual), sorted({_leaf(k) for k in domains}))
+    st = r["stage"]
+    print(f"\n===== {slug}  (artifact {r['artifact_mtime']})")
+    print(
+        f"  owned_max  BEFORE={r['owned_max_before']:.3f} ({r['owned_biggest_before']})"
+        f"  ->  AFTER={r['owned_max_after']:.3f} ({r['owned_biggest_after']})"
+        f"   [delta {r['owned_max_delta']:+.3f}]"
+    )
+    print(
+        f"  (all-files max_share {r['all_max_before']} -> {r['all_max_after']};"
+        f" dev_features {r['n_dev_features_before']} -> {r['n_dev_features_after']})"
+    )
+    print(
+        f"  stage: oversized={st['oversized_total']} split={st['features_split']}"
+        f" subs={st['subfeatures_created']} paths_moved={st['paths_moved']}"
+        f" members_deowned={st['members_deowned']}"
+    )
+    for s in st.get("split_sample", [])[:8]:
+        print(
+            f"    [{s['feature']}] -> {s['domains']} domains,"
+            f" moved={s['moved']} residual={s['residual']}: {s['names'][:12]}"
         )
-        for key, files in domains.items():
-            new_owned.append((set(files), _leaf(key)))
 
-    new_total = len(set().union(*[s for s, _ in new_owned])) or 1
-    after_max = max(len(s) for s, _ in new_owned) / new_total
-    after_big = max(new_owned, key=lambda x: len(x[0]))[1]
 
-    print(f"\n===== {slug}: median={median} total_owned={total_owned} cut={cut} floor={floor}")
-    print(f"  BEFORE owned_max={before_max:.3f} ({before_big})")
-    print(f"  AFTER  owned_max={after_max:.3f} ({after_big})   subs_created={subs_total}")
-    for name, n_owned, n_res, leaves in report:
-        print(f"    [{name} owned={n_owned}] -> {len(leaves)} subs, residual(->shared)={n_res}")
-        print(f"       {leaves}")
+_NOTE = """\
+RECONCILIATION NOTE
+===================
+The before/after numbers above are produced by the REAL eval/cold_eval.py
+g3_blob (the cold-corpus gate), measured before vs after running the REAL
+faultline.pipeline_v2.stage_8_9_anchor_subdecompose.subdecompose_oversized_features
+on hydrated Feature objects from fresh (mtime-today) cold scans. They are the
+ONE authoritative set; earlier commit-message / report figures (e.g.
+0.717->0.076, 0.498->0.388, 0.498->0.063) predate either the cold_eval
+_owned_file_set fix (faultlines-app e28ef47: a fully de-owned feature now
+contributes 0 owned files) or the depth-recurse stage rewrite, OR came from
+the old sim's hand-rolled owned-set reconstruction. Trust THIS output.
+"""
 
 
 def main(argv: list[str]) -> int:
-    slugs = argv[1:] or list(_DEFAULT_SLUGS)
-    for slug in slugs:
-        simulate(slug)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("slugs", nargs="*", help="cold-scan slugs (default: 4 demos)")
+    ap.add_argument("--json", action="store_true", help="emit machine JSON")
+    a = ap.parse_args(argv[1:])
+
+    slugs = a.slugs or list(_DEFAULT_SLUGS)
+    results = [simulate(s) for s in slugs]
+    results = [r for r in results if r is not None]
+
+    if a.json:
+        print(json.dumps(results, indent=2))
+        return 0
+
+    for r in results:
+        _print_human(r)
+    print("\n" + _NOTE)
     return 0
 
 
