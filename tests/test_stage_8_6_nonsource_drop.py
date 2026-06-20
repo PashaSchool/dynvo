@@ -275,8 +275,9 @@ def test_is_deown_scaffold_path(path: str, expected: bool) -> None:
 # ── Part 1 — non-source member strip ────────────────────────────────────────
 
 
-def test_strip_nonsource_members_mixed_feature_keeps_source() -> None:
+def test_strip_nonsource_members_mixed_feature_keeps_source(monkeypatch) -> None:
     """A source/non-source-mix feature sheds assets, keeps source members."""
+    monkeypatch.setenv("FAULTLINE_STAGE_8_6_NONSOURCE_STRIP", "1")
     f = _anchor("web", [
         _mf("apps/web/app/page.tsx"),
         _mf("apps/web/app/settings/page.tsx"),
@@ -293,7 +294,8 @@ def test_strip_nonsource_members_mixed_feature_keeps_source() -> None:
     assert set(f.paths) == surviving
 
 
-def test_strip_nonsource_members_noop_on_all_source() -> None:
+def test_strip_nonsource_members_noop_on_all_source(monkeypatch) -> None:
+    monkeypatch.setenv("FAULTLINE_STAGE_8_6_NONSOURCE_STRIP", "1")
     f = _anchor("web", [
         _mf("a/x.ts"), _mf("a/y.tsx"), _mf("a/schema.prisma"), _mf("a/theme.css"),
     ])
@@ -312,8 +314,9 @@ def test_strip_nonsource_members_disabled(monkeypatch) -> None:
     assert len(f.member_files) == 2  # untouched
 
 
-def test_strip_nonsource_members_scale_invariant() -> None:
+def test_strip_nonsource_members_scale_invariant(monkeypatch) -> None:
     """Tiny / medium / large mixed anchors all shed exactly their non-source."""
+    monkeypatch.setenv("FAULTLINE_STAGE_8_6_NONSOURCE_STRIP", "1")
     for n_src, n_asset in [(1, 1), (20, 8), (400, 120)]:
         members = [_mf(f"a/src{i}.ts") for i in range(n_src)]
         members += [_mf(f"a/img{i}.png") for i in range(n_asset)]
