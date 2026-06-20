@@ -354,6 +354,13 @@ def assemble_scan_meta(
         # rescue them — usually a hint to tighten that extractor.
         "stage_2_zero_path_drops_count": stage2.zero_path_drops_count,
         "stage_2_zero_path_drops_sample": stage2.zero_path_drops_sample,
+        # Schema-only phantom suppression: bare DB-entity models dropped
+        # because they had no owning code (every source schema-class).
+        # Non-zero is expected on schema-heavy stacks (one Prisma file
+        # with many models) and is the fix for the phantom-dup-feature
+        # cloning bug; it is NOT a warning.
+        "stage_2_schema_only_suppressed_count": stage2.schema_only_suppressed_count,
+        "stage_2_schema_only_suppressed_sample": stage2.schema_only_suppressed_sample,
         # Sprint S4 — Stage 5.3 sibling-router collapse telemetry.
         "stage_5_3_collapse_groups_count": len(s53.collapse_groups),
         "stage_5_3_features_collapsed": s53.features_collapsed,

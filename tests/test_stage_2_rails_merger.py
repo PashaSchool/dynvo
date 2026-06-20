@@ -104,12 +104,16 @@ def test_non_rails_repo_does_not_collapse_singular_plural() -> None:
     `address` and `addresses` have zero token overlap; Jaccard = 0;
     they remain separate.
     """
+    # Both candidates are code-anchored (mvc + route) so this test
+    # isolates the rails-canonical-noun collapse guard from the
+    # schema-only phantom suppression. ``address`` (mvc) and
+    # ``addresses`` (route) must stay separate without the rails tag.
     candidates = {
-        "schema": [
+        "mvc": [
             AnchorCandidate(
                 name="address",
-                paths=("schema.sql",),
-                source="schema",
+                paths=("app/controllers/address_controller.ts",),
+                source="mvc",
                 confidence_self=0.7,
             ),
         ],
@@ -124,7 +128,10 @@ def test_non_rails_repo_does_not_collapse_singular_plural() -> None:
     }
     ctx = _ctx(
         audited_stack="next-app-router",
-        tracked_files=["schema.sql", "app/api/addresses/route.ts"],
+        tracked_files=[
+            "app/controllers/address_controller.ts",
+            "app/api/addresses/route.ts",
+        ],
     )
     result = stage_2_reconcile(candidates, ctx)
     names = {f.name for f in result.features}

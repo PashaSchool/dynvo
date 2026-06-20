@@ -196,6 +196,12 @@ class Stage2Result:
     notes: list[str] = field(default_factory=list)
     zero_path_drops_count: int = 0
     zero_path_drops_sample: list[str] = field(default_factory=list)
+    # Schema-only phantom suppression (2026-06). Number + sample of the
+    # bare-DB-entity features dropped because they had no owning code
+    # (every source was a schema-declaration source). Stage 7 surfaces
+    # this in ``scan_meta`` so a non-zero count is visible telemetry.
+    schema_only_suppressed_count: int = 0
+    schema_only_suppressed_sample: list[str] = field(default_factory=list)
 
 
 # ── Similarity ─────────────────────────────────────────────────────────────
@@ -316,6 +322,80 @@ def _should_merge(a: str, b: str, *, threshold: float = 0.7) -> bool:
 _FILE_OVERLAP_EXCLUDED_SOURCES: frozenset[str] = frozenset(
     {"schema", "rails-models"},
 )
+
+
+# ── Schema-only phantom suppression (2026-06) ──────────────────────────────
+#
+# A DB-schema model (Prisma model/enum, Rails table) is EVIDENCE of a
+# feature, not a feature in itself — see the ``schema-domain-extractor``
+# skill ("A model's existence is evidence of a feature; the FEATURE
+# itself comes from controllers/routes/UI"). When a model ALSO has its
+# own owning code (a ``booking`` model + a ``booking/`` route, or a
+# ``packages/features/membership/`` module), the route/mvc/package
+# extractor emits a same-named candidate that NAME-MERGES with the schema
+# candidate in Stage 2 — so the resulting feature carries that code
+# source and survives.
+#
+# But a bare data entity with NO owning code of its own (``host-group``,
+# ``credential``, ``organization-settings`` … in cal.com's
+# ``schema.prisma``) never merges with anything: it spawns a feature
+# whose ONLY anchor is the single shared schema file. Stage 2.6
+# import-closure then piles the SAME closure set onto every such
+# feature, producing dozens of identical phantom duplicates (cal.com:
+# 92 features sharing one 133-file set). These are data entities, not
+# product features.
+#
+# SUPPRESSION RULE (structural, scale-invariant, no magic numbers, no
+# repo paths): drop a merged feature iff its contributing sources are a
+# NON-EMPTY SUBSET of the schema-declaration sources below — i.e. the
+# feature has NO distinct owning module / route / dir in code. This is
+# the same "schema-declaration source" class already used by the
+# file-overlap guard, reused here for consistency. A schema model with
+# its own code keeps a non-schema source and is never suppressed, so no
+# real feature is lost (verified: cal.com booking/availability/team/
+# membership/user all carry a route or module source).
+#
+# Enum/barrel re-export features (a Prisma enum re-exported through a
+# ``js-library`` barrel ``index.ts``) carry a ``js-library`` source and
+# are deliberately OUT of scope here — that fan-out is the
+# complementary Stage 8.8 barrel/hub guard's job, not this rule's.
+
+_SCHEMA_DECLARATION_SOURCES: frozenset[str] = _FILE_OVERLAP_EXCLUDED_SOURCES
+
+
+def _is_schema_only_phantom(feature: DeveloperFeature) -> bool:
+    """``True`` when a feature is a bare schema model with no owning code.
+
+    Structural test: every contributing source is a schema-declaration
+    source (``schema`` / ``rails-models``). Such a feature's anchor set
+    is only the shared schema file(s) — it has no route, module, or
+    directory of its own and must not be promoted to a standalone
+    developer feature. A model that owns code name-merges with the
+    code's candidate in Stage 2 and gains a non-schema source, so this
+    returns ``False`` for it.
+    """
+    sources = set(feature.sources)
+    if not sources:
+        return False
+    return sources <= _SCHEMA_DECLARATION_SOURCES
+
+
+def _suppress_schema_only_phantoms(
+    features: list[DeveloperFeature],
+) -> tuple[list[DeveloperFeature], list[str]]:
+    """Filter out schema-only phantom features (see module-level note).
+
+    Returns ``(kept_features, suppressed_names)``. Pure / deterministic;
+    no thresholds, no repo-specific paths.
+    """
+    kept: list[DeveloperFeature] = []
+    suppressed: list[str] = []
+    for f in features:
+        if _is_schema_only_phantom(f):
+            suppressed.append(f.name)
+        else:
+            kept.append(f)
+    return kept, sorted(suppressed)
 
 
 def _file_overlap_should_merge(
@@ -835,6 +915,22 @@ def stage_2_reconcile(
             notes.append(llm_note)
         features.append(_build_feature_from_group(group, canonical, llm_note))
 
+    # 2.8) Schema-only phantom suppression. A merged feature whose ONLY
+    #      contributing sources are schema-declaration sources is a bare
+    #      DB entity with no owning code (route/module/dir) — it must not
+    #      become a standalone developer feature, and if it did, Stage 2.6
+    #      import-closure would clone the same closure set onto every such
+    #      feature (the cal.com 92-phantom-dup bug). Runs BEFORE profile
+    #      and path attribution so the per-feature ``paths`` are still the
+    #      pure schema anchor set (no closure inflation yet). See
+    #      :func:`_is_schema_only_phantom`.
+    features, suppressed_phantoms = _suppress_schema_only_phantoms(features)
+    if suppressed_phantoms:
+        notes.append(
+            f"suppressed {len(suppressed_phantoms)} schema-only phantom "
+            f"feature(s) (no owning code): {suppressed_phantoms[:10]}",
+        )
+
     # 2.9) Profile-driven attribution (P4 framework-awareness).
     #      The active FrameworkProfile gets the FIRST say over which
     #      feature a file belongs to — route-group / feature-folder
@@ -917,6 +1013,8 @@ def stage_2_reconcile(
         notes=notes,
         zero_path_drops_count=zero_path_drops_count,
         zero_path_drops_sample=zero_path_drops_sample,
+        schema_only_suppressed_count=len(suppressed_phantoms),
+        schema_only_suppressed_sample=suppressed_phantoms[:10],
     )
 
 
