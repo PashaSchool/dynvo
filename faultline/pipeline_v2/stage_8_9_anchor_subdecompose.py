@@ -53,23 +53,34 @@ The rule (universal, scale-invariant, stack-agnostic)
 
 2. **Layer-transparent domain detection (depth-recurse).** The DOMAIN of
    a file = the FIRST path segment, below the feature's longest-common
-   directory prefix, that is NOT a pure architectural-LAYER / infra / test
-   / dynamic-route segment. Layer dirs (``app`` ``modules`` ``services``
-   ``src`` …) are TRANSPARENT — we recurse THROUGH them to the domain
-   beneath (``app/(app)/mail/page.tsx`` → ``mail``;
-   ``modules/ee/contacts/x.ts`` → ``contacts``;
-   ``modules/caddyhttp/reverseproxy/x.go`` → ``reverseproxy``). This is the
-   deep recursion the depth-1 version lacked; capped at
+   directory prefix, that is NOT a TRANSPARENT non-domain segment. Two
+   kinds of non-domain segment, with opposite recursion behaviour:
+
+   * **Transparent** — layers (``app`` ``modules`` ``services`` ``src`` ``lib``
+     …), version dirs (``v1`` ``v2``), dynamic routes (``[id]``), hidden
+     (``.x``). We recurse THROUGH them to the domain beneath
+     (``app/(app)/mail/page.tsx`` → ``mail``; ``modules/ee/contacts/x.ts``
+     → ``contacts``; ``modules/caddyhttp/reverseproxy/x.go`` →
+     ``reverseproxy``; ``api/v1/integrations/airtable/x.ts`` → ``airtable``).
+   * **Terminal** — asset/build/tooling/test/generated containers (``public``
+     ``scripts`` ``playwright`` ``dist`` ``__tests__`` …). Recursion STOPS
+     here and the whole subtree is residual: their children are
+     organisational buckets (``public/favicon`` is an asset,
+     ``scripts/docker`` is tooling), NEVER product domains.
+
+   This is the deep recursion the depth-1 version lacked; capped at
    :data:`_DEPTH_CAP` segments for safety.
 
 3. **Naming guard (no junk buckets).** A sub-feature is named after its
    leaf DOMAIN directory segment (route-group parens ``(x)`` stripped,
-   kebab-cased). A pure layer / infra / test / dynamic-route directory
-   NEVER becomes a feature (it is transparent in step 2), so the stage
-   cannot mint ``utils`` / ``components`` / ``__tests__`` / ``[id]`` /
-   ``prisma`` junk features. Files that resolve to NO domain segment
-   (top-level scaffold, ``layout.tsx``, ``components/ui/*``, tests) fall
-   to the SHARED residual (step 5).
+   kebab-cased). A transparent layer/version/route-param dir is invisible
+   to naming (step 2 recurses past it) and a terminal asset/tooling/test
+   dir stops the recursion, so the stage cannot mint ``utils`` /
+   ``components`` / ``__tests__`` / ``[id]`` / ``prisma`` / ``favicon`` /
+   ``docker`` / ``playwright`` / ``v1`` junk features. Files that resolve to
+   NO domain segment (top-level scaffold, ``layout.tsx``,
+   ``public/**``, ``scripts/**``, tests) fall to the SHARED residual
+   (step 5).
 
 4. **Grain + container floors.** A domain is promoted only if it holds at
    least the repo's median owned-feature size (``floor``); a feature is
@@ -135,23 +146,37 @@ if TYPE_CHECKING:
 
 # ── Structural vocabulary (corpus-free, scale-invariant) ─────────────────────
 #
-# Pure architectural-LAYER / infra / test directory segments. A segment in
-# this set is NEVER a domain: step-2 recursion is TRANSPARENT through it (it
-# descends to the domain beneath), and step-3 naming can therefore never mint
-# a feature named after it. House-pattern vocabulary, the SAME spirit as
-# ``eval/stacks/*.yaml`` and Stage 8.6 ``_DEOWN_SCAFFOLD_SEGMENTS`` (this is
-# its superset: scaffold + layers + framework + test/build/infra). It contains
-# NO path/folder name harvested from a corpus repo, NO counts, NO ratios
-# (memory/rule-no-magic-tuning + memory/rule-no-repo-specific-paths).
-_NON_DOMAIN_SEGMENTS: frozenset[str] = frozenset({
+# A non-domain segment is NEVER a feature. There are TWO kinds, and the
+# distinction is load-bearing for the depth-recursion (step 2):
+#
+#   * TRANSPARENT LAYERS (:data:`_LAYER_SEGMENTS`) — architectural containers
+#     whose CHILDREN are real domains. Recursion descends THROUGH them to the
+#     domain beneath: ``src/lib/ai`` → ``ai``; ``apps/web/modules/contacts``
+#     → ``contacts``. The layer itself never names a feature.
+#
+#   * TERMINAL CONTAINERS (:data:`_TERMINAL_SEGMENTS`) — asset / build /
+#     tooling / test / generated dirs whose ENTIRE SUBTREE is non-domain.
+#     Recursion STOPS at them and the whole path falls to the SHARED residual
+#     — their children are NOT product domains, they are organisational
+#     buckets (``public/favicon`` is an asset, not a feature; ``scripts/docker``
+#     is tooling, not a feature; ``playwright/api`` is a test tree, not a
+#     feature). This is what stops the depth-recursion from minting
+#     asset/tooling/test sub-features once it descends past a layer.
+#
+# House-pattern vocabulary, the SAME spirit as ``eval/stacks/*.yaml`` and
+# Stage 8.6 ``_DEOWN_SCAFFOLD_SEGMENTS``. It contains NO path/folder name
+# harvested from a corpus repo, NO counts, NO ratios — only universal
+# asset/build/tooling/test/layer tokens (memory/rule-no-magic-tuning +
+# memory/rule-no-repo-specific-paths).
+_LAYER_SEGMENTS: frozenset[str] = frozenset({
     # shared scaffold (Stage 8.6 lever-A subset)
     "lib", "libs", "util", "utils", "helper", "helpers", "hook", "hooks",
     "type", "types", "constant", "constants", "config", "configs",
     "style", "styles", "shared", "common",
     # architectural layers (containers, not domains)
     "src", "app", "apps", "pages", "page", "components", "component", "ui",
-    "api", "server", "client", "core", "internal", "pkg", "cmd", "public",
-    "static", "assets", "models", "model", "schemas", "schema", "views",
+    "api", "server", "client", "core", "internal", "pkg", "cmd",
+    "models", "model", "schemas", "schema", "views",
     "view", "controllers", "controller", "services", "service", "handlers",
     "handler", "routes", "route", "router", "routers", "store", "stores",
     "providers", "provider", "middleware", "middlewares",
@@ -159,23 +184,48 @@ _NON_DOMAIN_SEGMENTS: frozenset[str] = frozenset({
     "packages", "package", "plugins", "plugin", "integrations",
     "integration", "screens", "screen", "resources", "resource", "agents",
     "agent",
-    # i18n / asset leaf dirs
-    "i18n", "intl", "locale", "locales", "css", "scss", "images", "img",
-    "fonts", "icons",
+    # i18n layer dirs (descend to the locale's domain children if any)
+    "i18n", "intl", "locale", "locales",
     # generic monorepo workspace-container names (transparent so their
     # domain children surface, e.g. apps/web/<domain>)
     "web", "frontend", "backend", "studio", "dashboard", "admin",
-    # test / build / generated / infra
-    "test", "tests", "__tests__", "spec", "specs", "e2e", "fixtures",
-    "mocks", "__mocks__", "node_modules", "dist", "build", "out",
-    "coverage", "vendor", "prisma", "migrations", "generated", "gen",
-    "docs", "doc",
 })
 
-# Dynamic-route / private segments are NEVER domains:
+# Terminal containers — recursion STOPS here; the entire subtree is residual.
+# These are asset / build / tooling / test / generated / infra dirs whose
+# children are organisational buckets, never product domains. Universal
+# vocabulary only — no repo-specific names (rule-no-repo-specific-paths).
+_TERMINAL_SEGMENTS: frozenset[str] = frozenset({
+    # static / asset roots (children are images, fonts, media — not domains)
+    "public", "static", "assets", "asset", "media",
+    "images", "image", "img", "fonts", "font", "icons", "icon",
+    "css", "scss", "sass", "styles-static",
+    # build / tooling / generated output
+    "scripts", "script", "bin", "tools", "tooling", "dist", "build",
+    "out", "output", "target", "coverage", "vendor", "node_modules",
+    "generated", "gen", "codegen", "__generated__",
+    # test trees (children are spec/fixture sub-trees, not product domains)
+    "test", "tests", "__tests__", "spec", "specs", "e2e", "fixtures",
+    "fixture", "mocks", "__mocks__", "__snapshots__", "playwright",
+    "cypress", "storybook", ".storybook", "stories",
+    # docs / db-infra (children are guides / migration files, not domains)
+    "docs", "doc", "documentation", "migrations", "migration", "prisma",
+    "seed", "seeds", "drizzle",
+})
+
+# Union retained for back-compat (``_is_non_domain`` membership test).
+_NON_DOMAIN_SEGMENTS: frozenset[str] = _LAYER_SEGMENTS | _TERMINAL_SEGMENTS
+
+# Dynamic-route / private segments are NEVER domains (transparent):
 #   ``[id]`` ``[[...slug]]`` ``[...all]`` (Next/Remix/Nuxt route params)
 #   ``_private`` (Nuxt/SvelteKit private dir; leading-underscore convention)
 _DYNAMIC_SEGMENT_RE = re.compile(r"^\[.*\]$|^_")
+# Version segments are NEVER domains (transparent): the real domain lives
+# BELOW the version (``api/v1/integrations/airtable`` → ``airtable``;
+# ``api/v2/management/contacts`` → ``management``). Matches ``v1`` ``v2`` …
+# ``v1beta`` ``v2alpha`` etc. — a leading ``v`` + digit. Scale-invariant,
+# stack-agnostic (REST/gRPC/SDK versioning is universal).
+_VERSION_SEGMENT_RE = re.compile(r"^v\d+[a-z0-9]*$", re.IGNORECASE)
 _ROUTE_GROUP_RE = re.compile(r"^\((.*)\)$")  # Next route group ``(marketing)``
 
 _MIN_DOMAINS = 2          # a feature splitting into <2 domains is not a split
@@ -257,13 +307,35 @@ def _strip_route_group(seg: str) -> str:
     return m.group(1) if m else seg
 
 
-def _is_non_domain(seg: str) -> bool:
-    """``True`` when *seg* is a pure layer / infra / test / route-param dir
-    that must never become a feature (transparent in recursion)."""
+def _is_transparent(seg: str) -> bool:
+    """``True`` when *seg* is a TRANSPARENT non-domain segment — a layer,
+    version, dynamic-route, or hidden dir we recurse THROUGH to find the
+    domain beneath (it never names a feature, but its children might)."""
     if _DYNAMIC_SEGMENT_RE.match(seg):
         return True
     s = _strip_route_group(seg).lower()
-    return s in _NON_DOMAIN_SEGMENTS or s.startswith(".")
+    if s in _TERMINAL_SEGMENTS:
+        return False  # terminal: handled by _is_terminal, NOT transparent
+    return (
+        s in _LAYER_SEGMENTS
+        or bool(_VERSION_SEGMENT_RE.match(s))
+        or s.startswith(".")
+    )
+
+
+def _is_terminal(seg: str) -> bool:
+    """``True`` when *seg* is a TERMINAL container — an asset / build /
+    tooling / test / generated dir whose ENTIRE subtree is non-domain.
+    Recursion stops here; the path falls to the shared residual."""
+    return _strip_route_group(seg).lower() in _TERMINAL_SEGMENTS
+
+
+def _is_non_domain(seg: str) -> bool:
+    """``True`` when *seg* must never name a feature — i.e. it is either a
+    transparent layer/version/route-param OR a terminal asset/tooling/test
+    container. (Back-compat helper; recursion uses the finer-grained
+    :func:`_is_transparent` / :func:`_is_terminal` split.)"""
+    return _is_terminal(seg) or _is_transparent(seg)
 
 
 def _common_segments(paths: list[str]) -> int:
@@ -282,23 +354,39 @@ def _common_segments(paths: list[str]) -> int:
     return n
 
 
-def _domain_key(path: str, start: int) -> str | None:
+def _domain_key(path: str, start: int = 0) -> str | None:
     """The domain-key prefix of *path*: the path up to and INCLUDING the
     first segment at-or-after index *start* that is a DOMAIN (not a layer /
-    infra / test / route-param dir) and is itself a directory (a deeper
-    segment follows). Returns ``None`` when no such segment exists within
-    :data:`_DEPTH_CAP` (the file is pure scaffold/infra → residual).
+    version / route-param dir) and is itself a directory (a deeper segment
+    follows). Returns ``None`` when no such segment exists (the file is pure
+    scaffold/asset/tooling/test → SHARED residual).
+
+    Recursion has two non-domain behaviours:
+
+    * **Transparent** segments (layers ``src``/``app``/``modules``…, version
+      dirs ``v1``/``v2``, dynamic-route ``[id]``, hidden ``.x``) are skipped
+      — we descend THROUGH them to the domain beneath.
+    * **Terminal** containers (asset/build/tooling/test/generated dirs —
+      ``public``, ``scripts``, ``playwright``, ``dist``…) STOP the recursion
+      and yield ``None``: their whole subtree is organisational, never a
+      product domain. This is what prevents the depth-recursion from minting
+      ``favicon`` / ``docker`` / ``playwright`` style sub-features.
 
     ``modules/caddyhttp/reverseproxy/x.go`` (start=1) → ``modules/caddyhttp``
     ``apps/web/app/(app)/mail/page.tsx`` (start=0) → ``apps/web/app/(app)/mail``
+    ``apps/web/public/favicon/site.webmanifest``  → ``None`` (terminal)
+    ``apps/web/app/api/v1/integrations/airtable/route.ts`` → ``…/airtable``
     Returning the full prefix (not just the leaf) keeps two domains with the
     same leaf name under different layers distinct.
     """
     segs = path.split("/")
     i, depth = start, 0
     while i < len(segs) - 1 and depth < _DEPTH_CAP:
-        if not _is_non_domain(segs[i]):
-            return "/".join(segs[: i + 1])
+        seg = segs[i]
+        if _is_terminal(seg):
+            return None  # asset/build/tooling/test subtree → residual
+        if not _is_transparent(seg):
+            return "/".join(segs[: i + 1])  # first real domain segment
         i += 1
         depth += 1
     return None
