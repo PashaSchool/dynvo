@@ -63,29 +63,57 @@ The rule (universal, scale-invariant, stack-agnostic)
      → ``contacts``; ``modules/caddyhttp/reverseproxy/x.go`` →
      ``reverseproxy``; ``api/v1/integrations/airtable/x.ts`` → ``airtable``).
    * **Terminal** — asset/build/tooling/test/generated containers (``public``
-     ``scripts`` ``playwright`` ``dist`` ``__tests__`` …). Recursion STOPS
-     here and the whole subtree is residual: their children are
-     organisational buckets (``public/favicon`` is an asset,
-     ``scripts/docker`` is tooling), NEVER product domains.
+     ``scripts`` ``playwright`` ``dist`` ``__tests__`` …) AND UI
+     COMPONENT/VIEW COLLECTION dirs (``components`` ``ui`` ``widgets``
+     ``primitives`` ``layouts`` …). Recursion STOPS here and the whole
+     subtree is residual: their children are organisational buckets
+     (``public/favicon`` is an asset, ``scripts/docker`` is tooling,
+     ``components/v2/Accordion`` is a UI primitive), NEVER product domains.
 
    This is the deep recursion the depth-1 version lacked; capped at
    :data:`_DEPTH_CAP` segments for safety.
 
-3. **Naming guard (no junk buckets).** A sub-feature is named after its
-   leaf DOMAIN directory segment (route-group parens ``(x)`` stripped,
-   kebab-cased). A transparent layer/version/route-param dir is invisible
-   to naming (step 2 recurses past it) and a terminal asset/tooling/test
-   dir stops the recursion, so the stage cannot mint ``utils`` /
-   ``components`` / ``__tests__`` / ``[id]`` / ``prisma`` / ``favicon`` /
-   ``docker`` / ``playwright`` / ``v1`` junk features. Files that resolve to
-   NO domain segment (top-level scaffold, ``layout.tsx``,
-   ``public/**``, ``scripts/**``, tests) fall to the SHARED residual
-   (step 5).
+3. **Precision guards against per-component over-shatter.** Three layered
+   rules stop the recursion minting per-component / per-view junk
+   (``Accordion`` / ``Button`` / ``Card`` / ``MfaSessionPage`` …) once it
+   descends past a frontend layer:
 
-4. **Grain + container floors.** A domain is promoted only if it holds at
-   least the repo's median owned-feature size (``floor``); a feature is
-   only split if ≥ :data:`_MIN_DOMAINS` domains clear that floor (a lone
-   domain is not a decomposition). Sub-floor domains fold to the residual.
+   * **3a — component-collection dirs are TERMINAL** (in
+     :data:`_TERMINAL_SEGMENTS`): ``components`` / ``ui`` / ``widgets`` /
+     ``primitives`` / ``elements`` / ``fragments`` / ``partials`` /
+     ``layouts``. These are NEVER file-system routing roots, so stopping
+     here cannot suppress a real route domain — it only stops
+     ``components/v2/Accordion`` from minting ``Accordion``. (``pages`` /
+     ``views`` STAY transparent — they ARE routing roots in Next Pages
+     Router / Nuxt / Astro / Vite — so route domains beneath them survive.)
+   * **3b — PascalCase component leaves are not domains**
+     (:func:`_is_component_name`): a first-domain segment that is a single
+     mixed-case identifier (``MfaSessionPage`` under a transparent ``pages``
+     root; any presentational dir 3a's vocabulary missed) falls to the
+     residual. Kebab/lowercase domain dirs (``app-connection``,
+     ``content-manager``, ``reverseproxy``) promote. This is the universal
+     React/Vue component-naming convention, not a corpus name.
+   * **3c — naming.** A sub-feature is named after its leaf DOMAIN segment
+     (route-group parens ``(x)`` stripped, kebab-cased). Transparent
+     layer/version/route-param dirs are invisible to naming; terminal +
+     PascalCase dirs never reach naming. So the stage cannot mint
+     ``utils`` / ``components`` / ``Accordion`` / ``__tests__`` / ``[id]`` /
+     ``prisma`` / ``v1`` junk. Files that resolve to NO domain (top-level
+     scaffold, ``layout.tsx``, ``public/**``, component primitives, tests)
+     fall to the SHARED residual (step 5).
+
+4. **Grain + container floors + anti-shatter cap.** A domain is promoted
+   only if it holds at least the repo's median owned-feature size
+   (``floor``); a feature is only split if ≥ :data:`_MIN_DOMAINS` domains
+   clear that floor (a lone domain is not a decomposition). Sub-floor
+   domains fold to the residual. **Guard 3d (anti-shatter cap):** a single
+   feature may promote at most ``max(_MIN_DOMAINS, n_other_dev_features)``
+   domains — one feature shattering into more pieces than the rest of the
+   repo has features is pathological, so the largest domains survive and the
+   thin tail coarsens to the residual. The cap is the repo's OWN grain (its
+   other-feature count), scale-invariant, no magic constant — it never fires
+   on a legitimately large decomposition in the validated corpus and exists
+   as a safety net for unseen pathological repos.
 
 5. **Thin SHARED residual (member_files-aware).** The source feature
    keeps every loose / sub-floor / non-domain file in ``member_files`` but
@@ -173,8 +201,17 @@ _LAYER_SEGMENTS: frozenset[str] = frozenset({
     "lib", "libs", "util", "utils", "helper", "helpers", "hook", "hooks",
     "type", "types", "constant", "constants", "config", "configs",
     "style", "styles", "shared", "common",
-    # architectural layers (containers, not domains)
-    "src", "app", "apps", "pages", "page", "components", "component", "ui",
+    # architectural layers (containers, not domains). NOTE: ``pages`` / ``page``
+    # / ``views`` / ``view`` / ``screens`` / ``screen`` stay TRANSPARENT here on
+    # purpose — they are legitimate FILE-SYSTEM ROUTING roots (Next Pages
+    # Router, Nuxt, Astro, Vite/TanStack ``src/pages``, see
+    # eval/stacks/filesystem-routing.yaml), so their children are real route
+    # DOMAINS (``pages/dashboard`` → ``dashboard``). View-component junk that
+    # also lives under them (``pages/MfaSessionPage``) is caught by the
+    # PascalCase-component-leaf guard (:func:`_is_component_name`), not by
+    # making the routing root terminal. ``components`` / ``ui`` / ``widgets`` …
+    # are NEVER routing roots → they live in _TERMINAL_SEGMENTS below.
+    "src", "app", "apps", "pages", "page",
     "api", "server", "client", "core", "internal", "pkg", "cmd",
     "models", "model", "schemas", "schema", "views",
     "view", "controllers", "controller", "services", "service", "handlers",
@@ -196,6 +233,21 @@ _LAYER_SEGMENTS: frozenset[str] = frozenset({
 # children are organisational buckets, never product domains. Universal
 # vocabulary only — no repo-specific names (rule-no-repo-specific-paths).
 _TERMINAL_SEGMENTS: frozenset[str] = frozenset({
+    # UI component / view COLLECTION dirs — terminal, NOT transparent.
+    # A dir named ``components`` / ``ui`` / ``widgets`` … is a presentational
+    # collection: its children are individual components (``components/v2/
+    # Accordion``, ``components/Button``), NEVER product domains. Recursion
+    # MUST stop here, otherwise the depth-recurse descends through
+    # ``components`` (and a ``v2`` version dir) and mints each UI primitive
+    # (``Accordion`` / ``Button`` / ``Card`` / ``Checkbox`` / ``Alert``) as a
+    # bogus "domain" — the per-COMPONENT over-shatter this guard fixes. These
+    # tokens are NEVER file-system routing roots in any framework (unlike
+    # ``pages`` / ``views``, which stay transparent above), so stopping here
+    # cannot suppress a real route domain. Universal React/Vue/Svelte/Angular
+    # vocabulary only — no repo-specific names (rule-no-repo-specific-paths).
+    "components", "component", "ui", "elements", "element",
+    "widgets", "widget", "primitives", "primitive",
+    "fragments", "fragment", "partials", "partial", "layouts", "layout",
     # static / asset roots (children are images, fonts, media — not domains)
     "public", "static", "assets", "asset", "media",
     "images", "image", "img", "fonts", "font", "icons", "icon",
@@ -227,6 +279,18 @@ _DYNAMIC_SEGMENT_RE = re.compile(r"^\[.*\]$|^_")
 # stack-agnostic (REST/gRPC/SDK versioning is universal).
 _VERSION_SEGMENT_RE = re.compile(r"^v\d+[a-z0-9]*$", re.IGNORECASE)
 _ROUTE_GROUP_RE = re.compile(r"^\((.*)\)$")  # Next route group ``(marketing)``
+# A single PascalCase / camelCase COMPONENT identifier — ``Accordion``,
+# ``Button``, ``MfaSessionPage``, ``AccessManagementPage``, ``DataTable``,
+# ``aiEditor``. By ubiquitous JS/TS/React/Vue convention a component- or
+# view-DIRECTORY is named in mixed case with NO separator; a product-domain or
+# route directory is kebab-case or lowercase (``reverse-proxy``, ``app-connection``,
+# ``content-manager``, ``mail``, ``reverseproxy``). Matches an identifier that
+# contains at least one lower AND one upper letter and no ``-`` / ``_`` / ``.``.
+# Scale-invariant + stack-agnostic: it is the *casing convention*, not a
+# corpus-observed name (rule-no-magic-tuning / rule-no-repo-specific-paths).
+# Non-JS domains (Go ``reverseproxy``, Rust ``net``, Python ``billing``) are
+# conventionally lowercase, so this never suppresses a real non-frontend domain.
+_COMPONENT_NAME_RE = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])[A-Za-z][A-Za-z0-9]*$")
 
 _MIN_DOMAINS = 2          # a feature splitting into <2 domains is not a split
 _DEPTH_CAP = 6            # max segments to descend looking for a domain
@@ -325,9 +389,23 @@ def _is_transparent(seg: str) -> bool:
 
 def _is_terminal(seg: str) -> bool:
     """``True`` when *seg* is a TERMINAL container — an asset / build /
-    tooling / test / generated dir whose ENTIRE subtree is non-domain.
-    Recursion stops here; the path falls to the shared residual."""
+    tooling / test / generated / UI-component-collection dir whose ENTIRE
+    subtree is non-domain. Recursion stops here; the path falls to the
+    shared residual."""
     return _strip_route_group(seg).lower() in _TERMINAL_SEGMENTS
+
+
+def _is_component_name(seg: str) -> bool:
+    """``True`` when *seg* is a single COMPONENT / VIEW identifier rather than a
+    product domain — a mixed-case identifier with no separator (``Accordion``,
+    ``Button``, ``MfaSessionPage``, ``DataTable``, ``aiEditor``). Such a
+    directory is one presentational component / page-view, never a product
+    domain, so it must NOT mint a sub-feature even when it sits beneath a
+    transparent routing root (``pages/MfaSessionPage``) that we cannot make
+    terminal. Kebab-case / lowercase domain dirs (``reverse-proxy``,
+    ``content-manager``, ``reverseproxy``, ``mail``) return ``False``. Route
+    groups ``(x)`` are unwrapped first."""
+    return bool(_COMPONENT_NAME_RE.fullmatch(_strip_route_group(seg)))
 
 
 def _is_non_domain(seg: str) -> bool:
@@ -384,8 +462,14 @@ def _domain_key(path: str, start: int = 0) -> str | None:
     while i < len(segs) - 1 and depth < _DEPTH_CAP:
         seg = segs[i]
         if _is_terminal(seg):
-            return None  # asset/build/tooling/test subtree → residual
+            return None  # asset/build/tooling/test/component subtree → residual
         if not _is_transparent(seg):
+            # First non-layer segment. A mixed-case COMPONENT/VIEW identifier
+            # (``MfaSessionPage`` under a transparent ``pages`` routing root,
+            # any presentational dir Guard-1's vocabulary missed) is NOT a
+            # product domain → residual. A kebab/lowercase domain promotes.
+            if _is_component_name(seg):
+                return None
             return "/".join(segs[: i + 1])  # first real domain segment
         i += 1
         depth += 1
@@ -393,7 +477,7 @@ def _domain_key(path: str, start: int = 0) -> str | None:
 
 
 def _plan_split(
-    owned: list[str], floor: int,
+    owned: list[str], floor: int, *, max_domains: int | None = None,
 ) -> tuple[dict[str, list[str]], list[str]]:
     """Partition *owned* files into ``{domain_key: [files]}`` + residual.
 
@@ -402,6 +486,15 @@ def _plan_split(
     a split happens only with ≥ :data:`_MIN_DOMAINS` promotable domains.
     Sub-floor / non-domain files fall to residual. File conservation holds:
     every input is in exactly one output bucket.
+
+    *max_domains* is the defensive ANTI-SHATTER cap (Guard 3): when set and a
+    feature would promote MORE than ``max_domains`` domains, only the
+    ``max_domains`` LARGEST domains are kept; the smaller ones COARSEN back
+    into the residual (de-owned/shared) rather than minting a long tail of
+    thin sub-features. The cap is supplied by the caller and is RELATIVE to
+    the repo's own grain (the count of its other developer features — see
+    :func:`subdecompose_oversized_features`), never a magic constant
+    (rule-no-magic-tuning). ``None`` disables the cap.
     """
     start = _common_segments(owned)
     raw: dict[str, list[str]] = defaultdict(list)
@@ -416,6 +509,19 @@ def _plan_split(
     promotable = {k: f for k, f in raw.items() if len(f) >= floor}
     if len(promotable) < _MIN_DOMAINS:
         return {}, list(owned)
+
+    # Guard 3 — anti-shatter coarsening. A single feature decomposing into
+    # more domains than the rest of the repo has features is a shatter signal;
+    # keep the largest ``max_domains`` (the substantive domains) and fold the
+    # thin tail back. Deterministic tie-break by key so the output is stable.
+    if max_domains is not None and len(promotable) > max(_MIN_DOMAINS, max_domains):
+        ordered = sorted(
+            promotable.items(), key=lambda kv: (-len(kv[1]), kv[0]),
+        )
+        promotable = dict(ordered[: max(_MIN_DOMAINS, max_domains)])
+
+    # Everything in ``raw`` not finally promoted (sub-floor OR coarsened tail)
+    # folds to the residual — exactly once, so file conservation holds.
     for k, files in raw.items():
         if k not in promotable:
             residual.extend(files)
@@ -591,6 +697,16 @@ def subdecompose_oversized_features(
         _OVERSIZED_MEDIAN_MULT * median,
         math.ceil(_OVERSIZED_SHARE * total_owned),
     )
+    # Guard 3 — defensive anti-shatter cap, scale-invariant. A single feature
+    # decomposing into MORE domains than the repo has OTHER developer features
+    # is pathological: it alone would more than double the feature set with a
+    # long thin tail. Cap promoted domains at that count (the repo's own grain)
+    # so a true shatter coarsens gracefully (largest domains survive, tail folds
+    # to the shared residual) while every legitimate large decomposition in the
+    # corpus passes untouched (max observed = a 134-feature repo whose backend
+    # holds ~140 real service domains). No corpus-tuned constant — the cap is the
+    # repo's existing developer-feature count (rule-no-magic-tuning).
+    max_domains = max(_MIN_DOMAINS, len(devs) - 1)
 
     used_names = {f.name for f in features}
     new_features: list["Feature"] = []
@@ -600,7 +716,7 @@ def subdecompose_oversized_features(
         if len(owned) <= cut:
             continue
         result.oversized_total += 1
-        domains, residual = _plan_split(owned, floor)
+        domains, residual = _plan_split(owned, floor, max_domains=max_domains)
         if not domains:
             continue
 
