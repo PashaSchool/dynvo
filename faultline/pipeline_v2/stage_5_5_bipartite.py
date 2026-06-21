@@ -175,12 +175,24 @@ def _flow_identity_key(
       * ``entry_point_line``  — the exact entry line,
       * the sorted set of ``line_ranges`` — the flow's own code span.
 
-    The line-range component is what keeps the collapse conservative: two
-    flows that share a name and entry FILE but cover DIFFERENT lines (e.g.
-    FastAPI's many ``create-item-flow`` tutorials, each in its own module at
-    its own line) produce different keys and BOTH survive. Only provably
-    byte-identical entry+span copies — the hub-file fan-out where one
-    physical entry is a member of N features — collapse.
+    What keeps the collapse conservative AT THIS STAGE is the
+    ``(entry_point_file, entry_point_line)`` pair — both are populated by
+    Stage 3 and present here. Two flows sharing a name but beginning at a
+    DIFFERENT file or line (e.g. FastAPI's many ``create-item-flow``
+    tutorials, each in its own module; or ``create-account-flow`` at line 49
+    vs line 61) produce different keys and BOTH survive. Only the hub-file
+    fan-out — one physical entry (same file AND line) attributed to N
+    features — collapses.
+
+    NOTE: ``line_ranges`` is computed by the LOC expander in
+    ``phase_finalize`` (a LATER stage), so at the Stage-5.5 call site it is
+    empty for every flow and contributes nothing to the key — the operative
+    discriminator is ``entry_point_file`` + ``entry_point_line``. It is kept
+    in the key purely as forward-safety: should the pipeline ever populate
+    line_ranges before this stage, the key stays at-least-as-conservative
+    (never MORE collapse). Verified across 48 cold scans: no two flows share
+    ``(name, entry_point_file, entry_point_line)`` yet differ in line_ranges,
+    so the 3-tuple and 4-tuple are equivalent in practice today.
     """
     ranges = tuple(
         sorted(
