@@ -111,9 +111,24 @@ The rule (universal, scale-invariant, stack-agnostic)
    domains — one feature shattering into more pieces than the rest of the
    repo has features is pathological, so the largest domains survive and the
    thin tail coarsens to the residual. The cap is the repo's OWN grain (its
-   other-feature count), scale-invariant, no magic constant — it never fires
-   on a legitimately large decomposition in the validated corpus and exists
-   as a safety net for unseen pathological repos.
+   other-feature count), scale-invariant, no magic constant. It DOES fire on
+   the validated corpus (e.g. infisical's backend exposes ~140+ service
+   domains, more than its developer-feature count, so the cap coarsens the
+   thin tail there) and it never suppresses a legitimately large
+   decomposition because the SURVIVING domains are always the largest ones;
+   it also bounds the per-feature fan-out at every recursion level.
+
+5. **Recursion to a fixed point.** A minted sub-feature is itself re-tested
+   by the SAME oversized gate; if it still owns more than the repo's ``cut``
+   AND still has ≥ :data:`_MIN_DOMAINS` decomposable child domains, it is
+   decomposed again, repeating until no oversized-decomposable feature
+   remains. The repo-grain thresholds (``floor`` / ``cut`` / ``max_domains``)
+   are computed ONCE and held fixed for every level — they describe the repo,
+   not the level — so the fixed point is scale-invariant. Termination is
+   guaranteed by strict monotonic descent (each child owns a proper subset of
+   its parent's owned files); :data:`_FIXED_POINT_ITER_CAP` is a defensive CPU
+   bound only. Every precision guard above applies at every level (they live
+   inside the per-feature split), so junk stays 0 at depth-2+ as well.
 
 5. **Thin SHARED residual (member_files-aware).** The source feature
    keeps every loose / sub-floor / non-domain file in ``member_files`` but
@@ -129,9 +144,13 @@ The rule (universal, scale-invariant, stack-agnostic)
 Safety / conservation
 =====================
 
-* **File conservation.** Every owned file lands in exactly one place — a
-  sub-feature (owned) or the source residual (shared). Nothing dropped or
-  duplicated.
+* **File conservation.** Every file the source had — its owned
+  ``member_files`` AND any path-only ``paths`` entries that carried no owning
+  member row — lands in exactly one place: a sub-feature (owned) or the source
+  residual (shared). Path-only residual files are MATERIALISED as
+  ``role="shared"`` member rows so overwriting ``source.paths`` cannot drop
+  them (the jsonhero-web 9-file-drop bug). Nothing is dropped or duplicated;
+  a stage-wide conservation assertion is covered by tests.
 * **Product paths byte-stable.** Sub-features inherit the source's
   ``product_feature_id``; the owning product feature's path UNION is
   unchanged — the product-layer + membership-by-product gates cannot
@@ -143,9 +162,16 @@ Safety / conservation
   blob↔UF has no wall — late decomposition is UF-free). So an aggressive
   split is safe; the ONLY risk is dev-feature NAMING precision, which the
   naming guard (step 3) addresses by naming from real domain dirs.
-* **Not re-entrant.** Sub-features carry a ``"sub-domain"`` description
-  marker so de-sink / this stage never treat them as decomposable anchors,
-  and their flows / N:M overlays stay on the source residual.
+* **Re-entrancy / idempotence.** This stage recurses INTERNALLY by design
+  (step 5), but it is IDEMPOTENT across independent invocations: a feature
+  carrying this stage's sub-domain provenance at ENTRY (``split_from`` set +
+  the ``"sub-domain"`` description marker) is recognised as prior output and is
+  NOT re-decomposed as a fresh source, so ``stage(stage(features)) ==
+  stage(features)``. The marker also keeps de-sink from treating sub-features
+  as decomposable anchors, and their flows / N:M overlays stay on the source
+  residual. (Within a SINGLE run, freshly-minted sub-features ARE recursed —
+  they are tracked locally, not via the entry marker — which is the fixed-point
+  behaviour, not re-entry.)
 
 Sub-features are intentionally THIN on aggregate git metrics (commits /
 bug-fix ratio reset; health inherited as an approximation) — their
@@ -298,6 +324,21 @@ _SUBDOMAIN_MARKER = "sub-domain"
 _OVERSIZED_SHARE = 0.15   # a feature owning >15% of the repo is oversized…
 _OVERSIZED_MEDIAN_MULT = 2  # …OR more than 2x the repo's median feature size
 
+# Defensive recursion-depth cap for the fixed-point loop (step 1). This is a
+# SAFETY BOUND, not a tuned magic number: termination is already guaranteed by
+# strict monotonic descent — every split gives each child a PROPER SUBSET of its
+# parent's owned files (the residual stays on the parent and a split needs
+# ≥_MIN_DOMAINS domains, so every child is strictly smaller than the parent), so
+# the chain owned-size → strictly-smaller-owned-size is a decreasing sequence of
+# non-negative integers and MUST reach a fixed point. The cap exists ONLY to
+# bound CPU against a hypothetical future bug that broke the monotonicity
+# invariant (e.g. a child that re-claimed its parent's files); it is generous
+# (a real decomposition tree is at most a handful of levels: workspace → app →
+# route-group → domain) and is logged in telemetry if it ever fires. Per
+# memory/rule-no-magic-tuning: a number that bounds termination is a safety
+# constant, not a corpus-fit threshold — it is independent of repo size/grain.
+_FIXED_POINT_ITER_CAP = 8
+
 
 # ── Result / telemetry ───────────────────────────────────────────────────────
 
@@ -311,6 +352,8 @@ class SubdecomposeResult:
     subfeatures_created: int = 0
     paths_moved: int = 0             # owned files relocated to sub-features
     members_deowned: int = 0         # residual member files flipped to shared
+    iterations: int = 0              # fixed-point recursion levels actually run
+    depth_cap_hit: bool = False      # safety cap reached (should never happen)
     floor_by_feature: dict[str, int] = field(default_factory=dict)
     split_sample: list[dict[str, Any]] = field(default_factory=list)
 
@@ -332,6 +375,8 @@ class SubdecomposeResult:
             "subfeatures_created": self.subfeatures_created,
             "paths_moved": self.paths_moved,
             "members_deowned": self.members_deowned,
+            "iterations": self.iterations,
+            "depth_cap_hit": self.depth_cap_hit,
             "split_sample": list(self.split_sample[:20]),
         }
 
@@ -622,25 +667,57 @@ def _deown_residual(
       counting toward ``owned_max_feature_share``.
     * The source's exclusive ``paths`` shrink to the de-owned residual.
 
-    Returns the number of residual members flipped to shared.
+    **File conservation (path-only residual).** The split universe is the
+    source's OWNED file set (:func:`_owned_paths`). When the source's
+    ``paths`` is a SUPERSET of its owned ``member_files`` — i.e. it carries
+    *path-only* entries that have no owning ``member_file`` row (a real shape:
+    jsonhero-web's anchor lists 9 files in ``paths`` with no role metadata) —
+    those path-only files are part of neither ``moved`` nor any owned
+    ``member_file``. The caller folds them into *residual* (they were never
+    OWNED, so they coarsen to the shared residual, not a sub-feature). This
+    function then MATERIALISES every residual file as a ``role="shared"``
+    member row even when it had no prior ``member_file`` — so a path-only file
+    is recorded as a (de-owned) shared claim rather than silently dropped when
+    ``paths`` is overwritten below. Nothing the source previously had in
+    ``paths`` ∪ owned ``member_files`` is lost.
+
+    Returns the number of residual members flipped/created as shared.
     """
+    from faultline.models.types import MemberFile  # local: avoid import cycle
+
     members = list(getattr(source, "member_files", None) or [])
     deowned = 0
-    if members:
-        kept_members: list["MemberFile"] = []
-        for m in members:
-            p = getattr(m, "path", None)
-            if p in moved:
-                continue  # owned elsewhere now → drop from source ledger
-            if p in residual and (
-                getattr(m, "primary", False)
-                or getattr(m, "role", None) in ("anchor", "owner")
-            ):
-                m.role = "shared"
-                m.primary = False
-                deowned += 1
-            kept_members.append(m)
-        source.member_files = kept_members
+    seen_paths: set[str] = set()
+    kept_members: list["MemberFile"] = []
+    for m in members:
+        p = getattr(m, "path", None)
+        if p in moved:
+            continue  # owned elsewhere now → drop from source ledger
+        if isinstance(p, str):
+            seen_paths.add(p)
+        if p in residual and (
+            getattr(m, "primary", False)
+            or getattr(m, "role", None) in ("anchor", "owner")
+        ):
+            m.role = "shared"
+            m.primary = False
+            deowned += 1
+        kept_members.append(m)
+
+    # Conservation: any residual file with NO surviving member row (a
+    # path-only entry, or a member row that was somehow absent) is
+    # materialised as a shared claim so it is NOT dropped when ``paths`` is
+    # overwritten. Deterministic order for stable output.
+    for p in sorted(residual):
+        if p not in seen_paths:
+            kept_members.append(
+                MemberFile(
+                    path=p, role="shared", confidence=1.0, primary=False,
+                    evidence=f"{_SUBDOMAIN_MARKER} residual of '{source.name}'",
+                )
+            )
+            deowned += 1
+    source.member_files = kept_members
 
     # Exclusive paths = de-owned residual only (sub-features own the rest).
     source.paths = sorted(residual)
@@ -659,19 +736,142 @@ def _deown_residual(
 # ── Orchestration ────────────────────────────────────────────────────────────
 
 
+def _split_one_feature(
+    source: "Feature",
+    *,
+    floor: int,
+    cut: int,
+    max_domains: int,
+    used_names: set[str],
+    result: SubdecomposeResult,
+) -> list["Feature"] | None:
+    """Decompose ONE oversized feature into per-domain sub-features.
+
+    Returns the list of minted sub-features (≥ :data:`_MIN_DOMAINS`), or
+    ``None`` when *source* does not split (not oversized, or no decomposable
+    domain structure — i.e. a fixed point for this feature). Mutates *source*
+    in place (de-owns its residual) and updates *result* telemetry.
+
+    *floor* / *cut* / *max_domains* are the REPO-LEVEL grain thresholds,
+    computed once from the whole repo and held FIXED for every recursion level
+    (step 1). They describe the repo's grain, which does not change as we
+    descend — so a minted sub-feature that still owns more than the repo's
+    ``cut`` is judged oversized by the SAME standard as a top-level feature.
+    This is what makes the fixed point scale-invariant: every level is measured
+    against one stable repo-grain ruler, not a per-level drifting one.
+    """
+    owned = _owned_paths(source)
+    if len(owned) <= cut:
+        return None  # not oversized → fixed point for this feature
+    result.oversized_total += 1
+
+    # File conservation: the split universe is the OWNED set. When ``paths`` is
+    # a SUPERSET of the owned member set (path-only entries with no owning
+    # member_file row), those extra files are part of neither a domain nor the
+    # owned-derived residual. Fold them into the residual so _deown_residual
+    # materialises them as shared claims — nothing is dropped when ``paths`` is
+    # overwritten (audit: jsonhero-web dropped 9 such files).
+    path_only = [p for p in (getattr(source, "paths", None) or []) if p not in owned]
+
+    domains, residual = _plan_split(owned, floor, max_domains=max_domains)
+    if not domains:
+        return None  # no decomposable domain structure → fixed point
+
+    result.floor_by_feature[source.name] = floor
+    # Zero-path protection — never empty the source. If every owned file moved
+    # into a domain, keep the smallest domain on the source as its residual so
+    # it stays a valid, non-ghost feature.
+    if not residual:
+        smallest = min(domains, key=lambda k: len(domains[k]))
+        residual = domains.pop(smallest)
+        if len(domains) < 1:
+            return None
+
+    minted: list["Feature"] = []
+    moved_files: set[str] = set()
+    for domain_key, files in domains.items():
+        name = _slug(domain_key, used_names)
+        sub = _make_subfeature(source, domain_key, files, name)
+        minted.append(sub)
+        moved_files.update(files)
+
+    # path-only files (never owned) join the de-owned shared residual.
+    residual_set = set(residual) | set(path_only)
+    result.members_deowned += _deown_residual(source, moved_files, residual_set)
+    result.features_split += 1
+    result.subfeatures_created += len(domains)
+    result.paths_moved += len(moved_files)
+    if len(result.split_sample) < 20:
+        result.split_sample.append({
+            "feature": source.name,
+            "domains": len(domains),
+            "moved": len(moved_files),
+            "residual": len(residual_set),
+            "names": sorted({_strip_route_group(k.rsplit("/", 1)[-1])
+                             for k in domains})[:25],
+        })
+    return minted
+
+
 def subdecompose_oversized_features(
     features: list["Feature"],
 ) -> SubdecomposeResult:
     """Split OVERSIZED developer features into per-domain sub-features along
-    the repo's own directory tree.
+    the repo's own directory tree — RECURSIVELY, to a fixed point.
 
     Mutates ``features`` in place: a split source keeps its (de-owned,
-    ``role="shared"``) residual, and the new sub-features are APPENDED.
-    Returns telemetry.
+    ``role="shared"``) residual, and the new sub-features are APPENDED. A
+    minted sub-feature that is ITSELF still oversized AND still has a
+    decomposable domain structure is decomposed AGAIN, and so on until no
+    oversized-decomposable feature remains (the fixed point). Returns
+    telemetry.
+
+    Recursion design + termination (step 1)
+    ---------------------------------------
+    The per-feature split (:func:`_split_one_feature`) is driven by a WORKLIST.
+    The worklist is seeded with the repo's current developer features; whenever
+    a feature splits, its freshly-minted sub-features are pushed back onto the
+    worklist and re-evaluated by the SAME oversized gate. The repo-grain
+    thresholds (``floor`` / ``cut`` / ``max_domains``) are computed ONCE and
+    held fixed for the whole loop — they are a property of the repo, not of the
+    recursion level — so the fixed point is defined against one stable ruler.
+
+    Termination is GUARANTEED by strict monotonic descent: a split requires
+    ≥ :data:`_MIN_DOMAINS` promotable domains and leaves a non-empty residual
+    on the parent, so every child owns a PROPER SUBSET of its parent's owned
+    files (strictly fewer). Owned-file count is a non-negative integer that
+    strictly decreases along every parent→child chain, so the chain is finite
+    and the worklist drains. :data:`_FIXED_POINT_ITER_CAP` is a defensive CPU
+    bound only (logged via ``depth_cap_hit`` if ever hit), NOT the termination
+    mechanism — see its definition. The precision guards (terminal containers,
+    PascalCase-component leaves, grain floor, anti-shatter cap) apply at EVERY
+    level because they live inside :func:`_split_one_feature` /
+    :func:`_plan_split`, so junk cannot be minted at depth-2+ any more than at
+    depth-1.
+
+    Idempotence / re-entrancy
+    -------------------------
+    The stage recurses INTERNALLY by design, but a second INDEPENDENT
+    invocation on already-decomposed output is a no-op: features carrying the
+    sub-domain provenance marker (``split_from`` set + the ``sub-domain``
+    description) at ENTRY are this stage's OWN prior output and are NOT
+    re-decomposed as fresh sources. Within a single run, sub-features minted
+    THIS run are still recursed (they are tracked locally, not by the entry
+    marker). So ``stage(stage(features)) == stage(features)``.
     """
     result = SubdecomposeResult(enabled=_is_enabled())
     if not result.enabled:
         return result
+
+    # Re-entrancy guard: a feature that ALREADY carries this stage's sub-domain
+    # provenance at entry is prior output — count it toward the grain but never
+    # re-decompose it as a fresh source (idempotence on re-run). Freshly minted
+    # sub-features (this run) are recursed via the worklist, not this set.
+    def _is_prior_subdomain(f: "Feature") -> bool:
+        if getattr(f, "split_from", None):
+            desc = (getattr(f, "description", None) or "").lower()
+            return _SUBDOMAIN_MARKER in desc
+        return False
 
     devs = [
         f for f in features
@@ -681,11 +881,12 @@ def subdecompose_oversized_features(
     if not devs:
         return result
 
-    # Scale-invariant grain floor + oversized cut, both RELATIVE to the
-    # repo's own owned-file grain (rule-no-magic-tuning). ``floor`` = the
-    # repo's median owned-feature size (sub-features must be peers of the
-    # repo's grain). ``cut`` = oversized iff owning > max(2x median,
-    # 15% of all owned files).
+    # Scale-invariant grain floor + oversized cut, both RELATIVE to the repo's
+    # own owned-file grain (rule-no-magic-tuning), computed ONCE over the full
+    # current developer-feature set and held FIXED for every recursion level.
+    # ``floor`` = the repo's median owned-feature size (sub-features must be
+    # peers of the repo's grain). ``cut`` = oversized iff owning > max(2x
+    # median, 15% of all owned files).
     owned_by_feature = {id(f): _owned_paths(f) for f in devs}
     sizes = [len(v) for v in owned_by_feature.values() if v]
     if not sizes:
@@ -702,58 +903,44 @@ def subdecompose_oversized_features(
     # is pathological: it alone would more than double the feature set with a
     # long thin tail. Cap promoted domains at that count (the repo's own grain)
     # so a true shatter coarsens gracefully (largest domains survive, tail folds
-    # to the shared residual) while every legitimate large decomposition in the
-    # corpus passes untouched (max observed = a 134-feature repo whose backend
-    # holds ~140 real service domains). No corpus-tuned constant — the cap is the
+    # to the shared residual). The cap IS exercised by the validated corpus —
+    # e.g. infisical's backend holds ~140 real service domains under a 134-ish
+    # feature repo, so the cap fires there and coarsens the thin tail — and it
+    # never suppresses a legitimately large decomposition because the SURVIVING
+    # domains are the largest ones. No corpus-tuned constant — the cap is the
     # repo's existing developer-feature count (rule-no-magic-tuning).
     max_domains = max(_MIN_DOMAINS, len(devs) - 1)
 
     used_names = {f.name for f in features}
-    new_features: list["Feature"] = []
+    all_new: list["Feature"] = []
+    # Seed the worklist with eligible (non-prior-output) developer features.
+    worklist: list["Feature"] = [f for f in devs if not _is_prior_subdomain(f)]
 
-    for source in devs:
-        owned = owned_by_feature[id(source)]
-        if len(owned) <= cut:
-            continue
-        result.oversized_total += 1
-        domains, residual = _plan_split(owned, floor, max_domains=max_domains)
-        if not domains:
-            continue
+    iteration = 0
+    while worklist and iteration < _FIXED_POINT_ITER_CAP:
+        iteration += 1
+        next_round: list["Feature"] = []
+        for source in worklist:
+            minted = _split_one_feature(
+                source,
+                floor=floor, cut=cut, max_domains=max_domains,
+                used_names=used_names, result=result,
+            )
+            if minted:
+                all_new.extend(minted)
+                # Re-evaluate the freshly minted sub-features next round: any
+                # still-oversized + decomposable one splits again (fixed point).
+                next_round.extend(minted)
+        worklist = next_round
 
-        result.floor_by_feature[source.name] = floor
-        # Zero-path protection — never empty the source. If every owned file
-        # moved into a domain, keep the smallest domain on the source as its
-        # residual so it stays a valid, non-ghost feature.
-        if not residual:
-            smallest = min(domains, key=lambda k: len(domains[k]))
-            residual = domains.pop(smallest)
-            if len(domains) < 1:
-                continue
+    result.iterations = iteration
+    if worklist:
+        # Cap reached with work still pending — should be impossible given the
+        # strict-descent termination proof; surface it loudly for diagnosis
+        # rather than silently leaving an oversized blob.
+        result.depth_cap_hit = True
 
-        moved_files: set[str] = set()
-        for domain_key, files in domains.items():
-            name = _slug(domain_key, used_names)
-            new_features.append(_make_subfeature(source, domain_key, files, name))
-            moved_files.update(files)
-
-        residual_set = set(residual)
-        result.members_deowned += _deown_residual(
-            source, moved_files, residual_set,
-        )
-        result.features_split += 1
-        result.subfeatures_created += len(domains)
-        result.paths_moved += len(moved_files)
-        if len(result.split_sample) < 20:
-            result.split_sample.append({
-                "feature": source.name,
-                "domains": len(domains),
-                "moved": len(moved_files),
-                "residual": len(residual_set),
-                "names": sorted({_strip_route_group(k.rsplit("/", 1)[-1])
-                                 for k in domains})[:25],
-            })
-
-    features.extend(new_features)
+    features.extend(all_new)
     return result
 
 

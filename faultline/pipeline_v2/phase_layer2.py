@@ -511,7 +511,9 @@ def run_layer2_phase(
             f"anchors={subdecompose_result.anchors_total} "
             f"split={subdecompose_result.anchors_split} "
             f"subfeatures={subdecompose_result.subfeatures_created} "
-            f"paths_moved={subdecompose_result.paths_moved}",
+            f"paths_moved={subdecompose_result.paths_moved} "
+            f"iterations={subdecompose_result.iterations} "
+            f"depth_cap_hit={subdecompose_result.depth_cap_hit}",
         )
         write_stage_artifact(
             ctx.repo_path,
