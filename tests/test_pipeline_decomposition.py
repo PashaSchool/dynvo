@@ -127,6 +127,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (6, "uf_refiner"),
     (6, "history"),
     (6, "impact"),
+    # Stage 6.6 (2026-06) — Monorepo Assembly View. Deterministic, $0,
+    # additive; emitted on every run just before Stage 7 output (a trivial
+    # {"is_monorepo": False} view for single repos). See
+    # stage_6_6_monorepo_assembly.py.
+    (6, "monorepo_assembly"),
 ]
 
 

@@ -483,6 +483,46 @@ def run_finalize_phase(
     if llm_health is not None:
         stamp_llm_degraded(scan_meta, llm_health)
 
+    # ── Stage 6.6 — Monorepo Assembly View ($0, deterministic, additive) ──
+    #    Re-project the flat ``features`` into a per-project structure +
+    #    cross-project dependency graph. Gated on ``is_monorepo`` (single
+    #    repos get the trivial ``{"is_monorepo": False}``). Never mutates
+    #    ``features``. Defensive: an assembly failure degrades to ``{}`` +
+    #    a warning so it can NEVER break a scan.
+    monorepo_view: dict[str, Any] = {}
+    with StageLogger(run_dir, 6, "monorepo_assembly") as log66:
+        try:
+            from faultline.pipeline_v2.stage_6_6_monorepo_assembly import (
+                build_monorepo_assembly,
+            )
+
+            monorepo_view = build_monorepo_assembly(ctx, features)
+            stats = monorepo_view.get("stats", {})
+            log66.info(
+                "monorepo=%s projects=%s edges=%s assigned=%.0f%%"
+                % (
+                    monorepo_view.get("is_monorepo", False),
+                    stats.get("project_count", 0),
+                    stats.get("edge_count", 0),
+                    100.0 * float(stats.get("assigned_pct", 0.0)),
+                ),
+                feature=None,
+            )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=6,
+                stage_name="monorepo_assembly",
+                payload=monorepo_view,
+                run_dir=run_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail a scan on the view
+            log66.info(f"monorepo assembly skipped ({exc})", feature=None)
+            monorepo_view = {}
+    if monorepo_view:
+        scan_meta["monorepo_assembly"] = {
+            k: v for k, v in monorepo_view.get("stats", {}).items()
+        }
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     with StageLogger(run_dir, 7, "output") as log7:
@@ -499,6 +539,7 @@ def run_finalize_phase(
             base_scan_commit=(since or ""),
             scan_commit=head,
             engine_version=_engine_version,
+            monorepo=monorepo_view,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
 
