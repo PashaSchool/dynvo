@@ -168,12 +168,27 @@ def _read_featuremap(out_path: Path | None) -> dict[str, Any] | None:
 def _feature_file_set(feature: dict[str, Any]) -> set[str]:
     """Distinct file paths a developer feature touches.
 
-    Reads the ``paths`` list (the canonical membership field) and the
-    ``files`` list if present; both degrade to empty. Used for the
-    per-project blob metric (max share of the project's files owned by a
-    single feature) WITHOUT re-reading any source.
+    Reads ``member_files`` FIRST — the engine's canonical membership field,
+    a list of ``{path, role, primary, ...}`` dicts — exactly as
+    ``cold_eval._file_set`` does, then falls back to ``paths``/``files``.
+    Reading ``paths`` only diverged from the canonical judge and produced a
+    DIFFERENT blob metric than the one cold_eval gates on (the same
+    ``_file_set`` schema mismatch that mis-measured the blob corpus-wide —
+    see ``finding-coldeval-blob-broken-2026-06-19``). Both degrade to empty.
+    Used for the per-project blob metric WITHOUT re-reading any source.
     """
     files: set[str] = set()
+    mf = feature.get("member_files")
+    if isinstance(mf, list):
+        for m in mf:
+            if isinstance(m, dict):
+                pp = m.get("path")
+                if isinstance(pp, str):
+                    files.add(pp)
+            elif isinstance(m, str):
+                files.add(m)
+    if files:
+        return files
     for key in ("paths", "files"):
         val = feature.get(key)
         if isinstance(val, list):

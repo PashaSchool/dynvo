@@ -309,3 +309,75 @@ def test_assembly_is_deterministic(tmp_path: Path) -> None:
     a = build_partition_assembly(root, plan, results)
     b = build_partition_assembly(root, plan, results)
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def test_feature_file_set_reads_member_files_first() -> None:
+    """The per-project blob must key on ``member_files`` — the canonical field
+    ``cold_eval._file_set`` reads — not ``paths``. Reading paths-only produced a
+    DIFFERENT metric than the gate (finding-coldeval-blob-broken-2026-06-19),
+    so the assembly's max_feature_share silently diverged from cold_eval's."""
+    from faultline.pipeline_v2.auto_partition import _feature_file_set
+
+    # member_files (real dict schema with role/primary) WINS over paths.
+    feat = {
+        "paths": ["a.ts", "b.ts", "c.ts"],  # 3 — would be used if paths-first
+        "member_files": [
+            {"path": "a.ts", "role": "anchor", "primary": True},
+            {"path": "b.ts", "role": "shared"},
+        ],
+    }
+    assert _feature_file_set(feat) == {"a.ts", "b.ts"}  # not the 3 paths
+
+    # No member_files → fall back to paths.
+    assert _feature_file_set({"paths": ["x.ts", "y.ts"]}) == {"x.ts", "y.ts"}
+    # Bare-string member_files tolerated.
+    assert _feature_file_set({"member_files": ["m.ts"]}) == {"m.ts"}
+    # Empty everywhere → empty set (no crash).
+    assert _feature_file_set({}) == set()
+
+
+def test_blob_metric_matches_cold_eval_on_member_files_schema(tmp_path: Path) -> None:
+    """End-to-end: a project whose features carry the real member_files dict
+    schema gets a max_feature_share that keys on member_files (so the assembly
+    summary equals what cold_eval would gate on)."""
+    root = _js_repo(tmp_path)
+    # web: feat-big owns 3 of 4 distinct member_files → 0.75 by member_files.
+    fm = {
+        "developer_features": [
+            {
+                "name": "big",
+                "member_files": [
+                    {"path": "apps/web/a.ts", "primary": True},
+                    {"path": "apps/web/b.ts", "role": "shared"},
+                    {"path": "apps/web/c.ts", "role": "shared"},
+                ],
+                "paths": ["apps/web/a.ts"],  # sparse paths must NOT be used
+            },
+            {
+                "name": "small",
+                "member_files": [{"path": "apps/web/d.ts", "primary": True}],
+            },
+        ],
+        "user_flows": [],
+        "flows": [],
+        "scan_meta": {"stack": "next-app-router"},
+    }
+    api_fm = {
+        "developer_features": [
+            {"name": "srv", "member_files": [{"path": "apps/api/src/server.ts", "primary": True}]}
+        ],
+        "user_flows": [],
+        "flows": [],
+        "scan_meta": {"stack": "nestjs"},
+    }
+    web_out = _write_fm(tmp_path, "web", fm)
+    api_out = _write_fm(tmp_path, "api", api_fm)
+    plan = _plan(web="apps/web", api="apps/api")
+    results = [
+        MultiScanResult(subpath="apps/web", out_path=web_out, result={}, error=None),
+        MultiScanResult(subpath="apps/api", out_path=api_out, result={}, error=None),
+    ]
+    out = build_partition_assembly(root, plan, results)
+    web = out["projects"][0]["summary"]
+    assert web["file_count"] == 4
+    assert web["max_feature_share"] == 0.75  # 3/4 by member_files, not paths
