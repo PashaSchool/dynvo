@@ -380,6 +380,12 @@ def test_build_monorepo_assembly_full_shape(tmp_path: Path) -> None:
     assert by_sub["apps/web"]["feature_uuids"] == ["u1"]
     assert by_sub["packages/ui"]["feature_count"] == 1
     assert by_sub["packages/utils"]["feature_count"] == 1
+    # audit fix: file_count (renamed from the misleading 'loc') + per-project
+    # spanning trustworthiness signal. apps/web's lone feature is single-project.
+    assert "loc" not in by_sub["apps/web"]
+    assert by_sub["apps/web"]["file_count"] == 1
+    assert by_sub["apps/web"]["spanning_count"] == 0
+    assert by_sub["apps/web"]["spanning_ratio"] == 0.0
     # graph edges present.
     g = view["cross_project_graph"]
     assert {(e["from"], e["to"]) for e in g["edges"]} >= {
@@ -414,6 +420,11 @@ def test_assembly_conservation_no_feature_lost(tmp_path: Path) -> None:
     seen.extend(u["uuid"] for u in view["unassigned_features"])
     assert sorted(seen) == ["u1", "u2", "u3"]
     assert len(seen) == len(set(seen))  # no double-assignment
+    # audit fix: apps/web homes the spanning feature u2 (dominant on lex tie) +
+    # its own single-project u1 -> spanning_count 1 of 2 -> ratio 0.5.
+    web = next(p for p in view["projects"] if p["subpath"] == "apps/web")
+    assert web["spanning_count"] == 1
+    assert web["spanning_ratio"] == 0.5
 
 
 def test_single_repo_backcompat_trivial_view(tmp_path: Path) -> None:

@@ -828,7 +828,8 @@ def build_monorepo_assembly(
         {
           "is_monorepo": True,
           "projects": [
-            {name, type, subpath, fan_in, feature_uuids, feature_count, loc},
+            {name, type, subpath, fan_in, feature_uuids, feature_count,
+             file_count, spanning_count, spanning_ratio},
             ...
           ],
           "cross_project_graph": {"nodes": [...], "edges": [...]},
@@ -882,12 +883,23 @@ def build_monorepo_assembly(
                 }
             )
 
+    # Per-project spanning count: features homed HERE whose files actually
+    # span >1 project (assigned by the dominant-share heuristic). A high
+    # spanning_ratio means this project's feature list is mostly cross-cutting
+    # blobs (the flat scan's blob-bug leaking through) — a trustworthiness
+    # signal so a consumer can suppress low-confidence per-project ownership
+    # (e.g. cal-com homes many features to a lib at 6% dominant share).
+    spanning_by_project: dict[str, int] = {}
+    for s in spanning:
+        spanning_by_project[s["dominant"]] = spanning_by_project.get(s["dominant"], 0) + 1
+
     node_by_subpath = {n.subpath: n for n in nodes}
     projects: list[dict[str, Any]] = []
     for c in plan.classifications:
         uuids = per_project_uuids.get(c.path, [])
-        loc = _project_loc(uuids, feat_by_uuid)
+        file_count = _project_loc(uuids, feat_by_uuid)
         node = node_by_subpath.get(c.path)
+        span_n = spanning_by_project.get(c.path, 0)
         projects.append(
             {
                 "name": c.name,
@@ -896,7 +908,9 @@ def build_monorepo_assembly(
                 "fan_in": node.fan_in if node is not None else 0,
                 "feature_uuids": uuids,
                 "feature_count": len(uuids),
-                "loc": loc,
+                "file_count": file_count,
+                "spanning_count": span_n,
+                "spanning_ratio": round(span_n / len(uuids), 3) if uuids else 0.0,
             }
         )
     # Order projects: scan-worthy first (app/service), then by feature count.
@@ -945,14 +959,13 @@ def build_monorepo_assembly(
 def _project_loc(
     feature_uuids: Sequence[str], feat_by_uuid: Mapping[str, "Feature"]
 ) -> int:
-    """Approximate LOC for a project = sum of its features' distinct-file counts.
+    """Distinct FILE count for a project (emitted as the ``file_count`` field).
 
-    We do NOT re-read files (the flat scan didn't store per-file LOC on the
-    feature in a uniform field); ``loc`` here is a deterministic FILE count
-    proxy — the number of distinct files attributed to the project's
-    features. Honest + cheap; callers that need true LOC can join on
-    ``path_index``. Distinct across the project's features so a shared file
-    isn't double-counted.
+    NOT lines-of-code: we do not re-read files. It is the number of distinct
+    files attributed to the project's features — deterministic + cheap.
+    Callers that need true LOC can join on ``path_index``. Distinct across
+    the project's features so a shared file isn't double-counted. (The field
+    was renamed from the misleading ``loc`` per independent audit 2026-06-21.)
     """
     files: set[str] = set()
     for uid in feature_uuids:
