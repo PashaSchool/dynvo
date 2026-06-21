@@ -443,9 +443,33 @@ def test_cross_feature_distinct_entry_line_survive() -> None:
     assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
 
 
+def test_cross_feature_distinct_entry_line_survive() -> None:
+    """REAL runtime discriminator: same name + same entry FILE but DIFFERENT
+    entry_point_line are distinct and BOTH survive (the unkey
+    create-account-flow @line49 vs @line61 shape). This is the conservative
+    guard that actually fires at the Stage-5.5 call site, where line_ranges
+    is still empty."""
+    entry = "demo_api/main.go"
+    a = _feat_anchored(
+        "feat-a", paths=[entry],
+        flows=[_flow_lr("create-account-flow", [entry], entry, 49, [])],
+        anchor_file=entry,
+    )
+    b = _feat_anchored(
+        "feat-b", paths=[entry],
+        flows=[_flow_lr("create-account-flow", [entry], entry, 61, [])],
+        anchor_file=entry,
+    )
+    result = stage_5_5_bipartite([a, b])
+    assert len([f for f in result.flows if f.name == "create-account-flow"]) == 2
+    assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
+
+
 def test_cross_feature_distinct_line_ranges_survive() -> None:
-    """Same name AND same entry (file+line) but DIFFERENT line_ranges are
-    treated as distinct — the collapse is conservative on the span too."""
+    """FORWARD-SAFETY: if line_ranges were ever populated before Stage 5.5
+    (today they are NOT — the LOC expander runs in phase_finalize, later),
+    differing spans would still produce distinct keys. Guards against a future
+    stage reorder silently over-collapsing; inert at the current call site."""
     entry = "router.ts"
     a = _feat_anchored(
         "feat-a",
