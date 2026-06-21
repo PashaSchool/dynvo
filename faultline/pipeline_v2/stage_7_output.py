@@ -145,6 +145,7 @@ def build_feature_map(
     base_scan_commit: str = "",
     scan_commit: str = "",
     engine_version: str = "",
+    monorepo: dict[str, Any] | None = None,
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
 
@@ -161,6 +162,12 @@ def build_feature_map(
     bipartite store. The per-feature ``Feature.flows[]`` list stays
     populated as the containment projection so the landing app keeps
     working without modification.
+
+    ``monorepo`` (Stage 6.6) is the deterministic ADDITIVE assembly view
+    (per-project grouping + cross-project dependency graph) built by
+    :func:`faultline.pipeline_v2.stage_6_6_monorepo_assembly.build_monorepo_assembly`.
+    Defaults to ``{}`` (no field churn) for non-monorepo repos and for
+    callers that don't compute it. NEVER mutates ``features``.
     """
     return FeatureMap(
         schema_version=SCHEMA_VERSION,
@@ -181,6 +188,7 @@ def build_feature_map(
         base_scan_commit=base_scan_commit,
         scan_commit=scan_commit,
         engine_version=engine_version,
+        monorepo=dict(monorepo or {}),
     )
 
 
@@ -204,6 +212,7 @@ def stage_7_output(
     base_scan_commit: str = "",
     scan_commit: str = "",
     engine_version: str = "",
+    monorepo: dict[str, Any] | None = None,
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -230,6 +239,7 @@ def stage_7_output(
         base_scan_commit=base_scan_commit,
         scan_commit=scan_commit,
         engine_version=engine_version,
+        monorepo=monorepo,
     )
 
     # Snapshot Stage 7's input for replay before we hand off to the writer.

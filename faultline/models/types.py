@@ -990,6 +990,19 @@ class FeatureMap(BaseModel):
     base_scan_commit: str = ""
     scan_commit: str = ""
     engine_version: str = ""
+    # Stage 6.6 (2026-06) — MONOREPO ASSEMBLY VIEW. A deterministic, $0,
+    # ADDITIVE re-projection of the flat ``developer_features[]`` into a
+    # per-PROJECT structure plus the internal cross-project dependency
+    # graph, built by
+    # :mod:`faultline.pipeline_v2.stage_6_6_monorepo_assembly`. Free-form
+    # (like ``scan_meta``) so it can iterate without schema churn. Emitted
+    # ONLY for monorepos (``{"is_monorepo": True, "projects": [...],
+    # "cross_project_graph": {...}, "unassigned_features": [...], ...}``);
+    # a single repo gets the trivial ``{"is_monorepo": False}``. Defaults
+    # to ``{}`` so every scan produced before this field existed (and every
+    # non-monorepo scan that doesn't populate it) rehydrates unchanged.
+    # NEVER mutates ``features`` / ``developer_features`` — purely a view.
+    monorepo: dict[str, Any] = {}
 
     @model_validator(mode="after")
     def _merge_layer_inputs(self) -> "FeatureMap":
