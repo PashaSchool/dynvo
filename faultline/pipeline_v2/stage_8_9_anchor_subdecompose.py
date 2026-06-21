@@ -356,6 +356,12 @@ class SubdecomposeResult:
     depth_cap_hit: bool = False      # safety cap reached (should never happen)
     floor_by_feature: dict[str, int] = field(default_factory=dict)
     split_sample: list[dict[str, Any]] = field(default_factory=list)
+    # ── Husk cleanup (step 6) telemetry ───────────────────────────────────
+    husks_total: int = 0             # split sources that ended 0-owned (husks)
+    husks_dropped: int = 0           # empty-shell husks removed (all conserved)
+    husks_kept_residual: int = 0     # husks kept as de-duped 0-owned shared bucket
+    husk_members_deduped: int = 0    # double-count shared members removed from husks
+    husk_files_conserved: int = 0    # distinct sole-held files kept (never dropped)
 
     # Back-compat aliases (older telemetry consumers / tests expect these).
     @property
@@ -377,6 +383,11 @@ class SubdecomposeResult:
             "members_deowned": self.members_deowned,
             "iterations": self.iterations,
             "depth_cap_hit": self.depth_cap_hit,
+            "husks_total": self.husks_total,
+            "husks_dropped": self.husks_dropped,
+            "husks_kept_residual": self.husks_kept_residual,
+            "husk_members_deduped": self.husk_members_deduped,
+            "husk_files_conserved": self.husk_files_conserved,
             "split_sample": list(self.split_sample[:20]),
         }
 
@@ -733,6 +744,187 @@ def _deown_residual(
     return deowned
 
 
+# ── Husk cleanup (step 6) ────────────────────────────────────────────────────
+
+
+def _all_member_paths(feature: "Feature") -> set[str]:
+    """Every file the feature CLAIMS (any role) — its full ``member_files``
+    path set. This is what ``cold_eval._file_set`` reads for the all-files
+    blob denominator + ``max_feature_share`` candidacy."""
+    return {
+        m.path for m in (getattr(feature, "member_files", None) or [])
+        if isinstance(getattr(m, "path", None), str)
+    }
+
+
+def _owns_zero_files(feature: "Feature") -> bool:
+    """``True`` when the feature OWNS no files, by the SAME definition the blob
+    gate (``cold_eval._owned_file_set``) uses — i.e. its ``member_files`` carry
+    role/primary metadata and NONE is ``primary`` or ``role in {anchor,
+    owner}``.
+
+    This deliberately does NOT use :func:`_owned_paths`, which falls back to the
+    feature's flat ``paths`` list when no owned member row exists. A de-owned
+    Stage-8.9 residual keeps its residual files in BOTH ``member_files``
+    (``role="shared"``) AND ``paths`` (``_deown_residual`` sets
+    ``source.paths = residual``), so ``_owned_paths`` would report it as owning
+    its residual and the husk would be invisible. The gate ignores that
+    fallback whenever role metadata is present (a fully-shared member set owns
+    0), so the husk test must match the gate exactly."""
+    mf = list(getattr(feature, "member_files", None) or [])
+    if not mf:
+        return False  # no members at all → not a husk (handled separately)
+    has_role_meta = any(
+        getattr(m, "primary", None) is not None or getattr(m, "role", None) is not None
+        for m in mf
+    )
+    if not has_role_meta:
+        return False  # legacy rows with no metadata → treated as owned by the gate
+    return not any(
+        getattr(m, "primary", False) or getattr(m, "role", None) in ("anchor", "owner")
+        for m in mf
+    )
+
+
+def _cleanup_husks(
+    features: list["Feature"],
+    split_sources: list["Feature"],
+    *,
+    cut: int,
+    result: SubdecomposeResult,
+) -> None:
+    """De-degenerate the residual ``Feature`` objects this stage produced.
+
+    A *husk* is a split source that ended up OWNING 0 files: every domain it
+    contained moved to a sub-feature, leaving only a residual of loose /
+    sub-floor / scaffold files which :func:`_deown_residual` reclassified to
+    ``role="shared"``. Such a feature OWNS nothing yet LISTS (as shared)
+    hundreds of files — a degenerate "husk" that should not surface as a
+    developer feature (``flow-feature-concept``: a 0-owned developer feature is
+    not a feature) and that double-counts files already owned by its
+    sub-features when a naive all-files share is computed (inbox-zero
+    ``inbox-zero-ai``: 1701 members, ALL ``role="shared"``, owns 0).
+
+    This pass runs ONCE after the fixed-point loop, ONLY over the features this
+    stage de-owned (``split_sources``) — pre-existing 0-owned features from
+    other stages are never touched (``rule-stage-8-fixes-must-be-additive``).
+    It is **strictly subtractive on each husk**: it never promotes a residual
+    file to OWNED (preserving the operator-audited "a fully de-owned source
+    contributes 0 owned files" invariant — memory/project-blob-decomposer-
+    shipped-2026-06-21) and never moves a file onto another feature. For each
+    husk it applies, in order:
+
+    1. **De-dup (lossless).** Remove every husk member whose path is CLAIMED
+       (any role) by ≥1 OTHER feature in the scan. Those files are conserved on
+       that other feature; on the husk they are pure double-counts and the
+       direct cause of its inflated member list. This alone roughly halves the
+       fake feature (inbox-zero ``inbox-zero-ai`` 1697→866 members; dub ``web``
+       2037→813) and CANNOT change the blob metric: the union of attributed
+       files is unchanged (the removed files stay on the other feature) and the
+       husk stays 0-owned (still excluded from the owned/all-files
+       ``max_feature_share`` candidacy by ``cold_eval``). De-duped files are
+       pruned from ``paths`` and the path-keyed surfaces too.
+
+    2. **Drop empty shell.** If EVERY member was conserved elsewhere (the
+       sole-held set is empty), the husk holds nothing unique → REMOVE it from
+       ``features``. Conservation holds (every file is on another feature).
+       ``n_features`` drops by one. Flows / user_flows / feature_flow_edges are
+       untouched (the dropped container's flows already live on the wider flow
+       store, keyed independently of the feature partition — this stage runs
+       after flow synthesis and never reads ``flows``).
+
+    3. **Keep as de-duped 0-owned shared residual** (irreducible case). A husk
+       whose sole-held remainder is non-empty (inbox-zero ``inbox-zero-ai``
+       after de-dup = a single app's ``utils`` / ``components`` / ``prisma`` /
+       config / test spread that NO sub-domain and NO other feature owns) is the
+       SOLE attribution holder for those files. It cannot be dropped (the files
+       would be lost — conservation is sacred), cannot OWN them (that would
+       re-blob ``owned_max`` and break the audited invariant), and must not
+       redistribute them onto countable features (that would REGRESS the
+       all-files gate — measured: 0.063 → 0.11-0.24). So it is kept verbatim as
+       the de-duped 0-owned shared bucket. The blob metric stays honest via the
+       (operator-approved 2026-06-21) ``cold_eval`` husk-skip with which this
+       engine pass PAIRS; here we have removed the double-count inflation so the
+       product surface shows the minimal honest residual instead of the inflated
+       1701-file phantom.
+
+    Conservation invariant (asserted by tests): the set of files attributed to
+    SOME feature across the whole ``features`` list is IDENTICAL before and
+    after this pass. ``owned_max`` is unchanged (no residual file is ever
+    promoted to owned). Flows / user_flows / feature_flow_edges are never read
+    or mutated.
+
+    (``cut`` is accepted for symmetry with the rest of the stage and possible
+    future shape-gated behaviour; this subtractive cleanup does not branch on
+    it.)
+    """
+    if not split_sources:
+        return
+
+    split_ids = {id(f) for f in split_sources}
+    # Husks = split sources that ended 0-owned (by the gate's owned definition,
+    # NOT _owned_paths — see _owns_zero_files). Re-read ownership NOW (after the
+    # whole fixed-point loop), since a source split in an early iteration may
+    # have been further mutated. A pre-existing 0-owned feature from another
+    # stage is NOT in ``split_ids`` and is left untouched.
+    husks = [
+        f for f in features
+        if id(f) in split_ids and _owns_zero_files(f)
+    ]
+    if not husks:
+        return
+    result.husks_total = len(husks)
+
+    to_drop: list[int] = []
+    for husk in husks:
+        # Files claimed by ANY other feature (survivor OR another husk) — those
+        # are conserved elsewhere and may be removed from this husk losslessly.
+        claimed_elsewhere: set[str] = set()
+        for other in features:
+            if other is husk:
+                continue
+            claimed_elsewhere |= _all_member_paths(other)
+
+        members = list(getattr(husk, "member_files", None) or [])
+        sole_members = [
+            m for m in members
+            if isinstance(getattr(m, "path", None), str)
+            and m.path not in claimed_elsewhere
+        ]
+        deduped = len(members) - len(sole_members)
+        result.husk_members_deduped += deduped
+        sole_paths = set(m.path for m in sole_members)
+
+        # (2) Empty shell — every member conserved elsewhere → drop the husk.
+        if not sole_members:
+            to_drop.append(id(husk))
+            result.husks_dropped += 1
+            continue
+
+        # (3) Keep as the de-duped 0-owned shared residual. Strictly subtractive:
+        # remove only the conserved-elsewhere double-counts; the surviving
+        # sole-held members keep their (shared) role untouched. Nothing promoted
+        # to owned → audited owned-share invariant preserved.
+        if deduped:
+            husk.member_files = sole_members
+            # Prune ``paths`` + path-keyed surfaces of the de-duped files so the
+            # husk's flat projections agree with its (shrunk) member ledger.
+            husk.paths = sorted(p for p in (getattr(husk, "paths", None) or []) if p in sole_paths)
+            for attr, file_field in _FILE_KEYED_SURFACES:
+                items = getattr(husk, attr, None)
+                if not items:
+                    continue
+                kept = [it for it in items if getattr(it, file_field, None) in sole_paths]
+                if len(kept) != len(items):
+                    setattr(husk, attr, kept)
+        result.husk_files_conserved += len(sole_paths)
+        result.husks_kept_residual += 1
+
+    if to_drop:
+        drop_set = set(to_drop)
+        features[:] = [f for f in features if id(f) not in drop_set]
+
+
 # ── Orchestration ────────────────────────────────────────────────────────────
 
 
@@ -913,6 +1105,13 @@ def subdecompose_oversized_features(
 
     used_names = {f.name for f in features}
     all_new: list["Feature"] = []
+    # Every feature that produced ≥1 sub-feature (was de-owned in place) — the
+    # ONLY features the husk-cleanup (step 6) is allowed to touch. Tracked by
+    # object identity; pre-existing 0-owned features from other stages are never
+    # in this set, keeping the cleanup strictly additive
+    # (rule-stage-8-fixes-must-be-additive).
+    split_sources: list["Feature"] = []
+    split_source_ids: set[int] = set()
     # Seed the worklist with eligible (non-prior-output) developer features.
     worklist: list["Feature"] = [f for f in devs if not _is_prior_subdomain(f)]
 
@@ -928,6 +1127,9 @@ def subdecompose_oversized_features(
             )
             if minted:
                 all_new.extend(minted)
+                if id(source) not in split_source_ids:
+                    split_source_ids.add(id(source))
+                    split_sources.append(source)
                 # Re-evaluate the freshly minted sub-features next round: any
                 # still-oversized + decomposable one splits again (fixed point).
                 next_round.extend(minted)
@@ -941,6 +1143,15 @@ def subdecompose_oversized_features(
         result.depth_cap_hit = True
 
     features.extend(all_new)
+
+    # ── Step 6 — husk cleanup ──────────────────────────────────────────────
+    # A split source that ended 0-owned is a degenerate "husk" (owns nothing,
+    # lists its de-owned residual as shared). Run the cleanup over the FINAL
+    # feature set (incl. minted subs, so "claimed elsewhere" sees them) but only
+    # ACTING on the split sources. Conserves every file. Must run after
+    # ``features.extend(all_new)`` so the conservation/claim test sees the full
+    # post-stage feature set.
+    _cleanup_husks(features, split_sources, cut=cut, result=result)
     return result
 
 
