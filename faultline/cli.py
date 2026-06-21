@@ -12,6 +12,34 @@ from faultline.output.writer import write_feature_map
 
 logger = logging.getLogger(__name__)
 
+
+def _default_monorepo_out_path(repo_path: Path) -> Path:
+    """Default path for the assembled monorepo output (Phase 5).
+
+    Mirrors the FeatureMap writer's convention
+    (``~/.faultline/feature-map-<slug>-<ts>.json``) but with a
+    ``monorepo-`` prefix so the multi-project assembly is distinguishable
+    from a flat scan. Reuses the same slug + base-dir helpers — no new
+    path logic, no repo-specific names.
+    """
+    from datetime import datetime, timezone
+
+    from faultline.cache.paths import faultline_base_dir
+    from faultline.pipeline_v2.stage_7_output import _repo_slug
+
+    slug = _repo_slug(repo_path)
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    base = faultline_base_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"monorepo-{slug}-{ts}.json"
+
+
+def _json_dumps_assembly(assembly: dict) -> str:
+    """Serialize the assembled monorepo output (stable, pretty)."""
+    import json as _json
+
+    return _json.dumps(assembly, indent=2, sort_keys=False, default=str)
+
 app = typer.Typer(
     name="faultline",
     help=(
@@ -772,6 +800,33 @@ def scan_v2(
             "per subpath. Omit for a whole-repo scan (default)."
         ),
     ),
+    auto_partition: bool = typer.Option(
+        False,
+        "--auto-partition/--no-auto-partition",
+        help=(
+            "Let the engine DECIDE the monorepo sub-projects instead of "
+            "passing --subpath by hand. Runs the deterministic partition "
+            "planner (Stage 0.6b) once; if the repo is a monorepo, scans "
+            "each detected app/service workspace ISOLATED (via the shared "
+            "git-pass multi engine) and emits a single assembled monorepo "
+            "output (per-project featuremaps + cross-project graph). When "
+            "the repo is NOT a monorepo, falls back to the ordinary "
+            "whole-repo scan. OFF by default — default behaviour is "
+            "byte-identical. Mutually exclusive with --subpath."
+        ),
+    ),
+    partition_output: Optional[str] = typer.Option(
+        None,
+        "--partition-output",
+        help=(
+            "When --auto-partition produces a monorepo, write the assembled "
+            "monorepo output JSON (per-project featuremaps + cross-project "
+            "graph + partition plan) to this path. Default: "
+            "~/.faultline/monorepo-<slug>-<timestamp>.json. Ignored when "
+            "the repo is not a monorepo (each project still writes its own "
+            "FeatureMap as usual)."
+        ),
+    ),
     feature_history: bool = typer.Option(
         True,
         "--feature-history/--no-feature-history",
@@ -833,6 +888,18 @@ def scan_v2(
         )
         raise typer.Exit(code=2)
 
+    # --auto-partition and explicit --subpath are mutually exclusive: the
+    # engine either DECIDES the sub-projects (auto) or the user DECLARES
+    # them (--subpath), never both. (memory: project-monorepo-subprojects
+    # — one engine contract, two front doors.)
+    if auto_partition and subpath:
+        rprint(
+            "[red]Error:[/red] --auto-partition cannot be combined with "
+            "--subpath. Use --auto-partition to let the engine pick the "
+            "sub-projects, OR pass --subpath to declare them yourself."
+        )
+        raise typer.Exit(code=2)
+
     def _print_scope_start(scope: Optional[str]) -> None:
         scope_label = f" subpath={scope}" if scope else ""
         rprint(
@@ -882,6 +949,91 @@ def scan_v2(
             if detail:
                 rprint(f"[red]detail: {detail}[/red]")
             rprint("[bold white on red]" + "═" * 64 + "[/bold white on red]")
+
+    # ── Auto-partition: engine decides the sub-projects (Phase 5) ──────
+    # Build the ScanContext ONCE (Stage 0 intake — cheap, no LLM, same
+    # call ``partition-plan`` uses) and run the deterministic partition
+    # planner. A monorepo with ≥1 app/service unit routes through the
+    # shared-git-pass multi engine and emits ONE assembled monorepo
+    # output; a non-monorepo (or a monorepo with no independent unit)
+    # falls through to the ordinary single whole-repo scan below — i.e.
+    # byte-identical to today. This branch is entered ONLY with
+    # ``--auto-partition`` (default OFF), so the default path is untouched.
+    if auto_partition:
+        from faultline.pipeline_v2.auto_partition import build_partition_assembly
+        from faultline.pipeline_v2.multi import MultiScanResult, run_pipeline_multi
+        from faultline.pipeline_v2.stage_0_6_project_classifier import (
+            partition_monorepo,
+        )
+        from faultline.pipeline_v2.stage_0_intake import stage_0_intake
+
+        ctx = stage_0_intake(repo)
+        ctx.run_dir = None  # planning only — no artifact writes here.
+        plan = partition_monorepo(ctx)
+        auto_subpaths = plan.subpaths()
+        if plan.is_monorepo and auto_subpaths:
+            rprint(
+                f"[bold blue]auto-partition[/bold blue] {repo}: "
+                f"{len(auto_subpaths)} scan unit(s) "
+                f"[dim]({', '.join(auto_subpaths)})[/dim] — {plan.rationale}"
+            )
+
+            def _on_end_auto(entry: MultiScanResult) -> None:
+                if entry.error is not None:
+                    rprint(
+                        f"[red]Scan failed subpath={entry.subpath}:[/red] {entry.error}"
+                    )
+                elif entry.result is not None:
+                    _print_scope_result(entry.result)
+
+            multi_results = run_pipeline_multi(
+                repo,
+                auto_subpaths,
+                model=resolved_model,
+                days=days,
+                llm_reconcile=llm_reconcile,
+                run_id=run_id,
+                max_tree_depth=max_tree_depth,
+                since=since,
+                base_scan_path=Path(base_scan_path).resolve() if base_scan_path else None,
+                lineage_jaccard_threshold=lineage_jaccard_threshold,
+                max_cost=max_cost,
+                feature_history=feature_history,
+                on_subpath_start=_print_scope_start,
+                on_subpath_end=_on_end_auto,
+            )
+
+            # Assemble the ISOLATED per-project scans (deterministic, $0).
+            assembly = build_partition_assembly(repo, plan, multi_results)
+            assembly_path = (
+                Path(partition_output).resolve()
+                if partition_output
+                else _default_monorepo_out_path(repo)
+            )
+            assembly_path.parent.mkdir(parents=True, exist_ok=True)
+            assembly_path.write_text(
+                _json_dumps_assembly(assembly), encoding="utf-8"
+            )
+            stats = assembly.get("stats", {})
+            rprint(
+                f"[green]✓[/green] Wrote monorepo assembly {assembly_path}  "
+                f"(projects={stats.get('project_count')}, "
+                f"scanned={stats.get('scanned')}, "
+                f"failed={stats.get('failed')}, "
+                f"edges={stats.get('edge_count')}, "
+                f"dev_features={stats.get('developer_feature_total')}, "
+                f"max_project_blob={stats.get('max_project_blob_share')})"
+            )
+            if any(r.error is not None for r in multi_results):
+                raise typer.Exit(code=1)
+            return
+        # Not a monorepo (or no independent unit) → fall through to the
+        # ordinary whole-repo scan. Tell the user the engine looked.
+        rprint(
+            f"[dim]auto-partition: {plan.rationale} → whole-repo scan.[/dim]"
+        )
+        # The whole-repo path below uses ``scopes`` = [None] (subpath was
+        # forbidden alongside --auto-partition, so scopes is already that).
 
     # ── Multi-subpath: ONE shared git pass via run_pipeline_multi ──────
     # >1 subpath routes through the multi engine: the repo-level git
