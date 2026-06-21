@@ -63,7 +63,8 @@ Design tenets (mirrors stage_0_6_shape.py)
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+import tomllib
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
 
@@ -75,6 +76,7 @@ from faultline.pipeline_v2.stage_0_6_shape import (
     _has_cmd_with_main_go,
     _has_framework_manifest,
     _has_top_level_go_files,
+    _is_split_fullstack,
     _pyproject_has_scripts,
     _read_json_safe,
     _read_text_safe,
@@ -145,6 +147,17 @@ _EXAMPLE_PATH_SEGMENTS: frozenset[str] = frozenset({
     "test-apps",
     "example-apps",
     "example-app",
+    # Test-harness packages (``packages/tests``, ``e2e``, ``integration-tests``)
+    # are NOT product scan units. ``e2e`` is already above; ``test``/``tests``
+    # cover the common monorepo convention of a dedicated test-harness package
+    # (e.g. a package whose only job is to exercise the siblings). This is
+    # defense-in-depth alongside the server-ENTRY-POINT requirement in
+    # :class:`ServiceClassifier` — a test harness that pulls in a server
+    # framework as a devDependency (with no real server entry) must never
+    # become a service unit.
+    "test",
+    "tests",
+    "integration-tests",
 })
 
 # Client-side UI framework dependency keys — presence (together with a
@@ -188,6 +201,31 @@ _SERVER_FRAMEWORK_DEPS: frozenset[str] = frozenset({
     "graphql-yoga",
 })
 
+# Rust HTTP/RPC-server framework crate names. A Cargo crate that depends
+# on one of these AND has a binary entry (``src/main.rs`` or a Cargo
+# ``[[bin]]`` table) BOOTS a server process and is a ``service`` — the
+# direct Rust analogue of ``_SERVER_FRAMEWORK_DEPS`` for JS. Deliberately
+# limited to crates that RUN a server: a crate with a ``src/main.rs`` but
+# NO server-framework dep is a CLI/dev-tool/bench (meilisearch's
+# ``meilitool``, ``xtask``, ``openapi-generator`` each have a ``main.rs``
+# but no server crate — they ride along, they do NOT become units). This
+# is what keeps the Rust path from re-creating the lib-explosion: only the
+# crate that depends on a server framework (meilisearch's ``crates/
+# meilisearch`` depends on ``actix-web``) is promoted.
+_RUST_SERVER_FRAMEWORK_DEPS: frozenset[str] = frozenset({
+    "actix-web",
+    "actix",
+    "axum",
+    "warp",
+    "rocket",
+    "tonic",
+    "poem",
+    "salvo",
+    "hyper",
+    "tide",
+    "gotham",
+})
+
 # A SUBSET of server deps that is definitive enough to mark a service
 # EVEN when the package also exposes library exports — the dependency
 # only exists in a package that boots an HTTP server (``NestFactory``).
@@ -220,6 +258,16 @@ _ROUTE_DIR_CANDIDATES: tuple[str, ...] = (
 # universal ecosystem naming conventions (``@org/eslint-config``,
 # ``tsconfig``, ``*-cli``), not repo-specific names. Matched against the
 # de-scoped package name token.
+#
+# DELIBERATELY EXCLUDED (rule-no-repo-specific-paths): ``build-icons`` and
+# ``dev-tools`` were here but are literal supabase package names, not
+# industry conventions — a package called ``build-icons`` in another repo
+# is just as likely a product image library. They were removed; such
+# packages now classify via their STRUCTURAL signals (a ``bin`` field /
+# ``bin``·``cli``·``scripts`` dir with no library exports -> tool;
+# otherwise lib ride-along). Either way they are excluded from scan units,
+# so the partition is unaffected. Only genuine ecosystem conventions
+# remain below.
 _TOOL_NAME_EXACT: frozenset[str] = frozenset({
     "tsconfig",
     "config",
@@ -228,8 +276,6 @@ _TOOL_NAME_EXACT: frozenset[str] = frozenset({
     "prettier-config",
     "tailwind-config",
     "codegen",
-    "build-icons",
-    "dev-tools",
     "scripts",
 })
 # Tooling name SUFFIXES / tokens (matched on the de-scoped name). A name
@@ -266,6 +312,28 @@ _TOOL_DIR_CANDIDATES: tuple[str, ...] = (
     "cmd",
     "scripts",
     "src/bin",
+)
+
+# Conventional top-level directory names for a "split-fullstack" repo that
+# declares NO workspace manifest (no pnpm-workspace.yaml / package.json
+# ``workspaces`` / turbo.json / Cargo ``[workspace]``) yet physically
+# separates a frontend app from a backend service. ``frontend``+``backend``
+# is the canonical pattern that :func:`_is_split_fullstack` gates on;
+# ``client``/``server``/``web``/``api``/``app`` are the other common
+# spellings of the same split. Only directories that ACTUALLY have a
+# framework manifest are synthesized as units — a repo that incidentally
+# has an ``api/`` folder with no manifest contributes nothing. Universal
+# convention, not a repo-specific list.
+_SPLIT_FULLSTACK_DIRS: tuple[str, ...] = (
+    "frontend",
+    "backend",
+    "client",
+    "server",
+    "web",
+    "api",
+    "app",
+    "ui",
+    "www",
 )
 
 
@@ -310,6 +378,11 @@ class ProjectSignals:
     has_go_cmd_main: bool
     has_go_top_level: bool
     has_server_main_ts: bool
+    # Rust: a binary entry (``src/main.rs`` or a ``[[bin]]`` table) AND a
+    # server-framework crate dep => a running Rust service.
+    has_rust_binary_entry: bool
+    has_cargo_server_dep: bool
+    cargo_server_deps: tuple[str, ...]
 
     # ── Library (published) markers ──────────────────────────────────
     has_js_exports: bool
@@ -386,6 +459,19 @@ class ProjectSignals:
             and "[package]" in cargo_text
             and "[workspace]" not in cargo_text
         )
+        # Rust binary-service detection: a crate is a running service when
+        # it has a binary entry (``src/main.rs`` OR a Cargo ``[[bin]]``
+        # table) AND depends on an HTTP/RPC server framework crate. The
+        # binary entry alone is NOT promoted (a CLI/bench/dev-tool also has
+        # a ``main.rs``) — the server-framework dep is the discriminator.
+        has_rust_binary_entry = (ws_root / "src" / "main.rs").exists() or (
+            has_cargo_package and _cargo_has_bin_table(cargo_text)
+        )
+        cargo_server_deps = (
+            _cargo_deps_matching(cargo_text, _RUST_SERVER_FRAMEWORK_DEPS)
+            if has_cargo_package
+            else ()
+        )
 
         # ── tooling name convention ──
         has_tool_name = _is_tool_name(ws.name)
@@ -407,6 +493,9 @@ class ProjectSignals:
             has_go_cmd_main=has_go_cmd_main,
             has_go_top_level=has_go_top_level,
             has_server_main_ts=has_server_main_ts,
+            has_rust_binary_entry=has_rust_binary_entry,
+            has_cargo_server_dep=bool(cargo_server_deps),
+            cargo_server_deps=cargo_server_deps,
             has_js_exports=has_js_exports,
             has_pyproject_project=has_pyproject_project,
             has_cargo_package=has_cargo_package,
@@ -537,26 +626,44 @@ class ServiceClassifier:
         # DEFINITIVE server signals always trigger a service, even if the
         # package also exposes library exports: a server-RUNTIME dep
         # (``@nestjs/core`` = ``NestFactory.create``), a FastAPI factory,
-        # or a Go ``cmd/<x>/main.go`` binary. Each only exists in a
-        # package that boots a server process.
+        # a Go ``cmd/<x>/main.go`` binary, or a Rust crate that has a
+        # binary entry AND depends on a server framework (``actix-web`` +
+        # ``src/main.rs``). Each only exists in a package that boots a
+        # server process.
+        rust_service = signals.has_rust_binary_entry and signals.has_cargo_server_dep
         definitive = (
             signals.has_server_runtime_dep
             or signals.has_fastapi_factory
             or signals.has_go_cmd_main
+            or rust_service
         )
         # A broader server-FRAMEWORK dep (express/fastify/koa/…) marks a
-        # service ONLY when the package is not a published library OR has
-        # a server entry point — otherwise it is most likely a library
-        # that WRAPS that framework (middleware/util lib), e.g. a types
-        # package that imports Nest decorators. Published-export +
-        # framework-dep + no entry = lib (handled by LibClassifier).
-        published = (
-            signals.has_js_exports
-            or signals.has_pyproject_project
-            or signals.has_cargo_package
-        )
-        framework_service = signals.has_server_framework_dep and (
-            not published or signals.has_server_main_ts
+        # service ONLY when the package ALSO has a real server ENTRY POINT
+        # — a top-level ``src/main.ts`` / ``server.ts`` / ``src/server.ts``
+        # bootstrap. The framework dep on its OWN is not enough:
+        #
+        #   - an ADAPTER LIBRARY depends on the framework to provide an
+        #     integration (trpc ``@trpc/server`` / ``@trpc/next`` depend on
+        #     express/fastify and even ship a tiny ``bin`` install helper)
+        #     but has NO server bootstrap — it never boots a process.
+        #   - a TEST HARNESS spins the framework up only inside its test
+        #     suite (trpc ``packages/tests`` pulls in ``fastify`` as a
+        #     devDependency) but ships no server entry.
+        #
+        # The ``src/main.ts`` bootstrap is the universal "does this package
+        # BOOT a server?" discriminator. It is deliberately preferred over a
+        # ``not published`` / ``bin``-field test: a real backend service
+        # legitimately sets ``main`` to its compiled output (infisical
+        # ``backend`` declares ``"main": "./dist/main.mjs"`` AND has a
+        # ``src/main.ts`` — it IS a fastify service), so a ``main``/exports
+        # field does NOT imply "library", and a ``bin`` field does NOT imply
+        # "server" (published libs ship ``bin`` helpers — the same trap
+        # :class:`ToolClassifier` guards against). The definitive
+        # Nest/FastAPI/Go/Rust signals above are unaffected — they fire even
+        # for packages with exports, because those deps only exist where a
+        # server boots.
+        framework_service = (
+            signals.has_server_framework_dep and signals.has_server_main_ts
         )
         if not (definitive or framework_service):
             return None
@@ -571,12 +678,21 @@ class ServiceClassifier:
         if signals.has_server_framework_dep:
             reasons.append(f"server dep ({', '.join(signals.server_deps)})")
             sig.append("has_server_framework_dep")
+            if framework_service and signals.has_server_main_ts:
+                reasons.append("server entry (src/main.ts)")
+                sig.append("has_server_main_ts")
         if signals.has_fastapi_factory:
             reasons.append("FastAPI() factory")
             sig.append("has_fastapi_factory")
         if signals.has_go_cmd_main:
             reasons.append("cmd/<x>/main.go")
             sig.append("has_go_cmd_main")
+        if rust_service:
+            reasons.append(
+                f"Rust binary + server crate ({', '.join(signals.cargo_server_deps)})"
+            )
+            sig.append("has_rust_binary_entry")
+            sig.append("has_cargo_server_dep")
         return ProjectClassification(
             name=signals.name,
             path=signals.path,
@@ -879,6 +995,22 @@ def partition_monorepo(
     repo_root = Path(ctx.repo_path).resolve()
     workspaces = list(ctx.workspaces or [])
 
+    # ── Manifest-less split-fullstack rescue ──
+    #    A repo that declares NO workspace manager but physically splits a
+    #    frontend app from a backend service (``frontend/`` + ``backend/``
+    #    each with a manifest) enumerates ZERO workspaces above — it would
+    #    be scanned as ONE blob. Synthesize the split dirs as workspace
+    #    units so it partitions like any monorepo. Only fires when the
+    #    canonical frontend/backend split is present AND ≥2 split dirs have
+    #    a framework manifest; otherwise we leave ``workspaces`` untouched
+    #    and fall through to the whole-repo back-compat path.
+    synthesized_split = False
+    if len(workspaces) < MIN_WORKSPACES_FOR_PARTITION:
+        rescued = _synthesize_split_fullstack_workspaces(repo_root)
+        if len(rescued) >= MIN_WORKSPACES_FOR_PARTITION:
+            workspaces = rescued
+            synthesized_split = True
+
     # ── Not-a-monorepo short-circuit (back-compat whole-repo) ──
     if len(workspaces) < MIN_WORKSPACES_FOR_PARTITION:
         reason = (
@@ -922,18 +1054,26 @@ def partition_monorepo(
                 )
             )
         else:  # lib
-            if has_app_or_service:
-                # Rides along inside the whole-repo / consuming unit tree.
-                excluded.append(
-                    ExcludedProject(
-                        path=c.path,
-                        type="lib",
-                        reason="shared library — rides along inside an app/service unit",
-                    )
+            # Libraries NEVER become their own scan unit. When an app/
+            # service exists they ride along inside its tree; when NONE
+            # exists (a pile of libs with no product entry — a publishable
+            # library-monorepo such as meilisearch's ``crates/*`` or
+            # excalidraw's ``packages/*``) they still ride along, and the
+            # degenerate guard below collapses the whole repo into a SINGLE
+            # whole-repo unit. Emitting one-unit-per-lib was the inverse of
+            # the cal.com 219->3 win (it produced 24 units on meilisearch,
+            # 83 on lobe-chat); a library-monorepo is best scanned whole.
+            excluded.append(
+                ExcludedProject(
+                    path=c.path,
+                    type="lib",
+                    reason=(
+                        "shared library — rides along inside an app/service unit"
+                        if has_app_or_service
+                        else "library-monorepo with no app/service — rides along in whole-repo scan"
+                    ),
                 )
-            else:
-                # Standalone library monorepo: each lib is its own unit.
-                candidate_units.append(c)
+            )
 
     # ── Nesting de-dup: drop any unit nested under another chosen unit ──
     kept = _drop_nested(candidate_units)
@@ -952,10 +1092,14 @@ def partition_monorepo(
         for c in sorted(kept, key=lambda x: x.path)
     )
 
-    # ── Degenerate guard: a declared monorepo where nothing classified
-    #    as app/service AND we treated libs as ride-along would leave
-    #    ZERO units. Fall back to a whole-repo unit so the repo is still
-    #    scanned (back-compat, never emit an empty plan).
+    # ── No-app/service fallback (library-monorepo guard) ──
+    #    A declared monorepo where NOTHING classified as app/service leaves
+    #    ZERO candidate units (libs/tools/examples all ride along or are
+    #    excluded). This is the library-monorepo case (meilisearch's
+    #    ``crates/*``, excalidraw's ``packages/*``): collapse to a SINGLE
+    #    whole-repo unit rather than exploding into one-unit-per-lib. Also
+    #    covers the truly-degenerate "every workspace excluded" case. Never
+    #    emit an empty plan.
     if not units:
         return PartitionPlan(
             is_monorepo=True,
@@ -963,15 +1107,21 @@ def partition_monorepo(
             excluded=tuple(excluded),
             classifications=tuple(classifications),
             rationale=(
-                "Monorepo with no app/service unit and only ride-along libs; "
-                "whole-repo scan (no independent units)."
+                "Monorepo with no app/service unit (library-monorepo / only "
+                "ride-along libs); single whole-repo scan, no independent units."
             ),
         )
 
     rationale = (
-        f"Monorepo: {len(units)} scan unit(s) "
+        f"{'Split-fullstack ' if synthesized_split else ''}Monorepo: "
+        f"{len(units)} scan unit(s) "
         f"({', '.join(sorted({u.project_type for u in units}))}); "
         f"{len(excluded)} excluded/ride-along."
+        + (
+            " Workspaces synthesized from frontend/backend split (no workspace manifest)."
+            if synthesized_split
+            else ""
+        )
     )
     return PartitionPlan(
         is_monorepo=True,
@@ -1015,6 +1165,45 @@ def _deps_matching(
         if isinstance(section, dict):
             keys.update(k for k in section.keys() if isinstance(k, str))
     return tuple(sorted(keys & vocab))
+
+
+def _cargo_deps_matching(cargo_text: str | None, vocab: frozenset[str]) -> tuple[str, ...]:
+    """Return the sorted subset of ``vocab`` present in a Cargo manifest's deps.
+
+    Parses ``[dependencies]`` + ``[dev-dependencies]`` + ``[build-dependencies]``
+    with :mod:`tomllib` (NOT regex). Safe on missing / malformed manifests
+    (returns ``()``). Crate keys are matched as whole names — the same
+    class of structural signal as the JS ``package.json`` dependency keys.
+    """
+    if cargo_text is None or "[package]" not in cargo_text:
+        return ()
+    try:
+        data = tomllib.loads(cargo_text)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return ()
+    keys: set[str] = set()
+    for section_name in ("dependencies", "dev-dependencies", "build-dependencies"):
+        section = data.get(section_name)
+        if isinstance(section, dict):
+            keys.update(k for k in section.keys() if isinstance(k, str))
+    return tuple(sorted(keys & vocab))
+
+
+def _cargo_has_bin_table(cargo_text: str | None) -> bool:
+    """True when the Cargo manifest declares an explicit ``[[bin]]`` target.
+
+    A ``[[bin]]`` array-of-tables names a binary the crate produces — an
+    explicit, author-declared binary entry independent of the conventional
+    ``src/main.rs``. Parsed with :mod:`tomllib`; ``()`` on parse failure.
+    """
+    if cargo_text is None or "[[bin]]" not in cargo_text:
+        return False
+    try:
+        data = tomllib.loads(cargo_text)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return False
+    bins = data.get("bin")
+    return isinstance(bins, list) and len(bins) > 0
 
 
 def _first_existing_dir(root: Path, candidates: tuple[str, ...]) -> str | None:
@@ -1080,6 +1269,53 @@ def _drop_nested(
         if not nested:
             kept.append(cand)
     return kept
+
+
+def _synthesize_split_fullstack_workspaces(
+    repo_root: Path,
+) -> list["Workspace"]:
+    """Synthesize workspace units for a manifest-less split-fullstack repo.
+
+    Some repos physically separate a frontend app from a backend service
+    (``frontend/`` + ``backend/`` each with a ``package.json``) but declare
+    NO workspace manager, so :func:`detect_workspace` enumerates nothing
+    and the repo would otherwise be scanned as ONE blob — the exact disease
+    this module cures.
+
+    Gated on :func:`stage_0_6_shape._is_split_fullstack` (both ``frontend``
+    AND ``backend`` present with a framework manifest). When it fires, we
+    enumerate every conventional split dir (:data:`_SPLIT_FULLSTACK_DIRS`)
+    that actually has a framework manifest and synthesize a
+    :class:`Workspace` for it (parsing its ``package.json`` so the
+    classifier sees its deps). Returns ``[]`` when the repo is not a
+    split-fullstack layout, so the caller cleanly falls back to whole-repo.
+
+    Pure + defensive: a missing/broken manifest yields ``package_json=None``
+    (the classifier then leans on folder signals); never raises.
+    """
+    if not _is_split_fullstack(repo_root):
+        return []
+    from faultline.pipeline_v2.stage_0_intake import Workspace
+
+    synthesized: list[Workspace] = []
+    for dir_name in _SPLIT_FULLSTACK_DIRS:
+        d = repo_root / dir_name
+        try:
+            if not d.is_dir() or not _has_framework_manifest(d):
+                continue
+        except OSError:
+            continue
+        pkg = _read_json_safe(d / "package.json")
+        synthesized.append(
+            Workspace(
+                name=dir_name,
+                path=dir_name,
+                package_json=pkg if isinstance(pkg, dict) else None,
+                stack=None,
+                files=[],
+            )
+        )
+    return synthesized
 
 
 def _repo_name(repo_root: Path) -> str:

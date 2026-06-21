@@ -132,13 +132,66 @@ class TestProjectTypeClassification:
         _write(tmp_path, "packages/thing/routes/a.ts", "")
         assert _classify(tmp_path, ws) == "lib"
 
-    def test_service_from_server_dep(self, tmp_path):
+    def test_service_from_server_dep_with_entry(self, tmp_path):
+        # A server-framework dep marks a service ONLY together with a real
+        # server ENTRY POINT (src/main.ts). This is the express analogue of
+        # the NestJS bootstrap: a private backend that boots a process.
         ws = _make_workspace(
             tmp_path,
             "apps/backend",
             name="backend",
             package_json={"dependencies": {"express": "4"}},
         )
+        _write(tmp_path, "apps/backend/src/main.ts", "createServer().listen(3000)\n")
+        assert _classify(tmp_path, ws) == "service"
+
+    def test_server_dep_without_entry_is_not_service(self, tmp_path):
+        # A framework dep with NO server entry is NOT a service: it is an
+        # adapter/util library or a test harness that pulls the framework in
+        # only as a devDependency. (Demotes trpc packages/tests + the
+        # @trpc/server adapter lib from the old "not published => service"
+        # heuristic.) A private, export-less package with fastify but no
+        # bootstrap falls through to the residual lib ride-along.
+        ws = _make_workspace(
+            tmp_path,
+            "packages/harness",
+            name="harness",
+            package_json={"private": True, "devDependencies": {"fastify": "4"}},
+        )
+        assert _classify(tmp_path, ws) != "service"
+
+    def test_adapter_lib_with_framework_dep_and_bin_is_lib(self, tmp_path):
+        # A published adapter library depends on a server framework AND ships
+        # a small bin helper, but has NO server bootstrap — it must classify
+        # as lib, not service (the trpc @trpc/server / @trpc/next case).
+        ws = _make_workspace(
+            tmp_path,
+            "packages/adapter",
+            name="server-adapter",
+            package_json={
+                "main": "./dist/index.js",
+                "exports": {".": "./dist/index.js"},
+                "bin": {"intent": "./bin/intent.js"},
+                "dependencies": {"express": "4", "fastify": "4"},
+            },
+        )
+        assert _classify(tmp_path, ws) == "lib"
+
+    def test_service_with_compiled_main_and_entry_is_service(self, tmp_path):
+        # A real backend service legitimately sets "main" to its compiled
+        # output AND has a src/main.ts bootstrap (the infisical backend
+        # shape). The "main" field must NOT demote it to a library — the
+        # server entry is the decisive signal.
+        ws = _make_workspace(
+            tmp_path,
+            "backend",
+            name="backend",
+            package_json={
+                "main": "./dist/main.mjs",
+                "dependencies": {"fastify": "4", "react": "18", "react-dom": "18"},
+            },
+        )
+        _write(tmp_path, "backend/src/main.ts", "bootstrap()\n")
         assert _classify(tmp_path, ws) == "service"
 
     def test_service_from_nestjs_core_even_with_exports(self, tmp_path):
@@ -370,9 +423,12 @@ class TestPartitionPlan:
         assert lib_ex.type == "lib"
         assert "rides along" in lib_ex.reason
 
-    def test_standalone_lib_monorepo_makes_libs_units(self, tmp_path):
-        # No app/service anywhere -> each lib is its own unit (a
-        # publishable multi-package library repo).
+    def test_library_monorepo_no_app_service_collapses_to_whole_repo(self, tmp_path):
+        # No app/service anywhere -> a publishable multi-package LIBRARY
+        # monorepo collapses to a SINGLE whole-repo unit (subpath=None), it
+        # does NOT explode into one-unit-per-lib. (Fix 2c: emitting N
+        # lib-units was the inverse of the cal.com 219->3 win — 24 units on
+        # meilisearch, 83 on lobe-chat.) The libs are recorded as ride-along.
         a = _make_workspace(
             tmp_path, "packages/a", name="a",
             package_json={"exports": {".": "./i.js"}},
@@ -383,19 +439,29 @@ class TestPartitionPlan:
         )
         plan = partition_monorepo(_ctx(tmp_path, [a, b]))
         assert plan.is_monorepo is True
-        assert {u.subpath for u in plan.units} == {"packages/a", "packages/b"}
+        assert {u.subpath for u in plan.units} == {None}
+        assert plan.units[0].project_type == "repo"
+        assert plan.subpaths() == []
+        # both libs are recorded as ride-along (never silently dropped)
+        ride = {e.path: e.reason for e in plan.excluded}
+        assert set(ride) == {"packages/a", "packages/b"}
+        assert all("ride" in r for r in ride.values())
 
     def test_nested_units_collapse_to_shallowest(self, tmp_path):
         # apps/api (service) + apps/api/v1 (also a unit) -> only apps/api
-        # survives; v1 rides inside its tree (no double scan).
+        # survives; v1 rides inside its tree (no double scan). Both express
+        # packages carry a src/main.ts server entry so they qualify as
+        # services under the entry-point rule.
         parent = _make_workspace(
             tmp_path, "apps/api", name="api",
             package_json={"dependencies": {"express": "4"}},
         )
+        _write(tmp_path, "apps/api/src/main.ts", "listen()\n")
         child = _make_workspace(
             tmp_path, "apps/api/v1", name="api-v1",
             package_json={"dependencies": {"express": "4"}},
         )
+        _write(tmp_path, "apps/api/v1/src/main.ts", "listen()\n")
         other = _make_workspace(
             tmp_path, "apps/web", name="web",
             package_json={"dependencies": {"next": "14"}},
@@ -411,15 +477,17 @@ class TestPartitionPlan:
     def test_sibling_paths_not_treated_as_nested(self, tmp_path):
         # apps/api and apps/api-v2 are SIBLINGS (segment-aware), both
         # units — the prefix-string "apps/api" must not swallow
-        # "apps/api-v2".
+        # "apps/api-v2". Both carry a server entry so they are services.
         a = _make_workspace(
             tmp_path, "apps/api", name="api",
             package_json={"dependencies": {"express": "4"}},
         )
+        _write(tmp_path, "apps/api/src/main.ts", "listen()\n")
         b = _make_workspace(
             tmp_path, "apps/api-v2", name="api-v2",
             package_json={"dependencies": {"fastify": "4"}},
         )
+        _write(tmp_path, "apps/api-v2/src/main.ts", "listen()\n")
         plan = partition_monorepo(_ctx(tmp_path, [a, b]))
         assert {u.subpath for u in plan.units} == {"apps/api", "apps/api-v2"}
 
@@ -597,3 +665,265 @@ class TestArtifactWrite:
         data = json.loads(out.read_text())
         assert data["is_monorepo"] is True
         assert any(u["subpath"] == "apps/web" for u in data["units"])
+
+
+# ── Audit fix 1: no repo-specific package names ──────────────────────────
+
+
+class TestNoRepoSpecificToolNames:
+    def test_tool_name_exact_has_no_repo_specific_names(self):
+        # rule-no-repo-specific-paths: ``build-icons`` and ``dev-tools`` are
+        # literal supabase package names, NOT industry conventions. They must
+        # NOT be hardcoded as tooling-name markers.
+        from faultline.pipeline_v2.stage_0_6_project_classifier import (
+            _TOOL_NAME_EXACT,
+        )
+
+        assert "build-icons" not in _TOOL_NAME_EXACT
+        assert "dev-tools" not in _TOOL_NAME_EXACT
+        # genuine ecosystem conventions remain
+        assert "tsconfig" in _TOOL_NAME_EXACT
+        assert "eslint-config" in _TOOL_NAME_EXACT
+
+    def test_build_icons_name_alone_is_not_classified_tool(self, tmp_path):
+        # A package merely NAMED build-icons (with a product export, no
+        # tooling structure) is NOT tooling — it classifies by its real
+        # shape (a published lib here). The old hardcoded name forced it to
+        # ``tool``; that repo-specific shortcut is gone.
+        ws = _make_workspace(
+            tmp_path, "packages/build-icons", name="build-icons",
+            package_json={"exports": {".": "./i.js"}},
+        )
+        assert _classify(tmp_path, ws) == "lib"
+
+    def test_dev_tools_name_alone_is_not_classified_tool(self, tmp_path):
+        ws = _make_workspace(
+            tmp_path, "packages/dev-tools", name="dev-tools",
+            package_json={"main": "./index.js"},
+        )
+        assert _classify(tmp_path, ws) == "lib"
+
+    def test_genuine_config_name_still_tool(self, tmp_path):
+        # The generic ``*-config`` convention still classifies as tool —
+        # only the repo-specific names were removed.
+        ws = _make_workspace(
+            tmp_path, "packages/eslint-config-acme", name="eslint-config-acme",
+            package_json={"exports": {".": "./i.js"}},
+        )
+        assert _classify(tmp_path, ws) == "tool"
+
+
+# ── Audit fix 2a: Rust binary + server framework -> service ──────────────
+
+
+class TestRustBinaryService:
+    def _crate(
+        self,
+        tmp_path: Path,
+        path: str,
+        *,
+        cargo: str,
+        main_rs: bool = False,
+        lib_rs: bool = False,
+    ) -> Workspace:
+        ws = _make_workspace(tmp_path, path, name=path.split("/")[-1])
+        _write(tmp_path, f"{path}/Cargo.toml", cargo)
+        if main_rs:
+            _write(tmp_path, f"{path}/src/main.rs", "fn main() {}\n")
+        if lib_rs:
+            _write(tmp_path, f"{path}/src/lib.rs", "pub fn x() {}\n")
+        return ws
+
+    def test_rust_crate_with_main_and_server_dep_is_service(self, tmp_path):
+        # A crate with src/main.rs AND a server-framework crate dep
+        # (actix-web) BOOTS a server -> service (the meilisearch
+        # crates/meilisearch shape).
+        ws = self._crate(
+            tmp_path, "crates/server",
+            cargo='[package]\nname = "server"\n\n[dependencies]\nactix-web = "4"\n',
+            main_rs=True,
+            lib_rs=True,
+        )
+        assert _classify(tmp_path, ws) == "service"
+
+    def test_rust_crate_with_main_but_no_server_dep_is_not_service(self, tmp_path):
+        # A crate with src/main.rs but NO server-framework dep is a
+        # CLI/dev-tool/bench (meilisearch meilitool / xtask / openapi-gen) —
+        # NOT a service. This is what stops the Rust path from re-creating
+        # the lib-explosion (8 meilisearch crates have a main.rs).
+        ws = self._crate(
+            tmp_path, "crates/tool",
+            cargo='[package]\nname = "tool"\n\n[dependencies]\nclap = "4"\n',
+            main_rs=True,
+            lib_rs=True,
+        )
+        assert _classify(tmp_path, ws) != "service"
+
+    def test_rust_lib_crate_no_main_is_not_service(self, tmp_path):
+        # A pure library crate (lib.rs, no main.rs) is never a service even
+        # if it lists a server framework as a dependency.
+        ws = self._crate(
+            tmp_path, "crates/lib",
+            cargo='[package]\nname = "lib"\n\n[dependencies]\nhyper = "1"\n',
+            lib_rs=True,
+        )
+        assert _classify(tmp_path, ws) != "service"
+
+    def test_rust_crate_with_bin_table_and_server_dep_is_service(self, tmp_path):
+        # An explicit Cargo [[bin]] target counts as a binary entry even
+        # without the conventional src/main.rs.
+        ws = self._crate(
+            tmp_path, "crates/svc",
+            cargo=(
+                '[package]\nname = "svc"\n\n'
+                '[[bin]]\nname = "svc"\npath = "src/run.rs"\n\n'
+                '[dependencies]\naxum = "0.7"\n'
+            ),
+            lib_rs=True,
+        )
+        assert _classify(tmp_path, ws) == "service"
+
+    def test_rust_library_monorepo_collapses_to_whole_repo(self, tmp_path):
+        # A Cargo workspace of library crates (each lib.rs, no server) with
+        # NO running service collapses to a single whole-repo unit, NOT
+        # one-unit-per-crate (the meilisearch 24->1 / excalidraw 6->1 fix).
+        a = self._crate(
+            tmp_path, "crates/a",
+            cargo='[package]\nname = "a"\n', lib_rs=True,
+        )
+        b = self._crate(
+            tmp_path, "crates/b",
+            cargo='[package]\nname = "b"\n', lib_rs=True,
+        )
+        plan = partition_monorepo(_ctx(tmp_path, [a, b]))
+        assert {u.subpath for u in plan.units} == {None}
+        assert plan.subpaths() == []
+
+    def test_rust_workspace_with_one_server_yields_one_unit(self, tmp_path):
+        # 1 server crate among many library crates -> exactly one service
+        # unit; the libs ride along (meilisearch -> crates/meilisearch).
+        server = self._crate(
+            tmp_path, "crates/api",
+            cargo='[package]\nname = "api"\n\n[dependencies]\nactix-web = "4"\n',
+            main_rs=True, lib_rs=True,
+        )
+        libs = [
+            self._crate(
+                tmp_path, f"crates/lib{i}",
+                cargo=f'[package]\nname = "lib{i}"\n', lib_rs=True,
+            )
+            for i in range(5)
+        ]
+        plan = partition_monorepo(_ctx(tmp_path, [server, *libs]))
+        assert {u.subpath for u in plan.units} == {"crates/api"}
+        assert len([e for e in plan.excluded if e.type == "lib"]) == 5
+
+
+# ── Audit fix 3: test-harness must not leak as a unit ────────────────────
+
+
+class TestTestHarnessNotAUnit:
+    def test_tests_path_segment_is_excluded(self, tmp_path):
+        # A package under a ``tests`` path segment is never a scan unit even
+        # if it pulls a server framework in (trpc packages/tests).
+        app = _make_workspace(
+            tmp_path, "apps/web", name="web",
+            package_json={"dependencies": {"next": "14"}},
+        )
+        _write(tmp_path, "apps/web/app/page.tsx", "")
+        harness = _make_workspace(
+            tmp_path, "packages/tests", name="tests",
+            package_json={"private": True, "devDependencies": {"fastify": "4"}},
+        )
+        plan = partition_monorepo(_ctx(tmp_path, [app, harness]))
+        assert {u.subpath for u in plan.units} == {"apps/web"}
+        assert "packages/tests" not in {u.subpath for u in plan.units}
+
+    def test_test_harness_with_framework_devdep_not_service(self, tmp_path):
+        # Defense beyond the path segment: even a package NOT under a tests/
+        # segment, with a framework devDependency but NO server entry, is not
+        # promoted to a service.
+        ws = _make_workspace(
+            tmp_path, "packages/itest", name="itest",
+            package_json={"private": True, "devDependencies": {"fastify": "4"}},
+        )
+        assert _classify(tmp_path, ws) != "service"
+
+
+# ── Audit fix 4: manifest-less split-fullstack synthesis ─────────────────
+
+
+class TestSplitFullstackSynthesis:
+    def _split_repo(self, tmp_path: Path) -> None:
+        # frontend = react app with a routes dir; backend = fastify service
+        # with a src/main.ts. NO workspace manifest at the root.
+        _write(
+            tmp_path, "frontend/package.json",
+            _pkg("frontend", dependencies={"react": "18", "react-dom": "18"}),
+        )
+        _write(tmp_path, "frontend/src/pages/index.tsx", "")
+        _write(
+            tmp_path, "backend/package.json",
+            _pkg("backend", main="./dist/main.mjs", dependencies={"fastify": "4"}),
+        )
+        _write(tmp_path, "backend/src/main.ts", "bootstrap()\n")
+
+    def test_split_fullstack_synthesizes_two_units(self, tmp_path):
+        # No workspace manager -> ctx.workspaces is None, but frontend/ +
+        # backend/ each have a manifest -> synthesize them as units
+        # (infisical: 1 whole-repo blob -> 2 units).
+        self._split_repo(tmp_path)
+        plan = partition_monorepo(_ctx(tmp_path, None))
+        assert plan.is_monorepo is True
+        units = {u.subpath: u.project_type for u in plan.units}
+        assert units == {"frontend": "app", "backend": "service"}
+        assert sorted(plan.subpaths()) == ["backend", "frontend"]
+
+    def test_split_fullstack_fires_even_with_a_root_manifest(self, tmp_path):
+        # infisical HAS a root package.json (no ``workspaces`` field) — the
+        # rescue must still fire because detect_workspace enumerates nothing.
+        self._split_repo(tmp_path)
+        _write(tmp_path, "package.json", _pkg("root"))
+        plan = partition_monorepo(_ctx(tmp_path, None))
+        assert {u.subpath for u in plan.units} == {"frontend", "backend"}
+
+    def test_non_split_single_project_stays_whole_repo(self, tmp_path):
+        # A single-project repo (no workspaces, NOT split-fullstack) is
+        # whole-repo — back-compat preserved (caddy).
+        _write(tmp_path, "package.json", _pkg("solo", dependencies={"next": "14"}))
+        _write(tmp_path, "app/page.tsx", "")
+        plan = partition_monorepo(_ctx(tmp_path, None))
+        assert plan.is_monorepo is False
+        assert plan.units[0].subpath is None
+        assert plan.subpaths() == []
+
+    def test_split_requires_both_frontend_and_backend(self, tmp_path):
+        # Only a frontend/ with a manifest (no backend/) is NOT a split
+        # fullstack -> whole-repo (the gate is conservative).
+        _write(
+            tmp_path, "frontend/package.json",
+            _pkg("frontend", dependencies={"react": "18"}),
+        )
+        _write(tmp_path, "frontend/src/pages/index.tsx", "")
+        plan = partition_monorepo(_ctx(tmp_path, None))
+        assert plan.is_monorepo is False
+        assert plan.units[0].subpath is None
+
+    def test_split_fullstack_does_not_override_real_workspaces(self, tmp_path):
+        # When the repo DOES declare workspaces (>=2), the synthesis path is
+        # skipped entirely — real enumerated workspaces win.
+        a = _make_workspace(
+            tmp_path, "apps/web", name="web",
+            package_json={"dependencies": {"next": "14"}},
+        )
+        _write(tmp_path, "apps/web/app/page.tsx", "")
+        b = _make_workspace(
+            tmp_path, "packages/ui", name="ui",
+            package_json={"exports": {".": "./i.js"}},
+        )
+        # Also lay down a frontend/backend split that would otherwise fire.
+        self._split_repo(tmp_path)
+        plan = partition_monorepo(_ctx(tmp_path, [a, b]))
+        # Real workspaces used; synthesis NOT triggered.
+        assert {u.subpath for u in plan.units} == {"apps/web"}
+        assert "frontend" not in {u.subpath for u in plan.units}
