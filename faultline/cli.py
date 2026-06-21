@@ -1046,6 +1046,62 @@ def classify_shape_cmd(
         output.write_text(pretty)
 
 
+@app.command(name="partition-plan")
+def partition_plan_cmd(
+    repo_path: Path = typer.Argument(..., help="Path to the git repository to partition."),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        help="Write the full plan JSON to this file in addition to stdout.",
+    ),
+) -> None:
+    """Show the deterministic monorepo PARTITION PLAN without scanning.
+
+    Runs Stage 0 (intake) + the per-workspace project classifier
+    (Stage 0.6b) and prints which workspaces would become independent
+    scan UNITS (the subpaths fed to ``run_pipeline_multi``), which ride
+    along, and which are excluded — with reasons. PURE DETERMINISTIC:
+    $0.00, no LLM, manifest-grounded only (no README). Does NOT run a
+    scan and does NOT change any default scan behaviour — it only
+    surfaces the plan. A non-monorepo prints a single whole-repo unit
+    (``subpath: null``), i.e. back-compat.
+
+    Exit code 0 on success (including the whole-repo case); non-zero
+    only on I/O failure (bad path, not a git repo).
+    """
+    import json as _json
+    from dataclasses import asdict as _asdict
+
+    from faultline.pipeline_v2.stage_0_6_project_classifier import partition_monorepo
+    from faultline.pipeline_v2.stage_0_intake import stage_0_intake
+
+    repo_path = Path(repo_path).resolve()
+    if not repo_path.is_dir():
+        rprint(f"[red]error[/red]: repo_path is not a directory: {repo_path}")
+        raise typer.Exit(code=2)
+
+    ctx = stage_0_intake(repo_path)
+    # CLI mode — suppress artifact writes.
+    ctx.run_dir = None
+
+    plan = partition_monorepo(ctx)
+    report = {
+        "repo_path": str(repo_path),
+        "is_monorepo": plan.is_monorepo,
+        "workspace_manager": ctx.workspace_manager,
+        "workspace_count": len(ctx.workspaces or []),
+        "rationale": plan.rationale,
+        "units": [_asdict(u) for u in plan.units],
+        "subpaths": plan.subpaths(),
+        "excluded": [_asdict(e) for e in plan.excluded],
+        "classifications": [_asdict(c) for c in plan.classifications],
+    }
+    pretty = _json.dumps(report, indent=2, sort_keys=True, default=str)
+    typer.echo(pretty)
+    if output is not None:
+        output.write_text(pretty)
+
+
 @app.command()
 def version():
     """Shows the faultline version."""
