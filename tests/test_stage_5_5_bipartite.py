@@ -347,3 +347,201 @@ def test_dedup_entryless_flows_collapse_only_by_name() -> None:
     result = stage_5_5_bipartite([feat])
     assert {f.name for f in result.features[0].flows} == {"a-flow", "b-flow"}
     assert result.telemetry["duplicate_flows_dropped"] == 1
+
+
+# ── Step 0.5 — cross-feature duplicate collapse (the dup_flow_rate bug) ─────
+
+
+def _flow_lr(
+    name: str,
+    paths: list[str],
+    entry_file: str,
+    entry_line: int,
+    ranges: list[tuple[str, int, int]],
+) -> Flow:
+    """Flow factory carrying an entry point AND explicit line_ranges."""
+    from faultline.models.types import FlowLineRange
+
+    f = _flow(name, paths)
+    f.entry_point_file = entry_file
+    f.entry_point_line = entry_line
+    f.line_ranges = [
+        FlowLineRange(path=p, start_line=s, end_line=e) for (p, s, e) in ranges
+    ]
+    return f
+
+
+def _feat_anchored(name: str, paths: list[str], flows: list[Flow], anchor_file: str) -> Feature:
+    """Feature whose ``member_files`` anchors ``anchor_file`` (confidence 1.0)."""
+    from faultline.models.types import MemberFile
+
+    feat = _feat(name, paths=paths, flows=flows)
+    feat.member_files = [
+        MemberFile(path=anchor_file, role="anchor", confidence=1.0, primary=True),
+    ]
+    return feat
+
+
+def test_cross_feature_identical_flows_collapse_to_one() -> None:
+    """The hub-file bug: ONE physical flow at the same entry+line_ranges is
+    attributed once to EACH of N features that contain the entry file. They
+    must collapse to a SINGLE top-level flow, the losing features folded into
+    secondary_features — not N duplicate rows."""
+    entry = "demo_api/main.go"
+    ranges = [(entry, 61, 70)]
+    feats = []
+    for owner in ["abrupt-shutdown", "health", "v2-accounts"]:
+        feats.append(
+            _feat_anchored(
+                owner,
+                paths=[entry],
+                flows=[_flow_lr("create-account-flow", [entry], entry, 61, ranges)],
+                anchor_file=entry,
+            ),
+        )
+
+    result = stage_5_5_bipartite(feats)
+
+    # Exactly one surviving create-account-flow in the top-level projection.
+    cab = [f for f in result.flows if f.name == "create-account-flow"]
+    assert len(cab) == 1
+    survivor = cab[0]
+    # Deterministic primary = lexicographically smallest among equal anchors.
+    assert survivor.primary_feature == "abrupt-shutdown"
+    # The other two owners are preserved as secondary attachments.
+    assert survivor.secondary_features == ["health", "v2-accounts"]
+    assert survivor.cross_cutting is True
+    # Containment invariant: every flow appears exactly once across features.
+    total_contained = sum(len(f.flows) for f in result.features)
+    assert total_contained == len(result.flows) == 1
+    # Exactly one primary edge for the survivor + secondary edges.
+    primary_edges = [e for e in result.edges if e.type == "primary"]
+    assert len(primary_edges) == 1
+    assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 2
+    assert result.telemetry["duplicate_flows_dropped_within_feature"] == 0
+
+
+def test_cross_feature_distinct_entry_line_survive() -> None:
+    """Same NAME, same entry FILE, but DIFFERENT entry lines = genuinely
+    distinct flows (e.g. two tutorials in one module). Both survive."""
+    entry = "demo_api/main.go"
+    a = _feat_anchored(
+        "feat-a",
+        paths=[entry],
+        flows=[_flow_lr("create-account-flow", [entry], entry, 49, [(entry, 49, 60)])],
+        anchor_file=entry,
+    )
+    b = _feat_anchored(
+        "feat-b",
+        paths=[entry],
+        flows=[_flow_lr("create-account-flow", [entry], entry, 61, [(entry, 61, 70)])],
+        anchor_file=entry,
+    )
+    result = stage_5_5_bipartite([a, b])
+    cab = [f for f in result.flows if f.name == "create-account-flow"]
+    assert len(cab) == 2  # both distinct flows preserved
+    assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
+
+
+def test_cross_feature_distinct_line_ranges_survive() -> None:
+    """Same name AND same entry (file+line) but DIFFERENT line_ranges are
+    treated as distinct — the collapse is conservative on the span too."""
+    entry = "router.ts"
+    a = _feat_anchored(
+        "feat-a",
+        paths=[entry],
+        flows=[_flow_lr("list-flow", [entry], entry, 10, [(entry, 10, 20)])],
+        anchor_file=entry,
+    )
+    b = _feat_anchored(
+        "feat-b",
+        paths=[entry],
+        flows=[_flow_lr("list-flow", [entry], entry, 10, [(entry, 10, 40)])],
+        anchor_file=entry,
+    )
+    result = stage_5_5_bipartite([a, b])
+    assert len([f for f in result.flows if f.name == "list-flow"]) == 2
+    assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
+
+
+def test_cross_feature_anchor_owner_beats_non_anchor() -> None:
+    """When the entry file is ANCHORED by one feature and merely reached
+    (closure / no member_files) by another, the anchor owner wins the
+    primary regardless of feature-name ordering."""
+    entry = "backend/router.ts"
+    ranges = [(entry, 21, 30)]
+    # ``zzz-owner`` anchors the entry file; ``aaa-reacher`` has no member_files
+    # (a Stage-4 residual). Lexicographic order would pick ``aaa-reacher`` but
+    # the anchor rule must elect ``zzz-owner``.
+    anchored = _feat_anchored(
+        "zzz-owner",
+        paths=[entry],
+        flows=[_flow_lr("rotate-secret-flow", [entry], entry, 21, ranges)],
+        anchor_file=entry,
+    )
+    reacher = _feat(
+        "aaa-reacher",
+        paths=[entry],
+        flows=[_flow_lr("rotate-secret-flow", [entry], entry, 21, ranges)],
+    )
+    result = stage_5_5_bipartite([anchored, reacher])
+    survivor = next(f for f in result.flows if f.name == "rotate-secret-flow")
+    assert survivor.primary_feature == "zzz-owner"
+    assert survivor.secondary_features == ["aaa-reacher"]
+    assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 1
+
+
+def test_cross_feature_tiebreak_is_lexicographic_when_anchors_equal() -> None:
+    """All copies anchor the entry file with equal confidence → the primary
+    is the lexicographically smallest feature name (stable across rescans)."""
+    entry = "main.go"
+    ranges = [(entry, 1, 5)]
+    feats = [
+        _feat_anchored(o, paths=[entry], flows=[_flow_lr("greet-user-flow", [entry], entry, 1, ranges)], anchor_file=entry)
+        for o in ["mike", "alice", "bob"]
+    ]
+    result = stage_5_5_bipartite(feats)
+    survivor = next(f for f in result.flows if f.name == "greet-user-flow")
+    assert survivor.primary_feature == "alice"
+    assert survivor.secondary_features == ["bob", "mike"]
+
+
+def test_cross_feature_collapse_preserves_path_overlap_secondaries() -> None:
+    """The folded loser-feature secondaries must be UNIONED with the
+    path-overlap secondaries, not clobbered by Step 2."""
+    entry = "hub.ts"
+    other = "lib/shared.ts"
+    ranges = [(entry, 1, 9)]
+    # Both owners anchor the hub file; the survivor's flow ALSO reaches a path
+    # owned by a third feature, which must remain a path-overlap secondary.
+    a = _feat_anchored("a-owner", paths=[entry], flows=[], anchor_file=entry)
+    a.flows = [_flow_lr("do-thing-flow", [entry, other], entry, 1, ranges)]
+    b = _feat_anchored("b-owner", paths=[entry], flows=[], anchor_file=entry)
+    b.flows = [_flow_lr("do-thing-flow", [entry, other], entry, 1, ranges)]
+    third = _feat("shared-feat", paths=[other])
+    result = stage_5_5_bipartite([a, b, third])
+    survivor = next(f for f in result.flows if f.name == "do-thing-flow")
+    assert survivor.primary_feature == "a-owner"
+    # b-owner (folded) AND shared-feat (path-overlap) both present.
+    assert survivor.secondary_features == ["b-owner", "shared-feat"]
+
+
+def test_cross_feature_no_dup_is_noop() -> None:
+    """A repo with no cross-feature duplicates is left byte-for-byte unchanged
+    and reports zero cross-feature drops."""
+    a = _feat_anchored(
+        "a",
+        paths=["a.ts"],
+        flows=[_flow_lr("a-flow", ["a.ts"], "a.ts", 1, [("a.ts", 1, 5)])],
+        anchor_file="a.ts",
+    )
+    b = _feat_anchored(
+        "b",
+        paths=["b.ts"],
+        flows=[_flow_lr("b-flow", ["b.ts"], "b.ts", 1, [("b.ts", 1, 5)])],
+        anchor_file="b.ts",
+    )
+    result = stage_5_5_bipartite([a, b])
+    assert len(result.flows) == 2
+    assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
+    assert result.telemetry["duplicate_flows_dropped"] == 0
