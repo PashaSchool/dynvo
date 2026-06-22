@@ -1243,8 +1243,20 @@ def _backfill_reach_member_files(
     if not claimants:
         return {"reach_owned": 0, "reach_shared": 0, "fan_in_threshold": 0}
 
+    # A reach file is OWNED only when reached by FEWER than the floor of
+    # independent features; reached by >= the floor it is shared cross-cutting
+    # infrastructure. The floor IS the threshold: an earlier `max(floor, p90)`
+    # was empirically too lenient — on a JS/Next app the 90th-percentile reach
+    # fan-in is high (~10), so files reached by 3-9 features stayed OWNED and
+    # over-claimed (unsend `webhook`: 40/73 owned files reached by >=3 features
+    # -> owned_max 0.12 -> 0.181, crossing the gate). NestJS reach is genuinely
+    # distinct (Jaccard ~0.04, fan-in ~1), so the floor leaves it owned (the
+    # whole point of this backfill); JS shared re-export fan-out (fan-in >=3)
+    # is correctly recorded as shared. Floor of three mirrors Stage 2.6's
+    # `_FAN_IN_FLOOR` (a pairwise share of 2 is a legitimate attachment; 3
+    # independent claimants = shared). Scale-invariant, no tuned percentile.
     counts = sorted(len(v) for v in claimants.values())
-    fan_in_threshold = max(_REACH_FAN_IN_FLOOR, _reach_nearest_rank(counts, 0.90))
+    fan_in_threshold = _REACH_FAN_IN_FLOOR
 
     owned = 0
     shared = 0
