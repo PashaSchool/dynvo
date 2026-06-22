@@ -154,6 +154,34 @@ def test_owned_blob_does_not_explode_when_all_share_one_file() -> None:
     assert owned_union == set(), "shared reach must not become owned (no blob)"
 
 
+def test_three_claimants_shared_even_below_high_percentile() -> None:
+    """REGRESSION (2026-06, the leaked JS case). A file reached by exactly 3
+    features must be SHARED even when the repo's 90th-percentile reach fan-in
+    is much higher. The earlier ``max(floor, p90)`` left files reached by
+    3..p90-1 features OWNED and over-claimed — unsend ``webhook``: 40/73 owned
+    files reached by >=3 features pushed owned_max 0.12 -> 0.181 across the
+    gate, while NestJS (distinct reach, fan-in ~1) was unaffected. The floor
+    IS the threshold; the percentile must not relax it."""
+    # Skewed distribution: 3 mega-hubs reached by all 20 features push p90
+    # high (~20). A moderately-shared file reached by EXACTLY 3 must not ride
+    # that lenient percentile into OWNED.
+    feats = [_feature(f"f{i}", ["src"]) for i in range(20)]
+    reached: dict[int, list[str]] = {}
+    for i in range(20):
+        reached[i] = [f"src/f{i}/own.ts", "src/hub/a.ts", "src/hub/b.ts", "src/hub/c.ts"]
+    for i in range(3):  # exactly 3 claimants on this one file
+        reached[i].append("src/mod/shared3.ts")
+    _backfill_reach_member_files(feats, reached)
+    for i in range(3):
+        idx = _mf_index(feats[i])
+        assert idx["src/mod/shared3.ts"].role == "shared"
+        assert idx["src/mod/shared3.ts"].primary is False
+    # Private files (fan-in 1) stay owned — the NestJS-win property.
+    idx0 = _mf_index(feats[0])
+    assert idx0["src/f0/own.ts"].role == "closure"
+    assert idx0["src/f0/own.ts"].primary is True
+
+
 def test_threshold_is_scale_invariant_floor() -> None:
     """The fan-in floor (3 claimants) holds regardless of repo size: a
     pairwise (2-feature) share is still owned by the higher-priority
