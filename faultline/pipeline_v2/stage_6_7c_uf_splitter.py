@@ -35,11 +35,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
-from faultline.llm.cost import CostTracker, deterministic_params
+from faultline.llm.cost import CostTracker, deterministic_params, estimate_call_cost
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.llm.model_gateway import resolve_model as gateway_model
 
@@ -48,6 +50,20 @@ if TYPE_CHECKING:
     from faultline.pipeline_v2.run_logger import StageLogger
 
 logger = logging.getLogger(__name__)
+
+# ThreadPool size for the per-mega-UF partition LLM calls. The split fires on
+# only a handful of mega-UFs per repo, but on the largest over-merged repos
+# (cal.com) that handful is still enough that the SEQUENTIAL per-call latency
+# (Sonnet, ~several s each) dominated this stage's wall-time. The calls are
+# independent, so we fan them out over a bounded pool — execution-only, the
+# assembled result is identical to the sequential run (see
+# ``split_mega_user_flows`` for the ordering proof). Tunable via env so a
+# deploy can change concurrency WITHOUT an engine release; bounded [1, 32] to
+# respect the provider rate limit. Mirrors stage_3_flows' knob (shared default
+# of 8); same env var name so one knob sizes both Stage 6 LLM fan-outs.
+DEFAULT_MAX_WORKERS = max(
+    1, min(32, int(os.environ.get("FAULTLINES_STAGE6_MAX_WORKERS", "8") or "8"))
+)
 
 # Sonnet by default: the split fires on only a HANDFUL of UFs per repo, so the
 # higher per-call cost/latency is bounded, and Sonnet partitions a touch
@@ -116,16 +132,22 @@ def _is_mega(uf: "UserFlow", flow_by_key: dict[str, "Flow"]) -> bool:
 
 
 def _call_llm(
-    client: Any, model: str, user: str, cost_tracker: CostTracker,
+    client: Any, model: str, user: str,
     llm_health: LlmHealth | None = None,
-) -> list[dict] | None:
-    """One partition call. Returns the journeys list or None on any failure.
+) -> tuple[list[dict] | None, int, int]:
+    """One partition call. Returns ``(journeys | None, in_tokens, out_tokens)``.
+
+    Returns ``(None, 0, 0)`` on any failure (no client surface / API error /
+    bad JSON). Does NOT record cost — the caller records into the shared
+    :class:`CostTracker` from the deterministic apply phase so that, when the
+    calls run in parallel, ``tracker.records`` is still appended in input
+    order (byte-identical telemetry).
 
     Consults the shared :class:`LlmHealth`: after the first auth-class
     failure anywhere in the scan the call is skipped (dead key).
     """
     if llm_health is not None and not llm_health.should_call():
-        return None
+        return None, 0, 0
     try:
         msg = client.messages.create(
             model=gateway_model(model),
@@ -144,33 +166,29 @@ def _call_llm(
             )
         else:
             logger.warning("uf_splitter: LLM call failed: %s", exc)
-        return None
+        return None, 0, 0
     if llm_health is not None:
         llm_health.record_success()
     in_tok = int(getattr(getattr(msg, "usage", None), "input_tokens", 0) or 0)
     out_tok = int(getattr(getattr(msg, "usage", None), "output_tokens", 0) or 0)
-    try:
-        cost_tracker.record(model=model, input_tokens=in_tok, output_tokens=out_tok)
-    except Exception:  # noqa: BLE001 — budget cap; the call already happened
-        pass
     text = "\n".join(
         t for block in getattr(msg, "content", []) if (t := getattr(block, "text", None))
     ).strip()
     if not text:
-        return None
+        return None, in_tok, out_tok
     if not text.startswith("{"):
         m = _JSON_OBJ_RE.search(text)
         if not m:
-            return None
+            return None, in_tok, out_tok
         text = m.group(0)
     try:
         data = json.loads(text)
     except (json.JSONDecodeError, TypeError):
-        return None
+        return None, in_tok, out_tok
     journeys = data.get("journeys") if isinstance(data, dict) else None
     if not isinstance(journeys, list) or not journeys:
-        return None
-    return journeys
+        return None, in_tok, out_tok
+    return journeys, in_tok, out_tok
 
 
 def _split_one(
@@ -265,6 +283,7 @@ def split_mega_user_flows(
     cost_tracker: CostTracker | None = None,
     log: "StageLogger | None" = None,
     llm_health: LlmHealth | None = None,
+    max_workers: int = DEFAULT_MAX_WORKERS,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Split mega-mixed UFs into per-journey sub-UFs via one LLM call each.
@@ -272,6 +291,20 @@ def split_mega_user_flows(
     Mutates ``Flow.user_flow_id`` in place for moved members and returns the
     NEW user-flow list (non-mega UFs unchanged, mega UFs replaced by their
     sub-UFs). Always returns; never raises for IO/budget failures.
+
+    Concurrency (execution-only — output is order-independent)
+    ---------------------------------------------------------
+    The mega-UFs are independent, so each one's LLM partition call runs in a
+    bounded :class:`ThreadPoolExecutor` (``max_workers``). ONLY the LLM IO +
+    pure ``_split_one`` build run in parallel; every effect that touches
+    shared/ordered state — recording cost into the ``CostTracker``,
+    accumulating telemetry, stamping ``Flow.user_flow_id``, and building the
+    output list — happens in a SEQUENTIAL second pass over ``mega`` (and then
+    ``user_flows``) in input order. Results are collected into a dict keyed by
+    the mega-UF's input index, so a concurrent run produces byte-identical
+    ``user_flows[]`` / telemetry to the old sequential loop for the same
+    per-UF LLM responses. A per-call exception degrades exactly as before
+    (``subs=[]`` → mega-UF kept).
     """
     tracker = cost_tracker or CostTracker(max_cost=None)
     flow_by_key = {_flow_key(f): f for f in flows}
@@ -302,14 +335,48 @@ def split_mega_user_flows(
     mega_ids = {uf.id for uf in mega}
     split_results: dict[str, list["UserFlow"]] = {}
 
-    for uf in mega:
+    def _process(idx: int, uf: "UserFlow") -> tuple[list["UserFlow"], int, int]:
+        """Parallel-safe worker: LLM call + pure sub-UF build for one mega-UF.
+
+        Returns ``(subs, in_tokens, out_tokens)``. No shared mutation here —
+        cost recording, telemetry and ``Flow.user_flow_id`` stamping are done
+        by the sequential apply pass below in input order.
+        """
         names = _member_names(uf, flow_by_key)
         prompt = (
             f"domain: {uf.domain}\nflow names:\n"
             + "\n".join(f"- {n}" for n in names[:MAX_NAMES_IN_PROMPT])
         )
-        journeys = _call_llm(client, model, prompt, tracker, llm_health)
+        journeys, in_tok, out_tok = _call_llm(client, model, prompt, llm_health)
         subs = _split_one(uf, journeys, flow_by_key) if journeys else []
+        return subs, in_tok, out_tok
+
+    # ── Parallel compute (LLM IO) — collected by INPUT index ───────────
+    computed: dict[int, tuple[list["UserFlow"], int, int]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        future_to_idx = {
+            pool.submit(_process, idx, uf): idx for idx, uf in enumerate(mega)
+        }
+        for fut in as_completed(future_to_idx):
+            idx = future_to_idx[fut]
+            try:
+                computed[idx] = fut.result()
+            except Exception as exc:  # noqa: BLE001 — degrade exactly as sequential
+                logger.warning(
+                    "uf_splitter: mega-UF %r raised: %s", mega[idx].name, exc,
+                )
+                computed[idx] = ([], 0, 0)
+
+    # ── Sequential apply (deterministic, input order) ──────────────────
+    for idx, uf in enumerate(mega):
+        subs, in_tok, out_tok = computed.get(idx, ([], 0, 0))
+        if in_tok or out_tok:
+            try:
+                tracker.record(
+                    model=model, input_tokens=in_tok, output_tokens=out_tok,
+                )
+            except Exception:  # noqa: BLE001 — budget cap; the call already happened
+                pass
         if subs:
             split_results[uf.id] = subs
             telemetry["mega_split"] += 1

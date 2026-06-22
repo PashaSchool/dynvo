@@ -56,9 +56,11 @@ import logging
 import os
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from faultline.llm.cost import CostTracker, deterministic_params
+from faultline.llm.cost import CostTracker, deterministic_params, estimate_call_cost
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.naming_validator import (
     EvidenceBundle,
@@ -93,6 +95,55 @@ COST_CAP_USD_PER_DOMAIN = 0.05
 MAX_MEMBER_NAMES = 24
 MAX_ROUTES = 16
 MAX_UI_LABELS = 16
+
+# ThreadPool size for the per-DOMAIN refinement LLM calls. One Haiku call (plus
+# at most one name-validation retry) per code-grain domain; on big repos with
+# many domains the SEQUENTIAL per-domain latency dominated this stage's
+# wall-time (Phase 5, ~70min on the largest units). The domains are
+# independent, so we fan their LLM IO out over a bounded pool — execution-only,
+# the assembled result is byte-identical to the sequential run (see
+# ``refine_user_flows`` for the ordering proof). Tunable via env so a deploy
+# can change concurrency WITHOUT an engine release; bounded [1, 32] to respect
+# the provider rate limit. Shares the Stage 6 env knob with stage_6_7c so one
+# var sizes both Stage 6 LLM fan-outs (default 8, matching stage_3_flows).
+DEFAULT_MAX_WORKERS = max(
+    1, min(32, int(os.environ.get("FAULTLINES_STAGE6_MAX_WORKERS", "8") or "8"))
+)
+
+
+@dataclass
+class _DomainResult:
+    """Everything the SEQUENTIAL apply pass needs for one domain.
+
+    The parallel worker (:func:`_compute_domain`) does ALL the LLM IO + pure
+    validation for a domain and returns one of these; the apply pass then
+    records cost into the shared :class:`CostTracker`, accumulates telemetry,
+    and stamps the UFs — all in input (sorted-domain) order so a concurrent
+    run is byte-identical to the old sequential loop. The worker NEVER mutates
+    shared state (tracker / telemetry / UFs).
+    """
+
+    domain: str | None
+    ufs: list["UserFlow"]
+    members_by_uf: dict[str, list["Flow"]]
+    # Final post-retry-merge parsed refinements, or None when degraded.
+    parsed: dict[str, dict] | None
+    name_ok: dict[str, bool]
+    # Token usage for the FIRST call (always) and the retry (when it fired).
+    in_tok: int = 0
+    out_tok: int = 0
+    retry_fired: bool = False
+    retry_in_tok: int = 0
+    retry_out_tok: int = 0
+    # Pre-computed (pure) cost of call #1, used for the per-domain cost-cap
+    # degrade decision WITHOUT touching the shared tracker mid-flight.
+    call1_cost: float = 0.0
+    degraded_reason: str | None = None
+    # Telemetry deltas the apply pass folds into the scan-level counters.
+    names_invalid: int = 0
+    names_recovered: int = 0
+    names_fallback: int = 0
+
 
 _VALID_UI_TIERS = ("full-page", "panel", "settings", "admin", "no-ui")
 _VALID_INTENTS = (
@@ -492,6 +543,129 @@ def _apply_refinement(
     return applied
 
 
+# ── Per-domain compute (parallel-safe; NO shared mutation) ──────────────────
+
+
+def _compute_domain(
+    domain: str | None,
+    ufs: list["UserFlow"],
+    *,
+    client: Any,
+    model: str,
+    flows_by_key: dict[str, "Flow"],
+    product_strings: "ProductStringIndex | None",
+    llm_health: LlmHealth | None,
+) -> _DomainResult:
+    """Do ALL the LLM IO + pure validation for one domain.
+
+    Returns a :class:`_DomainResult`. Touches NO shared state: cost is
+    computed (not recorded), telemetry is returned as deltas, UFs are NOT
+    mutated. Mirrors exactly what the old sequential per-domain loop body
+    did up to (but not including) the apply step — so the apply pass, run
+    sequentially in input order, reproduces the byte-identical result.
+    """
+    members_by_uf = {
+        uf.id: _member_flows_for(uf, flows_by_key) for uf in ufs
+    }
+    payloads = [
+        _uf_payload(uf, members_by_uf[uf.id], product_strings)
+        for uf in ufs
+    ]
+    user_prompt = _build_user_prompt(domain, payloads)
+
+    text, in_tok, out_tok = _call_haiku(
+        client,
+        model=model,
+        system=_SYSTEM_PROMPT,
+        user=user_prompt,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        llm_health=llm_health,
+    )
+
+    # Cost of call #1 — derived from the pricing table (pure), identical to
+    # what ``tracker.record(...).cost_usd`` will compute in the apply pass.
+    call1_cost = (
+        estimate_call_cost(model, in_tok, out_tok) if (in_tok or out_tok) else 0.0
+    )
+
+    result = _DomainResult(
+        domain=domain,
+        ufs=ufs,
+        members_by_uf=members_by_uf,
+        parsed=None,
+        name_ok={},
+        in_tok=in_tok,
+        out_tok=out_tok,
+        call1_cost=call1_cost,
+    )
+
+    if call1_cost > COST_CAP_USD_PER_DOMAIN:
+        result.degraded_reason = f"cost_cap ${call1_cost:.4f}"
+        return result
+
+    parsed = _parse_refinement(text)
+    if parsed is None:
+        result.degraded_reason = "json_parse_failed"
+        return result
+
+    # ── Anti-hallucination name validation (naming review №2) ──
+    # Every content token of a refined name must be evidenced in the UF's
+    # bundle. ONE retry per domain with an explicit prohibition; second
+    # failure keeps the deterministic Stage-6.7 name + name_confidence="low".
+    bundles = {
+        uf.id: _uf_evidence_bundle(
+            uf, members_by_uf[uf.id], product_strings,
+        )
+        for uf in ufs
+    }
+    name_ok: dict[str, bool] = {}
+    violations: dict[str, list[str]] = {}
+    failing_ids: list[str] = []
+    for uf in ufs:
+        row = parsed.get(uf.id)
+        nm = row.get("name") if row else None
+        if not (isinstance(nm, str) and nm.strip()):
+            continue
+        verdict = validate_name(nm, bundles[uf.id])
+        name_ok[uf.id] = verdict.ok
+        if not verdict.ok:
+            violations[nm] = verdict.all_violations
+            failing_ids.append(uf.id)
+    if violations:
+        result.names_invalid = len(failing_ids)
+        if llm_health is None or llm_health.should_call():
+            result.retry_fired = True
+            retry_text, r_in, r_out = _call_haiku(
+                client,
+                model=model,
+                system=_SYSTEM_PROMPT,
+                user=user_prompt + "\n" + retry_prohibition(violations),
+                max_tokens=DEFAULT_MAX_TOKENS,
+                llm_health=llm_health,
+            )
+            result.retry_in_tok = r_in
+            result.retry_out_tok = r_out
+            retry_parsed = _parse_refinement(retry_text) or {}
+            for uf_id in failing_ids:
+                row2 = retry_parsed.get(uf_id)
+                nm2 = row2.get("name") if row2 else None
+                if isinstance(nm2, str) and nm2.strip() and validate_name(
+                    nm2, bundles[uf_id],
+                ).ok:
+                    # Adopt the grounded rename into the first response's row;
+                    # other fields keep the first (already-parsed) values.
+                    parsed[uf_id] = {**parsed.get(uf_id, {}), "name": nm2}
+                    name_ok[uf_id] = True
+                    result.names_recovered += 1
+        result.names_fallback = sum(
+            1 for uf_id in failing_ids if not name_ok.get(uf_id, True)
+        )
+
+    result.parsed = parsed
+    result.name_ok = name_ok
+    return result
+
+
 # ── Public entry point ──────────────────────────────────────────────────────
 
 
@@ -506,6 +680,7 @@ def refine_user_flows(
     domain_allowlist: set[str | None] | None = None,
     llm_health: LlmHealth | None = None,
     product_strings: "ProductStringIndex | None" = None,
+    max_workers: int = DEFAULT_MAX_WORKERS,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Refine ``user_flows`` in place via one Haiku call per domain.
@@ -587,7 +762,15 @@ def refine_user_flows(
     total_cost = 0.0
     domains_reused = 0
 
-    for domain, ufs in sorted(by_domain.items(), key=lambda kv: str(kv[0])):
+    # Domains to actually refine, in the canonical sorted order. Allowlist
+    # skips (incremental --since path) are accounted here and never computed.
+    # ``sorted(... key=str(domain))`` is the SAME deterministic order the old
+    # sequential loop walked — preserving it is what makes the parallel run
+    # byte-identical (cost-record order, telemetry accumulation, UF mutation
+    # order all follow this list, NOT thread-completion order).
+    domains_sorted = sorted(by_domain.items(), key=lambda kv: str(kv[0]))
+    to_compute: list[tuple[str | None, list["UserFlow"]]] = []
+    for domain, ufs in domains_sorted:
         # Incremental reuse: a domain NOT in the allowlist had every UF
         # matched to a refined base twin upstream — its members are
         # unchanged, so re-calling Haiku would just reproduce the base
@@ -595,46 +778,61 @@ def refine_user_flows(
         if domain_allowlist is not None and domain not in domain_allowlist:
             domains_reused += 1
             continue
-        members_by_uf = {
-            uf.id: _member_flows_for(uf, flows_by_key) for uf in ufs
-        }
-        payloads = [
-            _uf_payload(uf, members_by_uf[uf.id], product_strings)
-            for uf in ufs
-        ]
-        user_prompt = _build_user_prompt(domain, payloads)
+        to_compute.append((domain, ufs))
 
-        text, in_tok, out_tok = _call_haiku(
-            client,
-            model=model,
-            system=_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=DEFAULT_MAX_TOKENS,
-            llm_health=llm_health,
-        )
+    # ── Parallel compute (LLM IO) — collected by INPUT index ───────────
+    # Each domain is independent; its LLM call(s) + pure validation run in a
+    # bounded thread pool. The worker mutates NOTHING shared. Results land in
+    # ``computed[idx]`` keyed by the domain's position in ``to_compute``.
+    computed: dict[int, _DomainResult] = {}
+    if to_compute:
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+            future_to_idx = {
+                pool.submit(
+                    _compute_domain, domain, ufs,
+                    client=client, model=model, flows_by_key=flows_by_key,
+                    product_strings=product_strings, llm_health=llm_health,
+                ): idx
+                for idx, (domain, ufs) in enumerate(to_compute)
+            }
+            for fut in as_completed(future_to_idx):
+                idx = future_to_idx[fut]
+                domain, ufs = to_compute[idx]
+                try:
+                    computed[idx] = fut.result()
+                except Exception as exc:  # noqa: BLE001 — degrade as json_parse_failed
+                    logger.warning(
+                        "uf_refiner: domain=%r raised: %s", domain, exc,
+                    )
+                    computed[idx] = _DomainResult(
+                        domain=domain, ufs=ufs,
+                        members_by_uf={
+                            uf.id: _member_flows_for(uf, flows_by_key)
+                            for uf in ufs
+                        },
+                        parsed=None, name_ok={},
+                        degraded_reason="worker_error",
+                    )
 
-        call_cost = 0.0
-        if in_tok or out_tok:
-            entry = tracker.record(
+    # ── Sequential apply (deterministic, sorted-domain order) ──────────
+    # Record cost, accumulate telemetry, and mutate the UFs strictly in
+    # ``to_compute`` order so the result matches the old sequential loop.
+    for idx, (domain, ufs) in enumerate(to_compute):
+        res = computed[idx]
+        members_by_uf = res.members_by_uf
+
+        # Cost #1 (recorded in input order → tracker.records order preserved).
+        if res.in_tok or res.out_tok:
+            tracker.record(
                 provider="anthropic",
                 model=model,
-                input_tokens=in_tok,
-                output_tokens=out_tok,
+                input_tokens=res.in_tok,
+                output_tokens=res.out_tok,
                 label="stage-6.7b-uf-refiner",
             )
-            call_cost = float(getattr(entry, "cost_usd", 0.0) or 0.0)
-            total_cost += call_cost
+            total_cost += res.call1_cost
 
-        degraded_reason: str | None = None
-        parsed = None
-        if call_cost > COST_CAP_USD_PER_DOMAIN:
-            degraded_reason = f"cost_cap ${call_cost:.4f}"
-        else:
-            parsed = _parse_refinement(text)
-            if parsed is None:
-                degraded_reason = "json_parse_failed"
-
-        if degraded_reason is not None or parsed is None:
+        if res.degraded_reason is not None or res.parsed is None:
             telemetry["domains_degraded"] += 1
             # Graceful degrade: deterministic ui_tier so field isn't null.
             for uf in ufs:
@@ -643,75 +841,32 @@ def refine_user_flows(
             if log is not None:
                 log.warn(
                     f"uf_refiner: domain={domain!r} degraded "
-                    f"({degraded_reason}); kept deterministic names",
+                    f"({res.degraded_reason}); kept deterministic names",
                 )
             continue
 
-        # ── Anti-hallucination name validation (naming review №2) ──
-        # Every content token of a refined name must be evidenced in
-        # the UF's bundle (member flow names, routes, frontend labels,
-        # member files + their product strings). ONE retry per domain
-        # with an explicit prohibition; second failure keeps the
-        # deterministic Stage-6.7 name + name_confidence="low".
-        bundles = {
-            uf.id: _uf_evidence_bundle(
-                uf, members_by_uf[uf.id], product_strings,
-            )
-            for uf in ufs
-        }
-        name_ok: dict[str, bool] = {}
-        violations: dict[str, list[str]] = {}
-        failing_ids: list[str] = []
-        for uf in ufs:
-            row = parsed.get(uf.id)
-            nm = row.get("name") if row else None
-            if not (isinstance(nm, str) and nm.strip()):
-                continue
-            verdict = validate_name(nm, bundles[uf.id])
-            name_ok[uf.id] = verdict.ok
-            if not verdict.ok:
-                violations[nm] = verdict.all_violations
-                failing_ids.append(uf.id)
-        if violations:
-            telemetry["uf_names_invalid"] += len(failing_ids)
-            if llm_health is None or llm_health.should_call():
+        # Name-validation telemetry + retry cost (retry already happened in
+        # the worker; we only record its cost + counters here, in order).
+        if res.names_invalid:
+            telemetry["uf_names_invalid"] += res.names_invalid
+            if res.retry_fired:
                 telemetry["validator_retries"] += 1
-                retry_text, r_in, r_out = _call_haiku(
-                    client,
-                    model=model,
-                    system=_SYSTEM_PROMPT,
-                    user=user_prompt + "\n" + retry_prohibition(violations),
-                    max_tokens=DEFAULT_MAX_TOKENS,
-                    llm_health=llm_health,
-                )
-                if r_in or r_out:
-                    entry = tracker.record(
+                if res.retry_in_tok or res.retry_out_tok:
+                    tracker.record(
                         provider="anthropic",
                         model=model,
-                        input_tokens=r_in,
-                        output_tokens=r_out,
+                        input_tokens=res.retry_in_tok,
+                        output_tokens=res.retry_out_tok,
                         label="stage-6.7b-uf-refiner-name-retry",
                     )
-                    total_cost += float(
-                        getattr(entry, "cost_usd", 0.0) or 0.0,
+                    total_cost += estimate_call_cost(
+                        model, res.retry_in_tok, res.retry_out_tok,
                     )
-                retry_parsed = _parse_refinement(retry_text) or {}
-                for uf_id in failing_ids:
-                    row2 = retry_parsed.get(uf_id)
-                    nm2 = row2.get("name") if row2 else None
-                    if isinstance(nm2, str) and nm2.strip() and validate_name(
-                        nm2, bundles[uf_id],
-                    ).ok:
-                        # Adopt the grounded rename into the first
-                        # response's row; other fields keep the first
-                        # (already-parsed) values.
-                        parsed[uf_id] = {**parsed.get(uf_id, {}), "name": nm2}
-                        name_ok[uf_id] = True
-                        telemetry["uf_names_recovered_on_retry"] += 1
-            telemetry["uf_names_fallback"] += sum(
-                1 for uf_id in failing_ids if not name_ok.get(uf_id, True)
-            )
+                telemetry["uf_names_recovered_on_retry"] += res.names_recovered
+            telemetry["uf_names_fallback"] += res.names_fallback
 
+        parsed = res.parsed
+        name_ok = res.name_ok
         refined_here = 0
         for uf in ufs:
             row = parsed.get(uf.id)
