@@ -245,6 +245,9 @@ class EnrichmentResult:
     budget_sec: float = 0.0
     features_budget_skipped: int = 0
     max_workers: int = 1
+    # Reach member-file backfill telemetry (2026-06): counts of reach
+    # files recorded as owned (closure) vs shared, + the fan-in cap used.
+    reach_member_backfill: dict[str, int] = field(default_factory=dict)
 
 
 # ── Filter helpers ───────────────────────────────────────────────────────
@@ -1122,16 +1125,183 @@ def _resolve_py_module_simple(
 # ── Feature mutation helpers ─────────────────────────────────────────────
 
 
+# Member-file backfill for the Stage-6.3 import-tree reach
+# ───────────────────────────────────────────────────────────────────────
+#
+# Why this exists
+# ---------------
+# Stage 2.6 establishes the invariant documented on
+# :class:`faultline.models.types.MemberFile`: ``member_files`` is the
+# COMPLETE provenance ledger of every file-membership claim, and a file
+# appears with ``primary=True`` on exactly the feature whose ``paths``
+# carries it. Stage 6.3 then GROWS ``feature.paths`` by the reverse-import
+# reach set (``_apply_to_feature``) but historically wrote ONLY to
+# ``paths`` — so every reach-attached file landed in ``paths`` with NO
+# corresponding ``member_files`` record. The invariant broke.
+#
+# This is most visible on package-anchor features (e.g. a NestJS
+# ``server`` package whose ``ai`` / ``billing`` / ``i18n`` dependency
+# anchors start life on a single DIRECTORY path): Stage 2.6 records one
+# ``role="anchor"`` member file (the directory) and, because ``package``
+# is not a closure anchor source, attaches nothing else — yet Stage 6.3
+# expands ``paths`` to dozens of concrete module files. Any consumer that
+# reads the canonical ``member_files`` field first (the blob / coverage
+# evaluator, the bipartite anchor map, the Layer-2 clusterer) then sees a
+# 1-file feature with a 95-file ``paths`` projection.
+#
+# The fix records a ``member_files`` claim for each reach-attached file,
+# reusing the SAME scale-invariant fan-in discipline as Stage 2.6: a file
+# reached by FEW features is genuine distinct membership (``role="closure"``,
+# ``primary=True``); a file reached by MANY features is shared,
+# cross-cutting infrastructure (``role="shared"``, ``primary=False``).
+#
+# Universal-safety condition (the crux)
+# -------------------------------------
+# Backfilling ``member_files`` from the reach set is correct ONLY when the
+# reach is a genuine, mostly-distinct claim. On stacks where the import
+# reach is over-inclusive (a barrel/hub re-export pulls the same files
+# into every feature), an unconditional backfill would make every feature
+# "own" the same files and EXPLODE the owned-blob metric. The fan-in cap
+# is exactly the guard: a file in the top decile of the repo's OWN
+# per-file reach-claim distribution (with a structural floor of three
+# claimants) is classified ``shared`` — it still appears in the all-files
+# membership union (so honest coverage is preserved) but is NOT
+# ``primary``, so it cannot inflate any single feature's OWNED share.
+# This makes the fix safe on every stack by construction: NestJS reach
+# (mostly single-claimant, Jaccard ≈ 0) is backfilled as owned; a JS
+# monorepo's shared re-export fan-out is recorded as shared, not owned.
+#
+# Both thresholds are structural, not tuned:
+#   - the fan-in floor of three claimants mirrors Stage 2.6's
+#     ``_FAN_IN_FLOOR`` / Stage 4's saturation window ("three independent
+#     claimants" — a pairwise share is a legitimate attachment);
+#   - the confidence is fixed at the codebase's canonical "direct static
+#     import" value (Stage 2.6's depth-1 closure confidence,
+#     ``1 / (1 + 1) = 0.5``) — a reach attachment is a direct-import-class
+#     claim, strictly below an extractor anchor (1.0). Shared claims decay
+#     to half of that, keeping them below every primary claim.
+#
+# Additive + back-compat: this NEVER touches ``feature.paths``,
+# ``shared_attributions`` or ``symbol_attributions`` (the frozen output
+# surface). It only APPENDS ``member_files`` records, de-duplicated
+# against whatever Stage 2.6 already recorded. Disable with
+# ``FAULTLINE_STAGE_6_3_MEMBER_BACKFILL=0`` (default ON).
+
+_REACH_FAN_IN_FLOOR = 3
+# Canonical "direct static import" confidence — the value Stage 2.6 uses
+# for a depth-1 closure claim (``_closure_confidence(1) == 0.5``). A reach
+# attachment is the same evidence class (a file pulled in by the anchor's
+# static import graph), so it carries the same confidence, strictly below
+# an extractor anchor (1.0).
+_REACH_PRIMARY_CONFIDENCE = 0.5
+# Shared (cross-cutting) reach files decay to half the primary confidence
+# so they always rank below a primary claim in any election; provenance
+# only — never attached as a feature's owned surface.
+_REACH_SHARED_CONFIDENCE = 0.25
+
+
+def _backfill_reach_member_files(
+    features: list["Feature"],
+    reached_by_feature: dict[int, list[str]],
+    *,
+    log: "StageLogger | None" = None,
+) -> dict[str, int]:
+    """Append ``member_files`` records for the Stage-6.3 reach set.
+
+    ``reached_by_feature`` maps a feature's index (into ``features``) to
+    the ordered list of files that feature newly gained in ``paths``
+    during this stage. The cross-feature view lets us compute the
+    scale-invariant fan-in cap and classify each reach file as owned
+    (``role="closure"``, ``primary=True``) or shared
+    (``role="shared"``, ``primary=False``). Mutates features in place
+    (member_files only); returns small telemetry.
+
+    Files already present in a feature's ``member_files`` (e.g. recorded
+    by Stage 2.6) are skipped — this only fills the GAP between ``paths``
+    and the existing ledger.
+    """
+    from faultline.models.types import MemberFile
+
+    # Per-file claim count across all features (the fan-in distribution).
+    claimants: dict[str, list[int]] = defaultdict(list)
+    for idx, files in reached_by_feature.items():
+        for fp in files:
+            claimants[fp].append(idx)
+    if not claimants:
+        return {"reach_owned": 0, "reach_shared": 0, "fan_in_threshold": 0}
+
+    # A reach file is OWNED only when reached by FEWER than the floor of
+    # independent features; reached by >= the floor it is shared cross-cutting
+    # infrastructure. The floor IS the threshold: an earlier `max(floor, p90)`
+    # was empirically too lenient — on a JS/Next app the 90th-percentile reach
+    # fan-in is high (~10), so files reached by 3-9 features stayed OWNED and
+    # over-claimed (unsend `webhook`: 40/73 owned files reached by >=3 features
+    # -> owned_max 0.12 -> 0.181, crossing the gate). NestJS reach is genuinely
+    # distinct (Jaccard ~0.04, fan-in ~1), so the floor leaves it owned (the
+    # whole point of this backfill); JS shared re-export fan-out (fan-in >=3)
+    # is correctly recorded as shared. Floor of three mirrors Stage 2.6's
+    # `_FAN_IN_FLOOR` (a pairwise share of 2 is a legitimate attachment; 3
+    # independent claimants = shared). Scale-invariant, no tuned percentile.
+    fan_in_threshold = _REACH_FAN_IN_FLOOR
+
+    owned = 0
+    shared = 0
+    for idx, files in reached_by_feature.items():
+        feature = features[idx]
+        existing = {m.path for m in feature.member_files}
+        for fp in files:
+            if fp in existing:
+                continue
+            existing.add(fp)
+            n_claims = len(claimants[fp])
+            if n_claims >= fan_in_threshold:
+                feature.member_files.append(MemberFile(
+                    path=fp,
+                    role="shared",
+                    confidence=_REACH_SHARED_CONFIDENCE,
+                    evidence=(
+                        f"import-tree reach fan-in: reached by {n_claims} "
+                        f"features (threshold {fan_in_threshold})"
+                    ),
+                    primary=False,
+                ))
+                shared += 1
+            else:
+                feature.member_files.append(MemberFile(
+                    path=fp,
+                    role="closure",
+                    confidence=_REACH_PRIMARY_CONFIDENCE,
+                    evidence="static import-tree reach from anchors",
+                    primary=True,
+                ))
+                owned += 1
+    if log:
+        log.info(
+            f"reach-member-backfill: owned={owned} shared={shared} "
+            f"fan_in_threshold={fan_in_threshold} "
+            f"candidate_files={len(claimants)}",
+        )
+    return {
+        "reach_owned": owned,
+        "reach_shared": shared,
+        "fan_in_threshold": fan_in_threshold,
+        "candidate_files": len(claimants),
+    }
+
+
 def _apply_to_feature(
     feature: "Feature",
     attributions: list[SymbolAttributionRecord],
     *,
     seeds: list[ImportTreeSeed],
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     """Mutate ``feature`` to include the enrichment results.
 
-    Returns ``(paths_post, symbols_post)``. ``paths_post`` is the new
-    length of ``feature.paths`` AFTER union with reached files.
+    Returns ``(paths_post, symbols_post, reached_files)``. ``paths_post``
+    is the new length of ``feature.paths`` AFTER union with reached
+    files; ``reached_files`` is the ordered list of files this call newly
+    appended to ``feature.paths`` (used by the caller's cross-feature
+    member-file backfill — see :func:`_backfill_reach_member_files`).
     """
     from faultline.models.types import (
         FlowSymbolAttribution as PydanticFlowSymbolAttribution,
@@ -1219,7 +1389,7 @@ def _apply_to_feature(
                 existing_keys.add(key)
                 feature.symbol_attributions.append(fattr)
 
-    return (len(feature.paths), len(attributions))
+    return (len(feature.paths), len(attributions), reached_files)
 
 
 def _extend_flow_attributions(
@@ -1585,6 +1755,10 @@ def enrich_with_import_tree(
     cycles = 0
     depth_capped = 0
     external_skipped = 0
+    # index → files this feature newly gained in ``paths`` this stage,
+    # for the cross-feature member-file backfill (see
+    # :func:`_backfill_reach_member_files`).
+    reached_by_feature: dict[int, list[str]] = {}
 
     for index, feature in enumerate(features):
         result = result_by_index.get(index)
@@ -1635,9 +1809,11 @@ def enrich_with_import_tree(
         depth_capped += result.depth_capped
         external_skipped += result.external_skipped
 
-        paths_post, symbols_post = _apply_to_feature(
+        paths_post, symbols_post, reached_files = _apply_to_feature(
             feature, result.attributions, seeds=result.seeds,
         )
+        if reached_files:
+            reached_by_feature[index] = reached_files
 
         seeds_sample = [
             {"file": s.file, "symbol": s.symbol, "role": s.role}
@@ -1668,6 +1844,18 @@ def enrich_with_import_tree(
                 f"paths={result.paths_pre}→{paths_post}",
             )
 
+    # ── Member-file backfill for the reach set ───────────────────────
+    # Restore the MemberFile invariant: every file Stage 6.3 added to
+    # ``paths`` gets a provenance record (owned ``closure`` below the
+    # fan-in cap, ``shared`` at/above it). Default ON; the env flag is an
+    # escape hatch for A/B + regression isolation. See
+    # ``_backfill_reach_member_files`` for the full rationale.
+    reach_backfill: dict[str, int] = {}
+    if os.environ.get("FAULTLINE_STAGE_6_3_MEMBER_BACKFILL", "1") != "0":
+        reach_backfill = _backfill_reach_member_files(
+            features, reached_by_feature, log=log,
+        )
+
     elapsed = round(time.monotonic() - t0, 3)
     if budget_exceeded and log:
         log.warn(
@@ -1691,6 +1879,7 @@ def enrich_with_import_tree(
         budget_sec=wall_budget_sec or 0.0,
         features_budget_skipped=len(budget_skipped_indices),
         max_workers=max_workers,
+        reach_member_backfill=reach_backfill,
     )
 
 
@@ -1755,6 +1944,8 @@ def build_artifact_payload(
             "budget_exceeded": result.budget_exceeded,
             "features_budget_skipped": result.features_budget_skipped,
         },
+        # Reach member-file backfill (2026-06) — owned vs shared counts.
+        "reach_member_backfill": result.reach_member_backfill,
     }
 
 
