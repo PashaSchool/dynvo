@@ -32,7 +32,6 @@ from typing import Iterable
 from faultline.models.types import Feature, MemberFile
 from faultline.pipeline_v2.stage_6_3_import_tree import (
     _backfill_reach_member_files,
-    _reach_nearest_rank,
     enrich_with_import_tree,
 )
 
@@ -201,16 +200,6 @@ def test_threshold_is_scale_invariant_floor() -> None:
             m = _mf_index(feats[idx])["src/pair.ts"]
             assert m.role == "closure", f"n={n_features}"
             assert m.primary is True, f"n={n_features}"
-
-
-def test_nearest_rank_helper_matches_stage_2_6() -> None:
-    """The percentile helper is the same nearest-rank contract Stage 2.6
-    uses (scale-invariant; P90 of a fan-in distribution)."""
-    assert _reach_nearest_rank([], 0.9) == 0
-    assert _reach_nearest_rank([1], 0.9) == 1
-    # 10 values 1..10 → P90 nearest-rank = 9th value.
-    assert _reach_nearest_rank(list(range(1, 11)), 0.90) == 9
-    assert _reach_nearest_rank([5, 5, 5], 0.90) == 5
 
 
 def test_existing_member_files_not_duplicated() -> None:

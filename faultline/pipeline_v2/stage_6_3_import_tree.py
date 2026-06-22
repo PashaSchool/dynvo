@@ -1200,19 +1200,6 @@ _REACH_PRIMARY_CONFIDENCE = 0.5
 _REACH_SHARED_CONFIDENCE = 0.25
 
 
-def _reach_nearest_rank(sorted_values: list[int], pct: float) -> int:
-    """Nearest-rank percentile of a pre-sorted nonempty int list.
-
-    Identical contract to Stage 2.6's ``_nearest_rank`` (scale-invariant
-    by construction — a percentile of the repo's OWN distribution).
-    """
-    if not sorted_values:
-        return 0
-    n = len(sorted_values)
-    rank = max(1, -(-int(pct * 100) * n // 100))  # ceil(pct * n), 1-indexed
-    return sorted_values[min(rank, n) - 1]
-
-
 def _backfill_reach_member_files(
     features: list["Feature"],
     reached_by_feature: dict[int, list[str]],
@@ -1255,7 +1242,6 @@ def _backfill_reach_member_files(
     # is correctly recorded as shared. Floor of three mirrors Stage 2.6's
     # `_FAN_IN_FLOOR` (a pairwise share of 2 is a legitimate attachment; 3
     # independent claimants = shared). Scale-invariant, no tuned percentile.
-    counts = sorted(len(v) for v in claimants.values())
     fan_in_threshold = _REACH_FAN_IN_FLOOR
 
     owned = 0
