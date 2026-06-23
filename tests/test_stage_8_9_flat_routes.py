@@ -179,11 +179,17 @@ def test_domain_key_flat_route_file_keys_by_virtual_domain() -> None:
 
 
 def test_domain_key_flat_route_directory_keys_by_virtual_domain() -> None:
-    # A dot-name DIRECTORY (route + colocated files inside) keys the SAME way.
+    # A dot-name DIRECTORY (route + colocated files inside) keys the SAME way —
+    # but a MARKER-LESS folder name (``account.tokens``, no ``$``/``@``) only
+    # parses once its routes dir is CONFIRMED Remix (the universal-safety
+    # contract; ``route.tsx`` co-location is NOT a confirmation signal because
+    # ``route.ts`` is also Next.js/Express's own filename).
+    confirmed = frozenset({"apps/web/app/routes"})
     for start in (0, 2):
         assert _domain_key(
-            "apps/web/app/routes/account.tokens/route.tsx", start,
+            "apps/web/app/routes/account.tokens/route.tsx", start, confirmed,
         ) == "apps/web/app/routes/account"
+        # A ``$``-param dotted directory SELF-confirms (no external set needed).
         assert _domain_key(
             "apps/web/app/routes/_app.orgs.$o.projects.$p.sessions.$s/loader.ts", start,
         ) == "apps/web/app/routes/orgs"
@@ -527,3 +533,37 @@ def test_flat_routes_blob_metric_moves() -> None:
     subdecompose_oversized_features(feats)
     biggest_after = max(len(_owned_paths(f)) for f in feats)
     assert biggest_after < biggest_before
+
+
+def test_strong_marker_only_confirms_no_underscore_or_route_module_leak() -> None:
+    """REGRESSION (re-audit 2026-06-23): confirmation requires a ``$``-param or
+    ``@``-escape marker in a DOTTED name — a ``_``-prefix alone (shared with TS
+    barrels / NestJS bases / private modules) and a bare ``route.ts`` (Next.js's
+    own handler filename) must NOT confirm a non-Remix ``routes/`` dir, or the
+    Express/NestJS misfire reopens."""
+    leak_vectors = {
+        "express_lone__index": ["src/routes/auth.controller.ts", "src/routes/_index.ts"],
+        "express_route_module": ["src/routes/auth.controller.ts", "src/routes/orders/route.ts"],
+        "nestjs__private_service": [
+            "modules/auth/routes/auth.routes.ts",
+            "modules/auth/routes/_private.service.ts",
+        ],
+        "nestjs__base_controller": ["src/routes/users.controller.ts", "src/routes/_base.controller.ts"],
+        "deep_route_module_ancestor": [
+            "pkg/routes/sub/routes/things/route.ts",
+            "pkg/routes/auth.controller.ts",
+        ],
+        "next__app_standalone": ["src/routes/_app.tsx", "src/routes/users.controller.ts"],
+    }
+    for label, paths in leak_vectors.items():
+        assert _confirmed_remix_routes_dirs(paths) == frozenset(), f"LEAK: {label}"
+
+
+def test_dollar_param_confirms_genuine_remix_dir() -> None:
+    """A genuine Remix dir (any one ``$``-param dynamic route) confirms; its
+    marker-less static siblings then parse."""
+    paths = [
+        "apps/webapp/app/routes/_app.orgs.$organizationSlug.projects.tsx",
+        "apps/webapp/app/routes/account.tokens.tsx",  # marker-less sibling
+    ]
+    assert _confirmed_remix_routes_dirs(paths) == frozenset({"apps/webapp/app/routes"})
