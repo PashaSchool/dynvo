@@ -363,22 +363,67 @@ _FLAT_ROUTE_DIRS: frozenset[str] = frozenset({"routes", "route"})
 # ``account.tokens`` → ``account``).
 _FLAT_ROUTE_INDEX_MARKERS: frozenset[str] = frozenset({"@", "_index", "index"})
 
-# Known co-located NON-ROUTE dotted-file suffixes. A file like
-# ``Button.test.tsx`` / ``foo.server.ts`` / ``index.css`` / ``schema.d.ts`` has
-# dots but is NOT a route hierarchy — its dot segments are a TYPE/ROLE suffix,
-# not URL segments. If any dot segment (after the first) is one of these tokens,
-# the name is NOT a flat-route. Universal JS/TS co-location vocabulary, no
-# corpus name. This is the crux of the universal-safety guard: it prevents the
-# flat-route branch from misfiring on ordinary dotted files that happen to live
-# under a (non-Remix) ``route``/``routes`` dir.
+# ── POSITIVE Remix flat-routes signal (replaces the old denylist gate) ───────
+#
+# UNIVERSAL-SAFETY FIX (2026-06-23). The previous gate decided "is this a flat
+# route?" by a DENYLIST (``_NON_ROUTE_DOT_SUFFIXES``): a dotted name FIRED unless
+# one of its segments was a known type/role token. Wrong polarity — the denylist's
+# completeness is bounded by imagination, so anything NOT enumerated misfired:
+# ``src/routes/auth.routes.ts`` (Express) → ``[auth, routes]``, ``routes`` not in
+# the denylist → parsed as a flat route → minted an ``auth`` domain on a NON-Remix
+# repo; the entire NestJS/Angular file-suffix vocabulary
+# (``.controller`` ``.service`` ``.dto`` ``.guard`` ``.resolver`` ``.entity``
+# ``.gateway`` ``.repository`` ``.interceptor`` ``.pipe`` ``.filter`` …) misfired
+# the same way. That CHANGED non-Remix decomposition (novu/NestJS at risk).
+#
+# The correct test is a POSITIVE structural signal: a directory is a Remix
+# flat-routes dir IFF it CONTAINS at least one file carrying a genuine Remix
+# flat-route MARKER. The markers below are Remix-SPECIFIC conventions that
+# Express / NestJS / Angular never use in filenames, so they cannot be faked by a
+# conventional ``*.routes.ts`` / ``*.controller.ts`` file. Presence of a marker
+# CONFIRMS the dir; absence leaves the dir non-Remix and every file under it
+# byte-identical to the pre-fix directory descent.
+#
+# File-system routing is an EXPLICITLY ALLOWED grounding source (CLAUDE.md /
+# memory/rule-no-readme — folder + filename convention, not prose). These markers
+# are the universal Remix flat-routes convention, NO repo-specific path and NO
+# magic number (memory/rule-no-repo-specific-paths + rule-no-magic-tuning).
+#
+# A flat-route name's dot-segment is a MARKER segment when it is:
+#   * pathless layout — ``_``-prefixed (``_app`` ``_layout`` ``_auth`` ``_index``)
+#   * dynamic param   — ``$``-prefixed (``$slug`` ``$organizationSlug`` ``$``)
+#   * escape / index  — exactly ``@`` (Remix v2 escape / pathless-index marker)
+# Express ``auth.routes`` / NestJS ``users.controller`` have NONE of these → the
+# dir is never confirmed Remix from such a file.
+def _is_remix_marker_segment(part: str) -> bool:
+    """``True`` when a single flat-route dot-segment is a Remix-SPECIFIC marker
+    (pathless-layout ``_x`` / dynamic-param ``$x`` / escape ``@``). These are the
+    decisive positive signals: Express/NestJS/Angular filenames never contain
+    them, so a conventional ``auth.routes`` / ``users.controller`` segment list
+    returns ``False`` for every part and the dir is NOT confirmed Remix."""
+    return part.startswith("_") or part.startswith("$") or part == "@"
+
+
+# The Remix v2 co-located route MODULE basename: a directory route like
+# ``routes/account.tokens/route.tsx`` declares the route via a child file named
+# exactly ``route`` (+ a JS/TS extension). Its PRESENCE strictly below a
+# ``routes``/``route`` dir is itself a positive Remix signal (no Express/NestJS
+# convention co-locates a bare ``route.tsx`` route module this way). Universal
+# Remix v2 convention, no corpus name.
+_ROUTE_MODULE_RE = re.compile(r"^route\.(?:t|j)sx?$", re.IGNORECASE)
+
+# Known co-located NON-ROUTE dotted-file suffixes — retained as a SECONDARY
+# guard. The POSITIVE marker above is the decisive gate (a dir is Remix only with
+# a marker); this set additionally rejects ordinary type/role files
+# (``Button.test.tsx`` / ``foo.server.ts`` / ``index.css`` / ``schema.d.ts``)
+# from being parsed as routes EVEN inside a confirmed-Remix dir — those are
+# co-located test/style/server modules, not route leaves. Universal JS/TS
+# co-location vocabulary, no corpus name (rule-no-repo-specific-paths).
 #
 # DELIBERATELY this set is ONLY genuine FILE-ROLE / TYPE / build tokens — it does
 # NOT include the layer/domain vocabulary (``api`` ``admin`` ``account`` …),
-# because those words are legitimate URL segments in a flat route
-# (``_app.api.runs`` is the route ``/api/runs``). Rejecting on a layer word would
-# wrongly suppress real flat routes. A genuine non-route dotted file is
-# identified by its TYPE/ROLE suffix (``.server`` ``.test`` ``.css`` ``.d`` …),
-# never by a path-word.
+# because those words are legitimate URL segments in a confirmed flat route
+# (``_app.api.runs`` is the route ``/api/runs``).
 _NON_ROUTE_DOT_SUFFIXES: frozenset[str] = frozenset({
     # test / story
     "test", "spec", "stories", "story", "bench", "e2e",
@@ -596,24 +641,30 @@ def _flat_route_domain(name_no_ext: str) -> str | None:
 
 def _is_flat_route_name(name_no_ext: str) -> bool:
     """``True`` when *name_no_ext* (a basename with its extension already
-    stripped, OR a directory name) is a genuine flat-route name — i.e. it
+    stripped, OR a directory name) is a parseable flat-route name — i.e. it
     encodes a route HIERARCHY in dot-separated segments, not a co-located
     type/role suffix.
 
-    Two conditions, both required (universal-safety):
+    Two conditions, both required:
 
-    1. **≥2 route-like dot segments.** A single-dot name (``foo.ts`` → just
-       ``foo`` after the ext strip → no dots left) is NOT a flat route; a
-       hierarchy needs at least two segments (``account.tokens``,
-       ``_app.orgs``). One literal + one marker still counts (``@.runs`` →
-       ``@``+``runs``; ``account._index`` → ``account``+``_index``) — the marker
-       proves it is a route leaf.
+    1. **≥2 dot segments.** A single-dot name (``foo.ts`` → just ``foo`` after
+       the ext strip → no dots left) is NOT a flat route; a hierarchy needs at
+       least two segments (``account.tokens``, ``_app.orgs``).
     2. **No co-located non-route suffix.** If any segment AFTER the first is a
-       known type/role token (``test`` ``server`` ``client`` ``css`` ``d`` …) or
-       any layer/terminal token, the dots are a FILE-ROLE suffix, not URL
-       segments — ``Button.test`` / ``foo.server`` / ``index.css`` /
-       ``schema.d`` are NOT flat routes. This is what stops the branch from
-       misfiring on ordinary dotted files.
+       known type/role token (``test`` ``server`` ``client`` ``css`` ``d`` …)
+       the dots are a FILE-ROLE suffix, not URL segments — ``Button.test`` /
+       ``foo.server`` / ``index.css`` / ``schema.d`` are NOT flat routes.
+
+    NOTE — this predicate decides whether a name is PARSEABLE as a flat route
+    once its ``routes`` dir is already CONFIRMED Remix (see
+    :func:`_dir_is_confirmed_remix`). It is NOT the gate that decides whether a
+    NON-Remix dir misfires: a conventional ``auth.routes`` / ``users.controller``
+    would pass condition 1+2 here too (``routes`` / ``controller`` are not in the
+    type/role denylist — that denylist completeness is exactly the anti-pattern
+    we removed). Misfire safety comes from the POSITIVE confirmation gate, which
+    only ever calls this for a file whose dir contains a real Remix marker. So a
+    marker-less ``auth.routes.ts`` in an UNCONFIRMED Express ``routes/`` dir is
+    never even reached.
     """
     if "." not in name_no_ext:
         return False
@@ -623,6 +674,113 @@ def _is_flat_route_name(name_no_ext: str) -> bool:
     # Reject co-located non-route dotted files: a known type/role token anywhere
     # after the first segment means the dots are a suffix, not a route path.
     return not any(p.lower() in _NON_ROUTE_DOT_SUFFIXES for p in parts[1:])
+
+
+def _name_carries_remix_marker(name_no_ext: str) -> bool:
+    """``True`` when a basename/dirname (extension already stripped) is a
+    flat-route name that contains a Remix-SPECIFIC marker segment
+    (:func:`_is_remix_marker_segment`).
+
+    This is the POSITIVE per-file signal: ``_app.orgs.$slug`` (``_app`` + ``$slug``
+    markers) → ``True``; ``@.runs.$runParam`` (``@`` + ``$runParam``) → ``True``;
+    ``account.tokens`` (no marker) → ``False``; ``auth.routes`` (no marker) →
+    ``False``; ``users.controller`` (no marker) → ``False``. Express/NestJS/Angular
+    filenames NEVER contain these markers, so they cannot confirm a dir as Remix.
+    """
+    if "." not in name_no_ext:
+        # A lone marker segment (``_app``, ``$``, ``@``) IS a Remix signal even
+        # with no dot (a top-level pathless layout / index file), e.g.
+        # ``routes/_index.tsx`` or ``routes/$.tsx`` (splat). It still proves the
+        # dir is Remix.
+        return _is_remix_marker_segment(name_no_ext)
+    return any(_is_remix_marker_segment(p) for p in name_no_ext.split(".") if p)
+
+
+def _path_confirms_remix_routes_dir(segs: list[str]) -> set[str]:
+    """The set of ancestor ``routes``/``route`` directory prefixes that *segs*
+    (a single split path) PROVES are genuine Remix flat-routes dirs.
+
+    A path proves a ``routes`` dir at index ``d`` is Remix when, strictly below
+    it, there is positive evidence:
+
+      * the IMMEDIATE child ``segs[d+1]`` (a flat-route FILE basename
+        ext-stripped, or a dot-name DIRECTORY) carries a Remix marker segment
+        (``_app`` / ``$slug`` / ``@``), OR
+      * a Remix v2 co-located route MODULE basename ``route.{ts,tsx,js,jsx}``
+        appears anywhere strictly below the ``routes`` dir (the
+        ``routes/account.tokens/route.tsx`` directory-route convention).
+
+    Express ``src/routes/auth.routes.ts`` (child ``auth.routes`` has no marker,
+    basename is not ``route.*``) → ``{}``: the dir is NOT confirmed, so the
+    flat-route branch never fires and the file is byte-identical to the legacy
+    directory descent. NestJS ``modules/auth/routes/auth.routes.ts`` → ``{}``
+    for the same reason (its ``routes`` dir holds only marker-less ``*.routes`` /
+    ``*.controller`` / ``*.service`` files).
+
+    Returns a set (a path may sit under several nested ``routes`` dirs, e.g. a
+    sub-package's own ``routes``) so a self-confirm check can ask about a
+    SPECIFIC dir, not just the shallowest. Universal Remix convention, no
+    repo-specific path, no magic number.
+    """
+    last = len(segs) - 1
+    confirmed: set[str] = set()
+    for d, seg in enumerate(segs):
+        if seg.lower() not in _FLAT_ROUTE_DIRS or d >= last:
+            continue
+        prefix = "/".join(segs[: d + 1])
+        # (a) immediate child carries a marker (file basename or dot-name dir).
+        child = segs[d + 1]
+        child_no_ext = _FILE_EXT_RE.sub("", child) if (d + 1) == last else child
+        if _name_carries_remix_marker(child_no_ext):
+            confirmed.add(prefix)
+            continue
+        # (b) a Remix v2 ``route.{ts,tsx,js,jsx}`` module as the basename strictly
+        # below this dir (the ``routes/<route-dir>/route.tsx`` convention).
+        if _ROUTE_MODULE_RE.fullmatch(segs[last]) and last > d:
+            confirmed.add(prefix)
+    return confirmed
+
+
+def _confirmed_remix_routes_dirs(owned: list[str]) -> frozenset[str]:
+    """Pre-pass over a feature's owned files → the set of confirmed Remix
+    flat-routes directory prefixes (each a ``…/routes`` path that contains ≥1
+    file carrying a genuine Remix marker, per
+    :func:`_path_confirms_remix_routes_dir`).
+
+    This is the heart of the universal-safety fix. Once a dir is in this set,
+    EVERY flat-route name under it parses (including marker-LESS siblings like
+    ``account.tokens.tsx`` — the dir is proven Remix by some other ``_app`` /
+    ``$`` / ``@`` / ``route.tsx`` file). A NON-Remix Express/NestJS ``routes/``
+    dir contributes nothing to this set (no marker file), so the flat-route
+    branch is never consulted for any file under it and the decomposition is
+    byte-identical to the pre-fix behaviour.
+    """
+    dirs: set[str] = set()
+    for p in owned:
+        dirs |= _path_confirms_remix_routes_dir(p.split("/"))
+    return frozenset(dirs)
+
+
+def _dir_is_confirmed_remix(
+    routes_dir_prefix: str, segs: list[str], confirmed: frozenset[str] | None,
+) -> bool:
+    """Decide whether the ``routes`` dir at *routes_dir_prefix* is a confirmed
+    Remix flat-routes dir for the purpose of keying *segs*.
+
+    * When *confirmed* is supplied (the real pipeline path — a pre-pass over the
+      whole feature's owned files built the set), membership is authoritative:
+      a marker-less sibling parses iff its dir was confirmed by some OTHER file.
+    * When *confirmed* is ``None`` (a standalone / unit-test ``_domain_key``
+      call with no feature context), the path must SELF-confirm: this single
+      path alone must carry the Remix marker for this dir. This makes a lone
+      ``_app.orgs.$slug.ts`` resolve while a lone marker-less ``account.tokens.ts``
+      does not (it is genuinely ambiguous with Express ``auth.routes.ts`` in
+      isolation — only a sibling marker or an explicit confirmed-set can
+      disambiguate it). Either way a NON-Remix path never confirms.
+    """
+    if confirmed is not None:
+        return routes_dir_prefix in confirmed
+    return routes_dir_prefix in _path_confirms_remix_routes_dir(segs)
 
 
 def _flat_route_key(segs: list[str], i: int, *, is_last: bool) -> str | None | bool:
@@ -656,41 +814,52 @@ def _flat_route_key(segs: list[str], i: int, *, is_last: bool) -> str | None | b
     return "/".join(segs[:i]) + "/" + domain
 
 
-def _flat_route_scan(segs: list[str], start: int) -> str | None | bool:
+def _flat_route_scan(
+    segs: list[str], start: int, confirmed: frozenset[str] | None = None,
+) -> str | None | bool:
     """Detect a flat-route hierarchy ANYWHERE at-or-after *start* and key the
     file by its virtual route domain, INDEPENDENT of where the directory-tree
-    common-prefix landed.
+    common-prefix landed — but ONLY inside a CONFIRMED Remix flat-routes dir.
 
-    Why independent of ``start``: a ``routes``/``route`` directory followed by a
-    dot-name flat-route is an UNAMBIGUOUS file-system-routing signal. The
-    ordinary descent (:func:`_domain_key`) keys off the all-owned-files common
-    prefix (``start``), which a single stray attributed file (e.g. an
-    import-closure file outside the workspace package) can drag shallower — so
-    the descent may resolve the WORKSPACE-PACKAGE dir (``apps/webapp``) as a
-    spurious single "domain" and return BEFORE ever reaching ``routes/``. A
-    flat-routes directory does not depend on that prefix to be meaningful, so we
-    locate it directly. The FIRST ``routes``/``route`` dir at-or-after ``start``
-    whose next segment is a genuine flat-route wins; its virtual key
-    (``…/routes/<domain>``) groups every flat-route under that same dir together
-    regardless of ``start``.
+    Why independent of ``start``: a CONFIRMED Remix ``routes``/``route`` directory
+    is an UNAMBIGUOUS file-system-routing signal. The ordinary descent
+    (:func:`_domain_key`) keys off the all-owned-files common prefix (``start``),
+    which a single stray attributed file (e.g. an import-closure file outside the
+    workspace package) can drag shallower — so the descent may resolve the
+    WORKSPACE-PACKAGE dir (``apps/webapp``) as a spurious single "domain" and
+    return BEFORE ever reaching ``routes/``. A flat-routes directory does not
+    depend on that prefix to be meaningful, so we locate it directly.
 
-    Returns a domain-key string (flat-route domain found), ``None`` (a
-    flat-routes dir was found but THIS file is a layout/index shell with no
-    domain → residual), or ``False`` (no flat-routes structure on this path →
-    the caller runs the ordinary directory descent unchanged). Non-flat paths
-    therefore behave EXACTLY as before (byte-identical): ``False`` short-circuits
-    to the legacy walk.
+    UNIVERSAL-SAFETY GATE (2026-06-23): a ``routes``/``route`` dir is only treated
+    as flat-routes when it is CONFIRMED Remix by a POSITIVE marker
+    (:func:`_dir_is_confirmed_remix`) — a ``_app`` / ``$slug`` / ``@`` /
+    ``route.tsx`` file under it. An Express ``src/routes/`` or NestJS
+    ``modules/auth/routes/`` dir holds only marker-less ``*.routes`` /
+    ``*.controller`` / ``*.service`` files, so it is NEVER confirmed, the scan
+    skips it, and the file falls through to the byte-identical legacy descent.
+
+    Returns a domain-key string (flat-route domain found in a confirmed dir),
+    ``None`` (a confirmed flat-routes dir was found but THIS file is a
+    layout/index shell with no domain → residual), or ``False`` (no CONFIRMED
+    flat-routes structure on this path → the caller runs the ordinary directory
+    descent unchanged). Non-Remix paths therefore behave EXACTLY as before
+    (byte-identical): ``False`` short-circuits to the legacy walk.
     """
     last = len(segs) - 1
     for j in range(max(start, 1), len(segs)):
         if segs[j - 1].lower() not in _FLAT_ROUTE_DIRS:
             continue
-        # ``segs[j]`` sits directly under a routes/route dir — flat-route candidate.
+        # POSITIVE gate: only key off this routes dir if it is CONFIRMED Remix.
+        routes_dir_prefix = "/".join(segs[:j])
+        if not _dir_is_confirmed_remix(routes_dir_prefix, segs, confirmed):
+            continue  # non-Remix routes dir → legacy descent (byte-identical)
+        # ``segs[j]`` sits directly under a CONFIRMED routes dir — parse it.
         fr = _flat_route_key(segs, j, is_last=(j == last))
         if fr is not False:
             return fr  # str (domain) or None (layout/index shell → residual)
-        # Not a flat-route name under this routes dir → keep looking (there may
-        # be a nested ``routes/`` deeper, e.g. a sub-package), else fall through.
+        # Confirmed dir but this particular name is not parseable as a route
+        # (e.g. a co-located ``styles.css`` sibling) → keep looking deeper, else
+        # fall through to the legacy descent.
     return False
 
 
@@ -710,7 +879,9 @@ def _common_segments(paths: list[str]) -> int:
     return n
 
 
-def _domain_key(path: str, start: int = 0) -> str | None:
+def _domain_key(
+    path: str, start: int = 0, confirmed: frozenset[str] | None = None,
+) -> str | None:
     """The domain-key prefix of *path*: the path up to and INCLUDING the
     first segment at-or-after index *start* that is a DOMAIN (not a layer /
     version / route-param dir) and is itself a directory (a deeper segment
@@ -751,13 +922,16 @@ def _domain_key(path: str, start: int = 0) -> str | None:
     consulted, so every non-flat-route path is byte-identical to before.
     """
     segs = path.split("/")
-    # Flat-route (Remix) fast path — start-INDEPENDENT. A ``routes``/``route``
-    # dir + dot-name flat-route is an unambiguous file-system-routing signal that
-    # does not depend on the (outlier-fragile) common-prefix ``start``; resolve
-    # it directly so the workspace-package dir is never mistaken for the domain.
-    # ``False`` = no flat-route structure → the ordinary directory walk below runs
-    # byte-identically to the legacy behaviour for every non-flat path.
-    fr = _flat_route_scan(segs, start)
+    # Flat-route (Remix) fast path — start-INDEPENDENT, CONFIRMED-Remix-only. A
+    # ``routes``/``route`` dir that a POSITIVE Remix marker has CONFIRMED is an
+    # unambiguous file-system-routing signal that does not depend on the
+    # (outlier-fragile) common-prefix ``start``; resolve it directly so the
+    # workspace-package dir is never mistaken for the domain. ``confirmed`` is the
+    # pre-pass set of Remix-routes dirs (None ⇒ self-confirm from this path alone,
+    # for standalone calls). ``False`` = no CONFIRMED flat-route structure → the
+    # ordinary directory walk below runs byte-identically to the legacy behaviour
+    # for every non-Remix path (Express/NestJS ``routes/`` never confirm).
+    fr = _flat_route_scan(segs, start, confirmed)
     if fr is not False:
         return fr  # str (route domain) or None (layout/index shell → residual)
     i, depth = start, 0
@@ -799,10 +973,18 @@ def _plan_split(
     (rule-no-magic-tuning). ``None`` disables the cap.
     """
     start = _common_segments(owned)
+    # Universal-safety PRE-PASS: identify which ``routes``/``route`` dirs in THIS
+    # feature's owned files are CONFIRMED Remix flat-routes dirs (contain ≥1 file
+    # with a real ``_app`` / ``$slug`` / ``@`` / ``route.tsx`` marker). The
+    # flat-route branch fires ONLY inside these dirs, so a marker-less sibling
+    # (``account.tokens.tsx``) parses in a proven-Remix dir while an Express/NestJS
+    # ``routes/`` dir (no marker file) is left byte-identical to the legacy
+    # directory descent.
+    confirmed = _confirmed_remix_routes_dirs(owned)
     raw: dict[str, list[str]] = defaultdict(list)
     residual: list[str] = []
     for p in owned:
-        k = _domain_key(p, start)
+        k = _domain_key(p, start, confirmed)
         if k is None:
             residual.append(p)
         else:
