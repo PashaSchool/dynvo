@@ -31,8 +31,10 @@ from datetime import datetime, timezone
 
 from faultline.models.types import Feature, MemberFile
 from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
+    _confirmed_remix_routes_dirs,
     _domain_key,
     _flat_route_domain,
+    _flat_route_scan,
     _is_clean_domain_part,
     _is_flat_route_name,
     _owned_paths,
@@ -149,7 +151,9 @@ def test_is_flat_route_name_rejects_colocated_non_route_suffix() -> None:
 
 def test_domain_key_flat_route_file_keys_by_virtual_domain() -> None:
     # The loop bound ``i < len(segs)-1`` never inspects a file basename; the
-    # flat-route fast-path does. Each flat-route FILE keys by its route domain.
+    # flat-route fast-path does. Each MARKER-bearing flat-route FILE keys by its
+    # route domain — the ``_app`` / ``$`` / ``@`` markers SELF-confirm the dir as
+    # Remix (no explicit confirmed-set needed), so these resolve standalone.
     for start in (0, 2):
         assert _domain_key(
             "apps/web/app/routes/_app.orgs.$org.projects.$p.alerts.new.ts", start,
@@ -157,9 +161,21 @@ def test_domain_key_flat_route_file_keys_by_virtual_domain() -> None:
         assert _domain_key(
             "apps/web/app/routes/@.runs.$runParam.ts", start,
         ) == "apps/web/app/routes/runs"
+        # A MARKER-LESS flat-route file (``account.tokens`` — no ``_``/``$``/``@``)
+        # is genuinely ambiguous with Express ``auth.routes.ts`` in ISOLATION, so
+        # it does NOT self-confirm. It parses only once its dir is CONFIRMED Remix
+        # by a sibling marker — modelled here by passing the confirmed-set the
+        # per-feature pre-pass builds. This is the universal-safety contract: a
+        # marker-less name keys by domain iff its dir is proven Remix.
+        confirmed = frozenset({"apps/web/app/routes"})
+        assert _domain_key(
+            "apps/web/app/routes/account.tokens.ts", start, confirmed,
+        ) == "apps/web/app/routes/account"
+        # …and WITHOUT confirmation it falls through to the legacy descent (the
+        # marker-less name alone cannot be distinguished from a non-Remix file).
         assert _domain_key(
             "apps/web/app/routes/account.tokens.ts", start,
-        ) == "apps/web/app/routes/account"
+        ) is None
 
 
 def test_domain_key_flat_route_directory_keys_by_virtual_domain() -> None:
@@ -231,6 +247,204 @@ def test_domain_key_next_app_router_subdir_unchanged() -> None:
     # a subdir literally named ``routes`` but with NON-dotted children is a
     # normal directory router — its child is an ordinary domain dir.
     assert _domain_key("src/routes/billing/index.tsx", 0) == "src/routes/billing"
+
+
+# ── UNIVERSAL-SAFETY MISFIRE REGRESSIONS (2026-06-23) ────────────────────────
+#
+# The old gate decided "is this a flat route?" by a DENYLIST
+# (``_NON_ROUTE_DOT_SUFFIXES``): a dotted name FIRED unless one of its segments
+# was an enumerated type/role token. Wrong polarity — anything NOT enumerated
+# misfired. ``src/routes/auth.routes.ts`` → ``[auth, routes]``, ``routes`` not in
+# the denylist → parsed as a flat route → minted an ``auth`` domain on a NON-Remix
+# Express repo; the entire NestJS/Angular file-suffix vocabulary
+# (``.controller`` ``.service`` ``.dto`` ``.guard`` ``.resolver`` ``.entity`` …)
+# misfired the same way → CHANGED non-Remix decomposition (novu/NestJS at risk).
+#
+# The fix: a dir is Remix flat-routes ONLY by a POSITIVE marker
+# (``_app`` / ``$slug`` / ``@`` / co-located ``route.tsx``) — markers Express /
+# NestJS / Angular filenames NEVER carry. These tests PROVE the fixed
+# ``_domain_key`` is byte-IDENTICAL to the legacy directory descent for every
+# such non-Remix path (the flat-route branch never fires), and that an adversarial
+# NestJS/Express ``api`` feature does NOT split.
+
+# The full NestJS / Angular file-role suffix vocabulary. A ``routes/`` dir holding
+# only ``<thing>.<suffix>.ts`` files (no Remix marker) must NEVER be confirmed
+# Remix → every such file is byte-identical to the legacy descent. Universal
+# framework vocabulary, no repo-specific name (rule-no-repo-specific-paths).
+_NESTJS_ANGULAR_SUFFIXES = (
+    "controller", "service", "dto", "guard", "middleware", "resolver",
+    "entity", "gateway", "repository", "interceptor", "pipe", "filter",
+    "handler", "module", "decorator", "strategy", "schema", "validator",
+    "subscriber", "command", "query", "event", "saga", "component",
+    "directive", "model", "config",
+)
+
+
+def _legacy_domain_key(path: str, start: int = 0) -> str | None:
+    """The pre-fix directory descent — the byte-identity ORACLE. This is a
+    faithful copy of the ORDINARY (non-flat-route) walk that runs whenever the
+    flat-route branch returns ``False``; a non-Remix path MUST resolve to exactly
+    this. We copy it here (rather than reaching into the module) so the test pins
+    the legacy contract independently of how the flat-route fast-path is wired."""
+    from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
+        _DEPTH_CAP, _is_component_name, _is_terminal, _is_transparent,
+    )
+    segs = path.split("/")
+    i, depth = start, 0
+    while i < len(segs) - 1 and depth < _DEPTH_CAP:
+        seg = segs[i]
+        if _is_terminal(seg):
+            return None
+        if not _is_transparent(seg):
+            if _is_component_name(seg):
+                return None
+            return "/".join(segs[: i + 1])
+        i += 1
+        depth += 1
+    return None
+
+
+def test_domain_key_nestjs_controller_in_routes_dir_not_split() -> None:
+    # NestJS ``routes/users.controller.ts`` (and friends) have NO Remix marker →
+    # the ``routes`` dir is NOT confirmed → byte-identical to the legacy descent.
+    for start in (0, 2):
+        for p in (
+            "src/routes/users.controller.ts",
+            "src/routes/auth.controller.ts",
+            "apps/api/routes/orders.controller.ts",
+        ):
+            assert _domain_key(p, start) == _legacy_domain_key(p, start), p
+
+
+def test_domain_key_express_routes_file_in_routes_dir_not_split() -> None:
+    # Express ``src/routes/auth.routes.ts`` → ``[auth, routes]``; ``routes`` is
+    # NOT a Remix marker → dir unconfirmed → byte-identical to legacy descent.
+    for start in (0, 2):
+        for p in (
+            "src/routes/auth.routes.ts",
+            "src/routes/users.routes.ts",
+            "src/routes/index.routes.ts",
+            "apps/server/routes/billing.routes.ts",
+        ):
+            assert _domain_key(p, start) == _legacy_domain_key(p, start), p
+
+
+def test_domain_key_full_nestjs_angular_vocabulary_under_routes_not_flat() -> None:
+    # The ENTIRE NestJS/Angular file-role vocabulary, each as ``<thing>.<suffix>``
+    # under a ``routes/`` dir, must be byte-identical to the legacy descent — none
+    # carries a Remix marker, so none confirms the dir.
+    for suffix in _NESTJS_ANGULAR_SUFFIXES:
+        for p in (
+            f"src/routes/auth.{suffix}.ts",
+            f"modules/billing/routes/billing.{suffix}.ts",
+        ):
+            for start in (0, 2):
+                assert _domain_key(p, start) == _legacy_domain_key(p, start), p
+            # AND the flat-route scan itself must report "not a flat route".
+            assert _flat_route_scan(p.split("/"), 0) is False, p
+
+
+def test_domain_key_module_subdir_routes_keeps_module_domain() -> None:
+    # A NestJS module-subdir ``modules/auth/routes/auth.routes.ts``: the ``routes``
+    # dir is unconfirmed (marker-less), so the descent keeps the MODULE domain
+    # (``modules`` is transparent → first real domain is ``auth``), exactly as the
+    # legacy behaviour — NOT a flat-route ``routes/auth`` split.
+    p = "modules/auth/routes/auth.routes.ts"
+    assert _domain_key(p, 0) == _legacy_domain_key(p, 0) == "modules/auth"
+    p2 = "src/modules/payments/routes/payments.controller.ts"
+    assert _domain_key(p2, 0) == _legacy_domain_key(p2, 0) == "src/modules/payments"
+
+
+def test_confirmed_set_excludes_express_nestjs_routes_dirs() -> None:
+    # The pre-pass must NOT confirm any Express/NestJS ``routes/`` dir — they hold
+    # only marker-less files. (Direct test of the positive-signal pre-pass.)
+    owned = [
+        "src/routes/auth.routes.ts",
+        "src/routes/users.routes.ts",
+        "src/routes/auth.controller.ts",
+        "modules/auth/routes/auth.service.ts",
+        "modules/billing/routes/billing.dto.ts",
+    ]
+    assert _confirmed_remix_routes_dirs(owned) == frozenset()
+
+
+def test_confirmed_set_includes_only_dirs_with_a_marker() -> None:
+    # A Remix dir (has ``_app`` / ``$`` markers) is confirmed; a sibling Express
+    # ``routes`` dir on the SAME repo (marker-less) is NOT — the confirmation is
+    # PER-DIR, not global.
+    owned = [
+        "apps/web/app/routes/_app.orgs.$slug.tsx",   # Remix marker → confirms
+        "apps/web/app/routes/account.tokens.tsx",    # marker-less sibling
+        "apps/api/src/routes/auth.routes.ts",        # Express → no marker
+        "apps/api/src/routes/auth.controller.ts",
+    ]
+    assert _confirmed_remix_routes_dirs(owned) == frozenset(
+        {"apps/web/app/routes"}
+    )
+
+
+def test_confirmed_remix_dir_resolves_markerless_sibling() -> None:
+    # Inside a CONFIRMED Remix dir, a marker-less sibling (``account.tokens``)
+    # keys by its route domain — the dir is proven Remix by the ``_app`` file.
+    owned = [
+        "apps/web/app/routes/_app.orgs.$slug.tsx",
+        "apps/web/app/routes/account.tokens.tsx",
+    ]
+    confirmed = _confirmed_remix_routes_dirs(owned)
+    assert _domain_key(
+        "apps/web/app/routes/account.tokens.tsx", 2, confirmed,
+    ) == "apps/web/app/routes/account"
+
+
+# ── End-to-end: an adversarial NestJS/Express anchor must NOT decompose ──────
+
+
+def _nestjs_express_api_anchor(uuid: str = "n") -> Feature:
+    """SYNTHETIC adversarial NestJS/Express ``api`` feature (no real paths): an
+    oversized feature whose files live under a ``routes/`` dir but are ALL
+    conventional ``*.routes.ts`` / ``*.controller.ts`` / ``*.service.ts`` modules
+    — i.e. the exact shape the old denylist gate misfired on (it split this into
+    ``routes/auth`` + ``routes/users``). The fix must leave it UNTOUCHED by the
+    flat-route branch (it has no directory-tree domains either, so it does not
+    decompose at all)."""
+    paths: list[str] = []
+    for dom in ("auth", "users", "billing", "orders"):
+        paths += [
+            f"src/routes/{dom}.routes.ts",
+            f"src/routes/{dom}.controller.ts",
+            f"src/routes/{dom}.service.ts",
+        ]
+    return _owned("api", paths, uuid=uuid)
+
+
+def test_nestjs_express_api_anchor_does_not_flat_route_split() -> None:
+    # The adversarial NestJS/Express anchor is oversized but has NO Remix marker
+    # anywhere → the flat-route branch never fires. The decomposition is whatever
+    # the LEGACY directory descent produces (here: no domains — everything is a
+    # marker-less file directly under a transparent ``routes`` dir → residual),
+    # i.e. byte-identical to pre-fix. Crucially it must NOT mint ``auth``/``users``
+    # route domains the way the buggy denylist did.
+    anchor = _nestjs_express_api_anchor("n")
+    feats = [*_peers(8), anchor]
+    res = subdecompose_oversized_features(feats)
+    minted = {f.name for f in feats if f.split_from == "n"}
+    assert "auth" not in minted, minted
+    assert "users" not in minted, minted
+    assert "billing" not in minted and "orders" not in minted, minted
+    # No flat-route split happened: the pre-pass confirmed ZERO Remix dirs.
+    assert _confirmed_remix_routes_dirs(_owned_paths(anchor)) == frozenset()
+
+
+def test_nestjs_express_api_domain_key_byte_identical_to_legacy() -> None:
+    # Every owned file of the adversarial anchor resolves byte-identically to the
+    # legacy descent — the strongest universal-safety statement.
+    anchor = _nestjs_express_api_anchor("n")
+    owned = _owned_paths(anchor)
+    confirmed = _confirmed_remix_routes_dirs(owned)
+    from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import _common_segments
+    start = _common_segments(owned)
+    for p in owned:
+        assert _domain_key(p, start, confirmed) == _legacy_domain_key(p, start), p
 
 
 # ── End-to-end: a trigger.dev-SHAPED flat-routes workspace decomposes ────────
