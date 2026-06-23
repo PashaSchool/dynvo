@@ -687,13 +687,22 @@ def _name_carries_remix_marker(name_no_ext: str) -> bool:
     ``False``; ``users.controller`` (no marker) → ``False``. Express/NestJS/Angular
     filenames NEVER contain these markers, so they cannot confirm a dir as Remix.
     """
-    if "." not in name_no_ext:
-        # A lone marker segment (``_app``, ``$``, ``@``) IS a Remix signal even
-        # with no dot (a top-level pathless layout / index file), e.g.
-        # ``routes/_index.tsx`` or ``routes/$.tsx`` (splat). It still proves the
-        # dir is Remix.
-        return _is_remix_marker_segment(name_no_ext)
-    return any(_is_remix_marker_segment(p) for p in name_no_ext.split(".") if p)
+    # Require a DOTTED, MULTI-SEGMENT name whose marker is a ``$``-param or
+    # ``@``-escape — the UNAMBIGUOUS file-routing markers. ``$``- and
+    # ``@``-prefixed filename segments appear in NO other framework
+    # (Express/NestJS/Angular/Next/TS), so ``_app.orgs.$organizationSlug`` →
+    # confirms, but the ``_``-prefix is DELIBERATELY EXCLUDED here: it is shared
+    # with TS barrels (``_index``), private modules (``_private.service``), and
+    # NestJS base classes (``_base.controller``), so a ``_``-segment alone — even
+    # inside a dotted name — re-opened the Express/NestJS misfire the re-audit
+    # caught (``_private.service`` is dotted + ``_``-marker, yet pure NestJS).
+    # A Remix dir confirms via ANY one of its real dynamic routes (``$``-param),
+    # which every non-trivial Remix app has; its marker-less static siblings
+    # (``account.tokens``) then parse because the DIR is proven.
+    parts = [p for p in name_no_ext.split(".") if p]
+    if len(parts) < 2:
+        return False
+    return any(p.startswith("$") or p.startswith("@") for p in parts)
 
 
 def _path_confirms_remix_routes_dir(segs: list[str]) -> set[str]:
@@ -733,11 +742,15 @@ def _path_confirms_remix_routes_dir(segs: list[str]) -> set[str]:
         child_no_ext = _FILE_EXT_RE.sub("", child) if (d + 1) == last else child
         if _name_carries_remix_marker(child_no_ext):
             confirmed.add(prefix)
-            continue
-        # (b) a Remix v2 ``route.{ts,tsx,js,jsx}`` module as the basename strictly
-        # below this dir (the ``routes/<route-dir>/route.tsx`` convention).
-        if _ROUTE_MODULE_RE.fullmatch(segs[last]) and last > d:
-            confirmed.add(prefix)
+        # NOTE: the Remix-v2 co-located ``route.{ts,tsx,js,jsx}`` confirmation was
+        # REMOVED. ``route.ts`` is *also* Next.js App Router's handler filename and
+        # a common Express/Hono/Fastify per-resource router name, so it
+        # false-confirmed non-Remix dirs; and the old any-ancestor match
+        # (``last > d``) retroactively confirmed shallow ``routes`` dirs from a
+        # deep ``route.ts``. Remix-v2 FOLDER routes (``routes/account/route.tsx``)
+        # are directory-based and already decomposed by the legacy directory
+        # descent — only FLAT (dot-name) routes need this fast-path, and those are
+        # caught by the dotted-marker child check above.
     return confirmed
 
 
