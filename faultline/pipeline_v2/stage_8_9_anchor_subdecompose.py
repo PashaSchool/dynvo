@@ -318,6 +318,88 @@ _ROUTE_GROUP_RE = re.compile(r"^\((.*)\)$")  # Next route group ``(marketing)``
 # conventionally lowercase, so this never suppresses a real non-frontend domain.
 _COMPONENT_NAME_RE = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])[A-Za-z][A-Za-z0-9]*$")
 
+# ── Flat-route (Remix-style) virtual-path vocabulary ─────────────────────────
+#
+# Some file-system routers encode the WHOLE route hierarchy in a single
+# DOT-SEPARATED NAME inside ONE ``routes/`` directory, instead of in nested
+# sub-directories. This is the Remix / React-Router "flat-routes" convention
+# (also produced by ``remix-flat-routes`` and the ``app/routes.ts`` flat config):
+#
+#   ``app/routes/_app.orgs.$organizationSlug.projects.$projectParam.alerts.new.ts``
+#   ``app/routes/account.tokens/route.tsx``      (dot-name as a DIRECTORY)
+#   ``app/routes/@.runs.$runParam.ts``
+#
+# The route hierarchy ``/orgs/:slug/projects/:param/alerts/new`` lives in the
+# DOT-NAME, NOT in folders. The directory-tree decomposer (:func:`_domain_key`)
+# therefore sees ONE undecomposable ``routes/`` dir and resolves every flat-route
+# file to the SHARED residual — the workspace anchor stays a blob (trigger.dev's
+# ``webapp`` owned 39% of the repo this way). The fix: when a segment sits
+# DIRECTLY under a ``routes``/``route`` directory and its name is a genuine
+# flat-route (≥2 route-like dot segments), parse the VIRTUAL path hierarchy out
+# of the dot-name and key the file by its first real route DOMAIN.
+#
+# File-system routing is an EXPLICITLY ALLOWED grounding source (CLAUDE.md /
+# memory/rule-no-readme — folder + filename routing convention, not prose). This
+# vocabulary is the universal flat-routes convention, NO repo-specific path and
+# NO magic number (memory/rule-no-repo-specific-paths + rule-no-magic-tuning).
+#
+# A directory whose lowercased name is one of these IS a flat-routes root; a
+# segment directly beneath it is a flat-route candidate. ``routes``/``route`` are
+# already TRANSPARENT layers above, so non-flat children (e.g. a plain
+# ``routes/index.tsx``) keep their existing residual behaviour.
+_FLAT_ROUTE_DIRS: frozenset[str] = frozenset({"routes", "route"})
+
+# Flat-route SEGMENT markers — segments that form the virtual path but never
+# NAME the domain. Universal Remix flat-routes convention:
+#   * pathless layout    — a segment that is exactly ``_`` + name (``_app``,
+#     ``_layout``, ``_auth``): groups children without adding a URL segment.
+#   * dynamic param      — ``$`` prefix (``$organizationSlug``, ``$``): a URL
+#     parameter, not a domain.
+#   * index / escape     — ``@`` (escape / pathless index marker) and the
+#     ``_index`` / ``index`` route-index leaf.
+# These are SKIPPED for domain NAMING but still prove the name is a route. The
+# DOMAIN is the first segment that is none of these — the first literal URL
+# segment (``_app.orgs.$org…`` → ``orgs``; ``@.runs.$runParam`` → ``runs``;
+# ``account.tokens`` → ``account``).
+_FLAT_ROUTE_INDEX_MARKERS: frozenset[str] = frozenset({"@", "_index", "index"})
+
+# Known co-located NON-ROUTE dotted-file suffixes. A file like
+# ``Button.test.tsx`` / ``foo.server.ts`` / ``index.css`` / ``schema.d.ts`` has
+# dots but is NOT a route hierarchy — its dot segments are a TYPE/ROLE suffix,
+# not URL segments. If any dot segment (after the first) is one of these tokens,
+# the name is NOT a flat-route. Universal JS/TS co-location vocabulary, no
+# corpus name. This is the crux of the universal-safety guard: it prevents the
+# flat-route branch from misfiring on ordinary dotted files that happen to live
+# under a (non-Remix) ``route``/``routes`` dir.
+#
+# DELIBERATELY this set is ONLY genuine FILE-ROLE / TYPE / build tokens — it does
+# NOT include the layer/domain vocabulary (``api`` ``admin`` ``account`` …),
+# because those words are legitimate URL segments in a flat route
+# (``_app.api.runs`` is the route ``/api/runs``). Rejecting on a layer word would
+# wrongly suppress real flat routes. A genuine non-route dotted file is
+# identified by its TYPE/ROLE suffix (``.server`` ``.test`` ``.css`` ``.d`` …),
+# never by a path-word.
+_NON_ROUTE_DOT_SUFFIXES: frozenset[str] = frozenset({
+    # test / story
+    "test", "spec", "stories", "story", "bench", "e2e",
+    # framework file-roles (Remix/Next/SvelteKit/Nuxt co-located, NOT URL parts)
+    "server", "client", "worker", "node", "browser", "edge",
+    # module / build flavours
+    "module", "min", "bundle", "esm", "cjs", "umd",
+    # type / declaration
+    "d", "types",
+    # style files
+    "css", "scss", "sass", "less", "styl",
+    # data / config / doc dotted files
+    "config", "json", "yaml", "yml", "toml", "md", "mdx",
+    "mock", "mocks", "fixture", "snap",
+})
+
+# File-extension matcher (final ``.<ext>`` of a basename). Used to strip the
+# extension before flat-route parsing so ``foo.bar.ts`` is exploded as
+# ``foo``/``bar`` (route segments) not ``foo``/``bar``/``ts``.
+_FILE_EXT_RE = re.compile(r"\.[A-Za-z0-9]+$")
+
 _MIN_DOMAINS = 2          # a feature splitting into <2 domains is not a split
 _DEPTH_CAP = 6            # max segments to descend looking for a domain
 _SUBDOMAIN_MARKER = "sub-domain"
@@ -472,6 +554,146 @@ def _is_non_domain(seg: str) -> bool:
     return _is_terminal(seg) or _is_transparent(seg)
 
 
+def _is_clean_domain_part(part: str) -> bool:
+    """``True`` when a single flat-route segment is a usable literal route
+    DOMAIN — i.e. an ordinary URL word. ``False`` for the non-domain markers
+    (layout ``_x`` / param ``$x`` / index ``@`` ``index``) AND for any segment
+    carrying bracket escape/param syntax (``[id]`` dynamic, ``[.]`` escaped
+    literal dot, ``[[...slug]]`` optional catch-all). Brackets mean the segment
+    is a router special form, never a clean domain name (this also stops the
+    dot-explode from minting junk like ``sitemap[`` out of an escaped
+    ``sitemap[.]xml`` route)."""
+    if not part:
+        return False
+    if part.startswith("$"):
+        return False  # dynamic URL param
+    if part.startswith("_"):
+        return False  # pathless layout (``_app``) / ``_index``
+    if part in _FLAT_ROUTE_INDEX_MARKERS:
+        return False  # ``@`` escape / ``index`` leaf
+    if "[" in part or "]" in part:
+        return False  # bracket escape / param syntax — not a clean domain
+    return True
+
+
+def _flat_route_domain(name_no_ext: str) -> str | None:
+    """The first real route DOMAIN of a flat-route *name* (extension already
+    stripped), or ``None`` when the name is all layout/param/index/escape
+    markers.
+
+    Explodes the dot-name into its virtual route segments and returns the first
+    that is a clean literal URL segment (:func:`_is_clean_domain_part`) —
+    skipping pathless layouts (``_app``), dynamic params (``$slug``), index /
+    escape markers (``@`` / ``_index`` / ``index``) and bracket forms (``[id]``,
+    ``[.]``). ``_app.orgs.$organizationSlug.projects`` → ``orgs``;
+    ``@.runs.$runParam`` → ``runs``; ``account.tokens`` → ``account``;
+    ``sitemap[.]xml`` → ``None`` (escaped-dot single route file, no domain)."""
+    for part in name_no_ext.split("."):
+        if _is_clean_domain_part(part):
+            return part
+    return None
+
+
+def _is_flat_route_name(name_no_ext: str) -> bool:
+    """``True`` when *name_no_ext* (a basename with its extension already
+    stripped, OR a directory name) is a genuine flat-route name — i.e. it
+    encodes a route HIERARCHY in dot-separated segments, not a co-located
+    type/role suffix.
+
+    Two conditions, both required (universal-safety):
+
+    1. **≥2 route-like dot segments.** A single-dot name (``foo.ts`` → just
+       ``foo`` after the ext strip → no dots left) is NOT a flat route; a
+       hierarchy needs at least two segments (``account.tokens``,
+       ``_app.orgs``). One literal + one marker still counts (``@.runs`` →
+       ``@``+``runs``; ``account._index`` → ``account``+``_index``) — the marker
+       proves it is a route leaf.
+    2. **No co-located non-route suffix.** If any segment AFTER the first is a
+       known type/role token (``test`` ``server`` ``client`` ``css`` ``d`` …) or
+       any layer/terminal token, the dots are a FILE-ROLE suffix, not URL
+       segments — ``Button.test`` / ``foo.server`` / ``index.css`` /
+       ``schema.d`` are NOT flat routes. This is what stops the branch from
+       misfiring on ordinary dotted files.
+    """
+    if "." not in name_no_ext:
+        return False
+    parts = [p for p in name_no_ext.split(".") if p]
+    if len(parts) < 2:
+        return False
+    # Reject co-located non-route dotted files: a known type/role token anywhere
+    # after the first segment means the dots are a suffix, not a route path.
+    return not any(p.lower() in _NON_ROUTE_DOT_SUFFIXES for p in parts[1:])
+
+
+def _flat_route_key(segs: list[str], i: int, *, is_last: bool) -> str | None | bool:
+    """Flat-route resolution for segment ``segs[i]`` when it sits directly under
+    a ``routes``/``route`` directory.
+
+    Returns:
+      * a domain-key string — the virtual prefix ``…/routes`` + the parsed
+        route domain (``…/routes/orgs``) — when the segment is a flat-route with
+        a real domain;
+      * ``None`` — when the segment IS a flat-route but resolves to no domain
+        (pure layout/param/index, e.g. ``_app.tsx`` or ``@._index.ts``): the
+        file is a layout/index shell → shared residual;
+      * ``False`` — sentinel meaning "NOT a flat-route segment"; the caller
+        falls through to the ordinary directory-tree behaviour (so a plain
+        ``routes/index.tsx`` or ``routes/loaders/`` keeps its existing handling).
+
+    The virtual key reuses the leaf-naming path: ``_slug`` of ``…/routes/orgs``
+    yields ``orgs``. Two flat-routes with the same leaf domain under different
+    ``routes`` roots stay distinct because the full prefix is retained.
+    """
+    seg = segs[i]
+    name_no_ext = _FILE_EXT_RE.sub("", seg) if is_last else seg
+    if not _is_flat_route_name(name_no_ext):
+        return False  # ordinary file/dir under routes/ → existing behaviour
+    domain = _flat_route_domain(name_no_ext)
+    if domain is None:
+        return None  # layout/index-only route shell → residual
+    if _is_component_name(domain):
+        return None  # PascalCase view leaf → residual (same guard as dirs)
+    return "/".join(segs[:i]) + "/" + domain
+
+
+def _flat_route_scan(segs: list[str], start: int) -> str | None | bool:
+    """Detect a flat-route hierarchy ANYWHERE at-or-after *start* and key the
+    file by its virtual route domain, INDEPENDENT of where the directory-tree
+    common-prefix landed.
+
+    Why independent of ``start``: a ``routes``/``route`` directory followed by a
+    dot-name flat-route is an UNAMBIGUOUS file-system-routing signal. The
+    ordinary descent (:func:`_domain_key`) keys off the all-owned-files common
+    prefix (``start``), which a single stray attributed file (e.g. an
+    import-closure file outside the workspace package) can drag shallower — so
+    the descent may resolve the WORKSPACE-PACKAGE dir (``apps/webapp``) as a
+    spurious single "domain" and return BEFORE ever reaching ``routes/``. A
+    flat-routes directory does not depend on that prefix to be meaningful, so we
+    locate it directly. The FIRST ``routes``/``route`` dir at-or-after ``start``
+    whose next segment is a genuine flat-route wins; its virtual key
+    (``…/routes/<domain>``) groups every flat-route under that same dir together
+    regardless of ``start``.
+
+    Returns a domain-key string (flat-route domain found), ``None`` (a
+    flat-routes dir was found but THIS file is a layout/index shell with no
+    domain → residual), or ``False`` (no flat-routes structure on this path →
+    the caller runs the ordinary directory descent unchanged). Non-flat paths
+    therefore behave EXACTLY as before (byte-identical): ``False`` short-circuits
+    to the legacy walk.
+    """
+    last = len(segs) - 1
+    for j in range(max(start, 1), len(segs)):
+        if segs[j - 1].lower() not in _FLAT_ROUTE_DIRS:
+            continue
+        # ``segs[j]`` sits directly under a routes/route dir — flat-route candidate.
+        fr = _flat_route_key(segs, j, is_last=(j == last))
+        if fr is not False:
+            return fr  # str (domain) or None (layout/index shell → residual)
+        # Not a flat-route name under this routes dir → keep looking (there may
+        # be a nested ``routes/`` deeper, e.g. a sub-package), else fall through.
+    return False
+
+
 def _common_segments(paths: list[str]) -> int:
     """Count of leading path SEGMENTS shared by every path AND followed by
     a deeper segment somewhere (so the common prefix is a directory, not a
@@ -512,8 +734,32 @@ def _domain_key(path: str, start: int = 0) -> str | None:
     ``apps/web/app/api/v1/integrations/airtable/route.ts`` → ``…/airtable``
     Returning the full prefix (not just the leaf) keeps two domains with the
     same leaf name under different layers distinct.
+
+    **Flat-route (Remix) virtual hierarchy.** When a segment sits directly under
+    a ``routes``/``route`` directory and its name encodes a flat-route hierarchy
+    in dot-separated segments (:func:`_is_flat_route_name`), the route DOMAIN is
+    parsed from the DOT-NAME — not from sub-directories, which a flat-routes
+    repo does not have. This applies to BOTH a dot-name FILE (the basename, which
+    the directory loop below otherwise never inspects) and a dot-name DIRECTORY:
+    ``app/routes/_app.orgs.$organizationSlug.projects.ts`` → ``app/routes/orgs``;
+    ``app/routes/account.tokens/route.tsx`` → ``app/routes/account``;
+    ``app/routes/@.runs.$runParam.ts`` → ``app/routes/runs``. Files that are
+    layout/index-only route shells (``_app.tsx``, ``@._index.ts``) resolve to no
+    domain → shared residual. NON-flat dotted files under such a dir
+    (``foo.server.ts``, ``Button.test.tsx``) are NOT flat routes and keep their
+    ordinary behaviour. Outside a ``routes`` dir the flat-route branch is never
+    consulted, so every non-flat-route path is byte-identical to before.
     """
     segs = path.split("/")
+    # Flat-route (Remix) fast path — start-INDEPENDENT. A ``routes``/``route``
+    # dir + dot-name flat-route is an unambiguous file-system-routing signal that
+    # does not depend on the (outlier-fragile) common-prefix ``start``; resolve
+    # it directly so the workspace-package dir is never mistaken for the domain.
+    # ``False`` = no flat-route structure → the ordinary directory walk below runs
+    # byte-identically to the legacy behaviour for every non-flat path.
+    fr = _flat_route_scan(segs, start)
+    if fr is not False:
+        return fr  # str (route domain) or None (layout/index shell → residual)
     i, depth = start, 0
     while i < len(segs) - 1 and depth < _DEPTH_CAP:
         seg = segs[i]
