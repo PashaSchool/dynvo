@@ -421,9 +421,12 @@ def test_cross_feature_identical_flows_collapse_to_one() -> None:
     assert result.telemetry["duplicate_flows_dropped_within_feature"] == 0
 
 
-def test_cross_feature_distinct_entry_line_survive() -> None:
+def test_cross_feature_distinct_entry_line_survive_with_line_ranges() -> None:
     """Same NAME, same entry FILE, but DIFFERENT entry lines = genuinely
-    distinct flows (e.g. two tutorials in one module). Both survive."""
+    distinct flows (e.g. two tutorials in one module). Both survive the
+    byte-identical collapse (nothing MERGED) and are then RENAMED to unique
+    names by the Step-0.6 naming-collision disambiguation (the dup_flow_rate
+    kill) — distinct flows are never left sharing a generic name."""
     entry = "demo_api/main.go"
     a = _feat_anchored(
         "feat-a",
@@ -438,9 +441,14 @@ def test_cross_feature_distinct_entry_line_survive() -> None:
         anchor_file=entry,
     )
     result = stage_5_5_bipartite([a, b])
-    cab = [f for f in result.flows if f.name == "create-account-flow"]
-    assert len(cab) == 2  # both distinct flows preserved
+    # Both distinct flows preserved (count unchanged, nothing merged) …
+    assert len(result.flows) == 2
     assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
+    # … but disambiguated to distinct names, all still kebab + verb-led + -flow.
+    names = sorted(f.name for f in result.flows)
+    assert len(set(names)) == 2
+    for n in names:
+        assert n.startswith("create-") and n.endswith("-flow")
 
 
 def test_cross_feature_distinct_entry_line_survive() -> None:
@@ -448,7 +456,8 @@ def test_cross_feature_distinct_entry_line_survive() -> None:
     entry_point_line are distinct and BOTH survive (the unkey
     create-account-flow @line49 vs @line61 shape). This is the conservative
     guard that actually fires at the Stage-5.5 call site, where line_ranges
-    is still empty."""
+    is still empty. They survive the collapse (nothing merged) and are renamed
+    to distinct names by Step-0.6 disambiguation."""
     entry = "demo_api/main.go"
     a = _feat_anchored(
         "feat-a", paths=[entry],
@@ -461,15 +470,21 @@ def test_cross_feature_distinct_entry_line_survive() -> None:
         anchor_file=entry,
     )
     result = stage_5_5_bipartite([a, b])
-    assert len([f for f in result.flows if f.name == "create-account-flow"]) == 2
+    assert len(result.flows) == 2  # both distinct flows preserved
     assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
+    names = sorted(f.name for f in result.flows)
+    assert len(set(names)) == 2  # disambiguated to unique names
+    for n in names:
+        assert n.startswith("create-") and n.endswith("-flow")
 
 
 def test_cross_feature_distinct_line_ranges_survive() -> None:
     """FORWARD-SAFETY: if line_ranges were ever populated before Stage 5.5
     (today they are NOT — the LOC expander runs in phase_finalize, later),
     differing spans would still produce distinct keys. Guards against a future
-    stage reorder silently over-collapsing; inert at the current call site."""
+    stage reorder silently over-collapsing; inert at the current call site.
+    Both flows survive the collapse and are renamed to distinct names by
+    Step-0.6 disambiguation."""
     entry = "router.ts"
     a = _feat_anchored(
         "feat-a",
@@ -484,8 +499,12 @@ def test_cross_feature_distinct_line_ranges_survive() -> None:
         anchor_file=entry,
     )
     result = stage_5_5_bipartite([a, b])
-    assert len([f for f in result.flows if f.name == "list-flow"]) == 2
+    assert len(result.flows) == 2  # both distinct flows preserved (not merged)
     assert result.telemetry["duplicate_flows_dropped_cross_feature"] == 0
+    names = sorted(f.name for f in result.flows)
+    assert len(set(names)) == 2  # disambiguated to unique names
+    for n in names:
+        assert n.startswith("list-") and n.endswith("-flow")
 
 
 def test_cross_feature_anchor_owner_beats_non_anchor() -> None:
