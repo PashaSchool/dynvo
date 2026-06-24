@@ -363,6 +363,253 @@ def _collapse_cross_feature_duplicate_flows(features: list[Feature]) -> int:
     return dropped
 
 
+# ── Flow-name disambiguation (deterministic naming-collision kill) ─────────
+#
+# Stage 3 names every flow independently per ``<kebab-verb-phrase>-flow``
+# (LLM or the deterministic profile slugger) with NO cross-flow uniqueness.
+# So GENUINELY-DISTINCT flows — different ``entry_point_file``/line, different
+# owning feature — routinely land on the SAME generic label
+# (``search-cases-flow`` emitted once from the API search route, once from the
+# cases page, once from the cases router). The byte-identical collapse above
+# (Steps 0 / 0.5) correctly leaves these alone — they are NOT the same flow —
+# so they survive as duplicate *names* in the top-level ``flows[]`` projection
+# and dominate ``dup_flow_rate`` (≈1100 naming-collision groups corpus-wide vs
+# ≈90 byte-identical).
+#
+# This pass DISAMBIGUATES (never merges — merging by path-set is corpus-unsafe,
+# see ``finding-pathset-merge-refuted``) every genuine collision by inserting
+# the flow's distinguishing context BEFORE the ``-flow`` suffix, preserving
+# ``rule-flow-naming`` (kebab-case, STARTS with a verb, ENDS in ``-flow``):
+#
+#   search-cases-flow  ──▶  search-cases-<ctx>-flow
+#
+# Context source, in deterministic priority:
+#   1. ``flow.primary_feature`` — the owning developer-feature (most
+#      meaningful; populated by Stage 2/2.6, distinct per colliding flow
+#      across all 6 validation repos).
+#   2. the entry-point domain — the parent directory of ``entry_point_file``
+#      (else its basename stem) — when no primary feature is attributed.
+#   3. a minimal stable ordinal — only when two colliding flows STILL share a
+#      name after context (same feature + same name, near-identical flows);
+#      ordered by ``(entry_point_line, id)`` so it is reproducible across
+#      rescans. Last resort, guarantees global uniqueness.
+#
+# Purely structural: a collision is "this name is carried by >1 distinct Flow
+# object" — no magic number, no repo-specific path, scale-invariant.
+
+# Generic verb fillers a context slug may legitimately carry; dropping them
+# keeps the disambiguator focused on the DISTINGUISHING noun rather than
+# re-stating the journey's own verb. Universal vocabulary, not repo-tuned.
+_CTX_STOP_TOKENS = frozenset({
+    "flow", "flows", "api", "page", "pages", "route", "routes", "router",
+    "handler", "handlers", "view", "views", "endpoint", "endpoints",
+})
+
+
+def _name_key(name: str) -> str:
+    """Collision key — matches ``cold_eval._dup_rate`` (lower + strip)."""
+    return (name or "").strip().lower()
+
+
+def _strip_flow_suffix(name: str) -> str:
+    """Drop a trailing ``-flow`` / ``-flows`` so context can be inserted
+    BEFORE it (keeping the verb-led head intact)."""
+    return re.sub(r"-flows?$", "", name)
+
+
+def _context_tokens(flow: Flow, primary: str | None) -> list[str]:
+    """Distinguishing context tokens for ``flow``, in source priority.
+
+    Returns kebab tokens (already slugified, deduped, stop-tokens dropped).
+    Empty when the flow carries neither a primary feature nor an entry file —
+    the caller then falls through to the ordinal tier.
+    """
+    raw = ""
+    src = primary or flow.primary_feature
+    if src:
+        raw = src
+    else:
+        epf = flow.entry_point_file or ""
+        if epf:
+            parts = [p for p in epf.replace("\\", "/").split("/") if p]
+            if len(parts) >= 2:
+                raw = parts[-2]                      # parent directory
+            elif parts:
+                raw = parts[-1].rsplit(".", 1)[0]    # basename stem
+    slug = _slugify(raw)
+    if not slug:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for tok in slug.split("-"):
+        if not tok or tok in seen:
+            continue
+        seen.add(tok)
+        out.append(tok)
+    return out
+
+
+def _disambiguated_name(
+    base_no_suffix: str, ctx_tokens: list[str], *, trim: bool,
+) -> str:
+    """Build ``<base>-<ctx>-flow`` from a verb-led base + context tokens.
+
+    ``trim=True`` produces the SHORT variant: context tokens already present
+    in the base (so ``search-cases`` + ctx ``cases-page`` → ``search-cases-page``
+    not ``search-cases-cases-page``) and generic fillers (``api``/``page``/
+    ``route``…) are dropped. ``trim=False`` produces the FULL variant: only
+    exact base-token repeats are dropped (avoids ``x-x``) — used when the
+    short variant would not be unique within the collision group, so two
+    distinct contexts that share a filler token (``api-cases`` vs ``cases-page``)
+    still get distinct names (``…-api-cases`` vs ``…-cases-page``) instead of
+    being forced to an ordinal. The verb-led head is never touched.
+    """
+    base_tokens = {t for t in base_no_suffix.split("-") if t}
+    if trim:
+        kept = [
+            t for t in ctx_tokens
+            if t not in base_tokens and t not in _CTX_STOP_TOKENS
+        ]
+    else:
+        kept = [t for t in ctx_tokens if t not in base_tokens]
+    if not kept:
+        # Guard emptied the context (ctx fully contained in / filtered out of
+        # the base). Keep the verbatim context so the name still changes.
+        kept = ctx_tokens
+    suffix = "-".join(kept)
+    return f"{base_no_suffix}-{suffix}-flow" if suffix else f"{base_no_suffix}-flow"
+
+
+def _disambiguate_colliding_flow_names(features: list[Feature]) -> dict[str, int]:
+    """Rename genuinely-distinct flows that share a generic name, IN PLACE.
+
+    Operates on the post-collapse feature list (Steps 0 / 0.5 already removed
+    byte-identical duplicates, so every remaining same-named pair is a TRUE
+    naming collision between distinct flows). Two deterministic passes:
+
+      Pass A — for every name carried by >1 distinct Flow, insert each flow's
+      context (:func:`_context_tokens`) before ``-flow``
+      (:func:`_disambiguated_name`). Per group we first try the SHORT context
+      variant (fillers/redundant tokens trimmed); if that would not be unique
+      WITHIN the group, we retry that group with the FULL context variant so
+      two distinct contexts sharing a filler token still get distinct names
+      instead of being forced to an ordinal. Flows whose name is unique are
+      untouched (byte-identical output).
+
+      Pass B — recompute the global name multiset; any name STILL shared by
+      >1 flow (same feature + same name, or a context-insertion that happened
+      to re-collide with a pre-existing name) gets a minimal stable ordinal
+      (``-2``, ``-3``, …) inserted before ``-flow``, ordered by
+      ``(entry_point_line, id, original index)``. The first occurrence keeps
+      the no-ordinal form. This guarantees ``flows[]`` names are unique.
+
+    The Flow objects are SHARED between ``Feature.flows`` and the top-level
+    projection built later in this stage, so mutating ``flow.name`` here once
+    updates both views; ``flow.id`` is (re)stamped from the new name in Step 2,
+    and the later lineage uuid + expander ``short_label``/``display_name`` all
+    derive from it. Idempotent: a second run finds no collisions and is a
+    no-op.
+
+    Returns telemetry (collision groups, flows renamed by context, flows
+    renamed by ordinal).
+    """
+    flows: list[Flow] = [
+        fl for feat in features for fl in (getattr(feat, "flows", None) or [])
+    ]
+    if not flows:
+        return {
+            "naming_collision_groups": 0,
+            "flows_disambiguated_by_context": 0,
+            "flows_disambiguated_by_ordinal": 0,
+        }
+
+    # ── Pass A — context insertion on genuine collisions ────────────────
+    groups: dict[str, list[Flow]] = {}
+    for fl in flows:
+        groups.setdefault(_name_key(fl.name), []).append(fl)
+    collision_groups = {k: g for k, g in groups.items() if len(g) > 1}
+
+    by_context = 0
+    for members in collision_groups.values():
+        # Compute each member's context once; flows with no context (no
+        # primary feature AND no entry file) stay on their original name and
+        # drop to the ordinal tier in Pass B.
+        ctxs: list[tuple[Flow, list[str], str]] = []
+        for fl in members:
+            ctx = _context_tokens(fl, fl.primary_feature)
+            if ctx:
+                ctxs.append((fl, ctx, _strip_flow_suffix(fl.name)))
+        if not ctxs:
+            continue
+        # Prefer the SHORT variant; if it is NOT unique within the group, fall
+        # through to the FULL variant (distinct primary features usually differ
+        # in more than a filler token, so it separates them). Whichever variant
+        # is first fully-unique within the group is used; if neither is (e.g.
+        # identical primary feature), the FULL variant is applied and the
+        # residual dups are handed to the ordinal tier in Pass B.
+        cand: dict[int, str] = {}
+        for trim in (True, False):
+            cand = {
+                id(fl): _disambiguated_name(base, ctx, trim=trim)
+                for fl, ctx, base in ctxs
+            }
+            keys = [_name_key(v) for v in cand.values()]
+            if len(set(keys)) == len(keys):
+                break  # this variant is unique within the group — use it
+        for fl, _ctx, _base in ctxs:
+            new = cand[id(fl)]
+            if _name_key(new) != _name_key(fl.name):
+                fl.name = new
+                by_context += 1
+
+    # ── Pass B — ordinal fallback → guaranteed-unique names ─────────────
+    # Recompute the multiset over the (now mostly-disambiguated) names.
+    counts: dict[str, int] = {}
+    for fl in flows:
+        k = _name_key(fl.name)
+        counts[k] = counts.get(k, 0) + 1
+    residual = {k for k, c in counts.items() if c > 1}
+
+    by_ordinal = 0
+    if residual:
+        # Deterministic ordering inside each residual group so the survivor
+        # (no ordinal) and the numbering are reproducible across rescans.
+        order_index = {id(fl): i for i, fl in enumerate(flows)}
+        residual_members: dict[str, list[Flow]] = {}
+        for fl in flows:
+            k = _name_key(fl.name)
+            if k in residual:
+                residual_members.setdefault(k, []).append(fl)
+        # Names already taken (unique ones) so an ordinal never re-collides.
+        taken = {k for k, c in counts.items() if c == 1}
+        for _key, members in residual_members.items():
+            members.sort(
+                key=lambda f: (
+                    f.entry_point_line if f.entry_point_line is not None else -1,
+                    f.id or "",
+                    order_index[id(f)],
+                ),
+            )
+            base = _strip_flow_suffix(members[0].name)
+            taken.add(_name_key(members[0].name))  # first keeps the bare form
+            ordinal = 2
+            for fl in members[1:]:
+                cand = f"{base}-{ordinal}-flow"
+                while _name_key(cand) in taken:
+                    ordinal += 1
+                    cand = f"{base}-{ordinal}-flow"
+                fl.name = cand
+                taken.add(_name_key(cand))
+                by_ordinal += 1
+                ordinal += 1
+
+    return {
+        "naming_collision_groups": len(collision_groups),
+        "flows_disambiguated_by_context": by_context,
+        "flows_disambiguated_by_ordinal": by_ordinal,
+    }
+
+
 def _build_path_to_features(features: Iterable[Feature]) -> dict[str, set[str]]:
     """Reverse-index ``Feature.paths`` + ``Feature.shared_attributions``
     so we can ask "who reaches into path P?".
@@ -459,6 +706,19 @@ def stage_5_5_bipartite(
         for fl in (getattr(feat, "flows", None) or [])
         if fl.secondary_features
     }
+
+    # ── Step 0.6 — disambiguate naming collisions (deterministic) ────
+    # The byte-identical collapses above remove flows that are the SAME flow.
+    # What remains can still share a generic NAME across DISTINCT flows
+    # (different entry point / owning feature) because Stage 3 names each flow
+    # independently with no cross-flow uniqueness — the dominant dup_flow_rate
+    # residual. Rename (never merge) each genuine collision by inserting its
+    # primary feature (else entry-point domain, else a stable ordinal) BEFORE
+    # the ``-flow`` suffix, preserving rule-flow-naming. Runs BEFORE id stamping
+    # (Step 2) so flow.id — and the later lineage uuid + expander short_label /
+    # display_name — all derive from the disambiguated name. The flow COUNT is
+    # unchanged; only colliding names change; unique names are byte-untouched.
+    disambig = _disambiguate_colliding_flow_names(features)
 
     # ── Step 1 — reverse-index paths to feature names ───────────────
     path_to_features = _build_path_to_features(features)
@@ -603,6 +863,10 @@ def stage_5_5_bipartite(
         "duplicate_flows_dropped": dropped_dupes + dropped_cross,
         "duplicate_flows_dropped_within_feature": dropped_dupes,
         "duplicate_flows_dropped_cross_feature": dropped_cross,
+        # Step 0.6 naming-collision disambiguation (rename, never merge).
+        "naming_collision_groups": disambig["naming_collision_groups"],
+        "flows_disambiguated_by_context": disambig["flows_disambiguated_by_context"],
+        "flows_disambiguated_by_ordinal": disambig["flows_disambiguated_by_ordinal"],
         "max_shared_with_flows": max_shared_with_flows,
         "max_shared_with_features": max_shared_with_features,
     }
