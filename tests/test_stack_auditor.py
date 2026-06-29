@@ -776,3 +776,171 @@ def test_s9_framework_self_for_cargo_repo(tmp_path: Path) -> None:
         _verdict("rust-library"), ctx,
     )
     assert "framework-self" in corrected.extractor_hints
+
+
+# ─────────────── Rule 7 — Rails marker override ──────────────────
+#
+# A Rails app routinely ships a dev-tooling-ONLY package.json
+# (biome/eslint/prettier) with an EMPTY dependencies map. The LLM
+# auditor sees package.json and mislabels the repo ``js-generic``,
+# which makes the Rails extractors (routes/models/jobs/views/stimulus)
+# self-skip → 0 routes → collapsed UF recall. The decisive structural
+# triple — Gemfile + config/routes.rb + app/controllers/ — is
+# unambiguously Rails (no JS/Python stack produces all three) and must
+# override the non-committal verdict.  This is the symmetric twin of
+# Rule 5 (manage.py → django-app).
+
+
+def _rails_marker_files(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The decisive Rails structural triple, plus any extra files."""
+    files = {
+        "Gemfile": 'source "https://rubygems.org"\ngem "rails", "~> 7.1"\n',
+        "config/routes.rb": "Rails.application.routes.draw do\n  root 'home#index'\nend\n",
+        "app/controllers/application_controller.rb": (
+            "class ApplicationController < ActionController::Base\nend\n"
+        ),
+    }
+    if extra:
+        files.update(extra)
+    return files
+
+
+def test_rule7_js_generic_to_rails(tmp_path: Path) -> None:
+    """The `maybe` case: js-generic + Rails triple + dev-tooling-ONLY
+    package.json (empty deps, just biome) → forced to rails-app."""
+    ctx = _make_ctx(
+        tmp_path,
+        files=_rails_marker_files({
+            # dev-tooling-only — exactly what fooled the auditor
+            "package.json": json.dumps({
+                "name": "maybe",
+                "dependencies": {},
+                "devDependencies": {"@biomejs/biome": "^1.0.0"},
+            }),
+        }),
+        stack="js-generic",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("js-generic"), ctx,
+    )
+    assert corrected.primary_stack == "rails-app"
+    assert len(corrections) == 1
+    assert corrections[0]["original"] == "js-generic"
+    assert corrections[0]["corrected"] == "rails-app"
+    # Reason cites the decisive structural triple.
+    reason = corrections[0]["reason"].lower()
+    assert "gemfile" in reason
+    assert "routes.rb" in reason
+    assert "controllers" in reason
+    # Override carries the standard correction confidence penalty.
+    assert corrected.confidence < 0.95
+    assert tuple(corrected.corrections) == tuple(corrections)
+
+
+def test_rule7_override_fires_for_other_noncommittal_primaries(
+    tmp_path: Path,
+) -> None:
+    """Any non-committal catch-all (unknown/node/typescript/...) is
+    overridden, not just js-generic."""
+    for noncommittal in ("unknown", "node", "typescript", "ts-generic"):
+        # Same idempotent marker files each iteration; only the primary
+        # stack label under test changes.
+        ctx = _make_ctx(
+            tmp_path,
+            files=_rails_marker_files(),
+            stack=noncommittal,
+        )
+        corrected, corrections = correct_auditor_verdict(
+            _verdict(noncommittal), ctx,
+        )
+        assert corrected.primary_stack == "rails-app", (
+            f"{noncommittal} should be overridden to rails-app"
+        )
+        assert len(corrections) == 1
+
+
+def test_rule7_polyglot_keeps_frontend_adds_rails_secondary(
+    tmp_path: Path,
+) -> None:
+    """A real Next.js frontend + Rails backend (polyglot): the frontend
+    primary is KEPT, rails-app is added as a SECONDARY so the Rails
+    extractors still activate. Confidence is NOT penalised (additive)."""
+    ctx = _make_ctx(
+        tmp_path,
+        files=_rails_marker_files({
+            "package.json": json.dumps({
+                "name": "polyglot",
+                "dependencies": {"next": "^15.0.0", "react": "^19.0.0"},
+            }),
+            "next.config.mjs": "export default {}",
+        }),
+        stack="next-app-router",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("next-app-router"), ctx,
+    )
+    # Frontend primary preserved.
+    assert corrected.primary_stack == "next-app-router"
+    # Rails added as secondary so the backend extractors fire.
+    assert "rails-app" in corrected.secondary_stacks
+    assert len(corrections) == 1
+    assert "rails-app secondary" in corrections[0]["corrected"]
+    # Additive correction — no confidence penalty.
+    assert corrected.confidence == 0.95
+
+
+def test_rule7_noop_pure_js_no_rails_markers(tmp_path: Path) -> None:
+    """The `novu` no-misfire case: js-generic with only a package.json
+    and NO Rails markers must be left completely untouched."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "package.json": json.dumps({
+                "name": "novu",
+                "dependencies": {"react": "^18.0.0"},
+            }),
+        },
+        stack="js-generic",
+    )
+    original = _verdict("js-generic")
+    corrected, corrections = correct_auditor_verdict(original, ctx)
+    assert corrected.primary_stack == "js-generic"
+    # No rails-app leaked into the secondaries either.
+    assert "rails-app" not in corrected.secondary_stacks
+
+
+def test_rule7_noop_when_already_rails(tmp_path: Path) -> None:
+    """Idempotent: a verdict already at rails-app (with markers present)
+    must NOT be re-corrected or gain a duplicate rails-app secondary."""
+    ctx = _make_ctx(
+        tmp_path,
+        files=_rails_marker_files(),
+        stack="rails-app",
+    )
+    original = _verdict("rails-app")
+    corrected, corrections = correct_auditor_verdict(original, ctx)
+    assert corrected.primary_stack == "rails-app"
+    assert "rails-app" not in corrected.secondary_stacks  # no self-dup
+    assert not any(
+        "rails" in c.get("corrected", "").lower() for c in corrections
+    )
+
+
+def test_rule7_requires_all_three_markers(tmp_path: Path) -> None:
+    """Precision guard: a Gemfile ALONE (a plain Ruby gem with no
+    config/routes.rb and no app/controllers) must NOT trigger the
+    Rails override — all three markers are required."""
+    ctx = _make_ctx(
+        tmp_path,
+        files={
+            "Gemfile": 'source "https://rubygems.org"\ngem "rake"\n',
+            # no config/routes.rb, no app/controllers
+            "lib/my_gem.rb": "module MyGem\nend\n",
+        },
+        stack="js-generic",
+    )
+    corrected, corrections = correct_auditor_verdict(
+        _verdict("js-generic"), ctx,
+    )
+    assert corrected.primary_stack == "js-generic"
+    assert "rails-app" not in corrected.secondary_stacks
