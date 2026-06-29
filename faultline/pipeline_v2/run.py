@@ -95,6 +95,7 @@ from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.scan_meta import (
     LLM_FALLBACK_WARN_THRESHOLD,
     assemble_scan_meta,
+    build_degradations,
     build_warnings,
     compute_fallback_share,
     extractor_hits_from_stage1 as _extractor_hits,
@@ -651,6 +652,14 @@ def run_pipeline_v2(
         llm_share=share.llm_share,
         stack=ctx.stack,
     )
+    degradations = build_degradations(
+        stage3=stage3,
+        stage4=stage4,
+        enrichment=enrichment,
+        enrich_result=enrich_result,
+        branch_result=branch_result,
+        llm_share=share.llm_share,
+    )
 
     elapsed = round(time.monotonic() - t0, 2)
     cost_usd = round(tracker.total_cost_usd, 4)
@@ -674,6 +683,7 @@ def run_pipeline_v2(
         s53_features_post=s53_features_post,
         s53_collapse_sample=s53_collapse_sample,
         warnings=warnings,
+        degradations=degradations,
         elapsed=elapsed,
         cost_usd=cost_usd,
         llm_calls=llm_calls,

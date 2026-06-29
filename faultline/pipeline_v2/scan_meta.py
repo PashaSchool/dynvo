@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from faultline.models.types import SCHEMA_VERSION
+from faultline.pipeline_v2 import degradations
 from faultline.pipeline_v2.stage_6_3_import_tree import (
     DEFAULT_MAX_FILES_PER_FEATURE as _IMPORT_TREE_MAX_FILES,
     DEFAULT_MAX_SYMBOLS_PER_FEATURE as _IMPORT_TREE_MAX_SYMBOLS,
@@ -231,6 +232,53 @@ def build_warnings(
     return warnings
 
 
+def build_degradations(
+    *,
+    stage3: Any,
+    stage4: Any,
+    enrichment: Any,
+    enrich_result: Any,
+    branch_result: Any,
+    llm_share: float,
+) -> list[dict[str, Any]]:
+    """Aggregate STRUCTURED degradation events into ``scan_meta.degradations[]``.
+
+    The typed sibling of :func:`build_warnings`: same signals, machine-readable
+    so workers / boards can group by ``type`` (WHERE + HOW OFTEN) and remediate.
+    Each record follows the canonical schema in
+    :mod:`faultline.pipeline_v2.degradations`. Stages emit their own records
+    (``stage.degradations``); the budget-exceeded enrichment events and the
+    high-fallback nudge are derived here from the same fields
+    :func:`build_warnings` reads, so the two never drift.
+    """
+    out: list[dict[str, Any]] = []
+    out.extend(getattr(stage3, "degradations", None) or [])
+    out.extend(getattr(stage4, "degradations", None) or [])
+    for stage_name, res in (
+        ("stage_6_3_import_tree", enrichment),
+        ("stage_6_4_enrich", enrich_result),
+        ("stage_6_6_branch_slicer", branch_result),
+    ):
+        if getattr(res, "budget_exceeded", False):
+            out.append(
+                degradations.budget_exceeded(
+                    stage=stage_name,
+                    budget_sec=getattr(res, "budget_sec", 0),
+                    features_skipped=getattr(
+                        res, "features_budget_skipped", 0,
+                    ),
+                    elapsed_sec=getattr(res, "elapsed_sec", 0),
+                ),
+            )
+    if llm_share > LLM_FALLBACK_WARN_THRESHOLD:
+        out.append(
+            degradations.high_llm_fallback(
+                share=llm_share, threshold=LLM_FALLBACK_WARN_THRESHOLD,
+            ),
+        )
+    return out
+
+
 # ── scan_meta dict assembly ─────────────────────────────────────────────
 
 
@@ -253,6 +301,7 @@ def assemble_scan_meta(
     s53_features_post: int,
     s53_collapse_sample: list[dict[str, Any]],
     warnings: list[str],
+    degradations: list[dict[str, Any]] | None = None,
     elapsed: float,
     cost_usd: float,
     llm_calls: int,
@@ -370,6 +419,7 @@ def assemble_scan_meta(
         "deterministic_feature_count": share.deterministic_count,
         "residual_feature_count": share.fallback_count,
         "warnings": warnings,
+        "degradations": degradations or [],
         "elapsed_sec": elapsed,
         "cost_usd": cost_usd,
         "calls": llm_calls,
