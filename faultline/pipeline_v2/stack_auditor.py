@@ -818,6 +818,34 @@ def _has_manage_py(ctx: "ScanContext") -> bool:
     return (ctx.repo_path / "manage.py").is_file()
 
 
+# Non-committal primary stacks a decisive Rails-marker set should OVERRIDE
+# outright. Anything NOT in this set (a real framework like ``next`` or
+# ``react-spa``) is treated as the frontend of a Rails polyglot instead, so
+# rails-app is added as a SECONDARY rather than replacing the primary. Generic,
+# scale-invariant — these are catch-all labels, not corpus-fitted values.
+_RAILS_OVERRIDABLE_PRIMARIES = frozenset({
+    "js-generic", "ts-generic", "generic", "unknown",
+    "javascript", "typescript", "node", "node-app",
+})
+
+
+def _has_rails_markers(ctx: "ScanContext") -> bool:
+    """True when the repo carries the decisive Rails STRUCTURAL markers — a
+    ``Gemfile`` AND ``config/routes.rb`` AND an ``app/controllers`` directory.
+
+    All three together are unambiguously Rails: no JS or Python stack produces
+    this triple. They are therefore strong enough to override a misleading
+    dev-tooling-ONLY ``package.json`` (biome/eslint/prettier), which is the
+    common reason the LLM auditor mislabels a Rails app as ``js-generic`` and
+    suppresses the Rails extractors (routes/models/jobs/views/stimulus)."""
+    root = ctx.repo_path
+    return (
+        (root / "Gemfile").is_file()
+        and (root / "config" / "routes.rb").is_file()
+        and (root / "app" / "controllers").is_dir()
+    )
+
+
 def _read_repo_self_name(ctx: "ScanContext") -> str | None:
     """Return the repo's own package-manifest name, if any.
 
@@ -1080,6 +1108,50 @@ def correct_auditor_verdict(
             "fastapi-app",
             "auditor said python-library but FastAPI() call present "
             "in a top-level .py file",
+        ), corrections
+
+    # Rule 7: Rails markers (Gemfile + config/routes.rb + app/controllers) are
+    # DECISIVE — no JS/Python stack produces all three. A Rails app routinely
+    # ships a dev-tooling-ONLY package.json (biome/eslint/prettier) that
+    # misleads the LLM auditor to ``js-generic``, which suppresses the Rails
+    # extractors (routes/models/jobs/...) → 0 routes → collapsed UF recall.
+    # When the markers are present we force ``rails-app`` into the stack:
+    #   • a non-committal primary (js-generic/unknown/node) is OVERRIDDEN, but
+    #   • a real frontend framework primary (a Rails + JS-SPA polyglot) is kept,
+    #     with rails-app added as a SECONDARY so the backend is still extracted.
+    _secondary_lower = {s.strip().lower() for s in verdict.secondary_stacks}
+    if (
+        _has_rails_markers(ctx)
+        and primary != "rails-app"
+        and "rails-app" not in _secondary_lower
+    ):
+        if primary in _RAILS_OVERRIDABLE_PRIMARIES:
+            return _emit(
+                "rails-app",
+                f"Gemfile + config/routes.rb + app/controllers present — Rails "
+                f"(overrides non-committal `{primary}`; a dev-tooling-only "
+                f"package.json must not mask the Rails backend)",
+            ), corrections
+        # Real framework primary → Rails + JS-frontend polyglot: keep the
+        # frontend primary, add rails-app as a secondary so the Rails
+        # extractors activate on the backend without dropping the frontend.
+        corrections.append({
+            "original": verdict.primary_stack,
+            "corrected": f"{verdict.primary_stack} (+rails-app secondary)",
+            "reason": (
+                "Rails markers (Gemfile + config/routes.rb + app/controllers) "
+                f"present alongside `{primary}` frontend — polyglot backend"
+            ),
+        })
+        return AuditorVerdict(
+            primary_stack=verdict.primary_stack,
+            secondary_stacks=(*verdict.secondary_stacks, "rails-app"),
+            confidence=verdict.confidence,
+            extractor_hints=verdict.extractor_hints,
+            reasoning=verdict.reasoning,
+            cost_usd=verdict.cost_usd,
+            fallback_used=verdict.fallback_used,
+            corrections=tuple(corrections),
         ), corrections
 
     # Sprint S9 — framework-self extractor hint.
