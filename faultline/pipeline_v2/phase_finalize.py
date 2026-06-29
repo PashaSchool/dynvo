@@ -234,14 +234,58 @@ def run_finalize_phase(
         )
     scan_meta["stage_6_9_test_strip"] = dict(test_strip_telemetry)
 
-    # Reconcile Layer-2 after test-strip. A product feature whose only member
-    # was a test-only developer feature is now empty — test-strip dropped that
-    # feature here in the finalize phase, AFTER Stage 8.6's phantom drop ran.
-    # Re-apply the same deterministic, path-preserving rule now that the
-    # developer-feature set is final, so a content-less duplicate row (e.g. an
-    # "Integrations" cluster pointing only at e2e/ + tests/ paths) never reaches
-    # output. No-op when test-strip dropped nothing.
-    if test_strip_telemetry.get("features_dropped"):
+    # Stage 6.9b — generated-code strip (sibling of the test-strip): remove
+    # machine-generated source (protobuf / sqlc / stringer / k8s-gen / dart …)
+    # from the output tree so it never surfaces as a hand-authored product
+    # feature. Same invariants (never mutates a metric scalar; drops emptied
+    # features/flows). Disable with FAULTLINE_STAGE_6_9B_GENERATED_STRIP=0.
+    from faultline.pipeline_v2.stage_6_9b_generated_strip import (
+        stage_6_9b_enabled,
+        strip_generated_paths,
+    )
+
+    generated_strip_telemetry: dict[str, int] = {
+        "paths_removed": 0,
+        "features_dropped": 0,
+        "flows_dropped": 0,
+    }
+    with StageLogger(run_dir, 6, "generated_strip") as log6_9b:
+        if stage_6_9b_enabled():
+            generated_strip_telemetry = strip_generated_paths(
+                features, bipartite.flows,
+            )
+            log6_9b.info(
+                "generated_strip: paths_removed=%d features_dropped=%d "
+                "flows_dropped=%d"
+                % (
+                    generated_strip_telemetry["paths_removed"],
+                    generated_strip_telemetry["features_dropped"],
+                    generated_strip_telemetry["flows_dropped"],
+                ),
+            )
+        else:
+            generated_strip_telemetry["disabled"] = True
+            log6_9b.info("generated_strip: disabled via %s=0"
+                         % "FAULTLINE_STAGE_6_9B_GENERATED_STRIP")
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="generated_strip",
+            payload=generated_strip_telemetry,
+            run_dir=run_dir,
+        )
+    scan_meta["stage_6_9b_generated_strip"] = dict(generated_strip_telemetry)
+
+    # Reconcile Layer-2 after the strips. A product feature whose only member
+    # was a test-only / generated-only developer feature is now empty — the
+    # strips dropped that feature here in the finalize phase, AFTER Stage 8.6's
+    # phantom drop ran. Re-apply the same deterministic, path-preserving rule now
+    # that the developer-feature set is final, so a content-less duplicate row
+    # (e.g. an "Integrations" cluster pointing only at e2e/ + tests/ paths) never
+    # reaches output. No-op when neither strip dropped a feature.
+    if test_strip_telemetry.get("features_dropped") or generated_strip_telemetry.get(
+        "features_dropped"
+    ):
         from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
             drop_phantom_product_features,
         )
