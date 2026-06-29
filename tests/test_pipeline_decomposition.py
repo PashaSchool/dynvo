@@ -123,6 +123,7 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (8, "llm_component_split"),
     (3, "flow_expansion"),
     (6, "test_strip"),
+    (6, "generated_strip"),
     (6, "user_flows"),
     (6, "uf_splitter"),
     (6, "uf_refiner"),
