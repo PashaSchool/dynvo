@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 from faultline.llm.model_gateway import resolve_model as gateway_model
+from faultline.pipeline_v2.degradations import flow_walltime_exceeded
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.profiles._flow_lines import resolve_handler_line
 
@@ -201,6 +202,10 @@ class Stage3Result:
     cost_usd: float
     llm_calls: int
     warnings: list[str] = field(default_factory=list)
+    # Structured machine-readable degradation events (the typed sibling of
+    # ``warnings``) — folded into ``scan_meta.degradations[]`` for the
+    # worker / observability board. See :mod:`faultline.pipeline_v2.degradations`.
+    degradations: list[dict[str, Any]] = field(default_factory=list)
     # Sprint C1 — call-graph reach telemetry. Folded into scan_meta.
     reach_telemetry: dict[str, Any] = field(default_factory=dict)
 
@@ -703,6 +708,7 @@ def stage_3_flows(
     """
     tracker = cost_tracker or CostTracker(max_cost=None)
     warnings: list[str] = []
+    degradations: list[dict[str, Any]] = []
     llm_calls = 0
     llm_call_lock = threading.Lock()
     cost_cap_warned = False
@@ -907,9 +913,17 @@ def stage_3_flows(
                         rationale=f"error: {exc!r}",
                     )
         except TimeoutError:
+            affected = len(features) - len(out)
             warnings.append(
                 f"stage_3_flows wall-time {effective_timeout}s exceeded; "
-                f"{len(features) - len(out)} feature(s) defaulted to flows=[]"
+                f"{affected} feature(s) defaulted to flows=[]"
+            )
+            degradations.append(
+                flow_walltime_exceeded(
+                    budget_s=int(effective_timeout),
+                    affected=affected,
+                    total=len(features),
+                ),
             )
 
     # Fill in any features that didn't complete in time.
@@ -938,6 +952,7 @@ def stage_3_flows(
         cost_usd=tracker.total_cost_usd,
         llm_calls=llm_calls,
         warnings=warnings,
+        degradations=degradations,
         reach_telemetry=reach_telemetry,
     )
 
