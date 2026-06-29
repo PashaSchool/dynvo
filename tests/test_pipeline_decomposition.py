@@ -120,6 +120,7 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (8, "anchor_desink"),
     (8, "shared_members"),
     (8, "anchor_subdecompose"),
+    (8, "llm_component_split"),
     (3, "flow_expansion"),
     (6, "test_strip"),
     (6, "user_flows"),

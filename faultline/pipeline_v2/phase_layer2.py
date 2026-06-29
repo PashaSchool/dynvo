@@ -47,6 +47,9 @@ from faultline.pipeline_v2.stage_8_8_shared_members import (
 from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
     subdecompose_workspace_anchors,
 )
+from faultline.pipeline_v2.stage_8_9_5_llm_component_split import (
+    llm_component_split,
+)
 from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
     run_stage_8_analyst,
@@ -520,6 +523,40 @@ def run_layer2_phase(
             stage_index=8,
             stage_name="anchor_subdecompose",
             payload=stage_8_9_telemetry,
+            run_dir=run_dir,
+        )
+
+    # ── Stage 8.9.5 — LLM-semantic component-blob decomposition ───────
+    # Where deterministic 8.9 leaves a residual blob dominated by a
+    # ``components/`` subtree (plane ``web``, supabase ``studio``), a cached
+    # LLM label per blob splits its PRODUCT-AREA children (``issues`` /
+    # ``Auth`` …) into sub-features while UI groupings (``dropdowns`` /
+    # ``icons``) stay in the residual — the semantic call the deterministic
+    # casing rule provably cannot make. Coverage-preserving (files move into
+    # real features, never a sink); ONE cheap call per blob, cached by
+    # prompt-hash. Default OFF; FAULTLINE_STAGE_8_9_5_LLM_COMPONENT_SPLIT=1.
+    with StageLogger(run_dir, 8, "llm_component_split") as log8_9_5:
+        llm_split_result = llm_component_split(
+            features,
+            client=s8_client,
+            cache_backend=getattr(ctx, "cache_backend", None),
+            repo_slug=getattr(ctx, "slug", None) or ctx.repo_path.name,
+        )
+        stage_8_9_5_telemetry = llm_split_result.as_telemetry()
+        log8_9_5.info(
+            f"llm_component_split enabled={llm_split_result.enabled} "
+            f"candidates={llm_split_result.candidates} "
+            f"llm_calls={llm_split_result.llm_calls} "
+            f"cache_hits={llm_split_result.cache_hits} "
+            f"split={llm_split_result.features_split} "
+            f"subfeatures={llm_split_result.subfeatures_created} "
+            f"paths_moved={llm_split_result.paths_moved}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="llm_component_split",
+            payload=stage_8_9_5_telemetry,
             run_dir=run_dir,
         )
 
