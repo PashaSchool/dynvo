@@ -33,13 +33,13 @@ prompt-hash, so a re-scan reuses it (the only non-determinism is the cached
 label; the gate and split are fully deterministic). Default OFF (opt-in):
 ``FAULTLINE_STAGE_8_9_5_LLM_COMPONENT_SPLIT=1``.
 
-Known limitations (v1 — both validated, both honest no-harm):
-  * **Single-level fan-out only.** :func:`_component_fanout` keys on the FIRST
-    ``components`` segment, so product areas nested under an intermediate
-    grouping dir (supabase ``components/interfaces/{Auth,Database,…}``) are seen
-    as one ``interfaces`` child, not split. Those repos are conservatively left
-    whole (one domain < ``_MIN_DOMAINS`` → no split). A v2 recursion through a
-    single dominant grouping child would reach them.
+Fan-out depth (v2): :func:`_component_fanout` finds the product-area level
+whether it sits directly under ``components`` (plane ``core/components/<area>``)
+or one level deeper under a grouping dir (supabase
+``components/interfaces/<Area>``) — it picks the prefix with the widest
+distinct-child fan-out, so an intermediate grouping dir is descended through.
+
+Known limitation (validated, honest no-harm):
   * **No husk cleanup.** Unlike Stage 8.9, this stage does NOT run
     ``_cleanup_husks`` after a split, so a source whose entire owned set was
     product-domain components ends as a (de-owned, role="shared") residual
@@ -151,27 +151,48 @@ class LlmComponentSplitResult:
 def _component_fanout(
     owned: list[str],
 ) -> tuple[str, dict[str, list[str]]] | None:
-    """Locate the ``components`` container in *owned* with the largest child
-    fan-out. Returns ``(container_prefix, {child_dir: [files]})`` or ``None``.
+    """Locate the product-area FAN-OUT level within *owned*'s ``components``
+    subtree — the directory at or below a ``components`` segment with the most
+    distinct child dirs. Returns ``(container_prefix, {child_dir: [files]})`` or
+    ``None``.
 
-    A child qualifies only when it is itself a DIRECTORY (a deeper segment
-    follows), so a bare ``components/Button.tsx`` file never becomes a child.
-    Only the FIRST ``components`` segment on a path is considered (a nested
-    ``components/x/components/y`` keys under the outer one).
+    v2 — descend through an intermediate grouping dir. A child qualifies only
+    when it is itself a DIRECTORY (a deeper segment follows), so a bare
+    ``components/Button.tsx`` file never becomes a child. We consider EVERY
+    prefix from the first ``components`` segment downward, then pick the one with
+    the largest fan-out. That finds the real product areas whether they sit
+    directly under ``components`` (plane: ``core/components/{issues,cycles,…}``,
+    fan-out AT ``components``) OR one level deeper under a grouping dir (supabase:
+    ``components/interfaces/{Auth,Database,…}``, fan-out at
+    ``components/interfaces`` — which v1's immediate-child-only walk missed).
+    The deeper-but-thinner intermediate level (``components`` with a handful of
+    children) loses to the wider product-area level by the distinct-child count.
     """
     cand: dict[str, dict[str, list[str]]] = {}
     for p in owned:
         segs = p.split("/")
-        for d in range(len(segs) - 1):
-            if segs[d].lower() in _COMPONENT_SEGS:
-                # child = segs[d + 1]; require a deeper segment (child is a dir)
-                if d + 2 <= len(segs) - 1:
-                    prefix = "/".join(segs[: d + 1])
-                    child = segs[d + 1]
-                    cand.setdefault(prefix, {}).setdefault(child, []).append(p)
-                break
+        # First ``components`` segment on the path (a nested
+        # ``components/x/components/y`` keys under the OUTER one).
+        comp_idx = next(
+            (
+                d
+                for d in range(len(segs) - 1)
+                if segs[d].lower() in _COMPONENT_SEGS
+            ),
+            None,
+        )
+        if comp_idx is None:
+            continue
+        # Every dir prefix AT or BELOW the components segment is a candidate
+        # container; its child (segs[d + 1]) must itself be a directory.
+        for d in range(comp_idx, len(segs) - 1):
+            if d + 2 <= len(segs) - 1:
+                prefix = "/".join(segs[: d + 1])
+                child = segs[d + 1]
+                cand.setdefault(prefix, {}).setdefault(child, []).append(p)
     if not cand:
         return None
+    # The container with the MOST distinct children is the product-area fan-out.
     best = max(cand, key=lambda k: len(cand[k]))
     children = cand[best]
     if len(children) < _MIN_COMPONENT_CHILDREN:

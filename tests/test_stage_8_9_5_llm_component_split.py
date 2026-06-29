@@ -209,6 +209,26 @@ def test_component_fanout_finds_children():
     assert set(children) == {"issues", "cycles"}
 
 
+def test_component_fanout_descends_to_nested_grouping():
+    """v2: product areas under an intermediate grouping dir
+    (supabase ``components/interfaces/<Area>``) are found at the DEEPER
+    fan-out level, not lumped as a single ``interfaces`` child."""
+    areas = ["Auth", "Database", "Storage", "Settings", "Reports"]
+    owned = [
+        f"apps/studio/components/interfaces/{a}/X{i}.tsx"
+        for a in areas
+        for i in range(3)
+    ]
+    # shallow siblings directly under components/ (fewer than the area fan-out)
+    owned += [f"apps/studio/components/ui/U{i}.tsx" for i in range(2)]
+    owned += [f"apps/studio/components/grid/G{i}.tsx" for i in range(2)]
+    fan = _component_fanout(owned)
+    assert fan is not None
+    container, children = fan
+    assert container == "apps/studio/components/interfaces"
+    assert set(children) == set(areas)
+
+
 def test_component_fanout_none_for_single_child():
     owned = ["pkg/components/Button/index.tsx", "pkg/components/Button/x.tsx"]
     assert _component_fanout(owned) is None  # one child < _MIN_COMPONENT_CHILDREN
@@ -217,6 +237,46 @@ def test_component_fanout_none_for_single_child():
 def test_component_fanout_none_without_components():
     owned = ["src/lib/a.ts", "src/utils/b.ts"]
     assert _component_fanout(owned) is None
+
+
+def test_component_fanout_tie_resolves_to_shallower():
+    """On a distinct-child-count TIE, the SHALLOWER (components) level wins —
+    the v1-safe direction (max() keeps the first-inserted key, and the shallow
+    prefix is reached first on every path)."""
+    owned = (
+        [f"app/components/grouping/x/f{i}.tsx" for i in range(2)]
+        + [f"app/components/grouping/y/f{i}.tsx" for i in range(2)]
+        + [f"app/components/grouping/z/f{i}.tsx" for i in range(2)]
+        + [f"app/components/a/f{i}.tsx" for i in range(2)]
+        + [f"app/components/b/f{i}.tsx" for i in range(2)]
+    )
+    # components children {grouping, a, b} = 3; components/grouping {x,y,z} = 3 → tie
+    container, children = _component_fanout(owned)
+    assert container == "app/components"
+    assert set(children) == {"grouping", "a", "b"}
+
+
+def test_internals_descent_labelled_ui_does_not_split(monkeypatch):
+    """v2 may NOMINATE a single component's internal subdirs as the fan-out
+    (``components/DataTable/{hooks,utils,parts,…}``), but the LLM labels them
+    ``ui`` → no domains → no junk split. The descent only nominates; the
+    semantic gate disposes."""
+    monkeypatch.setenv(_ENV, "1")
+    internals = ("hooks", "utils", "parts", "styles", "context")
+    blob_paths = [
+        f"src/components/DataTable/{sub}/f{i}.tsx"
+        for sub in internals
+        for i in range(6)
+    ]
+    feats = [_feat("data-table", blob_paths, uuid="dt")]
+    feats += [
+        _feat(f"p{i}", [f"pkg/p{i}/a.ts", f"pkg/p{i}/b.ts", f"pkg/p{i}/c.ts"])
+        for i in range(8)
+    ]
+    client = _FakeClient({s: "ui" for s in internals})
+    res = llm_component_split(feats, client=client, repo_slug="x")
+    assert res.candidates == 1       # the internals WERE nominated as a fan-out
+    assert res.features_split == 0   # …but all-ui → no junk sub-features
 
 
 # ── unit: label parsing ─────────────────────────────────────────────────────
