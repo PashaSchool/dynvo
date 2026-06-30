@@ -433,6 +433,16 @@ def run_finalize_phase(
     )
     if _s67d_enabled():
         with StageLogger(run_dir, 6, "journey_abstraction") as log6_7d:
+            # Phase 2: feed the deterministic product-capability anchors mined in
+            # Stage 0 (i18n / nav / analytics / test) as the AUTHORITATIVE list so
+            # the LLM ALIGNS code evidence to them instead of free-generating
+            # (None when Phase-1 produced nothing → free-generation fallback).
+            # A cache backend makes a re-scan of an unchanged repo byte-identical.
+            from faultline.cache import get_cache_backend
+            try:
+                _s67d_cache = get_cache_backend()
+            except Exception:  # noqa: BLE001 — caching is best-effort, never fatal
+                _s67d_cache = None
             (
                 user_flows,
                 product_features,
@@ -443,8 +453,10 @@ def run_finalize_phase(
                 product_features,
                 features,
                 lineage_result.routes_index,
+                product_anchors=list(getattr(ctx, "product_anchors", None) or []),
                 model=model_id,
                 cost_tracker=tracker,
+                cache=_s67d_cache,
                 log=log6_7d,
                 llm_health=llm_health,
             )

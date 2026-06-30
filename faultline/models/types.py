@@ -780,6 +780,13 @@ class Feature(BaseModel):
     # Defaults to "low" so scans serialized before this field existed
     # rehydrate without loss and without over-claiming confidence.
     health_confidence: Literal["high", "low", "insufficient"] = "low"
+    # Stage 6.7d ALIGN (Phase 2, 2026-06-30) — set True ONLY when this
+    # product feature was emitted from CODE evidence that no deterministic
+    # product-capability anchor covered (the LLM judged it a real missed
+    # capability). False for anchor-aligned features and for every scan
+    # produced before this field existed (old JSONs rehydrate unchanged).
+    # Additive marker, not a schema break.
+    from_code_only: bool = False
     flows: list[Flow] = []    # populated when --flows flag is used
     # Sprint 2026-05-28 — per-feature hotspot files (dict shape). Each
     # entry: path + bug_fix_ratio + bug_fixes + total_commits. Sorted
@@ -928,6 +935,10 @@ class UserFlow(BaseModel):
     # back to the deterministic template name, or when the scan ran
     # LLM-degraded. Defaults to "high" for old-JSON rehydration.
     name_confidence: Literal["high", "low"] = "high"
+    # Stage 6.7d ALIGN (Phase 2, 2026-06-30) — see ``Feature.from_code_only``.
+    # True when this journey came from code evidence no deterministic anchor
+    # covered; False for anchor-aligned flows and old-JSON rehydration.
+    from_code_only: bool = False
 
 
 class FeatureMap(BaseModel):

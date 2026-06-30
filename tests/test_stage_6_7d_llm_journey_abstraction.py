@@ -315,3 +315,187 @@ def test_central_flow_graph_untouched() -> None:
     from faultline.pipeline_v2 import stage_6_7d_llm_journey_abstraction as m
     sig = inspect.signature(m.run_journey_abstraction)
     assert "flows" not in sig.parameters
+
+
+# ── Phase 2 — anchor alignment, structured output, content-hash cache ───────
+
+from dataclasses import dataclass as _dc
+
+from faultline.cache import MemoryCacheBackend
+
+
+@_dc
+class _Anchor:
+    text: str
+    source: str
+    locator: str = "x"
+
+
+def _anchors() -> list[_Anchor]:
+    return [
+        _Anchor("Account Management", "nav"),
+        _Anchor("Authentication", "i18n"),
+        _Anchor("account management", "test"),  # case-dup of #1 → deduped
+    ]
+
+
+# Alignment abstraction payload: names drawn from anchors + one from_code_only.
+_ALIGN_ABS = json.dumps({
+    "product_features": [
+        {"name": "Account Management", "description": "manage accounts",
+         "from_code_only": False},
+        {"name": "Authentication", "description": "sign in/up",
+         "from_code_only": False},
+        {"name": "Realtime Sync", "description": "code-only capability anchors missed",
+         "from_code_only": True},
+    ],
+    "user_flows": [
+        {"name": "Manage accounts", "resource": "account",
+         "product_feature": "Account Management", "from_flows": ["UF-001", "UF-002"],
+         "from_code_only": False},
+        {"name": "Sign in", "resource": "session",
+         "product_feature": "Authentication", "from_flows": ["UF-003"],
+         "from_code_only": False},
+        {"name": "Sync in realtime", "resource": "socket",
+         "product_feature": "Realtime Sync", "from_flows": [],
+         "from_code_only": True},
+    ],
+})
+# shared-ui maps to the code-only capability so that PF has contributing dev
+# evidence (a product feature with NO attributed dev features is correctly
+# dropped by reconstruction — aggregations need members).
+_ALIGN_MAP = json.dumps({"map": {
+    "accounts": "Account Management", "auth": "Authentication",
+    "shared-ui": "Realtime Sync",
+}})
+
+
+def _tool_client(abstraction_obj: dict, reattrib_obj: dict) -> Any:
+    """Fake client that returns FORCED tool-use blocks (the structured path),
+    routed by tool name (abstraction vs re-attribution)."""
+    @dataclass
+    class _ToolBlock:
+        type: str
+        name: str
+        input: dict
+
+    class _ToolMsg:
+        def __init__(self, name: str, payload: dict) -> None:
+            self.content = [_ToolBlock(type="tool_use", name=name, input=payload)]
+            self.usage = _Usage(400, 200)
+
+    class _C:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                tools = kw.get("tools") or []
+                name = tools[0]["name"] if tools else ""
+                if name == "emit_dev_capability_map":
+                    return _ToolMsg(name, reattrib_obj)
+                return _ToolMsg(name, abstraction_obj)
+        messages = _M()
+    return _C()
+
+
+def test_anchors_passed_output_names_drawn_from_anchors() -> None:
+    ufs, pfs, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [],
+        product_anchors=_anchors(), client=_client(_ALIGN_ABS, _ALIGN_MAP))
+    assert tel["applied"] is True
+    assert tel["aligned"] is True
+    assert tel["anchor_count"] == 2  # the case-dup collapsed
+    pf_names = {p.display_name for p in pfs}
+    # the two anchor capabilities survive as canonical product-feature names
+    assert {"Account Management", "Authentication"} <= pf_names
+
+
+def test_code_only_capability_flagged() -> None:
+    ufs, pfs, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [],
+        product_anchors=_anchors(), client=_client(_ALIGN_ABS, _ALIGN_MAP))
+    rt = next(p for p in pfs if p.display_name == "Realtime Sync")
+    assert rt.from_code_only is True
+    acct = next(p for p in pfs if p.display_name == "Account Management")
+    assert acct.from_code_only is False
+    sync_uf = next(u for u in ufs if u.name == "Sync in realtime")
+    assert sync_uf.from_code_only is True
+    assert tel["from_code_only_pf"] == 1
+    assert tel["from_code_only_uf"] == 1
+
+
+def test_structured_tool_use_path_parses() -> None:
+    """A client returning tool_use blocks (forced structured output) is parsed
+    via block.input — telemetry records the 'tool' path."""
+    abs_obj = json.loads(_ABS)
+    map_obj = json.loads(_MAP_FULL)
+    ufs, pfs, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_tool_client(abs_obj, map_obj))
+    assert tel["applied"] is True
+    assert tel["structured_path"] == "tool"
+    assert {u.name for u in ufs} == {"Manage accounts", "Sign in"}
+
+
+def test_text_fallback_when_tools_unsupported() -> None:
+    """A client whose create() raises when given the tools kwarg must fall back
+    to a plain text call + regex parse (graceful degrade of the SDK path)."""
+    class _NoToolsClient:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                if "tools" in kw:
+                    raise TypeError("tools not supported by this endpoint")
+                sysp = kw.get("system", "")
+                return _Msg(_MAP_FULL if "assign each developer feature" in sysp else _ABS)
+        messages = _M()
+    ufs, pfs, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_NoToolsClient())
+    assert tel["applied"] is True
+    assert tel["structured_path"] == "text_fallback"
+    assert {u.name for u in ufs} == {"Manage accounts", "Sign in"}
+
+
+def test_cache_hit_returns_identical_output_and_skips_llm() -> None:
+    """Second run with the same (digest+anchors+model) must hit the cache,
+    fire ZERO LLM calls, and return byte-identical output."""
+    cache = MemoryCacheBackend()
+
+    # Count create() calls so we can prove the 2nd run never touches the LLM.
+    class _CountingClient:
+        calls = 0
+        class _M:
+            def create(self_inner, **kw: Any) -> Any:
+                _CountingClient.calls += 1
+                sysp = kw.get("system", "")
+                return _Msg(_ALIGN_MAP if "assign each developer feature" in sysp else _ALIGN_ABS)
+        messages = _M()
+
+    c = _CountingClient()
+    # Reuse the SAME deterministic inputs across both runs — in a real re-scan
+    # the developer features are byte-identical; here _devs() would otherwise
+    # differ only by its now()-stamped last_modified, which is not what the
+    # cache guards (it guards the LLM answers; reconstruction is deterministic).
+    devs, ufs_in, pfs_in = _devs(), _ufs(), _pfs()
+    ufs1, pfs1, map1, tel1 = run_journey_abstraction(
+        ufs_in, pfs_in, devs, [], product_anchors=_anchors(), client=c, cache=cache)
+    assert tel1["applied"] is True and tel1["cache_hit"] is False
+    calls_after_first = _CountingClient.calls
+    assert calls_after_first == 2  # abstraction + re-attribution
+
+    ufs2, pfs2, map2, tel2 = run_journey_abstraction(
+        ufs_in, pfs_in, devs, [], product_anchors=_anchors(), client=c, cache=cache)
+    assert tel2["cache_hit"] is True
+    assert tel2["llm_calls"] == 0
+    assert _CountingClient.calls == calls_after_first  # no new LLM calls
+
+    # Byte-identical output (compare the serialised model dumps).
+    assert [u.model_dump() for u in ufs1] == [u.model_dump() for u in ufs2]
+    assert [p.model_dump() for p in pfs1] == [p.model_dump() for p in pfs2]
+    assert map1 == map2
+
+
+def test_free_generation_fallback_when_no_anchors() -> None:
+    """No anchors → free-generation path (aligned=False), behaves as before."""
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], product_anchors=None,
+        client=_client(_ABS, _MAP_FULL))
+    assert tel["applied"] is True
+    assert tel["aligned"] is False
+    assert tel["anchor_count"] == 0

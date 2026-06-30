@@ -46,6 +46,7 @@ Wiring: ``phase_finalize`` calls :func:`run_journey_abstraction` after Stage
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -53,13 +54,16 @@ import re
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any, Callable
 
+from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params, estimate_call_cost
 from faultline.llm.model_gateway import resolve_model as gateway_model
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.nav_taxonomy import aggregate_product_feature
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.models.types import Feature, Flow, UserFlow
+    from faultline.pipeline_v2.anchor_extractors import ProductAnchor
     from faultline.pipeline_v2.run_logger import StageLogger
 
 logger = logging.getLogger(__name__)
@@ -70,6 +74,16 @@ REATTRIB_MAX_TOKENS = 16000
 COST_CAP_USD = 0.50            # whole-stage guard against a runaway response
 MAX_DEV_FEATURES_DIGEST = 200  # abstraction digest cap (re-attrib sees all)
 MAX_ROUTES_DIGEST = 160
+#: Authoritative-anchor list cap fed into the alignment prompt. A bound on
+#: prompt size (NOT a tuned threshold) — anchors arrive pre-sorted by source
+#: trust (analytics > nav > docs > i18n > test) so the slice keeps the
+#: strongest product signal, not the alphabetical long tail.
+MAX_ANCHOR_TEXTS_DIGEST = 160
+
+#: Bumped whenever the prompt / tool schema / reconstruction changes in a way
+#: that would make a previously-cached answer wrong. Part of the cache key, so
+#: a bump transparently invalidates every stale entry.
+ABSTRACTION_CACHE_VERSION = "p2-1"
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -170,6 +184,102 @@ shell) that serves many capabilities, assign it to "Shared Platform".
 Return STRICT JSON only: {"map": {"<dev feature name>": "<capability>", ...}}."""
 
 
+# ── Alignment system prompt (anchors present — Phase 2 ALIGN mode) ───────────
+# When deterministic product-capability ANCHORS are supplied, the model no
+# longer free-generates. Its job is to ALIGN code evidence to the authoritative
+# anchor list: use anchor text as the canonical name, group code under the
+# anchor it serves, and emit a non-anchor item ONLY for a real capability the
+# anchors clearly missed (flagged from_code_only). This bounds the output to
+# the anchor set → kills over-production, blobs, and run-to-run drift.
+_ALIGN_SYSTEM = """You are the product-abstraction layer of a code-intelligence engine.
+A deterministic scanner parsed a repository into CODE-GRAIN artifacts: developer
+features (one per code module/dir), user flows (one per CRUD op), HTTP routes.
+SEPARATELY, a deterministic extractor mined an AUTHORITATIVE list of product
+capabilities from code-grounded sources (i18n labels, navigation, analytics
+events, test titles) — this is `product_capability_anchors`. No README exists.
+
+Your job is ALIGNMENT, not invention. Map the code evidence onto the anchor
+list. Rules in priority order:
+  1. The anchor list is AUTHORITATIVE. Produce ONE product_feature per distinct
+     product capability the anchors describe, using the ANCHOR TEXT (lightly
+     normalised to Title Case) as the canonical `name`. Consolidate near-
+     duplicate anchors (same capability worded twice) into one feature.
+  2. Produce user_flows that realise those capabilities. Each user_flow's
+     `product_feature` MUST be one of the names you emitted in (1). Name a
+     user_flow as a short verb phrase grounded in the code evidence + anchor.
+  3. GROUP the code under the anchor it serves: set `from_flows` to the list of
+     CURRENT user-flow ids that belong to each journey (member inheritance).
+     `from_flows` may be empty for a capability whose CRUD flows were not
+     detected — never inflate or cap your list to the current_user_flows count.
+  4. Emit an item NOT covered by ANY anchor ONLY when the code evidence clearly
+     shows a real customer capability the anchors missed. Flag every such item
+     with `"from_code_only": true`. Anchor-aligned items omit the flag (false).
+     Prefer aligning to an existing anchor over inventing a code-only item.
+  5. Do NOT emit anchors that have NO supporting code evidence (an anchor with
+     no related dev feature / route / flow is noise — drop it). Do NOT emit bare
+     code-structure leaks ("lib","web","core","utils","components") as features.
+
+Title Case names; product voice. Ground EVERY item in the supplied evidence.
+
+Return STRICT JSON only, no prose:
+{"product_features":[{"name":"...","description":"...","from_code_only":false}],
+ "user_flows":[{"name":"...","resource":"...","product_feature":"...",
+                "from_flows":["UF-001", ...],"from_code_only":false}]}"""
+
+
+# ── Tool schemas for forced structured output ────────────────────────────────
+# A forced tool-use call is more robust + deterministic than regex-extracting
+# JSON from free text. The model MUST return through these schemas. When the
+# SDK / endpoint does not support tools the caller falls back to text + regex.
+_ABSTRACTION_TOOL: dict[str, Any] = {
+    "name": "emit_product_abstraction",
+    "description": "Return the aligned product_features and user_flows.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "product_features": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "from_code_only": {"type": "boolean"},
+                    },
+                    "required": ["name"],
+                },
+            },
+            "user_flows": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "resource": {"type": "string"},
+                        "product_feature": {"type": "string"},
+                        "from_flows": {"type": "array", "items": {"type": "string"}},
+                        "from_code_only": {"type": "boolean"},
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        "required": ["product_features", "user_flows"],
+    },
+}
+_REATTRIB_TOOL: dict[str, Any] = {
+    "name": "emit_dev_capability_map",
+    "description": "Return the dev-feature → product-capability map.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "map": {"type": "object", "additionalProperties": {"type": "string"}},
+        },
+        "required": ["map"],
+    },
+}
+
+
 # ── Evidence digest (README-FORBIDDEN) ──────────────────────────────────────
 
 def _paths_of(f: "Feature") -> list[str]:
@@ -237,6 +347,52 @@ def _build_digest(
     }
 
 
+def _canonical_anchor_texts(
+    product_anchors: "list[ProductAnchor] | None",
+) -> list[dict[str, str]]:
+    """Deduped, bounded ``[{text, source}]`` for the alignment prompt.
+
+    Anchors arrive pre-sorted by source trust (analytics > nav > docs > i18n >
+    test). Dedup case-insensitively (preserving the first/highest-trust
+    occurrence), then cap at :data:`MAX_ANCHOR_TEXTS_DIGEST`. Pure + stable →
+    identical anchors yield an identical list (cache-key precondition).
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for a in product_anchors or []:
+        text = (getattr(a, "text", "") or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"text": text, "source": str(getattr(a, "source", ""))})
+        if len(out) >= MAX_ANCHOR_TEXTS_DIGEST:
+            break
+    return out
+
+
+def _cache_key(
+    digest: dict[str, Any], anchor_texts: list[dict[str, str]], model: str,
+) -> str:
+    """Stable content hash of (digest + sorted anchor texts + model + version).
+
+    Same repo state + same anchors + same model → same key → cache hit →
+    byte-identical output on re-scan. ``sort_keys`` makes the JSON canonical."""
+    payload = json.dumps(
+        {
+            "v": ABSTRACTION_CACHE_VERSION,
+            "model": model,
+            "mode": "aligned" if anchor_texts else "free",
+            "anchors": sorted(a["text"].lower() for a in anchor_texts),
+            "digest": digest,
+        },
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 # ── LLM call (mirrors stage_6_7b._call_haiku) ───────────────────────────────
 
 def _call_haiku(
@@ -268,6 +424,98 @@ def _call_haiku(
     in_tok = int(getattr(getattr(msg, "usage", None), "input_tokens", 0) or 0)
     out_tok = int(getattr(getattr(msg, "usage", None), "output_tokens", 0) or 0)
     return text, in_tok, out_tok
+
+
+def _tool_use_input(msg: Any, tool_name: str) -> dict[str, Any] | None:
+    """Return the ``.input`` of the first ``tool_use`` block, or ``None``.
+
+    Robust to SDK shapes where blocks expose ``type``/``name``/``input`` as
+    attributes (real SDK) — and tolerant when those are absent (test fakes
+    that only carry ``.text`` blocks return ``None`` → caller parses text).
+    """
+    try:
+        for block in getattr(msg, "content", None) or []:
+            if getattr(block, "type", None) == "tool_use":
+                if tool_name and getattr(block, "name", tool_name) != tool_name:
+                    continue
+                data = getattr(block, "input", None)
+                if isinstance(data, dict):
+                    return data
+    except Exception:  # noqa: BLE001 — never let block inspection abort the stage
+        return None
+    return None
+
+
+def _call_structured(
+    client: Any, *, model: str, system: str, user: str, tool: dict[str, Any],
+    max_tokens: int, llm_health: LlmHealth | None = None,
+) -> tuple[dict[str, Any] | None, int, int, str]:
+    """Forced tool-use call → parsed dict. Falls back to text+regex.
+
+    Returns ``(parsed_or_None, in_tokens, out_tokens, path)`` where ``path`` is
+    ``"tool"``, ``"text"`` (tool returned no tool_use block — fake/SDK ignored
+    it), ``"text_fallback"`` (tools kwarg errored, retried plain), or ``""`` on
+    a hard failure. The ``system`` prompt embeds the JSON schema so the text
+    fallback parses identically. Determinism is via ``deterministic_params``
+    (temperature=0) — re-asserted here so this stage can never drift to a
+    non-zero temperature even if the shared helper changes.
+    """
+    if llm_health is not None and not llm_health.should_call():
+        return None, 0, 0, ""
+
+    params = dict(deterministic_params(model))
+    params["temperature"] = 0  # hard guarantee for this stage (stability gate)
+
+    def _usage(msg: Any) -> tuple[int, int]:
+        u = getattr(msg, "usage", None)
+        return (int(getattr(u, "input_tokens", 0) or 0),
+                int(getattr(u, "output_tokens", 0) or 0))
+
+    def _text_of(msg: Any) -> str:
+        try:
+            return "\n".join(
+                t for block in (getattr(msg, "content", None) or [])
+                if (t := getattr(block, "text", None))
+            )
+        except Exception:  # noqa: BLE001
+            return ""
+
+    # 1) Forced tool-use.
+    try:
+        msg = client.messages.create(
+            model=gateway_model(model), max_tokens=max_tokens, system=system,
+            messages=[{"role": "user", "content": user}],
+            tools=[tool], tool_choice={"type": "tool", "name": tool["name"]},
+            **params,
+        )
+    except Exception as exc:  # noqa: BLE001 — tools unsupported / transient
+        logger.info("stage_6_7d: tool-use unavailable (%s) — retrying plain text", exc)
+        try:
+            msg = client.messages.create(
+                model=gateway_model(model), max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": user}], **params,
+            )
+        except Exception as exc2:  # noqa: BLE001 — non-fatal at scan-time
+            if llm_health is not None and llm_health.record_failure(
+                exc2, stage="stage_6_7d_llm_journey_abstraction",
+            ):
+                logger.error("stage_6_7d: LLM auth failed — skipping: %s", exc2)
+            else:
+                logger.warning("stage_6_7d: structured call failed: %s", exc2)
+            return None, 0, 0, ""
+        if llm_health is not None:
+            llm_health.record_success()
+        in_tok, out_tok = _usage(msg)
+        return _parse_json(_text_of(msg)), in_tok, out_tok, "text_fallback"
+
+    if llm_health is not None:
+        llm_health.record_success()
+    in_tok, out_tok = _usage(msg)
+    parsed = _tool_use_input(msg, tool["name"])
+    if parsed is not None:
+        return parsed, in_tok, out_tok, "tool"
+    # No tool_use block (SDK / fake ignored the tools kwarg) → parse any text.
+    return _parse_json(_text_of(msg)), in_tok, out_tok, "text"
 
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -368,6 +616,7 @@ def _build_user_flows(
             routes=sorted(set(routes)),
             refined=True,
             name_confidence="high",
+            from_code_only=bool(spec.get("from_code_only")),
         ))
     return out
 
@@ -381,6 +630,10 @@ def _build_product_features(
     (product_features, dev_to_product_map, files_attributed)."""
     desc_by_cap = {
         (s.get("name") or "").strip(): _short(s.get("description"), 240)
+        for s in pf_specs if (s.get("name") or "").strip()
+    }
+    code_only_by_cap = {
+        (s.get("name") or "").strip(): bool(s.get("from_code_only"))
         for s in pf_specs if (s.get("name") or "").strip()
     }
     dev_by_name = {(f.display_name or f.name): f for f in developer_features}
@@ -419,6 +672,7 @@ def _build_product_features(
             name=_slug(cap), display_name=cap,
             description=desc_by_cap.get(cap, ""), contrib=contrib,
         )
+        feat.from_code_only = code_only_by_cap.get(cap, False)
         # aggregate_product_feature unions .paths only; carry the richer
         # member_files ledger too (the owned-files registry the dashboard
         # tree / coverage / blob metric read) — dedup by path, preserve order.
@@ -445,14 +699,28 @@ def run_journey_abstraction(
     developer_features: list["Feature"],
     routes_index: list[dict[str, Any]],
     *,
+    product_anchors: "list[ProductAnchor] | None" = None,
     client: Any | None = None,
     model: str = DEFAULT_MODEL,
     cost_tracker: CostTracker | None = None,
+    cache: "CacheBackend | None" = None,
     log: "StageLogger | None" = None,
     llm_health: LlmHealth | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], list["Feature"], dict[str, tuple[str, ...]] | None, dict[str, Any]]:
     """Rewrite user_flows[] + product_features[] at journey/capability grain.
+
+    When ``product_anchors`` is supplied (Phase-2 ALIGN mode) the LLM ALIGNS the
+    code evidence to that deterministic, authoritative capability list instead
+    of free-generating — bounding the output to the anchor set (kills over-
+    production / blobs / dups). With no anchors it falls back to today's free-
+    generation, so callers that never ran Phase-1 behave exactly as before.
+
+    Stability: both calls are forced through a tool-use schema (with a text+regex
+    fallback) at ``temperature=0``; when a ``cache`` backend is given, the two
+    model outputs are content-hash cached on (digest + sorted anchor texts +
+    model) so a re-scan of an unchanged repo replays the SAME answers → the
+    rebuilt arrays are byte-identical.
 
     Returns ``(user_flows, product_features, dev_to_product_map, telemetry)``.
     On ANY failure the ORIGINAL inputs are returned unchanged (degrade), and
@@ -463,17 +731,23 @@ def run_journey_abstraction(
         "uf_before": len(user_flows), "uf_after": len(user_flows),
         "pf_before": len(product_features), "pf_after": len(product_features),
         "files_before": 0, "files_after": 0, "cost_usd": 0.0, "llm_calls": 0,
+        "aligned": False, "anchor_count": 0, "cache_hit": False,
+        "structured_path": None, "from_code_only_pf": 0, "from_code_only_uf": 0,
     }
     files_before = sum(len(_paths_of(p)) for p in product_features)
     tele["files_before"] = files_before
 
-    cli = client if client is not None else _client_factory()
-    if cli is None:
-        tele["degraded_reason"] = "no_client"
-        return user_flows, product_features, None, tele
+    anchor_texts = _canonical_anchor_texts(product_anchors)
+    tele["aligned"] = bool(anchor_texts)
+    tele["anchor_count"] = len(anchor_texts)
+
     if not developer_features:
         tele["degraded_reason"] = "no_dev_features"
         return user_flows, product_features, None, tele
+
+    digest = _build_digest(developer_features, product_features, user_flows, routes_index)
+    key = _cache_key(digest, anchor_texts, model)
+    tele["cache_key"] = key
 
     def _record(model_: str, in_tok: int, out_tok: int) -> float:
         cost = estimate_call_cost(model_, in_tok, out_tok) if (in_tok or out_tok) else 0.0
@@ -485,17 +759,81 @@ def run_journey_abstraction(
                 pass
         return cost
 
-    # ── Call 1 — abstraction ──────────────────────────────────────────
-    digest = _build_digest(developer_features, product_features, user_flows, routes_index)
+    def _finish(
+        abstraction: dict[str, Any], dev_map: dict[str, str],
+    ) -> tuple[list["UserFlow"], list["Feature"], dict[str, tuple[str, ...]], dict[str, Any]] | None:
+        """Deterministic reconstruction shared by the cache-hit + live paths.
+
+        Identical (abstraction, dev_map, developer_features) → identical output,
+        which is what makes a cache hit byte-identical to the original run."""
+        uf_specs = abstraction.get("user_flows") or []
+        pf_specs = abstraction.get("product_features") or []
+        new_pfs, dev_to_product, files_after = _build_product_features(
+            pf_specs, dev_map, developer_features)
+        new_ufs = _build_user_flows(uf_specs, user_flows)
+        if not new_pfs or not new_ufs:
+            return None
+        tele.update({
+            "applied": True, "uf_after": len(new_ufs), "pf_after": len(new_pfs),
+            "files_after": files_after, "dev_mapped": len(dev_map),
+            "dev_total": len(developer_features),
+            "residual_devs": sum(1 for d in developer_features
+                                 if (d.display_name or d.name) not in dev_map),
+            "from_code_only_pf": sum(1 for p in new_pfs if p.from_code_only),
+            "from_code_only_uf": sum(1 for u in new_ufs if u.from_code_only),
+        })
+        if log is not None:
+            log.info(
+                "stage_6_7d: UF %d->%d, PF %d->%d, files %d->%d, dev_mapped %d/%d, "
+                "aligned=%s cache_hit=%s code_only=%d/%d $%.4f",
+                tele["uf_before"], tele["uf_after"], tele["pf_before"], tele["pf_after"],
+                files_before, files_after, tele["dev_mapped"], tele["dev_total"],
+                tele["aligned"], tele["cache_hit"], tele["from_code_only_pf"],
+                tele["from_code_only_uf"], tele["cost_usd"],
+            )
+        return new_ufs, new_pfs, dev_to_product, tele
+
+    # ── Cache lookup — content-keyed replay (byte-identical re-scan) ──
+    if cache is not None:
+        try:
+            cached = cache.get(CacheKind.LLM_ABSTRACTION.value, key)
+        except Exception:  # noqa: BLE001 — a cache fault must never abort the stage
+            cached = None
+        if isinstance(cached, dict) and cached.get("v") == ABSTRACTION_CACHE_VERSION:
+            c_abs = cached.get("abstraction") or {}
+            c_map_raw = cached.get("map") or {}
+            c_map = {k: v for k, v in c_map_raw.items()
+                     if isinstance(k, str) and isinstance(v, str)}
+            if (c_abs.get("user_flows") and c_abs.get("product_features") and c_map):
+                tele["cache_hit"] = True
+                result = _finish(c_abs, c_map)
+                if result is not None:
+                    return result
+                tele["cache_hit"] = False  # malformed → fall through to live call
+
+    cli = client if client is not None else _client_factory()
+    if cli is None:
+        tele["degraded_reason"] = "no_client"
+        return user_flows, product_features, None, tele
+
+    # ── Call 1 — abstraction / alignment (forced tool-use) ────────────
+    if anchor_texts:
+        sys1 = _ALIGN_SYSTEM
+        anchor_block = ("\n\nAUTHORITATIVE product_capability_anchors "
+                        "(align the evidence to these):\n"
+                        + json.dumps(anchor_texts, ensure_ascii=False))
+    else:
+        sys1 = _ABSTRACTION_SYSTEM
+        anchor_block = ""
     user1 = ("Repository evidence (code-grounded, no README):\n```json\n"
-             + json.dumps(digest, ensure_ascii=False) + "\n```\nEmit the JSON now.")
-    text1, in1, out1 = _call_haiku(
-        cli, model=model, system=_ABSTRACTION_SYSTEM, user=user1,
+             + json.dumps(digest, ensure_ascii=False) + "\n```" + anchor_block
+             + "\nEmit the structured output now.")
+    parsed1, in1, out1, path1 = _call_structured(
+        cli, model=model, system=sys1, user=user1, tool=_ABSTRACTION_TOOL,
         max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
     tele["llm_calls"] += 1
-    cost1 = _record(model, in1, out1)
-    tele["cost_usd"] = round(tele["cost_usd"] + cost1, 6)
-    parsed1 = _parse_json(text1)
+    tele["structured_path"] = path1
+    tele["cost_usd"] = round(tele["cost_usd"] + _record(model, in1, out1), 6)
     if not parsed1:
         tele["degraded_reason"] = "abstraction_parse_failed"
         return user_flows, product_features, None, tele
@@ -508,7 +846,7 @@ def run_journey_abstraction(
         tele["degraded_reason"] = f"cost_cap ${tele['cost_usd']:.4f}"
         return user_flows, product_features, None, tele
 
-    # ── Call 2 — dev → capability re-attribution ──────────────────────
+    # ── Call 2 — dev → capability re-attribution (forced tool-use) ────
     caps = [s.get("name", "").strip() for s in pf_specs if s.get("name", "").strip()]
     caps_with_residual = caps + [_RESIDUAL_CAP]
     dev_items = [
@@ -520,13 +858,11 @@ def run_journey_abstraction(
              "\n\nDeveloper features (name, dir, file count):\n" +
              json.dumps(dev_items, ensure_ascii=False) +
              "\n\nReturn the full map now (every dev feature mapped).")
-    text2, in2, out2 = _call_haiku(
-        cli, model=model, system=_REATTRIB_SYSTEM, user=user2,
+    parsed2, in2, out2, _path2 = _call_structured(
+        cli, model=model, system=_REATTRIB_SYSTEM, user=user2, tool=_REATTRIB_TOOL,
         max_tokens=REATTRIB_MAX_TOKENS, llm_health=llm_health)
     tele["llm_calls"] += 1
-    cost2 = _record(model, in2, out2)
-    tele["cost_usd"] = round(tele["cost_usd"] + cost2, 6)
-    parsed2 = _parse_json(text2)
+    tele["cost_usd"] = round(tele["cost_usd"] + _record(model, in2, out2), 6)
     dev_map_raw = (parsed2 or {}).get("map") or {}
     dev_map = {k: v for k, v in dev_map_raw.items() if isinstance(k, str) and isinstance(v, str)}
     # Re-attribution failed entirely (LLM error / bad JSON / health-blocked):
@@ -537,26 +873,20 @@ def run_journey_abstraction(
         tele["degraded_reason"] = "reattrib_failed"
         return user_flows, product_features, None, tele
 
+    # ── Persist the two structured outputs for byte-identical replay ──
+    if cache is not None:
+        try:
+            cache.set(CacheKind.LLM_ABSTRACTION.value, key, {
+                "v": ABSTRACTION_CACHE_VERSION,
+                "abstraction": {"product_features": pf_specs, "user_flows": uf_specs},
+                "map": dev_map,
+            })
+        except Exception:  # noqa: BLE001 — a cache write fault must not abort
+            pass
+
     # ── Reconstruct (conservation guaranteed — residual catches omits) ─
-    new_pfs, dev_to_product, files_after = _build_product_features(
-        pf_specs, dev_map, developer_features)
-    new_ufs = _build_user_flows(uf_specs, user_flows)
-    if not new_pfs or not new_ufs:
+    result = _finish(parsed1, dev_map)
+    if result is None:
         tele["degraded_reason"] = "reconstruct_empty"
         return user_flows, product_features, None, tele
-
-    tele.update({
-        "applied": True, "uf_after": len(new_ufs), "pf_after": len(new_pfs),
-        "files_after": files_after, "dev_mapped": len(dev_map),
-        "dev_total": len(developer_features),
-        "residual_devs": sum(1 for d in developer_features
-                             if (d.display_name or d.name) not in dev_map),
-    })
-    if log is not None:
-        log.info(
-            "stage_6_7d: UF %d->%d, PF %d->%d, files %d->%d, dev_mapped %d/%d, $%.4f",
-            tele["uf_before"], tele["uf_after"], tele["pf_before"], tele["pf_after"],
-            files_before, files_after, tele["dev_mapped"], tele["dev_total"],
-            tele["cost_usd"],
-        )
-    return new_ufs, new_pfs, dev_to_product, tele
+    return result

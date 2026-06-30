@@ -65,6 +65,14 @@ class CacheKind(str, Enum):
     # Content-keyed (same input → same answer) so this is a deterministic
     # short-circuit, not per-repo memory — compliant with rule-cold-scan.
     LLM_RESIDUAL = "llm-residual"
+    # Stage 6.7d journey/product abstraction (Phase 2): one entry per
+    # (digest + sorted anchor texts + model id) content hash. The cached
+    # value is the model's two structured outputs (abstraction specs +
+    # dev→capability map) — NOT reconstructed objects — so a re-scan of an
+    # unchanged repo replays the SAME LLM answers and produces byte-identical
+    # output. Content-keyed (same input → same answer), so this is a
+    # deterministic short-circuit, not per-repo memory (rule-cold-scan safe).
+    LLM_ABSTRACTION = "llm-abstraction"
     FLOW_VERDICT = "flow-verdict"
     FLOW_SYMBOL = "flow-symbol"
     MARKETING = "marketing"
@@ -147,6 +155,8 @@ class FilesystemCacheBackend:
             return self._base / "llm-cache" / f"{safe_key}.json"
         if kind == CacheKind.LLM_RESIDUAL.value:
             return self._base / "llm-cache" / "residual" / f"{safe_key}.json"
+        if kind == CacheKind.LLM_ABSTRACTION.value:
+            return self._base / "llm-cache" / "abstraction" / f"{safe_key}.json"
         if kind == CacheKind.MARKETING.value:
             return self._base / "marketing-cache" / f"{safe_key}.json"
         if kind == CacheKind.ASSIGNMENT.value:
@@ -169,6 +179,7 @@ class FilesystemCacheBackend:
         return kind in {
             CacheKind.LLM_NAME.value,
             CacheKind.LLM_RESIDUAL.value,
+            CacheKind.LLM_ABSTRACTION.value,
             CacheKind.MARKETING.value,
             CacheKind.BLAME.value,
         }
