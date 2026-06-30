@@ -427,11 +427,16 @@ def _call_haiku(
 
 
 def _tool_use_input(msg: Any, tool_name: str) -> dict[str, Any] | None:
-    """Return the ``.input`` of the first ``tool_use`` block, or ``None``.
+    """Return the ``.input`` of the first genuine ``tool_use`` block, else ``None``.
 
     Robust to SDK shapes where blocks expose ``type``/``name``/``input`` as
     attributes (real SDK) — and tolerant when those are absent (test fakes
     that only carry ``.text`` blocks return ``None`` → caller parses text).
+
+    Returns ``None`` for the subscription-proxy SHIM that wraps the model's
+    text in ``{"_raw": "```json…```"}`` instead of honouring the schema — that
+    is NOT a real structured answer (the CLI refuses an unknown tool), so the
+    caller must fall back to a plain text call which the proxy DOES serve.
     """
     try:
         for block in getattr(msg, "content", None) or []:
@@ -440,6 +445,8 @@ def _tool_use_input(msg: Any, tool_name: str) -> dict[str, Any] | None:
                     continue
                 data = getattr(block, "input", None)
                 if isinstance(data, dict):
+                    if set(data.keys()) == {"_raw"}:
+                        return None  # proxy shim — treat as tools-not-honoured
                     return data
     except Exception:  # noqa: BLE001 — never let block inspection abort the stage
         return None
@@ -480,42 +487,56 @@ def _call_structured(
         except Exception:  # noqa: BLE001
             return ""
 
-    # 1) Forced tool-use.
-    try:
-        msg = client.messages.create(
+    def _create(with_tools: bool) -> Any:
+        kw: dict[str, Any] = dict(
             model=gateway_model(model), max_tokens=max_tokens, system=system,
-            messages=[{"role": "user", "content": user}],
-            tools=[tool], tool_choice={"type": "tool", "name": tool["name"]},
-            **params,
+            messages=[{"role": "user", "content": user}], **params,
         )
-    except Exception as exc:  # noqa: BLE001 — tools unsupported / transient
-        logger.info("stage_6_7d: tool-use unavailable (%s) — retrying plain text", exc)
-        try:
-            msg = client.messages.create(
-                model=gateway_model(model), max_tokens=max_tokens, system=system,
-                messages=[{"role": "user", "content": user}], **params,
-            )
-        except Exception as exc2:  # noqa: BLE001 — non-fatal at scan-time
-            if llm_health is not None and llm_health.record_failure(
-                exc2, stage="stage_6_7d_llm_journey_abstraction",
-            ):
-                logger.error("stage_6_7d: LLM auth failed — skipping: %s", exc2)
-            else:
-                logger.warning("stage_6_7d: structured call failed: %s", exc2)
-            return None, 0, 0, ""
-        if llm_health is not None:
-            llm_health.record_success()
-        in_tok, out_tok = _usage(msg)
-        return _parse_json(_text_of(msg)), in_tok, out_tok, "text_fallback"
+        if with_tools:
+            kw["tools"] = [tool]
+            kw["tool_choice"] = {"type": "tool", "name": tool["name"]}
+        return client.messages.create(**kw)
 
+    # 1) Forced tool-use. A genuine tool_use block is the deterministic path.
+    #    A fake/SDK that ignores the kwarg may still return parseable text.
+    try:
+        msg = _create(with_tools=True)
+    except Exception as exc:  # noqa: BLE001 — tools unsupported / transient
+        logger.info("stage_6_7d: tool-use call errored (%s) — retrying plain text", exc)
+        msg = None
+    if msg is not None:
+        in_tok, out_tok = _usage(msg)
+        parsed = _tool_use_input(msg, tool["name"])
+        if parsed is not None:
+            if llm_health is not None:
+                llm_health.record_success()
+            return parsed, in_tok, out_tok, "tool"
+        text = _text_of(msg)
+        if text:
+            ptext = _parse_json(text)
+            if ptext is not None:
+                if llm_health is not None:
+                    llm_health.record_success()
+                return ptext, in_tok, out_tok, "text"
+        # Tool attempt produced nothing usable (proxy ``_raw`` shim / refusal /
+        # no parseable text) → fall through to a plain (no-tools) call, which
+        # the subscription proxy DOES serve.
+
+    # 2) Plain text fallback.
+    try:
+        msg2 = _create(with_tools=False)
+    except Exception as exc2:  # noqa: BLE001 — non-fatal at scan-time
+        if llm_health is not None and llm_health.record_failure(
+            exc2, stage="stage_6_7d_llm_journey_abstraction",
+        ):
+            logger.error("stage_6_7d: LLM auth failed — skipping: %s", exc2)
+        else:
+            logger.warning("stage_6_7d: structured call failed: %s", exc2)
+        return None, 0, 0, ""
     if llm_health is not None:
         llm_health.record_success()
-    in_tok, out_tok = _usage(msg)
-    parsed = _tool_use_input(msg, tool["name"])
-    if parsed is not None:
-        return parsed, in_tok, out_tok, "tool"
-    # No tool_use block (SDK / fake ignored the tools kwarg) → parse any text.
-    return _parse_json(_text_of(msg)), in_tok, out_tok, "text"
+    in2, out2 = _usage(msg2)
+    return _parse_json(_text_of(msg2)), in2, out2, "text_fallback"
 
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
