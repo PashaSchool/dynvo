@@ -420,6 +420,58 @@ def run_finalize_phase(
         )
     scan_meta["stage_6_7b_uf_refiner"] = dict(uf_refine_telemetry)
 
+    # ── Stage 6.7d — LLM product/journey abstraction (opt-in, OFF) ──
+    # Crosses the code-grain → product-grain gap the deterministic stages
+    # structurally cannot: REWRITES user_flows[] + product_features[] at
+    # journey/capability grain via two Haiku calls over a code-grounded
+    # digest (NO README). Output-layer only — the central flows[] graph is
+    # untouched. Default OFF; FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION=1. On any
+    # LLM failure the deterministic arrays pass through byte-identical.
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        is_enabled as _s67d_enabled,
+        run_journey_abstraction,
+    )
+    if _s67d_enabled():
+        with StageLogger(run_dir, 6, "journey_abstraction") as log6_7d:
+            (
+                user_flows,
+                product_features,
+                s67d_dev_map,
+                s67d_telemetry,
+            ) = run_journey_abstraction(
+                user_flows,
+                product_features,
+                features,
+                lineage_result.routes_index,
+                model=model_id,
+                cost_tracker=tracker,
+                log=log6_7d,
+                llm_health=llm_health,
+            )
+            # Re-stamp dev features' product_feature_id so the bipartite /
+            # output linkage stays coherent with the rewritten product layer.
+            if s67d_dev_map:
+                for _dev in features:
+                    _slugs = s67d_dev_map.get(getattr(_dev, "name", None))
+                    if _slugs:
+                        _dev.product_feature_id = _slugs[0]
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=6,
+                stage_name="journey_abstraction",
+                payload={
+                    **s67d_telemetry,
+                    "user_flows": [uf.model_dump() for uf in user_flows],
+                    "product_features": [
+                        {"name": pf.name, "display_name": pf.display_name,
+                         "n_paths": len(pf.paths)}
+                        for pf in product_features
+                    ],
+                },
+                run_dir=run_dir,
+            )
+        scan_meta["stage_6_7d_journey_abstraction"] = dict(s67d_telemetry)
+
     # ── Stage 6.95 — per-entity git-history timeline ────────────────
     # Deterministic, pure, $0 LLM. Runs LAST before output by design:
     # product-feature ``paths`` are final (Stage 8 + 8.5) and user-flow
