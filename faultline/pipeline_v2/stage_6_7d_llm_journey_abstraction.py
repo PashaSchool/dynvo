@@ -83,7 +83,7 @@ MAX_ANCHOR_TEXTS_DIGEST = 160
 #: Bumped whenever the prompt / tool schema / reconstruction changes in a way
 #: that would make a previously-cached answer wrong. Part of the cache key, so
 #: a bump transparently invalidates every stale entry.
-ABSTRACTION_CACHE_VERSION = "p2-1"
+ABSTRACTION_CACHE_VERSION = "p2-2"
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -201,12 +201,20 @@ events, test titles) — this is `product_capability_anchors`. No README exists.
 Your job is ALIGNMENT, not invention. Map the code evidence onto the anchor
 list. Rules in priority order:
   1. The anchor list is AUTHORITATIVE. Produce ONE product_feature per distinct
-     product capability the anchors describe, using the ANCHOR TEXT (lightly
-     normalised to Title Case) as the canonical `name`. Consolidate near-
-     duplicate anchors (same capability worded twice) into one feature.
+     product capability the anchors describe. Use the ANCHOR TEXT VERBATIM as
+     the canonical `name`: copy the anchor's words EXACTLY — you may only adjust
+     capitalisation to Title Case. Do NOT reword, paraphrase, translate, expand,
+     abbreviate, or "improve" the wording. Drawing names verbatim from the fixed
+     anchor list is REQUIRED — it keeps names stable across runs and faithful to
+     the maintainer's own vocabulary. Consolidate near-duplicate anchors (the
+     same capability worded twice) into one feature, keeping the clearest
+     anchor's text verbatim.
   2. Produce user_flows that realise those capabilities. Each user_flow's
-     `product_feature` MUST be one of the names you emitted in (1). Name a
-     user_flow as a short verb phrase grounded in the code evidence + anchor.
+     `product_feature` MUST be one of the names you emitted in (1). When a
+     user_flow realises a specific anchor capability, use THAT anchor's text
+     VERBATIM (Title Case ok) as the flow `name` — do not paraphrase it. Only
+     when no single anchor matches the flow, write a short verb phrase grounded
+     in the code evidence.
   3. GROUP the code under the anchor it serves: set `from_flows` to the list of
      CURRENT user-flow ids that belong to each journey (member inheritance).
      `from_flows` may be empty for a capability whose CRUD flows were not

@@ -491,6 +491,18 @@ def test_cache_hit_returns_identical_output_and_skips_llm() -> None:
     assert map1 == map2
 
 
+def test_align_prompt_instructs_verbatim_anchor_naming() -> None:
+    """The ALIGN prompt must instruct the model to reuse anchor text VERBATIM
+    (stability + product-grain fidelity), not paraphrase it."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import _ALIGN_SYSTEM
+
+    low = _ALIGN_SYSTEM.lower()
+    assert "verbatim" in low
+    assert "do not reword" in low  # explicit no-paraphrase instruction
+    # Applies to BOTH product_features (rule 1) and user_flows (rule 2).
+    assert low.count("verbatim") >= 2
+
+
 def test_free_generation_fallback_when_no_anchors() -> None:
     """No anchors → free-generation path (aligned=False), behaves as before."""
     _u, _p, _m, tel = run_journey_abstraction(

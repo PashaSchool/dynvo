@@ -99,6 +99,10 @@ def _patch_llm_stages(monkeypatch: pytest.MonkeyPatch) -> None:
 EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (0, "intake"),
     (0, "auditor"),
+    # Phase 1 (anchor-extractors) — deterministic product-capability anchor
+    # extraction, emitted during intake right after the stack auditor. See
+    # anchor_extractors.py / phase_intake.py.
+    (0, "anchors"),
     (1, "extractors"),
     (2, "reconcile"),
     (2, "membership_closure"),

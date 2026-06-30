@@ -42,7 +42,7 @@ from typing import Callable, Literal
 
 logger = logging.getLogger(__name__)
 
-AnchorSource = Literal["i18n", "nav", "analytics", "test", "docs"]
+AnchorSource = Literal["i18n", "nav", "docs_nav", "analytics", "test", "docs"]
 
 
 # ── Bounds (list-size / string-length caps — NOT tuned thresholds) ──────────
@@ -56,24 +56,61 @@ MAX_GREP_STRINGS = 2000
 MAX_ANALYTICS_STRINGS = 500
 #: Max nav labels collected (memory ceiling).
 MAX_NAV_STRINGS = 400
-#: Total anchor-list cap — bounds downstream prompt size.
+#: Max i18n anchors (namespaces + leaf values) collected from ALL locale
+#: files combined. A guard against a pathological locale tree (e.g.
+#: cal.com ships ~215k leaf strings) allocating ~85MB of anchors before
+#: the global cap ever applies — bounds memory + traversal, not accuracy
+#: (the alignment pool only ever reads the first ~160 by trust). NOT a
+#: per-repo tuned knob: a memory ceiling like every other MAX_* here.
+MAX_I18N_VALUES = 3000
+#: Total raw anchor-list cap (telemetry view, before pool curation).
+MAX_RAW_ANCHORS = 5000
+#: Total alignment-pool cap — bounds the prompt fed to Stage 6.7d.
 MAX_TOTAL_ANCHORS = 800
 
 #: Source trust ordering (NOT a tuned number — a fixed categorical
-#: priority). Analytics events + nav labels are the maintainer's own
+#: priority). Analytics events + app nav labels are the maintainer's own
 #: product vocabulary (highest trust); i18n namespaces are curated
-#: section labels; i18n leaf values + test titles are dense but noisier.
-#: This ordering decides (a) which source wins a cross-source text
-#: collision in dedup and (b) which anchors survive the MAX_TOTAL_ANCHORS
-#: cap — so the cap keeps the strongest product signal, not the
-#: alphabetically-first long tail.
+#: section labels; i18n leaf values + test titles are dense but noisier;
+#: docs-site nav (page titles of the marketing/docs SITE, not the app)
+#: is the weakest product signal of all. This ordering decides (a) which
+#: source wins a cross-source text collision in dedup and (b) which
+#: anchors survive a cap — so the cap keeps the strongest product signal,
+#: not the alphabetically-first long tail.
 _SOURCE_PRIORITY: dict[AnchorSource, int] = {
     "analytics": 0,
     "nav": 1,
     "docs": 2,
     "i18n": 3,
     "test": 4,
+    "docs_nav": 5,
 }
+
+# ── Alignment-pool curation (which anchors actually feed Stage 6.7d) ─────────
+#: Sources NEVER admitted to the alignment pool by default. Test titles are
+#: dense + noisy (documenso shipped 795/800 test titles — describe/it blocks,
+#: assertions, fixtures — drowning the real product vocabulary). Docs-site nav
+#: is the marketing/docs SITE's page titles, not the APP's features (supabase
+#: shipped 615 docs-site page titles). Both stay EXTRACTED (telemetry) but are
+#: kept OUT of the pool that steers product/journey naming.
+_POOL_EXCLUDED_SOURCES: frozenset[AnchorSource] = frozenset({"test", "docs_nav"})
+#: Per-source cap inside the pool so no single source dominates (the cap is a
+#: list-size bound, NOT a per-repo tuned threshold). Sources absent here are
+#: excluded from the pool entirely (see ``_POOL_EXCLUDED_SOURCES``).
+_POOL_PER_SOURCE_CAP: dict[AnchorSource, int] = {
+    "analytics": 400,
+    "nav": 300,
+    "docs": 200,
+    "i18n": 400,
+}
+#: When the repo has essentially NO product signal (i18n + app-nav + analytics
+#: + docs all tiny — a library/CLI with only tests), test titles are admitted
+#: as a LOW-TRUST FALLBACK so the pool is not empty. ``_FALLBACK_MIN_SIGNAL``
+#: is the "essentially no signal" bound (categorical, not tuned); admitted test
+#: anchors are themselves capped at ``_TEST_FALLBACK_CAP`` so even the fallback
+#: can never produce a test-dominated blob.
+_FALLBACK_MIN_SIGNAL = 12
+_TEST_FALLBACK_CAP = 80
 
 #: Source-string length window (chars). Below/above are noise (ids / blobs).
 _MIN_VALUE_LEN = 3
@@ -98,6 +135,24 @@ _PREFERRED_LOCALE_BASENAMES = frozenset(
 )
 #: Filename substrings that mark a navigation component.
 _NAV_FILENAME_MARKERS = ("nav", "sidebar", "menu", "tabs")
+#: Path substrings (lowercased, POSIX) that mark a DOCS-SITE surface — the
+#: marketing/documentation site, NOT the application. Nav extracted from here
+#: is the site's page-title list (e.g. supabase ``apps/docs`` / ``apps/www``),
+#: which is product *prose* navigation, not the app's feature surface, so it is
+#: tagged ``docs_nav`` and excluded from the alignment pool.
+_DOCS_SITE_PATH_MARKERS = (
+    "/docs/",
+    "/website/",
+    "/content/",
+    "/apps/docs/",
+    "/apps/www/",
+    "/documentation/",
+    "docusaurus",
+    "nextra",
+)
+#: Basename prefixes of known docs-site nav configs (docusaurus ``sidebars.*``,
+#: nextra ``_meta.*``) — treated as docs-site nav regardless of their location.
+_DOCS_NAV_BASENAME_PREFIXES = ("sidebars.", "_meta.")
 #: Path substrings (lowercased) that mark a test file.
 _TEST_PATH_MARKERS = (
     ".test.",
@@ -228,8 +283,11 @@ def _grep_strings(
                     continue
                 seen.add(s)
                 out.append((s, full))
-        if len(seen) >= cap:
-            break
+                # Cap check INSIDE the match loop (F2): a per-file end-of-loop
+                # check could overshoot ``cap`` by a whole file's worth of
+                # matches; bail the instant the cap is reached.
+                if len(seen) >= cap:
+                    return out
     return out
 
 
@@ -253,6 +311,13 @@ def extract_i18n_anchors(repo_root: Path) -> list[ProductAnchor]:
     files = _walk(repo_root, (".json",), _is_locale)[:MAX_LOCALE_FILES]
     anchors: list[ProductAnchor] = []
     for full in files:
+        # Per-VALUE cap (F1): bail before recursing into the next file once the
+        # combined namespace + leaf-value count hits the ceiling. A 215k-value
+        # locale tree (cal.com) would otherwise allocate ~85MB of anchors before
+        # the downstream global cap ever bites. The first ~3000 (sorted-stable)
+        # already saturate the trust-ordered alignment pool.
+        if len(anchors) >= MAX_I18N_VALUES:
+            break
         rel = _relpath(full, repo_root)
         try:
             data = json.loads(Path(full).read_text(encoding="utf-8"))
@@ -260,6 +325,11 @@ def extract_i18n_anchors(repo_root: Path) -> list[ProductAnchor]:
             continue
 
         def _recurse(obj: object, depth: int = 0) -> None:
+            # Stop allocating (and stop traversing) the instant the cap is hit;
+            # the guard lives INSIDE the recursion so a single huge file cannot
+            # blow past MAX_I18N_VALUES.
+            if len(anchors) >= MAX_I18N_VALUES:  # noqa: B023
+                return
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     if depth == 0 and isinstance(key, str) and _is_english(key):
@@ -269,6 +339,8 @@ def extract_i18n_anchors(repo_root: Path) -> list[ProductAnchor]:
                                 ProductAnchor(label, "i18n", f"{rel}#{key}"),  # noqa: B023
                             )
                     _recurse(value, depth + 1)
+                    if len(anchors) >= MAX_I18N_VALUES:  # noqa: B023
+                        return
             elif isinstance(obj, str):
                 s = obj.strip()
                 if (
@@ -282,11 +354,29 @@ def extract_i18n_anchors(repo_root: Path) -> list[ProductAnchor]:
     return anchors
 
 
+def _is_docs_site(path: str) -> bool:
+    """True when ``path`` belongs to a DOCS/MARKETING site, not the app.
+
+    Used to split app navigation (real feature surface, ``nav``) from
+    docs-site navigation (page-title lists, ``docs_nav``). Matches on a
+    docs-site path segment or a known docs-site nav-config basename.
+    """
+    low = path.replace(os.sep, "/").lower()
+    if any(marker in low for marker in _DOCS_SITE_PATH_MARKERS):
+        return True
+    base = os.path.basename(low)
+    return base.startswith(_DOCS_NAV_BASENAME_PREFIXES)
+
+
 def extract_nav_anchors(repo_root: Path) -> list[ProductAnchor]:
     """Navigation components → ``label`` / ``title`` / ``name`` props.
 
     Only files whose basename contains nav/sidebar/menu/tabs are read,
     and only uppercase-initial string props (explicit author intent).
+    Each anchor is tagged ``nav`` (in-app navigation — real feature
+    surface) or ``docs_nav`` (the marketing/docs SITE's page-title nav,
+    which is excluded from the alignment pool — see
+    :func:`build_alignment_pool`). Both are kept for telemetry.
     """
     def _is_nav(path: str) -> bool:
         base = os.path.basename(path).lower()
@@ -295,7 +385,11 @@ def extract_nav_anchors(repo_root: Path) -> list[ProductAnchor]:
     files = _walk(repo_root, _SOURCE_SUFFIXES, _is_nav)
     pairs = _grep_strings(files, (_NAV_RX,), cap=MAX_NAV_STRINGS)
     return [
-        ProductAnchor(text, "nav", _relpath(full, repo_root))
+        ProductAnchor(
+            text,
+            "docs_nav" if _is_docs_site(full) else "nav",
+            _relpath(full, repo_root),
+        )
         for text, full in pairs
     ]
 
@@ -359,18 +453,40 @@ _EXTRACTORS: tuple[Callable[[Path], list[ProductAnchor]], ...] = (
 )
 
 
-def extract_product_anchors(repo_root: Path) -> list[ProductAnchor]:
-    """Run every local source, dedup by lowercased text, cap, and sort.
+def _sort_key(a: ProductAnchor) -> tuple[int, str, str]:
+    """Stable ``(source priority, lowercased text, locator)`` sort key."""
+    return (_SOURCE_PRIORITY.get(a.source, 99), a.text.lower(), a.locator)
 
-    Fully deterministic: identical repo tree → identical output. Each
-    source is guarded — one source raising never aborts the others nor
-    the scan.
 
-    Ordering is ``(source priority, lowercased text, locator)`` so the
-    output is sorted, dedup resolves a cross-source text collision to
-    the higher-trust source, and the ``MAX_TOTAL_ANCHORS`` cap keeps the
-    strongest product signal (analytics / nav) rather than the
-    alphabetically-first long tail of test titles.
+def _dedup_capped(
+    sorted_anchors: list[ProductAnchor], cap: int,
+) -> list[ProductAnchor]:
+    """Dedup by lowercased text (keeping the first = highest-trust), cap.
+
+    ``sorted_anchors`` MUST already be ordered by :func:`_sort_key` so the
+    surviving anchor of a cross-source text collision is the higher-trust one.
+    """
+    out: list[ProductAnchor] = []
+    seen_lower: set[str] = set()
+    for anchor in sorted_anchors:
+        key = anchor.text.lower()
+        if key in seen_lower:
+            continue
+        seen_lower.add(key)
+        out.append(anchor)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def extract_raw_anchors(repo_root: Path) -> list[ProductAnchor]:
+    """Run every local source; return the FULL deduped, sorted extraction.
+
+    This is the RAW telemetry view — every source (incl. ``test`` and
+    ``docs_nav``) is present so per-source counts reflect what the repo
+    actually contains. The curated subset that steers naming is produced
+    by :func:`build_alignment_pool`. Fully deterministic; each source is
+    guarded so one raising never aborts the others nor the scan.
     """
     repo_root = Path(repo_root)
     collected: list[ProductAnchor] = []
@@ -381,48 +497,105 @@ def extract_product_anchors(repo_root: Path) -> list[ProductAnchor]:
             logger.warning(
                 "anchor_extractors: %s failed: %s", extractor.__name__, exc,
             )
+    collected.sort(key=_sort_key)
+    return _dedup_capped(collected, MAX_RAW_ANCHORS)
 
-    collected.sort(
-        key=lambda a: (_SOURCE_PRIORITY.get(a.source, 99), a.text.lower(), a.locator),
-    )
 
-    deduped: list[ProductAnchor] = []
-    seen_lower: set[str] = set()
-    for anchor in collected:
-        key = anchor.text.lower()
-        if key in seen_lower:
+def build_alignment_pool(raw_anchors: list[ProductAnchor]) -> list[ProductAnchor]:
+    """Curate the raw extraction into the pool that feeds Stage 6.7d ALIGN.
+
+    Curation rules (all deterministic, all list-size bounds — no per-repo
+    tuned thresholds):
+
+    * ``test`` + ``docs_nav`` sources are EXCLUDED by default — they are
+      dense/noisy and historically dominated the cap (documenso 795 test
+      titles; supabase 615 docs-site page titles), regressing alignment.
+    * Each admitted source is capped at :data:`_POOL_PER_SOURCE_CAP` so no
+      single source dominates the pool.
+    * FALLBACK: when the curated core signal is essentially empty
+      (``< _FALLBACK_MIN_SIGNAL`` — a library/CLI with only tests), a low
+      cap of ``test`` titles is admitted so the pool is not empty.
+    * Final dedup keeps the highest-trust source on a text collision and
+      bounds the result to :data:`MAX_TOTAL_ANCHORS`.
+
+    Input is assumed sorted by :func:`_sort_key` (as :func:`extract_raw_anchors`
+    returns); the per-source slices therefore keep a stable subset.
+    """
+    by_source: dict[str, list[ProductAnchor]] = {}
+    for a in raw_anchors:
+        by_source.setdefault(a.source, []).append(a)
+
+    core: list[ProductAnchor] = []
+    for source, items in by_source.items():
+        if source in _POOL_EXCLUDED_SOURCES:
             continue
-        seen_lower.add(key)
-        deduped.append(anchor)
-        if len(deduped) >= MAX_TOTAL_ANCHORS:
-            break
-    return deduped
+        core.extend(items[: _POOL_PER_SOURCE_CAP.get(source, MAX_TOTAL_ANCHORS)])
+
+    # Curate (dedup + cap) the core first so the "is there signal?" decision
+    # is made on de-duplicated anchors, not raw collision-padded counts.
+    core.sort(key=_sort_key)
+    pool = _dedup_capped(core, MAX_TOTAL_ANCHORS)
+
+    if len(pool) < _FALLBACK_MIN_SIGNAL:
+        # Essentially no product signal → admit test titles as a low-trust
+        # fallback (capped) rather than ship an empty pool.
+        fallback = by_source.get("test", [])[:_TEST_FALLBACK_CAP]
+        if fallback:
+            merged = pool + fallback
+            merged.sort(key=_sort_key)
+            pool = _dedup_capped(merged, MAX_TOTAL_ANCHORS)
+    return pool
 
 
-def anchor_telemetry(anchors: list[ProductAnchor]) -> dict[str, object]:
+def extract_product_anchors(repo_root: Path) -> list[ProductAnchor]:
+    """The CLEAN alignment pool for a repo — what Stage 6.7d consumes.
+
+    Convenience composition of :func:`extract_raw_anchors` →
+    :func:`build_alignment_pool`. Deterministic: identical repo tree →
+    identical output.
+    """
+    return build_alignment_pool(extract_raw_anchors(repo_root))
+
+
+def anchor_telemetry(
+    anchors: list[ProductAnchor],
+    raw: list[ProductAnchor] | None = None,
+) -> dict[str, object]:
     """Compact ``scan_meta.product_anchors`` payload (counts + small sample).
 
-    NEVER embeds the full anchor list — only per-source counts, the
-    total, and the first ~15 texts (sorted-stable) for eyeballing.
+    ``anchors`` is the CURATED alignment pool (counts under ``total`` /
+    ``by_source`` / ``sample``). When ``raw`` is supplied (the full
+    pre-curation extraction) its per-source counts are added under
+    ``raw_total`` / ``raw_by_source`` so telemetry shows BOTH the noisy
+    extraction and the clean pool. NEVER embeds the full anchor list.
     """
-    by_source: dict[str, int] = {}
-    for anchor in anchors:
-        by_source[anchor.source] = by_source.get(anchor.source, 0) + 1
-    return {
+    def _counts(xs: list[ProductAnchor]) -> dict[str, int]:
+        by: dict[str, int] = {}
+        for a in xs:
+            by[a.source] = by.get(a.source, 0) + 1
+        return dict(sorted(by.items()))
+
+    tel: dict[str, object] = {
         "total": len(anchors),
-        "by_source": dict(sorted(by_source.items())),
+        "by_source": _counts(anchors),
         "sample": [a.text for a in anchors[:15]],
     }
+    if raw is not None:
+        tel["raw_total"] = len(raw)
+        tel["raw_by_source"] = _counts(raw)
+    return tel
 
 
 __all__ = [
     "AnchorSource",
     "ProductAnchor",
     "anchor_telemetry",
+    "build_alignment_pool",
     "extract_analytics_anchors",
     "extract_docs_anchors",
     "extract_i18n_anchors",
     "extract_nav_anchors",
     "extract_product_anchors",
+    "extract_raw_anchors",
     "extract_test_anchors",
 ]

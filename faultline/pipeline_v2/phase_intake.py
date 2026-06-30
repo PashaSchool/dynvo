@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.anchor_extractors import (
     anchor_telemetry,
-    extract_product_anchors,
+    build_alignment_pool,
+    extract_raw_anchors,
 )
 from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stack_auditor import (
@@ -179,16 +180,23 @@ def run_intake_phase(
     # telemetry only; NO current stage changes behaviour off these anchors.
     # Fully guarded — extraction must never crash a scan.
     with StageLogger(run_dir, 0, "anchors") as log_anchors:
+        # RAW = full per-source extraction (telemetry); POOL = curated subset
+        # that feeds Stage 6.7d ALIGN (test titles + docs-site nav excluded,
+        # per-source capped). The POOL is what steers product/journey naming.
+        raw_anchors: list[Any] = []
         anchors: list[Any] = []
         try:
-            anchors = extract_product_anchors(ctx.repo_path)
+            raw_anchors = extract_raw_anchors(ctx.repo_path)
+            anchors = build_alignment_pool(raw_anchors)
         except Exception as exc:  # noqa: BLE001 — never fail a scan on anchors
             log_anchors.warn(f"anchor extraction failed: {exc}")
         ctx.product_anchors = anchors
-        telemetry = anchor_telemetry(anchors)
+        telemetry = anchor_telemetry(anchors, raw=raw_anchors)
         log_anchors.info(
-            f"product_anchors: total={telemetry['total']} "
-            f"by_source={telemetry['by_source']}",
+            f"product_anchors(pool): total={telemetry['total']} "
+            f"by_source={telemetry['by_source']} "
+            f"raw_total={telemetry['raw_total']} "
+            f"raw_by_source={telemetry['raw_by_source']}",
         )
         write_stage_artifact(
             ctx.repo_path,
@@ -196,11 +204,18 @@ def run_intake_phase(
             stage_name="anchors",
             payload={
                 **telemetry,
-                # Full list lives in the artifact (not scan_meta) for
+                # Full lists live in the artifact (not scan_meta) for
                 # replay/debug; scan_meta carries counts + sample only.
+                # ``anchors`` = the curated POOL; ``raw_anchors`` = the
+                # pre-curation extraction (so a regression can be traced to
+                # extraction vs curation).
                 "anchors": [
                     {"text": a.text, "source": a.source, "locator": a.locator}
                     for a in anchors
+                ],
+                "raw_anchors": [
+                    {"text": a.text, "source": a.source, "locator": a.locator}
+                    for a in raw_anchors
                 ],
             },
             run_dir=run_dir,
