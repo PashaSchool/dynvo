@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
+    from faultline.pipeline_v2.anchor_extractors import ProductAnchor
     from faultline.pipeline_v2.git_snapshot import GitSnapshot
     from faultline.pipeline_v2.stage_0_6_shape import ClassificationResult
 
@@ -156,6 +157,14 @@ class ScanContext:
     # and the caller must prepend ``subpath/`` to reconstruct a
     # repo-root-relative path. Emitted into ``scan_meta.subpath``.
     subpath: str | None = None
+    # Phase 1 (anchor-extractors) — deterministic product-capability
+    # anchors extracted from code-grounded sources (i18n / nav /
+    # analytics / test). Populated ONCE by the intake phase via
+    # ``anchor_extractors.extract_product_anchors``; empty until then.
+    # A later stage (6.7d ALIGN, deferred) will consume these to steer
+    # product/journey naming toward maintainer vocabulary. Additive —
+    # no current stage reads it, so absence is a safe no-op.
+    product_anchors: list["ProductAnchor"] = field(default_factory=list)
 
     def with_shape(self, result: "ClassificationResult") -> "ScanContext":
         """Return a NEW ScanContext with the shape-classification fields populated.
@@ -184,6 +193,7 @@ class ScanContext:
             shape_rationale=result.rationale,
             cache_backend=self.cache_backend,
             subpath=self.subpath,
+            product_anchors=list(self.product_anchors),
         )
 
     def with_audited_stack(
@@ -221,6 +231,7 @@ class ScanContext:
             shape_rationale=self.shape_rationale,
             cache_backend=self.cache_backend,
             subpath=self.subpath,
+            product_anchors=list(self.product_anchors),
         )
 
 

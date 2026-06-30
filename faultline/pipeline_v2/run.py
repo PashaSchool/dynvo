@@ -720,6 +720,15 @@ def run_pipeline_v2(
         if k not in {"per_feature", "attached_sample", "elapsed_sec"}
     }
 
+    # Phase 1 (anchor-extractors) telemetry — additive key. Counts +
+    # small sample only; the full anchor list stays in the
+    # 00-stage-anchors.json artifact (never bloat scan_meta).
+    from faultline.pipeline_v2.anchor_extractors import anchor_telemetry as _anchor_tel
+
+    scan_meta["product_anchors"] = _anchor_tel(
+        list(getattr(ctx, "product_anchors", None) or []),
+    )
+
     # Multi-subpath engine telemetry — additive key, only emitted when
     # this run consumed an injected shared git snapshot (no schema-
     # version bump; consumers treat absence as "own git pass").

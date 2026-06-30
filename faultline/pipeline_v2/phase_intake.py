@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from faultline.pipeline_v2.llm_health import LlmHealth
 
 from faultline.llm.cost import CostTracker
+from faultline.pipeline_v2.anchor_extractors import (
+    anchor_telemetry,
+    extract_product_anchors,
+)
 from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stack_auditor import (
     MIN_CONFIDENCE_TO_APPLY,
@@ -165,6 +169,41 @@ def run_intake_phase(
             f"shape={shape_result.shape} "
             f"confidence={shape_result.confidence:.2f} "
             f"matched_signals={list(shape_result.matched_signals)}",
+        )
+
+    # ── Phase 1 — product-capability anchor extraction (deterministic) ──
+    # Deterministic, network-free, README-free extraction of product-grain
+    # capability strings from code-grounded sources (i18n / nav / analytics
+    # / test). Stashed on ``ctx.product_anchors`` for a later ALIGN stage
+    # (6.7d, deferred) to consume. Phase-1 scope = produce + expose +
+    # telemetry only; NO current stage changes behaviour off these anchors.
+    # Fully guarded — extraction must never crash a scan.
+    with StageLogger(run_dir, 0, "anchors") as log_anchors:
+        anchors: list[Any] = []
+        try:
+            anchors = extract_product_anchors(ctx.repo_path)
+        except Exception as exc:  # noqa: BLE001 — never fail a scan on anchors
+            log_anchors.warn(f"anchor extraction failed: {exc}")
+        ctx.product_anchors = anchors
+        telemetry = anchor_telemetry(anchors)
+        log_anchors.info(
+            f"product_anchors: total={telemetry['total']} "
+            f"by_source={telemetry['by_source']}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=0,
+            stage_name="anchors",
+            payload={
+                **telemetry,
+                # Full list lives in the artifact (not scan_meta) for
+                # replay/debug; scan_meta carries counts + sample only.
+                "anchors": [
+                    {"text": a.text, "source": a.source, "locator": a.locator}
+                    for a in anchors
+                ],
+            },
+            run_dir=run_dir,
         )
 
     return IntakeResult(
