@@ -157,6 +157,19 @@ def test_success_path_stagelogger_info_no_spurious_degrade() -> None:
     assert reason.startswith("stage_6_7d:")
 
 
+def test_output_is_deterministically_ordered() -> None:
+    """Phase 1 stability: abstracted product_features + user_flows come back in a
+    stable sort (by name / id) regardless of LLM emission order, so re-scans and
+    independent scans never churn the output array order."""
+    ufs, pfs, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    assert tel["applied"] is True
+    pf_names = [p.name for p in pfs]
+    uf_keys = [(str(u.id or ""), (u.name or "").lower()) for u in ufs]
+    assert pf_names == sorted(pf_names, key=lambda n: (n.lower(), n))
+    assert uf_keys == sorted(uf_keys)
+
+
 def test_rewrites_user_flows_and_product_features() -> None:
     ufs, pfs, dev_map, tel = run_journey_abstraction(
         _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))

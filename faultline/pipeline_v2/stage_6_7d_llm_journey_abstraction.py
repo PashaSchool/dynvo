@@ -602,6 +602,12 @@ def run_journey_abstraction(
         new_ufs = _build_user_flows(uf_specs_, user_flows)
         if not new_pfs or not new_ufs:
             return None
+        # Deterministic output ordering (Phase 1 stability): the LLM emits
+        # features/flows in an order that drifts run-to-run. Sort by a stable key
+        # so the output array order never churns — applies identically to the
+        # live and cache-hit paths, preserving the byte-identical-replay invariant.
+        new_pfs.sort(key=lambda p: ((getattr(p, "name", "") or "").lower(), getattr(p, "name", "") or ""))
+        new_ufs.sort(key=lambda u: (str(getattr(u, "id", "") or ""), (getattr(u, "name", "") or "").lower()))
         tele.update({
             "applied": True, "fallback": None,
             "uf_after": len(new_ufs), "pf_after": len(new_pfs),
