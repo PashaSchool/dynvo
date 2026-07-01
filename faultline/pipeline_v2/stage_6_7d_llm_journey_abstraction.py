@@ -65,6 +65,7 @@ from faultline.pipeline_v2.nav_taxonomy import aggregate_product_feature
 if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
     from faultline.models.types import Feature, Flow, UserFlow
+    from faultline.pipeline_v2.anchor_extractors import ProductAnchor
     from faultline.pipeline_v2.run_logger import StageLogger
 
 logger = logging.getLogger(__name__)
@@ -90,11 +91,17 @@ MAX_ROUTES_DIGEST = 160
 # budget and forced a degrade. Cap to the top-N by member_count (the heaviest,
 # most-supported journeys) — a prompt-size bound, NOT a tuned threshold.
 MAX_USER_FLOWS_DIGEST = 120
+# Anchor-alignment (Phase 2): cap the authoritative anchor vocabulary fed into
+# the align prompt (a prompt-size bound). The GATE below decides align-vs-free-gen.
+MAX_ANCHOR_TEXTS_DIGEST = 160
+# improve-or-no-op gate floor: align only with a viable product taxonomy (a small
+# absolute bound; the primary gate is the anchors>=features ratio — scale-invariant).
+_MIN_ANCHORS_FLOOR = 8
 
 #: Bumped whenever the prompt / reconstruction changes in a way that would make
 #: a previously-cached answer wrong. Part of the cache key, so a bump
 #: transparently invalidates every stale entry.
-ABSTRACTION_CACHE_VERSION = "free-gen-1"
+ABSTRACTION_CACHE_VERSION = "align-1"
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -196,6 +203,52 @@ Return STRICT JSON only, no prose:
 {"product_features":[{"name":"...","description":"..."}],
  "user_flows":[{"name":"...","resource":"...","product_feature":"...","from_flows":["UF-001", ...]}]}"""
 
+
+# ── Alignment system prompt (Phase 2 ALIGN mode — anchors present) ──────────
+# When the gate says a repo has a rich, clean anchor pool, the LLM ALIGNS the
+# code evidence to the AUTHORITATIVE anchor list instead of free-generating.
+# Using anchor text VERBATIM as the name is what makes names STABLE across runs
+# (the Phase-1 finding: free-gen naming drifts; anchors are deterministic).
+_ALIGN_SYSTEM = """You are the product-abstraction layer of a code-intelligence engine.
+A deterministic scanner parsed a repository into CODE-GRAIN artifacts: developer
+features (one per code module/dir), user flows (one per CRUD op), HTTP routes.
+SEPARATELY, a deterministic extractor mined an AUTHORITATIVE list of product
+capabilities from code-grounded sources (i18n labels, navigation, analytics
+events, test titles) — this is `product_capability_anchors`. No README exists.
+
+Your job is ALIGNMENT, not invention. Map the code evidence onto the anchor
+list. Rules in priority order:
+  1. The anchor list is AUTHORITATIVE. Produce ONE product_feature per distinct
+     product capability the anchors describe. Use the ANCHOR TEXT VERBATIM as
+     the canonical `name`: copy the anchor's words EXACTLY — you may only adjust
+     capitalisation to Title Case. Do NOT reword, paraphrase, translate, expand,
+     abbreviate, or "improve" the wording. Drawing names verbatim from the fixed
+     anchor list is REQUIRED — it keeps names stable across runs and faithful to
+     the maintainer's own vocabulary. Consolidate near-duplicate anchors (the
+     same capability worded twice) into one feature, keeping the clearest
+     anchor's text verbatim.
+  2. Produce user_flows that realise those capabilities. Each user_flow's
+     `product_feature` MUST be one of the names you emitted in (1). When a
+     user_flow realises a specific anchor capability, use THAT anchor's text
+     VERBATIM (Title Case ok) as the flow `name` — do not paraphrase it. Only
+     when no single anchor matches the flow, write a short verb phrase grounded
+     in the code evidence.
+  3. GROUP the code under the anchor it serves: set `from_flows` to the list of
+     CURRENT user-flow ids that belong to each journey (member inheritance).
+     `from_flows` may be empty for a capability whose CRUD flows were not
+     detected — never inflate or cap your list to the current_user_flows count.
+  4. Emit an item NOT covered by ANY anchor ONLY when the code evidence clearly
+     shows a real customer capability the anchors missed.
+  5. Do NOT emit anchors that have NO supporting code evidence (an anchor with
+     no related dev feature / route / flow is noise — drop it). Do NOT emit bare
+     code-structure leaks ("lib","web","core","utils","components") as features.
+
+Title Case names; product voice. Ground EVERY item in the supplied evidence.
+
+Return STRICT JSON only, no prose:
+{"product_features":[{"name":"...","description":"..."}],
+ "user_flows":[{"name":"...","resource":"...","product_feature":"...","from_flows":["UF-001", ...]}]}"""
+
 _REATTRIB_SYSTEM = """You assign each developer feature (a code module) to exactly ONE product
 capability from the given list, using the module name and its directory. Every
 developer feature must map to exactly one capability. If a module is generic
@@ -229,6 +282,51 @@ def _top_dirs(paths: list[str], k: int = 2) -> list[str]:
 
 def _short(s: str | None, n: int) -> str:
     return (s or "").strip().replace("\n", " ")[:n]
+
+
+def _canonical_anchor_texts(
+    product_anchors: "list[ProductAnchor] | None",
+) -> list[str]:
+    """Deduped, bounded, stable list of anchor texts for the align prompt.
+
+    Anchors arrive pre-sorted by source trust (analytics > nav > i18n > test).
+    Dedup case-insensitively preserving the first/highest-trust occurrence, cap
+    at MAX_ANCHOR_TEXTS_DIGEST. Pure + stable → identical anchors yield an
+    identical list (a cache-key precondition, and the source of name stability).
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for a in product_anchors or []:
+        text = (getattr(a, "text", "") or "").strip()
+        if not text:
+            continue
+        low = text.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(text)
+        if len(out) >= MAX_ANCHOR_TEXTS_DIGEST:
+            break
+    return out
+
+
+def _anchors_sufficient(
+    product_anchors: "list[ProductAnchor] | None",
+    product_features: list["Feature"],
+) -> bool:
+    """Improve-or-no-op gate: ALIGN only when the clean anchor pool is rich
+    enough to be an authoritative product taxonomy — i.e. at least as many
+    distinct capability anchors as deterministic product features (you cannot
+    align to a bounded target smaller than the #capabilities without
+    under-producing — the documenso 4-anchor failure), and above a small floor.
+    Below that → free-generate (the validated default). Scale-invariant: the
+    primary test is the anchors>=features ratio, not a per-repo tuned number."""
+    distinct = len({
+        (getattr(a, "text", "") or "").strip().lower()
+        for a in (product_anchors or [])
+        if (getattr(a, "text", "") or "").strip()
+    })
+    return distinct >= _MIN_ANCHORS_FLOOR and distinct >= len(product_features or [])
 
 
 def _build_digest(
@@ -280,7 +378,8 @@ def _build_digest(
     }
 
 
-def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: str) -> str:
+def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: str,
+               anchor_sig: str = "") -> str:
     """Stable content hash of (digest + both model ids + version).
 
     Same repo state + same models → same key → cache hit → byte-identical
@@ -295,6 +394,7 @@ def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: s
             "v": ABSTRACTION_CACHE_VERSION,
             "abstraction_model": abstraction_model,
             "reattrib_model": reattrib_model,
+            "anchor_sig": anchor_sig,
             "digest": digest,
         },
         sort_keys=True, ensure_ascii=False,
@@ -510,6 +610,7 @@ def run_journey_abstraction(
     developer_features: list["Feature"],
     routes_index: list[dict[str, Any]],
     *,
+    product_anchors: "list[ProductAnchor] | None" = None,
     client: Any | None = None,
     model: str = DEFAULT_MODEL,
     cost_tracker: CostTracker | None = None,
@@ -585,7 +686,15 @@ def run_journey_abstraction(
         "digest_user_flows": len(digest["current_user_flows"]),
         "digest_routes": len(digest["routes"]),
     })
-    key = _cache_key(digest, abstraction_model, reattrib_model)
+    # Phase 2: decide ALIGN (bounded, anchor-verbatim naming → stable) vs FREE-GEN
+    # (validated default). The gate is improve-or-no-op: sparse-anchor repos fall
+    # back so they never regress. anchor_sig makes align/free-gen cache separately.
+    anchor_texts = _canonical_anchor_texts(product_anchors)
+    aligned = _anchors_sufficient(product_anchors, product_features)
+    tele["aligned"] = aligned
+    tele["anchor_count"] = len(anchor_texts)
+    anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""
+    key = _cache_key(digest, abstraction_model, reattrib_model, anchor_sig)
 
     def _finish(
         abstraction: dict[str, Any], dev_map: dict[str, str],
@@ -656,11 +765,20 @@ def run_journey_abstraction(
     if cli is None:
         return _degrade("no_client")
 
-    # ── Call 1 — abstraction / grain-lift (Sonnet) ────────────────────
+    # ── Call 1 — abstraction / grain-lift (Sonnet); ALIGN when anchors suffice ─
+    if aligned:
+        sys1 = _ALIGN_SYSTEM
+        anchor_block = ("\n\nAUTHORITATIVE product_capability_anchors "
+                        "(align the evidence to these; use verbatim as names):\n"
+                        + json.dumps(anchor_texts, ensure_ascii=False))
+    else:
+        sys1 = _ABSTRACTION_SYSTEM
+        anchor_block = ""
     user1 = ("Repository evidence (code-grounded, no README):\n```json\n"
-             + json.dumps(digest, ensure_ascii=False) + "\n```\nEmit the JSON now.")
+             + json.dumps(digest, ensure_ascii=False) + "\n```" + anchor_block
+             + "\nEmit the JSON now.")
     text1, in1, out1 = _call_haiku(
-        cli, model=abstraction_model, system=_ABSTRACTION_SYSTEM, user=user1,
+        cli, model=abstraction_model, system=sys1, user=user1,
         max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
     tele["llm_calls"] += 1
     tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in1, out1), 6)
