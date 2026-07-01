@@ -64,6 +64,9 @@ _BATCH_DISCOUNT = 0.50
 # accepts it.
 _NO_TEMPERATURE_MODELS: tuple[str, ...] = (
     "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "claude-fable-5",
 )
 
 
@@ -78,17 +81,45 @@ def supports_temperature(model: str) -> bool:
     return not any(model.startswith(prefix) for prefix in _NO_TEMPERATURE_MODELS)
 
 
+# Models that run ADAPTIVE THINKING BY DEFAULT when ``thinking`` is omitted
+# (Sonnet 5, Opus 4.7/4.8). Our stages emit structured JSON, not reasoning —
+# left on, adaptive thinking silently eats the ``max_tokens`` budget and
+# truncates the JSON mid-object (observed: Sonnet-5 abstraction hit out==16000
+# exactly, unbalanced braces, "abstraction_parse_failed"). These models ACCEPT
+# ``thinking:{type:"disabled"}`` (Fable 5 does NOT — it 400s and is always-on —
+# so it is deliberately excluded; Haiku 4.5 doesn't default-on and is excluded
+# too). Gate it through ``thinking_disabled`` at every messages.create site.
+_ADAPTIVE_THINKING_DEFAULT_MODELS: tuple[str, ...] = (
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+)
+
+
+def thinking_disabled(model: str) -> bool:
+    """True when we should send ``thinking:{type:"disabled"}`` for ``model``.
+
+    Only for models that default adaptive-thinking ON *and* accept an explicit
+    disable — so a JSON-extraction stage keeps its full output budget.
+    """
+    return any(model.startswith(p) for p in _ADAPTIVE_THINKING_DEFAULT_MODELS)
+
+
 def deterministic_params(model: str) -> dict[str, Any]:
     """Return the kwargs to splat into ``messages.create``.
 
     ``temperature=0`` for determinism (omitted on models that dropped it),
-    plus — when a pipeline stage is active — an ``extra_headers`` marker so the
-    local dev proxy can attribute each LLM call to the exact stage that issued
-    it. Harmless in prod: the real Anthropic API ignores the unknown header.
+    ``thinking:{type:"disabled"}`` on models that would otherwise burn the
+    output budget on adaptive thinking (Sonnet 5 / Opus 4.7-4.8), plus — when a
+    pipeline stage is active — an ``extra_headers`` marker so the local dev
+    proxy can attribute each LLM call to the stage that issued it. Harmless in
+    prod: the real Anthropic API ignores the unknown header.
     """
     params: dict[str, Any] = {}
     if supports_temperature(model):
         params["temperature"] = 0
+    if thinking_disabled(model):
+        params["thinking"] = {"type": "disabled"}
     stage = current_stage()
     if stage:
         params["extra_headers"] = {

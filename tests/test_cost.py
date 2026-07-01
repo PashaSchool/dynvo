@@ -232,7 +232,19 @@ class TestTemperatureSupport:
         assert deterministic_params("claude-sonnet-4-6") == {"temperature": 0}
 
     def test_deterministic_params_opus_4_7(self) -> None:
-        assert deterministic_params("claude-opus-4-7") == {}
+        # Opus 4.7 drops temperature AND defaults adaptive-thinking on, so we
+        # disable thinking to keep the full output budget for structured JSON.
+        assert deterministic_params("claude-opus-4-7") == {"thinking": {"type": "disabled"}}
+
+    def test_deterministic_params_sonnet_5_disables_thinking(self) -> None:
+        # Sonnet 5: no temperature, thinking disabled (else adaptive thinking
+        # eats max_tokens and truncates the JSON).
+        assert deterministic_params("claude-sonnet-5") == {"thinking": {"type": "disabled"}}
+
+    def test_deterministic_params_fable_5_no_thinking_key(self) -> None:
+        # Fable 5 is always-on thinking and 400s on {"type":"disabled"} — must
+        # NOT be sent the key (and temperature is also dropped).
+        assert deterministic_params("claude-fable-5") == {}
 
     def test_deterministic_params_unknown_model(self) -> None:
         # Unknown models default to supporting temperature — safer to

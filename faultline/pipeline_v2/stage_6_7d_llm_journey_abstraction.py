@@ -8,7 +8,9 @@ The deterministic pipeline emits CODE-grain artifacts: Stage 6.7 rolls flows
 into one ``user_flow`` PER CRUD operation (1.5-4.4x over-produced vs a curated
 journey golden), and Stage 6.5's workspace clusterer RE-LUMPS dev features into
 coarse ``product_features``. When ENABLED, this stage REWRITES both arrays at
-product/journey grain via two Haiku calls over a CODE-grounded digest:
+product/journey grain via two LLM calls over a CODE-grounded digest — Call 1
+(the grain-lift) on SONNET by default (validated model; Haiku is too weak), Call
+2 (re-attribution) on the passed model (Haiku on a default scan):
 
   Call 1 (abstraction) — coarsen redundant CRUD variants of the SAME resource
     into one journey, PRESERVE distinct capabilities, and SURFACE cross-cutting
@@ -48,28 +50,51 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import os
 import re
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any, Callable
 
+from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params, estimate_call_cost
 from faultline.llm.model_gateway import resolve_model as gateway_model
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.nav_taxonomy import aggregate_product_feature
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.models.types import Feature, Flow, UserFlow
     from faultline.pipeline_v2.run_logger import StageLogger
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-ABSTRACTION_MAX_TOKENS = 8000
+# The abstraction (Call 1) grain-lift was validated on SONNET — Haiku is too
+# weak for it (it degrades + under-produces). The stage therefore resolves its
+# abstraction model from a DEDICATED env, INDEPENDENT of the scan's main
+# model_id (which stays Haiku for cost). Call 2 (re-attribution) is a cheap
+# mechanical map and stays on the passed model_id (Haiku) — the validated
+# "Sonnet + Haiku" combo. Override via FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL.
+DEFAULT_ABSTRACTION_MODEL = "claude-sonnet-4-6"
+ABSTRACTION_MODEL_ENV = "FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL"
+# ~50-120 coarsened UFs + ~30-60 PFs must fit in ONE structured response on a
+# large repo (dub). 8k truncated the JSON on big repos → parse-fail → degrade.
+ABSTRACTION_MAX_TOKENS = 16000
 REATTRIB_MAX_TOKENS = 16000
-COST_CAP_USD = 0.50            # whole-stage guard against a runaway response
+COST_CAP_USD = 0.60            # whole-stage guard against a runaway response
 MAX_DEV_FEATURES_DIGEST = 200  # abstraction digest cap (re-attrib sees all)
 MAX_ROUTES_DIGEST = 160
+# The CURRENT user flows are SUPPORTING detail in the abstraction prompt (the
+# model coarsens them). On dub (222 UFs) the raw list blew the prompt/output
+# budget and forced a degrade. Cap to the top-N by member_count (the heaviest,
+# most-supported journeys) — a prompt-size bound, NOT a tuned threshold.
+MAX_USER_FLOWS_DIGEST = 120
+
+#: Bumped whenever the prompt / reconstruction changes in a way that would make
+#: a previously-cached answer wrong. Part of the cache key, so a bump
+#: transparently invalidates every stale entry.
+ABSTRACTION_CACHE_VERSION = "free-gen-1"
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -107,6 +132,15 @@ def _default_client_factory() -> Any | None:  # pragma: no cover - IO
 
 def is_enabled() -> bool:
     return os.environ.get(ENV_FLAG, "0") != "0"
+
+
+def resolve_abstraction_model() -> str:
+    """Model for Call 1 (the grain-lift). Read from
+    :data:`ABSTRACTION_MODEL_ENV`, defaulting to :data:`DEFAULT_ABSTRACTION_MODEL`
+    (Sonnet) — DELIBERATELY decoupled from the scan's main model_id so the
+    abstraction always runs on the model it was validated on, even on a
+    Haiku-default scan. An empty env value falls back to the default."""
+    return os.environ.get(ABSTRACTION_MODEL_ENV, "").strip() or DEFAULT_ABSTRACTION_MODEL
 
 
 # ── System prompts ──────────────────────────────────────────────────────────
@@ -203,7 +237,11 @@ def _build_digest(
     user_flows: list["UserFlow"],
     routes_index: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    devf = sorted(developer_features, key=lambda f: -(f.total_commits or 0))
+    # Secondary key (name) breaks commit-count ties deterministically — else
+    # equal-commit modules keep input order (nondeterministic) and the digest
+    # JSON varies run-to-run, defeating the content-hash cache (byte-identical
+    # re-scan). Same reason for the UF + re-attribution sorts below.
+    devf = sorted(developer_features, key=lambda f: (-(f.total_commits or 0), f.name or ""))
     dev_lines = [
         {"name": f.display_name or f.name, "where": _top_dirs(_paths_of(f)),
          "what": _short(f.description, 90)}
@@ -213,10 +251,15 @@ def _build_digest(
         {"name": p.display_name or p.name, "what": _short(p.description, 110)}
         for p in product_features
     ]
+    # CURRENT user flows are only SUPPORTING detail — cap to the top-N by
+    # member_count so a large repo (dub: 222 UFs) can't blow the prompt/output
+    # budget and force a degrade. The heaviest journeys carry the most signal;
+    # the rest are redundant CRUD variants the model would coarsen away anyway.
+    ufs_by_weight = sorted(user_flows, key=lambda u: (-(u.member_count or 0), u.id or ""))
     uf_lines = [
         {"id": u.id, "name": u.name, "resource": u.resource,
          "domain": u.domain, "intent": u.intent}
-        for u in user_flows
+        for u in ufs_by_weight[:MAX_USER_FLOWS_DIGEST]
     ]
     seen: set[tuple] = set()
     routes: list[dict[str, Any]] = []
@@ -235,6 +278,28 @@ def _build_digest(
         "current_user_flows": uf_lines,
         "routes": routes,
     }
+
+
+def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: str) -> str:
+    """Stable content hash of (digest + both model ids + version).
+
+    Same repo state + same models → same key → cache hit → byte-identical
+    output on re-scan. ``sort_keys`` makes the JSON canonical. The abstraction
+    model is part of the key so flipping FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL
+    transparently invalidates stale entries. Content-keyed (same input → same
+    answer), so this is a deterministic short-circuit, NOT per-repo memory —
+    compliant with rule-cold-scan.
+    """
+    payload = json.dumps(
+        {
+            "v": ABSTRACTION_CACHE_VERSION,
+            "abstraction_model": abstraction_model,
+            "reattrib_model": reattrib_model,
+            "digest": digest,
+        },
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 # ── LLM call (mirrors stage_6_7b._call_haiku) ───────────────────────────────
@@ -448,6 +513,7 @@ def run_journey_abstraction(
     client: Any | None = None,
     model: str = DEFAULT_MODEL,
     cost_tracker: CostTracker | None = None,
+    cache: "CacheBackend | None" = None,
     log: "StageLogger | None" = None,
     llm_health: LlmHealth | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
@@ -455,11 +521,24 @@ def run_journey_abstraction(
     """Rewrite user_flows[] + product_features[] at journey/capability grain.
 
     Returns ``(user_flows, product_features, dev_to_product_map, telemetry)``.
-    On ANY failure the ORIGINAL inputs are returned unchanged (degrade), and
-    ``dev_to_product_map`` is ``None`` (caller keeps its existing mapping).
+
+    NEVER-WORSE INVARIANT (operator's core requirement): on ANY failure path —
+    no client, LLM exception, empty / unparseable output, re-attribution
+    failure, cost-cap, empty reconstruction — the ORIGINAL deterministic
+    ``user_flows`` + ``product_features`` are returned UNCHANGED (object
+    identity), ``dev_to_product_map`` is ``None`` (caller keeps its mapping),
+    and ``telemetry["fallback"]`` is set to the reason string. On success
+    ``telemetry["fallback"]`` is ``None`` and ``applied`` is ``True``.
+
+    Call 1 (abstraction / grain-lift) runs on :func:`resolve_abstraction_model`
+    (Sonnet by default) regardless of ``model``. Call 2 (re-attribution) runs
+    on the passed ``model`` (Haiku on a default scan). ``cache`` (when supplied)
+    content-keys the two structured LLM outputs so a re-scan of an unchanged
+    repo replays byte-identical output at $0.
     """
     tele: dict[str, Any] = {
         "enabled": True, "applied": False, "degraded_reason": None,
+        "fallback": None, "cache_hit": False,
         "uf_before": len(user_flows), "uf_after": len(user_flows),
         "pf_before": len(product_features), "pf_after": len(product_features),
         "files_before": 0, "files_after": 0, "cost_usd": 0.0, "llm_calls": 0,
@@ -467,13 +546,24 @@ def run_journey_abstraction(
     files_before = sum(len(_paths_of(p)) for p in product_features)
     tele["files_before"] = files_before
 
-    cli = client if client is not None else _client_factory()
-    if cli is None:
-        tele["degraded_reason"] = "no_client"
+    def _degrade(reason: str) -> tuple[
+        list["UserFlow"], list["Feature"], None, dict[str, Any]
+    ]:
+        """Never-worse exit: return the ORIGINAL inputs UNCHANGED (identity) and
+        record the fallback reason. Every early-return in this function routes
+        through here, so no failure path can ever emit a partial/degenerate
+        result — the deterministic Stage 6.5/6.7 output passes through."""
+        tele["degraded_reason"] = reason
+        tele["fallback"] = reason
         return user_flows, product_features, None, tele
+
+    abstraction_model = resolve_abstraction_model()
+    reattrib_model = model
+    tele["abstraction_model"] = abstraction_model
+    tele["reattrib_model"] = reattrib_model
+
     if not developer_features:
-        tele["degraded_reason"] = "no_dev_features"
-        return user_flows, product_features, None, tele
+        return _degrade("no_dev_features")
 
     def _record(model_: str, in_tok: int, out_tok: int) -> float:
         cost = estimate_call_cost(model_, in_tok, out_tok) if (in_tok or out_tok) else 0.0
@@ -485,78 +575,156 @@ def run_journey_abstraction(
                 pass
         return cost
 
-    # ── Call 1 — abstraction ──────────────────────────────────────────
+    # ── Digest + input-size telemetry (large-repo robustness) ─────────
     digest = _build_digest(developer_features, product_features, user_flows, routes_index)
+    tele.update({
+        "input_dev_features": len(developer_features),
+        "input_user_flows": len(user_flows),
+        "input_routes": len(routes_index),
+        "digest_dev_features": len(digest["developer_features"]),
+        "digest_user_flows": len(digest["current_user_flows"]),
+        "digest_routes": len(digest["routes"]),
+    })
+    key = _cache_key(digest, abstraction_model, reattrib_model)
+
+    def _finish(
+        abstraction: dict[str, Any], dev_map: dict[str, str],
+    ) -> tuple[list["UserFlow"], list["Feature"],
+               dict[str, tuple[str, ...]], dict[str, Any]] | None:
+        """Reconstruct the rewritten arrays from the two structured outputs and
+        stamp success telemetry. Shared by the LIVE path and the cache-hit path
+        — identical inputs → identical objects, so a cache hit is byte-identical
+        to the original live run. Returns ``None`` on an empty reconstruction."""
+        uf_specs_ = abstraction.get("user_flows") or []
+        pf_specs_ = abstraction.get("product_features") or []
+        new_pfs, dev_to_product, files_after = _build_product_features(
+            pf_specs_, dev_map, developer_features)
+        new_ufs = _build_user_flows(uf_specs_, user_flows)
+        if not new_pfs or not new_ufs:
+            return None
+        tele.update({
+            "applied": True, "fallback": None,
+            "uf_after": len(new_ufs), "pf_after": len(new_pfs),
+            "files_after": files_after, "dev_mapped": len(dev_map),
+            "dev_total": len(developer_features),
+            "residual_devs": sum(1 for d in developer_features
+                                 if (d.display_name or d.name) not in dev_map),
+        })
+        if log is not None:
+            # StageLogger.info(reason, feature=None, **extra) takes only 2-3
+            # positional args — pre-format the message (%-style separate args
+            # raise TypeError, which the caller's broad except turns into a
+            # spurious "reconstruct_exception" degrade on the success path).
+            log.info(
+                "stage_6_7d: UF %d->%d, PF %d->%d, files %d->%d, dev_mapped %d/%d, "
+                "abs_model=%s cache_hit=%s $%.4f" % (
+                    tele["uf_before"], tele["uf_after"], tele["pf_before"], tele["pf_after"],
+                    files_before, files_after, tele["dev_mapped"], tele["dev_total"],
+                    abstraction_model, tele["cache_hit"], tele["cost_usd"],
+                )
+            )
+        return new_ufs, new_pfs, dev_to_product, tele
+
+    # ── Cache lookup — content-keyed replay (byte-identical re-scan) ──
+    if cache is not None:
+        try:
+            cached = cache.get(CacheKind.LLM_ABSTRACTION.value, key)
+        except Exception:  # noqa: BLE001 — a cache fault must never abort the stage
+            cached = None
+        if isinstance(cached, dict) and cached.get("v") == ABSTRACTION_CACHE_VERSION:
+            c_abs = cached.get("abstraction") or {}
+            c_map_raw = cached.get("map") or {}
+            c_map = {k: v for k, v in c_map_raw.items()
+                     if isinstance(k, str) and isinstance(v, str)}
+            if c_abs.get("user_flows") and c_abs.get("product_features") and c_map:
+                tele["cache_hit"] = True
+                try:
+                    result = _finish(c_abs, c_map)
+                except Exception:  # noqa: BLE001 — malformed cache must never crash
+                    result = None
+                if result is not None:
+                    return result
+                tele["cache_hit"] = False  # malformed → fall through to live call
+
+    cli = client if client is not None else _client_factory()
+    if cli is None:
+        return _degrade("no_client")
+
+    # ── Call 1 — abstraction / grain-lift (Sonnet) ────────────────────
     user1 = ("Repository evidence (code-grounded, no README):\n```json\n"
              + json.dumps(digest, ensure_ascii=False) + "\n```\nEmit the JSON now.")
     text1, in1, out1 = _call_haiku(
-        cli, model=model, system=_ABSTRACTION_SYSTEM, user=user1,
+        cli, model=abstraction_model, system=_ABSTRACTION_SYSTEM, user=user1,
         max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
     tele["llm_calls"] += 1
-    cost1 = _record(model, in1, out1)
-    tele["cost_usd"] = round(tele["cost_usd"] + cost1, 6)
+    tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in1, out1), 6)
     parsed1 = _parse_json(text1)
     if not parsed1:
-        tele["degraded_reason"] = "abstraction_parse_failed"
-        return user_flows, product_features, None, tele
-    uf_specs = parsed1.get("user_flows") or []
-    pf_specs = parsed1.get("product_features") or []
-    if not uf_specs or not pf_specs:
-        tele["degraded_reason"] = "abstraction_empty"
-        return user_flows, product_features, None, tele
-    if tele["cost_usd"] > COST_CAP_USD:
-        tele["degraded_reason"] = f"cost_cap ${tele['cost_usd']:.4f}"
-        return user_flows, product_features, None, tele
+        return _degrade("abstraction_parse_failed")
 
-    # ── Call 2 — dev → capability re-attribution ──────────────────────
+    # Sanitise at the boundary: keep only specs whose "name" is a non-empty
+    # string. An LLM can emit a numeric/None name in otherwise-valid JSON, and
+    # every downstream consumer calls ``.strip()``/``.get()`` on it — dropping
+    # them here means no reconstruction path can raise (never-worse). If this
+    # empties a list, degrade rather than proceed on garbage.
+    def _valid_spec(s: Any) -> bool:
+        return (isinstance(s, dict) and isinstance(s.get("name"), str)
+                and bool(s.get("name").strip()))
+
+    uf_specs = [s for s in (parsed1.get("user_flows") or []) if _valid_spec(s)]
+    pf_specs = [s for s in (parsed1.get("product_features") or []) if _valid_spec(s)]
+    if not uf_specs or not pf_specs:
+        return _degrade("abstraction_empty")
+    parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
+    if tele["cost_usd"] > COST_CAP_USD:
+        return _degrade(f"cost_cap ${tele['cost_usd']:.4f}")
+
+    # ── Call 2 — dev → capability re-attribution (Haiku / passed model) ─
     caps = [s.get("name", "").strip() for s in pf_specs if s.get("name", "").strip()]
     caps_with_residual = caps + [_RESIDUAL_CAP]
     dev_items = [
         {"name": f.display_name or f.name, "where": _top_dirs(_paths_of(f)),
          "n_files": len(_paths_of(f))}
-        for f in sorted(developer_features, key=lambda f: -len(_paths_of(f)))
+        for f in sorted(developer_features, key=lambda f: (-len(_paths_of(f)), f.name or ""))
     ]
     user2 = ("Product capabilities:\n" + json.dumps(caps_with_residual) +
              "\n\nDeveloper features (name, dir, file count):\n" +
              json.dumps(dev_items, ensure_ascii=False) +
              "\n\nReturn the full map now (every dev feature mapped).")
     text2, in2, out2 = _call_haiku(
-        cli, model=model, system=_REATTRIB_SYSTEM, user=user2,
+        cli, model=reattrib_model, system=_REATTRIB_SYSTEM, user=user2,
         max_tokens=REATTRIB_MAX_TOKENS, llm_health=llm_health)
     tele["llm_calls"] += 1
-    cost2 = _record(model, in2, out2)
-    tele["cost_usd"] = round(tele["cost_usd"] + cost2, 6)
+    tele["cost_usd"] = round(tele["cost_usd"] + _record(reattrib_model, in2, out2), 6)
     parsed2 = _parse_json(text2)
     dev_map_raw = (parsed2 or {}).get("map") or {}
     dev_map = {k: v for k, v in dev_map_raw.items() if isinstance(k, str) and isinstance(v, str)}
     # Re-attribution failed entirely (LLM error / bad JSON / health-blocked):
     # without it every dev feature would collapse into the Shared Platform
     # residual, emitting a degenerate single-blob product layer. Degrade fully
-    # — return the ORIGINAL arrays unchanged (graceful-degrade invariant).
+    # — return the ORIGINAL arrays unchanged (never-worse invariant).
     if not dev_map:
-        tele["degraded_reason"] = "reattrib_failed"
-        return user_flows, product_features, None, tele
+        return _degrade("reattrib_failed")
+
+    # ── Persist the two structured outputs for byte-identical replay ──
+    if cache is not None:
+        try:
+            cache.set(CacheKind.LLM_ABSTRACTION.value, key, {
+                "v": ABSTRACTION_CACHE_VERSION,
+                "abstraction": {"product_features": pf_specs, "user_flows": uf_specs},
+                "map": dev_map,
+            })
+        except Exception:  # noqa: BLE001 — a cache write fault must not abort
+            pass
 
     # ── Reconstruct (conservation guaranteed — residual catches omits) ─
-    new_pfs, dev_to_product, files_after = _build_product_features(
-        pf_specs, dev_map, developer_features)
-    new_ufs = _build_user_flows(uf_specs, user_flows)
-    if not new_pfs or not new_ufs:
-        tele["degraded_reason"] = "reconstruct_empty"
-        return user_flows, product_features, None, tele
-
-    tele.update({
-        "applied": True, "uf_after": len(new_ufs), "pf_after": len(new_pfs),
-        "files_after": files_after, "dev_mapped": len(dev_map),
-        "dev_total": len(developer_features),
-        "residual_devs": sum(1 for d in developer_features
-                             if (d.display_name or d.name) not in dev_map),
-    })
-    if log is not None:
-        log.info(
-            "stage_6_7d: UF %d->%d, PF %d->%d, files %d->%d, dev_mapped %d/%d, $%.4f",
-            tele["uf_before"], tele["uf_after"], tele["pf_before"], tele["pf_after"],
-            files_before, files_after, tele["dev_mapped"], tele["dev_total"],
-            tele["cost_usd"],
-        )
-    return new_ufs, new_pfs, dev_to_product, tele
+    # Never-worse: any reconstruction error (e.g. LLM returns a non-string
+    # "name" → .strip() raises) degrades to the original deterministic arrays
+    # rather than crashing the scan.
+    try:
+        result = _finish(parsed1, dev_map)
+    except Exception:  # noqa: BLE001
+        return _degrade("reconstruct_exception")
+    if result is None:
+        return _degrade("reconstruct_empty")
+    return result

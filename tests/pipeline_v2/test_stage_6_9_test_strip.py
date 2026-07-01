@@ -19,6 +19,7 @@ from faultline.models.types import (
     FlowLocEdge,
     FlowLocNode,
     FlowSymbolAttribution,
+    MemberFile,
     SymbolAttribution,
 )
 from faultline.pipeline_v2.stage_6_9_test_strip import (
@@ -154,6 +155,34 @@ def test_feature_paths_and_attributions_stripped() -> None:
     assert [a.file_path for a in f.shared_attributions] == ["app/util.ts"]
     assert stats["paths_removed"] == 3
     assert stats["features_dropped"] == 0
+
+
+def test_feature_member_files_stripped() -> None:
+    """member_files — the full-provenance ledger the dashboard / blob metrics
+    read — must be swept too. Otherwise test files stripped from ``paths``
+    linger here and inflate the feature's apparent size (the Soc0 ``backend``
+    case leaked 336 test files: 315 real paths shown as a 653-file blob)."""
+    f = _feature(
+        "backend",
+        ["backend/services/auth.py"],  # paths already test-free
+        member_files=[
+            MemberFile(path="backend/services/auth.py", role="anchor",
+                       confidence=1.0, primary=True),
+            MemberFile(path="backend/tests/test_auth.py", role="closure",
+                       confidence=0.5),
+            MemberFile(path="backend/services/util.py", role="closure",
+                       confidence=0.5),
+        ],
+    )
+    stats = strip_test_paths([f], [])
+    kept = [m.path for m in f.member_files]
+    assert kept == ["backend/services/auth.py", "backend/services/util.py"]
+    # feature survives (paths non-empty) and metric scalars are untouched
+    assert f.paths == ["backend/services/auth.py"]
+    assert f.health_score == 80.0
+    assert f.coverage_pct == 42.5
+    assert stats["features_dropped"] == 0
+    assert stats["paths_removed"] == 1  # the one leaked test MemberFile
 
 
 def test_flow_attributions_and_loc_nodes_stripped() -> None:
