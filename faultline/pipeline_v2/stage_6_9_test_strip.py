@@ -193,8 +193,16 @@ def _strip_attr(obj: Any, attr: str, *, edges: bool = False) -> int:
 
 
 # Fields swept per object kind. Tolerant: missing attrs are skipped.
+# ``member_files`` is the full-provenance membership ledger (Stage 2.6 +
+# Stage 8.5 backfill, which both run BEFORE this stage). It must be swept
+# too, else test files stripped from ``paths`` linger here and inflate the
+# feature's apparent size — the dashboard / blob metrics read member_files,
+# so an un-stripped ledger makes a 315-file feature look like 653 (the
+# Soc0 ``backend`` case: 336 leaked test files). Each entry is a MemberFile
+# whose ``.path`` the shared ``_path_of`` accessor resolves.
 _FEATURE_LIST_ATTRS = (
     "paths",
+    "member_files",
     "symbol_attributions",
     "shared_attributions",
     "participants",
