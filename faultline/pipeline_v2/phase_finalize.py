@@ -499,6 +499,29 @@ def run_finalize_phase(
             )
         scan_meta["stage_6_7d_journey_abstraction"] = dict(s67d_telemetry)
 
+    # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
+    # Attach code + product-source anchor corroboration + a confidence score to
+    # the final product features / user flows. Anchors are EVIDENCE here (a match
+    # confirms a name), not a naming constraint — safe on noisy pools. Best-effort.
+    from faultline.pipeline_v2.dual_evidence import dual_evidence_enabled
+    if dual_evidence_enabled():
+        with StageLogger(run_dir, 6, "dual_evidence") as log_de:
+            try:
+                from faultline.pipeline_v2.anchor_extractors import (
+                    build_alignment_pool, extract_raw_anchors,
+                )
+                from faultline.pipeline_v2.dual_evidence import attach_dual_evidence
+                _de_anchors = build_alignment_pool(extract_raw_anchors(repo_path))
+                de_stats = attach_dual_evidence(product_features, user_flows, _de_anchors)
+                scan_meta["stage_dual_evidence"] = dict(de_stats)
+                log_de.info(
+                    "dual_evidence: pf %d/%d, uf %d/%d corroborated" % (
+                        de_stats["pf_corroborated"], de_stats["pf"],
+                        de_stats["uf_corroborated"], de_stats["uf"]),
+                    feature=None)
+            except Exception as _de_exc:  # noqa: BLE001 — evidence is best-effort, never fatal
+                log_de.info(f"dual_evidence skipped: {_de_exc}", feature=None)
+
     # ── Stage 6.95 — per-entity git-history timeline ────────────────
     # Deterministic, pure, $0 LLM. Runs LAST before output by design:
     # product-feature ``paths`` are final (Stage 8 + 8.5) and user-flow
