@@ -611,12 +611,17 @@ def run_journey_abstraction(
                                  if (d.display_name or d.name) not in dev_map),
         })
         if log is not None:
+            # StageLogger.info(reason, feature=None, **extra) takes only 2-3
+            # positional args — pre-format the message (%-style separate args
+            # raise TypeError, which the caller's broad except turns into a
+            # spurious "reconstruct_exception" degrade on the success path).
             log.info(
                 "stage_6_7d: UF %d->%d, PF %d->%d, files %d->%d, dev_mapped %d/%d, "
-                "abs_model=%s cache_hit=%s $%.4f",
-                tele["uf_before"], tele["uf_after"], tele["pf_before"], tele["pf_after"],
-                files_before, files_after, tele["dev_mapped"], tele["dev_total"],
-                abstraction_model, tele["cache_hit"], tele["cost_usd"],
+                "abs_model=%s cache_hit=%s $%.4f" % (
+                    tele["uf_before"], tele["uf_after"], tele["pf_before"], tele["pf_after"],
+                    files_before, files_after, tele["dev_mapped"], tele["dev_total"],
+                    abstraction_model, tele["cache_hit"], tele["cost_usd"],
+                )
             )
         return new_ufs, new_pfs, dev_to_product, tele
 
