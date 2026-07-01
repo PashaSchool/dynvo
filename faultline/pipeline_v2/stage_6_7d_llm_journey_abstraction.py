@@ -724,8 +724,12 @@ def run_journey_abstraction(
         # features/flows in an order that drifts run-to-run. Sort by a stable key
         # so the output array order never churns — applies identically to the
         # live and cache-hit paths, preserving the byte-identical-replay invariant.
+        # Sort by CONTENT-derived keys only. NB: UserFlow.id is "UF-NNN" assigned
+        # from the LLM's emission POSITION, so sorting by id would be a no-op (it
+        # re-encodes the drifting response order) — use name+resource so identical
+        # output content yields identical array order across independent runs.
         new_pfs.sort(key=lambda p: ((getattr(p, "name", "") or "").lower(), getattr(p, "name", "") or ""))
-        new_ufs.sort(key=lambda u: (str(getattr(u, "id", "") or ""), (getattr(u, "name", "") or "").lower()))
+        new_ufs.sort(key=lambda u: ((getattr(u, "name", "") or "").lower(), str(getattr(u, "resource", "") or "")))
         tele.update({
             "applied": True, "fallback": None,
             "uf_after": len(new_ufs), "pf_after": len(new_pfs),

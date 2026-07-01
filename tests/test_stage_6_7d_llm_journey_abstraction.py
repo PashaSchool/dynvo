@@ -218,9 +218,22 @@ def test_output_is_deterministically_ordered() -> None:
         _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
     assert tel["applied"] is True
     pf_names = [p.name for p in pfs]
-    uf_keys = [(str(u.id or ""), (u.name or "").lower()) for u in ufs]
+    uf_names = [(u.name or "").lower() for u in ufs]
     assert pf_names == sorted(pf_names, key=lambda n: (n.lower(), n))
-    assert uf_keys == sorted(uf_keys)
+    assert uf_names == sorted(uf_names)
+
+
+def test_output_order_stable_across_llm_emission_order() -> None:
+    """Regression (audit 2026-07-01): the UF/PF sort must be CONTENT-derived so two
+    runs whose LLM emits the SAME items in a DIFFERENT order produce the SAME final
+    array order. A position-derived (UF-id) sort is a no-op and fails this."""
+    payload = json.loads(_ABS)
+    rev = json.dumps({"product_features": list(reversed(payload["product_features"])),
+                      "user_flows": list(reversed(payload["user_flows"]))})
+    u1, p1, _m, _t = run_journey_abstraction(_ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    u2, p2, _m, _t = run_journey_abstraction(_ufs(), _pfs(), _devs(), [], client=_client(rev, _MAP_FULL))
+    assert [u.name for u in u1] == [u.name for u in u2]
+    assert [p.name for p in p1] == [p.name for p in p2]
 
 
 def test_rewrites_user_flows_and_product_features() -> None:
