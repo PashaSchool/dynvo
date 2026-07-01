@@ -142,7 +142,9 @@ def test_enumerate_candidates_pulls_exports_and_lines(tmp_path: Path) -> None:
         ),
     )
     feature = _feature("billing", ("app/billing/page.tsx",))
-    exports, routes, sym_loc = _enumerate_candidates(feature, str(tmp_path))
+    exports, routes, sym_loc, content_sig = _enumerate_candidates(
+        feature, str(tmp_path),
+    )
     assert "BillingPage" in exports
     assert "billingHelper" in exports
     # Next.js route handler counts as both an export and route.
@@ -150,6 +152,9 @@ def test_enumerate_candidates_pulls_exports_and_lines(tmp_path: Path) -> None:
     # Each export records a (file, start_line) tuple.
     assert sym_loc["BillingPage"][0] == "app/billing/page.tsx"
     assert sym_loc["BillingPage"][1] >= 1
+    # Content signature: one stable hash per parsed file.
+    assert content_sig["app/billing/page.tsx"]
+    assert content_sig == _enumerate_candidates(feature, str(tmp_path))[3]
 
 
 def test_parse_response_handles_fenced_json() -> None:

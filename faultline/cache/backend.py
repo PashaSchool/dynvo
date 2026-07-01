@@ -65,6 +65,17 @@ class CacheKind(str, Enum):
     # Content-keyed (same input → same answer) so this is a deterministic
     # short-circuit, not per-repo memory — compliant with rule-cold-scan.
     LLM_RESIDUAL = "llm-residual"
+    # Stage 3 flow detection: one entry per developer-feature flow-detection
+    # unit, keyed on the content hash of that unit's LLM input (system prompt
+    # + feature slug + sorted paths + extracted exports/routes + per-file
+    # source-content signature + canonical model + cache version). The cached
+    # value is the parsed ``flows[]`` array the LLM returned — NOT the raw text
+    # or tokens — so a re-scan of an unchanged feature REPLAYS the identical
+    # flows and the downstream PF/UF are reproducible. Content-keyed (same
+    # input → same answer): a deterministic short-circuit, not per-repo memory
+    # (rule-cold-scan safe). Stage 3 is the last uncached main LLM stage; this
+    # closes the reproducibility gap Stage 4 (LLM_RESIDUAL) already covered.
+    LLM_FLOWS = "llm-flows"
     FLOW_VERDICT = "flow-verdict"
     FLOW_SYMBOL = "flow-symbol"
     MARKETING = "marketing"
@@ -147,6 +158,8 @@ class FilesystemCacheBackend:
             return self._base / "llm-cache" / f"{safe_key}.json"
         if kind == CacheKind.LLM_RESIDUAL.value:
             return self._base / "llm-cache" / "residual" / f"{safe_key}.json"
+        if kind == CacheKind.LLM_FLOWS.value:
+            return self._base / "llm-cache" / "flows" / f"{safe_key}.json"
         if kind == CacheKind.MARKETING.value:
             return self._base / "marketing-cache" / f"{safe_key}.json"
         if kind == CacheKind.ASSIGNMENT.value:
@@ -169,6 +182,7 @@ class FilesystemCacheBackend:
         return kind in {
             CacheKind.LLM_NAME.value,
             CacheKind.LLM_RESIDUAL.value,
+            CacheKind.LLM_FLOWS.value,
             CacheKind.MARKETING.value,
             CacheKind.BLAME.value,
         }

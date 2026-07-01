@@ -251,7 +251,9 @@ def test_assemble_scan_meta_keys() -> None:
         schema_only_suppressed_count=0,
         schema_only_suppressed_sample=[],
     )
-    stage3 = SimpleNamespace(cost_usd=0.0, reach_telemetry={})
+    stage3 = SimpleNamespace(
+        cost_usd=0.0, reach_telemetry={}, llm_calls=0, cache_hits=0,
+    )
     stage4 = SimpleNamespace(
         cost_usd=0.0,
         clusters_total=0,
