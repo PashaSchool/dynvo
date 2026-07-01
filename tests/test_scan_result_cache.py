@@ -304,3 +304,31 @@ def test_pipeline_hit_short_circuits_before_intake(
     assert result["scan_cache"]["served_from_cache"] is True
     assert result["marker"] == "SEEDED"
     assert out.read_text() == raw_text  # byte-identical replay
+
+
+# ── audit fixes: untracked content (Bug 1) + stage env flags (Bug 2) ─────────
+
+def test_key_differs_when_untracked_file_content_changes(git_repo: Path, cfg: dict) -> None:
+    """Editing an UNTRACKED new file must change the key (audit Bug 1) — else a
+    stub→populated file serves a stale zero-flow result."""
+    (git_repo / "new_untracked.py").write_text("# stub\n")
+    k_stub = _key(git_repo, cfg)
+    (git_repo / "new_untracked.py").write_text("def f():\n    return 300\n" * 20)
+    k_full = _key(git_repo, cfg)
+    assert k_stub != k_full
+
+
+def test_key_differs_when_output_env_flag_toggled(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stage-gating env flag (e.g. FAULTLINE_SEED_SYSTEM_UFS kill-switch)
+    toggled between scans must change the key (audit Bug 2)."""
+    monkeypatch.delenv("FAULTLINE_SEED_SYSTEM_UFS", raising=False)
+    k_on = _key(git_repo, src.scan_config_signature(
+        model="haiku", days=365, subpath=None, max_tree_depth=8,
+        llm_reconcile=False, feature_history=True))
+    monkeypatch.setenv("FAULTLINE_SEED_SYSTEM_UFS", "0")
+    k_off = _key(git_repo, src.scan_config_signature(
+        model="haiku", days=365, subpath=None, max_tree_depth=8,
+        llm_reconcile=False, feature_history=True))
+    assert k_on != k_off

@@ -74,9 +74,28 @@ ENV_BYPASS = "FAULTLINE_SCAN_CACHE_BYPASS"
 ENV_6_7D_ABSTRACTION = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 ENV_6_7D_ABSTRACTION_MODEL = "FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL"
 
+# Every env flag that gates a pipeline stage on/off and thus materially changes
+# product_features[] / user_flows[]. Any of these toggled between two scans of
+# the same tree MUST miss the cache (audit Bug 2 — else a toggle-and-rescan, the
+# exact eval workflow the stale-cache rule forbids, serves a stale result). We
+# store the RAW env value for each (unset vs "0" vs "1" all distinct) — safe
+# over-invalidation beats a stale serve.
+ENV_OUTPUT_FLAGS = (
+    "FAULTLINE_SEED_SYSTEM_UFS",
+    "FAULTLINE_STAGE_6_3_MEMBER_BACKFILL",
+    "FAULTLINE_STAGE_8_6_NONSOURCE_DROP",
+    "FAULTLINE_STAGE_8_6_5_SCAFFOLD_FILTER",
+    "FAULTLINE_STAGE_8_6_7_DI_ATTRIBUTION",
+    "FAULTLINE_STAGE_8_7_DESINK",
+    "FAULTLINE_STAGE_8_8_SHARED_MEMBERS",
+    "FAULTLINE_STAGE_8_9_SUBDECOMPOSE",
+    "FAULTLINE_PF_ANCHOR_NAME_GUARD",
+    "FAULTLINE_STAGE_8_9_5_LLM_COMPONENT_SPLIT",
+)
+
 #: Bump when the KEY composition changes so old entries can't be served
 #: against a new key layout (they simply won't match — silent invalidation).
-KEY_SCHEMA_VERSION = 1
+KEY_SCHEMA_VERSION = 2
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
@@ -191,17 +210,56 @@ def _dirty_hash(repo_path: Path) -> str:
     status lines) with ``git diff HEAD`` (the actual content diff of tracked
     modifications, staged + unstaged). A clean checkout → both empty → ``""``.
     """
-    status = _git(repo_path, "status", "--porcelain=v1")
+    # ``--untracked-files=all`` expands untracked DIRECTORIES into individual
+    # file entries so each new file gets its own ``?? path`` line.
+    status = _git(repo_path, "status", "--porcelain=v1", "--untracked-files=all")
     diff = _git(repo_path, "diff", "HEAD")
     status_s = status or ""
     diff_s = diff or ""
-    if not status_s.strip() and not diff_s.strip():
+    # Untracked NEW files appear as "?? path" in status but contribute NOTHING to
+    # ``git diff HEAD`` — so their CONTENT is invisible to the key unless hashed
+    # explicitly (audit Bug 1): editing an untracked file would keep the key
+    # stable and serve a stale result.
+    untracked_s = _untracked_content_hash(repo_path, status_s)
+    if not status_s.strip() and not diff_s.strip() and not untracked_s:
         return ""
     h = hashlib.sha256()
     h.update(b"status\0")
     h.update(status_s.encode("utf-8", "replace"))
     h.update(b"\0diff\0")
     h.update(diff_s.encode("utf-8", "replace"))
+    h.update(b"\0untracked\0")
+    h.update(untracked_s.encode("utf-8"))
+    return h.hexdigest()
+
+
+def _untracked_content_hash(repo_path: Path, status_s: str) -> str:
+    """Content hash of untracked (``?? path``) files listed in ``status_s``.
+    Deterministic (sorted), bounded (2 MiB/file; huge files hashed by size)."""
+    paths: list[str] = []
+    for line in status_s.splitlines():
+        if line.startswith("?? "):
+            rel = line[3:].strip()
+            if rel.startswith('"') and rel.endswith('"'):  # git quotes special names
+                rel = rel[1:-1]
+            paths.append(rel)
+    if not paths:
+        return ""
+    h = hashlib.sha256()
+    for rel in sorted(paths):
+        h.update(rel.encode("utf-8", "replace"))
+        h.update(b"\0")
+        fp = repo_path / rel
+        try:
+            if fp.is_file():
+                size = fp.stat().st_size
+                if size <= 2 * 1024 * 1024:
+                    h.update(fp.read_bytes())
+                else:
+                    h.update(f"size:{size}".encode())
+        except OSError:
+            h.update(b"\0unreadable")
+        h.update(b"\0")
     return h.hexdigest()
 
 
@@ -286,6 +344,10 @@ def scan_config_signature(
         "stage_6_7d_abstraction_model": os.environ.get(
             ENV_6_7D_ABSTRACTION_MODEL, "",
         ).strip(),
+        # All stage-gating env flags (raw values) — see ENV_OUTPUT_FLAGS.
+        "stage_flags": {
+            f: os.environ.get(f, "").strip() for f in ENV_OUTPUT_FLAGS
+        },
     }
 
 
