@@ -433,6 +433,14 @@ def run_finalize_phase(
     )
     if _s67d_enabled():
         with StageLogger(run_dir, 6, "journey_abstraction") as log6_7d:
+            # A content-hash cache backend makes a re-scan of an unchanged repo
+            # byte-identical (same digest + models → same key → replayed LLM
+            # answers). Best-effort — a cache fault degrades to a live call.
+            from faultline.cache import get_cache_backend
+            try:
+                _s67d_cache = get_cache_backend()
+            except Exception:  # noqa: BLE001 — caching is best-effort, never fatal
+                _s67d_cache = None
             (
                 user_flows,
                 product_features,
@@ -445,6 +453,7 @@ def run_finalize_phase(
                 lineage_result.routes_index,
                 model=model_id,
                 cost_tracker=tracker,
+                cache=_s67d_cache,
                 log=log6_7d,
                 llm_health=llm_health,
             )

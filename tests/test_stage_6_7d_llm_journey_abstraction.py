@@ -17,7 +17,10 @@ from typing import Any
 
 from faultline.models.types import Feature, UserFlow
 from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+    DEFAULT_ABSTRACTION_MODEL,
+    MAX_USER_FLOWS_DIGEST,
     is_enabled,
+    resolve_abstraction_model,
     run_journey_abstraction,
 )
 
@@ -315,3 +318,195 @@ def test_central_flow_graph_untouched() -> None:
     from faultline.pipeline_v2 import stage_6_7d_llm_journey_abstraction as m
     sig = inspect.signature(m.run_journey_abstraction)
     assert "flows" not in sig.parameters
+
+
+# ── Ship changes: Sonnet model / never-worse fallback / large-repo / cache ──
+
+class _CapturingClient:
+    """Records the (system, model) of every create() call and routes the
+    response by system prompt (abstraction vs re-attribution)."""
+
+    def __init__(self, abstraction: str, reattrib: str) -> None:
+        self.abstraction = abstraction
+        self.reattrib = reattrib
+        self.calls: list[dict[str, Any]] = []
+        outer = self
+
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                outer.calls.append({"system": kw.get("system", ""),
+                                    "model": kw.get("model", "")})
+                sysp = kw.get("system", "")
+                is_reattrib = "assign each developer feature" in sysp
+                return _Msg(outer.reattrib if is_reattrib else outer.abstraction)
+
+        self.messages = _M()
+
+
+class _FakeCache:
+    """In-memory CacheBackend for replay tests."""
+
+    def __init__(self) -> None:
+        self.store: dict[tuple[str, str], Any] = {}
+
+    def get(self, kind: str, key: str) -> Any:
+        return self.store.get((kind, key))
+
+    def set(self, kind: str, key: str, value: Any, *, ttl_seconds: Any = None) -> None:
+        self.store[(kind, key)] = value
+
+    def delete(self, kind: str, key: str) -> None:
+        self.store.pop((kind, key), None)
+
+    def load_namespace(self, kind: str) -> dict[str, Any]:
+        return {}
+
+    def flush(self) -> None:
+        pass
+
+
+def test_abstraction_model_defaults_to_sonnet_env(monkeypatch: Any) -> None:
+    """Change 1: Call 1 (abstraction) resolves to the Sonnet env default,
+    INDEPENDENT of the passed model_id (which stays on the Haiku default for
+    Call 2)."""
+    monkeypatch.delenv("FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL", raising=False)
+    assert resolve_abstraction_model() == DEFAULT_ABSTRACTION_MODEL  # claude-sonnet-4-6
+    cli = _CapturingClient(_ABS, _MAP_FULL)
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli, model="claude-haiku-4-5-20251001")
+    assert tel["applied"] is True
+    # Call 1 (abstraction system prompt) went out on a SONNET gateway id.
+    abs_call = next(c for c in cli.calls if "assign each developer feature" not in c["system"])
+    reattrib_call = next(c for c in cli.calls if "assign each developer feature" in c["system"])
+    assert "sonnet" in abs_call["model"].lower()
+    assert "haiku" in reattrib_call["model"].lower()   # Call 2 stays on passed model
+    assert tel["abstraction_model"] == DEFAULT_ABSTRACTION_MODEL
+
+
+def test_abstraction_model_env_override(monkeypatch: Any) -> None:
+    monkeypatch.setenv("FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL", "claude-haiku-4-5")
+    assert resolve_abstraction_model() == "claude-haiku-4-5"
+    cli = _CapturingClient(_ABS, _MAP_FULL)
+    _u, _p, _m, tel = run_journey_abstraction(_ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["abstraction_model"] == "claude-haiku-4-5"
+    abs_call = next(c for c in cli.calls if "assign each developer feature" not in c["system"])
+    assert "haiku" in abs_call["model"].lower()
+
+
+def test_abstraction_model_empty_env_falls_back(monkeypatch: Any) -> None:
+    monkeypatch.setenv("FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL", "   ")
+    assert resolve_abstraction_model() == DEFAULT_ABSTRACTION_MODEL
+
+
+def test_fallback_field_set_on_every_failure_path() -> None:
+    """Change 2 (never-worse): every failure path returns ORIGINAL inputs
+    (identity) AND sets tele['fallback'] to the reason string."""
+    ufs_in, pfs_in = _ufs(), _pfs()
+
+    # no dev features
+    u, p, dm, tel = run_journey_abstraction(ufs_in, pfs_in, [], [], client=_client(_ABS, _MAP_FULL))
+    assert u is ufs_in and p is pfs_in and dm is None
+    assert tel["fallback"] == "no_dev_features" and tel["applied"] is False
+
+    # no client
+    u, p, dm, tel = run_journey_abstraction(
+        ufs_in, pfs_in, _devs(), [], client=None, _client_factory=lambda: None)
+    assert u is ufs_in and p is pfs_in and tel["fallback"] == "no_client"
+
+    # bad abstraction JSON
+    u, p, dm, tel = run_journey_abstraction(
+        ufs_in, pfs_in, _devs(), [], client=_client("not json", _MAP_FULL))
+    assert u is ufs_in and p is pfs_in and tel["fallback"] == "abstraction_parse_failed"
+
+    # empty abstraction
+    empty = _client(json.dumps({"product_features": [], "user_flows": []}), _MAP_FULL)
+    u, p, dm, tel = run_journey_abstraction(ufs_in, pfs_in, _devs(), [], client=empty)
+    assert u is ufs_in and p is pfs_in and tel["fallback"] == "abstraction_empty"
+
+    # re-attribution failed (Call 2 raises)
+    u, p, dm, tel = run_journey_abstraction(
+        ufs_in, pfs_in, _devs(), [], client=_client(_ABS, "not json"))
+    assert u is ufs_in and p is pfs_in and tel["fallback"] == "reattrib_failed"
+
+    # LLM raises entirely
+    u, p, dm, tel = run_journey_abstraction(
+        ufs_in, pfs_in, _devs(), [], client=_raising_client())
+    assert u is ufs_in and p is pfs_in and tel["fallback"] is not None
+
+
+def test_fallback_is_none_on_success() -> None:
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    assert tel["applied"] is True and tel["fallback"] is None
+
+
+def _many_ufs(n: int) -> list[UserFlow]:
+    return [_uf(f"UF-{i:03d}", f"Do thing {i}", [f"f{i}"]) for i in range(1, n + 1)]
+
+
+def test_large_uf_input_capped_in_digest_no_crash() -> None:
+    """Change 3: a dub-scale UF count (222) must NOT crash and must be CAPPED
+    in the abstraction digest (supporting detail only)."""
+    big_ufs = _many_ufs(222)
+    # from_flows in _ABS references UF-001..UF-003 which still exist here.
+    _u, _p, _m, tel = run_journey_abstraction(
+        big_ufs, _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    assert tel["applied"] is True                       # abstracted, did not degrade
+    assert tel["input_user_flows"] == 222
+    assert tel["digest_user_flows"] == MAX_USER_FLOWS_DIGEST  # capped to top-N
+    assert tel["digest_user_flows"] < tel["input_user_flows"]
+
+
+def test_cache_hit_returns_identical_output() -> None:
+    """Change 4: a warm content-hash cache replays byte-identical output with
+    NO LLM call (a subsequent raising client proves the LLM is not touched)."""
+    cache = _FakeCache()
+    # Same repo state across both scans = identical input objects (the fixtures
+    # stamp a fresh now() per call, so reuse them to model an UNCHANGED repo).
+    ufs_in, pfs_in, devs_in = _ufs(), _pfs(), _devs()
+    ufs1, pfs1, map1, tel1 = run_journey_abstraction(
+        ufs_in, pfs_in, devs_in, [], client=_client(_ABS, _MAP_FULL), cache=cache)
+    assert tel1["applied"] is True and tel1["cache_hit"] is False
+    assert len(cache.store) == 1
+
+    # Second run: same inputs, cache warm, LLM would RAISE if called.
+    ufs2, pfs2, map2, tel2 = run_journey_abstraction(
+        ufs_in, pfs_in, devs_in, [], client=_raising_client(), cache=cache)
+    assert tel2["cache_hit"] is True and tel2["applied"] is True
+    assert tel2["llm_calls"] == 0 and tel2["cost_usd"] == 0.0
+    assert tel2["fallback"] is None
+    # Byte-identical reconstruction.
+    assert [u.model_dump() for u in ufs2] == [u.model_dump() for u in ufs1]
+    assert [p.model_dump() for p in pfs2] == [p.model_dump() for p in pfs1]
+    assert map2 == map1
+
+
+def test_cache_write_then_key_changes_on_model(monkeypatch: Any) -> None:
+    """A different abstraction model → different cache key → cold miss (no
+    stale replay across models)."""
+    cache = _FakeCache()
+    monkeypatch.delenv("FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL", raising=False)
+    run_journey_abstraction(_ufs(), _pfs(), _devs(), [],
+                            client=_client(_ABS, _MAP_FULL), cache=cache)
+    assert len(cache.store) == 1
+    # Flip the abstraction model → new key → the warm entry must NOT be reused
+    # (a raising client would surface a wrongful hit).
+    monkeypatch.setenv("FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL", "claude-haiku-4-5")
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL), cache=cache)
+    assert tel["cache_hit"] is False and tel["applied"] is True
+    assert len(cache.store) == 2   # two distinct keys now cached
+
+
+def test_cache_fault_never_aborts_stage() -> None:
+    """A cache backend that raises on get/set must not break the stage."""
+    class _BadCache(_FakeCache):
+        def get(self, kind: str, key: str) -> Any:
+            raise RuntimeError("cache down")
+
+        def set(self, kind: str, key: str, value: Any, *, ttl_seconds: Any = None) -> None:
+            raise RuntimeError("cache down")
+
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL), cache=_BadCache())
+    assert tel["applied"] is True and tel["cache_hit"] is False
