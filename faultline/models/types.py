@@ -857,6 +857,10 @@ class Feature(BaseModel):
     # ``scan_meta.llm_degraded``). Defaults to "high" so old JSONs
     # rehydrate unchanged — "low" is an explicit degradation marker.
     name_confidence: Literal["high", "low"] = "high"
+    # Phase 3 dual-evidence (2026-07): {"code": [paths], "anchors": [{text,source,
+    # locator}], "confidence": 0-1} — code + product-source corroboration, attached
+    # deterministically by dual_evidence.py. Additive/optional; None when not computed.
+    dual_evidence: dict[str, Any] | None = None
 
 
 class FeatureFlowEdge(BaseModel):
@@ -928,6 +932,10 @@ class UserFlow(BaseModel):
     # back to the deterministic template name, or when the scan ran
     # LLM-degraded. Defaults to "high" for old-JSON rehydration.
     name_confidence: Literal["high", "low"] = "high"
+    # Phase 3 dual-evidence (2026-07): {"code": [paths], "anchors": [{text,source,
+    # locator}], "confidence": 0-1} — code + product-source corroboration, attached
+    # deterministically by dual_evidence.py. Additive/optional; None when not computed.
+    dual_evidence: dict[str, Any] | None = None
 
 
 class FeatureMap(BaseModel):
