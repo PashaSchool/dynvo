@@ -39,6 +39,7 @@ to bridge LLM output → line ranges without a second LLM call.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -52,6 +53,7 @@ from faultline.analyzer.ast_extractor import (
     FileSignature,
     extract_signatures,
 )
+from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params
 
 if TYPE_CHECKING:
@@ -208,6 +210,11 @@ class Stage3Result:
     degradations: list[dict[str, Any]] = field(default_factory=list)
     # Sprint C1 — call-graph reach telemetry. Folded into scan_meta.
     reach_telemetry: dict[str, Any] = field(default_factory=dict)
+    # Warm-cache telemetry — per-feature flow-detection units served from
+    # the content-hash cache (CacheKind.LLM_FLOWS) instead of a Haiku call.
+    # ``cache_hits`` are NOT counted in ``llm_calls`` and cost $0. Mirrors
+    # Stage 4's ``Stage4Result.cache_hits``.
+    cache_hits: int = 0
 
 
 # ── Anthropic client protocol (for tests) ──────────────────────────────────
@@ -275,18 +282,124 @@ def _build_user_prompt(
     return "\n".join(lines)
 
 
+# ── Flow-detection LLM cache (content-hash short-circuit) ───────────────────
+#
+# Each per-feature flow-detection LLM output is a pure function of its input:
+#   (system prompt, feature slug, feature paths, extracted exports + routes,
+#    per-file source-content signature, canonical model).
+# We cache the PARSED ``flows[]`` array keyed on a sha256 of exactly those
+# inputs so an unchanged feature never re-issues a Haiku call. This makes a
+# re-scan of an unchanged repo REPLAY the identical flows → the downstream
+# product_features[]/user_flows[] are reproducible (temp=0 on Anthropic is not
+# bit-exact for complex generations, so re-running Stage 3 uncached was the
+# reproducibility gap). Content-keyed (same input → same answer): a
+# deterministic short-circuit, NOT per-repo memory — compliant with
+# rule-cold-scan. Mirrors Stage 4's CacheKind.LLM_RESIDUAL cache.
+#
+# STAGE3_CACHE_VERSION is the manual invalidation lever required by
+# rule-cache-invalidation: bump it whenever the prompt template, the parse
+# logic, or the cached-value shape changes in a way that must NOT serve a
+# stale answer. (The system-prompt text is ALSO hashed into the key, but the
+# version constant is the documented, explicit control surface.)
+STAGE3_CACHE_VERSION = "v1"
+
+
+def _flow_cache_key(
+    feature: "DeveloperFeature",
+    *,
+    model: str,
+    system: str,
+    exports: list[str],
+    routes: list[str],
+    content_sig: dict[str, str],
+) -> str:
+    """Content-hash key for one feature's flow-detection LLM call.
+
+    Components (every input that affects the LLM's raw output):
+      * ``STAGE3_CACHE_VERSION`` — manual invalidation lever.
+      * canonical ``model`` id (pre-gateway, so the key is stable whether
+        or not the AI-Gateway model shim is active).
+      * the ``system`` prompt text (auto-invalidates on prompt edits).
+      * ``feature.name`` — the slug the LLM is told to reason about.
+      * ``feature.paths`` — SORTED so the key is stable regardless of the
+        order Stage 2 happened to assemble the path tuple.
+      * ``exports`` + ``routes`` — the extracted symbols/route signatures
+        the prompt shows the LLM (deterministically ordered by
+        :func:`_enumerate_candidates`).
+      * ``content_sig`` — ``{path: sha256(source)}`` for every parsed file,
+        so a byte-change to a member file misses the cache even when its
+        exports/routes are unchanged.
+
+    Deliberately EXCLUDED: run_id, timestamps, clone/job dir, feature
+    ordering, thread identity, or any other run-varying value. The key is a
+    pure function of the repo's content + the model + the prompt version.
+    """
+    payload = json.dumps(
+        {
+            "version": STAGE3_CACHE_VERSION,
+            "model": model,
+            "system": system,
+            "name": feature.name,
+            "paths": sorted(feature.paths),
+            "exports": list(exports),
+            "routes": list(routes),
+            "content_sig": content_sig,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _flow_order_key(flow: "FlowSpec") -> tuple[str, int, str]:
+    """Deterministic stable-sort key for a feature's final ``flows[]``.
+
+    Belt-and-suspenders reproducibility: even on a COLD (cache-miss) scan —
+    where the LLM's emission order is not guaranteed run-to-run — the final
+    flow list is ordered by a pure content key ``(entry_point_file,
+    entry_point_line, name)``. Applied AFTER detection/dedup/merge, so it
+    only REORDERS the surviving flows; it never drops, adds, or re-selects
+    any flow (flow DETECTION logic is untouched).
+    """
+    return (
+        flow.entry_point_file or "",
+        flow.entry_point_line or 0,
+        flow.name,
+    )
+
+
+def _sorted_flows(flows: list["FlowSpec"]) -> list["FlowSpec"]:
+    """Stable content-ordered copy of a feature's final flow list.
+
+    Python's ``sorted`` is stable, so flows that tie on the content key keep
+    their pre-sort relative order. Pure reordering — the returned list has
+    exactly the same members as the input.
+    """
+    return sorted(flows, key=_flow_order_key)
+
+
 # ── Flow candidate enumeration from FileSignature ──────────────────────────
 
 
 def _enumerate_candidates(
     feature: "DeveloperFeature",
     repo_path: str,
-) -> tuple[list[str], list[str], dict[str, tuple[str, int]]]:
+) -> tuple[list[str], list[str], dict[str, tuple[str, int]], dict[str, str]]:
     """Walk a feature's paths via :func:`extract_signatures` and pull
-    exports + routes + a (symbol → (file, start_line)) lookup map.
+    exports + routes + a (symbol → (file, start_line)) lookup map + a
+    per-file source-content signature.
 
-    Returns ``(exports, routes, symbol_to_loc)``. The lookup map is used
-    after the LLM responds to re-attach line ranges deterministically.
+    Returns ``(exports, routes, symbol_to_loc, content_sig)``.
+
+    * ``symbol_to_loc`` bridges LLM output → line ranges deterministically
+      after the LLM responds.
+    * ``content_sig`` maps ``rel_path → sha256(source)[:16]`` for every
+      parsed file. It is a *content* signature — it changes iff a file's
+      bytes change — and feeds the Stage 3 flow-detection cache key so an
+      unchanged feature replays its cached flows and a changed file misses
+      the cache (belt-and-suspenders beyond the exports/routes already in
+      the prompt). Only parsed files (TS/JS/PY/Go/Rust/Ruby) appear, which
+      is exactly the set that can influence the LLM's flow output.
     """
     sigs: dict[str, FileSignature] = extract_signatures(
         list(feature.paths), repo_path,
@@ -295,9 +408,13 @@ def _enumerate_candidates(
     exports: list[str] = []
     routes: list[str] = []
     symbol_to_loc: dict[str, tuple[str, int]] = {}
+    content_sig: dict[str, str] = {}
     seen_exports: set[str] = set()
 
     for rel, sig in sigs.items():
+        content_sig[rel] = hashlib.sha256(
+            (sig.source or "").encode("utf-8", "ignore"),
+        ).hexdigest()[:16]
         for sym in sig.exports:
             if sym in seen_exports:
                 continue
@@ -321,7 +438,7 @@ def _enumerate_candidates(
             if r not in routes:
                 routes.append(r)
 
-    return exports, routes, symbol_to_loc
+    return exports, routes, symbol_to_loc, content_sig
 
 
 def _merge_seed_and_llm_flows(
@@ -710,8 +827,16 @@ def stage_3_flows(
     warnings: list[str] = []
     degradations: list[dict[str, Any]] = []
     llm_calls = 0
+    cache_hits = 0
     llm_call_lock = threading.Lock()
     cost_cap_warned = False
+
+    # Content-hash flow cache (CacheKind.LLM_FLOWS). Defensive: a missing
+    # backend behaves exactly as pre-cache (no short-circuit; every eligible
+    # feature issues its Haiku call). Read once here so the per-feature
+    # ``_process`` closure captures it. Mirrors Stage 4's ``ctx.cache_backend``
+    # read.
+    cache_backend = getattr(ctx, "cache_backend", None)
 
     # Profile-driven deterministic flow seeding (P4). Empty for the
     # DefaultProfile / None, so the LLM path stays fully in charge and
@@ -783,7 +908,7 @@ def stage_3_flows(
     out: dict[int, FeatureWithFlows] = {}
 
     def _process(idx: int, feature: "DeveloperFeature") -> FeatureWithFlows:
-        nonlocal llm_calls, cost_cap_warned
+        nonlocal llm_calls, cache_hits, cost_cap_warned
         # D2: the profile seed AUGMENTS the LLM, it does NOT replace it.
         # When the active profile seeded flows for this feature we still
         # run the LLM and MERGE (seed + LLM, deduped on entry-point) so
@@ -791,14 +916,16 @@ def stage_3_flows(
         # the richer LLM flows. ``seeded`` is empty under the
         # DefaultProfile, so the legacy LLM-only path is byte-identical.
         seeded = profile_flows.get(feature.name) or []
-        exports, routes, sym_loc = _enumerate_candidates(feature, repo_path_str)
+        exports, routes, sym_loc, content_sig = _enumerate_candidates(
+            feature, repo_path_str,
+        )
         if not _passes_flow_gate(feature, exports, routes):
             # No LLM surface. If the profile seeded flows we still emit
             # them (deterministic, authoritative); otherwise flows=[].
             if seeded:
                 return FeatureWithFlows(
                     feature=feature,
-                    flows=list(seeded),
+                    flows=_sorted_flows(list(seeded)),
                     rationale=f"profile-seeded {len(seeded)} flow(s), "
                               f"no LLM surface "
                               f"(profile={getattr(profile, 'name', 'default')})",
@@ -830,7 +957,7 @@ def stage_3_flows(
             # Seed survives a budget-cap degrade (deterministic, free).
             return FeatureWithFlows(
                 feature=feature,
-                flows=list(seeded),
+                flows=_sorted_flows(list(seeded)),
                 rationale="cost-cap-hit"
                           + (f"; kept {len(seeded)} seeded flow(s)"
                              if seeded else ""),
@@ -839,35 +966,84 @@ def stage_3_flows(
         user_prompt = _build_user_prompt(
             feature.name, list(feature.paths), exports, routes,
         )
-        text, in_tok, out_tok = _call_haiku(
-            client,
-            model=model,
-            system=_SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=DEFAULT_MAX_TOKENS,
-            llm_health=llm_health,
-        )
-        with llm_call_lock:
-            llm_calls += 1
-        if in_tok or out_tok:
-            tracker.record(
-                provider="anthropic",
-                model=model,
-                input_tokens=in_tok,
-                output_tokens=out_tok,
-                label="stage-3-flows",
-            )
-        if not text:
-            # LLM empty/failed — fall back to the seed (never lose it).
-            return FeatureWithFlows(
-                feature=feature,
-                flows=list(seeded),
-                rationale="llm-empty-or-failed"
-                          + (f"; kept {len(seeded)} seeded flow(s)"
-                             if seeded else ""),
-            )
 
-        raw_flows = _parse_response_text(text)
+        # ── Cache lookup (content-hash short-circuit) ──────────────────
+        # The cached value is the PARSED ``flows[]`` array (not raw text /
+        # tokens), so a hit replays byte-identically through the SAME
+        # deterministic ``_validate_and_attach_lines`` + merge below — line
+        # attribution is recomputed each run, so a cache hit never freezes
+        # stale line numbers.
+        cache_key: str | None = None
+        cached_raw: list[dict[str, Any]] | None = None
+        if cache_backend is not None:
+            cache_key = _flow_cache_key(
+                feature,
+                model=model,
+                system=_SYSTEM_PROMPT,
+                exports=exports,
+                routes=routes,
+                content_sig=content_sig,
+            )
+            try:
+                stored = cache_backend.get(CacheKind.LLM_FLOWS.value, cache_key)
+            except Exception as exc:  # noqa: BLE001 — cache must never break a scan
+                logger.warning("stage_3_flows: cache get failed: %s", exc)
+                stored = None
+            if isinstance(stored, dict) and isinstance(stored.get("flows"), list):
+                cached_raw = [f for f in stored["flows"] if isinstance(f, dict)]
+
+        if cached_raw is not None:
+            # HIT: no LLM call, no token cost recorded — reproducibility +
+            # warm-cache token savings. ``raw_flows`` is byte-identical to
+            # what a fresh ``_parse_response_text`` produced on the cold run.
+            with llm_call_lock:
+                cache_hits += 1
+            raw_flows = cached_raw
+        else:
+            text, in_tok, out_tok = _call_haiku(
+                client,
+                model=model,
+                system=_SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                llm_health=llm_health,
+            )
+            with llm_call_lock:
+                llm_calls += 1
+            if in_tok or out_tok:
+                tracker.record(
+                    provider="anthropic",
+                    model=model,
+                    input_tokens=in_tok,
+                    output_tokens=out_tok,
+                    label="stage-3-flows",
+                )
+            if not text:
+                # LLM empty/failed — fall back to the seed (never lose it).
+                # Do NOT cache a failure: only real responses are stored so a
+                # transient outage never poisons future reproducible replays.
+                return FeatureWithFlows(
+                    feature=feature,
+                    flows=_sorted_flows(list(seeded)),
+                    rationale="llm-empty-or-failed"
+                              + (f"; kept {len(seeded)} seeded flow(s)"
+                                 if seeded else ""),
+                )
+
+            raw_flows = _parse_response_text(text)
+            # MISS → persist the parsed flows for future runs. Store only the
+            # deterministic parse output (no raw text / tokens / timestamps)
+            # so a hit replays byte-identically downstream.
+            if cache_backend is not None and cache_key is not None:
+                try:
+                    cache_backend.set(
+                        CacheKind.LLM_FLOWS.value,
+                        cache_key,
+                        {"version": STAGE3_CACHE_VERSION, "flows": raw_flows},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("stage_3_flows: cache set failed: %s", exc)
+
         valid, drop_notes = _validate_and_attach_lines(raw_flows, sym_loc)
         # D2: AUGMENT — merge seed (source of truth) with LLM flows,
         # deduping LLM duplicates against the seed's entry-points. No-op
@@ -882,8 +1058,10 @@ def stage_3_flows(
             rationale = f"detected {len(valid)} flows"
         if drop_notes:
             rationale += f" ({'; '.join(drop_notes)})"
+        # Deterministic final ordering (belt-and-suspenders reproducibility):
+        # reorder AFTER merge/dedup so the surviving flow SET is unchanged.
         return FeatureWithFlows(
-            feature=feature, flows=merged, rationale=rationale,
+            feature=feature, flows=_sorted_flows(merged), rationale=rationale,
         )
 
     if not features:
@@ -954,6 +1132,7 @@ def stage_3_flows(
         warnings=warnings,
         degradations=degradations,
         reach_telemetry=reach_telemetry,
+        cache_hits=cache_hits,
     )
 
 
@@ -1157,13 +1336,14 @@ def _safe_exports(feature: "DeveloperFeature", ctx: "ScanContext") -> list[str]:
     pre-flight no-client gate. Returns an empty list on any failure.
     """
     try:
-        exports, _, _ = _enumerate_candidates(feature, str(ctx.repo_path))
+        exports, _, _, _ = _enumerate_candidates(feature, str(ctx.repo_path))
     except Exception:  # noqa: BLE001
         return []
     return exports
 
 
 __all__ = [
+    "STAGE3_CACHE_VERSION",
     "FlowSpec",
     "FeatureWithFlows",
     "Stage3Result",

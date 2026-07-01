@@ -446,7 +446,8 @@ def run_pipeline_v2(
         for w in stage3.warnings:
             log3.warn(w)
         log3.info(
-            f"cost_usd={stage3.cost_usd:.4f} llm_calls={stage3.llm_calls}",
+            f"cost_usd={stage3.cost_usd:.4f} llm_calls={stage3.llm_calls} "
+            f"cache_hits={stage3.cache_hits}",
         )
         # Sprint C1 — call-graph reach enrichment summary.
         if stage3.reach_telemetry:
@@ -469,6 +470,7 @@ def run_pipeline_v2(
                 ),
                 "cost_usd": stage3.cost_usd,
                 "llm_calls": stage3.llm_calls,
+                "cache_hits": stage3.cache_hits,
                 "warnings": stage3.warnings,
                 "reach_telemetry": stage3.reach_telemetry,
             },

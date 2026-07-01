@@ -424,6 +424,11 @@ def assemble_scan_meta(
         "cost_usd": cost_usd,
         "calls": llm_calls,
         "stage3_cost_usd": round(stage3.cost_usd, 4),
+        # Stage 3 flow-detection warm-cache (CacheKind.LLM_FLOWS): per-feature
+        # units replayed from the content-hash cache instead of a Haiku call.
+        # On a re-scan of an unchanged repo this drives Stage 3 reproducibility.
+        "stage_3_cache_hits": stage3.cache_hits,
+        "stage_3_llm_calls": stage3.llm_calls,
         "stage4_cost_usd": round(stage4.cost_usd, 4),
         "stage_4_clusters_total": stage4.clusters_total,
         "stage_4_clusters_processed": stage4.clusters_processed,
