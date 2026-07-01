@@ -157,6 +157,85 @@ def test_success_path_stagelogger_info_no_spurious_degrade() -> None:
     assert reason.startswith("stage_6_7d:")
 
 
+def _anchors(n: int, texts: list[str] | None = None):
+    from faultline.pipeline_v2.anchor_extractors import ProductAnchor
+    items = texts if texts is not None else [f"Capability {i}" for i in range(n)]
+    return [ProductAnchor(text=t, source="i18n", locator=f"a/{i}#k") for i, t in enumerate(items)]
+
+
+def test_anchors_sufficient_gate() -> None:
+    """Improve-or-no-op gate: align only when distinct anchors >= #product_features
+    AND >= floor(8). Sparse → free-gen (documenso-style repos never regress)."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import _anchors_sufficient
+    one_pf = _pfs()  # 1 product feature
+    assert _anchors_sufficient([], one_pf) is False
+    assert _anchors_sufficient(_anchors(3), one_pf) is False      # below floor
+    assert _anchors_sufficient(_anchors(8), one_pf) is True        # >= floor and >= 1 pf
+    many_pf = [_feat(f"pf{i}", [f"app/{i}.ts"]) for i in range(10)]
+    assert _anchors_sufficient(_anchors(8), many_pf) is False      # 8 < 10 features → fall back
+    assert _anchors_sufficient(_anchors(10), many_pf) is True
+
+
+def test_sparse_anchors_fall_back_to_free_gen() -> None:
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], product_anchors=_anchors(3),
+        client=_client(_ABS, _MAP_FULL))
+    assert tel["aligned"] is False      # gate → free-gen
+    assert tel["applied"] is True       # free-gen still applies (never-worse)
+
+
+def test_align_is_opt_in_default_off() -> None:
+    """Align defaults OFF (it degrades stability on noisy pools) — even with rich
+    anchors, free-gen runs unless FAULTLINE_STAGE_6_7D_ALIGN is set."""
+    anchors = _anchors(12)
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], product_anchors=anchors,
+        client=_client(_ABS, _MAP_FULL))
+    assert tel["aligned"] is False
+    assert tel["applied"] is True
+
+
+def test_rich_anchors_align_with_verbatim_names(monkeypatch) -> None:
+    monkeypatch.setenv("FAULTLINE_STAGE_6_7D_ALIGN", "1")  # opt in
+    anchors = _anchors(0, texts=["Account Management", "Authentication", "Billing",
+                                 "Settings", "Reports", "Search", "Notifications", "Team"])
+    _u, pfs, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], product_anchors=anchors,
+        client=_client(_ABS, _MAP_FULL))
+    assert tel["aligned"] is True
+    assert tel["anchor_count"] == 8
+    assert tel["applied"] is True
+    # verbatim anchor text is preserved as the display_name (name is slugified);
+    # display_name is the customer-facing, run-to-run-stable string.
+    assert {"Account Management", "Authentication"} <= {p.display_name for p in pfs}
+
+
+def test_output_is_deterministically_ordered() -> None:
+    """Phase 1 stability: abstracted product_features + user_flows come back in a
+    stable sort (by name / id) regardless of LLM emission order, so re-scans and
+    independent scans never churn the output array order."""
+    ufs, pfs, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    assert tel["applied"] is True
+    pf_names = [p.name for p in pfs]
+    uf_names = [(u.name or "").lower() for u in ufs]
+    assert pf_names == sorted(pf_names, key=lambda n: (n.lower(), n))
+    assert uf_names == sorted(uf_names)
+
+
+def test_output_order_stable_across_llm_emission_order() -> None:
+    """Regression (audit 2026-07-01): the UF/PF sort must be CONTENT-derived so two
+    runs whose LLM emits the SAME items in a DIFFERENT order produce the SAME final
+    array order. A position-derived (UF-id) sort is a no-op and fails this."""
+    payload = json.loads(_ABS)
+    rev = json.dumps({"product_features": list(reversed(payload["product_features"])),
+                      "user_flows": list(reversed(payload["user_flows"]))})
+    u1, p1, _m, _t = run_journey_abstraction(_ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    u2, p2, _m, _t = run_journey_abstraction(_ufs(), _pfs(), _devs(), [], client=_client(rev, _MAP_FULL))
+    assert [u.name for u in u1] == [u.name for u in u2]
+    assert [p.name for p in p1] == [p.name for p in p2]
+
+
 def test_rewrites_user_flows_and_product_features() -> None:
     ufs, pfs, dev_map, tel = run_journey_abstraction(
         _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))

@@ -442,6 +442,22 @@ def run_finalize_phase(
                 _s67d_cache = get_cache_backend()
             except Exception:  # noqa: BLE001 — caching is best-effort, never fatal
                 _s67d_cache = None
+            # Phase 2 anchor-ingest (OPT-IN): mine deterministic product-capability
+            # anchors → clean alignment pool ONLY when align is enabled (default OFF
+            # — align degrades stability on noisy pools). Skip the file-walk cost on
+            # the default free-gen path; extraction failure must never crash a scan.
+            _s67d_anchors = None
+            try:
+                from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+                    align_enabled,
+                )
+                if align_enabled():
+                    from faultline.pipeline_v2.anchor_extractors import (
+                        build_alignment_pool, extract_raw_anchors,
+                    )
+                    _s67d_anchors = build_alignment_pool(extract_raw_anchors(repo_path))
+            except Exception:  # noqa: BLE001 — anchors are optional; degrade to free-gen
+                _s67d_anchors = None
             (
                 user_flows,
                 product_features,
@@ -452,6 +468,7 @@ def run_finalize_phase(
                 product_features,
                 features,
                 lineage_result.routes_index,
+                product_anchors=_s67d_anchors,
                 model=model_id,
                 cost_tracker=tracker,
                 cache=_s67d_cache,
