@@ -65,6 +65,18 @@ class CacheKind(str, Enum):
     # Content-keyed (same input → same answer) so this is a deterministic
     # short-circuit, not per-repo memory — compliant with rule-cold-scan.
     LLM_RESIDUAL = "llm-residual"
+    # Top-level scan-result cache: one entry per (repo content identity +
+    # engine version + scan config) — the full FeatureMap JSON of a
+    # completed scan. Because temperature=0 on Anthropic is NOT bit-exact,
+    # the several LLM stages (Stage 3 flows + 6.7b/6.7c UF + Stage 8 product
+    # clusterer) diverge run-to-run on an unchanged repo. This cache
+    # short-circuits the WHOLE pipeline: same input → replay the byte-
+    # identical stored FeatureMap ($0, instant). Content-keyed (repo state +
+    # version + config, NOT run_id/timestamps) so it is a deterministic
+    # reproducibility cache, not per-repo memory — rule-cold-scan safe.
+    # Stored under a dedicated ``scan-cache/`` dir (scans are large JSONs,
+    # kept out of the small ``llm-cache/``). Opt-in via FAULTLINE_SCAN_CACHE.
+    SCAN_RESULT = "scan-result"
     FLOW_VERDICT = "flow-verdict"
     FLOW_SYMBOL = "flow-symbol"
     MARKETING = "marketing"
@@ -147,6 +159,10 @@ class FilesystemCacheBackend:
             return self._base / "llm-cache" / f"{safe_key}.json"
         if kind == CacheKind.LLM_RESIDUAL.value:
             return self._base / "llm-cache" / "residual" / f"{safe_key}.json"
+        if kind == CacheKind.SCAN_RESULT.value:
+            # Dedicated dir — scan JSONs are large; keep them out of the
+            # small content-keyed ``llm-cache/``.
+            return self._base / "scan-cache" / f"{safe_key}.json"
         if kind == CacheKind.MARKETING.value:
             return self._base / "marketing-cache" / f"{safe_key}.json"
         if kind == CacheKind.ASSIGNMENT.value:
@@ -169,6 +185,7 @@ class FilesystemCacheBackend:
         return kind in {
             CacheKind.LLM_NAME.value,
             CacheKind.LLM_RESIDUAL.value,
+            CacheKind.SCAN_RESULT.value,
             CacheKind.MARKETING.value,
             CacheKind.BLAME.value,
         }

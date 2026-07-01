@@ -90,6 +90,7 @@ from faultline.pipeline_v2.phase_finalize import run_finalize_phase
 from faultline.pipeline_v2.phase_intake import run_intake_phase
 from faultline.pipeline_v2.phase_layer2 import run_layer2_phase
 from faultline.pipeline_v2.phase_postprocess import run_postprocess_phase
+from faultline.pipeline_v2 import scan_result_cache as _scan_cache
 from faultline.pipeline_v2.run_dir import update_latest_symlink
 from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.scan_meta import (
@@ -248,6 +249,58 @@ def run_pipeline_v2(
         if max_tree_depth is not None
         else _IMPORT_TREE_MAX_DEPTH
     )
+
+    # ── Top-level scan-result cache (opt-in) ───────────────────────────
+    # temperature=0 is NOT bit-exact on Anthropic, so the LLM stages
+    # (Stage 3 flows + 6.7b/6.7c UF + Stage 8 clusterer) diverge run-to-run
+    # on an unchanged repo. When FAULTLINE_SCAN_CACHE=1, short-circuit the
+    # WHOLE pipeline on a HIT: same (repo content identity + engine version +
+    # config) → replay the byte-identical stored FeatureMap ($0, instant).
+    # Computed HERE — before intake (Stage 0.5 auditor is a Haiku call) and
+    # every downstream expensive stage. Default OFF → this block is a no-op
+    # and behaviour is byte-identical to today. Incremental (--since) runs
+    # are diff-based and never served from the full-scan cache. Every fault
+    # is swallowed → fall through to a normal scan; a scan NEVER crashes here.
+    scan_cache_key: str | None = None
+    scan_cache_active = _scan_cache.is_enabled() and since is None
+    if scan_cache_active:
+        try:
+            _cfg_sig = _scan_cache.scan_config_signature(
+                model=model_id,
+                days=days,
+                subpath=subpath,
+                max_tree_depth=effective_max_tree_depth,
+                llm_reconcile=llm_reconcile,
+                feature_history=feature_history,
+            )
+            scan_cache_key = _scan_cache.compute_scan_cache_key(
+                repo_path,
+                engine_version=_scan_cache.engine_version(),
+                config_signature=_cfg_sig,
+            )
+        except Exception as exc:  # noqa: BLE001 — cache must never break a scan
+            logger.warning(
+                "scan_result_cache: key computation failed (%s) — normal scan",
+                exc,
+            )
+            scan_cache_key = None
+        if scan_cache_key and not _scan_cache.is_bypassed():
+            try:
+                _hit = _scan_cache.load_cached_scan(scan_cache_key)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "scan_result_cache: read fault (%s) — normal scan", exc,
+                )
+                _hit = None
+            if _hit is not None:
+                served = _scan_cache.serve_from_cache(
+                    _hit,
+                    key=scan_cache_key,
+                    repo_path=repo_path,
+                    out_path=out_path,
+                )
+                if served is not None:
+                    return served
 
     # One shared CostTracker across Stage 3 + Stage 4 so the reported
     # cost is the FULL LLM bill for this scan.
@@ -758,6 +811,29 @@ def run_pipeline_v2(
         cache_backend.flush()
     except Exception as exc:  # noqa: BLE001 — never fail a scan on cache flush
         logger.warning("pipeline_v2: cache flush failed: %s", exc)
+
+    # ── Store the FINAL FeatureMap under the scan-result cache key ─────
+    # MISS path only (a HIT returned far above). We cache the byte-exact
+    # bytes just written by Stage 7 so a later identical scan replays them
+    # verbatim. Faults are swallowed — a cache-store failure never fails an
+    # otherwise-successful scan. Additive ``scan_meta.scan_cache`` marker
+    # records the outcome for telemetry (absent when the cache is OFF).
+    if scan_cache_active and scan_cache_key:
+        stored = False
+        try:
+            stored = _scan_cache.store_scan_result(scan_cache_key, out)
+        except Exception as exc:  # noqa: BLE001 — never fail a scan on cache store
+            logger.warning("scan_result_cache: store fault (%s)", exc)
+        scan_meta["scan_cache"] = {
+            "enabled": True,
+            "served_from_cache": False,
+            "stored": bool(stored),
+            "key": scan_cache_key,
+        }
+        logger.info(
+            "scan_result_cache: MISS — stored=%s (key=%s)",
+            stored, scan_cache_key[:12],
+        )
 
     # ── Atomically point `latest` at this run ──────────────────────
     update_latest_symlink(ctx.repo_path, ctx.run_id or "")
