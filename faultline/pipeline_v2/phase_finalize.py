@@ -423,7 +423,8 @@ def run_finalize_phase(
     # ── Stage 6.7d — LLM product/journey abstraction (opt-in, OFF) ──
     # Crosses the code-grain → product-grain gap the deterministic stages
     # structurally cannot: REWRITES user_flows[] + product_features[] at
-    # journey/capability grain via two Haiku calls over a code-grounded
+    # journey/capability grain via a Sonnet call (abstraction) + a Haiku call
+    # (re-attribution) over a code-grounded
     # digest (NO README). Output-layer only — the central flows[] graph is
     # untouched. Default OFF; FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION=1. On any
     # LLM failure the deterministic arrays pass through byte-identical.

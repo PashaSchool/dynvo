@@ -510,3 +510,41 @@ def test_cache_fault_never_aborts_stage() -> None:
     _u, _p, _m, tel = run_journey_abstraction(
         _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL), cache=_BadCache())
     assert tel["applied"] is True and tel["cache_hit"] is False
+
+
+# ── Audit fixes (ship): C1 reconstruct-exception, I1 digest determinism ──────
+
+def test_nonstring_name_sanitised_not_crash() -> None:
+    """A non-string 'name' in otherwise-valid JSON must be DROPPED at the
+    boundary — never crash the scan (never-worse). (Audit C1.)"""
+    mixed_abs = json.dumps({
+        "product_features": [
+            {"name": "Account Management", "description": "ok"},
+            {"name": 42, "description": "numeric — must be dropped"},
+        ],
+        "user_flows": [
+            {"name": "Manage accounts", "resource": "account",
+             "product_feature": "Account Management", "from_flows": []},
+            {"name": None, "resource": "x", "product_feature": "Y"},
+        ],
+    })
+    reattrib = json.dumps({"map": {"accounts": "Account Management",
+                                   "auth": "Account Management",
+                                   "shared-ui": "Shared Platform"}})
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(mixed_abs, reattrib))
+    assert tel["applied"] is True                       # sanitised, did not crash
+    assert "Manage accounts" in {u.name for u in ufs}   # valid kept
+    assert all(isinstance(p.display_name, str) for p in pfs)
+
+
+def test_digest_deterministic_under_input_order() -> None:
+    """Equal-commit dev features must not make the digest order (and thus the
+    cache key) depend on input order — else the byte-identical re-scan cache
+    never hits. (Audit I1.)"""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import _build_digest
+    a = _feat("alpha", ["a/x.ts"])   # _feat sets total_commits=3 for all → tie
+    b = _feat("beta", ["b/y.ts"])
+    d1 = _build_digest([a, b], [], [], [])
+    d2 = _build_digest([b, a], [], [], [])
+    assert json.dumps(d1, ensure_ascii=False) == json.dumps(d2, ensure_ascii=False)

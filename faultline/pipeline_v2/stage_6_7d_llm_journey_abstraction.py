@@ -237,7 +237,11 @@ def _build_digest(
     user_flows: list["UserFlow"],
     routes_index: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    devf = sorted(developer_features, key=lambda f: -(f.total_commits or 0))
+    # Secondary key (name) breaks commit-count ties deterministically — else
+    # equal-commit modules keep input order (nondeterministic) and the digest
+    # JSON varies run-to-run, defeating the content-hash cache (byte-identical
+    # re-scan). Same reason for the UF + re-attribution sorts below.
+    devf = sorted(developer_features, key=lambda f: (-(f.total_commits or 0), f.name or ""))
     dev_lines = [
         {"name": f.display_name or f.name, "where": _top_dirs(_paths_of(f)),
          "what": _short(f.description, 90)}
@@ -251,7 +255,7 @@ def _build_digest(
     # member_count so a large repo (dub: 222 UFs) can't blow the prompt/output
     # budget and force a degrade. The heaviest journeys carry the most signal;
     # the rest are redundant CRUD variants the model would coarsen away anyway.
-    ufs_by_weight = sorted(user_flows, key=lambda u: -(u.member_count or 0))
+    ufs_by_weight = sorted(user_flows, key=lambda u: (-(u.member_count or 0), u.id or ""))
     uf_lines = [
         {"id": u.id, "name": u.name, "resource": u.resource,
          "domain": u.domain, "intent": u.intent}
@@ -629,7 +633,10 @@ def run_journey_abstraction(
                      if isinstance(k, str) and isinstance(v, str)}
             if c_abs.get("user_flows") and c_abs.get("product_features") and c_map:
                 tele["cache_hit"] = True
-                result = _finish(c_abs, c_map)
+                try:
+                    result = _finish(c_abs, c_map)
+                except Exception:  # noqa: BLE001 — malformed cache must never crash
+                    result = None
                 if result is not None:
                     return result
                 tele["cache_hit"] = False  # malformed → fall through to live call
@@ -649,10 +656,21 @@ def run_journey_abstraction(
     parsed1 = _parse_json(text1)
     if not parsed1:
         return _degrade("abstraction_parse_failed")
-    uf_specs = parsed1.get("user_flows") or []
-    pf_specs = parsed1.get("product_features") or []
+
+    # Sanitise at the boundary: keep only specs whose "name" is a non-empty
+    # string. An LLM can emit a numeric/None name in otherwise-valid JSON, and
+    # every downstream consumer calls ``.strip()``/``.get()`` on it — dropping
+    # them here means no reconstruction path can raise (never-worse). If this
+    # empties a list, degrade rather than proceed on garbage.
+    def _valid_spec(s: Any) -> bool:
+        return (isinstance(s, dict) and isinstance(s.get("name"), str)
+                and bool(s.get("name").strip()))
+
+    uf_specs = [s for s in (parsed1.get("user_flows") or []) if _valid_spec(s)]
+    pf_specs = [s for s in (parsed1.get("product_features") or []) if _valid_spec(s)]
     if not uf_specs or not pf_specs:
         return _degrade("abstraction_empty")
+    parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
     if tele["cost_usd"] > COST_CAP_USD:
         return _degrade(f"cost_cap ${tele['cost_usd']:.4f}")
 
@@ -662,7 +680,7 @@ def run_journey_abstraction(
     dev_items = [
         {"name": f.display_name or f.name, "where": _top_dirs(_paths_of(f)),
          "n_files": len(_paths_of(f))}
-        for f in sorted(developer_features, key=lambda f: -len(_paths_of(f)))
+        for f in sorted(developer_features, key=lambda f: (-len(_paths_of(f)), f.name or ""))
     ]
     user2 = ("Product capabilities:\n" + json.dumps(caps_with_residual) +
              "\n\nDeveloper features (name, dir, file count):\n" +
@@ -695,7 +713,13 @@ def run_journey_abstraction(
             pass
 
     # ── Reconstruct (conservation guaranteed — residual catches omits) ─
-    result = _finish(parsed1, dev_map)
+    # Never-worse: any reconstruction error (e.g. LLM returns a non-string
+    # "name" → .strip() raises) degrades to the original deterministic arrays
+    # rather than crashing the scan.
+    try:
+        result = _finish(parsed1, dev_map)
+    except Exception:  # noqa: BLE001
+        return _degrade("reconstruct_exception")
     if result is None:
         return _degrade("reconstruct_empty")
     return result
