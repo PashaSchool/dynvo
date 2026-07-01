@@ -184,7 +184,19 @@ def test_sparse_anchors_fall_back_to_free_gen() -> None:
     assert tel["applied"] is True       # free-gen still applies (never-worse)
 
 
-def test_rich_anchors_align_with_verbatim_names() -> None:
+def test_align_is_opt_in_default_off() -> None:
+    """Align defaults OFF (it degrades stability on noisy pools) — even with rich
+    anchors, free-gen runs unless FAULTLINE_STAGE_6_7D_ALIGN is set."""
+    anchors = _anchors(12)
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], product_anchors=anchors,
+        client=_client(_ABS, _MAP_FULL))
+    assert tel["aligned"] is False
+    assert tel["applied"] is True
+
+
+def test_rich_anchors_align_with_verbatim_names(monkeypatch) -> None:
+    monkeypatch.setenv("FAULTLINE_STAGE_6_7D_ALIGN", "1")  # opt in
     anchors = _anchors(0, texts=["Account Management", "Authentication", "Billing",
                                  "Settings", "Reports", "Search", "Notifications", "Team"])
     _u, pfs, _m, tel = run_journey_abstraction(

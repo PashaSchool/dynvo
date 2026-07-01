@@ -97,6 +97,15 @@ MAX_ANCHOR_TEXTS_DIGEST = 160
 # improve-or-no-op gate floor: align only with a viable product taxonomy (a small
 # absolute bound; the primary gate is the anchors>=features ratio — scale-invariant).
 _MIN_ANCHORS_FLOOR = 8
+# ALIGN is OPT-IN (default OFF). Empirically it DEGRADES stability on noisy anchor
+# pools (Soc0 i18n leaf values: PF name-Jaccard 0.72 free-gen → 0.03 align) — the
+# quantity gate can't tell a clean pool from UI-string noise. Until a QUALITY gate
+# exists, free-gen is the default; align is opt-in for clean-anchor repos.
+ALIGN_ENV = "FAULTLINE_STAGE_6_7D_ALIGN"
+
+
+def align_enabled() -> bool:
+    return os.environ.get(ALIGN_ENV, "0").strip() not in {"0", "false", "False", ""}
 
 #: Bumped whenever the prompt / reconstruction changes in a way that would make
 #: a previously-cached answer wrong. Part of the cache key, so a bump
@@ -690,7 +699,7 @@ def run_journey_abstraction(
     # (validated default). The gate is improve-or-no-op: sparse-anchor repos fall
     # back so they never regress. anchor_sig makes align/free-gen cache separately.
     anchor_texts = _canonical_anchor_texts(product_anchors)
-    aligned = _anchors_sufficient(product_anchors, product_features)
+    aligned = align_enabled() and _anchors_sufficient(product_anchors, product_features)
     tele["aligned"] = aligned
     tele["anchor_count"] = len(anchor_texts)
     anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""
