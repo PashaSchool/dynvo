@@ -64,6 +64,9 @@ _BATCH_DISCOUNT = 0.50
 # accepts it.
 _NO_TEMPERATURE_MODELS: tuple[str, ...] = (
     "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "claude-fable-5",
 )
 
 
