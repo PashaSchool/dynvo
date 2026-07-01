@@ -130,6 +130,33 @@ _MAP_OMITS_SHARED = json.dumps({"map": {
 
 # ── Tests ───────────────────────────────────────────────────────────────────
 
+def test_success_path_stagelogger_info_no_spurious_degrade() -> None:
+    """Regression (audit 2026-07-01): the success-path ``log.info`` must pass a
+    single pre-formatted positional arg. StageLogger.info(reason, feature=None,
+    **extra) raises TypeError on the old %-style multi-positional call, and the
+    broad ``except`` around _finish() swallowed it into a spurious
+    ``reconstruct_exception`` degrade — discarding the fully-abstracted arrays on
+    the SUCCESS path. A strict StageLogger-signature fake catches a relapse."""
+    calls: list[tuple[str, Any, dict]] = []
+
+    class _StrictLog:  # mirrors StageLogger.info's exact signature
+        def info(self, reason: str, feature: Any = None, **extra: Any) -> None:
+            calls.append((reason, feature, extra))
+
+    ufs, pfs, dev_map, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [],
+        client=_client(_ABS, _MAP_FULL), log=_StrictLog(),
+    )
+    assert tel["applied"] is True
+    assert tel.get("fallback") is None
+    assert tel.get("degraded_reason") != "reconstruct_exception"
+    # exactly one call, single pre-formatted positional string (no *args overflow)
+    assert len(calls) == 1
+    reason, feature, extra = calls[0]
+    assert feature is None and extra == {}
+    assert reason.startswith("stage_6_7d:")
+
+
 def test_rewrites_user_flows_and_product_features() -> None:
     ufs, pfs, dev_map, tel = run_journey_abstraction(
         _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
