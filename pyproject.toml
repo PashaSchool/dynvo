@@ -7,10 +7,10 @@ name = "dynvo"
 version = "1.39.0"
 description = "Map features in any codebase from git history alone. No Jira required."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "FSL-1.1-ALv2" }
 requires-python = ">=3.11"
 authors = [
-    { name = "Faultlines" },
+    { name = "Dynvo" },
 ]
 keywords = [
     "git", "features", "technical-debt", "code-analysis",
