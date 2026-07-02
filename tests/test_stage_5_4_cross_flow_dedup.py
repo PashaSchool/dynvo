@@ -46,6 +46,9 @@ def test_owner_of_entry_wins():
     res = dedup_cross_feature_flows([claimant, owner])  # claimant FIRST
     assert res.flows_removed == 1
     assert [f.name for f in owner.flows] == ["group-data-flow"]
+    # Audit fix: the loser's paths are UNIONED into the winner so Stage 5.5
+    # recovers the cross-feature (secondary/blast-radius) signal.
+    assert set(owner.flows[0].paths) == {"utils/array.ts", "store/state.ts"}
     assert claimant.flows == []
     assert claimant.paths == ["store/state.ts"]  # membership untouched
 

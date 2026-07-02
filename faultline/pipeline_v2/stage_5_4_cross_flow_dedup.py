@@ -100,6 +100,19 @@ def dedup_cross_feature_flows(
         ordered = sorted(members, key=_rank)
         winner_feat, winner_flow = ordered[0]
         for feat, fl in ordered[1:]:
+            # MERGE, don't discard: the loser's paths carry the cross-feature
+            # reach that Stage 5.5 turns into secondary_features /
+            # cross-cutting / blast-radius (audit IMPORTANT, 2026-07-02 —
+            # winner-take-all measurably cratered UF-F1: supabase 36.8→26.3,
+            # plane 67.8→48.6 by impoverishing the rollup's domain signal).
+            # Union preserves the signal; 5.5's path-overlap pass recovers
+            # the loser feature's attachment naturally (the established
+            # _collapse_cross_feature_duplicate_flows contract).
+            winner_paths = set(winner_flow.paths or [])
+            extra = [pth for pth in (getattr(fl, "paths", None) or [])
+                     if pth not in winner_paths]
+            if extra:
+                winner_flow.paths = list(winner_flow.paths or []) + sorted(extra)
             to_remove.setdefault(id(feat), set()).add(id(fl))
             result.flows_removed += 1
             if len(result.sample) < 20:
