@@ -384,3 +384,57 @@ def test_flowreach_is_frozen():
     )
     with pytest.raises(Exception):
         reach.entry_file = "b.ts"  # type: ignore[misc]
+
+
+# ── Determinism under hash randomisation (supabase drift, 2026-07-02) ───────
+
+_SEED_DRIVER = """
+import json, sys
+from pathlib import Path
+from faultline.pipeline_v2 import ScanContext
+from faultline.pipeline_v2.flow_reach import build_reach_context, compute_flow_reach
+
+root = Path(sys.argv[1])
+tracked = json.loads(sys.argv[2])
+ctx = ScanContext(repo_path=root, stack=None, monorepo=False, workspaces=None,
+                  tracked_files=tracked, commits=[], stack_signals=[],
+                  workspace_manager=None)
+rctx = build_reach_context(ctx)
+reach = compute_flow_reach(rctx, "entry.py", 1)
+print(json.dumps(list(reach.reached_paths)))
+"""
+
+
+def test_reach_paths_stable_across_hash_seeds(tmp_path: Path) -> None:
+    """The max_paths cap must keep the SAME neighbors regardless of the
+    per-process PYTHONHASHSEED — a plain set made Flow.paths drift between
+    two runs of an identical scan (supabase: bipartite shared_with/secondary
+    + testmap counts). Requires subprocesses (the seed is fixed per process)."""
+    import json as _json
+    import subprocess
+    import sys
+
+    # Entry imports MORE modules than max_paths (8) → the cap binds.
+    mods = [f"mod{i:02d}" for i in range(14)]
+    _write(tmp_path, "entry.py",
+           "\n".join(f"import {m}" for m in mods) + "\n")
+    for m in mods:
+        _write(tmp_path, f"{m}.py", "X = 1\n")
+    tracked = ["entry.py"] + [f"{m}.py" for m in mods]
+
+    driver = tmp_path / "driver.py"
+    driver.write_text(_SEED_DRIVER)
+
+    def _run(seed: str) -> list[str]:
+        import os
+        env = {"PYTHONHASHSEED": seed, "PATH": "/usr/bin:/bin",
+               "PYTHONPATH": os.getcwd()}
+        out = subprocess.run(
+            [sys.executable, str(driver), str(tmp_path), _json.dumps(tracked)],
+            capture_output=True, text=True, env=env, check=True,
+        )
+        return _json.loads(out.stdout.strip())
+
+    r1, r2 = _run("1"), _run("2")
+    assert len(r1) > 0 and len(r1) <= 8 + 1
+    assert r1 == r2, f"reach drifted across hash seeds:\n{r1}\nvs\n{r2}"

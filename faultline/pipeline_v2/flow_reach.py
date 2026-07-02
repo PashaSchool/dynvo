@@ -406,7 +406,14 @@ def _file_edges(
     Centralises the language switch so callers (the BFS) stay clean.
     """
     suffix = Path(rel_path).suffix.lower()
-    out: set[str] = set()
+    # INSERTION-ORDERED dedup (dict-as-ordered-set), NOT a set: the BFS
+    # truncates the frontier at max_paths, and set iteration order is
+    # PYTHONHASHSEED-randomised per process — a plain set made WHICH
+    # neighbors survive the cap differ between two runs of the same scan
+    # (Flow.paths drift → bipartite shared_with/secondary + testmap drift;
+    # diagnosed on supabase 2026-07-02). Neighbors now keep deterministic
+    # source-import order.
+    out: dict[str, None] = {}
 
     # TS/JS: use the existing ast_extractor signatures + resolver.
     if suffix in _TS_JS_EXTENSIONS:
@@ -422,7 +429,7 @@ def _file_edges(
                 repo_root=str(repo_path),
             )
             if resolved and resolved != rel_path:
-                out.add(resolved)
+                out[resolved] = None
         return list(out)
 
     # The other languages don't have imports populated on FileSignature
@@ -441,32 +448,32 @@ def _file_edges(
                 source_roots=python_source_roots,
             )
             if resolved and resolved != rel_path:
-                out.add(resolved)
+                out[resolved] = None
         for match in _RE_PY_IMPORT.finditer(source):
             resolved = _resolve_python_module(
                 rel_path, match.group(1), file_set,
                 source_roots=python_source_roots,
             )
             if resolved and resolved != rel_path:
-                out.add(resolved)
+                out[resolved] = None
         return list(out)
 
     if suffix == _GO_EXTENSION:
         for imp in _extract_go_imports(source):
             resolved = _resolve_go_import(imp, file_set, go_module_prefix)
             if resolved and resolved != rel_path:
-                out.add(resolved)
+                out[resolved] = None
         return list(out)
 
     if suffix == _RUST_EXTENSION:
         for match in _RE_RUST_USE_CRATE.finditer(source):
             resolved = _resolve_rust_use(rel_path, match.group(1), file_set)
             if resolved and resolved != rel_path:
-                out.add(resolved)
+                out[resolved] = None
         for match in _RE_RUST_MOD.finditer(source):
             resolved = _resolve_rust_mod(rel_path, match.group(1), file_set)
             if resolved and resolved != rel_path:
-                out.add(resolved)
+                out[resolved] = None
         return list(out)
 
     return []
