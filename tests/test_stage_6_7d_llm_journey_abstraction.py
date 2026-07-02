@@ -1045,3 +1045,68 @@ def test_digest_invariant_to_split_depth() -> None:
     assert d_whole["n_dev_features"] == 1 == d_split["n_dev_features"]
     w = d_whole["developer_features"][0]; v = d_split["developer_features"][0]
     assert w["name"] == v["name"] and w["where"] == v["where"]
+
+
+def test_rollup_folds_multilevel_chain_to_root() -> None:
+    """Audit IMPORTANT: 8.9 recurses on minted subs — a grandchild must fold
+    into the ROOT parent, never vanish from both view and folded buckets."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _rollup_split_view,
+    )
+    parent = _feat("web", ["apps/web/app.tsx"])
+    parent.uuid = "web-uuid"
+    sub = _sub("issues", parent, ["apps/web/components/issues/a.tsx"])
+    grand = _feat("issues-detail", ["apps/web/components/issues/detail/d.tsx"])
+    grand.uuid = "sub-grand"
+    grand.split_from = sub.uuid
+    grand.description = "sub-domain 'detail' of feature 'issues'"
+    view, sub_to_parent = _rollup_split_view([parent, sub, grand])
+    assert sub_to_parent == {"issues": "web", "issues-detail": "web"}
+    assert len(view) == 1
+    folded = view[0]
+    assert "apps/web/components/issues/a.tsx" in folded.paths
+    assert "apps/web/components/issues/detail/d.tsx" in folded.paths  # not lost
+
+
+def test_cache_hit_propagates_capability_to_subs() -> None:
+    """Audit gap: propagation must hold on the CACHE-HIT path — the cache
+    stores the PARENT-level map; subs re-inherit at every reconstruction."""
+    from faultline.cache.backend import CacheKind
+
+    class _MemCache:
+        def __init__(self) -> None:
+            self.store: dict[tuple[str, str], Any] = {}
+        def get(self, kind: str, key: str) -> Any:
+            return self.store.get((kind, key))
+        def set(self, kind: str, key: str, value: Any) -> None:
+            self.store[(kind, key)] = value
+
+    parent = _feat("web", ["apps/web/app.tsx"])
+    parent.uuid = "web-uuid"
+    s1 = _sub("issues", parent, ["apps/web/components/issues/a.tsx"])
+    devs = [parent, s1, _feat("auth", ["app/auth/login.ts"])]
+    abs_payload = json.dumps({
+        "product_features": [{"name": "Issue Tracking", "description": "i"}],
+        "user_flows": [
+            {"name": "Manage issues", "resource": "issue",
+             "product_feature": "Issue Tracking", "from_flows": ["UF-001"]},
+        ],
+    })
+    reattrib = json.dumps({"map": {"web": "Issue Tracking",
+                                   "auth": "Issue Tracking"}})
+    cache = _MemCache()
+    ufs1, pfs1, dm1, tel1 = run_journey_abstraction(
+        _ufs(), _pfs(), devs, [], client=_client(abs_payload, reattrib),
+        cache=cache)
+    assert tel1["applied"] and not tel1["cache_hit"]
+    assert dm1["issues"] == ("issue-tracking",)
+    # Cached map must stay PARENT-level ("issues" absent).
+    (payload,) = [v for (k, _), v in cache.store.items()
+                  if k == CacheKind.LLM_ABSTRACTION.value]
+    assert "issues" not in payload["map"]
+
+    ufs2, pfs2, dm2, tel2 = run_journey_abstraction(
+        _ufs(), _pfs(), devs, [], client=_raising_client(), cache=cache)
+    assert tel2["applied"] and tel2["cache_hit"]
+    assert dm2["issues"] == ("issue-tracking",)   # re-propagated on replay
+    assert dm2 == dm1

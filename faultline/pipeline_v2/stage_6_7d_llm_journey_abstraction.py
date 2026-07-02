@@ -458,19 +458,39 @@ def _rollup_split_view(
         u: f for f in developer_features
         if (u := getattr(f, "uuid", None))
     }
+
+    def _root_ancestor(sub: "Feature") -> "Feature | None":
+        """Walk the split chain to its NON-SUB root. Stage 8.9 recurses on
+        its own minted subs (parent -> sub -> grandchild), so one hop lands
+        on an intermediate sub whose own exclusion would silently drop the
+        grandchild from the view (audit IMPORTANT, 2026-07-02). Cycle-guarded;
+        an unresolvable chain returns None (the sub stays standalone)."""
+        seen: set[int] = set()
+        cur = sub
+        while True:
+            parent_name = _split_parent_name(cur)
+            if parent_name is None:
+                return cur  # reached a non-sub feature = the root
+            if id(cur) in seen:
+                return None  # cycle — treat as orphan
+            seen.add(id(cur))
+            # NAME channel first (reliable), uuid channel as a fallback.
+            parent = by_name.get(parent_name) or by_uuid.get(
+                getattr(cur, "split_from", None))
+            if parent is None or parent is cur:
+                return None  # orphan (husk dropped)
+            cur = parent
+
     sub_to_parent: dict[str, str] = {}
     folded: dict[int, list["Feature"]] = defaultdict(list)
     for f in developer_features:
-        parent_name = _split_parent_name(f)
-        if parent_name is None:
+        if _split_parent_name(f) is None:
             continue
-        # NAME channel first (reliable), uuid channel as a fallback.
-        parent = by_name.get(parent_name) or by_uuid.get(
-            getattr(f, "split_from", None))
-        if parent is None or parent is f:
+        root = _root_ancestor(f)
+        if root is None or root is f:
             continue
-        sub_to_parent[_dev_key(f)] = _dev_key(parent)
-        folded[id(parent)].append(f)
+        sub_to_parent[_dev_key(f)] = _dev_key(root)
+        folded[id(root)].append(f)
 
     view: list[Any] = []
     for f in developer_features:
