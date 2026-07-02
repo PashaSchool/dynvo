@@ -432,6 +432,22 @@ def assemble_scan_meta(
         # On a re-scan of an unchanged repo this drives Stage 3 reproducibility.
         "stage_3_cache_hits": stage3.cache_hits,
         "stage_3_llm_calls": stage3.llm_calls,
+        # Chunked oversized-feature flow detection (Stage-8.9 oversized
+        # contract reused at Stage 3): features routed through the chunked
+        # path, chunks planned, chunk Haiku calls / cache hits (subsets of
+        # stage_3_llm_calls / stage_3_cache_hits), and validated flows
+        # produced by chunk calls. ``getattr`` keeps older Stage3Result
+        # stubs (tests) working.
+        "stage_3_features_chunked": (getattr(
+            stage3, "chunk_telemetry", None) or {}).get("features_chunked", 0),
+        "stage_3_chunks_total": (getattr(
+            stage3, "chunk_telemetry", None) or {}).get("chunks_total", 0),
+        "stage_3_chunk_llm_calls": (getattr(
+            stage3, "chunk_telemetry", None) or {}).get("chunk_llm_calls", 0),
+        "stage_3_chunk_cache_hits": (getattr(
+            stage3, "chunk_telemetry", None) or {}).get("chunk_cache_hits", 0),
+        "stage_3_flows_from_chunks": (getattr(
+            stage3, "chunk_telemetry", None) or {}).get("flows_from_chunks", 0),
         "stage4_cost_usd": round(stage4.cost_usd, 4),
         "stage_4_clusters_total": stage4.clusters_total,
         "stage_4_clusters_processed": stage4.clusters_processed,

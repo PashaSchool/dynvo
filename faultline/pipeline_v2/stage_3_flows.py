@@ -42,8 +42,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
+import statistics
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -64,6 +66,16 @@ logger = logging.getLogger(__name__)
 from faultline.llm.model_gateway import resolve_model as gateway_model
 from faultline.pipeline_v2.degradations import flow_walltime_exceeded
 from faultline.pipeline_v2.llm_health import LlmHealth
+
+# Stage-8.9 OVERSIZED contract — imported, not duplicated
+# (rule-no-magic-tuning): a feature is oversized iff it owns
+# > max(_OVERSIZED_MEDIAN_MULT * median, ceil(_OVERSIZED_SHARE * total))
+# files, computed over the CURRENT feature set's owned sizes.
+from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
+    _MIN_DOMAINS,
+    _OVERSIZED_MEDIAN_MULT,
+    _OVERSIZED_SHARE,
+)
 from faultline.pipeline_v2.profiles._flow_lines import resolve_handler_line
 
 if TYPE_CHECKING:
@@ -121,12 +133,24 @@ def _passes_flow_gate(feature, exports, routes) -> bool:
     return bool(exports) or bool(routes)
 
 
-def _compute_wall_timeout(n_features: int, max_workers: int) -> int:
-    """Universal wall-time cap that scales with feature count."""
-    if n_features <= 0 or max_workers <= 0:
+def _compute_wall_timeout(
+    n_call_units: int,
+    max_workers: int,
+    max_units_one_feature: int = 1,
+) -> int:
+    """Universal wall-time cap that scales with LLM-call-unit count.
+
+    ``n_call_units`` is the number of per-feature LLM calls the pool will
+    issue: 1 per ordinary feature, plus the planned chunk count for each
+    OVERSIZED (chunked) feature. ``max_units_one_feature`` is the largest
+    unit count any single feature carries — a chunked feature runs its
+    chunks SERIALLY inside one worker thread, so the wall-time can never be
+    below that feature's own serial budget regardless of pool width.
+    """
+    if n_call_units <= 0 or max_workers <= 0:
         return MIN_WALL_TIMEOUT_S
-    import math
-    needed = math.ceil(n_features * PER_CALL_BUDGET_S / max_workers)
+    needed = math.ceil(n_call_units * PER_CALL_BUDGET_S / max_workers)
+    needed = max(needed, max_units_one_feature * PER_CALL_BUDGET_S)
     return max(MIN_WALL_TIMEOUT_S, needed)
 
 # Prompt sample caps — keep the request small.
@@ -137,6 +161,38 @@ MAX_ROUTES_IN_PROMPT = 20
 # Output validation
 MAX_FLOWS_PER_FEATURE = 12
 MIN_FLOWS_PER_FEATURE_HINT = 3  # only a hint to the LLM; not enforced post-hoc
+
+# ── Chunked flow detection for OVERSIZED features ───────────────────────────
+#
+# A giant feature (supabase "studio": 2000+ files, ~40 pages) previously got
+# ONE Haiku call capped at MAX_FLOWS_PER_FEATURE=12 flows for dozens of real
+# journeys — the golden journeys living in its subtrees were unreachable for
+# the UF rollup. For features that pass the Stage-8.9 OVERSIZED contract
+# (same constants, imported — rule-no-magic-tuning) we deterministically
+# partition the feature's files by product-domain directory fan-out and run
+# the EXISTING per-feature LLM machinery once per chunk:
+#
+#   * same prompt shape + naming discipline + per-call MAX_FLOWS cap;
+#   * S7-B ``seen_entries`` SHARED across all chunks of one feature (no
+#     same-entry twins across chunks);
+#   * each chunk call content-hash cached via the SAME CacheKind.LLM_FLOWS
+#     key derivation (the key hashes paths + exports + routes + content_sig,
+#     so a chunk key — a proper subset of the feature's paths — can never
+#     collide with a whole-feature key, and non-oversized features keep
+#     byte-identical keys → warm caches still hit; no version bump needed).
+#
+# Flows therefore enter the pipeline at the normal Stage-3 point, so
+# expansion / testmap / bipartite / rollup downstream just work.
+#
+# Kill switch: FAULTLINE_STAGE3_CHUNKED=0 restores the single-call path.
+_CHUNKING_ENV = "FAULTLINE_STAGE3_CHUNKED"
+_RESIDUAL_CHUNK = "__residual__"
+
+
+def _chunking_enabled() -> bool:
+    return (os.environ.get(_CHUNKING_ENV, "1") or "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
 
 # Per [[rule-flow-naming]]: ``manage-X-flow`` shape, NEVER ``use-X-flow``.
 _USE_PREFIX_PATTERN = re.compile(r"^use-", re.IGNORECASE)
@@ -215,6 +271,13 @@ class Stage3Result:
     # ``cache_hits`` are NOT counted in ``llm_calls`` and cost $0. Mirrors
     # Stage 4's ``Stage4Result.cache_hits``.
     cache_hits: int = 0
+    # Chunked oversized-feature flow-detection telemetry. Keys:
+    #   features_chunked   — features routed through the chunked path
+    #   chunks_total       — chunks planned across all chunked features
+    #   chunk_llm_calls    — Haiku calls issued for chunks (subset of llm_calls)
+    #   chunk_cache_hits   — chunk units served from cache (subset of cache_hits)
+    #   flows_from_chunks  — validated flows produced by chunk calls
+    chunk_telemetry: dict[str, int] = field(default_factory=dict)
 
 
 # ── Anthropic client protocol (for tests) ──────────────────────────────────
@@ -312,6 +375,7 @@ def _flow_cache_key(
     exports: list[str],
     routes: list[str],
     content_sig: dict[str, str],
+    paths: list[str] | None = None,
 ) -> str:
     """Content-hash key for one feature's flow-detection LLM call.
 
@@ -333,6 +397,16 @@ def _flow_cache_key(
     Deliberately EXCLUDED: run_id, timestamps, clone/job dir, feature
     ordering, thread identity, or any other run-varying value. The key is a
     pure function of the repo's content + the model + the prompt version.
+
+    Chunked flow detection (oversized features) passes ``paths`` — the
+    chunk's file subset — so a chunk's key hashes exactly the chunk's
+    content (paths + exports + routes + content_sig all differ per chunk).
+    ``paths=None`` (the whole-feature default) produces a payload that is
+    BYTE-IDENTICAL to the pre-chunking derivation, so existing warm-cache
+    entries for non-oversized features still hit, and no
+    ``STAGE3_CACHE_VERSION`` bump is needed: a chunk is a PROPER SUBSET of
+    its feature's paths (chunking requires ≥2 chunks), so a chunk key can
+    never equal a stale whole-feature key for the same feature.
     """
     payload = json.dumps(
         {
@@ -340,7 +414,7 @@ def _flow_cache_key(
             "model": model,
             "system": system,
             "name": feature.name,
-            "paths": sorted(feature.paths),
+            "paths": sorted(paths if paths is not None else feature.paths),
             "exports": list(exports),
             "routes": list(routes),
             "content_sig": content_sig,
@@ -378,6 +452,113 @@ def _sorted_flows(flows: list["FlowSpec"]) -> list["FlowSpec"]:
     return sorted(flows, key=_flow_order_key)
 
 
+# ── Oversized-feature chunk planning (deterministic) ───────────────────────
+
+
+def _oversized_cut(features: list["DeveloperFeature"]) -> tuple[int, int] | None:
+    """``(cut, median)`` per the Stage-8.9 oversized contract, computed over
+    the CURRENT Stage-3 feature set's owned sizes (``len(f.paths)``).
+
+    A feature is oversized iff ``len(f.paths) > cut``. Returns ``None`` when
+    no feature owns any path (degenerate input). Mirrors
+    ``stage_8_9_anchor_subdecompose.stage_8_9_anchor_subdecompose``'s
+    median/cut computation exactly — the constants are imported from there so
+    the two stages can never drift apart.
+    """
+    sizes = [len(f.paths) for f in features if f.paths]
+    if not sizes:
+        return None
+    median = max(2, int(statistics.median(sizes)))
+    total_owned = len({p for f in features for p in f.paths})
+    cut = max(
+        _OVERSIZED_MEDIAN_MULT * median,
+        math.ceil(_OVERSIZED_SHARE * total_owned),
+    )
+    return cut, median
+
+
+def _widest_fanout(paths: list[str]) -> tuple[str, dict[str, list[str]]] | None:
+    """Locate the widest distinct-child directory level within *paths*.
+
+    Every directory prefix of every path is a candidate CONTAINER; a child
+    qualifies only when it is itself a directory (a deeper segment follows),
+    so a bare file directly under the container never becomes a chunk. The
+    container with the MOST distinct child dirs is the product-domain fan-out
+    level (same idea as ``stage_8_9_5_llm_component_split._component_fanout``,
+    generalised beyond ``components`` subtrees: the deeper-but-thinner
+    grouping level loses to the wider product-area level).
+
+    Deterministic: ties break to the shallower container, then lexicographic.
+    Returns ``(container_prefix, {child_dir: [files]})`` — ``""`` container
+    means the repo root — or ``None`` when no level fans out into at least
+    ``_MIN_DOMAINS`` children (a fan-out of 1 is not a split, per Stage 8.9).
+    """
+    cand: dict[str, dict[str, list[str]]] = {}
+    for p in sorted(paths):
+        segs = p.split("/")
+        # Child at index d is a directory iff it is not the basename
+        # (index len(segs)-1) — i.e. d <= len(segs)-2, which is exactly
+        # ``range(len(segs) - 1)``.
+        for d in range(len(segs) - 1):
+            container = "/".join(segs[:d])
+            child = segs[d]
+            cand.setdefault(container, {}).setdefault(child, []).append(p)
+    if not cand:
+        return None
+    best = min(
+        cand,
+        key=lambda k: (-len(cand[k]), len(k.split("/")) if k else 0, k),
+    )
+    children = cand[best]
+    if len(children) < _MIN_DOMAINS:
+        return None
+    return best, children
+
+
+def _plan_chunks(
+    paths: list[str], max_chunks: int,
+) -> list[tuple[str, list[str]]] | None:
+    """Deterministic chunk partition of an oversized feature's *paths*.
+
+    Each child dir at the widest fan-out level becomes one chunk; files not
+    under the fan-out (or directly at the container level) fall into a
+    ``__residual__`` chunk. The number of chunks is bounded by *max_chunks*
+    (see the call site for the scale-invariant formula): chunks are ordered
+    largest-first (ties lexicographic) and the SMALLEST overflow chunks are
+    merged into the residual — so a pathological 200-child fan-out coarsens
+    gracefully instead of firing 200 LLM calls.
+
+    File conservation: every input path lands in exactly one chunk. Returns
+    ``None`` (caller falls back to the single-call path, byte-identical to
+    the non-oversized behaviour) when no usable fan-out exists or fewer than
+    2 chunks would result.
+    """
+    if max_chunks < 2:
+        return None
+    fan = _widest_fanout(paths)
+    if fan is None:
+        return None
+    _container, children = fan
+    buckets = {child: sorted(files) for child, files in children.items()}
+    claimed = {p for files in buckets.values() for p in files}
+    residual = sorted(p for p in paths if p not in claimed)
+    ordered = sorted(buckets.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    # Reserve one slot for the residual chunk whenever one will exist.
+    if residual or len(ordered) > max_chunks:
+        keep_n = max_chunks - 1
+    else:
+        keep_n = max_chunks
+    kept = ordered[:keep_n]
+    overflow = [p for _name, files in ordered[keep_n:] for p in files]
+    residual = sorted(residual + overflow)
+    chunks: list[tuple[str, list[str]]] = [(name, files) for name, files in kept]
+    if residual:
+        chunks.append((_RESIDUAL_CHUNK, residual))
+    if len(chunks) < 2:
+        return None
+    return chunks
+
+
 # ── Flow candidate enumeration from FileSignature ──────────────────────────
 
 
@@ -385,7 +566,17 @@ def _enumerate_candidates(
     feature: "DeveloperFeature",
     repo_path: str,
 ) -> tuple[list[str], list[str], dict[str, tuple[str, int]], dict[str, str]]:
-    """Walk a feature's paths via :func:`extract_signatures` and pull
+    """Whole-feature wrapper over :func:`_enumerate_candidates_paths` —
+    byte-identical to the pre-chunking behaviour (same code path, same
+    ordering)."""
+    return _enumerate_candidates_paths(list(feature.paths), repo_path)
+
+
+def _enumerate_candidates_paths(
+    paths: list[str],
+    repo_path: str,
+) -> tuple[list[str], list[str], dict[str, tuple[str, int]], dict[str, str]]:
+    """Walk *paths* via :func:`extract_signatures` and pull
     exports + routes + a (symbol → (file, start_line)) lookup map + a
     per-file source-content signature.
 
@@ -402,7 +593,7 @@ def _enumerate_candidates(
       is exactly the set that can influence the LLM's flow output.
     """
     sigs: dict[str, FileSignature] = extract_signatures(
-        list(feature.paths), repo_path,
+        list(paths), repo_path,
     )
 
     exports: list[str] = []
@@ -539,10 +730,19 @@ def _parse_response_text(text: str) -> list[dict[str, Any]]:
 def _validate_and_attach_lines(
     raw_flows: list[dict[str, Any]],
     symbol_to_loc: dict[str, tuple[str, int]],
+    *,
+    seen_entries: set[tuple[str, int]] | None = None,
 ) -> tuple[list[FlowSpec], list[str]]:
     """Filter naming-discipline violations + attach line ranges.
 
     Returns ``(valid_flows, drop_notes)``.
+
+    ``seen_entries`` (optional) is the S7-B entry-point dedup set. When the
+    caller passes one — the chunked oversized-feature path shares ONE set
+    across all chunks of a feature — flows colliding with entries kept by an
+    earlier chunk are dropped too (no same-entry twins across chunks). The
+    default ``None`` builds a fresh per-call set: byte-identical to the
+    pre-chunking single-call behaviour.
 
     Sprint S7-B — Stage 3 entry-point dedup
     ----------------------------------------
@@ -558,7 +758,8 @@ def _validate_and_attach_lines(
     """
     out: list[FlowSpec] = []
     notes: list[str] = []
-    seen_entries: set[tuple[str, int]] = set()
+    if seen_entries is None:
+        seen_entries = set()
     dup_count = 0
     for raw in raw_flows:
         name = (raw.get("name") or "").strip().lower()
@@ -843,11 +1044,65 @@ def stage_3_flows(
     # the legacy behaviour is byte-for-byte preserved (regression guard).
     profile_flows = _profile_flows_by_feature(profile, ctx, features)
 
-    # Scale wall-time cap to feature count when caller didn't pin it.
-    effective_timeout = (
-        timeout if timeout is not None
-        else _compute_wall_timeout(len(features), max_workers)
-    )
+    # Chunked flow detection for OVERSIZED features (Stage-8.9 contract,
+    # constants imported — see module docs at ``_CHUNKING_ENV``). The cut
+    # and median are computed ONCE over the CURRENT feature set and shared
+    # by every worker. ``chunk_cut is None`` ⇒ chunking fully disabled and
+    # every feature takes the pre-existing single-call path.
+    chunk_cut: int | None = None
+    chunk_median: int = 2
+    if _chunking_enabled():
+        _oc = _oversized_cut(features)
+        if _oc is not None:
+            chunk_cut, chunk_median = _oc
+    chunk_stats: dict[str, int] = {
+        "features_chunked": 0,
+        "chunks_total": 0,
+        "chunk_llm_calls": 0,
+        "chunk_cache_hits": 0,
+        "flows_from_chunks": 0,
+    }
+    # Pre-plan chunks ONCE for every oversized feature (deterministic, pure
+    # path-string work — no IO). Keyed by object identity: the features list
+    # is fixed for the lifetime of this call. Doing it up front (a) gives the
+    # wall-time formula EXACT per-feature call-unit counts instead of the
+    # loose ``paths // median`` upper bound, and (b) keeps worker threads
+    # free of planning work. The chunk-call cap is SCALE-INVARIANT
+    # (rule-no-magic-tuning): at ``len(paths) // median`` chunks, each chunk
+    # averages at least one repo-median-feature worth of files — so the
+    # LLM-call count is bounded by the number of median-grain features this
+    # oversized feature is "worth" (the cost it would have incurred had
+    # Stage 2 emitted it at the repo's own grain). A pathological 200-child
+    # fan-out on a feature worth 10 median features fires ≤10 calls:
+    # ``_plan_chunks`` merges the smallest children into the residual chunk.
+    chunk_plans: dict[int, list[tuple[str, list[str]]]] = {}
+    if chunk_cut is not None:
+        for f in features:
+            if len(f.paths) > chunk_cut:
+                plan = _plan_chunks(
+                    sorted(f.paths),
+                    max_chunks=len(f.paths) // chunk_median,
+                )
+                if plan is not None:
+                    chunk_plans[id(f)] = plan
+
+    # Scale wall-time cap to LLM-call-unit count when caller didn't pin it:
+    # 1 unit per ordinary feature, the EXACT planned chunk count per chunked
+    # oversized feature (its chunks run serially inside one worker thread).
+    # With chunking disabled ``chunk_plans`` is empty and every feature is
+    # exactly 1 unit — identical to the pre-chunking formula.
+    if timeout is not None:
+        effective_timeout: float = timeout
+    else:
+        call_units = 0
+        max_units_one = 1
+        for f in features:
+            units = len(chunk_plans.get(id(f), ())) or 1
+            call_units += units
+            max_units_one = max(max_units_one, units)
+        effective_timeout = _compute_wall_timeout(
+            call_units, max_workers, max_units_one,
+        )
 
     # Build the client lazily; if it's None and there are features that
     # need detection, we record one warning and return empty flows for
@@ -907,6 +1162,148 @@ def stage_3_flows(
     repo_path_str = str(ctx.repo_path)
     out: dict[int, FeatureWithFlows] = {}
 
+    def _process_chunked(
+        feature: "DeveloperFeature",
+        seeded: list[FlowSpec],
+        chunks: list[tuple[str, list[str]]],
+    ) -> FeatureWithFlows:
+        """Chunked flow detection for one OVERSIZED feature.
+
+        Runs the SAME per-feature LLM machinery once per chunk — same prompt
+        shape, same naming discipline, same per-call
+        :data:`MAX_FLOWS_PER_FEATURE` cap, same ``CacheKind.LLM_FLOWS``
+        content-hash cache — with the chunk's file digest instead of the
+        whole feature's. The S7-B entry dedup set is SHARED across all
+        chunks (no same-entry twins across chunks), so the per-feature
+        total is naturally bounded by ``MAX_FLOWS_PER_FEATURE *
+        len(chunks)`` minus cross-chunk collisions. Chunk order is
+        deterministic (largest-first from :func:`_plan_chunks`).
+        """
+        nonlocal llm_calls, cache_hits, cost_cap_warned
+        with llm_call_lock:
+            chunk_stats["features_chunked"] += 1
+            chunk_stats["chunks_total"] += len(chunks)
+        seen_entries: set[tuple[str, int]] = set()  # S7-B, shared over chunks
+        all_flows: list[FlowSpec] = []
+        notes: list[str] = []
+        for label, chunk_paths in chunks:
+            exports, routes, sym_loc, content_sig = (
+                _enumerate_candidates_paths(chunk_paths, repo_path_str)
+            )
+            if not _passes_flow_gate(feature, exports, routes):
+                continue
+            # Budget guard — identical semantics to the single-call path,
+            # applied per chunk so a mid-feature cap stops further calls.
+            if (
+                tracker.max_cost is not None
+                and tracker.total_cost_usd >= tracker.max_cost
+            ):
+                with llm_call_lock:
+                    if not cost_cap_warned:
+                        cost_cap_warned = True
+                        warnings.append(
+                            f"stage_3_flows: shared cost cap "
+                            f"${tracker.max_cost:.2f} hit; remaining "
+                            f"features default to flows=[]",
+                        )
+                notes.append(f"cost-cap-hit at chunk {label!r}")
+                break
+            user_prompt = _build_user_prompt(
+                feature.name, list(chunk_paths), exports, routes,
+            )
+            cache_key: str | None = None
+            cached_raw: list[dict[str, Any]] | None = None
+            if cache_backend is not None:
+                cache_key = _flow_cache_key(
+                    feature,
+                    model=model,
+                    system=_SYSTEM_PROMPT,
+                    exports=exports,
+                    routes=routes,
+                    content_sig=content_sig,
+                    paths=chunk_paths,
+                )
+                try:
+                    stored = cache_backend.get(
+                        CacheKind.LLM_FLOWS.value, cache_key,
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    logger.warning("stage_3_flows: cache get failed: %s", exc)
+                    stored = None
+                if isinstance(stored, dict) and isinstance(
+                    stored.get("flows"), list,
+                ):
+                    cached_raw = [
+                        f for f in stored["flows"] if isinstance(f, dict)
+                    ]
+            if cached_raw is not None:
+                with llm_call_lock:
+                    cache_hits += 1
+                    chunk_stats["chunk_cache_hits"] += 1
+                raw_flows = cached_raw
+            else:
+                text, in_tok, out_tok = _call_haiku(
+                    client,
+                    model=model,
+                    system=_SYSTEM_PROMPT,
+                    user=user_prompt,
+                    max_tokens=DEFAULT_MAX_TOKENS,
+                    llm_health=llm_health,
+                )
+                with llm_call_lock:
+                    llm_calls += 1
+                    chunk_stats["chunk_llm_calls"] += 1
+                if in_tok or out_tok:
+                    tracker.record(
+                        provider="anthropic",
+                        model=model,
+                        input_tokens=in_tok,
+                        output_tokens=out_tok,
+                        label="stage-3-flows",
+                    )
+                if not text:
+                    # Do NOT cache a failure (same rule as single-call path).
+                    notes.append(f"chunk {label!r}: llm-empty-or-failed")
+                    continue
+                raw_flows = _parse_response_text(text)
+                if cache_backend is not None and cache_key is not None:
+                    try:
+                        cache_backend.set(
+                            CacheKind.LLM_FLOWS.value,
+                            cache_key,
+                            {
+                                "version": STAGE3_CACHE_VERSION,
+                                "flows": raw_flows,
+                            },
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "stage_3_flows: cache set failed: %s", exc,
+                        )
+            valid, drop_notes = _validate_and_attach_lines(
+                raw_flows, sym_loc, seen_entries=seen_entries,
+            )
+            all_flows.extend(valid)
+            if drop_notes:
+                notes.append(f"chunk {label!r}: {'; '.join(drop_notes)}")
+        with llm_call_lock:
+            chunk_stats["flows_from_chunks"] += len(all_flows)
+        merged = _merge_seed_and_llm_flows(seeded, all_flows)
+        rationale = (
+            f"chunked oversized feature into {len(chunks)} chunk(s); "
+            f"detected {len(all_flows)} flow(s)"
+        )
+        if seeded:
+            rationale += (
+                f"; merged with {len(seeded)} profile-seeded "
+                f"-> {len(merged)} flow(s)"
+            )
+        if notes:
+            rationale += f" ({'; '.join(notes)})"
+        return FeatureWithFlows(
+            feature=feature, flows=_sorted_flows(merged), rationale=rationale,
+        )
+
     def _process(idx: int, feature: "DeveloperFeature") -> FeatureWithFlows:
         nonlocal llm_calls, cache_hits, cost_cap_warned
         # D2: the profile seed AUGMENTS the LLM, it does NOT replace it.
@@ -916,6 +1313,16 @@ def stage_3_flows(
         # the richer LLM flows. ``seeded`` is empty under the
         # DefaultProfile, so the legacy LLM-only path is byte-identical.
         seeded = profile_flows.get(feature.name) or []
+
+        # OVERSIZED features route through chunked detection so their flow
+        # yield is no longer capped at one MAX_FLOWS_PER_FEATURE call. Plans
+        # are precomputed (see ``chunk_plans`` above for the scale-invariant
+        # cap rationale); a feature without a usable fan-out has no plan and
+        # falls through to the byte-identical single-call path below.
+        chunks = chunk_plans.get(id(feature))
+        if chunks is not None and client is not None:
+            return _process_chunked(feature, seeded, chunks)
+
         exports, routes, sym_loc, content_sig = _enumerate_candidates(
             feature, repo_path_str,
         )
@@ -1133,6 +1540,7 @@ def stage_3_flows(
         degradations=degradations,
         reach_telemetry=reach_telemetry,
         cache_hits=cache_hits,
+        chunk_telemetry=dict(chunk_stats),
     )
 
 

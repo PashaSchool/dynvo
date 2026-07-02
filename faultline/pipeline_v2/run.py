@@ -524,6 +524,7 @@ def run_pipeline_v2(
                 "cost_usd": stage3.cost_usd,
                 "llm_calls": stage3.llm_calls,
                 "cache_hits": stage3.cache_hits,
+                "chunk_telemetry": stage3.chunk_telemetry,
                 "warnings": stage3.warnings,
                 "reach_telemetry": stage3.reach_telemetry,
             },
