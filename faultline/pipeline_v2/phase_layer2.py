@@ -585,6 +585,19 @@ def run_layer2_phase(
             f"targets={dom_attr_result.targets_enriched} "
             f"ambiguous_skipped={dom_attr_result.ambiguous_skipped}",
         )
+        # A transfer can cross product boundaries (frontend anchor →
+        # backend domain feature) and the moved path was never in ANY
+        # product union (member-only) — re-union product paths so the
+        # Layer-2 surface stays consistent (audit #2, 2026-07-02). The
+        # 8.9/8.9.5 splits don't need this (subfeatures inherit
+        # product_feature_id → unions byte-stable); only run on transfers.
+        if dom_attr_result.files_transferred:
+            product_features, s896_reconcile = reconcile_product_features(
+                [f for f in features
+                 if getattr(f, "layer", "developer") == "developer"],
+                product_features,
+            )
+            stage_8_9_6_telemetry["product_reconcile"] = s896_reconcile
         write_stage_artifact(
             ctx.repo_path,
             stage_index=8,

@@ -117,17 +117,23 @@ def _build_name_index(
     exact: dict[str, list["Feature"]] = {}
     singular: dict[str, list["Feature"]] = {}
     for f in devs:
-        seen_keys: set[str] = set()
-        for raw in {f.name, getattr(f, "display_name", None)}:
+        # ORDERED iteration (name first, then display_name) + one seen-set PER
+        # TIER: a shared set let a name's singular reduction shadow the
+        # display_name's literal slug out of the exact index, and set-of-str
+        # iteration order is hash-randomised across processes → transfer
+        # decisions could differ between runs (audit #3, 2026-07-02).
+        seen_exact: set[str] = set()
+        seen_singular: set[str] = set()
+        for raw in (f.name, getattr(f, "display_name", None)):
             if not raw:
                 continue
             e = _norm(raw)
-            if e and e not in seen_keys:
-                seen_keys.add(e)
+            if e and e not in seen_exact:
+                seen_exact.add(e)
                 exact.setdefault(e, []).append(f)
             s = _singular(e)
-            if s and s not in seen_keys:
-                seen_keys.add(s)
+            if s and s not in seen_singular:
+                seen_singular.add(s)
                 singular.setdefault(s, []).append(f)
     return exact, singular
 
@@ -201,10 +207,19 @@ def attribute_domain_members(
             if target is None or target is source:
                 keep.append(mf)
                 continue
-            # Transfer: the target claims ownership (path was unowned) and
-            # inherits the ledger entry; the source's ledger shrinks.
+            # Transfer: the target claims OWNERSHIP (path was unowned), so
+            # mint a fresh owning MemberFile (role="anchor", primary=True —
+            # the _make_subfeature pattern) rather than carrying the stale
+            # shared-role entry: _owned_paths()/owned_max only count
+            # primary/anchor/owner rows once a ledger exists, so a shared-role
+            # append would leave paths and member_files in a split-brain
+            # (audit #1, 2026-07-02). The source's ledger shrinks.
+            from faultline.models.types import MemberFile  # local: import cycle
             target.member_files = (getattr(target, "member_files", None) or [])
-            target.member_files.append(mf)
+            target.member_files.append(MemberFile(
+                path=p, role="anchor", confidence=1.0, primary=True,
+                evidence=f"domain-dir attribution from '{source.name}'",
+            ))
             target.paths.append(p)
             owned_all.add(p)
             enriched.add(id(target))

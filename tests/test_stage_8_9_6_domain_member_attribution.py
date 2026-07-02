@@ -144,3 +144,58 @@ def test_deterministic_across_runs(monkeypatch):
     attribute_domain_members(b)
     assert [f.paths for f in a] == [f.paths for f in b]
     assert [_mnames(f) for f in a] == [_mnames(f) for f in b]
+
+
+# ── audit fixes (2026-07-02): ownership registration, index tiers, dup claims ─
+
+
+def test_transfer_registers_with_owned_paths(monkeypatch):
+    """Audit #1 (CRITICAL): a target that ALREADY has anchor member rows (the
+    real production shape) must see the transferred file in _owned_paths —
+    the transfer mints a fresh primary/anchor MemberFile, not a stale
+    shared-role copy."""
+    from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import _owned_paths
+
+    monkeypatch.setenv(_ENV, "1")
+    anchor = _feat("frontend", ["fe/app.tsx"],
+                   members=["fe/src/hooks/api/pam/h1.ts"])
+    pam = _feat("pam", ["backend/pam/p.ts"], uuid="p")
+    pam.member_files = [
+        MemberFile(path="backend/pam/p.ts", role="anchor",
+                   confidence=1.0, primary=True),
+    ]
+    res = attribute_domain_members([anchor, pam])
+    assert res.files_transferred == 1
+    assert "fe/src/hooks/api/pam/h1.ts" in _owned_paths(pam)
+    moved = [m for m in pam.member_files
+             if m.path == "fe/src/hooks/api/pam/h1.ts"]
+    assert len(moved) == 1 and moved[0].primary and moved[0].role == "anchor"
+
+
+def test_display_name_exact_not_shadowed_by_name_singular(monkeypatch):
+    """Audit #3: name's singular reduction must not evict display_name's
+    LITERAL slug from the exact index."""
+    monkeypatch.setenv(_ENV, "1")
+    anchor = _feat("frontend", ["fe/app.tsx"],
+                   members=["fe/src/hooks/api/certificate/h1.ts"])
+    f = _feat("certificates", ["b/c.ts"], uuid="c")
+    f.display_name = "Certificate"   # literal singular — exact-tier entry
+    res = attribute_domain_members([anchor, f])
+    assert res.files_transferred == 1
+    assert "fe/src/hooks/api/certificate/h1.ts" in f.paths
+
+
+def test_cross_source_duplicate_claim_first_wins(monkeypatch):
+    """Audit #4 (minor): the same member-only path in TWO sources — the first
+    source (input order) transfers it; the second's copy stays put (it is now
+    an owned path → Rail 1 protects it as a legit shared claim)."""
+    monkeypatch.setenv(_ENV, "1")
+    p = "fe/src/hooks/api/pam/h1.ts"
+    s1 = _feat("frontend", ["fe/app.tsx"], members=[p], uuid="s1")
+    s2 = _feat("frontend-v2", ["fe2/app.tsx"], members=[p], uuid="s2")
+    pam = _feat("pam", ["backend/pam/p.ts"], uuid="p")
+    res = attribute_domain_members([s1, s2, pam])
+    assert res.files_transferred == 1
+    assert pam.paths.count(p) == 1
+    assert _mnames(s1) == []          # transferred away
+    assert _mnames(s2) == [p]         # kept as shared claim on the new owner
