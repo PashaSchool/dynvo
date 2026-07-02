@@ -342,7 +342,7 @@ def _merge_features(
     )
     last_modified = max(
         (m.last_modified for m in members),
-        default=datetime.now(timezone.utc),
+        default=datetime.fromtimestamp(0, timezone.utc),  # deterministic: zero-evidence aggregate must not stamp scan wall-clock (2026-07-02)
     )
     health_score = max((m.health_score or 0.0) for m in members)
 

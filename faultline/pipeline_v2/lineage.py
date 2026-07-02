@@ -120,8 +120,37 @@ def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     return len(a & b) / union
 
 
-def _mint_uuid() -> str:
-    return _uuid.uuid4().hex
+def _mint_uuid(name: str = "", seq: int = 0, ns: str = "") -> str:
+    """CONTENT-DERIVED uuid — sha256 of (namespace, name, per-name sequence).
+
+    uuid4 minting regenerated every identity on every run: two scans of an
+    IDENTICAL repo state produced fully-disjoint flow/feature uuids, which
+    (a) made semantically-identical outputs byte-different, and (b) leaked
+    into LLM prompts via member ids (dup-named flows key by uuid), churning
+    content-hash cache keys (supabase determinism arc, 2026-07-02). A
+    name+sequence hash is stable for identical content, unique within a
+    scan (seq = occurrence counter per name; _assert_unique still guards),
+    and changes naturally when content changes. Empty-args fallback keeps
+    uuid4 for legacy callers.
+    """
+    if not name:
+        return _uuid.uuid4().hex
+    import hashlib
+    return hashlib.sha256(
+        f"flmint-v1|{ns}|{name}|{seq}".encode("utf-8")).hexdigest()[:32]
+
+
+class _SeqMinter:
+    """Per-name occurrence counter → deterministic uuid per identity."""
+
+    def __init__(self, ns: str) -> None:
+        self._ns = ns
+        self._seen: dict[str, int] = {}
+
+    def mint(self, name: str) -> str:
+        seq = self._seen.get(name, 0)
+        self._seen[name] = seq + 1
+        return _mint_uuid(name, seq, self._ns)
 
 
 def _path_set(item: dict[str, Any]) -> frozenset[str]:
@@ -136,6 +165,7 @@ def assign_feature_lineage(
     *,
     rename_threshold: float = RENAME_THRESHOLD,
     related_threshold: float = RELATED_THRESHOLD,
+    _ns: str = "feature",
 ) -> tuple[list[LineageRecord], LineageStats]:
     """Compute UUID + lineage metadata for every entry in ``new_features``.
 
@@ -165,8 +195,9 @@ def assign_feature_lineage(
     stats.base_count = len(base)
 
     if not base:
+        minter = _SeqMinter(_ns)
         records = [
-            LineageRecord(name=n, uuid=str(f.get("uuid") or _mint_uuid()))
+            LineageRecord(name=n, uuid=str(f.get("uuid") or minter.mint(n)))
             for n, f in zip(new_names, new_features)
         ]
         stats.fresh = len(records)
@@ -177,7 +208,11 @@ def assign_feature_lineage(
     base_names = [str(b.get("name", "")) for b in base]
     base_uuids = [str(b.get("uuid") or "") for b in base]
     # Mint UUIDs for any base feature that pre-dates the lineage system.
-    base_uuids = [u or _mint_uuid() for u in base_uuids]
+    _base_minter = _SeqMinter(f"{_ns}-base")
+    base_uuids = [
+        u or _base_minter.mint(bn) for u, bn in zip(base_uuids, base_names)
+    ]
+    _fresh_minter = _SeqMinter(_ns)
 
     # ── Step 1 — compute full overlap matrix ────────────────────────
     # overlaps[new_idx] = sorted list of (jaccard, base_idx)
@@ -269,7 +304,7 @@ def assign_feature_lineage(
             stats.fresh += 1
         rec = LineageRecord(
             name=name,
-            uuid=_mint_uuid(),
+            uuid=_fresh_minter.mint(name),
             split_from=split_from,
         )
         records.append(rec)
@@ -309,6 +344,7 @@ def assign_flow_lineage(
         base_flows,
         rename_threshold=rename_threshold,
         related_threshold=related_threshold,
+        _ns="flow",
     )
 
 

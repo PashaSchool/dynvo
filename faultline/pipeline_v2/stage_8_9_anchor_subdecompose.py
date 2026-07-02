@@ -1084,7 +1084,11 @@ def _make_subfeature(
         "description": (
             f"{_SUBDOMAIN_MARKER} '{domain_key}' of feature '{source.name}'"
         ),
-        "uuid": _uuid.uuid4().hex,
+        # Content-derived (parent identity + domain) — uuid4 churned every
+        # run, breaking byte-identical re-scans (determinism arc 2026-07-02).
+        "uuid": __import__("hashlib").sha256(
+            f"subfeat-v1|{getattr(source, 'uuid', '') or source.name}|"
+            f"{domain_key}|{name}".encode("utf-8")).hexdigest()[:32],
         "split_from": getattr(source, "uuid", None),
         "previous_names": [],
         "merged_from": [],

@@ -472,3 +472,21 @@ def test_filename_match_step4_stable_across_hash_seeds(tmp_path: Path) -> None:
     r1, r2, r3 = _run("1"), _run("2"), _run("3")
     assert r1 == r2 == r3
     assert r1 == "pkg00/src/config.ts"  # lexicographic min
+
+
+def test_lineage_uuids_content_derived_and_stable() -> None:
+    """Fresh lineage mints must be identical across runs for identical
+    content (uuid4 churned all identities per run), unique for dup names."""
+    from faultline.pipeline_v2.lineage import assign_feature_lineage
+
+    feats = [{"name": "auth", "paths": ["a.ts"]},
+             {"name": "auth", "paths": ["b.ts"]},   # dup name → distinct uuid
+             {"name": "billing", "paths": ["c.ts"]}]
+    r1, _ = assign_feature_lineage([dict(f) for f in feats], None)
+    r2, _ = assign_feature_lineage([dict(f) for f in feats], None)
+    assert [x.uuid for x in r1] == [x.uuid for x in r2]
+    assert len({x.uuid for x in r1}) == 3
+    # flows namespace mints differently from features for the same name
+    from faultline.pipeline_v2.lineage import assign_flow_lineage
+    rf, _ = assign_flow_lineage([{"name": "auth", "paths": ["a.ts"]}], None)
+    assert rf[0].uuid != r1[0].uuid

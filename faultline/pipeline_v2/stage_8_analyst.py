@@ -700,7 +700,7 @@ def _emit_product_features_from_analyst(
         )
         last_modified = max(
             (c.last_modified for c in contrib),
-            default=datetime.now(timezone.utc),
+            default=datetime.fromtimestamp(0, timezone.utc),  # deterministic: zero-evidence aggregate must not stamp scan wall-clock (2026-07-02)
         )
         health = sum(c.health_score for c in contrib) / len(contrib)
         cov_vals = [
