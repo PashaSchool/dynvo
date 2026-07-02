@@ -842,3 +842,100 @@ def test_uf_ids_renumbered_content_stable() -> None:
     assert tel["applied"] is True
     assert [u.id for u in ufs] == [f"UF-{i:03d}" for i in range(1, len(ufs) + 1)]
     assert [u.name for u in ufs] == sorted((u.name for u in ufs), key=str.lower)
+
+
+def test_cache_hit_replays_dev_grounded_uf_identically() -> None:
+    """Audit #3: the cache payload keeps from_dev_features, so a cache-hit
+    reconstruction grounds a dev-grounded UF EXACTLY like the live run —
+    even when the replay client would raise (proof nothing is re-called)."""
+    from faultline.cache.backend import CacheKind
+
+    class _MemCache:
+        def __init__(self) -> None:
+            self.store: dict[tuple[str, str], Any] = {}
+        def get(self, kind: str, key: str) -> Any:
+            return self.store.get((kind, key))
+        def set(self, kind: str, key: str, value: Any) -> None:
+            self.store[(kind, key)] = value
+
+    abs_payload = json.dumps({
+        "product_features": [{"name": "Authentication", "description": "auth"}],
+        "user_flows": [
+            {"name": "Reset password", "resource": "password",
+             "product_feature": "Authentication", "from_flows": [],
+             "from_dev_features": ["auth"]},
+        ],
+    })
+    reattrib = json.dumps({"map": {"accounts": "Authentication",
+                                   "auth": "Authentication",
+                                   "shared-ui": "Shared Platform"}})
+    cache = _MemCache()
+    ufs1, pfs1, dm1, tel1 = run_journey_abstraction(
+        _ufs(), _pfs(), _devs_with_flows(), [],
+        client=_client(abs_payload, reattrib), cache=cache)
+    assert tel1["applied"] is True and tel1["cache_hit"] is False
+    assert tel1["uf_dev_grounded"] == 1
+    # Persisted spec must retain the grounding channel.
+    (payload,) = [v for (k, _), v in cache.store.items()
+                  if k == CacheKind.LLM_ABSTRACTION.value]
+    assert payload["abstraction"]["user_flows"][0]["from_dev_features"] == ["auth"]
+
+    ufs2, pfs2, dm2, tel2 = run_journey_abstraction(
+        _ufs(), _pfs(), _devs_with_flows(), [],
+        client=_raising_client(), cache=cache)  # any live call would raise
+    assert tel2["applied"] is True and tel2["cache_hit"] is True
+    assert tel2["uf_dev_grounded"] == 1
+    assert [(u.id, u.name, u.member_flow_ids) for u in ufs2] == \
+           [(u.id, u.name, u.member_flow_ids) for u in ufs1]
+    assert dm2 == dm1
+
+
+def test_dev_grounding_dedups_shared_flow_across_cited_devs() -> None:
+    """Audit #1: two cited dev features sharing a physical flow must not
+    produce duplicate member ids / inflated member_count."""
+    devs = _devs()
+    shared = _flow("password-reset-flow", "fx-shared")
+    devs[0].flows = [shared]   # accounts
+    devs[1].flows = [shared]   # auth — same flow object, same uuid
+    abs_payload = json.dumps({
+        "product_features": [{"name": "Authentication", "description": "auth"}],
+        "user_flows": [
+            {"name": "Reset password", "resource": "password",
+             "product_feature": "Authentication", "from_flows": [],
+             "from_dev_features": ["auth", "accounts", "Auth"]},
+        ],
+    })
+    reattrib = json.dumps({"map": {"accounts": "Authentication",
+                                   "auth": "Authentication",
+                                   "shared-ui": "Shared Platform"}})
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), devs, [], client=_client(abs_payload, reattrib))
+    assert tel["applied"] is True
+    uf = next(u for u in ufs if u.name == "Reset password")
+    assert uf.member_flow_ids == ["fx-shared"]
+    assert uf.member_count == 1
+
+
+def test_residual_devs_telemetry_counts_actual_residual() -> None:
+    """Audit #2: residual_devs must equal devs_residual (devs that actually
+    LANDED in the residual), not 'devs omitted from the map'."""
+    devs = _devs() + [_feat("account-billing", ["app/billing/b.ts"])]
+    abs_payload = json.dumps({
+        "product_features": [
+            {"name": "Account Management", "description": "acc"},
+            {"name": "Billing", "description": "money"},
+        ],
+        "user_flows": [
+            {"name": "Manage accounts", "resource": "account",
+             "product_feature": "Account Management", "from_flows": ["UF-001"]},
+        ],
+    })
+    # Both "account-billing" (token-rescuable) and "shared-ui" (residual)
+    # are omitted from the map.
+    reattrib = json.dumps({"map": {"accounts": "Account Management",
+                                   "auth": "Account Management"}})
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), devs, [], client=_client(abs_payload, reattrib))
+    assert tel["applied"] is True
+    assert tel["devs_token_rescued"] == 1          # account-billing → Billing
+    assert tel["residual_devs"] == tel["devs_residual"] == 1  # shared-ui only

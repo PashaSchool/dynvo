@@ -700,13 +700,16 @@ def _build_user_flows(
         if not uf.member_flow_ids:
             utok = _content_tokens(uf.name, uf.resource)
             attached: list[str] = []
+            seen_a: set[str] = set()  # dedup — two cited devs may share a flow
             # 2a. cited dev features: their unclaimed, content-overlapping flows.
             for dref in spec.get("from_dev_features") or []:
                 dev = dev_by_name.get(dref.strip().lower()) if isinstance(dref, str) else None
                 if dev is None:
                     continue
                 for mid in dev_flow_ids.get(dev.name, []):
-                    if mid not in claimed and (flow_tokens.get(mid) or set()) & utok:
+                    if (mid not in claimed and mid not in seen_a
+                            and (flow_tokens.get(mid) or set()) & utok):
+                        seen_a.add(mid)
                         attached.append(mid)
             if attached:
                 tele["uf_dev_grounded"] += 1
@@ -987,8 +990,10 @@ def run_journey_abstraction(
             "uf_after": len(new_ufs), "pf_after": len(new_pfs),
             "files_after": files_after, "dev_mapped": len(dev_map),
             "dev_total": len(developer_features),
-            "residual_devs": sum(1 for d in developer_features
-                                 if (d.display_name or d.name) not in dev_map),
+            # Post-A1 "omitted from the map" ≠ "landed in the residual" (token
+            # rescue diverges them) — residual_devs mirrors the ACCURATE
+            # devs_residual count so the blob signal stays honest.
+            "residual_devs": pf_tele.get("devs_residual", 0),
             **pf_tele, **uf_tele,
         })
         if log is not None:
