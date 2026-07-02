@@ -295,12 +295,18 @@ def _filename_match(test_path: str, source_set: set[str]) -> str | None:
                 return cand
 
     # 4. Last resort — basename match anywhere (might be wrong but better
-    # than nothing for orphan tests). Only use for first hit.
+    # than nothing for orphan tests). DETERMINISTIC pick: source_set is a
+    # set, and returning the first iteration hit made the winning source
+    # PYTHONHASHSEED-dependent — monorepos have many same-basename files
+    # (config.ts, index.ts), so the test→source map (and every downstream
+    # consumer: flow test attach, behavioral coverage) drifted between two
+    # runs of an identical scan (supabase 382 vs 378, diagnosed 2026-07-02).
+    # min() = lexicographically-smallest match, structural + scale-invariant.
     for ext in exts:
         target_name = f"{base}{ext}"
-        for src in source_set:
-            if Path(src).name == target_name:
-                return src
+        matches = [src for src in source_set if Path(src).name == target_name]
+        if matches:
+            return min(matches)
 
     return None
 

@@ -438,3 +438,37 @@ def test_reach_paths_stable_across_hash_seeds(tmp_path: Path) -> None:
     r1, r2 = _run("1"), _run("2")
     assert len(r1) > 0 and len(r1) <= 8 + 1
     assert r1 == r2, f"reach drifted across hash seeds:\n{r1}\nvs\n{r2}"
+
+
+_MAPPER_SEED_DRIVER = """
+import json, sys
+from faultline.analyzer.test_mapper import _filename_match
+# Many same-basename sources — the step-4 fallback must pick deterministically.
+sources = {f"pkg{i:02d}/src/config.ts" for i in range(20)}
+print(json.dumps(_filename_match("e2e/config.test.ts", sources)))
+"""
+
+
+def test_filename_match_step4_stable_across_hash_seeds(tmp_path: Path) -> None:
+    """test_mapper._filename_match step-4 iterated a set and returned the
+    first basename hit — the winning source was PYTHONHASHSEED-dependent
+    (supabase testmap 382 vs 378). Must be stable across seeds."""
+    import json as _json
+    import os
+    import subprocess
+    import sys
+
+    driver = tmp_path / "driver.py"
+    driver.write_text(_MAPPER_SEED_DRIVER)
+
+    def _run(seed: str) -> str:
+        env = {"PYTHONHASHSEED": seed, "PATH": "/usr/bin:/bin",
+               "PYTHONPATH": os.getcwd()}
+        out = subprocess.run([sys.executable, str(driver)],
+                             capture_output=True, text=True, env=env,
+                             check=True)
+        return _json.loads(out.stdout.strip())
+
+    r1, r2, r3 = _run("1"), _run("2"), _run("3")
+    assert r1 == r2 == r3
+    assert r1 == "pkg00/src/config.ts"  # lexicographic min
