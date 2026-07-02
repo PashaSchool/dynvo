@@ -1,22 +1,18 @@
 <div align="center">
 
-<a href="https://faultlines.dev">
-  <img src="assets/faultlines-banner.png" alt="Faultlines — Codebase intelligence for teams and AI agents" width="100%">
-</a>
+# Dynvo
 
-<br>
-
-**Faultlines turns raw git history into a living map of every _feature_ and _user flow_ in your repo — with bug hotspots, test coverage, and the precise context your AI coding agent actually needs.**
+**Dynvo turns raw git history into a living map of every _feature_ and _user flow_ in your repo — with bug hotspots, test coverage, and the precise context your AI coding agent actually needs.**
 
 No Jira. No annotations. No manual tagging. Just `git log` and your code.
 
-[![PyPI](https://img.shields.io/pypi/v/faultlines?color=6E56CF&label=pip%20install%20faultlines)](https://pypi.org/project/faultlines/)
-[![Python](https://img.shields.io/pypi/pyversions/faultlines?color=6E56CF)](https://pypi.org/project/faultlines/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-6E56CF.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/dynvo?color=6E56CF&label=pip%20install%20dynvo)](https://pypi.org/project/dynvo/)
+[![Python](https://img.shields.io/pypi/pyversions/dynvo?color=6E56CF)](https://pypi.org/project/dynvo/)
+[![License: FSL-1.1](https://img.shields.io/badge/License-FSL--1.1--ALv2-6E56CF.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-ready-6E56CF)](https://modelcontextprotocol.io)
-[![Downloads](https://img.shields.io/pypi/dm/faultlines?color=6E56CF)](https://pypi.org/project/faultlines/)
+[![Downloads](https://img.shields.io/pypi/dm/dynvo?color=6E56CF)](https://pypi.org/project/dynvo/)
 
-[**Website**](https://faultlines.dev) · [**Quick start**](#-quick-start) · [**For AI agents**](#-built-for-ai-coding-agents) · [**How it works**](#-how-it-works) · [**Releases**](https://github.com/PashaSchool/faultlines/releases)
+[**Website**](https://dynvo.ai) · [**Live scans**](https://dynvo.ai/live-scan) · [**Quick start**](#quick-start) · [**For AI agents**](#built-for-ai-coding-agents) · [**How it works**](#how-it-works) · [**Releases**](https://github.com/PashaSchool/dynvo/releases)
 
 </div>
 
@@ -35,12 +31,12 @@ Your **issue tracker** doesn't know — it's full of aspirational tickets.
 **Static analysis** sees imports, not intent.
 And your **AI agent** just `grep`s 15 files and burns your context window guessing.
 
-The answers were in your **git history** the whole time. Faultlines reads them.
+The answers were in your **git history** the whole time. Dynvo reads them.
 
-## What Faultlines does
+## What Dynvo does
 
 ```
-$ faultlines ./my-app
+$ dynvo ./my-app
 
   ✓ 472 commits analysed · 1,284 files mapped
 
@@ -78,23 +74,25 @@ A **two-layer feature map**:
 ## Quick start
 
 ```bash
-pip install faultlines
+pip install dynvo
 
-# Scan a repo. Bare `faultlines <repo>` runs the scan pipeline —
+# Scan a repo. Bare `dynvo <repo>` runs the scan pipeline —
 # flows and symbol-level attribution are included by default.
-faultlines /path/to/your/repo
+dynvo /path/to/your/repo
 ```
 
-Faultlines is **deterministic-first**: the feature/flow structure comes from your code and git history with no LLM required. Set an `ANTHROPIC_API_KEY` and a **Haiku** pass automatically adds human-readable names and flow detection — no flag needed. Pick the model with `--model haiku|sonnet|opus` (default: `haiku`):
+Dynvo is **deterministic-first**: the feature/flow structure comes from your code and git history with no LLM required. Set an `ANTHROPIC_API_KEY` and a **Haiku** pass automatically adds human-readable names and flow detection — no flag needed. Pick the model with `--model haiku|sonnet|opus` (default: `haiku`):
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-faultlines /path/to/your/repo --model sonnet
+dynvo /path/to/your/repo --model sonnet
 ```
 
-> `scan-v2` is the explicit name of the same pipeline (`faultlines scan-v2 <repo>`); the bare form is just shorthand for it.
+> `scan-v2` is the explicit name of the same pipeline (`dynvo scan-v2 <repo>`); the bare form is just shorthand for it.
 
 That writes a versioned **feature-map JSON** to `~/.faultline/`. Explore it, diff it across runs, ship it to CI, or hand it to your AI agent (below).
+
+Prefer not to run anything locally? [**dynvo.ai**](https://dynvo.ai) hosts the same engine — with PR comments, runtime overlays, dashboards and history — and scans public repos for free.
 
 ## Built for AI coding agents
 
@@ -109,13 +107,15 @@ pip install faultlines-mcp
 ```
 
 ```jsonc
-// ~/.cursor/mcp.json  (or: claude mcp add faultlines -- faultlines-mcp)
+// ~/.cursor/mcp.json  (or: claude mcp add dynvo -- faultlines-mcp)
 {
   "mcpServers": {
-    "faultlines": { "command": "faultlines-mcp" }
+    "dynvo": { "command": "faultlines-mcp" }
   }
 }
 ```
+
+> The MCP package keeps its legacy `faultlines-mcp` name on PyPI for now; everything else is Dynvo.
 
 Now Cursor / Claude Code / Cline / Windsurf can call **13 tools**:
 
@@ -165,9 +165,9 @@ Now Cursor / Claude Code / Cline / Windsurf can call **13 tools**:
 
 - **…grep / read the files?** Burns context and misses cross-boundary, runtime and historical coupling that static analysis can't see.
 - **…SonarQube / linters?** Great for line-level issues; blind to *features*, *flows* and *blast radius*.
-- **…your issue tracker?** Describes intent, not reality. Faultlines is grounded in what the code and history actually say.
+- **…your issue tracker?** Describes intent, not reality. Dynvo is grounded in what the code and history actually say.
 
-Faultlines is the only layer that joins **structure + git history + runtime** into one map — and serves it to your AI agent.
+Dynvo is the only layer that joins **structure + git history + runtime** into one map — and serves it to your AI agent.
 
 ## Roadmap
 
@@ -177,20 +177,22 @@ Faultlines is the only layer that joins **structure + git history + runtime** in
 - [x] MCP server (13 tools) — Local · Hosted · VPC
 - [x] Sentry + PostHog runtime overlays
 - [x] Incremental, sub-second re-scans on every commit
-- [x] Native plugins for more agents & IDEs
+- [ ] Native plugins for Claude Code, Cursor & Codex
 
 ## Contributing
 
-Issues, ideas and PRs are welcome. Faultlines is built to map *any* codebase — if it mis-reads your stack, that's a bug we want to hear about.
+Issues, ideas and PRs are welcome. Dynvo is built to map *any* codebase — if it mis-reads your stack, that's a bug we want to hear about.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[Functional Source License, v1.1, Apache-2.0 future](LICENSE) (FSL-1.1-ALv2).
+
+In plain words: **use it, read it, modify it, self-host it — for anything except selling a competing product**. Each release automatically becomes plain **Apache 2.0 two years** after it ships. It's the same license Sentry uses; details at [fsl.software](https://fsl.software).
 
 <div align="center">
 
-**[Star this repo](https://github.com/PashaSchool/faultlines)** if Faultlines helps you (or your agent) understand a codebase faster.
+**[Star this repo](https://github.com/PashaSchool/dynvo)** if Dynvo helps you (or your agent) understand a codebase faster.
 
-Made for engineers and the AI agents that work alongside them · [faultlines.dev](https://faultlines.dev)
+Made for engineers and the AI agents that work alongside them · [dynvo.ai](https://dynvo.ai)
 
 </div>
