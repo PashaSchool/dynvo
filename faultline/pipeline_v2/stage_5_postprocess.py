@@ -194,7 +194,10 @@ def _flow_spec_to_flow(spec: FlowSpec) -> Flow:
         total_commits=0,
         bug_fixes=0,
         bug_fix_ratio=0.0,
-        last_modified=datetime.now(timezone.utc),
+        # deterministic placeholder — scan wall-clock leaked into every
+        # flow (480/480 byte-diff between identical scans, 2026-07-02);
+        # git enrichment overwrites where evidence exists
+        last_modified=datetime.fromtimestamp(0, timezone.utc),
         health_score=80.0,
         flow_symbol_attributions=flow_attrs,
     )
@@ -242,7 +245,10 @@ def _dev_feature_to_feature(
         total_commits=0,
         bug_fixes=0,
         bug_fix_ratio=0.0,
-        last_modified=datetime.now(timezone.utc),
+        # deterministic placeholder — scan wall-clock leaked into every
+        # flow (480/480 byte-diff between identical scans, 2026-07-02);
+        # git enrichment overwrites where evidence exists
+        last_modified=datetime.fromtimestamp(0, timezone.utc),
         health_score=80.0,
         flows=[_flow_spec_to_flow(f) for f in (flows or [])],
         layer="developer",
