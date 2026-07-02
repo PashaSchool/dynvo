@@ -358,6 +358,13 @@ def run_finalize_phase(
     # names the split UFs. Shared CostTracker; graceful degrade keeps the
     # mega-UF on any LLM failure. Measured F1 64→74 on cal.com vs uf-golden.
     from faultline.pipeline_v2.stage_6_7c_uf_splitter import split_mega_user_flows
+    # Content-hash LLM cache for the UF-path stages (6.7c split + 6.7b
+    # refine): same backend Stage 3 / Stage 8 use (threaded on the scan
+    # context by run.py). A warm entry replays the stage's PARSED LLM
+    # output byte-identically at $0 on an unchanged repo; ``None`` (or the
+    # per-stage env opt-outs) behaves exactly as pre-cache. Best-effort —
+    # any cache fault inside the stages degrades to a live call.
+    _uf_llm_cache = getattr(ctx, "cache_backend", None)
     with StageLogger(run_dir, 6, "uf_splitter") as log6_7c:
         user_flows, uf_split_telemetry = split_mega_user_flows(
             user_flows,
@@ -365,6 +372,7 @@ def run_finalize_phase(
             cost_tracker=tracker,
             log=log6_7c,
             llm_health=llm_health,
+            cache=_uf_llm_cache,
         )
         write_stage_artifact(
             ctx.repo_path,
@@ -407,6 +415,7 @@ def run_finalize_phase(
             domain_allowlist=uf_domain_allowlist,
             llm_health=llm_health,
             product_strings=product_strings,
+            cache=_uf_llm_cache,
         )
         write_stage_artifact(
             ctx.repo_path,
