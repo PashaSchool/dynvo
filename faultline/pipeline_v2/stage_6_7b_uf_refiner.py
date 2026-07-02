@@ -51,6 +51,7 @@ Spec: faultlines-app/docs/specs/flow-to-user-flow-rollup.md (Stage D).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -60,6 +61,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
+from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params, estimate_call_cost
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.naming_validator import (
@@ -69,6 +71,7 @@ from faultline.pipeline_v2.naming_validator import (
 )
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.models.types import Flow, UserFlow
     from faultline.pipeline_v2.product_strings import ProductStringIndex
     from faultline.pipeline_v2.run_logger import StageLogger
@@ -110,6 +113,99 @@ DEFAULT_MAX_WORKERS = max(
     1, min(32, int(os.environ.get("FAULTLINES_STAGE6_MAX_WORKERS", "8") or "8"))
 )
 
+# ── Content-hash LLM cache (deterministic short-circuit) ────────────────────
+#
+# Each per-domain refinement call is a pure function of its input: the system
+# prompt + the user prompt (domain + the full deterministic UF payload batch)
+# + the canonical model id. We cache the PARSED ``{uf_id: refinement_row}``
+# mapping keyed on a sha256 of exactly those inputs, so a re-scan of an
+# unchanged repo REPLAYS the identical refinements ($0, byte-identical UFs)
+# through the SAME validation/apply code as a live call. The name-validation
+# retry keys separately (its user prompt embeds the prohibition suffix).
+# Content-keyed (same input → same answer): a deterministic short-circuit,
+# NOT per-repo memory — compliant with rule-cold-scan. Mirrors Stage 3's
+# CacheKind.LLM_FLOWS cache. Default ON; opt out via
+# ``FAULTLINE_STAGE_6_7B_CACHE=0``.
+#
+# STAGE_6_7B_CACHE_VERSION is the manual invalidation lever required by
+# rule-cache-invalidation: bump it whenever the prompt template, the parse
+# logic, or the cached-value shape changes in a way that must NOT serve a
+# stale answer. (The system prompt is ALSO hashed into the key, but the
+# version constant is the documented, explicit control surface.)
+STAGE_6_7B_CACHE_VERSION = "v1"
+
+_CACHE_ENV = "FAULTLINE_STAGE_6_7B_CACHE"
+
+
+def _cache_enabled() -> bool:
+    """Default ON — set ``FAULTLINE_STAGE_6_7B_CACHE=0`` to opt out."""
+    return os.environ.get(_CACHE_ENV, "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def _refine_cache_key(model: str, user: str) -> str:
+    """Content-hash key for one per-domain refinement (or retry) call.
+
+    Components: cache version + canonical model id (pre-gateway) + the
+    system prompt + the full user prompt (which embeds the domain and the
+    deterministically-built UF payload batch — the exact structured input).
+    Deliberately EXCLUDED: run_id, timestamps, thread identity, or any other
+    run-varying value.
+    """
+    payload = json.dumps(
+        {
+            "version": STAGE_6_7B_CACHE_VERSION,
+            "model": model,
+            "system": _SYSTEM_PROMPT,
+            "user": user,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _cache_get_parsed(
+    cache: "CacheBackend", key: str,
+) -> dict[str, dict] | None:
+    """Read a stored parsed-refinement mapping. ``None`` on miss, version
+    mismatch, malformed entry, or ANY backend fault — a cache problem must
+    never abort the stage (never-worse)."""
+    try:
+        stored = cache.get(CacheKind.LLM_UF_REFINE.value, key)
+    except Exception as exc:  # noqa: BLE001 — cache must never break a scan
+        logger.warning("uf_refiner: cache get failed: %s", exc)
+        return None
+    if not isinstance(stored, dict) or stored.get("v") != STAGE_6_7B_CACHE_VERSION:
+        return None
+    rows = stored.get("user_flows")
+    if not isinstance(rows, dict):
+        return None
+    out = {
+        k: v for k, v in rows.items()
+        if isinstance(k, str) and isinstance(v, dict)
+    }
+    # ``_parse_refinement`` never returns an empty mapping (``out or None``),
+    # so an empty stored value is malformed → miss.
+    return out or None
+
+
+def _cache_put_parsed(
+    cache: "CacheBackend", key: str, parsed: dict[str, dict],
+) -> None:
+    """Persist a parsed-refinement mapping. Failures are logged + swallowed.
+    Only SUCCESSFUL parses are ever stored (callers guarantee it) so a
+    transient outage never poisons future reproducible replays."""
+    try:
+        cache.set(
+            CacheKind.LLM_UF_REFINE.value,
+            key,
+            {"v": STAGE_6_7B_CACHE_VERSION, "user_flows": parsed},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("uf_refiner: cache set failed: %s", exc)
+
 
 @dataclass
 class _DomainResult:
@@ -143,6 +239,11 @@ class _DomainResult:
     names_invalid: int = 0
     names_recovered: int = 0
     names_fallback: int = 0
+    # Warm-cache telemetry: calls served from the content-hash cache
+    # (CacheKind.LLM_UF_REFINE) vs live Haiku calls issued. Cache hits are
+    # NOT counted in llm_calls and cost $0 — mirrors Stage 3 / Stage 4.
+    cache_hits: int = 0
+    llm_calls: int = 0
 
 
 _VALID_UI_TIERS = ("full-page", "panel", "settings", "admin", "no-ui")
@@ -555,6 +656,7 @@ def _compute_domain(
     flows_by_key: dict[str, "Flow"],
     product_strings: "ProductStringIndex | None",
     llm_health: LlmHealth | None,
+    cache: "CacheBackend | None" = None,
 ) -> _DomainResult:
     """Do ALL the LLM IO + pure validation for one domain.
 
@@ -563,6 +665,12 @@ def _compute_domain(
     mutated. Mirrors exactly what the old sequential per-domain loop body
     did up to (but not including) the apply step — so the apply pass, run
     sequentially in input order, reproduces the byte-identical result.
+
+    ``cache`` (content-hash short-circuit): a warm entry replays the PARSED
+    refinement mapping through the SAME validation/apply code as a live
+    call. Only successful parses are ever stored, so a hit can only replay
+    what a live run produced. A cold cache changes nothing (the live path
+    below is byte-identical to the pre-cache code plus one ``set``).
     """
     members_by_uf = {
         uf.id: _member_flows_for(uf, flows_by_key) for uf in ufs
@@ -573,20 +681,33 @@ def _compute_domain(
     ]
     user_prompt = _build_user_prompt(domain, payloads)
 
-    text, in_tok, out_tok = _call_haiku(
-        client,
-        model=model,
-        system=_SYSTEM_PROMPT,
-        user=user_prompt,
-        max_tokens=DEFAULT_MAX_TOKENS,
-        llm_health=llm_health,
-    )
+    # ── Cache lookup for call #1 ──
+    key1: str | None = None
+    cached_call1: dict[str, dict] | None = None
+    if cache is not None:
+        key1 = _refine_cache_key(model, user_prompt)
+        cached_call1 = _cache_get_parsed(cache, key1)
 
-    # Cost of call #1 — derived from the pricing table (pure), identical to
-    # what ``tracker.record(...).cost_usd`` will compute in the apply pass.
-    call1_cost = (
-        estimate_call_cost(model, in_tok, out_tok) if (in_tok or out_tok) else 0.0
-    )
+    if cached_call1 is not None:
+        # HIT: no Haiku call, no tokens, $0. The parsed rows feed the SAME
+        # validation + apply code below, so the result is byte-identical to
+        # the run that populated the entry.
+        in_tok = out_tok = 0
+        call1_cost = 0.0
+    else:
+        text, in_tok, out_tok = _call_haiku(
+            client,
+            model=model,
+            system=_SYSTEM_PROMPT,
+            user=user_prompt,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            llm_health=llm_health,
+        )
+        # Cost of call #1 — derived from the pricing table (pure), identical to
+        # what ``tracker.record(...).cost_usd`` will compute in the apply pass.
+        call1_cost = (
+            estimate_call_cost(model, in_tok, out_tok) if (in_tok or out_tok) else 0.0
+        )
 
     result = _DomainResult(
         domain=domain,
@@ -597,16 +718,26 @@ def _compute_domain(
         in_tok=in_tok,
         out_tok=out_tok,
         call1_cost=call1_cost,
+        cache_hits=1 if cached_call1 is not None else 0,
+        llm_calls=0 if cached_call1 is not None else 1,
     )
 
-    if call1_cost > COST_CAP_USD_PER_DOMAIN:
-        result.degraded_reason = f"cost_cap ${call1_cost:.4f}"
-        return result
+    if cached_call1 is not None:
+        parsed = cached_call1
+    else:
+        if call1_cost > COST_CAP_USD_PER_DOMAIN:
+            result.degraded_reason = f"cost_cap ${call1_cost:.4f}"
+            return result
 
-    parsed = _parse_refinement(text)
-    if parsed is None:
-        result.degraded_reason = "json_parse_failed"
-        return result
+        parsed_or_none = _parse_refinement(text)
+        if parsed_or_none is None:
+            result.degraded_reason = "json_parse_failed"
+            return result
+        parsed = parsed_or_none
+        # MISS → persist the parsed rows for future runs. Degrades (cost cap /
+        # parse failure / empty response) returned above are NEVER cached.
+        if key1 is not None and cache is not None:
+            _cache_put_parsed(cache, key1, parsed)
 
     # ── Anti-hallucination name validation (naming review №2) ──
     # Every content token of a refined name must be evidenced in the UF's
@@ -635,17 +766,35 @@ def _compute_domain(
         result.names_invalid = len(failing_ids)
         if llm_health is None or llm_health.should_call():
             result.retry_fired = True
-            retry_text, r_in, r_out = _call_haiku(
-                client,
-                model=model,
-                system=_SYSTEM_PROMPT,
-                user=user_prompt + "\n" + retry_prohibition(violations),
-                max_tokens=DEFAULT_MAX_TOKENS,
-                llm_health=llm_health,
-            )
-            result.retry_in_tok = r_in
-            result.retry_out_tok = r_out
-            retry_parsed = _parse_refinement(retry_text) or {}
+            # The retry prompt is deterministic given call #1's parsed rows +
+            # the evidence bundles (both content-derived), so it caches under
+            # its OWN content key. If the evidence changed since the entry
+            # was written, the prompt changes → clean miss → live call.
+            retry_user = user_prompt + "\n" + retry_prohibition(violations)
+            key2: str | None = None
+            cached_retry: dict[str, dict] | None = None
+            if cache is not None:
+                key2 = _refine_cache_key(model, retry_user)
+                cached_retry = _cache_get_parsed(cache, key2)
+            if cached_retry is not None:
+                result.cache_hits += 1
+                retry_parsed: dict[str, dict] = cached_retry
+            else:
+                retry_text, r_in, r_out = _call_haiku(
+                    client,
+                    model=model,
+                    system=_SYSTEM_PROMPT,
+                    user=retry_user,
+                    max_tokens=DEFAULT_MAX_TOKENS,
+                    llm_health=llm_health,
+                )
+                result.llm_calls += 1
+                result.retry_in_tok = r_in
+                result.retry_out_tok = r_out
+                retry_parsed_or_none = _parse_refinement(retry_text)
+                if retry_parsed_or_none is not None and key2 is not None and cache is not None:
+                    _cache_put_parsed(cache, key2, retry_parsed_or_none)
+                retry_parsed = retry_parsed_or_none or {}
             for uf_id in failing_ids:
                 row2 = retry_parsed.get(uf_id)
                 nm2 = row2.get("name") if row2 else None
@@ -681,6 +830,7 @@ def refine_user_flows(
     llm_health: LlmHealth | None = None,
     product_strings: "ProductStringIndex | None" = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    cache: "CacheBackend | None" = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Refine ``user_flows`` in place via one Haiku call per domain.
@@ -703,6 +853,13 @@ def refine_user_flows(
             those are base-scan refinements applied upstream by
             ``incremental_gate.plan_uf_refinement_reuse``). This is how
             Stage 6.7b reuse is realised without re-clustering.
+        cache: content-hash LLM cache (CacheKind.LLM_UF_REFINE). When
+            supplied AND ``FAULTLINE_STAGE_6_7B_CACHE`` != 0 (default ON),
+            each per-domain call whose input is unchanged replays its
+            stored PARSED refinement at $0 — byte-identical output on an
+            unchanged repo. ``None`` (unit tests, missing backend) behaves
+            exactly as pre-cache. Any cache fault falls through to the
+            live call (never-worse).
         _client_factory: injection hook for the default client builder.
 
     Returns:
@@ -726,9 +883,15 @@ def refine_user_flows(
         "uf_names_recovered_on_retry": 0,
         "uf_names_fallback": 0,
         "validator_retries": 0,
+        "cache_hits": 0,
+        "llm_calls": 0,
     }
     if not user_flows:
         return user_flows, telemetry
+
+    # Env opt-out honoured regardless of what the caller threaded in.
+    if cache is not None and not _cache_enabled():
+        cache = None
 
     if client is None:
         client = _client_factory()
@@ -792,6 +955,7 @@ def refine_user_flows(
                     _compute_domain, domain, ufs,
                     client=client, model=model, flows_by_key=flows_by_key,
                     product_strings=product_strings, llm_health=llm_health,
+                    cache=cache,
                 ): idx
                 for idx, (domain, ufs) in enumerate(to_compute)
             }
@@ -820,6 +984,10 @@ def refine_user_flows(
     for idx, (domain, ufs) in enumerate(to_compute):
         res = computed[idx]
         members_by_uf = res.members_by_uf
+
+        # Warm-cache telemetry (commutative ints, folded in input order).
+        telemetry["cache_hits"] += res.cache_hits
+        telemetry["llm_calls"] += res.llm_calls
 
         # Cost #1 (recorded in input order → tracker.records order preserved).
         if res.in_tok or res.out_tok:
@@ -923,5 +1091,6 @@ def _apply_deterministic_ui_tiers(
 __all__ = [
     "COST_CAP_USD_PER_DOMAIN",
     "DEFAULT_MODEL",
+    "STAGE_6_7B_CACHE_VERSION",
     "refine_user_flows",
 ]
