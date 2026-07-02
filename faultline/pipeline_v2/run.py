@@ -667,6 +667,7 @@ def run_pipeline_v2(
     stage_8_8_telemetry = layer2.stage_8_8_telemetry
     stage_8_9_telemetry = layer2.stage_8_9_telemetry
     stage_8_9_5_telemetry = layer2.stage_8_9_5_telemetry
+    stage_8_9_6_telemetry = layer2.stage_8_9_6_telemetry
 
     # ── Product-feature hotspots (Sprint 2026-05-28) ───────────────
     # Stage 6 already attached hotspots to every Layer 1 (developer)
@@ -762,6 +763,7 @@ def run_pipeline_v2(
         stage_8_8_telemetry=stage_8_8_telemetry,
         stage_8_9_telemetry=stage_8_9_telemetry,
         stage_8_9_5_telemetry=stage_8_9_5_telemetry,
+        stage_8_9_6_telemetry=stage_8_9_6_telemetry,
         shape_result=shape_result,
     )
 
