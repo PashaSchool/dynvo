@@ -1190,7 +1190,14 @@ def stage_3_flows(
             exports, routes, sym_loc, content_sig = (
                 _enumerate_candidates_paths(chunk_paths, repo_path_str)
             )
-            if not _passes_flow_gate(feature, exports, routes):
+            # Gate semantics match the LEGACY whole-feature call: a feature
+            # that qualified for chunking already passed sizing, and the old
+            # single call evaluated the flow gate over the COMBINED
+            # exports/routes — so a sparse chunk (e.g. __residual__ with <3
+            # exports on a non-route-anchored giant) must not silently drop
+            # flows the whole-feature call would have found (audit nuance,
+            # 2026-07-02). Skip only truly EMPTY chunks (nothing to prompt).
+            if not exports and not routes:
                 continue
             # Budget guard — identical semantics to the single-call path,
             # applied per chunk so a mid-feature cap stops further calls.

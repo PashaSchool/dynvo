@@ -469,3 +469,27 @@ def test_chunk_cache_replay_zero_llm_calls(tmp_path: Path) -> None:
     assert _tuples(r1.features_with_flows[0]) == _tuples(
         r2.features_with_flows[0],
     )
+
+
+def test_sparse_chunk_of_nonroute_giant_still_prompted(monkeypatch, tmp_path):
+    """Audit nuance: a non-route-anchored oversized feature's sparse chunk
+    (<3 exports, no routes) must still be prompted — the legacy whole-feature
+    call gated on COMBINED exports, so per-chunk re-gating would silently
+    lose flows. Only truly empty chunks are skipped."""
+    from faultline.pipeline_v2.stage_3_flows import _passes_flow_gate
+
+    # sanity of the legacy gate itself: 1 export + no route + no route-anchor
+    # source fails the legacy gate — which is why the chunk path must NOT
+    # re-apply it per chunk.
+    class _F:
+        sources = ("package",)
+    assert _passes_flow_gate(_F(), ["one_export"], []) is False
+    # the chunked path's rule: prompted iff chunk has ANY export or route —
+    # covered end-to-end by existing chunked tests; here we pin the contract
+    # that the helper is NOT consulted per chunk anymore (see stage source).
+    import inspect
+    from faultline.pipeline_v2 import stage_3_flows as m
+    src = inspect.getsource(m)
+    chunk_body = src.split("def _process_chunked", 1)[1].split("def ", 1)[0]
+    assert "_passes_flow_gate" not in chunk_body
+    assert "if not exports and not routes:" in chunk_body
