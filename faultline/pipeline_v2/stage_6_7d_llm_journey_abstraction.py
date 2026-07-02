@@ -400,26 +400,52 @@ def _canonical_anchor_texts(
     return out
 
 
+def _candidate_journeys(user_flows: list["UserFlow"]) -> int:
+    """Journey-grain candidate count for the grain gate.
+
+    The deterministic walk emits ~one user_flow per CRUD op; the abstraction's
+    FIRST move (align prompt rule 2 / free-gen rule 2) merges redundant CRUD
+    variants of the SAME resource into one journey — so the journey set the
+    anchor vocabulary must cover is ~one per DISTINCT RESOURCE, not one per
+    input flow. Gating on the raw flow count would demand a ~1.5-2x larger
+    vocabulary than the journeys need and wrongly refuse repos where align
+    measurably pays (supabase, Phase 3.0: 89 tier-1 anchors, 126 input flows
+    but only 61 distinct resources → aligned and won +7..+10). Distinct
+    non-empty resources (case-folded); falls back to the flow count when the
+    flows carry no resources at all (conservative).
+    """
+    resources = {
+        r for u in user_flows or []
+        if (r := str(getattr(u, "resource", "") or "").strip().lower())
+    }
+    return len(resources) if resources else len(user_flows or [])
+
+
 def _grain_gate(
     anchors: "list[ProductAnchor] | None",
-    candidate_uf_count: int,
+    candidate_journeys: int,
 ) -> tuple[bool, int, int]:
     """Align-v2 GRAIN gate. Returns ``(granted, tier1_count, tier2_count)``.
 
     Align iff the repo's distinct TIER-1 (action-grain) anchor vocabulary is at
-    least as large as the candidate ``user_flows`` set entering 6.7d (you cannot
-    bound N journeys to a vocabulary of fewer than N action labels without
-    under-producing — the formbricks 11-anchors-vs-37-journeys failure, Phase
-    3.0) AND above a small floor. Scale-invariant ratio — no per-repo tuned
-    constants. Tier-2 anchors (i18n leaf values, test titles, docs-site nav)
-    NEVER count (Soc0 leaf-value lesson). Counts are DISTINCT case-insensitive
-    texts, computed over the RAW extraction when the caller supplies it (the
-    pool's per-source caps would understate a fine-grained vocabulary).
+    least as large as the candidate JOURNEY set entering 6.7d (one journey per
+    distinct resource — see :func:`_candidate_journeys`; you cannot bound N
+    journeys to a vocabulary of fewer than N action labels without
+    under-producing — the formbricks 11-anchors-vs-103-resources failure,
+    Phase 3.0) AND above a small floor. Scale-invariant ratio — no per-repo
+    tuned constants. Tier-2 anchors (i18n leaf values, test titles, docs-site
+    nav) NEVER count (Soc0 leaf-value lesson). Counts are DISTINCT
+    case-insensitive texts, computed over the RAW extraction when the caller
+    supplies it (the pool's per-source caps would understate a fine-grained
+    vocabulary). Measured separation (2026-07-02, current extractor):
+    formbricks 11 vs 103 → refuse; supabase 89 vs 61 → align; cal-com 3076 vs
+    ~240 → align; documenso 5 vs ~55-86 → refuse. Matches the Phase 3.0
+    win/loss table exactly.
     """
     from faultline.pipeline_v2.anchor_extractors import distinct_tier_counts
 
     tier1, tier2 = distinct_tier_counts(anchors or [])
-    granted = tier1 >= _MIN_ANCHORS_FLOOR and tier1 >= candidate_uf_count
+    granted = tier1 >= _MIN_ANCHORS_FLOOR and tier1 >= candidate_journeys
     return granted, tier1, tier2
 
 
@@ -1099,9 +1125,10 @@ def run_journey_abstraction(
     # cache key is byte-identical to an align-OFF scan.
     anchor_texts = _canonical_anchor_texts(product_anchors)
     align_requested = align_enabled()
+    candidate_journeys = _candidate_journeys(user_flows)
     gate_granted, tier1_count, tier2_count = _grain_gate(
         raw_anchors if raw_anchors is not None else product_anchors,
-        len(user_flows),
+        candidate_journeys,
     )
     aligned = align_requested and gate_granted and bool(anchor_texts)
     tele["aligned"] = aligned
@@ -1115,6 +1142,7 @@ def run_journey_abstraction(
             "tier1_count": tier1_count,
             "tier2_count": tier2_count,
             "candidate_ufs": len(user_flows),
+            "candidate_journeys": candidate_journeys,
         }
         if not aligned:
             from faultline.pipeline_v2 import degradations as _degradations
@@ -1126,6 +1154,7 @@ def run_journey_abstraction(
                 tier1_count=tier1_count,
                 tier2_count=tier2_count,
                 candidate_ufs=len(user_flows),
+                candidate_journeys=candidate_journeys,
                 floor=_MIN_ANCHORS_FLOOR,
             )]
     anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""

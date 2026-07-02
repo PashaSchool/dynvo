@@ -76,10 +76,10 @@ def _feat(name: str, paths: list[str]):
     )
 
 
-def _uf(uf_id: str, name: str, members: list[str]):
+def _uf(uf_id: str, name: str, members: list[str], resource: str = "thing"):
     from faultline.models.types import UserFlow
     return UserFlow(
-        id=uf_id, name=name, intent="author", resource="thing",
+        id=uf_id, name=name, intent="author", resource=resource,
         member_flow_ids=members, member_count=len(members),
         routes=[f"/{name}"],
     )
@@ -219,37 +219,70 @@ def test_alignment_pool_prefers_tier1_within_i18n(tmp_path) -> None:
     assert all(a.tier == TIER1_ACTION for a in first_20)
 
 
-# ── 2. gate truth table on recorded Phase-3.0 pool shapes ───────────────────
+# ── 2. gate truth table on MEASURED Phase-3.0 pool shapes ────────────────────
+# (tier-1 / candidate-journey counts measured 2026-07-02 on the actual clones
+#  with the current extractor + the actual 6.7d input artifacts)
+
+
+def test_candidate_journeys_is_distinct_resources() -> None:
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _candidate_journeys,
+    )
+    ufs = [
+        _uf("UF-001", "Create account", ["f1"], resource="account"),
+        _uf("UF-002", "Update account", ["f2"], resource="Account"),  # case-folds
+        _uf("UF-003", "Sign in", ["f3"], resource="session"),
+    ]
+    assert _candidate_journeys(ufs) == 2
+    # no resources at all → conservative fallback to the flow count
+    bare = [_uf("UF-001", "A", ["f1"], resource=""),
+            _uf("UF-002", "B", ["f2"], resource="")]
+    assert _candidate_journeys(bare) == 2
+    assert _candidate_journeys([]) == 0
 
 
 def test_gate_formbricks_shape_refuses() -> None:
-    """11 coarse i18n DOMAIN namespaces vs ~85 candidate UFs → free-gen
-    (the measured −9..−14.5 F1 failure align-v2 exists to prevent)."""
+    """formbricks: 11 coarse i18n DOMAIN namespaces vs 103 candidate journeys
+    → free-gen (the measured −9..−14.5 F1 failure align-v2 exists to prevent)."""
     pool = (
         _n_anchors(11, source="i18n", tier=TIER1_ACTION, prefix="Domain")
         + _n_anchors(300, source="i18n", prefix="Ui copy")  # leaves, tier2
     )
-    granted, t1, t2 = _grain_gate(pool, 85)
+    granted, t1, t2 = _grain_gate(pool, 103)
     assert (granted, t1, t2) == (False, 11, 300)
 
 
 def test_gate_supabase_shape_grants() -> None:
-    """66 analytics events + ~300 nav labels (action-grain) vs ~80 UFs → align."""
+    """supabase: 63 analytics events + 26 nav labels (89 tier-1) vs 61 distinct
+    resources among 126 input flows → align (the measured +7..+10 win — gating
+    on the raw 126 flow count would wrongly refuse this repo)."""
     pool = (
-        _n_anchors(66, source="analytics", prefix="Event")
-        + _n_anchors(300, source="nav", prefix="Nav")
+        _n_anchors(63, source="analytics", prefix="Event")
+        + _n_anchors(26, source="nav", prefix="Nav")
     )
-    granted, t1, _t2 = _grain_gate(pool, 80)
+    granted, t1, _t2 = _grain_gate(pool, 61)
     assert granted is True
-    assert t1 == 366
+    assert t1 == 89
+    # the raw flow count would refuse — exactly why the gate is journey-grain
+    assert _grain_gate(pool, 126)[0] is False
 
 
 def test_gate_calcom_shape_grants() -> None:
-    """Thousands of fine i18n NAMESPACE keys vs 326 candidate UFs → align."""
+    """cal-com: thousands of fine i18n NAMESPACE keys vs ~240 candidate
+    journeys → align (measured +9..+12)."""
     pool = _n_anchors(1000, source="i18n", tier=TIER1_ACTION, prefix="Key")
-    granted, t1, _t2 = _grain_gate(pool, 326)
+    granted, t1, _t2 = _grain_gate(pool, 248)
     assert granted is True
     assert t1 == 1000
+
+
+def test_gate_documenso_shape_refuses() -> None:
+    """documenso: 5 tier-1 anchors (sparse-signal boundary) vs ~55-86 candidate
+    journeys → free-gen; also below the floor."""
+    pool = (_n_anchors(5, source="analytics", prefix="Event")
+            + _n_anchors(900, source="test", prefix="Spec"))
+    granted, t1, t2 = _grain_gate(pool, 55)
+    assert (granted, t1, t2) == (False, 5, 900)
 
 
 def test_gate_soc0_shape_refuses() -> None:
@@ -271,9 +304,10 @@ def test_gate_floor_applies_even_on_tiny_repos() -> None:
 def test_gate_uses_raw_anchors_when_provided(monkeypatch) -> None:
     """The gate measures the RAW vocabulary (pool caps would understate it):
     a capped pool of 8 tier-1 anchors with a rich raw extraction still aligns
-    when raw tier-1 >= candidate UFs."""
+    when raw tier-1 >= candidate journeys."""
     monkeypatch.setenv(ALIGN_ENV, "1")
-    ufs = [_uf(f"UF-{i:03d}", f"Flow {i}", [f"f{i}"]) for i in range(1, 13)]  # 12 UFs
+    ufs = [_uf(f"UF-{i:03d}", f"Flow {i}", [f"f{i}"], resource=f"res{i}")
+           for i in range(1, 13)]              # 12 flows, 12 distinct resources
     pool = _n_anchors(8)                       # 8 < 12 → pool alone would refuse
     raw = _n_anchors(40)                       # 40 >= 12 → raw grants
     devs = [_feat("accounts", ["app/accounts/a.ts"]), _feat("auth", ["app/auth/l.ts"])]
@@ -283,6 +317,7 @@ def test_gate_uses_raw_anchors_when_provided(monkeypatch) -> None:
     assert tel["aligned"] is True
     assert tel["align_decision"]["tier1_count"] == 40
     assert tel["align_decision"]["candidate_ufs"] == 12
+    assert tel["align_decision"]["candidate_journeys"] == 12
 
 
 # ── tier-2 never reaches the prompt ──────────────────────────────────────────
@@ -394,14 +429,16 @@ def test_align_decision_and_degradation_on_requested_but_refused(monkeypatch) ->
     assert tel["aligned"] is False
     assert tel["align_decision"] == {
         "requested": True, "granted": False,
-        "tier1_count": 4, "tier2_count": 37, "candidate_ufs": 2,
+        "tier1_count": 4, "tier2_count": 37,
+        "candidate_ufs": 2, "candidate_journeys": 1,
     }
     (rec,) = tel["degradations"]
     assert rec["type"] == "align_gate_refused"
     assert rec["stage"] == "stage_6_7d_journey_abstraction"
     assert rec["severity"] == "degraded"
     assert rec["metrics"] == {
-        "tier1_count": 4, "tier2_count": 37, "candidate_ufs": 2, "floor": 8,
+        "tier1_count": 4, "tier2_count": 37, "candidate_ufs": 2,
+        "candidate_journeys": 1, "floor": 8,
     }
     # free-gen still applied (never-worse) — refusal is not a failure
     assert tel["applied"] is True
@@ -417,7 +454,8 @@ def test_align_decision_on_granted(monkeypatch) -> None:
     assert tel["aligned"] is True
     assert tel["align_decision"] == {
         "requested": True, "granted": True,
-        "tier1_count": 12, "tier2_count": 0, "candidate_ufs": 1,
+        "tier1_count": 12, "tier2_count": 0,
+        "candidate_ufs": 1, "candidate_journeys": 1,
     }
     assert "degradations" not in tel
 
@@ -440,8 +478,9 @@ def test_granted_gate_but_empty_tier1_pool_refuses(monkeypatch) -> None:
 def test_degradations_builder_shape() -> None:
     from faultline.pipeline_v2.degradations import align_gate_refused
     rec = align_gate_refused(tier1_count=11, tier2_count=300,
-                             candidate_ufs=85, floor=8)
+                             candidate_ufs=153, candidate_journeys=103, floor=8)
     assert rec["type"] == "align_gate_refused"
     assert rec["severity"] == "degraded"
-    assert "11" in rec["detail"] and "85" in rec["detail"]
+    assert "11" in rec["detail"] and "103" in rec["detail"]
     assert rec["metrics"]["floor"] == 8
+    assert rec["metrics"]["candidate_journeys"] == 103
