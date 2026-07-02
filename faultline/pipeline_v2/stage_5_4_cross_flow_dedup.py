@@ -22,10 +22,13 @@ see the twins). Winner selection is semantic then deterministic:
   3. final tie-break: lexicographically smallest ``(feature.name,
      flow.name)`` — stable across runs.
 
-Losers are removed from their feature's ``flows`` list only — the
-feature's paths/membership are untouched (this is a FLOW-row dedup, not a
-file re-attribution). Default ON (a bugfix, like S7-B / the generated
-strip); opt out via ``FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=0``.
+Losers are removed from their feature's ``flows`` list only (their paths
+union into the winner) — the feature's paths/membership are untouched.
+DEFAULT OFF: measured on the determinized instrument, the collapse costs
+UF-F1 (supabase −10.5, plane −19.2) because twin names were matching
+distinct golden journeys off one code object — the dups partially inflate
+golden recall and mask real flow-detection gaps. Opt in via
+``FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=1`` (see ``_is_enabled``).
 """
 
 from __future__ import annotations
@@ -39,7 +42,20 @@ if TYPE_CHECKING:
 
 
 def _is_enabled() -> bool:
-    return os.environ.get("FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP", "1") != "0"
+    """Default OFF (opt-in via FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=1).
+
+    Measured 2026-07-02 (determinized instrument, byte-reproducible): removing
+    the cross-feature twins costs UF-F1 −10.5 (supabase 36.8→26.3) and −19.2
+    (plane 67.8→48.6) — the twin names were matching DISTINCT golden journeys
+    off one code object, i.e. the dups partially inflate golden-matched recall
+    and mask real flow-detection gaps (the honest journey often has no other
+    engine row). Until Stage-3 recall closes those gaps, accuracy outranks the
+    cosmetic dup metric (23-41 rows/repo), so the collapse is opt-in for
+    consumers that need strict one-row-per-code-object flow counts. Strict
+    (same-entry AND same-name) twins measure ZERO on the corpus, so there is
+    no F1-safe subset worth a default.
+    """
+    return os.environ.get("FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP", "0") != "0"
 
 
 @dataclass

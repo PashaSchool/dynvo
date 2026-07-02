@@ -16,6 +16,15 @@ from faultline.pipeline_v2.stage_5_4_cross_flow_dedup import (
 
 _ENV = "FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP"
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _enable_stage(monkeypatch):
+    """Stage is default-OFF (F1 cost, 2026-07-02) — tests exercise the
+    opt-in behavior."""
+    monkeypatch.setenv(_ENV, "1")
+
 
 def _flow(name, entry_file=None, entry_line=None, paths=None):
     return Flow(
@@ -88,6 +97,14 @@ def test_single_claimant_untouched():
     b = _feat("b", ["b.ts"], [_flow("f2", "b.ts", 1)])
     res = dedup_cross_feature_flows([a, b])
     assert res.flows_removed == 0
+
+
+def test_default_off(monkeypatch):
+    monkeypatch.delenv(_ENV, raising=False)
+    owner = _feat("a", ["s.ts"], [_flow("f1", "s.ts", 1)])
+    twin = _feat("b", ["b.ts"], [_flow("f2", "s.ts", 1)])
+    res = dedup_cross_feature_flows([owner, twin])
+    assert res.enabled is False and res.flows_removed == 0
 
 
 def test_env_opt_out(monkeypatch):

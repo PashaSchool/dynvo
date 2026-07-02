@@ -162,8 +162,9 @@ def run_postprocess_phase(
     # Two overlapping features can each mint a flow at the SAME entry point
     # (S7-B dedups only within one feature's Stage-3 call) — one real flow
     # as two rows. Collapse globally BEFORE bipartite ids/edges exist; the
-    # owner of the entry file keeps the flow. Default ON (bugfix);
-    # FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=0 to disable.
+    # owner of the entry file keeps the flow. Default OFF (measured F1
+    # cost — twins partially inflate golden recall; see the stage module);
+    # FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=1 to enable.
     with StageLogger(run_dir, 5, "cross_flow_dedup") as log5_4:
         s54 = dedup_cross_feature_flows(features)
         s54_telemetry = s54.as_telemetry()
