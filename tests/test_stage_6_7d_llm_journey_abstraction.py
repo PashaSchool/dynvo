@@ -939,3 +939,92 @@ def test_residual_devs_telemetry_counts_actual_residual() -> None:
     assert tel["applied"] is True
     assert tel["devs_token_rescued"] == 1          # account-billing → Billing
     assert tel["residual_devs"] == tel["devs_residual"] == 1  # shared-ui only
+
+
+# ── Split-invariance (2026-07-02): 8.9/8.9.5 subfeatures folded for 6.7d ─────
+
+def _sub(name: str, parent: Feature, paths: list[str]) -> Feature:
+    f = _feat(name, paths)
+    f.uuid = f"sub-{name}"
+    f.split_from = parent.uuid
+    f.description = f"sub-domain '{paths[0].rsplit('/', 1)[0]}' of feature '{parent.name}'"
+    return f
+
+
+def test_rollup_view_folds_subs_into_parent() -> None:
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _rollup_split_view,
+    )
+    parent = _feat("web", ["apps/web/app.tsx"])
+    parent.uuid = "web-uuid"
+    s1 = _sub("issues", parent, ["apps/web/components/issues/a.tsx"])
+    s2 = _sub("cycles", parent, ["apps/web/components/cycles/b.tsx"])
+    orphan = _sub("ghost", parent, ["apps/web/components/ghost/c.tsx"])
+    orphan.split_from = "missing-uuid"   # parent husk dropped
+    plain = _feat("auth", ["app/auth/login.ts"])
+    view, sub_to_parent = _rollup_split_view([parent, s1, s2, orphan, plain])
+    names = [getattr(v, "name") for v in view]
+    assert "issues" not in names and "cycles" not in names
+    assert "ghost" in names and "auth" in names   # orphan + plain stay
+    folded = next(v for v in view if v.name == "web")
+    assert "apps/web/components/issues/a.tsx" in folded.paths
+    assert "apps/web/components/cycles/b.tsx" in folded.paths
+    # 3 commits each (fixture) — parent + 2 folded subs
+    assert folded.total_commits == 9
+    assert sub_to_parent == {"issues": "web", "cycles": "web"}
+    # real objects untouched
+    assert parent.paths == ["apps/web/app.tsx"]
+
+
+def test_split_subfeatures_inherit_parent_capability() -> None:
+    """End-to-end: Call 2 maps the PARENT; sub files aggregate into the
+    parent's capability PF (same placement as a no-split scan)."""
+    parent = _feat("web", ["apps/web/app.tsx"])
+    parent.uuid = "web-uuid"
+    s1 = _sub("issues", parent, ["apps/web/components/issues/a.tsx"])
+    devs = [parent, s1] + [_feat("auth", ["app/auth/login.ts"])]
+    abs_payload = json.dumps({
+        "product_features": [
+            {"name": "Issue Tracking", "description": "issues"},
+            {"name": "Authentication", "description": "auth"},
+        ],
+        "user_flows": [
+            {"name": "Manage issues", "resource": "issue",
+             "product_feature": "Issue Tracking", "from_flows": ["UF-001"]},
+        ],
+    })
+    # Call 2 sees the ROLLED view → maps parent "web"; "issues" NOT in map.
+    reattrib = json.dumps({"map": {"web": "Issue Tracking",
+                                   "auth": "Authentication"}})
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), devs, [], client=_client(abs_payload, reattrib))
+    assert tel["applied"] is True
+    assert tel["digest_rolled_subs"] == 1
+    assert dm["issues"] == ("issue-tracking",)   # inherited from parent
+    it = next(p for p in pfs if p.display_name == "Issue Tracking")
+    assert "apps/web/components/issues/a.tsx" in it.paths
+
+
+def test_digest_invariant_to_split_depth() -> None:
+    """The 6.7d digest must be IDENTICAL whether the container was split or
+    not — the split-invariance contract."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _build_digest, _rollup_split_view,
+    )
+    whole = _feat("web", ["apps/web/a.tsx", "apps/web/components/issues/b.tsx"])
+    whole.uuid = "web-uuid"
+    whole.total_commits = 6
+
+    husk = _feat("web", ["apps/web/a.tsx"])
+    husk.uuid = "web-uuid"
+    husk.total_commits = 3
+    sub = _sub("issues", husk, ["apps/web/components/issues/b.tsx"])
+    sub.total_commits = 3
+
+    view_split, _ = _rollup_split_view([husk, sub])
+    d_whole = _build_digest([whole], [], [], [])
+    d_split = _build_digest(view_split, [], [], [])
+    # Same names, same dirs, same n_dev_features — description text may differ.
+    assert d_whole["n_dev_features"] == 1 == d_split["n_dev_features"]
+    w = d_whole["developer_features"][0]; v = d_split["developer_features"][0]
+    assert w["name"] == v["name"] and w["where"] == v["where"]

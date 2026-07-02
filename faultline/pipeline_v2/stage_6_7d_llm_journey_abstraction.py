@@ -120,7 +120,7 @@ def align_enabled() -> bool:
 #: Bumped whenever the prompt / reconstruction changes in a way that would make
 #: a previously-cached answer wrong. Part of the cache key, so a bump
 #: transparently invalidates every stale entry.
-ABSTRACTION_CACHE_VERSION = "ground-1"
+ABSTRACTION_CACHE_VERSION = "ground-2"
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -407,6 +407,92 @@ def _anchors_sufficient(
         if (getattr(a, "text", "") or "").strip()
     })
     return distinct >= _MIN_ANCHORS_FLOOR and distinct >= len(product_features or [])
+
+
+_SPLIT_MARKER = "sub-domain"
+
+
+def _is_split_subfeature(f: "Feature") -> bool:
+    """Stage 8.9/8.9.5 provenance: ``split_from`` (source uuid) + the
+    sub-domain description marker — the same re-entrancy signature the
+    subdecompose stage itself uses."""
+    return bool(getattr(f, "split_from", None)) and (
+        _SPLIT_MARKER in (getattr(f, "description", None) or "").lower()
+    )
+
+
+def _dev_key(f: Any) -> str:
+    return getattr(f, "display_name", None) or getattr(f, "name", "") or ""
+
+
+def _rollup_split_view(
+    developer_features: list["Feature"],
+) -> tuple[list[Any], dict[str, str]]:
+    """Abstraction-input view with split-minted subfeatures FOLDED back into
+    their parents. Returns ``(view, sub_to_parent_key)``.
+
+    The DF layer decomposes physical containers (Stage 8.9 deterministic +
+    8.9.5 LLM splits, 19-67 thin subfeatures on a monorepo) — but that grain
+    choice must NOT leak into the product abstraction: measured on supabase,
+    the post-split dev list (227 items, thin low-commit subs crowding the
+    MAX_DEV_FEATURES_DIGEST cap) systematically degraded UF-F1 44.5→~34
+    while the same engine with splits off held ~44 (2026-07-02 waves 3-7).
+    Folding subs into their parent makes the 6.7d input INVARIANT to how
+    deeply the container was decomposed; the parent's capability is
+    propagated back to each sub at reconstruction, so PF aggregation places
+    sub files exactly where a no-split scan would. A sub whose parent is
+    absent (husk dropped) stays standalone. Pure view — real Feature objects
+    are never mutated (proxies via SimpleNamespace).
+    """
+    from types import SimpleNamespace
+
+    by_uuid = {getattr(f, "uuid", None): f for f in developer_features}
+    sub_to_parent: dict[str, str] = {}
+    folded: dict[int, list["Feature"]] = defaultdict(list)
+    for f in developer_features:
+        if not _is_split_subfeature(f):
+            continue
+        parent = by_uuid.get(getattr(f, "split_from", None))
+        if parent is None or parent is f:
+            continue
+        sub_to_parent[_dev_key(f)] = _dev_key(parent)
+        folded[id(parent)].append(f)
+
+    view: list[Any] = []
+    for f in developer_features:
+        if _dev_key(f) in sub_to_parent:
+            continue  # folded into its parent
+        subs = folded.get(id(f))
+        if not subs:
+            view.append(f)
+            continue
+        view.append(SimpleNamespace(
+            name=f.name,
+            display_name=getattr(f, "display_name", None),
+            description=getattr(f, "description", None),
+            member_files=None,  # force _paths_of onto the folded paths
+            paths=list(getattr(f, "paths", None) or [])
+            + [p for sub in subs for p in _paths_of(sub)],
+            total_commits=(getattr(f, "total_commits", 0) or 0)
+            + sum((getattr(sub, "total_commits", 0) or 0) for sub in subs),
+        ))
+    return view, sub_to_parent
+
+
+def _propagate_dev_map(
+    dev_map: dict[str, str], sub_to_parent: dict[str, str],
+) -> dict[str, str]:
+    """Extend the parent-level Call-2 map onto split subfeatures: each sub
+    inherits its parent's capability, so ``_build_product_features``
+    aggregates sub files into the SAME product feature a no-split scan
+    would. Parents missing from the map stay unmapped (their subs fall to
+    the normal fallback path)."""
+    out = dict(dev_map)
+    for sub_key, parent_key in sub_to_parent.items():
+        cap = dev_map.get(parent_key)
+        if cap and sub_key not in out:
+            out[sub_key] = cap
+    return out
 
 
 def _build_digest(
@@ -939,8 +1025,14 @@ def run_journey_abstraction(
         return cost
 
     # ── Digest + input-size telemetry (large-repo robustness) ─────────
-    digest = _build_digest(developer_features, product_features, user_flows, routes_index)
+    # Split-invariance: fold Stage 8.9/8.9.5 subfeatures into their parents
+    # for BOTH LLM calls, so the product abstraction never sees (or pays the
+    # digest cap for) the DF layer's container decomposition. Their files
+    # re-join the right capability via _propagate_dev_map at reconstruction.
+    dev_view, sub_to_parent = _rollup_split_view(developer_features)
+    digest = _build_digest(dev_view, product_features, user_flows, routes_index)
     tele.update({
+        "digest_rolled_subs": len(sub_to_parent),
         "input_dev_features": len(developer_features),
         "input_user_flows": len(user_flows),
         "input_routes": len(routes_index),
@@ -968,6 +1060,9 @@ def run_journey_abstraction(
         to the original live run. Returns ``None`` on an empty reconstruction."""
         uf_specs_ = abstraction.get("user_flows") or []
         pf_specs_ = abstraction.get("product_features") or []
+        # Cache stores the PARENT-level map; propagation is deterministic
+        # from (map, current features), so live and cache-hit replays agree.
+        dev_map = _propagate_dev_map(dev_map, sub_to_parent)
         new_pfs, dev_to_product, files_after, pf_tele = _build_product_features(
             pf_specs_, dev_map, developer_features)
         new_ufs, uf_tele = _build_user_flows(
@@ -1078,9 +1173,9 @@ def run_journey_abstraction(
     caps = [s.get("name", "").strip() for s in pf_specs if s.get("name", "").strip()]
     caps_with_residual = caps + [_RESIDUAL_CAP]
     dev_items = [
-        {"name": f.display_name or f.name, "where": _top_dirs(_paths_of(f)),
+        {"name": _dev_key(f), "where": _top_dirs(_paths_of(f)),
          "n_files": len(_paths_of(f))}
-        for f in sorted(developer_features, key=lambda f: (-len(_paths_of(f)), f.name or ""))
+        for f in sorted(dev_view, key=lambda f: (-len(_paths_of(f)), f.name or ""))
     ]
     user2 = ("Product capabilities:\n" + json.dumps(caps_with_residual) +
              "\n\nDeveloper features (name, dir, file count):\n" +
