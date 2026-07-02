@@ -359,3 +359,102 @@ def test_zero_path_protection_keeps_smallest_domain(monkeypatch):
     assert len(web.paths) == 8            # smallest domain (modules) kept
     after = {p for f in feats for p in f.paths}
     assert original <= after              # conservation, nothing lost
+
+
+# ── A2 hardening (2026-07-02): hooks class, ledger gate, model plumbing ──────
+
+
+def _peers(n=6, files=3):
+    return [
+        _feat(f"peer{j}", [f"src/p{j}/f{i}.ts" for i in range(files)], uuid=f"p{j}")
+        for j in range(n)
+    ]
+
+
+def test_hooks_fanout_descends_to_domain_level():
+    """The hooks class: fan-out through the ``api`` grouping dir finds the
+    domain level (infisical ``frontend/src/hooks/api/<domain>``)."""
+    paths = (
+        [f"frontend/src/hooks/api/auth/h{i}.ts" for i in range(4)]
+        + [f"frontend/src/hooks/api/secrets/h{i}.ts" for i in range(4)]
+        + [f"frontend/src/hooks/api/certificates/h{i}.ts" for i in range(4)]
+        + ["frontend/src/hooks/useToggle.tsx"]
+    )
+    fan = _component_fanout(paths)
+    assert fan is not None
+    container, children = fan
+    assert container == "frontend/src/hooks/api"
+    assert set(children) == {"auth", "secrets", "certificates"}
+
+
+def test_hooks_blob_splits_into_domains(monkeypatch):
+    """End-to-end: an oversized hooks blob splits its LLM-labelled domain
+    children into sub-features."""
+    monkeypatch.setenv(_ENV, "1")
+    paths = (
+        [f"frontend/src/hooks/api/auth/h{i}.ts" for i in range(12)]
+        + [f"frontend/src/hooks/api/secrets/h{i}.ts" for i in range(12)]
+        + [f"frontend/src/hooks/api/utils/u{i}.ts" for i in range(4)]
+    )
+    feats = [_feat("frontend", paths, uuid="fe")] + _peers()
+    client = _FakeClient({"auth": "domain", "secrets": "domain", "utils": "ui"})
+    res = llm_component_split(feats, client=client, cache_backend=_DictCache())
+    assert res.features_split == 1
+    assert res.subfeatures_created == 2
+    names = {f.name for f in feats}
+    assert any("auth" in n for n in names)
+    assert any("secrets" in n for n in names)
+
+
+def test_member_ledger_oversized_gate(monkeypatch):
+    """A de-owned anchor whose OWNED set is under the cut but whose
+    member_files ledger is oversized must still be examined (the blob metric
+    reads the ledger — infisical frontend-v2 class)."""
+    from faultline.models.types import MemberFile
+
+    monkeypatch.setenv(_ENV, "1")
+    owned = (
+        [f"fe/components/auth/c{i}.tsx" for i in range(5)]
+        + [f"fe/components/billing/c{i}.tsx" for i in range(5)]
+        # non-domain remainder so the residual is non-empty (else zero-path
+        # protection folds the smallest domain back)
+        + ["fe/app.tsx", "fe/router.tsx"]
+    )
+    anchor = _feat("frontend", owned, uuid="fe")
+    # Big member ledger (the blob surface) — way past any cut.
+    anchor.member_files = [
+        MemberFile(path=f"fe/hooks/api/x{i}.ts", role="shared", confidence=0.5)
+        for i in range(400)
+    ] + [MemberFile(path=p, role="anchor", confidence=1.0) for p in owned]
+    feats = [anchor] + _peers()
+    client = _FakeClient({"auth": "domain", "billing": "domain"})
+    res = llm_component_split(feats, client=client, cache_backend=_DictCache())
+    assert res.features_examined == 1     # ledger crossed the cut
+    assert res.features_split == 1        # split still operates on owned
+    assert res.subfeatures_created == 2
+
+
+def test_model_passed_to_client(monkeypatch):
+    """The wired model id must reach the API call — a bare 'haiku' alias 404s
+    on the real Anthropic API (the supabase wave-4 silent miss)."""
+    monkeypatch.setenv(_ENV, "1")
+    seen: dict = {}
+
+    class _Client:
+        class _M:
+            def create(self, **kw):
+                seen.update(kw)
+                return _FakeMsg(json.dumps({"auth": "domain", "billing": "domain"}))
+        messages = _M()
+
+    paths = (
+        [f"app/components/auth/c{i}.tsx" for i in range(12)]
+        + [f"app/components/billing/c{i}.tsx" for i in range(12)]
+    )
+    feats = [_feat("web", paths, uuid="w")] + _peers()
+    res = llm_component_split(
+        feats, client=_Client(), model="claude-haiku-4-5-20251001",
+        cache_backend=_DictCache(),
+    )
+    assert res.features_split == 1
+    assert seen.get("model") == "claude-haiku-4-5-20251001"

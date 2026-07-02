@@ -96,7 +96,11 @@ _MIN_DOMAIN_FILES = 2
 # Component-COLLECTION container tokens (the subset of _TERMINAL_SEGMENTS whose
 # children can legitimately be product areas). Narrow + universal — NOT
 # ``ui``/``widgets`` (their children are primitives, never domains).
-_COMPONENT_SEGS = frozenset({"components", "component"})
+# ``hooks`` added 2026-07-02 (A2 hooks-class): large apps group data/API hooks
+# by product domain exactly like components (infisical
+# ``frontend/src/hooks/api/{auth,certificates,secrets,…}`` ×108) — the v2
+# fan-out descent finds the domain level through the ``api`` grouping dir.
+_COMPONENT_SEGS = frozenset({"components", "component", "hooks", "hook"})
 _SAMPLES_PER_CHILD = 2
 # Bound the prompt on a pathological fan-out; the largest children win.
 _MAX_CHILDREN_IN_PROMPT = 80
@@ -223,11 +227,11 @@ def _build_prompt(
         "Each child is EITHER:\n"
         '  - "domain": a distinct PRODUCT capability / feature area '
         "(e.g. issues, billing, auth, storage, reports, settings, "
-        "table-editor) — components grouped because they serve that "
+        "table-editor) — code grouped because it serves that "
         "product area.\n"
-        '  - "ui": a generic PRESENTATIONAL grouping with no product '
-        "meaning (e.g. dropdowns, icons, buttons, modals, layouts, "
-        "primitives, ui, common, shared, forms, skeletons).\n\n"
+        '  - "ui": a generic PRESENTATIONAL or UTILITY grouping with no '
+        "product meaning (e.g. dropdowns, icons, buttons, modals, layouts, "
+        "primitives, ui, common, shared, forms, skeletons, utils, helpers).\n\n"
         "Children:\n"
         f"{listing}\n\n"
         'Return ONLY a JSON object mapping each child name to "domain" or '
@@ -370,8 +374,16 @@ def llm_component_split(
 
     for source in list(devs):
         owned = owned_by[id(source)]
-        if len(owned) <= cut:
-            continue  # not oversized
+        # Oversized when EITHER surface crosses the cut: the owned set (what
+        # the split moves) OR the member_files ledger (the surface the blob
+        # metric reads). A workspace anchor that Stage 8.7 de-sink already
+        # de-owned can still be the repo's blob via its member ledger
+        # (infisical frontend-v2: 762 owned vs 1565 members, 2026-07-02) —
+        # gating on owned alone blind-spots exactly the features this stage
+        # exists to fix. The split itself still operates on owned paths only.
+        ledger = len(getattr(source, "member_files", None) or [])
+        if len(owned) <= cut and ledger <= cut:
+            continue  # not oversized on either surface
         result.features_examined += 1
         fan = _component_fanout(owned)
         if fan is None:

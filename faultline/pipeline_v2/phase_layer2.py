@@ -58,6 +58,9 @@ from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     _default_client_factory as _stage_8_default_client_factory,
     run_stage_8,
 )
+from faultline.pipeline_v2.stage_8_9_6_domain_member_attribution import (
+    attribute_domain_members,
+)
 from faultline.pipeline_v2.stage_8_rollup_strategies import (
     stage_8_rollup_flows,
     write_rollup_artifact,
@@ -80,6 +83,8 @@ class Layer2Result:
     stage_8_7_telemetry: dict[str, Any]
     stage_8_8_telemetry: dict[str, Any]
     stage_8_9_telemetry: dict[str, Any]
+    stage_8_9_5_telemetry: dict[str, Any]
+    stage_8_9_6_telemetry: dict[str, Any]
 
 
 def run_layer2_phase(
@@ -536,9 +541,14 @@ def run_layer2_phase(
     # real features, never a sink); ONE cheap call per blob, cached by
     # prompt-hash. Default OFF; FAULTLINE_STAGE_8_9_5_LLM_COMPONENT_SPLIT=1.
     with StageLogger(run_dir, 8, "llm_component_split") as log8_9_5:
+        # model_id (the scan's RESOLVED model) — the stage's bare "haiku"
+        # default only resolves through the subscription proxy; the real
+        # Anthropic API 404s on it, silently disabling the split (the
+        # supabase wave-4 miss, 2026-07-02).
         llm_split_result = llm_component_split(
             features,
             client=s8_client,
+            model=model_id,
             cache_backend=getattr(ctx, "cache_backend", None),
             repo_slug=getattr(ctx, "slug", None) or ctx.repo_path.name,
         )
@@ -560,6 +570,42 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 8.9.6 — deterministic domain-dir member attribution ─────
+    # Member-only files under a components/hooks container whose domain dir
+    # UNIQUELY names an existing dev feature transfer to it (the unowned-
+    # ledger blob class 8.9.5 cannot reach — infisical hooks/api/<domain>).
+    # $0 LLM, deterministic. Default OFF; FAULTLINE_STAGE_8_9_6_DOMAIN_ATTRIBUTION=1.
+    with StageLogger(run_dir, 8, "domain_member_attribution") as log8_9_6:
+        dom_attr_result = attribute_domain_members(features)
+        stage_8_9_6_telemetry = dom_attr_result.as_telemetry()
+        log8_9_6.info(
+            f"domain_member_attribution enabled={dom_attr_result.enabled} "
+            f"sources={dom_attr_result.sources_examined} "
+            f"transferred={dom_attr_result.files_transferred} "
+            f"targets={dom_attr_result.targets_enriched} "
+            f"ambiguous_skipped={dom_attr_result.ambiguous_skipped}",
+        )
+        # A transfer can cross product boundaries (frontend anchor →
+        # backend domain feature) and the moved path was never in ANY
+        # product union (member-only) — re-union product paths so the
+        # Layer-2 surface stays consistent (audit #2, 2026-07-02). The
+        # 8.9/8.9.5 splits don't need this (subfeatures inherit
+        # product_feature_id → unions byte-stable); only run on transfers.
+        if dom_attr_result.files_transferred:
+            product_features, s896_reconcile = reconcile_product_features(
+                [f for f in features
+                 if getattr(f, "layer", "developer") == "developer"],
+                product_features,
+            )
+            stage_8_9_6_telemetry["product_reconcile"] = s896_reconcile
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="domain_member_attribution",
+            payload=stage_8_9_6_telemetry,
+            run_dir=run_dir,
+        )
+
     return Layer2Result(
         features=features,
         product_features=product_features,
@@ -573,6 +619,8 @@ def run_layer2_phase(
         stage_8_7_telemetry=stage_8_7_telemetry,
         stage_8_8_telemetry=stage_8_8_telemetry,
         stage_8_9_telemetry=stage_8_9_telemetry,
+        stage_8_9_5_telemetry=stage_8_9_5_telemetry,
+        stage_8_9_6_telemetry=stage_8_9_6_telemetry,
     )
 
 
