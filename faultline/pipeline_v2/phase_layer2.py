@@ -80,6 +80,7 @@ class Layer2Result:
     stage_8_7_telemetry: dict[str, Any]
     stage_8_8_telemetry: dict[str, Any]
     stage_8_9_telemetry: dict[str, Any]
+    stage_8_9_5_telemetry: dict[str, Any]
 
 
 def run_layer2_phase(
@@ -536,9 +537,14 @@ def run_layer2_phase(
     # real features, never a sink); ONE cheap call per blob, cached by
     # prompt-hash. Default OFF; FAULTLINE_STAGE_8_9_5_LLM_COMPONENT_SPLIT=1.
     with StageLogger(run_dir, 8, "llm_component_split") as log8_9_5:
+        # model_id (the scan's RESOLVED model) — the stage's bare "haiku"
+        # default only resolves through the subscription proxy; the real
+        # Anthropic API 404s on it, silently disabling the split (the
+        # supabase wave-4 miss, 2026-07-02).
         llm_split_result = llm_component_split(
             features,
             client=s8_client,
+            model=model_id,
             cache_backend=getattr(ctx, "cache_backend", None),
             repo_slug=getattr(ctx, "slug", None) or ctx.repo_path.name,
         )
@@ -573,6 +579,7 @@ def run_layer2_phase(
         stage_8_7_telemetry=stage_8_7_telemetry,
         stage_8_8_telemetry=stage_8_8_telemetry,
         stage_8_9_telemetry=stage_8_9_telemetry,
+        stage_8_9_5_telemetry=stage_8_9_5_telemetry,
     )
 
 
