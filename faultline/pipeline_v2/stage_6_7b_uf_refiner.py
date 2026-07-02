@@ -736,8 +736,13 @@ def _compute_domain(
         parsed = parsed_or_none
         # MISS → persist the parsed rows for future runs. Degrades (cost cap /
         # parse failure / empty response) returned above are NEVER cached.
+        # Store a COPY: the retry path below mutates parsed[uf_id] in place,
+        # and a reference-storing backend (MemoryCacheBackend, buffered worker
+        # flush) would silently bake the retry's correction into the call-1
+        # artifact (audit IMPORTANT, 2026-07-02). Shallow suffices — the later
+        # mutation replaces top-level rows, never mutates a nested row dict.
         if key1 is not None and cache is not None:
-            _cache_put_parsed(cache, key1, parsed)
+            _cache_put_parsed(cache, key1, dict(parsed))
 
     # ── Anti-hallucination name validation (naming review №2) ──
     # Every content token of a refined name must be evidenced in the UF's

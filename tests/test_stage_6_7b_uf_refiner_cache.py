@@ -277,3 +277,58 @@ def test_parse_failure_not_cached() -> None:
     )
     assert tel["domains_degraded"] == 1
     assert cache.store == {}
+
+
+# ── (g) audit 2026-07-02: call-1 artifact must be immune to the retry merge ──
+
+
+def _sequenced_client(responses: list[str]) -> Any:
+    class _Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        class _Messages:
+            def __init__(self, outer: Any) -> None:
+                self._outer = outer
+
+            def create(self, **_kw: Any) -> Any:
+                i = min(self._outer.calls, len(responses) - 1)
+                self._outer.calls += 1
+                return _FakeMsg(text=responses[i], in_tokens=400, out_tokens=150)
+
+        @property
+        def messages(self) -> Any:
+            return _Client._Messages(self)
+
+    return _Client()
+
+
+def test_retry_merge_does_not_mutate_cached_call1_artifact() -> None:
+    """MISS → cache call-1 → validator flags a hallucinated name → retry
+    succeeds and merges IN PLACE. A reference-storing backend (_MemCache)
+    must still hold the PRE-retry call-1 parse under key1 — the merge must
+    never leak into the stored artifact (audit IMPORTANT, aliasing)."""
+    bad = json.dumps({"user_flows": [{
+        "id": "UF-001",
+        "name": "Provision quantum blockchain",   # tokens absent from evidence
+        "description": "hallucinated",
+        "intent": "author",
+        "ui_tier": "full-page",
+        "acceptance": [],
+    }]})
+    cache = _MemCache()
+    ufs, flows = _fixture()
+    out, tel = refine_user_flows(
+        ufs, flows, client=_sequenced_client([bad, _RESP]), cache=cache,
+    )
+    # Retry fired and the applied name is the clean one.
+    assert tel["llm_calls"] == 2
+    assert out[0].name == "Create a detector"
+    # Two cache entries: call-1 and the retry (distinct keys).
+    entries = [v for (k, _), v in cache.store.items()
+               if k == CacheKind.LLM_UF_REFINE.value]
+    assert len(entries) == 2
+    names = sorted(e["user_flows"]["UF-001"]["name"] for e in entries)
+    # The call-1 artifact keeps the PRE-retry (hallucinated) parse verbatim;
+    # the retry artifact holds the corrected one.
+    assert names == ["Create a detector", "Provision quantum blockchain"]
