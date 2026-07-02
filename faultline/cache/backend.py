@@ -84,6 +84,34 @@ class CacheKind(str, Enum):
     # (rule-cold-scan safe). Stage 3 is the last uncached main LLM stage; this
     # closes the reproducibility gap Stage 4 (LLM_RESIDUAL) already covered.
     LLM_FLOWS = "llm-flows"
+    # Stage 6.7b UF-refiner: one entry per per-domain Haiku call (first call
+    # AND the optional name-validation retry — the retry's user prompt embeds
+    # the prohibition text, so it keys separately). Keyed on the content hash
+    # of {cache version, canonical model, system prompt, user prompt}; the
+    # user prompt IS the canonical structured input (domain + full UF payload
+    # batch, built deterministically). The cached value is the PARSED
+    # ``{uf_id: refinement_row}`` mapping — replayed through the SAME
+    # validation/apply code as a live call, so an unchanged repo re-scan is
+    # byte-identical at $0. Content-keyed (same input → same answer): a
+    # deterministic short-circuit, not per-repo memory (rule-cold-scan safe).
+    LLM_UF_REFINE = "llm-uf-refine"
+    # Stage 6.7c mega-UF splitter: one entry per per-mega-UF partition call
+    # (Sonnet). Keyed on {cache version, canonical model, system prompt, user
+    # prompt (domain + member flow names)}. The cached value is the PARSED
+    # ``journeys[]`` array — replayed through the same ``_split_one`` builder,
+    # so sub-UF construction is byte-identical on an unchanged repo.
+    LLM_UF_SPLIT = "llm-uf-split"
+    # Stage 8 Layer-2 clusterer/analyst: one entry per LLM call on the
+    # product-cluster path — the Haiku label-mapper (``cluster_via_haiku``),
+    # the Sonnet analyst main + parse-retry calls, and the analyst's
+    # name-validator rename retry. All keyed on {cache version, canonical
+    # model, system prompt, user prompt}; model+system are in the key, so the
+    # two Stage-8 modes never collide. Values are the PARSED structured
+    # outputs (mapping / analyst dict / renames) — replayed through the same
+    # emission/validation code, making product_feature_id stamps reproducible
+    # on an unchanged repo. NOT the marketing-page cache (kind ``marketing``),
+    # which stays as-is.
+    LLM_PRODUCT_CLUSTER = "llm-product-cluster"
     # Top-level scan-result cache: one entry per (repo content identity +
     # engine version + scan config) — the full FeatureMap JSON of a
     # completed scan. Because temperature=0 on Anthropic is NOT bit-exact,
@@ -182,6 +210,12 @@ class FilesystemCacheBackend:
             return self._base / "llm-cache" / "abstraction" / f"{safe_key}.json"
         if kind == CacheKind.LLM_FLOWS.value:
             return self._base / "llm-cache" / "flows" / f"{safe_key}.json"
+        if kind == CacheKind.LLM_UF_REFINE.value:
+            return self._base / "llm-cache" / "uf-refine" / f"{safe_key}.json"
+        if kind == CacheKind.LLM_UF_SPLIT.value:
+            return self._base / "llm-cache" / "uf-split" / f"{safe_key}.json"
+        if kind == CacheKind.LLM_PRODUCT_CLUSTER.value:
+            return self._base / "llm-cache" / "product-cluster" / f"{safe_key}.json"
         if kind == CacheKind.SCAN_RESULT.value:
             # Dedicated dir — scan JSONs are large; keep them out of the
             # small content-keyed ``llm-cache/``.
@@ -210,6 +244,9 @@ class FilesystemCacheBackend:
             CacheKind.LLM_RESIDUAL.value,
             CacheKind.LLM_ABSTRACTION.value,
             CacheKind.LLM_FLOWS.value,
+            CacheKind.LLM_UF_REFINE.value,
+            CacheKind.LLM_UF_SPLIT.value,
+            CacheKind.LLM_PRODUCT_CLUSTER.value,
             CacheKind.SCAN_RESULT.value,
             CacheKind.MARKETING.value,
             CacheKind.BLAME.value,
