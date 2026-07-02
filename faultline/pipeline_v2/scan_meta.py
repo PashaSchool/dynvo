@@ -324,6 +324,7 @@ def assemble_scan_meta(
     stage_8_9_telemetry: dict[str, Any] | None = None,
     stage_8_9_5_telemetry: dict[str, Any] | None = None,
     stage_8_9_6_telemetry: dict[str, Any] | None = None,
+    stage_5_4_telemetry: dict[str, Any] | None = None,
     stage_8_6_5_telemetry: dict[str, Any] | None = None,
     stage_8_6_7_telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -541,6 +542,7 @@ def assemble_scan_meta(
         "stage_8_9_subdecompose": dict(stage_8_9_telemetry or {}),
         "stage_8_9_5_llm_component_split": dict(stage_8_9_5_telemetry or {}),
         "stage_8_9_6_domain_member_attribution": dict(stage_8_9_6_telemetry or {}),
+        "stage_5_4_cross_flow_dedup": dict(stage_5_4_telemetry or {}),
         # Sprint S6.1 — Stage 0.6 deterministic shape classifier.
         # Used by the Stage 8 flow-rollup dispatcher to pick the per-
         # shape attribution strategy. Universal-residual is the safe

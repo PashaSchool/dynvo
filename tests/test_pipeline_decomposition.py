@@ -106,6 +106,7 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (4, "residual"),
     (5, "postprocess"),
     (5, "sibling_collapse"),
+    (5, "cross_flow_dedup"),
     (5, "bipartite"),
     (6, "metrics"),
     (6, "product_clusterer"),

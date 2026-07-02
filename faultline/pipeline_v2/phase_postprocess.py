@@ -20,6 +20,9 @@ from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stage_5_3_sibling_collapse import (
     collapse_sibling_routes,
 )
+from faultline.pipeline_v2.stage_5_4_cross_flow_dedup import (
+    dedup_cross_feature_flows,
+)
 from faultline.pipeline_v2.stage_5_5_bipartite import stage_5_5_bipartite
 from faultline.pipeline_v2.stage_5_postprocess import (
     stage_5_from_stage3_result_with_telemetry,
@@ -39,6 +42,7 @@ class PostprocessResult:
     s53_features_post: int
     s53_collapse_sample: list[dict[str, Any]]
     bipartite: Any
+    s54_telemetry: dict[str, Any] | None = None
 
 
 def run_postprocess_phase(
@@ -154,6 +158,28 @@ def run_postprocess_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 5.4 — cross-feature entry-twin flow dedup (deterministic) ─
+    # Two overlapping features can each mint a flow at the SAME entry point
+    # (S7-B dedups only within one feature's Stage-3 call) — one real flow
+    # as two rows. Collapse globally BEFORE bipartite ids/edges exist; the
+    # owner of the entry file keeps the flow. Default OFF (measured F1
+    # cost — twins partially inflate golden recall; see the stage module);
+    # FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=1 to enable.
+    with StageLogger(run_dir, 5, "cross_flow_dedup") as log5_4:
+        s54 = dedup_cross_feature_flows(features)
+        s54_telemetry = s54.as_telemetry()
+        log5_4.info(
+            f"cross_flow_dedup enabled={s54.enabled} "
+            f"entry_groups={s54.entry_groups} removed={s54.flows_removed}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=5,
+            stage_name="cross_flow_dedup",
+            payload=s54_telemetry,
+            run_dir=run_dir,
+        )
+
     # ── Stage 5.5 — bipartite store + blast-radius (deterministic) ─
     # Pure in-memory pass over the Stage 5 features. Mutates each
     # contained Flow in place to populate the new bipartite fields
@@ -200,6 +226,7 @@ def run_postprocess_phase(
         s53=s53,
         s53_features_pre=s53_features_pre,
         s53_features_post=s53_features_post,
+        s54_telemetry=s54_telemetry,
         s53_collapse_sample=s53_collapse_sample,
         bipartite=bipartite,
     )
