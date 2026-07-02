@@ -157,23 +157,26 @@ def test_success_path_stagelogger_info_no_spurious_degrade() -> None:
     assert reason.startswith("stage_6_7d:")
 
 
-def _anchors(n: int, texts: list[str] | None = None):
+def _anchors(n: int, texts: list[str] | None = None, source: str = "analytics"):
+    """Anchor fixtures — default source ``analytics`` (tier-1/action-grain) so
+    a rich pool exercises the align path; pass source="i18n" (leaf → tier-2 by
+    default) to build an advisory-only pool."""
     from faultline.pipeline_v2.anchor_extractors import ProductAnchor
     items = texts if texts is not None else [f"Capability {i}" for i in range(n)]
-    return [ProductAnchor(text=t, source="i18n", locator=f"a/{i}#k") for i, t in enumerate(items)]
+    return [ProductAnchor(text=t, source=source, locator=f"a/{i}#k") for i, t in enumerate(items)]
 
 
-def test_anchors_sufficient_gate() -> None:
-    """Improve-or-no-op gate: align only when distinct anchors >= #product_features
-    AND >= floor(8). Sparse → free-gen (documenso-style repos never regress)."""
-    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import _anchors_sufficient
-    one_pf = _pfs()  # 1 product feature
-    assert _anchors_sufficient([], one_pf) is False
-    assert _anchors_sufficient(_anchors(3), one_pf) is False      # below floor
-    assert _anchors_sufficient(_anchors(8), one_pf) is True        # >= floor and >= 1 pf
-    many_pf = [_feat(f"pf{i}", [f"app/{i}.ts"]) for i in range(10)]
-    assert _anchors_sufficient(_anchors(8), many_pf) is False      # 8 < 10 features → fall back
-    assert _anchors_sufficient(_anchors(10), many_pf) is True
+def test_grain_gate_tier1_vs_candidate_ufs() -> None:
+    """Align-v2 grain gate: align only when distinct TIER-1 anchors >= candidate
+    user_flows AND >= floor(8). Tier-2 (i18n leaf values) NEVER counts."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import _grain_gate
+    assert _grain_gate([], 1) == (False, 0, 0)
+    assert _grain_gate(_anchors(3), 1) == (False, 3, 0)          # below floor
+    assert _grain_gate(_anchors(8), 3) == (True, 8, 0)           # >= floor and >= UFs
+    assert _grain_gate(_anchors(8), 10) == (False, 8, 0)         # 8 tier1 < 10 UFs
+    assert _grain_gate(_anchors(10), 10) == (True, 10, 0)
+    # a huge tier-2 pool can never open the gate (Soc0 leaf-value lesson)
+    assert _grain_gate(_anchors(500, source="i18n"), 3) == (False, 0, 500)
 
 
 def test_sparse_anchors_fall_back_to_free_gen() -> None:

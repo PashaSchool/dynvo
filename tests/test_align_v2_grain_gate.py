@@ -1,0 +1,447 @@
+"""Align-v2 — grain-gated anchor alignment (Phase 3.1).
+
+Covers the five test areas from the align-v2 brief:
+  1. tier classification per SOURCE; i18n leaf VALUES are never tier-1
+  2. gate truth table on the recorded Phase-3.0 pool shapes
+     (formbricks / supabase / cal-com / Soc0)
+  3. gate-refused path is byte-identical to align-OFF — outputs AND cache keys
+  4. telemetry (align_decision) + degradation emit on requested-but-refused
+  5. i18n NAMESPACE-key extraction yields key paths (humanised), not values
+
+The LLM is always mocked. No network, no real cache.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from faultline.pipeline_v2.anchor_extractors import (
+    TIER1_ACTION,
+    TIER2_ADVISORY,
+    ProductAnchor,
+    anchor_tier,
+    build_alignment_pool,
+    distinct_tier_counts,
+    extract_i18n_anchors,
+    extract_raw_anchors,
+)
+from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+    ALIGN_ENV,
+    _canonical_anchor_texts,
+    _grain_gate,
+    run_journey_abstraction,
+)
+
+# ── shared fixtures (mirror test_stage_6_7d_llm_journey_abstraction) ────────
+
+
+@dataclass
+class _Usage:
+    input_tokens: int
+    output_tokens: int
+
+
+@dataclass
+class _Block:
+    text: str
+
+
+class _Msg:
+    def __init__(self, text: str) -> None:
+        self.content = [_Block(text=text)]
+        self.usage = _Usage(400, 200)
+
+
+def _client(abstraction: str, reattrib: str) -> Any:
+    class _C:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                sysp = kw.get("system", "")
+                return _Msg(reattrib if "assign each developer feature" in sysp else abstraction)
+        messages = _M()
+    return _C()
+
+
+def _feat(name: str, paths: list[str]):
+    from faultline.models.types import Feature, MemberFile
+    return Feature(
+        name=name, display_name=name, description=f"{name} module",
+        paths=paths, authors=["a"], total_commits=3, bug_fixes=1,
+        bug_fix_ratio=0.33, last_modified=datetime.now(timezone.utc),
+        health_score=90.0, layer="developer",
+        member_files=[MemberFile(path=p, role="anchor", confidence=1.0) for p in paths],
+    )
+
+
+def _uf(uf_id: str, name: str, members: list[str]):
+    from faultline.models.types import UserFlow
+    return UserFlow(
+        id=uf_id, name=name, intent="author", resource="thing",
+        member_flow_ids=members, member_count=len(members),
+        routes=[f"/{name}"],
+    )
+
+
+_ABS = json.dumps({
+    "product_features": [
+        {"name": "Account Management", "description": "manage accounts"},
+        {"name": "Authentication", "description": "sign in/up"},
+    ],
+    "user_flows": [
+        {"name": "Manage accounts", "resource": "account",
+         "product_feature": "Account Management", "from_flows": ["UF-001", "UF-002"]},
+        {"name": "Sign in", "resource": "session",
+         "product_feature": "Authentication", "from_flows": ["UF-003"]},
+    ],
+})
+_MAP = json.dumps({"map": {
+    "accounts": "Account Management", "auth": "Authentication",
+    "shared-ui": "Shared Platform",
+}})
+
+
+def _anchors(texts: list[str], source: str = "analytics", tier: str = ""):
+    return [
+        ProductAnchor(text=t, source=source, locator=f"src/{i}.ts", tier=tier)  # type: ignore[arg-type]
+        for i, t in enumerate(texts)
+    ]
+
+
+def _n_anchors(n: int, source: str = "analytics", tier: str = "", prefix: str = "Cap"):
+    return _anchors([f"{prefix} {i}" for i in range(n)], source=source, tier=tier)
+
+
+class _RecCache:
+    """Records every (op, kind, key) — asserts cache-key invariance."""
+
+    def __init__(self) -> None:
+        self.ops: list[tuple[str, str, str]] = []
+
+    def get(self, kind: str, key: str) -> None:
+        self.ops.append(("get", kind, key))
+        return None
+
+    def set(self, kind: str, key: str, value: Any) -> None:
+        self.ops.append(("set", kind, key))
+
+
+# ── 1. tier classification per source ───────────────────────────────────────
+
+
+def test_default_tier_by_source() -> None:
+    """SOURCE decides the default tier: analytics/nav/docs are action-grain;
+    i18n (leaf default) / test / docs_nav are advisory."""
+    assert ProductAnchor("Track Event", "analytics", "a.ts").tier == TIER1_ACTION
+    assert ProductAnchor("Settings", "nav", "nav.tsx").tier == TIER1_ACTION
+    assert ProductAnchor("Pricing", "docs", "x").tier == TIER1_ACTION
+    assert ProductAnchor("Sign in to continue", "i18n", "en.json").tier == TIER2_ADVISORY
+    assert ProductAnchor("creates a booking", "test", "a.spec.ts").tier == TIER2_ADVISORY
+    assert ProductAnchor("Getting Started", "docs_nav", "sidebars.js").tier == TIER2_ADVISORY
+
+
+def test_i18n_namespace_key_can_be_tier1_explicitly() -> None:
+    a = ProductAnchor("Billing", "i18n", "en.json#billing", tier=TIER1_ACTION)
+    assert a.tier == TIER1_ACTION
+    assert anchor_tier(a) == TIER1_ACTION
+
+
+def test_anchor_tier_robust_to_foreign_objects() -> None:
+    """Duck-typed anchors without a tier attr derive from source; unknown
+    source falls to tier-2 (never counts toward the gate)."""
+    class _Foreign:
+        text = "Something"
+        source = "analytics"
+    assert anchor_tier(_Foreign()) == TIER1_ACTION
+
+    class _Unknown:
+        text = "Mystery"
+        source = "weird"
+    assert anchor_tier(_Unknown()) == TIER2_ADVISORY
+
+
+def test_distinct_tier_counts_case_insensitive() -> None:
+    anchors = (
+        _anchors(["Billing", "billing", "Auth"])          # 2 distinct tier1
+        + _anchors(["Some UI copy", "More copy"], source="test")  # 2 tier2
+    )
+    assert distinct_tier_counts(anchors) == (2, 2)
+
+
+# ── 5. i18n namespace-key extraction: key paths, not values ─────────────────
+
+
+def _locale_repo(tmp_path, payload: dict) -> Any:
+    loc = tmp_path / "web" / "locales" / "en"
+    loc.mkdir(parents=True)
+    (loc / "common.json").write_text(json.dumps(payload), encoding="utf-8")
+    return tmp_path
+
+
+def test_i18n_namespace_keys_tier1_leaf_values_tier2(tmp_path) -> None:
+    repo = _locale_repo(tmp_path, {
+        "billing": {"title": "Billing & Payments",
+                    "invoice": {"paid": "Your invoice was paid"}},
+        "auth": {"login": "Sign In To Your Account"},
+    })
+    anchors = extract_i18n_anchors(repo)
+    tier1 = {a.text for a in anchors if a.tier == TIER1_ACTION}
+    tier2 = {a.text for a in anchors if a.tier == TIER2_ADVISORY}
+    # namespace KEYS (humanised) are tier-1 and carry a #key locator
+    assert tier1 == {"Billing", "Auth"}
+    assert all("#" in a.locator for a in anchors if a.tier == TIER1_ACTION)
+    # leaf VALUES are tier-2 — never tier-1
+    assert {"Billing & Payments", "Your invoice was paid",
+            "Sign In To Your Account"} <= tier2
+    assert not (tier1 & tier2)
+
+
+def test_namespace_wins_dedup_collision_against_same_text_leaf(tmp_path) -> None:
+    """When a namespace key humanises to the same text as a leaf value, the
+    raw dedup must keep the TIER-1 (namespace) anchor — else the vocabulary
+    silently shrinks at the gate."""
+    repo = _locale_repo(tmp_path, {"billing": {"x": "Billing"}})
+    raw = extract_raw_anchors(repo)
+    billing = [a for a in raw if a.text.lower() == "billing"]
+    assert len(billing) == 1
+    assert billing[0].tier == TIER1_ACTION
+
+
+def test_alignment_pool_prefers_tier1_within_i18n(tmp_path) -> None:
+    repo = _locale_repo(tmp_path, {
+        f"namespace_{i}": {"leaf": f"Leaf copy number {i}"} for i in range(20)
+    })
+    pool = build_alignment_pool(extract_raw_anchors(repo))
+    i18n = [a for a in pool if a.source == "i18n"]
+    first_20 = i18n[:20]
+    assert all(a.tier == TIER1_ACTION for a in first_20)
+
+
+# ── 2. gate truth table on recorded Phase-3.0 pool shapes ───────────────────
+
+
+def test_gate_formbricks_shape_refuses() -> None:
+    """11 coarse i18n DOMAIN namespaces vs ~85 candidate UFs → free-gen
+    (the measured −9..−14.5 F1 failure align-v2 exists to prevent)."""
+    pool = (
+        _n_anchors(11, source="i18n", tier=TIER1_ACTION, prefix="Domain")
+        + _n_anchors(300, source="i18n", prefix="Ui copy")  # leaves, tier2
+    )
+    granted, t1, t2 = _grain_gate(pool, 85)
+    assert (granted, t1, t2) == (False, 11, 300)
+
+
+def test_gate_supabase_shape_grants() -> None:
+    """66 analytics events + ~300 nav labels (action-grain) vs ~80 UFs → align."""
+    pool = (
+        _n_anchors(66, source="analytics", prefix="Event")
+        + _n_anchors(300, source="nav", prefix="Nav")
+    )
+    granted, t1, _t2 = _grain_gate(pool, 80)
+    assert granted is True
+    assert t1 == 366
+
+
+def test_gate_calcom_shape_grants() -> None:
+    """Thousands of fine i18n NAMESPACE keys vs 326 candidate UFs → align."""
+    pool = _n_anchors(1000, source="i18n", tier=TIER1_ACTION, prefix="Key")
+    granted, t1, _t2 = _grain_gate(pool, 326)
+    assert granted is True
+    assert t1 == 1000
+
+
+def test_gate_soc0_shape_refuses() -> None:
+    """Leaf-value-heavy pool (the 0.03-Jaccard lesson): tiny tier-1 → free-gen,
+    no matter how large the tier-2 noise pool is."""
+    pool = (
+        _n_anchors(5, source="nav", prefix="Nav")
+        + _n_anchors(500, source="i18n", prefix="Noise")
+    )
+    granted, t1, t2 = _grain_gate(pool, 30)
+    assert (granted, t1, t2) == (False, 5, 500)
+
+
+def test_gate_floor_applies_even_on_tiny_repos() -> None:
+    assert _grain_gate(_n_anchors(7), 3)[0] is False   # 7 < floor 8
+    assert _grain_gate(_n_anchors(8), 3)[0] is True
+
+
+def test_gate_uses_raw_anchors_when_provided(monkeypatch) -> None:
+    """The gate measures the RAW vocabulary (pool caps would understate it):
+    a capped pool of 8 tier-1 anchors with a rich raw extraction still aligns
+    when raw tier-1 >= candidate UFs."""
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    ufs = [_uf(f"UF-{i:03d}", f"Flow {i}", [f"f{i}"]) for i in range(1, 13)]  # 12 UFs
+    pool = _n_anchors(8)                       # 8 < 12 → pool alone would refuse
+    raw = _n_anchors(40)                       # 40 >= 12 → raw grants
+    devs = [_feat("accounts", ["app/accounts/a.ts"]), _feat("auth", ["app/auth/l.ts"])]
+    _u, _p, _m, tel = run_journey_abstraction(
+        ufs, [_feat("web", ["app/a.ts"])], devs, [],
+        product_anchors=pool, raw_anchors=raw, client=_client(_ABS, _MAP))
+    assert tel["aligned"] is True
+    assert tel["align_decision"]["tier1_count"] == 40
+    assert tel["align_decision"]["candidate_ufs"] == 12
+
+
+# ── tier-2 never reaches the prompt ──────────────────────────────────────────
+
+
+def test_canonical_anchor_texts_tier1_only() -> None:
+    pool = (
+        _anchors(["Track Signup", "Invite Member"])                 # tier1
+        + _anchors(["Some long UI sentence"], source="i18n")        # tier2 leaf
+        + _anchors(["creates a booking"], source="test")            # tier2
+    )
+    assert _canonical_anchor_texts(pool) == ["Track Signup", "Invite Member"]
+
+
+def test_align_prompt_carries_only_tier1_texts(monkeypatch) -> None:
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    seen_prompts: list[str] = []
+
+    class _SpyClient:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                seen_prompts.append(kw.get("user", "") or kw["messages"][0]["content"])
+                sysp = kw.get("system", "")
+                return _Msg(_MAP if "assign each developer feature" in sysp else _ABS)
+        messages = _M()
+
+    pool = (_n_anchors(10, prefix="Action")
+            + _anchors(["Leafy UI copy sentence"], source="i18n"))
+    devs = [_feat("accounts", ["app/accounts/a.ts"])]
+    ufs = [_uf("UF-001", "Create account", ["f1"])]
+    _u, _p, _m, tel = run_journey_abstraction(
+        ufs, [_feat("web", ["app/a.ts"])], devs, [],
+        product_anchors=pool, client=_SpyClient())
+    assert tel["aligned"] is True
+    joined = "\n".join(seen_prompts)
+    assert "Action 0" in joined
+    assert "Leafy UI copy sentence" not in joined
+
+
+# ── 3. gate-refused == align-OFF: byte-identical output + cache keys ────────
+
+
+def _run_pair(monkeypatch, devs, pfs, ufs):
+    """Run once align-OFF and once align-ON-but-gate-refused; same fixtures."""
+    sparse = _n_anchors(3)  # 3 tier1 < floor 8 → gate refuses
+
+    monkeypatch.delenv(ALIGN_ENV, raising=False)
+    cache_off = _RecCache()
+    off = run_journey_abstraction(
+        ufs, pfs, devs, [], product_anchors=sparse, raw_anchors=sparse,
+        client=_client(_ABS, _MAP), cache=cache_off)
+
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    cache_on = _RecCache()
+    on = run_journey_abstraction(
+        ufs, pfs, devs, [], product_anchors=sparse, raw_anchors=sparse,
+        client=_client(_ABS, _MAP), cache=cache_on)
+    return off, cache_off, on, cache_on
+
+
+def test_gate_refused_output_and_cache_keys_identical_to_align_off(monkeypatch) -> None:
+    devs = [_feat("accounts", ["app/accounts/a.ts", "app/accounts/b.ts"]),
+            _feat("auth", ["app/auth/login.ts"]),
+            _feat("shared-ui", ["packages/ui/button.tsx"])]
+    pfs = [_feat("web", ["app/accounts/a.ts", "app/auth/login.ts"])]
+    ufs = [_uf("UF-001", "Create account", ["f1"]),
+           _uf("UF-002", "Update account", ["f2"]),
+           _uf("UF-003", "Sign in", ["f3"])]
+    (u_off, p_off, m_off, t_off), c_off, (u_on, p_on, m_on, t_on), c_on = _run_pair(
+        monkeypatch, devs, pfs, ufs)
+
+    # identical cache traffic — SAME keys (anchor_sig empty on both paths)
+    assert c_off.ops == c_on.ops
+    assert len(c_off.ops) >= 1
+    # identical rewritten arrays
+    assert [u.model_dump() for u in u_off] == [u.model_dump() for u in u_on]
+    assert [(p.name, p.display_name, sorted(p.paths)) for p in p_off] == \
+           [(p.name, p.display_name, sorted(p.paths)) for p in p_on]
+    assert m_off == m_on
+    assert t_off["aligned"] is False and t_on["aligned"] is False
+    # the ONLY telemetry difference is the requested-path extras
+    extras = {"align_decision", "degradations"}
+    assert {k: v for k, v in t_on.items() if k not in extras} == \
+           {k: v for k, v in t_off.items() if k not in extras}
+
+
+# ── 4. telemetry + degradation emit ──────────────────────────────────────────
+
+
+def test_align_decision_absent_when_env_off(monkeypatch) -> None:
+    monkeypatch.delenv(ALIGN_ENV, raising=False)
+    devs = [_feat("accounts", ["app/accounts/a.ts"])]
+    _u, _p, _m, tel = run_journey_abstraction(
+        [_uf("UF-001", "Create account", ["f1"])], [_feat("web", ["app/a.ts"])],
+        devs, [], product_anchors=_n_anchors(50), client=_client(_ABS, _MAP))
+    assert "align_decision" not in tel
+    assert "degradations" not in tel
+
+
+def test_align_decision_and_degradation_on_requested_but_refused(monkeypatch) -> None:
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    devs = [_feat("accounts", ["app/accounts/a.ts"])]
+    ufs = [_uf("UF-001", "Create account", ["f1"]),
+           _uf("UF-002", "Update account", ["f2"])]
+    pool = (_n_anchors(4) + _n_anchors(37, source="i18n", prefix="Leaf"))
+    _u, _p, _m, tel = run_journey_abstraction(
+        ufs, [_feat("web", ["app/a.ts"])], devs, [],
+        product_anchors=pool, client=_client(_ABS, _MAP))
+    assert tel["aligned"] is False
+    assert tel["align_decision"] == {
+        "requested": True, "granted": False,
+        "tier1_count": 4, "tier2_count": 37, "candidate_ufs": 2,
+    }
+    (rec,) = tel["degradations"]
+    assert rec["type"] == "align_gate_refused"
+    assert rec["stage"] == "stage_6_7d_journey_abstraction"
+    assert rec["severity"] == "degraded"
+    assert rec["metrics"] == {
+        "tier1_count": 4, "tier2_count": 37, "candidate_ufs": 2, "floor": 8,
+    }
+    # free-gen still applied (never-worse) — refusal is not a failure
+    assert tel["applied"] is True
+
+
+def test_align_decision_on_granted(monkeypatch) -> None:
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    devs = [_feat("accounts", ["app/accounts/a.ts"])]
+    ufs = [_uf("UF-001", "Create account", ["f1"])]
+    _u, _p, _m, tel = run_journey_abstraction(
+        ufs, [_feat("web", ["app/a.ts"])], devs, [],
+        product_anchors=_n_anchors(12), client=_client(_ABS, _MAP))
+    assert tel["aligned"] is True
+    assert tel["align_decision"] == {
+        "requested": True, "granted": True,
+        "tier1_count": 12, "tier2_count": 0, "candidate_ufs": 1,
+    }
+    assert "degradations" not in tel
+
+
+def test_granted_gate_but_empty_tier1_pool_refuses(monkeypatch) -> None:
+    """Guard: raw grants but the curated pool holds no tier-1 text → refuse
+    (nothing to align to) and record the decision."""
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    devs = [_feat("accounts", ["app/accounts/a.ts"])]
+    ufs = [_uf("UF-001", "Create account", ["f1"])]
+    _u, _p, _m, tel = run_journey_abstraction(
+        ufs, [_feat("web", ["app/a.ts"])], devs, [],
+        product_anchors=_anchors(["Leafy copy"], source="i18n"),
+        raw_anchors=_n_anchors(40), client=_client(_ABS, _MAP))
+    assert tel["aligned"] is False
+    assert tel["align_decision"]["granted"] is False
+    assert tel["degradations"][0]["type"] == "align_gate_refused"
+
+
+def test_degradations_builder_shape() -> None:
+    from faultline.pipeline_v2.degradations import align_gate_refused
+    rec = align_gate_refused(tier1_count=11, tier2_count=300,
+                             candidate_ufs=85, floor=8)
+    assert rec["type"] == "align_gate_refused"
+    assert rec["severity"] == "degraded"
+    assert "11" in rec["detail"] and "85" in rec["detail"]
+    assert rec["metrics"]["floor"] == 8

@@ -451,11 +451,15 @@ def run_finalize_phase(
                 _s67d_cache = get_cache_backend()
             except Exception:  # noqa: BLE001 — caching is best-effort, never fatal
                 _s67d_cache = None
-            # Phase 2 anchor-ingest (OPT-IN): mine deterministic product-capability
-            # anchors → clean alignment pool ONLY when align is enabled (default OFF
-            # — align degrades stability on noisy pools). Skip the file-walk cost on
-            # the default free-gen path; extraction failure must never crash a scan.
+            # Anchor-ingest for align-v2 (OPT-IN): mine deterministic product-
+            # capability anchors ONLY when align is enabled (default OFF — the
+            # per-repo GRAIN gate inside 6.7d then decides align-vs-free-gen).
+            # The RAW extraction feeds the gate (pool caps would understate a
+            # fine-grained vocabulary); the curated pool feeds the prompt. Skip
+            # the file-walk cost on the default free-gen path; extraction
+            # failure must never crash a scan.
             _s67d_anchors = None
+            _s67d_raw_anchors = None
             try:
                 from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
                     align_enabled,
@@ -464,9 +468,11 @@ def run_finalize_phase(
                     from faultline.pipeline_v2.anchor_extractors import (
                         build_alignment_pool, extract_raw_anchors,
                     )
-                    _s67d_anchors = build_alignment_pool(extract_raw_anchors(repo_path))
+                    _s67d_raw_anchors = extract_raw_anchors(repo_path)
+                    _s67d_anchors = build_alignment_pool(_s67d_raw_anchors)
             except Exception:  # noqa: BLE001 — anchors are optional; degrade to free-gen
                 _s67d_anchors = None
+                _s67d_raw_anchors = None
             (
                 user_flows,
                 product_features,
@@ -478,6 +484,7 @@ def run_finalize_phase(
                 features,
                 lineage_result.routes_index,
                 product_anchors=_s67d_anchors,
+                raw_anchors=_s67d_raw_anchors,
                 model=model_id,
                 cost_tracker=tracker,
                 cache=_s67d_cache,
@@ -506,7 +513,14 @@ def run_finalize_phase(
                 },
                 run_dir=run_dir,
             )
-        scan_meta["stage_6_7d_journey_abstraction"] = dict(s67d_telemetry)
+        _s67d_meta = dict(s67d_telemetry)
+        # Lift structured degradation records (align requested-but-refused)
+        # into the canonical scan_meta.degradations[]; keep the stage key
+        # free of the duplicate nested copy (the stage artifact retains it).
+        _s67d_degr = _s67d_meta.pop("degradations", None) or []
+        if _s67d_degr:
+            scan_meta.setdefault("degradations", []).extend(_s67d_degr)
+        scan_meta["stage_6_7d_journey_abstraction"] = _s67d_meta
 
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to

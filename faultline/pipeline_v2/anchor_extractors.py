@@ -44,6 +44,40 @@ logger = logging.getLogger(__name__)
 
 AnchorSource = Literal["i18n", "nav", "docs_nav", "analytics", "test", "docs"]
 
+# ── Grain tiers (align-v2, Phase 3.1) ────────────────────────────────────────
+# Phase 3.0 (2026-07-02) proved anchor GRAIN — not pool cleanliness — decides
+# whether Stage 6.7d alignment helps or strangles: journey/action-grain pools
+# (supabase analytics+nav, cal-com fine i18n namespaces) won +7..+12 UF-F1;
+# a domain-grain pool (formbricks: 11 coarse i18n namespaces) bounding 37
+# journeys cost −9..−14.5. Every anchor therefore carries a grain TIER:
+#
+#   tier1_action  — the maintainer's own ACTION/journey-grain vocabulary:
+#                   analytics event names, in-app nav labels, i18n NAMESPACE
+#                   keys (structural author intent), external docs sidebar.
+#                   ONLY tier-1 anchors count toward the 6.7d align gate and
+#                   ONLY tier-1 texts are ever sent to the align prompt.
+#   tier2_advisory — noisy prose: i18n leaf VALUES (the Soc0 lesson — aligning
+#                   to UI copy took PF name-Jaccard 0.72 → 0.03), test titles,
+#                   docs-SITE page-title nav. Extracted for telemetry / dual
+#                   evidence, NEVER admitted to the gate or the align prompt.
+AnchorTier = Literal["tier1_action", "tier2_advisory"]
+TIER1_ACTION: AnchorTier = "tier1_action"
+TIER2_ADVISORY: AnchorTier = "tier2_advisory"
+
+#: Default tier by SOURCE (categorical, not tuned). ``i18n`` defaults to
+#: tier-2 on purpose: within i18n only NAMESPACE-KEY anchors are action-grain
+#: and the extractor stamps those ``tier1_action`` EXPLICITLY — so an i18n
+#: anchor constructed without a tier (a leaf value, or any legacy caller) can
+#: never count toward the gate. Leaf values must NEVER be tier-1.
+_DEFAULT_TIER_BY_SOURCE: dict[str, AnchorTier] = {
+    "analytics": TIER1_ACTION,
+    "nav": TIER1_ACTION,
+    "docs": TIER1_ACTION,
+    "i18n": TIER2_ADVISORY,
+    "test": TIER2_ADVISORY,
+    "docs_nav": TIER2_ADVISORY,
+}
+
 
 # ── Bounds (list-size / string-length caps — NOT tuned thresholds) ──────────
 #: Max files visited per directory-walk pattern (performance ceiling).
@@ -189,11 +223,39 @@ class ProductAnchor:
             than a stray nav label).
         locator: file path (repo-relative POSIX) or ``path#key`` for
             i18n namespaces — provenance for trust/debugging later.
+        tier: grain tier (see :data:`AnchorTier`). Defaults from the
+            SOURCE via ``_DEFAULT_TIER_BY_SOURCE`` when not given;
+            i18n NAMESPACE-key extraction passes ``tier1_action``
+            explicitly, so i18n leaf values can never be tier-1.
     """
 
     text: str
     source: AnchorSource
     locator: str
+    tier: AnchorTier = ""  # type: ignore[assignment]  # sentinel → derived in __post_init__
+
+    def __post_init__(self) -> None:
+        if not self.tier:
+            object.__setattr__(
+                self,
+                "tier",
+                _DEFAULT_TIER_BY_SOURCE.get(self.source, TIER2_ADVISORY),
+            )
+
+
+def anchor_tier(anchor: object) -> AnchorTier:
+    """Grain tier of *anchor*, robust to foreign/duck-typed objects.
+
+    Reads ``anchor.tier`` when it is a recognised tier value; otherwise
+    derives the tier from ``anchor.source`` (unknown source → tier-2, the
+    safe direction: an unclassifiable anchor never counts toward the gate).
+    """
+    tier = getattr(anchor, "tier", "") or ""
+    if tier in (TIER1_ACTION, TIER2_ADVISORY):
+        return tier  # type: ignore[return-value]
+    return _DEFAULT_TIER_BY_SOURCE.get(
+        str(getattr(anchor, "source", "") or ""), TIER2_ADVISORY,
+    )
 
 
 # ── Filesystem walk (deterministic: sorted dirs + files) ────────────────────
@@ -335,8 +397,13 @@ def extract_i18n_anchors(repo_root: Path) -> list[ProductAnchor]:
                     if depth == 0 and isinstance(key, str) and _is_english(key):
                         label = _humanise(key)
                         if len(label) >= 2:
+                            # NAMESPACE KEY path (structural author intent) —
+                            # the only i18n anchors that are action-grain.
                             anchors.append(
-                                ProductAnchor(label, "i18n", f"{rel}#{key}"),  # noqa: B023
+                                ProductAnchor(  # noqa: B023
+                                    label, "i18n", f"{rel}#{key}",
+                                    tier=TIER1_ACTION,
+                                ),
                             )
                     _recurse(value, depth + 1)
                     if len(anchors) >= MAX_I18N_VALUES:  # noqa: B023
@@ -348,7 +415,11 @@ def extract_i18n_anchors(repo_root: Path) -> list[ProductAnchor]:
                     and s[:1].isupper()
                     and _is_english(s)
                 ):
-                    anchors.append(ProductAnchor(s, "i18n", rel))  # noqa: B023
+                    # Leaf VALUE (UI copy) — advisory tier, NEVER tier-1
+                    # (Soc0: aligning to leaf values → name-Jaccard 0.03).
+                    anchors.append(
+                        ProductAnchor(s, "i18n", rel, tier=TIER2_ADVISORY),  # noqa: B023
+                    )
 
         _recurse(data)
     return anchors
@@ -453,9 +524,17 @@ _EXTRACTORS: tuple[Callable[[Path], list[ProductAnchor]], ...] = (
 )
 
 
-def _sort_key(a: ProductAnchor) -> tuple[int, str, str]:
-    """Stable ``(source priority, lowercased text, locator)`` sort key."""
-    return (_SOURCE_PRIORITY.get(a.source, 99), a.text.lower(), a.locator)
+def _sort_key(a: ProductAnchor) -> tuple[int, int, str, str]:
+    """Stable ``(source priority, tier rank, lowercased text, locator)`` key.
+
+    Tier rank sits between source trust and text so that WITHIN a source the
+    action-grain anchors outrank advisory ones: i18n NAMESPACE keys win the
+    dedup collision against a same-text leaf value (else the leaf's shorter
+    locator would win the tie and silently demote a tier-1 anchor to tier-2),
+    and the per-source pool caps keep namespaces before leaf values.
+    """
+    tier_rank = 0 if anchor_tier(a) == TIER1_ACTION else 1
+    return (_SOURCE_PRIORITY.get(a.source, 99), tier_rank, a.text.lower(), a.locator)
 
 
 def _dedup_capped(
@@ -557,6 +636,23 @@ def extract_product_anchors(repo_root: Path) -> list[ProductAnchor]:
     return build_alignment_pool(extract_raw_anchors(repo_root))
 
 
+def distinct_tier_counts(anchors: list[ProductAnchor]) -> tuple[int, int]:
+    """Distinct (case-insensitive text) tier-1 / tier-2 counts over *anchors*.
+
+    The 6.7d grain gate's input: ``tier1`` measures the size of the repo's
+    ACTION-grain product vocabulary. Pure counting — no set ITERATION, so no
+    determinism hazard (only ``len`` is read).
+    """
+    tier1: set[str] = set()
+    tier2: set[str] = set()
+    for a in anchors or []:
+        text = (getattr(a, "text", "") or "").strip().lower()
+        if not text:
+            continue
+        (tier1 if anchor_tier(a) == TIER1_ACTION else tier2).add(text)
+    return len(tier1), len(tier2)
+
+
 def anchor_telemetry(
     anchors: list[ProductAnchor],
     raw: list[ProductAnchor] | None = None,
@@ -588,8 +684,13 @@ def anchor_telemetry(
 
 __all__ = [
     "AnchorSource",
+    "AnchorTier",
+    "TIER1_ACTION",
+    "TIER2_ADVISORY",
     "ProductAnchor",
     "anchor_telemetry",
+    "anchor_tier",
+    "distinct_tier_counts",
     "build_alignment_pool",
     "extract_analytics_anchors",
     "extract_docs_anchors",
