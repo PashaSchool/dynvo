@@ -112,6 +112,13 @@ class CacheKind(str, Enum):
     # on an unchanged repo. NOT the marketing-page cache (kind ``marketing``),
     # which stays as-is.
     LLM_PRODUCT_CLUSTER = "llm-product-cluster"
+    # Stage 0.5 stack auditor: raw response text keyed on
+    # (cache version + model + system + user prompt). The auditor prompt is
+    # deterministic for an identical repo state, but Anthropic temp=0 is NOT
+    # bit-deterministic — an uncached auditor re-rolled its prose hints every
+    # run, and those hints sit inside the stage-8 analyst payload (= its
+    # cache key), silently re-rolling all of Layer 2 (supabase, 2026-07-02).
+    LLM_AUDITOR = "llm-auditor"
     # Top-level scan-result cache: one entry per (repo content identity +
     # engine version + scan config) — the full FeatureMap JSON of a
     # completed scan. Because temperature=0 on Anthropic is NOT bit-exact,
@@ -216,6 +223,8 @@ class FilesystemCacheBackend:
             return self._base / "llm-cache" / "uf-split" / f"{safe_key}.json"
         if kind == CacheKind.LLM_PRODUCT_CLUSTER.value:
             return self._base / "llm-cache" / "product-cluster" / f"{safe_key}.json"
+        if kind == CacheKind.LLM_AUDITOR.value:
+            return self._base / "llm-cache" / "auditor" / f"{safe_key}.json"
         if kind == CacheKind.SCAN_RESULT.value:
             # Dedicated dir — scan JSONs are large; keep them out of the
             # small content-keyed ``llm-cache/``.
@@ -247,6 +256,7 @@ class FilesystemCacheBackend:
             CacheKind.LLM_UF_REFINE.value,
             CacheKind.LLM_UF_SPLIT.value,
             CacheKind.LLM_PRODUCT_CLUSTER.value,
+            CacheKind.LLM_AUDITOR.value,
             CacheKind.SCAN_RESULT.value,
             CacheKind.MARKETING.value,
             CacheKind.BLAME.value,

@@ -944,3 +944,85 @@ def test_rule7_requires_all_three_markers(tmp_path: Path) -> None:
     )
     assert corrected.primary_stack == "js-generic"
     assert "rails-app" not in corrected.secondary_stacks
+
+
+# ── Stage 0.5 content-keyed llm-cache (determinism, 2026-07-02) ──────────────
+
+_CACHE_RESP = json.dumps({
+    "primary_stack": "go-library",
+    "secondary_stacks": ["go-http-router"],
+    "confidence": 0.82,
+    "extractor_hints": ["hint-a", "hint-b"],
+    "reasoning": "cached-path fixture",
+})
+
+
+class _AudMemCache:
+    def __init__(self) -> None:
+        self.store: dict[tuple, Any] = {}
+    def get(self, kind, key):
+        return self.store.get((kind, key))
+    def set(self, kind, key, value, *, ttl_seconds=None):
+        self.store[(kind, key)] = value
+
+
+class _AudRaisingClient:
+    class _Messages:
+        def create(self, **_kw):
+            raise AssertionError("LLM must NOT be called on a warm cache")
+    messages = _Messages()
+
+
+def _aud_client(text: str):
+    class _C:
+        class _M:
+            def create(self, **_kw):
+                return _FakeMsg(text=text, in_tokens=500, out_tokens=200)
+        messages = _M()
+    return _C()
+
+
+def test_auditor_cache_populates_and_replays(tmp_path: Path) -> None:
+    from faultline.cache.backend import CacheKind
+
+    cache = _AudMemCache()
+    ctx1 = _make_ctx(tmp_path, stack="go",
+                     files={"go.mod": "module github.com/go-chi/chi\n"})
+    v1 = run_stack_auditor(ctx1, client=_aud_client(_CACHE_RESP), cache=cache)
+    assert v1.fallback_used is False and v1.cost_usd > 0.0
+    assert [k for k, _ in cache.store] == [CacheKind.LLM_AUDITOR.value]
+
+    v2 = run_stack_auditor(ctx1, client=_AudRaisingClient(), cache=cache)
+    assert v2.fallback_used is False
+    assert v2.cost_usd == 0.0                      # replay = $0
+    assert v2.primary_stack == v1.primary_stack
+    assert v2.extractor_hints == v1.extractor_hints  # THE determinism point
+    assert v2.reasoning == v1.reasoning
+
+
+def test_auditor_cache_none_backend_never_caches(tmp_path: Path) -> None:
+    """No explicit backend → no caching side-effects (a unit test must not
+    touch the developer's real ~/.faultline)."""
+    ctx = _make_ctx(tmp_path, stack="go",
+                    files={"go.mod": "module x\n"})
+    v = run_stack_auditor(ctx, client=_aud_client(_CACHE_RESP), cache=None)
+    assert v.fallback_used is False and v.cost_usd > 0.0
+
+
+def test_auditor_cache_env_opt_out(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FAULTLINE_STAGE_0_5_CACHE", "0")
+    cache = _AudMemCache()
+    ctx = _make_ctx(tmp_path, stack="go",
+                    files={"go.mod": "module x\n"})
+    run_stack_auditor(ctx, client=_aud_client(_CACHE_RESP), cache=cache)
+    assert cache.store == {}
+
+
+def test_auditor_parse_failure_not_cached(tmp_path: Path) -> None:
+    cache = _AudMemCache()
+    ctx = _make_ctx(tmp_path, stack="go",
+                    files={"go.mod": "module x\n"})
+    v = run_stack_auditor(ctx, client=_aud_client("NOT JSON AT ALL"),
+                          cache=cache)
+    assert v.fallback_used is True
+    assert cache.store == {}                       # failures never cached
