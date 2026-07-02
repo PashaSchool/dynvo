@@ -23,7 +23,17 @@ product/journey grain via two LLM calls over a CODE-grounded digest — Call 1
     capability, so each rewritten ``product_feature`` AGGREGATES its members'
     files/metrics (paths union, commit sums, averaged health) via
     :func:`nav_taxonomy.aggregate_product_feature`. Nothing is lost: dev
-    features the model omits fall into a ``Shared Platform`` residual.
+    features the model omits are token-matched to an emitted capability, and
+    only true platform containers fall into the ``Shared Platform`` residual,
+    which carries the house "workspace anchor" platform marker so blob
+    metrics never read it as the top product feature (trustworthy-core fix
+    A1, 2026-07-02).
+
+Trustworthy-core fix B (2026-07-02): every rewritten user_flow must be
+GROUNDED — members inherited via ``from_flows``, grounded via the cited
+``from_dev_features``'s flows, or deterministically rescued by resource/token
+match against unclaimed flows / route patterns. A UF still holding 0 members
+AND 0 routes is DROPPED (it was an LLM-invented 0-LOC journey name).
 
 P0 (Sonnet + Haiku, $0 subscription-proxy) lift, UF-F1 base → strong-Haiku:
 fastapi 41→73, documenso 44→73, plane 56→76, ollama 49→71, axios 31→68 — every
@@ -110,7 +120,7 @@ def align_enabled() -> bool:
 #: Bumped whenever the prompt / reconstruction changes in a way that would make
 #: a previously-cached answer wrong. Part of the cache key, so a bump
 #: transparently invalidates every stale entry.
-ABSTRACTION_CACHE_VERSION = "align-1"
+ABSTRACTION_CACHE_VERSION = "ground-1"
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -129,6 +139,39 @@ _INTENT = {
 }
 
 _RESIDUAL_CAP = "Shared Platform"
+# The residual bucket is a PLATFORM container, not a customer capability. Its
+# description carries the house-wide "workspace anchor" platform marker so
+# every consumer that already special-cases platform buckets
+# (eval/structural_audit._is_platform_feature, blob/concentration metrics,
+# dashboards) recognises it and never reads it as the repo's top product
+# feature. An empty description here is what made the residual score as the
+# #1 blob in 6/7 re-score repos (2026-07-01 audit).
+_RESIDUAL_DESCRIPTION = (
+    "Shared platform bucket (workspace anchor): cross-cutting infrastructure "
+    "— shared UI kit, generic lib/utils, build config, app shell — serving "
+    "many capabilities; not a customer-facing product feature."
+)
+# Bare code-structure names: a developer feature whose SLUG is one of these is
+# a container/scaffold, not a capability — when Call 2 omits it from the map
+# it belongs in the platform residual, never as a token-match rescue target.
+# Mirrors the code-structure-leak list in the abstraction prompt. Full-slug
+# match ONLY (token-level matching would swallow real capabilities like
+# "api-tokens").
+_STRUCTURE_LEAK_SLUGS = frozenset({
+    "lib", "libs", "web", "core", "editor", "utils", "util", "components",
+    "shared", "common", "packages", "app", "apps", "src", "frontend",
+    "backend", "server", "client", "api", "ui", "config", "scripts", "docs",
+    "types", "hooks", "styles", "assets", "public", "internal", "tools",
+    "vendor", "misc", "helpers", "tests", "test",
+})
+# Generic verbs/glue excluded from grounding-match content tokens (mirrors the
+# uf-scorer convention: journeys are matched on NOUNS, not on CRUD verbs).
+_GROUND_STOP = frozenset(
+    "flow flows the and or to of for with your from into a an edit manage "
+    "browse filter create run view configure set up new add make get list "
+    "show require build connect process submit administer enforce update "
+    "delete remove use using via".split()
+)
 
 
 # ── Anthropic client (IoC for tests) ────────────────────────────────────────
@@ -187,14 +230,21 @@ user_flows by over-merging. Avoid that. Rules in priority order:
      websockets/SSE, generate OpenAPI, serve static files, render templates,
      test with a client) — enumerate each as its OWN flow.
   5. Each user_flow: a short verb phrase `name`, one lowercase `resource` (the
-     primary noun), the `product_feature` it belongs to, and `from_flows` =
-     the list of CURRENT user-flow ids it subsumes (for member inheritance).
+     primary noun), the `product_feature` it belongs to, `from_flows` = the
+     list of CURRENT user-flow ids it subsumes (for member inheritance), and
+     `from_dev_features` = the developer_features (their `name` VERBATIM from
+     the evidence) whose code implements this journey.
      CRITICAL: `from_flows` is bookkeeping — it must NEVER cap your journey
      count. Enumerate the distinct capabilities FIRST (rule 1), THEN attach
      whichever current ids fit; `from_flows` may be empty for a capability the
      CRUD walk missed. Do NOT collapse your journeys down to roughly the number
      of current_user_flows — there are usually MORE distinct capabilities than
      the CRUD list shows.
+  6. GROUNDING IS MANDATORY: every user_flow MUST cite at least one
+     `from_flows` id OR one `from_dev_features` name. A journey citing neither
+     is ungrounded and the engine will DROP it — never emit a capability you
+     cannot point to concrete code evidence (a dev feature or a current flow)
+     for.
 
 product_features — CUSTOMER-CAPABILITY grain. SAME completeness-first rule as
 user_flows: enumerate EVERY distinct customer-facing capability the evidence
@@ -210,7 +260,8 @@ that are not customer capabilities ("lib","web","core","editor","utils",
 
 Return STRICT JSON only, no prose:
 {"product_features":[{"name":"...","description":"..."}],
- "user_flows":[{"name":"...","resource":"...","product_feature":"...","from_flows":["UF-001", ...]}]}"""
+ "user_flows":[{"name":"...","resource":"...","product_feature":"...",
+  "from_flows":["UF-001", ...],"from_dev_features":["<dev feature name>", ...]}]}"""
 
 
 # ── Alignment system prompt (Phase 2 ALIGN mode — anchors present) ──────────
@@ -243,9 +294,13 @@ list. Rules in priority order:
      when no single anchor matches the flow, write a short verb phrase grounded
      in the code evidence.
   3. GROUP the code under the anchor it serves: set `from_flows` to the list of
-     CURRENT user-flow ids that belong to each journey (member inheritance).
-     `from_flows` may be empty for a capability whose CRUD flows were not
-     detected — never inflate or cap your list to the current_user_flows count.
+     CURRENT user-flow ids that belong to each journey (member inheritance) and
+     `from_dev_features` to the developer_features (their `name` VERBATIM)
+     whose code implements it. `from_flows` may be empty for a capability whose
+     CRUD flows were not detected — never inflate or cap your list to the
+     current_user_flows count. GROUNDING IS MANDATORY: every user_flow MUST
+     cite at least one `from_flows` id OR one `from_dev_features` name, or the
+     engine will DROP it.
   4. Emit an item NOT covered by ANY anchor ONLY when the code evidence clearly
      shows a real customer capability the anchors missed.
   5. Do NOT emit anchors that have NO supporting code evidence (an anchor with
@@ -256,7 +311,8 @@ Title Case names; product voice. Ground EVERY item in the supplied evidence.
 
 Return STRICT JSON only, no prose:
 {"product_features":[{"name":"...","description":"..."}],
- "user_flows":[{"name":"...","resource":"...","product_feature":"...","from_flows":["UF-001", ...]}]}"""
+ "user_flows":[{"name":"...","resource":"...","product_feature":"...",
+  "from_flows":["UF-001", ...],"from_dev_features":["<dev feature name>", ...]}]}"""
 
 _REATTRIB_SYSTEM = """You assign each developer feature (a code module) to exactly ONE product
 capability from the given list, using the module name and its directory. Every
@@ -291,6 +347,21 @@ def _top_dirs(paths: list[str], k: int = 2) -> list[str]:
 
 def _short(s: str | None, n: int) -> str:
     return (s or "").strip().replace("\n", " ")[:n]
+
+
+def _content_tokens(*texts: str | None) -> set[str]:
+    """Noun-ish content tokens for deterministic grounding matches: lowercase
+    alnum words, crudely singularised, minus generic verbs/glue. Mirrors the
+    uf-scorer tokenisation so engine-side grounding and eval-side matching
+    agree on what counts as content."""
+    out: set[str] = set()
+    for t in texts:
+        for w in re.findall(r"[a-z0-9]+", (t or "").lower()):
+            if len(w) > 3 and w.endswith("s"):
+                w = w[:-1]
+            if len(w) > 2 and w not in _GROUND_STOP:
+                out.add(w)
+    return out
 
 
 def _canonical_anchor_texts(
@@ -507,14 +578,87 @@ def _intent_for(name: str) -> str:
     return "other"
 
 
+def _flow_member_id(flow: Any) -> str:
+    """Stable member identifier — mirrors Stage 6.7's ``_flow_key`` (uuid when
+    present, else name) so grounded members join the same id space the
+    deterministic UFs use."""
+    return getattr(flow, "uuid", "") or getattr(flow, "name", "") or ""
+
+
 def _build_user_flows(
-    uf_specs: list[dict[str, Any]], old_ufs: list["UserFlow"],
-) -> list["UserFlow"]:
+    uf_specs: list[dict[str, Any]],
+    old_ufs: list["UserFlow"],
+    developer_features: list["Feature"],
+    routes_index: list[dict[str, Any]],
+) -> tuple[list["UserFlow"], dict[str, Any]]:
+    """Reconstruct the abstracted user_flows — GROUNDED-ONLY.
+
+    Every emitted UF must end up with real code behind it (member flows and/or
+    routes). Grounding sources, in order:
+      1. ``from_flows`` — member inheritance from the deterministic UFs
+         (the validated original channel).
+      2. ``from_dev_features`` — the cited dev features' UNCLAIMED flows
+         (content-token overlap preferred; the channel that grounds
+         capabilities the CRUD walk missed).
+      3. Deterministic rescue — resource/token match of a still-empty UF
+         against ALL unclaimed flows, then against ``routes_index`` patterns.
+    A UF still holding 0 members AND 0 routes after all three is DROPPED —
+    an LLM-invented capability name with no code is exactly the 0-LOC defect
+    the trustworthy-core mission forbids (2026-07-01 audit: 5-53% of UFs).
+    Returns ``(user_flows, grounding_telemetry)``.
+    """
     from faultline.models.types import UserFlow
 
     old_by_id = {u.id: u for u in old_ufs}
-    out: list[UserFlow] = []
-    for i, spec in enumerate(uf_specs, start=1):
+    # Grounding pools: dev-feature lookup (name + display_name, case-folded)
+    # and per-flow content tokens (flow name + owning dev name).
+    dev_by_name: dict[str, "Feature"] = {}
+    for d in developer_features:
+        for key in {d.name, d.display_name}:
+            if key:
+                dev_by_name[key.strip().lower()] = d
+    flow_tokens: dict[str, set[str]] = {}
+    dev_flow_ids: dict[str, list[str]] = {}
+    for d in developer_features:
+        ids: list[str] = []
+        dtok = _content_tokens(d.display_name or d.name)
+        for fl in getattr(d, "flows", None) or []:
+            mid = _flow_member_id(fl)
+            if not mid:
+                continue
+            ids.append(mid)
+            flow_tokens[mid] = _content_tokens(
+                getattr(fl, "name", None), getattr(fl, "display_name", None),
+            ) | dtok
+        dev_flow_ids[d.name] = ids
+
+    def _route_patterns_for(resource: str) -> list[str]:
+        """routes_index patterns having *resource* (singular/plural) as a path
+        segment — the deterministic route-grounding rescue."""
+        res = resource[:-1] if len(resource) > 3 and resource.endswith("s") else resource
+        if not res:
+            return []
+        hits: set[str] = set()
+        for r in routes_index:
+            pattern = str(r.get("pattern") or "")
+            for seg in re.split(r"[/.]", pattern.lower()):
+                seg = re.sub(r"[^a-z0-9]+", "", seg)
+                if len(seg) > 3 and seg.endswith("s"):
+                    seg = seg[:-1]
+                if seg and seg == res:
+                    hits.add(pattern)
+                    break
+        return sorted(hits)
+
+    tele: dict[str, Any] = {
+        "uf_dev_grounded": 0, "uf_rescued_flows": 0,
+        "uf_rescued_routes": 0, "uf_dropped_ungrounded": 0,
+        "uf_dropped_names": [],
+    }
+
+    # ── Pass 1 — from_flows inheritance (unchanged, validated channel) ──
+    built: list[tuple[dict[str, Any], "UserFlow"]] = []
+    for spec in uf_specs:
         name = spec.get("name")
         if not isinstance(name, str) or not name.strip():
             continue
@@ -530,8 +674,8 @@ def _build_user_flows(
                     seen_m.add(mid)
                     members.append(mid)
             routes.extend(src.routes or [])
-        out.append(UserFlow(
-            id=f"UF-{i:03d}",
+        built.append((spec, UserFlow(
+            id="UF-000",  # provisional — renumbered after the content sort
             name=name.strip(),
             resource=str(spec.get("resource") or "").lower(),
             domain=None,
@@ -542,32 +686,132 @@ def _build_user_flows(
             routes=sorted(set(routes)),
             refined=True,
             name_confidence="high",
-        ))
-    return out
+        )))
+
+    # Flows already claimed by ANY inherited membership are off-limits to the
+    # grounding passes — a flow keeps exactly one owning journey.
+    claimed: set[str] = set()
+    for _, uf in built:
+        claimed.update(uf.member_flow_ids)
+
+    # ── Pass 2 — ground still-empty UFs (cited devs → token rescue → routes) ─
+    out: list["UserFlow"] = []
+    for spec, uf in built:
+        if not uf.member_flow_ids:
+            utok = _content_tokens(uf.name, uf.resource)
+            attached: list[str] = []
+            seen_a: set[str] = set()  # dedup — two cited devs may share a flow
+            # 2a. cited dev features: their unclaimed, content-overlapping flows.
+            for dref in spec.get("from_dev_features") or []:
+                dev = dev_by_name.get(dref.strip().lower()) if isinstance(dref, str) else None
+                if dev is None:
+                    continue
+                for mid in dev_flow_ids.get(dev.name, []):
+                    if (mid not in claimed and mid not in seen_a
+                            and (flow_tokens.get(mid) or set()) & utok):
+                        seen_a.add(mid)
+                        attached.append(mid)
+            if attached:
+                tele["uf_dev_grounded"] += 1
+            else:
+                # 2b. rescue: resource/token match over ALL unclaimed flows.
+                res = uf.resource
+                if len(res) > 3 and res.endswith("s"):
+                    res = res[:-1]
+                for mid, ftok in flow_tokens.items():
+                    if mid in claimed:
+                        continue
+                    if (res and res in ftok) or len(utok & ftok) >= 2:
+                        attached.append(mid)
+                if attached:
+                    tele["uf_rescued_flows"] += 1
+            if attached:
+                uf.member_flow_ids = attached
+                uf.member_count = len(attached)
+                claimed.update(attached)
+        if not uf.member_flow_ids and not uf.routes:
+            # 2c. route grounding — a journey may be real yet flow-less
+            # (route detected, flow-walk missed it).
+            route_hits = _route_patterns_for(uf.resource)
+            if route_hits:
+                uf.routes = route_hits
+                tele["uf_rescued_routes"] += 1
+        if not uf.member_flow_ids and not uf.routes:
+            # Still 0-LOC → drop. Never emit a code-less journey name.
+            tele["uf_dropped_ungrounded"] += 1
+            if len(tele["uf_dropped_names"]) < 30:  # scan_meta size bound
+                tele["uf_dropped_names"].append(uf.name)
+            continue
+        out.append(uf)
+    return out, tele
+
+
+def _fallback_capability(
+    dev: "Feature", cap_tokens: dict[str, set[str]],
+) -> tuple[str, bool]:
+    """Capability for a dev feature Call 2 OMITTED from the map.
+
+    A workspace anchor / bare code-structure container genuinely belongs in
+    the platform residual. Any OTHER omitted dev feature is a mapping miss —
+    dumping it into the residual is what inflated the shared-platform blob to
+    48-78% of repo files (2026-07-01 audit) — so try a deterministic
+    content-token match against the emitted capabilities first. No match →
+    residual (conservation still holds). Returns ``(capability, rescued)``.
+    """
+    from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
+
+    nm = dev.display_name or dev.name or ""
+    if _slug(nm) in _STRUCTURE_LEAK_SLUGS or _is_workspace_anchor(dev):
+        return _RESIDUAL_CAP, False
+    dtok = _content_tokens(nm)
+    best: str | None = None
+    best_score: tuple[int, float] = (0, 0.0)
+    for cap in sorted(cap_tokens):  # deterministic final tie-break
+        ctok = cap_tokens[cap]
+        n = len(dtok & ctok)
+        if not n:
+            continue
+        # Prefer more shared tokens, then the more SPECIFIC capability (higher
+        # share of ITS tokens matched) — "account-billing" goes to "Billing"
+        # (1/1) over "Account Management" (1/2).
+        score = (n, n / len(ctok) if ctok else 0.0)
+        if score > best_score:
+            best, best_score = cap, score
+    if best is not None:
+        return best, True
+    return _RESIDUAL_CAP, False
 
 
 def _build_product_features(
     pf_specs: list[dict[str, Any]],
     dev_map: dict[str, str],
     developer_features: list["Feature"],
-) -> tuple[list["Feature"], dict[str, tuple[str, ...]], int]:
+) -> tuple[list["Feature"], dict[str, tuple[str, ...]], int, dict[str, Any]]:
     """Aggregate dev features into the abstracted capabilities. Returns
-    (product_features, dev_to_product_map, files_attributed)."""
+    (product_features, dev_to_product_map, files_attributed, pf_telemetry)."""
     desc_by_cap = {
         (s.get("name") or "").strip(): _short(s.get("description"), 240)
         for s in pf_specs if (s.get("name") or "").strip()
     }
-    dev_by_name = {(f.display_name or f.name): f for f in developer_features}
+    cap_tokens = {cap: _content_tokens(cap) for cap in desc_by_cap}
 
-    # Group dev features by their mapped capability (residual for omitted).
+    # Group dev features by their mapped capability. Omitted devs are token-
+    # matched to an emitted capability when possible; only true platform
+    # containers and unmatchable devs land in the (marked) residual.
+    pf_tele: dict[str, Any] = {"devs_token_rescued": 0, "devs_residual": 0}
     cap_to_devs: dict[str, list["Feature"]] = defaultdict(list)
     dev_to_product: dict[str, tuple[str, ...]] = {}
     for dev in developer_features:
         nm = dev.display_name or dev.name
-        cap = dev_map.get(nm) or _RESIDUAL_CAP
+        cap = dev_map.get(nm)
+        if not cap:
+            cap, rescued = _fallback_capability(dev, cap_tokens)
+            if rescued:
+                pf_tele["devs_token_rescued"] += 1
+        if cap == _RESIDUAL_CAP:
+            pf_tele["devs_residual"] += 1
         cap_to_devs[cap].append(dev)
         dev_to_product[dev.name] = (_slug(cap),)
-    _ = dev_by_name  # reserved for future per-dev lookups
 
     out: list["Feature"] = []
     files_attributed = 0
@@ -589,9 +833,15 @@ def _build_product_features(
         contrib = cap_to_devs.get(cap)
         if not contrib:
             continue
+        # The residual ALWAYS carries the platform marker description — even
+        # if the LLM echoed "Shared Platform" as a capability with its own
+        # blurb — so downstream blob metrics recognise it as a platform
+        # bucket, never as the top product feature.
+        desc = (_RESIDUAL_DESCRIPTION if cap == _RESIDUAL_CAP
+                else desc_by_cap.get(cap, ""))
         feat = aggregate_product_feature(
             name=_slug(cap), display_name=cap,
-            description=desc_by_cap.get(cap, ""), contrib=contrib,
+            description=desc, contrib=contrib,
         )
         # aggregate_product_feature unions .paths only; carry the richer
         # member_files ledger too (the owned-files registry the dashboard
@@ -607,8 +857,11 @@ def _build_product_features(
         if merged_mf:
             feat.member_files = merged_mf
         files_attributed += len(merged_mf) if merged_mf else len(feat.paths)
+        if cap == _RESIDUAL_CAP:
+            pf_tele["residual_files"] = (len(merged_mf) if merged_mf
+                                         else len(feat.paths))
         out.append(feat)
-    return out, dev_to_product, files_attributed
+    return out, dev_to_product, files_attributed, pf_tele
 
 
 # ── Public entrypoint ───────────────────────────────────────────────────────
@@ -715,28 +968,33 @@ def run_journey_abstraction(
         to the original live run. Returns ``None`` on an empty reconstruction."""
         uf_specs_ = abstraction.get("user_flows") or []
         pf_specs_ = abstraction.get("product_features") or []
-        new_pfs, dev_to_product, files_after = _build_product_features(
+        new_pfs, dev_to_product, files_after, pf_tele = _build_product_features(
             pf_specs_, dev_map, developer_features)
-        new_ufs = _build_user_flows(uf_specs_, user_flows)
+        new_ufs, uf_tele = _build_user_flows(
+            uf_specs_, user_flows, developer_features, routes_index)
         if not new_pfs or not new_ufs:
             return None
         # Deterministic output ordering (Phase 1 stability): the LLM emits
         # features/flows in an order that drifts run-to-run. Sort by a stable key
         # so the output array order never churns — applies identically to the
         # live and cache-hit paths, preserving the byte-identical-replay invariant.
-        # Sort by CONTENT-derived keys only. NB: UserFlow.id is "UF-NNN" assigned
-        # from the LLM's emission POSITION, so sorting by id would be a no-op (it
-        # re-encodes the drifting response order) — use name+resource so identical
-        # output content yields identical array order across independent runs.
+        # Sort by CONTENT-derived keys only, then renumber UF ids from the sorted
+        # position — ids become content-stable across independent runs instead of
+        # re-encoding the LLM's drifting emission order.
         new_pfs.sort(key=lambda p: ((getattr(p, "name", "") or "").lower(), getattr(p, "name", "") or ""))
         new_ufs.sort(key=lambda u: ((getattr(u, "name", "") or "").lower(), str(getattr(u, "resource", "") or "")))
+        for i, u in enumerate(new_ufs, start=1):
+            u.id = f"UF-{i:03d}"
         tele.update({
             "applied": True, "fallback": None,
             "uf_after": len(new_ufs), "pf_after": len(new_pfs),
             "files_after": files_after, "dev_mapped": len(dev_map),
             "dev_total": len(developer_features),
-            "residual_devs": sum(1 for d in developer_features
-                                 if (d.display_name or d.name) not in dev_map),
+            # Post-A1 "omitted from the map" ≠ "landed in the residual" (token
+            # rescue diverges them) — residual_devs mirrors the ACCURATE
+            # devs_residual count so the blob signal stays honest.
+            "residual_devs": pf_tele.get("devs_residual", 0),
+            **pf_tele, **uf_tele,
         })
         if log is not None:
             # StageLogger.info(reason, feature=None, **extra) takes only 2-3
