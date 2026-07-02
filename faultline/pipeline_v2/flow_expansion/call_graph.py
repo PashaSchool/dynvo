@@ -97,38 +97,49 @@ def _extract_member_method_calls(
     source: str,
     start_line: int | None,
     end_line: int | None,
-) -> set[str]:
+) -> list[str]:
     """Method names invoked as ``obj.method(...)`` in a source slice.
 
     These are the callee METHODS the flow actually exercises. Resolving
     them to the specific method body (not the enclosing class) is what
     keeps a flow's LOC = lines actually run, instead of pulling a whole
     1800-line repository class in for one ``repo.findById()`` call.
+
+    INSERTION-ORDERED dedup, not a set: callees_by_symbol fills in this
+    order and the emit loop truncates at max_nodes — a set made WHICH
+    callees survive the cap PYTHONHASHSEED-dependent (same disease as
+    flow_reach._file_edges, fixed 44c8119; diagnosed on supabase
+    2026-07-02: flow_symbol_attributions → testmap drift). Source order =
+    first-called wins, deterministically.
     """
     if not source:
-        return set()
+        return []
     if start_line is not None and end_line is not None and end_line >= start_line:
         lines = source.splitlines()
         slice_ = "\n".join(lines[start_line - 1: end_line])
     else:
         slice_ = source
-    return {m.group(1) for m in _MEMBER_CALL_PATTERN.finditer(slice_)}
+    return list(dict.fromkeys(
+        m.group(1) for m in _MEMBER_CALL_PATTERN.finditer(slice_)))
 
 
 def _extract_constructor_calls(
     source: str,
     start_line: int | None,
     end_line: int | None,
-) -> set[str]:
-    """Class names invoked as ``new Class(...)`` in a source slice."""
+) -> list[str]:
+    """Class names invoked as ``new Class(...)`` in a source slice.
+
+    Insertion-ordered dedup — see _extract_member_method_calls."""
     if not source:
-        return set()
+        return []
     if start_line is not None and end_line is not None and end_line >= start_line:
         lines = source.splitlines()
         slice_ = "\n".join(lines[start_line - 1: end_line])
     else:
         slice_ = source
-    return {m.group(1) for m in _NEW_CALL_PATTERN.finditer(slice_)}
+    return list(dict.fromkeys(
+        m.group(1) for m in _NEW_CALL_PATTERN.finditer(slice_)))
 
 # A call-expression with its parenthesised argument list, e.g.
 # ``defaultResponderForAppDir(postHandler)`` or

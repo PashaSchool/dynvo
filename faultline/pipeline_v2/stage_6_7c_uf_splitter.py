@@ -33,6 +33,7 @@ untouched (``refined`` semantics unchanged). Validated against the curated
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -41,11 +42,13 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params, estimate_call_cost
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.llm.model_gateway import resolve_model as gateway_model
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.models.types import Flow, UserFlow
     from faultline.pipeline_v2.run_logger import StageLogger
 
@@ -86,6 +89,94 @@ MAX_NAMES_IN_PROMPT = 40
 MAX_JOURNEYS = 8
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+# ── Content-hash LLM cache (deterministic short-circuit) ────────────────────
+#
+# Each per-mega-UF partition call is a pure function of its input: the system
+# prompt + the user prompt (domain + the distinct member flow names) + the
+# canonical model id. We cache the PARSED ``journeys[]`` array keyed on a
+# sha256 of exactly those inputs, so a re-scan of an unchanged repo REPLAYS
+# the identical partition ($0) through the SAME ``_split_one`` builder —
+# byte-identical sub-UFs. Content-keyed (same input → same answer): a
+# deterministic short-circuit, NOT per-repo memory — compliant with
+# rule-cold-scan. Mirrors Stage 3's CacheKind.LLM_FLOWS cache. Default ON;
+# opt out via ``FAULTLINE_STAGE_6_7C_CACHE=0``.
+#
+# STAGE_6_7C_CACHE_VERSION is the manual invalidation lever required by
+# rule-cache-invalidation: bump it whenever the prompt template, the parse
+# logic, or the cached-value shape changes in a way that must NOT serve a
+# stale answer. (The system prompt is ALSO hashed into the key, but the
+# version constant is the documented, explicit control surface.)
+STAGE_6_7C_CACHE_VERSION = "v1"
+
+_CACHE_ENV = "FAULTLINE_STAGE_6_7C_CACHE"
+
+
+def _cache_enabled() -> bool:
+    """Default ON — set ``FAULTLINE_STAGE_6_7C_CACHE=0`` to opt out."""
+    return os.environ.get(_CACHE_ENV, "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def _split_cache_key(model: str, user: str) -> str:
+    """Content-hash key for one mega-UF partition call.
+
+    Components: cache version + canonical model id (pre-gateway) + the
+    system prompt + the full user prompt (domain + member flow names —
+    the exact structured input). Deliberately EXCLUDED: run_id,
+    timestamps, UF ids, thread identity, or any other run-varying value.
+    """
+    payload = json.dumps(
+        {
+            "version": STAGE_6_7C_CACHE_VERSION,
+            "model": model,
+            "system": _SYSTEM_PROMPT,
+            "user": user,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _cache_get_journeys(cache: "CacheBackend", key: str) -> list[dict] | None:
+    """Read stored parsed journeys. ``None`` on miss, version mismatch,
+    malformed entry, or ANY backend fault — a cache problem must never
+    abort the stage (never-worse)."""
+    try:
+        stored = cache.get(CacheKind.LLM_UF_SPLIT.value, key)
+    except Exception as exc:  # noqa: BLE001 — cache must never break a scan
+        logger.warning("uf_splitter: cache get failed: %s", exc)
+        return None
+    if not isinstance(stored, dict) or stored.get("v") != STAGE_6_7C_CACHE_VERSION:
+        return None
+    journeys = stored.get("journeys")
+    if not isinstance(journeys, list) or not journeys:
+        # ``_call_llm`` never returns an empty list (it degrades to ``None``),
+        # so an empty stored value is malformed → miss.
+        return None
+    # Returned VERBATIM (no per-entry filtering): ``_split_one`` slices then
+    # type-guards each entry itself, so replay must hand it the exact list a
+    # live parse produced.
+    return journeys
+
+
+def _cache_put_journeys(
+    cache: "CacheBackend", key: str, journeys: list[dict],
+) -> None:
+    """Persist parsed journeys. Failures are logged + swallowed. Only
+    SUCCESSFUL parses are ever stored (callers guarantee it) so a transient
+    outage never poisons future reproducible replays."""
+    try:
+        cache.set(
+            CacheKind.LLM_UF_SPLIT.value,
+            key,
+            {"v": STAGE_6_7C_CACHE_VERSION, "journeys": journeys},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("uf_splitter: cache set failed: %s", exc)
+
 
 _SYSTEM_PROMPT = (
     "You group software user-flow names into coherent end-user journeys. "
@@ -284,9 +375,18 @@ def split_mega_user_flows(
     log: "StageLogger | None" = None,
     llm_health: LlmHealth | None = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    cache: "CacheBackend | None" = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Split mega-mixed UFs into per-journey sub-UFs via one LLM call each.
+
+    ``cache`` (content-hash short-circuit, CacheKind.LLM_UF_SPLIT): when
+    supplied AND ``FAULTLINE_STAGE_6_7C_CACHE`` != 0 (default ON), a
+    mega-UF whose partition input is unchanged replays its stored PARSED
+    ``journeys[]`` at $0 through the SAME ``_split_one`` builder —
+    byte-identical sub-UFs on an unchanged repo. ``None`` behaves exactly
+    as pre-cache; any cache fault falls through to the live call
+    (never-worse). Failures are never cached.
 
     Mutates ``Flow.user_flow_id`` in place for moved members and returns the
     NEW user-flow list (non-mega UFs unchanged, mega UFs replaced by their
@@ -318,6 +418,8 @@ def split_mega_user_flows(
         "members_moved": 0,
         "cost_usd": 0.0,
         "fallback_reason": None,
+        "cache_hits": 0,
+        "llm_calls": 0,
     }
     if not mega:
         return user_flows, telemetry
@@ -329,30 +431,54 @@ def split_mega_user_flows(
         telemetry["fallback_reason"] = "no_anthropic_client"
         return user_flows, telemetry
 
+    # Env opt-out honoured regardless of what the caller threaded in.
+    if cache is not None and not _cache_enabled():
+        cache = None
+
     cost_before = tracker.total_cost_usd
     flow_by_key_for_stamp = flow_by_key
     out: list["UserFlow"] = []
     mega_ids = {uf.id for uf in mega}
     split_results: dict[str, list["UserFlow"]] = {}
 
-    def _process(idx: int, uf: "UserFlow") -> tuple[list["UserFlow"], int, int]:
+    def _process(
+        idx: int, uf: "UserFlow",
+    ) -> tuple[list["UserFlow"], int, int, int, int]:
         """Parallel-safe worker: LLM call + pure sub-UF build for one mega-UF.
 
-        Returns ``(subs, in_tokens, out_tokens)``. No shared mutation here —
-        cost recording, telemetry and ``Flow.user_flow_id`` stamping are done
-        by the sequential apply pass below in input order.
+        Returns ``(subs, in_tokens, out_tokens, cache_hits, llm_calls)``. No
+        shared mutation here — cost recording, telemetry and
+        ``Flow.user_flow_id`` stamping are done by the sequential apply pass
+        below in input order.
         """
         names = _member_names(uf, flow_by_key)
         prompt = (
             f"domain: {uf.domain}\nflow names:\n"
             + "\n".join(f"- {n}" for n in names[:MAX_NAMES_IN_PROMPT])
         )
-        journeys, in_tok, out_tok = _call_llm(client, model, prompt, llm_health)
+        # ── Cache lookup (content-hash short-circuit) ──
+        key: str | None = None
+        journeys: list[dict] | None = None
+        if cache is not None:
+            key = _split_cache_key(model, prompt)
+            journeys = _cache_get_journeys(cache, key)
+        if journeys is not None:
+            # HIT: no LLM call, no tokens, $0 — the parsed journeys feed the
+            # SAME ``_split_one`` builder, so replay is byte-identical.
+            in_tok = out_tok = 0
+            hits, calls = 1, 0
+        else:
+            journeys, in_tok, out_tok = _call_llm(client, model, prompt, llm_health)
+            hits, calls = 0, 1
+            # MISS → persist the parsed journeys. ``None`` (call failed /
+            # bad JSON) is NEVER cached.
+            if journeys is not None and key is not None and cache is not None:
+                _cache_put_journeys(cache, key, journeys)
         subs = _split_one(uf, journeys, flow_by_key) if journeys else []
-        return subs, in_tok, out_tok
+        return subs, in_tok, out_tok, hits, calls
 
     # ── Parallel compute (LLM IO) — collected by INPUT index ───────────
-    computed: dict[int, tuple[list["UserFlow"], int, int]] = {}
+    computed: dict[int, tuple[list["UserFlow"], int, int, int, int]] = {}
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
         future_to_idx = {
             pool.submit(_process, idx, uf): idx for idx, uf in enumerate(mega)
@@ -365,11 +491,13 @@ def split_mega_user_flows(
                 logger.warning(
                     "uf_splitter: mega-UF %r raised: %s", mega[idx].name, exc,
                 )
-                computed[idx] = ([], 0, 0)
+                computed[idx] = ([], 0, 0, 0, 0)
 
     # ── Sequential apply (deterministic, input order) ──────────────────
     for idx, uf in enumerate(mega):
-        subs, in_tok, out_tok = computed.get(idx, ([], 0, 0))
+        subs, in_tok, out_tok, hits, calls = computed.get(idx, ([], 0, 0, 0, 0))
+        telemetry["cache_hits"] += hits
+        telemetry["llm_calls"] += calls
         if in_tok or out_tok:
             try:
                 tracker.record(
@@ -406,4 +534,4 @@ def split_mega_user_flows(
     return out, telemetry
 
 
-__all__ = ["split_mega_user_flows"]
+__all__ = ["STAGE_6_7C_CACHE_VERSION", "split_mega_user_flows"]

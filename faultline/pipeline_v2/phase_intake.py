@@ -113,12 +113,21 @@ def run_intake_phase(
     # ``stack`` field is never mutated — the verdict is surfaced via
     # ``ctx.audited_stack`` so downstream code can prefer either.
     with StageLogger(run_dir, 0, "auditor") as log_aud:
+        # Content-keyed llm-cache (determinism): identical repo state must
+        # replay identical hints, else the volatile auditor prose re-rolls
+        # the stage-8 analyst cache key downstream.
+        try:
+            from faultline.cache import get_cache_backend
+            _aud_cache = get_cache_backend()
+        except Exception:  # noqa: BLE001 — caching is best-effort
+            _aud_cache = None
         verdict = run_stack_auditor(
             _run._isolate(ctx),
             model=model_id,
             cost_tracker=tracker,
             log=log_aud,
             llm_health=llm_health,
+            cache=_aud_cache,
         )
         if verdict.confidence >= MIN_CONFIDENCE_TO_APPLY:
             ctx = ctx.with_audited_stack(

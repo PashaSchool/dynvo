@@ -289,7 +289,7 @@ def aggregate_product_feature(
         bug_fix_ratio=(bug_fixes / total_commits) if total_commits else 0.0,
         last_modified=max(
             (c.last_modified for c in contrib),
-            default=datetime.now(timezone.utc),
+            default=datetime.fromtimestamp(0, timezone.utc),  # deterministic: zero-evidence aggregate must not stamp scan wall-clock (2026-07-02)
         ),
         health_score=round(
             sum(c.health_score for c in contrib) / len(contrib), 2,

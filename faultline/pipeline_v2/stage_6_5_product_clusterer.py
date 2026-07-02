@@ -1021,7 +1021,7 @@ def run_product_clusterer(
         bug_fix_ratio = (bug_fixes / total_commits) if total_commits else 0.0
         last_modified = max(
             (c.last_modified for c in contrib),
-            default=datetime.now(timezone.utc),
+            default=datetime.fromtimestamp(0, timezone.utc),  # deterministic: zero-evidence aggregate must not stamp scan wall-clock (2026-07-02)
         )
         # Health is averaged across contributing dev features. We do
         # not invent a fresh signal — the product feature inherits its

@@ -75,6 +75,57 @@ DEFAULT_MAX_TOKENS = 800
 # scan even on the largest monorepo while still catching runaway
 # malformed responses.
 COST_CAP_USD = 0.05
+
+# ── Stage 0.5 content-keyed LLM cache (determinism, 2026-07-02) ─────────────
+# The auditor prompt is deterministic for an identical repo state, but
+# Anthropic temp=0 is NOT bit-deterministic — an uncached auditor re-rolled
+# its prose ``extractor_hints`` every run, and those hints are embedded in
+# the stage-8 analyst payload (= its llm-cache key), silently re-rolling all
+# of Layer 2 on an unchanged repo. Cache the RAW response text keyed on
+# (version + model + system + user); only successful parses are stored.
+_AUDITOR_CACHE_VERSION = "v1"
+
+
+def _auditor_cache_enabled() -> bool:
+    return os.environ.get("FAULTLINE_STAGE_0_5_CACHE", "1") != "0"
+
+
+def _auditor_cache_key(model: str, system: str, user: str) -> str:
+    import hashlib
+    payload = json.dumps(
+        {"v": _AUDITOR_CACHE_VERSION, "model": model,
+         "system": system, "user": user},
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _auditor_cache_get(cache: Any | None, key: str) -> str | None:
+    # EXPLICIT backend only — never the global one (a unit test with a fake
+    # client must not read/write the developer's real ~/.faultline).
+    if cache is None or not _auditor_cache_enabled():
+        return None
+    try:
+        from faultline.cache.backend import CacheKind
+        cached = cache.get(CacheKind.LLM_AUDITOR.value, key)
+    except Exception:  # noqa: BLE001 — cache is best-effort, never fatal
+        return None
+    if isinstance(cached, dict) and isinstance(cached.get("text"), str):
+        return cached["text"]
+    return None
+
+
+def _auditor_cache_put(cache: Any | None, key: str, text: str) -> None:
+    if cache is None or not _auditor_cache_enabled():
+        return
+    try:
+        from faultline.cache.backend import CacheKind
+        cache.set(
+            CacheKind.LLM_AUDITOR.value, key,
+            {"v": _AUDITOR_CACHE_VERSION, "text": text},
+        )
+    except Exception:  # noqa: BLE001
+        pass
 MAX_RECENT_PATHS = 50
 MAX_RECENT_COMMITS = 100
 MIN_CONFIDENCE_TO_APPLY = 0.5
@@ -1320,6 +1371,7 @@ def run_stack_auditor(
     cost_tracker: CostTracker | None = None,
     log: "StageLogger | None" = None,
     llm_health: LlmHealth | None = None,
+    cache: Any | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> AuditorVerdict:
     """Run Stage 0.5 against ``ctx``.
@@ -1352,14 +1404,23 @@ def run_stack_auditor(
     payload = build_auditor_context(ctx)
     user_prompt = _build_user_prompt(payload)
 
-    text, in_tok, out_tok = _call_haiku(
-        client,
-        model=model,
-        system=_SYSTEM_PROMPT,
-        user=user_prompt,
-        max_tokens=DEFAULT_MAX_TOKENS,
-        llm_health=llm_health,
-    )
+    cache_key = _auditor_cache_key(model, _SYSTEM_PROMPT, user_prompt)
+    cached_text = _auditor_cache_get(cache, cache_key)
+    if cached_text is not None:
+        # Replay: identical repo state → identical hints → stable stage-8
+        # analyst cache key. $0, no tokens; same parse path as live below.
+        text, in_tok, out_tok = cached_text, 0, 0
+        if log is not None:
+            log.info("auditor: llm-cache hit — verdict replayed at $0")
+    else:
+        text, in_tok, out_tok = _call_haiku(
+            client,
+            model=model,
+            system=_SYSTEM_PROMPT,
+            user=user_prompt,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            llm_health=llm_health,
+        )
 
     # Record cost regardless of parse outcome (we paid for it).
     call_cost = 0.0
@@ -1403,6 +1464,11 @@ def run_stack_auditor(
         if log is not None:
             log.warn("auditor: JSON parse failed; falling back to Stage 0")
         return verdict
+
+    # Persist ONLY a successfully-parsed response (never failures) — and
+    # only when it came from a live call.
+    if cached_text is None:
+        _auditor_cache_put(cache, cache_key, text)
 
     verdict = _verdict_from_json(data, ctx.stack, call_cost)
 

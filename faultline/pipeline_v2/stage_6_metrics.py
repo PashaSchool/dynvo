@@ -380,8 +380,11 @@ def _finalize_feature_metrics(
         feat.bug_fixes = bug_fixes
         feat.bug_fix_ratio = round(bug_fix_ratio, 3)
         feat.authors = sorted(feature_authors.get(feat.name, set()))
+        # deterministic: a zero-commit feature must not stamp scan
+        # wall-clock (the last identity leak, 19 features on supabase
+        # 2026-07-02) — epoch like the other placeholder sites.
         feat.last_modified = feature_last_modified.get(
-            feat.name, datetime.now(tz=timezone.utc),
+            feat.name, datetime.fromtimestamp(0, tz=timezone.utc),
         )
         feat.health_score = (
             _calculate_health(bug_fix_ratio, total, c_for_feat)

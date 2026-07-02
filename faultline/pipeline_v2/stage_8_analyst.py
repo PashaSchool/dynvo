@@ -84,10 +84,15 @@ from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
     Stage8Result,
     fetch_marketing_taxonomy,
+    llm_cache_enabled,
+    llm_cache_get,
+    llm_cache_key,
+    llm_cache_put,
     run_stage_8 as run_stage_8_haiku,
 )
 
 if TYPE_CHECKING:
+    from faultline.cache.backend import CacheBackend
     from faultline.models.types import Feature, Flow
     from faultline.pipeline_v2.run_logger import StageLogger
     from faultline.pipeline_v2.stage_0_intake import ScanContext
@@ -695,7 +700,7 @@ def _emit_product_features_from_analyst(
         )
         last_modified = max(
             (c.last_modified for c in contrib),
-            default=datetime.now(timezone.utc),
+            default=datetime.fromtimestamp(0, timezone.utc),  # deterministic: zero-evidence aggregate must not stamp scan wall-clock (2026-07-02)
         )
         health = sum(c.health_score for c in contrib) / len(contrib)
         cov_vals = [
@@ -844,9 +849,17 @@ def _call_rename_retry(
     failing: list[dict[str, Any]],
     cost_tracker: CostTracker | None,
     llm_health: LlmHealth | None,
-) -> dict[str, str]:
-    """ONE retry call for the failing names. Returns ``{old: new}``
-    (empty on any failure — caller falls back deterministically)."""
+    cache: "CacheBackend | None" = None,
+) -> tuple[dict[str, str], bool]:
+    """ONE retry call for the failing names. Returns ``({old: new},
+    cache_hit)`` (empty mapping on any failure — caller falls back
+    deterministically).
+
+    ``cache`` (content-hash short-circuit, CacheKind.LLM_PRODUCT_CLUSTER):
+    the rename prompt is deterministic given the failing entries + their
+    prohibitions (both content-derived), so an unchanged repo replays the
+    stored renames at $0. Failures / empty rename sets are never cached.
+    """
     prohibitions = {
         e["name"]: list(e["prohibited"]) for e in failing
     }
@@ -856,6 +869,20 @@ def _call_rename_retry(
         + "\n"
         + retry_prohibition(prohibitions)
     )
+
+    # ── Cache lookup ──
+    key: str | None = None
+    if cache is not None:
+        key = llm_cache_key(model, _RENAME_SYSTEM_PROMPT, user)
+        raw = llm_cache_get(cache, key, "renames")
+        if isinstance(raw, dict) and raw:
+            cached = {
+                k: v for k, v in raw.items()
+                if isinstance(k, str) and isinstance(v, str) and v.strip()
+            }
+            if cached:
+                return cached, True
+
     text, in_t, out_t, _ = _call_sonnet(
         client, model=model, system=_RENAME_SYSTEM_PROMPT, user=user,
         max_tokens=2000, llm_health=llm_health,
@@ -867,13 +894,13 @@ def _call_rename_retry(
             label="stage_8_name_validator_retry",
         )
     if not text:
-        return {}
+        return {}, False
     try:
         obj = json.loads(_strip_code_fences(text))
     except json.JSONDecodeError:
-        return {}
+        return {}, False
     if not isinstance(obj, dict):
-        return {}
+        return {}, False
     out: dict[str, str] = {}
     for row in obj.get("renames") or []:
         if (
@@ -883,7 +910,11 @@ def _call_rename_retry(
             and row["new"].strip()
         ):
             out[row["old"]] = row["new"].strip()
-    return out
+    # MISS → persist a NON-EMPTY rename set (an empty mapping is
+    # indistinguishable from a failed call, so it is never cached).
+    if out and key is not None and cache is not None:
+        llm_cache_put(cache, key, "renames", out)
+    return out, False
 
 
 def _slugify(label: str) -> str:
@@ -938,6 +969,7 @@ def _validate_pf_names(
     llm_health: LlmHealth | None,
     log: "StageLogger | None",
     pinned_slugs: set[str] | None = None,
+    cache: "CacheBackend | None" = None,
 ) -> dict[str, Any]:
     """Anti-hallucination pass over the analyst's PF names (review №2).
 
@@ -1053,6 +1085,8 @@ def _validate_pf_names(
         "pf_names_fallback": 0,
         "pf_names_anchor_guarded": anchor_guarded,
         "validator_retry_called": False,
+        "rename_cache_hits": 0,
+        "rename_llm_calls": 0,
     }
     if not failing:
         return telemetry
@@ -1060,10 +1094,13 @@ def _validate_pf_names(
     renames: dict[str, str] = {}
     if client is not None and (llm_health is None or llm_health.should_call()):
         telemetry["validator_retry_called"] = True
-        renames = _call_rename_retry(
+        renames, rename_hit = _call_rename_retry(
             client, model=model, failing=failing,
             cost_tracker=cost_tracker, llm_health=llm_health,
+            cache=cache,
         )
+        telemetry["rename_cache_hits"] = 1 if rename_hit else 0
+        telemetry["rename_llm_calls"] = 0 if rename_hit else 1
 
     pf_by_slug: dict[str, "Feature"] = {
         pf.name: pf for pf in product_features
@@ -1197,49 +1234,102 @@ def run_stage_8_analyst(
         )
 
     user_prompt = build_user_prompt(payload)
-    text, in_t, out_t, elapsed = _call_sonnet(
-        client, model=model, system=SYSTEM_PROMPT, user=user_prompt,
-        llm_health=llm_health,
-    )
-    cost = 0.0
-    if cost_tracker is not None and (in_t or out_t):
-        rec = cost_tracker.record(
-            provider="anthropic",
-            model=model,
-            input_tokens=in_t,
-            output_tokens=out_t,
-            label="stage_8_analyst",
-        )
-        cost = rec.cost_usd
 
-    parsed = _parse_analyst_response(text)
+    # ── Content-hash LLM cache (CacheKind.LLM_PRODUCT_CLUSTER) ─────────
+    # The analyst's Sonnet call does NOT use deterministic sampling params,
+    # so re-running it on an unchanged repo is THE noise source for
+    # product_feature_id stamps. A warm entry replays the PARSED analyst
+    # dict through the SAME emission/validation code below — byte-identical
+    # Layer 2 at $0. Backend comes from the scan context (same as Stage 3 /
+    # the marketing cache); env opt-out FAULTLINE_STAGE_8_CACHE=0. Parse
+    # failures are never cached; cache faults fall through to a live call.
+    llm_cache: "CacheBackend | None" = getattr(ctx, "cache_backend", None)
+    if llm_cache is not None and not llm_cache_enabled():
+        llm_cache = None
+    llm_cache_hits = 0
+    llm_calls = 0
+
+    def _cached_analysis(key: str | None) -> dict[str, Any] | None:
+        """Stored parsed analyst dict, validated with the SAME structural
+        check as ``_parse_analyst_response`` (product_features is a list)."""
+        if key is None or llm_cache is None:
+            return None
+        raw = llm_cache_get(llm_cache, key, "analysis")
+        if isinstance(raw, dict) and isinstance(raw.get("product_features"), list):
+            return raw
+        return None
+
+    key_main: str | None = (
+        llm_cache_key(model, SYSTEM_PROMPT, user_prompt)
+        if llm_cache is not None else None
+    )
+    parsed = _cached_analysis(key_main)
     retried = False
-    if parsed is None and text:
-        # One retry with a stricter prompt suffix.
-        if log is not None:
-            log.warn(
-                "analyst-parse-failed — retrying with stricter suffix",
-            )
-        retried = True
-        text2, in2, out2, _ = _call_sonnet(
-            client,
-            model=model,
-            system=SYSTEM_PROMPT,
-            user=user_prompt + _RETRY_SUFFIX,
+    if parsed is not None:
+        # HIT: no Sonnet call, no tokens, $0.
+        llm_cache_hits += 1
+        in_t = out_t = 0
+        elapsed = 0.0
+        cost = 0.0
+    else:
+        text, in_t, out_t, elapsed = _call_sonnet(
+            client, model=model, system=SYSTEM_PROMPT, user=user_prompt,
             llm_health=llm_health,
         )
-        if cost_tracker is not None and (in2 or out2):
-            rec2 = cost_tracker.record(
+        llm_calls += 1
+        cost = 0.0
+        if cost_tracker is not None and (in_t or out_t):
+            rec = cost_tracker.record(
                 provider="anthropic",
                 model=model,
-                input_tokens=in2,
-                output_tokens=out2,
-                label="stage_8_analyst_retry",
+                input_tokens=in_t,
+                output_tokens=out_t,
+                label="stage_8_analyst",
             )
-            cost += rec2.cost_usd
-        in_t += in2
-        out_t += out2
-        parsed = _parse_analyst_response(text2)
+            cost = rec.cost_usd
+
+        parsed = _parse_analyst_response(text)
+        if parsed is not None and key_main is not None and llm_cache is not None:
+            llm_cache_put(llm_cache, key_main, "analysis", parsed)
+        if parsed is None and text:
+            # One retry with a stricter prompt suffix (its OWN content key —
+            # the suffix changes the user prompt).
+            if log is not None:
+                log.warn(
+                    "analyst-parse-failed — retrying with stricter suffix",
+                )
+            retried = True
+            retry_user = user_prompt + _RETRY_SUFFIX
+            key_retry: str | None = (
+                llm_cache_key(model, SYSTEM_PROMPT, retry_user)
+                if llm_cache is not None else None
+            )
+            parsed = _cached_analysis(key_retry)
+            if parsed is not None:
+                llm_cache_hits += 1
+            else:
+                text2, in2, out2, _ = _call_sonnet(
+                    client,
+                    model=model,
+                    system=SYSTEM_PROMPT,
+                    user=retry_user,
+                    llm_health=llm_health,
+                )
+                llm_calls += 1
+                if cost_tracker is not None and (in2 or out2):
+                    rec2 = cost_tracker.record(
+                        provider="anthropic",
+                        model=model,
+                        input_tokens=in2,
+                        output_tokens=out2,
+                        label="stage_8_analyst_retry",
+                    )
+                    cost += rec2.cost_usd
+                in_t += in2
+                out_t += out2
+                parsed = _parse_analyst_response(text2)
+                if parsed is not None and key_retry is not None and llm_cache is not None:
+                    llm_cache_put(llm_cache, key_retry, "analysis", parsed)
 
     if parsed is None:
         if log is not None:
@@ -1313,6 +1403,7 @@ def run_stage_8_analyst(
         developer_features, payload, product_strings,
         client=client, model=model, cost_tracker=cost_tracker,
         llm_health=llm_health, log=log, pinned_slugs=pinned_slugs,
+        cache=llm_cache,
     )
 
     # Degraded-scan stamp (naming review №6): when the key died mid-scan
@@ -1348,6 +1439,11 @@ def run_stage_8_analyst(
         "prompt_output_tokens": out_t,
         "elapsed_sec": round(elapsed, 2),
         "retried_on_parse_error": retried,
+        # Content-hash LLM cache counters (main + parse-retry calls; the
+        # name-validator's rename call reports its own via
+        # rename_cache_hits / rename_llm_calls below).
+        "llm_cache_hits": llm_cache_hits,
+        "llm_calls": llm_calls,
         "product_features_emitted": len(product_features),
         "phantom_count_estimate": phantom_count,
         "developer_features_mapped": sum(

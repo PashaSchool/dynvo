@@ -41,6 +41,7 @@ in use).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -63,6 +64,7 @@ from faultline.analyzer.marketing_fetcher import (
     parse_llms_txt,
     rank_sitemap_urls_by_product_likelihood,
 )
+from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.product_strings import (
@@ -110,6 +112,89 @@ _HAIKU_MAX_TOKENS = 2000
 # succeeds. Higher than deterministic (0.6) but lower than customer
 # override (1.0) to preserve the cascade.
 _CONF_MARKETING_HAIKU = 0.85
+
+# ── Content-hash LLM cache (deterministic short-circuit) ────────────────
+#
+# Every Stage-8 LLM call on the product-cluster path (this module's Haiku
+# label-mapper AND the Sonnet analyst / rename-retry calls in
+# ``stage_8_analyst`` — which imports these helpers) is a pure function of
+# its input: the system prompt + the user prompt + the canonical model id.
+# We cache the PARSED structured output keyed on a sha256 of exactly those
+# inputs (CacheKind.LLM_PRODUCT_CLUSTER), so a re-scan of an unchanged repo
+# REPLAYS the identical mapping/analysis ($0) through the SAME
+# validation/emission code — byte-identical ``product_features[]`` +
+# ``product_feature_id`` stamps. This matters doubly for the analyst, whose
+# Sonnet call does NOT use deterministic sampling params. Content-keyed
+# (same input → same answer): a deterministic short-circuit, NOT per-repo
+# memory — compliant with rule-cold-scan. NOT the marketing-page cache
+# (kind ``marketing``), which is slug-keyed with a 7-day TTL and stays
+# as-is. Default ON; opt out via ``FAULTLINE_STAGE_8_CACHE=0``.
+#
+# STAGE_8_CACHE_VERSION is the manual invalidation lever required by
+# rule-cache-invalidation: bump it whenever a prompt template, the parse
+# logic, or the cached-value shape changes in a way that must NOT serve a
+# stale answer. (The system prompt is ALSO hashed into the key, but the
+# version constant is the documented, explicit control surface.)
+STAGE_8_CACHE_VERSION = "v1"
+
+_LLM_CACHE_ENV = "FAULTLINE_STAGE_8_CACHE"
+
+
+def llm_cache_enabled() -> bool:
+    """Default ON — set ``FAULTLINE_STAGE_8_CACHE=0`` to opt out."""
+    return os.environ.get(_LLM_CACHE_ENV, "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def llm_cache_key(model: str, system: str, user: str) -> str:
+    """Content-hash key for one Stage-8 LLM call.
+
+    Components: cache version + canonical model id (pre-gateway) + the
+    system prompt + the full user prompt (dev-feature digest + taxonomy /
+    analyst payload / rename entries — the exact structured input).
+    Deliberately EXCLUDED: run_id, timestamps, clone dir, thread identity,
+    or any other run-varying value.
+    """
+    payload = json.dumps(
+        {
+            "version": STAGE_8_CACHE_VERSION,
+            "model": model,
+            "system": system,
+            "user": user,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def llm_cache_get(cache: "CacheBackend", key: str, field: str) -> Any | None:
+    """Read the stored parsed output under ``field``. ``None`` on miss,
+    version mismatch, malformed entry, or ANY backend fault — a cache
+    problem must never abort the stage (never-worse)."""
+    try:
+        stored = cache.get(CacheKind.LLM_PRODUCT_CLUSTER.value, key)
+    except Exception as exc:  # noqa: BLE001 — cache must never break a scan
+        logger.warning("stage_8: llm cache get failed: %s", exc)
+        return None
+    if not isinstance(stored, dict) or stored.get("v") != STAGE_8_CACHE_VERSION:
+        return None
+    return stored.get(field)
+
+
+def llm_cache_put(cache: "CacheBackend", key: str, field: str, value: Any) -> None:
+    """Persist a parsed output under ``field``. Failures are logged +
+    swallowed. Only SUCCESSFUL parses are ever stored (callers guarantee
+    it) so a transient outage never poisons future reproducible replays."""
+    try:
+        cache.set(
+            CacheKind.LLM_PRODUCT_CLUSTER.value,
+            key,
+            {"v": STAGE_8_CACHE_VERSION, field: value},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("stage_8: llm cache set failed: %s", exc)
 
 
 # ── Public types ────────────────────────────────────────────────────────
@@ -565,6 +650,7 @@ def cluster_via_haiku(
     cost_tracker: CostTracker | None = None,
     llm_health: LlmHealth | None = None,
     product_strings: "ProductStringIndex | None" = None,
+    cache: "CacheBackend | None" = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """Single Haiku call: map each dev feature to a taxonomy label.
 
@@ -572,6 +658,12 @@ def cluster_via_haiku(
     ``{dev_name: product_label}`` — entries the model said were
     ``null`` are dropped from the mapping (they remain orphan and the
     deterministic Stage 6.5 result wins for those features).
+
+    ``cache`` (content-hash short-circuit, CacheKind.LLM_PRODUCT_CLUSTER):
+    when supplied AND ``FAULTLINE_STAGE_8_CACHE`` != 0 (default ON), an
+    unchanged prompt replays its stored PARSED mapping at $0 through the
+    SAME taxonomy-validation code below. Failures ARE never cached; any
+    cache fault falls through to the live call (never-worse).
 
     Naming-evidence note: emitted PF names are constrained to the
     fetched marketing taxonomy (invented labels are rejected below), and
@@ -582,27 +674,59 @@ def cluster_via_haiku(
     if not developer_features or not taxonomy.product_features:
         return {}, {"called": False, "reason": "empty-input"}
 
-    user = _build_user_prompt(developer_features, taxonomy, product_strings)
-    text, in_tokens, out_tokens = _call_haiku(
-        client,
-        model=model,
-        system=_SYSTEM_PROMPT,
-        user=user,
-        max_tokens=_HAIKU_MAX_TOKENS,
-        llm_health=llm_health,
-    )
-    cost = 0.0
-    if cost_tracker is not None and (in_tokens or out_tokens):
-        rec = cost_tracker.record(
-            provider="anthropic",
-            model=model,
-            input_tokens=in_tokens,
-            output_tokens=out_tokens,
-            label="stage_8_marketing_cluster",
-        )
-        cost = rec.cost_usd
+    if cache is not None and not llm_cache_enabled():
+        cache = None
 
-    parsed = _parse_haiku_mapping(text)
+    user = _build_user_prompt(developer_features, taxonomy, product_strings)
+
+    # ── Cache lookup (content-hash short-circuit) ──
+    key: str | None = None
+    cached_mapping: dict[str, str | None] | None = None
+    if cache is not None:
+        key = llm_cache_key(model, _SYSTEM_PROMPT, user)
+        raw = llm_cache_get(cache, key, "mappings")
+        if isinstance(raw, dict) and raw:
+            candidate = {
+                k: v for k, v in raw.items()
+                if isinstance(k, str) and (v is None or isinstance(v, str))
+            }
+            # ``_parse_haiku_mapping`` failures return ``{}`` and are never
+            # stored, so an empty candidate is malformed → miss.
+            cached_mapping = candidate or None
+
+    if cached_mapping is not None:
+        # HIT: no Haiku call, no tokens, $0 — the parsed mapping feeds the
+        # SAME validation below, so replay is byte-identical.
+        in_tokens = out_tokens = 0
+        cost = 0.0
+        cache_hit = True
+        parsed = cached_mapping
+    else:
+        cache_hit = False
+        text, in_tokens, out_tokens = _call_haiku(
+            client,
+            model=model,
+            system=_SYSTEM_PROMPT,
+            user=user,
+            max_tokens=_HAIKU_MAX_TOKENS,
+            llm_health=llm_health,
+        )
+        cost = 0.0
+        if cost_tracker is not None and (in_tokens or out_tokens):
+            rec = cost_tracker.record(
+                provider="anthropic",
+                model=model,
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
+                label="stage_8_marketing_cluster",
+            )
+            cost = rec.cost_usd
+
+        parsed = _parse_haiku_mapping(text)
+        # MISS → persist the parsed mapping. Parse failures (``{}``) are
+        # NEVER cached so a transient outage can't poison future replays.
+        if parsed and key is not None and cache is not None:
+            llm_cache_put(cache, key, "mappings", parsed)
 
     # Validate: only accept labels that appear in taxonomy (case-
     # insensitive). This stops Haiku from inventing categories.
@@ -627,6 +751,8 @@ def cluster_via_haiku(
         "mappings_accepted": len(cleaned),
         "invented_labels_rejected": invented,
         "model": model,
+        "cache_hits": 1 if cache_hit else 0,
+        "llm_calls": 0 if cache_hit else 1,
     }
     return cleaned, telemetry
 
@@ -676,7 +802,7 @@ def _emit_product_features(
         bug_fix_ratio = (bug_fixes / total_commits) if total_commits else 0.0
         last_modified = max(
             (c.last_modified for c in contrib),
-            default=datetime.now(timezone.utc),
+            default=datetime.fromtimestamp(0, timezone.utc),  # deterministic: zero-evidence aggregate must not stamp scan wall-clock (2026-07-02)
         )
         health_score = (
             sum(c.health_score for c in contrib) / len(contrib)
@@ -812,6 +938,7 @@ def run_stage_8(
             client=client, model=model, cost_tracker=cost_tracker,
             llm_health=llm_health,
             product_strings=product_strings,
+            cache=cache_backend,
         )
         if mapping:
             # In-repo nav taxonomy overrides the marketing mapping for
@@ -900,6 +1027,11 @@ def run_stage_8(
                 "confidence": _CONF_MARKETING_HAIKU,
                 "cache_hit": cached_before is not None,
                 "haiku_called": True,
+                # Content-hash LLM cache counters (CacheKind.LLM_PRODUCT_
+                # CLUSTER) — distinct from ``cache_hit`` above, which is
+                # the slug-keyed marketing-PAGE cache.
+                "llm_cache_hits": haiku_telemetry.get("cache_hits", 0),
+                "llm_calls": haiku_telemetry.get("llm_calls", 0),
                 "nav_taxonomy_overrides": nav_overrides,
             }
             # Degraded-scan stamp (naming review №6) — a dead key mid-
@@ -984,8 +1116,13 @@ def _default_client_factory() -> Any | None:  # pragma: no cover - IO
 
 
 __all__ = [
+    "STAGE_8_CACHE_VERSION",
     "Stage8Result",
-    "fetch_marketing_taxonomy",
     "cluster_via_haiku",
+    "fetch_marketing_taxonomy",
+    "llm_cache_enabled",
+    "llm_cache_get",
+    "llm_cache_key",
+    "llm_cache_put",
     "run_stage_8",
 ]
