@@ -961,6 +961,7 @@ def test_rollup_view_folds_subs_into_parent() -> None:
     s2 = _sub("cycles", parent, ["apps/web/components/cycles/b.tsx"])
     orphan = _sub("ghost", parent, ["apps/web/components/ghost/c.tsx"])
     orphan.split_from = "missing-uuid"   # parent husk dropped
+    orphan.description = "sub-domain 'x' of feature 'gone'"  # name unresolvable
     plain = _feat("auth", ["app/auth/login.ts"])
     view, sub_to_parent = _rollup_split_view([parent, s1, s2, orphan, plain])
     names = [getattr(v, "name") for v in view]
@@ -974,6 +975,22 @@ def test_rollup_view_folds_subs_into_parent() -> None:
     assert sub_to_parent == {"issues": "web", "cycles": "web"}
     # real objects untouched
     assert parent.paths == ["apps/web/app.tsx"]
+
+
+def test_rollup_matches_by_name_when_split_from_missing() -> None:
+    """Production shape (supabase wave-9): uuid backfill happens AFTER
+    Stage 8, so subs carry split_from=None — the description NAME channel
+    must still fold them."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _rollup_split_view,
+    )
+    parent = _feat("studio", ["apps/studio/app.tsx"])
+    parent.uuid = "later-backfilled"
+    sub = _sub("auth", parent, ["apps/studio/components/interfaces/Auth/a.tsx"])
+    sub.split_from = None
+    view, sub_to_parent = _rollup_split_view([parent, sub])
+    assert sub_to_parent == {"auth": "studio"}
+    assert len(view) == 1 and view[0].name == "studio"
 
 
 def test_split_subfeatures_inherit_parent_capability() -> None:

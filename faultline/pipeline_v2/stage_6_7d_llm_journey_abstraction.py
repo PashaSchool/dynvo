@@ -410,15 +410,22 @@ def _anchors_sufficient(
 
 
 _SPLIT_MARKER = "sub-domain"
+# _make_subfeature stamps: "sub-domain '<domain_key>' of feature '<source.name>'".
+# The NAME channel is the reliable provenance: ``split_from`` (source uuid) is
+# None in practice — dev features get their uuid backfilled AFTER Stage 8, so
+# at mint time getattr(source, "uuid", None) yields nothing (measured on
+# supabase wave-9: 67/67 subs split_from=None, description parseable 67/67).
+_SPLIT_PARENT_RE = re.compile(r"of feature '([^']+)'\s*$")
 
 
-def _is_split_subfeature(f: "Feature") -> bool:
-    """Stage 8.9/8.9.5 provenance: ``split_from`` (source uuid) + the
-    sub-domain description marker — the same re-entrancy signature the
-    subdecompose stage itself uses."""
-    return bool(getattr(f, "split_from", None)) and (
-        _SPLIT_MARKER in (getattr(f, "description", None) or "").lower()
-    )
+def _split_parent_name(f: "Feature") -> str | None:
+    """The parent feature NAME a Stage 8.9/8.9.5 subfeature was split from,
+    or ``None`` when *f* is not a split subfeature."""
+    desc = getattr(f, "description", None) or ""
+    if _SPLIT_MARKER not in desc.lower():
+        return None
+    m = _SPLIT_PARENT_RE.search(desc)
+    return m.group(1) if m else None
 
 
 def _dev_key(f: Any) -> str:
@@ -446,13 +453,20 @@ def _rollup_split_view(
     """
     from types import SimpleNamespace
 
-    by_uuid = {getattr(f, "uuid", None): f for f in developer_features}
+    by_name = {f.name: f for f in developer_features}
+    by_uuid = {
+        u: f for f in developer_features
+        if (u := getattr(f, "uuid", None))
+    }
     sub_to_parent: dict[str, str] = {}
     folded: dict[int, list["Feature"]] = defaultdict(list)
     for f in developer_features:
-        if not _is_split_subfeature(f):
+        parent_name = _split_parent_name(f)
+        if parent_name is None:
             continue
-        parent = by_uuid.get(getattr(f, "split_from", None))
+        # NAME channel first (reliable), uuid channel as a fallback.
+        parent = by_name.get(parent_name) or by_uuid.get(
+            getattr(f, "split_from", None))
         if parent is None or parent is f:
             continue
         sub_to_parent[_dev_key(f)] = _dev_key(parent)
