@@ -630,6 +630,83 @@ def classify_repo_class(
     return ResidualProductAppClassifier().classify(snap)
 
 
+def classify_repo_class_per_unit(
+    ctx: "ScanContext",
+    *,
+    classifiers: Sequence[RepoClassifier] | None = None,
+) -> RepoClassVerdict:
+    """Whole-repo verdict refined by the Stage 0.6b partition (Phase B+).
+
+    Where the partition provides scan units, ``repo_class`` evaluates
+    PER UNIT: a hybrid repo whose whole-repo signals read non-product
+    (a backend that looks daemon/library-shaped next to a nested
+    frontend) is still a product app when ANY unit is CONFIDENTLY a
+    product app. Rules:
+
+      * whole-repo verdict already ``product-app`` → returned as-is
+        (nothing to refine; the common case, zero behaviour change);
+      * no partition units (single-package repo, library monorepo) →
+        whole-repo verdict as-is (the G4 path);
+      * a unit verdict overrides ONLY when it is ``product-app`` at
+        ``confidence >= SUPPRESS_MIN_CONFIDENCE`` — the same bar UF
+        suppression itself requires. The fail-open residual verdict
+        (``CONF_RESIDUAL``) can therefore never flip a confident
+        non-product whole-repo verdict.
+
+    Pure, deterministic (units sorted by subpath; first confident
+    product-app unit wins), never raises.
+    """
+    verdict = classify_repo_class(ctx, classifiers=classifiers)
+    if verdict.repo_class == REPO_CLASS_PRODUCT_APP:
+        return verdict
+
+    try:
+        from faultline.pipeline_v2.unit_scope import (
+            scan_unit_subpaths,
+            unit_scoped_ctx,
+        )
+
+        subpaths = scan_unit_subpaths(ctx)
+    except Exception as exc:  # noqa: BLE001 — refinement must never fail a scan
+        logger.warning("stage_0_7 per-unit: unit derivation failed (%s)", exc)
+        return verdict
+    if not subpaths:
+        return verdict
+
+    for subpath in subpaths:
+        try:
+            scoped = unit_scoped_ctx(ctx, subpath)
+            if not scoped.tracked_files:
+                continue
+            unit_verdict = classify_repo_class(scoped, classifiers=classifiers)
+        except Exception as exc:  # noqa: BLE001 — graceful degradation
+            logger.warning(
+                "stage_0_7 per-unit: unit %s classification failed (%s)",
+                subpath, exc,
+            )
+            continue
+        if (
+            unit_verdict.repo_class == REPO_CLASS_PRODUCT_APP
+            and unit_verdict.confidence >= SUPPRESS_MIN_CONFIDENCE
+        ):
+            return RepoClassVerdict(
+                repo_class=REPO_CLASS_PRODUCT_APP,
+                confidence=unit_verdict.confidence,
+                rationale=(
+                    f"Per-unit refinement: scan unit ``{subpath}`` is a "
+                    f"confident product app ({unit_verdict.rationale}) — "
+                    "the repo ships a product even though its whole-repo "
+                    f"signals read ``{verdict.repo_class}``."
+                ),
+                matched_signals=(
+                    "per-unit",
+                    f"unit:{subpath}",
+                    *unit_verdict.matched_signals,
+                ),
+            )
+    return verdict
+
+
 def should_suppress_user_flows(verdict: RepoClassVerdict | None) -> bool:
     """The ONE suppression seam the finalize phase consults.
 
@@ -859,6 +936,7 @@ __all__ = [
     "LibraryClassifier",
     "ResidualProductAppClassifier",
     "classify_repo_class",
+    "classify_repo_class_per_unit",
     "gate_enabled",
     "scan_meta_block",
     "should_suppress_user_flows",

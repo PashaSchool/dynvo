@@ -350,9 +350,18 @@ def run_pipeline_v2(
     # threaded (not stashed on ScanContext — its schema stays stable)
     # into the attribution + flow stages, and its name is surfaced in
     # ``scan_meta.framework_profile``.
-    from faultline.pipeline_v2.profiles import select_profile as _select_profile
+    #
+    # Phase B+ — per-scan-unit refinement: when the Stage 0.6b
+    # partition yields units whose own trees select a DIFFERENT
+    # profile than the whole-repo winner (polar: FastAPI backend +
+    # Next frontend units), ``select_scan_profile`` returns a
+    # CompositeProfile that dispatches per unit. Single-package repos
+    # and uniform monorepos get the whole-repo winner unchanged.
+    from faultline.pipeline_v2.profiles import (
+        select_scan_profile as _select_scan_profile,
+    )
 
-    framework_profile = _select_profile(ctx)
+    framework_profile = _select_scan_profile(ctx)
     framework_profile_name = getattr(framework_profile, "name", "default")
     logger.info("framework_profile selected: %s", framework_profile_name)
 
@@ -819,6 +828,18 @@ def run_pipeline_v2(
     # version bump; consumers treat absence as "own git pass").
     if git_snapshot is not None:
         scan_meta["shared_git_pass"] = True
+
+    # Phase B+ per-unit profile telemetry — additive key, only emitted
+    # when the selection built a CompositeProfile (absence == the
+    # whole-repo winner served every tree, exactly as before).
+    unit_assignments = getattr(framework_profile, "unit_assignments", None)
+    if unit_assignments:
+        scan_meta["framework_profile_units"] = [
+            {"subpath": sp, "profile": name} for sp, name in unit_assignments
+        ]
+        scan_meta["framework_profile_root"] = getattr(
+            framework_profile, "root_profile_name", framework_profile_name,
+        )
 
     # ── Finalize phase — Stage 6.8 / 3.5 / 6.9 / 6.7* / 7 ──────────
     # Straight-line body lives in :mod:`faultline.pipeline_v2.phase_finalize`

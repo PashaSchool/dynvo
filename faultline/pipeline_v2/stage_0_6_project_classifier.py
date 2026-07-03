@@ -893,6 +893,11 @@ class PartitionPlan:
     excluded: tuple[ExcludedProject, ...]
     classifications: tuple[ProjectClassification, ...] = ()
     rationale: str = ""
+    # True when the workspaces were SYNTHESIZED by the manifest-less
+    # split-fullstack rescue (no declared/discovered workspace list).
+    # Consumers that must stay byte-identical for split-fullstack repos
+    # (Phase B+ per-unit profile selection) skip refinement on it.
+    synthesized_split: bool = False
 
     def subpaths(self) -> list[str]:
         """The non-None subpaths, ready for ``run_pipeline_multi``.
@@ -1129,6 +1134,7 @@ def partition_monorepo(
         excluded=tuple(excluded),
         classifications=tuple(classifications),
         rationale=rationale,
+        synthesized_split=synthesized_split,
     )
 
 

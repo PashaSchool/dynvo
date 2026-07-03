@@ -17,6 +17,8 @@ All deterministic — NO LLM, NO network.
 
 from __future__ import annotations
 
+from faultline.pipeline_v2.profiles._composite import CompositeProfile
+from faultline.pipeline_v2.profiles._per_unit import select_scan_profile
 from faultline.pipeline_v2.profiles._registry import (
     ProfileRegistry,
     discover_profiles,
@@ -40,6 +42,7 @@ __all__ = [
     "ROOT_WORKSPACE_NAME",
     "ROOT_WORKSPACE_PATH",
     "AttributionSpec",
+    "CompositeProfile",
     "DefaultProfile",
     "FileRole",
     "FlowEntry",
@@ -48,5 +51,6 @@ __all__ = [
     "discover_profiles",
     "is_monorepo",
     "select_profile",
+    "select_scan_profile",
     "split_workspaces",
 ]
