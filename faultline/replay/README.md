@@ -56,7 +56,7 @@ artifact byte-identically after normalization.
 ```bash
 # 0. Record a baseline run (input capture is always on):
 ./eval/scrub-faultline-cache.sh formbricks       # cache hygiene (app repo)
-dynvo scan-v2 ~/workspace/_faultlines-testrepos/formbricks --run-id ws1-baseline
+dynvo scan ~/workspace/_faultlines-testrepos/formbricks --run-id ws1-baseline
 
 # 1. Edit the stage code you are experimenting on
 #    (e.g. faultline/pipeline_v2/stage_5_3_sibling_collapse.py).

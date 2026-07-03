@@ -13,7 +13,7 @@ corpus / baseline skip cleanly):
 * a baseline run recorded with input capture, default env, and the
   warm llm-cache (see faultline/replay/README.md):
 
-      dynvo scan-v2 <formbricks-clone> --run-id ws1-baseline
+      dynvo scan <formbricks-clone> --run-id ws1-baseline
 
 $0: the dummy API key below never authenticates; every LLM unit is
 served from the content-keyed llm-cache exactly as in the baseline.

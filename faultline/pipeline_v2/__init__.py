@@ -1,8 +1,9 @@
 """Pipeline v2 — the Layer 1/2 code-grounded scanner.
 
 This is the only scan pipeline; the legacy ``faultline.llm.pipeline``
-(the old ``analyze`` command) has been removed. ``faultline scan-v2``
-and the bare ``faultline <repo>`` invocation both run this pipeline.
+(the old ``analyze`` command) has been removed. ``dynvo scan``
+and the bare ``dynvo <repo>`` invocation both run this pipeline
+(``dynvo scan-v2`` survives as a deprecated hidden alias).
 
 Public surface (built up incrementally as stages land on the
 ``agent/layer1-dev-features-v1`` branch):

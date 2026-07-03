@@ -1444,7 +1444,7 @@ def _detect_parent_shape(parent_root: Path | None) -> str:
     """Sprint S10: classify the parent git repo of a subdir scan.
 
     When ``classify_repo_shape`` runs on a subdir (e.g. user ran
-    ``faultline scan-v2 Soc0/frontend`` and the git root is ``Soc0/``)
+    ``dynvo scan Soc0/frontend`` and the git root is ``Soc0/``)
     we want to know whether the PARENT itself is a known monorepo /
     split-fullstack shape so the subdir classifier can pick a more
     informed shape.

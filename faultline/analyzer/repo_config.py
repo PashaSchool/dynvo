@@ -417,7 +417,7 @@ def auto_save_canonicals(
             "block above\n"
             "#   2. Delete the matching ``network-detections/...`` "
             "lines from auto_aliases\n"
-            "#   3. Re-run ``faultline analyze``\n"
+            "#   3. Re-run ``dynvo scan``\n"
             "#\n"
             "# How to RENAME a feature without breaking flow attribution: "
             "edit the\n"

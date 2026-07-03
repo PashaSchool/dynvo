@@ -3,7 +3,7 @@ files a ``--since`` diff actually touched.
 
 Problem
 -------
-Before this module, the ``scan-v2 --since`` path ran the WHOLE pipeline
+Before this module, the ``dynvo scan --since`` path ran the WHOLE pipeline
 (including the per-feature Haiku call in Stage 3 and the per-cluster
 Haiku call in Stage 4) over every file in the repo, then carried forward
 ONLY Stage 6 metrics for untouched features (see

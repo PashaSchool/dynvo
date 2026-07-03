@@ -41,10 +41,10 @@ def _json_dumps_assembly(assembly: dict) -> str:
     return _json.dumps(assembly, indent=2, sort_keys=False, default=str)
 
 app = typer.Typer(
-    name="faultline",
+    name="dynvo",
     help=(
         "Map developer features from git history and code structure. "
-        "Bare `faultline <repo>` runs the scan-v2 pipeline."
+        "Bare `dynvo <repo>` runs the scan pipeline."
     ),
     add_completion=False,
     no_args_is_help=True,
@@ -53,25 +53,27 @@ console = Console()
 
 
 # Subcommand names that must NOT be swallowed by the default-command
-# router. Anything else on a bare invocation is treated as scan-v2 input
-# (a repo path and/or scan-v2 flags). Keep this in sync with the
-# @app.command() definitions below.
+# router. Anything else on a bare invocation is treated as scan input
+# (a repo path and/or scan flags). Keep this in sync with the
+# @app.command() definitions below. ``scan-v2`` stays routable as the
+# deprecated alias of ``scan`` (the Fly worker contract still spells it
+# out; drop it only after one full release with the alias live).
 _KNOWN_SUBCOMMANDS = frozenset({
     "update", "evolve", "refresh", "watch", "watch-status", "watch-stop",
-    "pull", "suggest-config", "scan-v2", "classify-shape", "version",
-    "replay",
+    "pull", "suggest-config", "scan", "scan-v2", "classify-shape",
+    "version", "replay",
 })
 
 
-def _route_default_to_scan_v2(argv: list[str]) -> list[str]:
-    """Insert the implicit ``scan-v2`` subcommand for a bare invocation.
+def _route_default_to_scan(argv: list[str]) -> list[str]:
+    """Insert the implicit ``scan`` subcommand for a bare invocation.
 
     Typer has no native "default command". The console script calls
     :func:`main`, which rewrites ``argv`` so a bare
-    ``faultline <repo> [flags]`` is dispatched to the ``scan-v2`` command,
+    ``dynvo <repo> [flags]`` is dispatched to the ``scan`` command,
     re-using its exact option set. Explicit subcommands (including
-    ``faultline scan-v2 …`` — the worker contract) and the top-level
-    ``--help`` pass through untouched.
+    ``dynvo scan-v2 …`` — the deprecated worker-contract alias) and the
+    top-level ``--help`` pass through untouched.
     """
     if not argv:
         return argv
@@ -80,15 +82,15 @@ def _route_default_to_scan_v2(argv: list[str]) -> list[str]:
         return argv
     if first in ("-h", "--help"):
         return argv
-    # First token is a repo path (or a scan-v2 flag) → prepend scan-v2.
-    return ["scan-v2", *argv]
+    # First token is a repo path (or a scan flag) → prepend scan.
+    return ["scan", *argv]
 
 
 def main() -> None:
     """Console-script entry point with default-command routing."""
     import sys
 
-    sys.argv = [sys.argv[0], *_route_default_to_scan_v2(sys.argv[1:])]
+    sys.argv = [sys.argv[0], *_route_default_to_scan(sys.argv[1:])]
     app()
 
 
@@ -131,7 +133,7 @@ def update(
         matches = sorted(glob.glob(pattern))
         if not matches:
             console.print(f"[red]✗[/red] No existing scan found for '{repo_name}' in {home}")
-            console.print("[dim]Run 'faultline deep-scan' first to create initial scan[/dim]")
+            console.print("[dim]Run 'dynvo scan' first to create initial scan[/dim]")
             raise typer.Exit(1)
         scan_path = Path(matches[-1])
 
@@ -223,7 +225,7 @@ def evolve(
         matches = sorted(glob.glob(pattern))
         if not matches:
             console.print(f"[red]✗[/red] No existing scan found for '{repo_name}'")
-            console.print("[dim]Run 'faultline deep-scan' first[/dim]")
+            console.print("[dim]Run 'dynvo scan' first[/dim]")
             raise typer.Exit(1)
         scan_path = Path(matches[-1])
 
@@ -330,9 +332,9 @@ def refresh(
     on untouched features.
 
     Examples:
-        faultlines refresh
-        faultlines refresh /path/to/repo --check
-        faultlines refresh . --output latest.json
+        dynvo refresh
+        dynvo refresh /path/to/repo --check
+        dynvo refresh . --output latest.json
     """
     import json as _json
     from faultline.cache.refresh import refresh_feature_map
@@ -349,7 +351,7 @@ def refresh(
         if not candidates:
             console.print(
                 "[red]No feature map found.[/red] "
-                "Run `faultlines analyze . --llm --flows` first."
+                "Run `dynvo scan .` first."
             )
             raise typer.Exit(1)
         map_file = candidates[-1]
@@ -444,7 +446,7 @@ def refresh(
         elif report.extensions or report.new_features:
             console.print(
                 "\n[dim]Review above. Re-run with --detect-new --auto-apply to apply "
-                "high-confidence proposals, or run a full `faultlines analyze` for a "
+                "high-confidence proposals, or run a full `dynvo scan` for a "
                 "fresh scan.[/dim]"
             )
 
@@ -462,7 +464,7 @@ def refresh(
             f"  [yellow]⚠ {len(result.orphan_files)} orphan file(s) not mapped to any feature.[/yellow]"
         )
         console.print(
-            f"    Run `faultlines refresh --detect-new` to classify them via LLM."
+            f"    Run `dynvo refresh --detect-new` to classify them via LLM."
         )
     console.print(f"\n[dim]Saved:[/dim] {saved_path}")
 
@@ -483,7 +485,7 @@ def watch(
     ),
     daemon: bool = typer.Option(
         False, "--daemon",
-        help="Run in background (fork + detach). Use `faultlines watch-stop` to kill.",
+        help="Run in background (fork + detach). Use `dynvo watch-stop` to kill.",
     ),
     map_path: Optional[str] = typer.Option(
         None, "--map",
@@ -498,9 +500,9 @@ def watch(
     Only triggers metric refresh — no LLM calls, no cost.
 
     Examples:
-        faultlines watch                         # foreground, current dir
-        faultlines watch /path/to/repo --daemon  # background
-        faultlines watch . --debounce 10         # react faster
+        dynvo watch                         # foreground, current dir
+        dynvo watch /path/to/repo --daemon  # background
+        dynvo watch . --debounce 10         # react faster
     """
     from faultline.watch import run_watcher, start_daemon
 
@@ -508,7 +510,7 @@ def watch(
         try:
             pid = start_daemon(repo_path, debounce_seconds=debounce, map_path=map_path)
             console.print(f"[green]✓ Watcher started[/green] (pid {pid})")
-            console.print(f"[dim]Stop with: faultlines watch-stop {repo_path}[/dim]")
+            console.print(f"[dim]Stop with: dynvo watch-stop {repo_path}[/dim]")
         except RuntimeError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1)
@@ -622,7 +624,7 @@ def suggest_config(
             "Write suggestions to .faultline.yaml instead of "
             "printing to stdout. Existing file is preserved — "
             "suggestions land under a fresh ``# Suggested by "
-            "faultline suggest-config`` header."
+            "dynvo suggest-config`` header."
         ),
         is_flag=True,
     ),
@@ -674,12 +676,12 @@ def suggest_config(
         yaml_block, sort_keys=False, allow_unicode=True, indent=2,
     )
     header = (
-        "# Suggested by `faultline suggest-config` — review and edit "
+        "# Suggested by `dynvo suggest-config` — review and edit "
         "before scanning.\n"
         "# Each feature below was derived from a workspace package "
         "name or a CODEOWNERS team.\n"
         "# Empty `variants` is fine; the engine fills in matches "
-        "automatically when you run `faultline analyze`.\n\n"
+        "automatically when you run `dynvo scan`.\n\n"
     )
 
     if write:
@@ -702,8 +704,8 @@ def suggest_config(
         console.print(header + rendered, end="")
 
 
-@app.command(name="scan-v2")
-def scan_v2(
+@app.command(name="scan")
+def scan(
     repo_path: str = typer.Argument(
         ".",
         help="Path to the git repository (default: cwd).",
@@ -850,9 +852,9 @@ def scan_v2(
         ),
     ),
 ):
-    """Run the Layer 1 pipeline v2 (deterministic extractors + Haiku flows).
+    """Run the Dynvo scan pipeline (deterministic extractors + Haiku flows).
 
-    Pipeline v2 is the new code-grounded scanner introduced 2026-05-18.
+    The code-grounded scanner (pipeline v2, introduced 2026-05-18).
     Stages 0..7 run in order; Stage 3 + Stage 4 are the only LLM calls.
     Output: a single FeatureMap JSON with developer_features populated
     and product_features empty (Layer 2 is deferred).
@@ -904,7 +906,7 @@ def scan_v2(
     def _print_scope_start(scope: Optional[str]) -> None:
         scope_label = f" subpath={scope}" if scope else ""
         rprint(
-            f"[bold blue]faultline scan-v2[/bold blue] {repo}{scope_label} "
+            f"[bold blue]dynvo scan[/bold blue] {repo}{scope_label} "
             f"(model={resolved_model}, llm_reconcile={llm_reconcile}, "
             f"days={days}, max_tree_depth={max_tree_depth})"
         )
@@ -1106,6 +1108,27 @@ def scan_v2(
 
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
+
+
+# ── Deprecated alias: `dynvo scan-v2` ────────────────────────────────
+# The Fly worker contract still invokes `dynvo scan-v2` and PyPI floats
+# latest, so the old spelling must keep working for at least one full
+# release after the rename. Hidden from --help; identical flag surface
+# (functools.wraps → typer reads `scan`'s signature); prints a one-line
+# deprecation note to STDERR (stdout stays clean for log parsers).
+import functools as _functools  # noqa: E402 — colocated with the alias
+
+
+@app.command(name="scan-v2", hidden=True)
+@_functools.wraps(scan)
+def scan_v2(*args, **kwargs):
+    typer.secho(
+        "note: `scan-v2` is deprecated — use `dynvo scan` "
+        "(same pipeline, same flags).",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+    return scan(*args, **kwargs)
 
 
 @app.command(name="replay")
@@ -1350,9 +1373,9 @@ def partition_plan_cmd(
 
 @app.command()
 def version():
-    """Shows the faultline version."""
+    """Shows the Dynvo engine version."""
     from faultline import __version__
-    rprint(f"faultline [bold blue]v{__version__}[/bold blue]")
+    rprint(f"dynvo [bold blue]v{__version__}[/bold blue]")
 
 
 if __name__ == "__main__":
