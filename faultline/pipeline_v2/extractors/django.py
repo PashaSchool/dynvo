@@ -32,15 +32,15 @@ the other extractors and stay robust to partial/invalid files. Patterns
 live in ``eval/stacks/django.yaml`` (per ``stack-pattern-library``);
 this module only compiles + applies them.
 
-Activation gate (universal, structural — no repo-specific paths, no
-corpus-tuned magic numbers): fire when Stage 0 / the auditor classified
-the repo (or the current workspace) as ``django-app`` / ``django``
-(primary OR secondary), when an auditor ``extractor_hint`` mentions
-Django, or when a Python repo otherwise exposes Django source markers
-(``manage.py``, a ``settings.py`` with ``INSTALLED_APPS``, a ``urls.py``
-with ``urlpatterns``, or a ``rest_framework`` dependency/import). The
-source probe is bounded so the gate stays cheap on large repos.
-Self-skips to ``[]`` on non-Django repos.
+Activation gate: the extractor fires when Stage 0 / the auditor
+classified the repo (or the current workspace) as ``django-app`` /
+``django`` (primary OR secondary). Structural activation for repos
+whose stack TAG is inconclusive (hybrid monorepos tagged
+``js-generic``, python repos with Django source) is folded into the
+Django framework profile (StackProfile Phase B): the profile detects
+the framework from manifests + source fingerprints and supplies an
+always-active instance of this extractor through the Stage-1 override
+seam. Self-skips to ``[]`` on non-Django repos.
 
 No LLM. No network. Pure file-system scan + regex.
 """
@@ -68,13 +68,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-# Bounded number of candidate .py files the source-marker probe inspects
-# before giving up. Structural, not corpus-tuned: it caps the gate's I/O
-# on a huge non-Django repo; a real Django project surfaces a marker far
-# inside this budget.
-_GATE_SCAN_BUDGET = 300
 
 
 def _load_config() -> dict:
@@ -184,71 +177,20 @@ def _compile(config: dict) -> _Compiled:
 # ── Activation gate ────────────────────────────────────────────────────────
 
 
-def _hint_mentions_django(ctx: "ScanContext") -> bool:
-    """True when an auditor extractor_hint references Django."""
-    for hint in ctx.extractor_hints or ():
-        if "django" in hint.lower():
-            return True
-    return False
+def _is_django_app(ctx: "ScanContext") -> bool:
+    """Stack-tag gate only — structural detection lives in the profile.
 
-
-def _has_django_source(ctx: "ScanContext", c: "_Compiled") -> bool:
-    """Cheap, bounded structural probe for Django markers.
-
-    Only consulted when the stack tags are inconclusive. Looks for the
-    universal Django fingerprints — ``manage.py`` at any tracked level,
-    a ``settings.py`` declaring ``INSTALLED_APPS``, a ``urls.py`` with
-    ``urlpatterns``, or a ``rest_framework`` import — inspecting at most
-    ``_GATE_SCAN_BUDGET`` candidate files so the gate stays cheap on a
-    large non-Django repo.
+    The pre-profile fallbacks (auditor-hint substring match + probing
+    .py source for Django markers when the Stage-0 tag was an
+    inconclusive python flavour) moved into
+    ``profiles/django.py`` (Phase B activation fold): the profile's
+    ``detects()`` covers every structural case — including the
+    hybrid-monorepo shapes the tag-based branch could never reach — and
+    force-activates this extractor via the Stage-1 override seam.
     """
-    checked = 0
-    for rel in ctx.tracked_files:
-        if not rel.endswith(".py"):
-            continue
-        norm = f"/{posix(rel)}"
-        if "/site-packages/" in norm or "/.venv/" in norm or "/venv/" in norm:
-            continue
-        base = Path(rel).name
-        # manage.py is the canonical Django marker and is cheap to assert
-        # without reading the file.
-        if base == "manage.py":
-            return True
-        # Only pay the read cost for files whose name suggests a marker.
-        if base in ("settings.py", "urls.py", "urlconf.py") or base.endswith(
-            "_settings.py"
-        ):
-            text = read_text(ctx.repo_path / rel)
-            if text and (
-                "INSTALLED_APPS" in text
-                or "urlpatterns" in text
-                or "rest_framework" in text
-            ):
-                return True
-        checked += 1
-        if checked >= _GATE_SCAN_BUDGET:
-            break
-    return False
-
-
-def _is_django_app(ctx: "ScanContext", c: "_Compiled") -> bool:
-    """Activation gate — True iff the repo/workspace looks like Django."""
     if is_any_stack(ctx, "django-app", "django"):
         return True
-    if (ctx.audited_stack or "").lower().startswith("django"):
-        return True
-    secondaries = tuple(s.lower() for s in (ctx.secondary_stacks or ()))
-    if any(s.startswith("django") for s in secondaries):
-        return True
-    if _hint_mentions_django(ctx):
-        return True
-    # Inconclusive Python (or unknown) stack → confirm via source markers.
-    stack = (ctx.stack or "").lower()
-    if stack in (
-        "", "python", "python-lib", "python-library", "python-cli", "unknown",
-    ) or not stack:
-        return _has_django_source(ctx, c)
-    return False
+    return (ctx.audited_stack or "").lower().startswith("django")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -317,9 +259,12 @@ class DjangoExtractor:
     def __init__(self, config: dict | None = None) -> None:
         self._config = config if config is not None else _load_config()
 
+    def is_active(self, ctx: "ScanContext") -> bool:
+        return _is_django_app(ctx)
+
     def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
         c = _compile(self._config)
-        if not _is_django_app(ctx, c):
+        if not self.is_active(ctx):
             return []
 
         # ── Pass A: collect HTTP view classes per file (symbol → file) ──

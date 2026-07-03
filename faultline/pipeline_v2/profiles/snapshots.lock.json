@@ -47,6 +47,18 @@
       "commit_sha": "64aa8476273ef3dbacf37b2504ee716624d24812",
       "profile": "fastapi-family",
       "digest": "sha256:4d3e25c276e1135b17901d57623173e75aa239e706e2329751c7dc4afeeae00c"
+    },
+    "saleor": {
+      "path": "/Users/pkuzina/workspace/_faultlines-tier1/saleor",
+      "commit_sha": "f03b30eb612ba3a93a8cc144687325320519ee0a",
+      "profile": "django",
+      "digest": "sha256:e056a69f8b579e64ea053f56e6d2cfe702a422cc72ecf17170a9125ce4cafe05"
+    },
+    "weblate": {
+      "path": "/Users/pkuzina/workspace/_faultlines-tier1/weblate",
+      "commit_sha": "16a3c863ee5330c8c209d4f9bf52e2236bb0b795",
+      "profile": "django",
+      "digest": "sha256:e4cab4d5e458b12abcf696041361dc968e078af45175e314202465b6cc7c1333"
     }
   }
 }

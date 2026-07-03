@@ -2,18 +2,6 @@
   "_comment": "G3 trunk-purity legacy allowlist (StackProfile Phase A, 2026-07-03). Keyed by (file, stripped line). Phase B deletes extractor-activation rows as each stack folds into its profile. NEVER add a row without a review decision.",
   "entries": [
     {
-      "file": "faultline/pipeline_v2/extractors/django.py",
-      "line": "if \"django\" in hint.lower():",
-      "pattern": "stack-literal-cmp-rev",
-      "class": "extractor-activation"
-    },
-    {
-      "file": "faultline/pipeline_v2/extractors/django.py",
-      "line": "if stack in (",
-      "pattern": "stack-branch",
-      "class": "extractor-activation"
-    },
-    {
       "file": "faultline/pipeline_v2/extractors/express.py",
       "line": "if (ctx.stack or \"\").lower() == \"express\":",
       "pattern": "stack-literal-cmp",

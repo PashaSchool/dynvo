@@ -142,6 +142,7 @@ store-mutation = "faultline.framework_linkers.store_mutation:StoreMutationLinker
 # per stack; the core never changes (OCP).
 next-app-router = "faultline.pipeline_v2.profiles.next_app_router:NextAppRouterProfile"
 fastapi-family = "faultline.pipeline_v2.profiles.fastapi_family:FastApiFamilyProfile"
+django = "faultline.pipeline_v2.profiles.django:DjangoProfile"
 
 [tool.hatch.envs.default]
 dependencies = [

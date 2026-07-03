@@ -1,10 +1,11 @@
 """DjangoExtractor unit tests.
 
-Covers the activation gate (fires on a Django app via audited_stack,
-secondary stack, auditor hint, and structural source markers; self-skips
-on a non-Django repo) and extraction (path/re_path/url routes,
-include() traversal, DRF ViewSet/APIView detection, residual unrouted
-viewsets, supporting serializer/model evidence).
+Covers the activation gate (fires on a Django app via audited_stack /
+secondary stack; self-skips on a non-Django repo — the pre-profile
+hint/source-probe fallbacks are FOLDED into ``profiles/django.py``,
+Phase B) and extraction (path/re_path/url routes, include() traversal,
+DRF ViewSet/APIView detection, residual unrouted viewsets, supporting
+serializer/model evidence).
 """
 
 from __future__ import annotations
@@ -141,7 +142,11 @@ def test_gate_fires_on_secondary_stack(tmp_path: Path) -> None:
     assert DjangoExtractor().extract(ctx)
 
 
-def test_gate_fires_on_auditor_hint(tmp_path: Path) -> None:
+def test_hint_gate_folded_into_profile(tmp_path: Path) -> None:
+    """Auditor-hint activation moved to the Django profile (Phase B
+    fold): a hint alone no longer activates the extractor — the profile
+    detects the framework structurally and force-activates it via the
+    Stage-1 override seam instead."""
     _write(tmp_path / "api/urls.py", _URLS)
     ctx = _ctx(
         repo_path=tmp_path,
@@ -149,14 +154,13 @@ def test_gate_fires_on_auditor_hint(tmp_path: Path) -> None:
         audited_stack="monorepo-polyglot",
         extractor_hints=("apps/api is Django; enable Django extractor",),
     )
-    assert DjangoExtractor().extract(ctx)
+    assert DjangoExtractor().extract(ctx) == []
 
 
-def test_gate_fires_on_source_markers_when_stack_inconclusive(
-    tmp_path: Path,
-) -> None:
-    # No audited django tag, plain "python" stack — must confirm via
-    # structural markers (manage.py + urls.py with urlpatterns).
+def test_source_probe_folded_into_profile(tmp_path: Path) -> None:
+    """The inconclusive-stack source probe moved to the Django profile
+    (Phase B fold): structural markers alone no longer activate the
+    extractor without a Django stack tag."""
     _write(tmp_path / "manage.py", "import django\n")
     _write(tmp_path / "app/urls.py", _URLS)
     _write(tmp_path / "app/views.py", _VIEWS)
@@ -166,7 +170,7 @@ def test_gate_fires_on_source_markers_when_stack_inconclusive(
         stack="python",
         audited_stack=None,
     )
-    assert DjangoExtractor().extract(ctx)
+    assert DjangoExtractor().extract(ctx) == []
 
 
 def test_gate_skips_python_without_markers(tmp_path: Path) -> None:
