@@ -187,8 +187,9 @@ Working on the scan pipeline? Every stage persists its exact input
 next to its output artifact, and `dynvo replay --run <run> --stage
 <name> [--through output]` re-runs a single stage (or the downstream
 chain) from those artifacts with your edited code — no full rescan.
-See [docs/replay-v2.md](docs/replay-v2.md) for the isolated-stage
-experiment workflow and the `--fresh-llm` cache-bust semantics.
+See [faultline/replay/README.md](faultline/replay/README.md) for the
+isolated-stage experiment workflow and the `--fresh-llm` cache-bust
+semantics.
 
 ## License
 

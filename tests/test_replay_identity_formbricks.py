@@ -11,7 +11,7 @@ corpus / baseline skip cleanly):
 
 * the pinned clone at the snapshot-gate path;
 * a baseline run recorded with input capture, default env, and the
-  warm llm-cache (see docs/replay-v2.md):
+  warm llm-cache (see faultline/replay/README.md):
 
       dynvo scan-v2 <formbricks-clone> --run-id ws1-baseline
 

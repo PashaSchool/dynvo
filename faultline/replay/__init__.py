@@ -1,6 +1,6 @@
 """Replay v2 — per-stage input persistence + isolated stage re-execution.
 
-See ``docs/replay-v2.md`` for the workflow and
+See ``faultline/replay/README.md`` for the workflow and
 :mod:`faultline.replay.runner` for the executor semantics.
 
 The package ``__init__`` stays import-light on purpose: the pipeline

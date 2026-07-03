@@ -28,7 +28,7 @@ Design rules
   exclusions (e.g. ``ScanContext.cache_backend``) drop live handles;
   the replay runner reconstructs them (see
   :mod:`faultline.replay.runner`). What is NOT captured is documented
-  in ``docs/replay-v2.md`` — the identity-replay gate defines "good
+  in ``faultline/replay/README.md`` — the identity-replay gate defines "good
   enough".
 * **Pydantic round-trip** uses ``model_dump(mode="json")`` +
   ``model_validate`` — the same serialization the final FeatureMap
