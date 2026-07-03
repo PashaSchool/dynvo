@@ -368,7 +368,7 @@ def run_pipeline_v2(
     # ── Extract phase — Stage 1 (deterministic extractors) ─────────
     # Straight-line body lives in :mod:`faultline.pipeline_v2.phase_extract`
     # (global vs per-workspace dispatch + Stage 1 telemetry).
-    extract = run_extract_phase(ctx, run_dir)
+    extract = run_extract_phase(ctx, run_dir, profile=framework_profile)
     stage1_out = extract.stage1_out
     extractor_hits = extract.extractor_hits
     per_ws_telemetry = extract.per_ws_telemetry

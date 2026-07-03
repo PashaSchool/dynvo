@@ -87,6 +87,11 @@ _SOURCE_PRIORITY: dict[str, int] = {
     # (metric-honesty review): they were absent → priority 0 → they
     # lost file ownership to every listed source, including ``config``.
     "fastapi-route":   4,   # FastAPI @app/@router decorators
+    # Profile-supplied domain-package anchors (FastAPI-family, Phase B).
+    # Code-layout-derived like the other module/sub-package extractors,
+    # so the same ``mvc`` tier: below declared HTTP entry points (the
+    # router file itself belongs to the route anchor), above schema.
+    "fastapi-domain":  3,
     "route-fastify":   4,   # Fastify .get/.post route registrations
     "route-express":   4,   # Express .get/.post route registrations
     "go-router":       4,   # Go HTTP mux/handler registrations

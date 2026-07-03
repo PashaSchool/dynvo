@@ -216,6 +216,52 @@ def _discover_extractors() -> list[AnchorExtractor]:
     return extractors
 
 
+def merge_profile_extractors(
+    extractors: list[AnchorExtractor],
+    profile: Any,
+    ctx: "ScanContext",
+) -> list[AnchorExtractor]:
+    """Apply the active profile's optional Stage-1 extractor overrides.
+
+    StackProfile Phase B activation fold: a framework profile MAY
+    implement ``stage_1_extractor_overrides(ctx) -> list[AnchorExtractor]``
+    to supply the extractor instances its stack needs — folding the
+    pre-profile stack-tag activation gates into the profile module.
+
+    Duck-typed (``getattr``) so this trunk seam never names a concrete
+    profile (G3) and is a strict no-op for the DefaultProfile / ``None``
+    / any profile without the method — byte-for-byte preservation for
+    every other stack. Merge rule: an override whose ``name`` matches a
+    discovered extractor REPLACES it in place (never runs twice); new
+    names are APPENDED sorted by name (deterministic registry order).
+    """
+    if profile is None:
+        return extractors
+    method = getattr(profile, "stage_1_extractor_overrides", None)
+    if method is None:
+        return extractors
+    try:
+        overrides = [
+            o for o in (method(ctx) or [])
+            if isinstance(o, AnchorExtractor)
+        ]
+    except Exception as exc:  # noqa: BLE001 — override failure is non-fatal
+        logger.warning(
+            "profile %s stage_1_extractor_overrides failed: %s",
+            getattr(profile, "name", "?"), exc,
+        )
+        return extractors
+    if not overrides:
+        return extractors
+
+    by_name: dict[str, AnchorExtractor] = {o.name: o for o in overrides}
+    merged: list[AnchorExtractor] = [
+        by_name.pop(ex.name, ex) for ex in extractors
+    ]
+    merged.extend(by_name[name] for name in sorted(by_name))
+    return merged
+
+
 def _safe_extract(
     extractor: AnchorExtractor,
     ctx: ScanContext,
@@ -249,6 +295,7 @@ def stage_1_extractors(
     extractors: list[AnchorExtractor] | None = None,
     *,
     max_workers: int | None = None,
+    profile: Any | None = None,
 ) -> dict[str, list[AnchorCandidate]]:
     """Run all registered extractors in parallel.
 
@@ -260,6 +307,10 @@ def stage_1_extractors(
             under control.
         max_workers: thread pool size. ``None`` lets ``ThreadPoolExecutor``
             pick a sensible default based on the number of extractors.
+        profile: the ACTIVE framework profile (highest ``detects()`` win),
+            consulted duck-typed for Stage-1 extractor overrides — see
+            :func:`merge_profile_extractors`. ``None`` / DefaultProfile /
+            profiles without the optional method are a strict no-op.
 
     Returns:
         A ``dict`` keyed by extractor ``name`` (i.e. the ``source``
@@ -272,6 +323,7 @@ def stage_1_extractors(
     """
     if extractors is None:
         extractors = _discover_extractors()
+    extractors = merge_profile_extractors(extractors, profile, ctx)
 
     if not extractors:
         return {}
@@ -313,4 +365,4 @@ def stage_1_extractors(
     return results
 
 
-__all__ = ["stage_1_extractors"]
+__all__ = ["merge_profile_extractors", "stage_1_extractors"]
