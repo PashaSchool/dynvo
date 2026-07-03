@@ -10,13 +10,13 @@
       "path": "/Users/pkuzina/workspace/_faultlines-testrepos/formbricks",
       "commit_sha": "af198c56322da3e97934e7d45ed4e5e7896b5da5",
       "profile": "next-app-router",
-      "digest": "sha256:670415e29345fc9a86b09c07fdcf9dee64cd8e9a34dde7ce89c23e96a1dde62d"
+      "digest": "sha256:fe97ce8a9459dac67e7d0327e06e9522eb96155d9c652d581b47a377593f0c8e"
     },
     "dub": {
       "path": "/Users/pkuzina/workspace/_faultlines-testrepos/dub",
       "commit_sha": "263fff9ed0c82d59bbb7684fd888e41ed298d531",
       "profile": "next-app-router",
-      "digest": "sha256:823575d99f308614ef116b37d72da8acdfffffe21a1173d7665e67217601dfee"
+      "digest": "sha256:5005deaff872f8470423579cf668c95a4b078abc476bd0754c8f087e3b3ba701"
     },
     "traefik": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/traefik",
