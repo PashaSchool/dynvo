@@ -785,6 +785,26 @@ def stage_0_intake(
     # want (one FeatureMap per sub-project).
     ws_info = detect_workspace(str(effective_root), tracked_files)
 
+    # StackProfile Phase B+ — nested-manifest fallback. ONLY when the
+    # root-level detection found nothing: a repo whose workspace
+    # manifest lives below the root (polar's ``clients/
+    # pnpm-workspace.yaml``) or that colocates an app root deep inside
+    # its source tree (dispatch's ``src/dispatch/static/dispatch/``)
+    # otherwise enumerates zero workspaces and its whole frontend stays
+    # unattributed. Root-manifest repos and repos where discovery finds
+    # nothing are byte-for-byte untouched (G4).
+    nested_signals: list[str] = []
+    if not ws_info.detected:
+        from faultline.pipeline_v2.nested_workspaces import (
+            discover_nested_workspaces,
+        )
+
+        nested_info, nested_signals = discover_nested_workspaces(
+            effective_root, tracked_files,
+        )
+        if nested_info.detected:
+            ws_info = nested_info
+
     if ws_info.detected:
         workspaces = _enrich_workspaces(effective_root, ws_info)
         # Root stack — the monorepo itself usually carries one too
@@ -798,7 +818,7 @@ def stage_0_intake(
             workspaces=workspaces,
             tracked_files=tracked_files,
             commits=commits,
-            stack_signals=root_signals,
+            stack_signals=root_signals + nested_signals,
             workspace_manager=ws_info.manager,
             run_id=resolved_run_id,
             run_dir=resolved_run_dir,

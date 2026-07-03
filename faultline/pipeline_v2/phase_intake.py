@@ -29,7 +29,7 @@ from faultline.pipeline_v2.stack_auditor import (
 )
 from faultline.pipeline_v2.stage_0_6_shape import classify_repo_shape
 from faultline.pipeline_v2.stage_0_7_repo_class import (
-    classify_repo_class,
+    classify_repo_class_per_unit,
     should_suppress_user_flows,
     write_repo_class_artifact,
 )
@@ -207,7 +207,7 @@ def run_intake_phase(
     # journeys); ambiguity fails open to product-app. Pure structural
     # probes over Stage 0/0.6 signals; writes 06-stage-repo_class.json.
     write_stage_input(run_dir, 6, "repo_class", {"ctx": ctx})
-    repo_class_result = classify_repo_class(ctx)
+    repo_class_result = classify_repo_class_per_unit(ctx)
     write_repo_class_artifact(ctx, repo_class_result)
     with StageLogger(run_dir, 6, "repo_class") as log_rc:
         log_rc.info(

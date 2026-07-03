@@ -64,8 +64,10 @@ class ReplayEnv:
             return None
 
     def profile(self, ctx: Any) -> Any:
-        from faultline.pipeline_v2.profiles import select_profile
-        return select_profile(ctx)
+        # Phase B+ — replay uses the same per-unit-aware selection as
+        # the live pipeline so replayed stages see the same profile.
+        from faultline.pipeline_v2.profiles import select_scan_profile
+        return select_scan_profile(ctx)
 
 
 def prepare_ctx(ctx: Any, env: ReplayEnv) -> Any:
@@ -216,13 +218,13 @@ def _run_shape(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
 
 def _run_repo_class(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     from faultline.pipeline_v2.stage_0_7_repo_class import (
-        classify_repo_class,
+        classify_repo_class_per_unit,
         should_suppress_user_flows,
         write_repo_class_artifact,
     )
 
     ctx = prepare_ctx(state["ctx"], env)
-    verdict = classify_repo_class(ctx)
+    verdict = classify_repo_class_per_unit(ctx)
     write_repo_class_artifact(ctx, verdict)  # writes 06-stage-repo_class.json
     with StageLogger(env.run_dir, 6, "repo_class") as log_rc:
         log_rc.info(
