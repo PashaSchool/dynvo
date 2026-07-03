@@ -59,6 +59,7 @@ console = Console()
 _KNOWN_SUBCOMMANDS = frozenset({
     "update", "evolve", "refresh", "watch", "watch-status", "watch-stop",
     "pull", "suggest-config", "scan-v2", "classify-shape", "version",
+    "replay",
 })
 
 
@@ -1105,6 +1106,99 @@ def scan_v2(
 
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
+
+
+@app.command(name="replay")
+def replay_cmd(
+    run: str = typer.Option(
+        ...,
+        "--run",
+        help=(
+            "Source run: an absolute run-dir path, or <slug>/<run_id> "
+            "(or <slug>/latest) under ~/.faultline/logs/."
+        ),
+    ),
+    stage: str = typer.Option(
+        ...,
+        "--stage",
+        help=(
+            "Stage to replay — the artifact stage name (e.g. 'flows', "
+            "'residual', 'uf_refiner') or its numbered form "
+            "('03-flows' / '03-stage-flows')."
+        ),
+    ),
+    through: Optional[str] = typer.Option(
+        None,
+        "--through",
+        help=(
+            "Chain downstream stages in pipeline order up to and "
+            "including this stage (e.g. --through output). Each "
+            "downstream stage starts from ITS recorded input, overlaid "
+            "with the state the replayed upstream stages produced."
+        ),
+    ),
+    env: Optional[List[str]] = typer.Option(
+        None,
+        "--env",
+        help=(
+            "K=V environment override applied for the duration of the "
+            "replay (repeatable) — the knob for stage-gate experiments, "
+            "e.g. --env FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=1."
+        ),
+    ),
+    fresh_llm: bool = typer.Option(
+        False,
+        "--fresh-llm",
+        help=(
+            "Clear ONLY the target stage kind's llm-cache subdir "
+            "(~/.faultline/llm-cache/<kind>/) before replaying, forcing "
+            "live LLM calls for that stage. Other stages' caches are "
+            "untouched."
+        ),
+    ),
+):
+    """Re-run ONE pipeline-v2 stage (or a chain) from a recorded run.
+
+    Reconstructs the stage input from the source run's
+    ``NN-stage-<name>-input.json`` artifact, executes the CURRENT code
+    for that stage, and writes results into a NEW run dir stamped
+    ``replayed_from``. LLM stages replay against the content-keyed
+    llm-cache by default ($0 on an unchanged repo).
+    """
+    from faultline.replay.runner import replay as _replay
+
+    env_overrides: dict[str, str] = {}
+    for item in env or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            rprint(f"[red]Error:[/red] --env expects K=V, got {item!r}")
+            raise typer.Exit(code=2)
+        env_overrides[key] = value
+
+    try:
+        report = _replay(
+            run,
+            stage,
+            through=through,
+            env_overrides=env_overrides,
+            fresh_llm=fresh_llm,
+        )
+    except (FileNotFoundError, KeyError, ValueError, NotImplementedError) as exc:
+        rprint(f"[red]Replay failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    rprint(
+        f"[green]✓[/green] Replayed {len(report.stages_run)} stage(s) "
+        f"from {report.source_run_dir.name} → {report.new_run_dir}"
+    )
+    rprint(f"  stages: {', '.join(report.stages_run)}")
+    if report.stages_skipped:
+        rprint(
+            f"  [yellow]skipped (gated off in source run):[/yellow] "
+            f"{', '.join(report.stages_skipped)}"
+        )
+    if report.out_path is not None:
+        rprint(f"  feature map: {report.out_path}")
 
 
 @app.command(name="classify-shape")

@@ -93,6 +93,7 @@ from faultline.pipeline_v2.phase_postprocess import run_postprocess_phase
 from faultline.pipeline_v2 import scan_result_cache as _scan_cache
 from faultline.pipeline_v2.run_dir import update_latest_symlink
 from faultline.pipeline_v2.run_logger import StageLogger
+from faultline.replay.capture import write_stage_input
 from faultline.pipeline_v2.scan_meta import (
     LLM_FALLBACK_WARN_THRESHOLD,
     assemble_scan_meta,
@@ -374,6 +375,11 @@ def run_pipeline_v2(
     workspace_telemetry = extract.workspace_telemetry
 
     # ── Stage 2 — reconciliation ────────────────────────────────────
+    write_stage_input(run_dir, 2, "reconcile", {
+        "stage1_out": stage1_out,
+        "ctx": ctx,
+        "llm_reconcile": llm_reconcile,
+    })
     with StageLogger(run_dir, 2, "reconcile") as log2:
         stage2 = stage_2_reconcile(
             _isolate(stage1_out), _isolate(ctx),
@@ -440,6 +446,12 @@ def run_pipeline_v2(
     # Stage 8 Layer-2. See stage_2_6_membership_closure.py docstring.
     # ``extractor_signals`` feeds the URL-literal frontend→backend
     # linker channel (route table from explicit + filesystem routes).
+    write_stage_input(run_dir, 2, "membership_closure", {
+        "deterministic_features": deterministic_features,
+        "unattributed": unattributed,
+        "ctx": ctx,
+        "stage1_out": stage1_out,
+    })
     with StageLogger(run_dir, 2, "membership_closure") as log2_6:
         closure = run_membership_closure(
             _isolate(deterministic_features), _isolate(unattributed),
@@ -484,6 +496,11 @@ def run_pipeline_v2(
         incremental_base_scan = gate_outcome.base_scan
 
     # ── Stage 3 — flow detection (Haiku) ───────────────────────────
+    write_stage_input(run_dir, 3, "flows", {
+        "deterministic_features": deterministic_features,
+        "ctx": ctx,
+        "model_id": model_id,
+    })
     with StageLogger(run_dir, 3, "flows") as log3:
         stage3 = stage_3_flows(
             _isolate(deterministic_features), _isolate(ctx),
@@ -532,6 +549,12 @@ def run_pipeline_v2(
         )
 
     # ── Stage 4 — residual LLM fallback (cluster + saturation) ─────
+    write_stage_input(run_dir, 4, "residual", {
+        "unattributed": unattributed,
+        "ctx": ctx,
+        "deterministic_features": deterministic_features,
+        "model_id": model_id,
+    })
     with StageLogger(run_dir, 4, "residual") as log4:
         stage4 = stage_4_residual(
             _isolate(unattributed), _isolate(ctx),
@@ -678,6 +701,13 @@ def run_pipeline_v2(
     # after Stage 8 rollup + Stage 8.5 backfill. Run the same
     # deterministic pass on them here so the final scan output carries
     # hotspots on both layers. Pure git data, no extra deps.
+    # Replay v2 — input-only capture for the hotspot connector (this
+    # pass writes no output artifact of its own; the replay chain needs
+    # its input to bridge Stage 8.x → finalize).
+    write_stage_input(run_dir, 8, "pf_hotspots", {
+        "product_features": product_features,
+        "ctx": ctx,
+    })
     try:
         pfs_with_hotspots = attach_hotspots_to_product_features(
             product_features, ctx.commits,
