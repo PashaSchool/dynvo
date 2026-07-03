@@ -1,0 +1,28 @@
+{
+  "_comment": "StackProfile snapshot gate lock (spec Gap 3). Digests are sha256 of the NORMALIZED deterministic-only scan JSON (faultline.tools.normalize_scan) of each pinned LOCAL clone at the pinned commit. Regenerate with `python -m faultline.tools.snapshot_gate --update`. Paths are machine-local pins (the corpus clones are not vendored); CI boxes without the clones skip the gate. days=3650 pins the git window to the full clone so digests do not rot as calendar time passes.",
+  "version": 1,
+  "scan_config": {
+    "days": 3650,
+    "llm": "hard-off (no ANTHROPIC_API_KEY in child env; all LLM caches disabled)"
+  },
+  "repos": {
+    "formbricks": {
+      "path": "/Users/pkuzina/workspace/_faultlines-testrepos/formbricks",
+      "commit_sha": "af198c56322da3e97934e7d45ed4e5e7896b5da5",
+      "profile": "next-app-router",
+      "digest": "sha256:670415e29345fc9a86b09c07fdcf9dee64cd8e9a34dde7ce89c23e96a1dde62d"
+    },
+    "dub": {
+      "path": "/Users/pkuzina/workspace/_faultlines-testrepos/dub",
+      "commit_sha": "263fff9ed0c82d59bbb7684fd888e41ed298d531",
+      "profile": "next-app-router",
+      "digest": "sha256:823575d99f308614ef116b37d72da8acdfffffe21a1173d7665e67217601dfee"
+    },
+    "traefik": {
+      "path": "/Users/pkuzina/workspace/_faultlines-freshblood/traefik",
+      "commit_sha": "6e4f397357787d8c841bf92588866d8a04e4a683",
+      "profile": "default",
+      "digest": "sha256:f7fa70018a7cc9d5cdeef409d78e64897f25a323246edac2be393ed66154fbfb"
+    }
+  }
+}

@@ -1,0 +1,167 @@
+{
+  "_comment": "G3 trunk-purity legacy allowlist (StackProfile Phase A, 2026-07-03). Keyed by (file, stripped line). Phase B deletes extractor-activation rows as each stack folds into its profile. NEVER add a row without a review decision.",
+  "entries": [
+    {
+      "file": "faultline/pipeline_v2/extractors/django.py",
+      "line": "if \"django\" in hint.lower():",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/django.py",
+      "line": "if stack in (",
+      "pattern": "stack-branch",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/express.py",
+      "line": "if (ctx.stack or \"\").lower() == \"express\":",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/express.py",
+      "line": "if (ws.stack or \"\").lower() == \"express\":",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/fastapi.py",
+      "line": "if stack in (\"python\", \"python-lib\", \"python-library\", \"\") or not stack:",
+      "pattern": "stack-branch",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/fastify.py",
+      "line": "- ``ctx.audited_stack == \"fastify\"``",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/fastify.py",
+      "line": "- ``\"fastify\" in ctx.secondary_stacks``",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/fastify.py",
+      "line": "if isinstance(block, dict) and \"fastify\" in block:",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/fastify.py",
+      "line": "if (ctx.stack or \"\").lower() == \"fastify\":",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/fastify.py",
+      "line": "if (ws.stack or \"\").lower() == \"fastify\":",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/route.py",
+      "line": "elif stack in py_stacks:",
+      "pattern": "stack-branch",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/rust_packages.py",
+      "line": "``rust_workspace``'s Rust check \u2014 ``ctx.stack == \"rust\"``, an audited",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/rust_packages.py",
+      "line": "if (ctx.stack or \"\").lower() == \"rust\":",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/rust_packages.py",
+      "line": "if \"rust\" in secondaries or any(s.startswith(\"rust\") for s in secondaries):",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/rust_workspace.py",
+      "line": "(ctx.stack or \"\").lower() == \"rust\"",
+      "pattern": "stack-literal-cmp",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/extractors/rust_workspace.py",
+      "line": "or \"rust\" in secondaries",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "extractor-activation"
+    },
+    {
+      "file": "faultline/pipeline_v2/flow_symbols.py",
+      "line": "if lang == \"go\":",
+      "pattern": "stack-literal-cmp",
+      "class": "language-lexer"
+    },
+    {
+      "file": "faultline/pipeline_v2/stack_auditor.py",
+      "line": "if primary == \"next-app-router\" and \"next\" not in deps:",
+      "pattern": "stack-literal-cmp",
+      "class": "stack-detection"
+    },
+    {
+      "file": "faultline/pipeline_v2/stack_auditor.py",
+      "line": "if primary == \"express\" and \"fastify\" in deps:",
+      "pattern": "stack-literal-cmp",
+      "class": "stack-detection"
+    },
+    {
+      "file": "faultline/pipeline_v2/stack_auditor.py",
+      "line": "if primary == \"python-library\" and _has_manage_py(ctx):",
+      "pattern": "stack-literal-cmp",
+      "class": "stack-detection"
+    },
+    {
+      "file": "faultline/pipeline_v2/stack_auditor.py",
+      "line": "if primary == \"python-library\" and _has_fastapi_call(ctx):",
+      "pattern": "stack-literal-cmp",
+      "class": "stack-detection"
+    },
+    {
+      "file": "faultline/pipeline_v2/stage_0_intake.py",
+      "line": "if \"django\" in dep_haystack:",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "stack-detection"
+    },
+    {
+      "file": "faultline/pipeline_v2/stage_0_intake.py",
+      "line": "if \"fastapi\" in haystack:",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "stack-detection"
+    },
+    {
+      "file": "faultline/pipeline_v2/stage_6_6_branch_slicer.py",
+      "line": "elif name == \"go\":",
+      "pattern": "stack-literal-cmp",
+      "class": "language-lexer"
+    },
+    {
+      "file": "faultline/pipeline_v2/stage_6_6_branch_slicer.py",
+      "line": "elif name == \"rust\":",
+      "pattern": "stack-literal-cmp",
+      "class": "language-lexer"
+    },
+    {
+      "file": "faultline/pipeline_v2/url_linker.py",
+      "line": "if \"trpc\" in ident.lower():",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "url-ident-heuristic"
+    },
+    {
+      "file": "faultline/pipeline_v2/url_linker.py",
+      "line": "if \"trpc\" in low or _chain_contains_trpc(text, m.start()):",
+      "pattern": "stack-literal-cmp-rev",
+      "class": "url-ident-heuristic"
+    }
+  ]
+}

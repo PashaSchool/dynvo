@@ -160,19 +160,25 @@ class ProfileRegistry:
         return self._by_name["default"]
 
     def select(self, ctx) -> FrameworkProfile:  # noqa: ANN001 — ScanContext, avoid import cycle
-        """Pick the highest-``detects`` profile for ``ctx``.
+        """Pick the highest-``detects`` profile for ``ctx`` — deterministically.
 
-        Ties and an all-zero field both resolve to the default
-        (its positive floor guarantees a non-``None`` result).
+        G1 (stack-profile-architecture spec): exactly one profile per
+        scan-unit, selected by the highest ``detects()`` score. Ties
+        break by profile ``name`` lexicographic (ascending) so the
+        winner NEVER depends on registration / discovery order — a new
+        profile can change another repo's selection only by genuinely
+        outscoring the incumbent, which the per-pinned-repo selection
+        fixtures catch. No positive score at all → :class:`DefaultProfile`
+        (its floor normally guarantees this branch is unreachable, but
+        the guard keeps selection total even with a floorless default).
         """
-        best = self.default
-        best_score = best.detects(ctx)
-        for profile in self._by_name.values():
-            if profile is best:
-                continue
-            score = profile.detects(ctx)
-            if score > best_score:
-                best, best_score = profile, score
+        scored = sorted(
+            ((profile.detects(ctx), profile) for profile in self._by_name.values()),
+            key=lambda pair: (-pair[0], pair[1].name),
+        )
+        best_score, best = scored[0]
+        if best_score <= 0.0:
+            return self.default
         return best
 
 

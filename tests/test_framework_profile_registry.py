@@ -172,6 +172,55 @@ def test_select_specific_beats_default_floor(tmp_path: Path) -> None:
     assert chosen.name == "barely"
 
 
+def test_select_tie_breaks_lexicographic_regardless_of_order(
+    tmp_path: Path,
+) -> None:
+    """G1 — equal scores resolve by profile name, never insertion order."""
+    alpha = _FakeProfile("alpha", 0.8)
+    zulu = _FakeProfile("zulu", 0.8)
+    assert select_profile(_ctx(tmp_path), [zulu, alpha]).name == "alpha"
+    assert select_profile(_ctx(tmp_path), [alpha, zulu]).name == "alpha"
+
+
+def test_select_is_order_independent_for_distinct_scores(tmp_path: Path) -> None:
+    """G1 — permuting the registration order never changes the winner."""
+    import itertools
+
+    profiles = [
+        _FakeProfile("a-weak", 0.2),
+        _FakeProfile("m-strong", 0.9),
+        _FakeProfile("z-mid", 0.5),
+    ]
+    for perm in itertools.permutations(profiles):
+        assert select_profile(_ctx(tmp_path), list(perm)).name == "m-strong"
+
+
+def test_select_returns_default_when_no_positive_score(tmp_path: Path) -> None:
+    """G1 guard — a floorless registry still resolves to the default."""
+
+    class _ZeroFloorDefault(_FakeProfile):
+        pass
+
+    reg = ProfileRegistry([_FakeProfile("nothing", 0.0)])
+    chosen = reg.select(_ctx(tmp_path))
+    assert chosen.name == "default"
+
+
+def test_select_tie_with_default_floor_prefers_default_lexicographically(
+    tmp_path: Path,
+) -> None:
+    """G1 — a profile that only EQUALS the default floor does not win.
+
+    'default' sorts before almost any profile slug; matching the floor
+    (0.01) is not a real detection signal, so the null-object keeps the
+    repo. Beating the floor (see test_select_specific_beats_default_floor)
+    is what flips selection.
+    """
+    barely = _FakeProfile("not-really-detected", 0.01)
+    chosen = select_profile(_ctx(tmp_path), [barely])
+    assert chosen.name == "default"
+
+
 # ── discovery ───────────────────────────────────────────────────────────────
 
 
