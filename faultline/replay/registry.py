@@ -214,6 +214,26 @@ def _run_shape(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     return {"ctx": ctx}
 
 
+def _run_repo_class(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    from faultline.pipeline_v2.stage_0_7_repo_class import (
+        classify_repo_class,
+        should_suppress_user_flows,
+        write_repo_class_artifact,
+    )
+
+    ctx = prepare_ctx(state["ctx"], env)
+    verdict = classify_repo_class(ctx)
+    write_repo_class_artifact(ctx, verdict)  # writes 06-stage-repo_class.json
+    with StageLogger(env.run_dir, 6, "repo_class") as log_rc:
+        log_rc.info(
+            f"repo_class={verdict.repo_class} "
+            f"confidence={verdict.confidence:.2f} "
+            f"uf_suppression={should_suppress_user_flows(verdict)} "
+            f"matched_signals={list(verdict.matched_signals)}",
+        )
+    return {"ctx": ctx}
+
+
 def _run_extractors(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     from faultline.pipeline_v2 import run as _run
     from faultline.pipeline_v2.phase_extract import run_extract_phase
@@ -1517,55 +1537,56 @@ STAGES: list[StageSpec] = [
     StageSpec("intake", 0, 0, _run_intake),
     StageSpec("auditor", 0, 1, _run_auditor, llm_cache_dir="auditor"),
     StageSpec("shape", 6, 2, _run_shape),
-    StageSpec("extractors", 1, 3, _run_extractors),
-    StageSpec("reconcile", 2, 4, _run_reconcile),
-    StageSpec("membership_closure", 2, 5, _run_membership_closure),
-    StageSpec("flows", 3, 6, _run_flows, llm_cache_dir="flows"),
-    StageSpec("residual", 4, 7, _run_residual, llm_cache_dir="residual"),
-    StageSpec("postprocess", 5, 8, _run_postprocess),
-    StageSpec("sibling_collapse", 5, 9, _run_sibling_collapse),
-    StageSpec("cross_flow_dedup", 5, 10, _run_cross_flow_dedup),
-    StageSpec("bipartite", 5, 11, _run_bipartite),
-    StageSpec("metrics", 6, 12, _run_metrics),
-    StageSpec("product_clusterer", 6, 13, _run_product_clusterer),
-    StageSpec("import_tree", 6, 14, _run_import_tree),
-    StageSpec("framework_enrich", 6, 15, _run_framework_enrich),
-    StageSpec("branch_slicer", 6, 16, _run_branch_slicer),
+    StageSpec("repo_class", 6, 3, _run_repo_class),
+    StageSpec("extractors", 1, 4, _run_extractors),
+    StageSpec("reconcile", 2, 5, _run_reconcile),
+    StageSpec("membership_closure", 2, 6, _run_membership_closure),
+    StageSpec("flows", 3, 7, _run_flows, llm_cache_dir="flows"),
+    StageSpec("residual", 4, 8, _run_residual, llm_cache_dir="residual"),
+    StageSpec("postprocess", 5, 9, _run_postprocess),
+    StageSpec("sibling_collapse", 5, 10, _run_sibling_collapse),
+    StageSpec("cross_flow_dedup", 5, 11, _run_cross_flow_dedup),
+    StageSpec("bipartite", 5, 12, _run_bipartite),
+    StageSpec("metrics", 6, 13, _run_metrics),
+    StageSpec("product_clusterer", 6, 14, _run_product_clusterer),
+    StageSpec("import_tree", 6, 15, _run_import_tree),
+    StageSpec("framework_enrich", 6, 16, _run_framework_enrich),
+    StageSpec("branch_slicer", 6, 17, _run_branch_slicer),
     StageSpec(
-        "marketing_clusterer", 8, 17, _run_marketing_clusterer,
+        "marketing_clusterer", 8, 18, _run_marketing_clusterer,
         llm_cache_dir="product-cluster",
     ),
-    StageSpec("rollup", 8, 18, _run_rollup),
-    StageSpec("member_backfill", 8, 19, _run_member_backfill),
-    StageSpec("nonsource_drop", 8, 20, _run_nonsource_drop),
-    StageSpec("scaffold_filter", 8, 21, _run_scaffold_filter),
-    StageSpec("di_attribution", 8, 22, _run_di_attribution),
-    StageSpec("anchor_desink", 8, 23, _run_anchor_desink),
-    StageSpec("shared_members", 8, 24, _run_shared_members),
-    StageSpec("anchor_subdecompose", 8, 25, _run_anchor_subdecompose),
+    StageSpec("rollup", 8, 19, _run_rollup),
+    StageSpec("member_backfill", 8, 20, _run_member_backfill),
+    StageSpec("nonsource_drop", 8, 21, _run_nonsource_drop),
+    StageSpec("scaffold_filter", 8, 22, _run_scaffold_filter),
+    StageSpec("di_attribution", 8, 23, _run_di_attribution),
+    StageSpec("anchor_desink", 8, 24, _run_anchor_desink),
+    StageSpec("shared_members", 8, 25, _run_shared_members),
+    StageSpec("anchor_subdecompose", 8, 26, _run_anchor_subdecompose),
     StageSpec(
-        "llm_component_split", 8, 26, _run_llm_component_split,
+        "llm_component_split", 8, 27, _run_llm_component_split,
         llm_cache_dir="llm-component-split",
     ),
-    StageSpec("domain_member_attribution", 8, 27, _run_domain_member_attribution),
-    StageSpec("pf_hotspots", 8, 28, _run_pf_hotspots, connector=True),
-    StageSpec("lineage", 6, 29, _run_lineage, connector=True),
-    StageSpec("flow_expansion", 3, 30, _run_flow_expansion),
-    StageSpec("test_strip", 6, 31, _run_test_strip),
-    StageSpec("generated_strip", 6, 32, _run_generated_strip),
-    StageSpec("user_flows", 6, 33, _run_user_flows),
-    StageSpec("uf_splitter", 6, 34, _run_uf_splitter, llm_cache_dir="uf-split"),
-    StageSpec("uf_refiner", 6, 35, _run_uf_refiner, llm_cache_dir="uf-refine"),
+    StageSpec("domain_member_attribution", 8, 28, _run_domain_member_attribution),
+    StageSpec("pf_hotspots", 8, 29, _run_pf_hotspots, connector=True),
+    StageSpec("lineage", 6, 30, _run_lineage, connector=True),
+    StageSpec("flow_expansion", 3, 31, _run_flow_expansion),
+    StageSpec("test_strip", 6, 32, _run_test_strip),
+    StageSpec("generated_strip", 6, 33, _run_generated_strip),
+    StageSpec("user_flows", 6, 34, _run_user_flows),
+    StageSpec("uf_splitter", 6, 35, _run_uf_splitter, llm_cache_dir="uf-split"),
+    StageSpec("uf_refiner", 6, 36, _run_uf_refiner, llm_cache_dir="uf-refine"),
     StageSpec(
-        "journey_abstraction", 6, 36, _run_journey_abstraction,
+        "journey_abstraction", 6, 37, _run_journey_abstraction,
         optional=True, llm_cache_dir="abstraction",
     ),
-    StageSpec("dual_evidence", 6, 37, _run_dual_evidence,
+    StageSpec("dual_evidence", 6, 38, _run_dual_evidence,
               optional=True, connector=True),
-    StageSpec("history", 6, 38, _run_history),
-    StageSpec("impact", 6, 39, _run_impact),
-    StageSpec("monorepo_assembly", 6, 40, _run_monorepo_assembly),
-    StageSpec("output", 7, 41, _run_output),
+    StageSpec("history", 6, 39, _run_history),
+    StageSpec("impact", 6, 40, _run_impact),
+    StageSpec("monorepo_assembly", 6, 41, _run_monorepo_assembly),
+    StageSpec("output", 7, 42, _run_output),
 ]
 
 _BY_KEY = {s.key: s for s in STAGES}

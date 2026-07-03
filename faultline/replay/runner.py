@@ -106,6 +106,68 @@ def _fresh_llm_bust(spec: StageSpec) -> str | None:
     return None
 
 
+#: LlmHealth ``record_failure(stage=…)`` labels → registry spec keys.
+#: Used to locate the recorded auth-death point in pipeline order.
+_HEALTH_LABEL_TO_SPEC_KEY = {
+    "stack_auditor": "auditor",
+    "stage_2_reconcile": "reconcile",
+    "stage_3_flows": "flows",
+    "stage_4_residual": "residual",
+    "stage_8_analyst": "marketing_clusterer",
+    "stage_8_marketing_clusterer": "marketing_clusterer",
+    "stage_6_7c_uf_splitter": "uf_splitter",
+    "stage_6_7b_uf_refiner": "uf_refiner",
+    "stage_6_7d_llm_journey_abstraction": "journey_abstraction",
+}
+
+
+def _seed_recorded_llm_health(
+    source_run_dir: Path, target: StageSpec, env: ReplayEnv,
+) -> None:
+    """Replay fidelity for scan-wide LLM health.
+
+    ``LlmHealth`` is sticky across a live scan: one auth-class failure
+    flips ``should_call()`` False for every LATER stage. The per-stage
+    input artifacts do not carry that service state, so a fresh replay
+    of a downstream stage would run HEALTHIER than the recorded run
+    whenever the llm-cache holds answers the dead scan never looked up
+    (WS1 identity gate, 04-residual). When the source run recorded an
+    auth death (``scan_meta.llm_degraded`` in ``07-stage-output.json``)
+    at a stage strictly EARLIER in pipeline order than the replay
+    target, seed the replay's health with that recorded state. A target
+    at (or before) the death stage starts healthy and re-derives the
+    failure exactly as the live scan did.
+    """
+    out_artifact = source_run_dir / "07-stage-output.json"
+    if not out_artifact.exists():
+        return
+    try:
+        doc = json.loads(out_artifact.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):  # pragma: no cover — defensive
+        return
+    degraded = (doc.get("scan_meta") or {}).get("llm_degraded") or {}
+    if degraded.get("reason") != "auth_error":
+        return
+    first_label = degraded.get("first_stage", "")
+    key = _HEALTH_LABEL_TO_SPEC_KEY.get(first_label)
+    if key is None:
+        return
+    from faultline.replay.registry import STAGES
+
+    order_by_key = {s.key: s.order for s in STAGES}
+    death_order = order_by_key.get(key)
+    if death_order is None or death_order >= target.order:
+        return
+    env.llm_health.seed_auth_failure(
+        stage=first_label, detail=degraded.get("detail", ""),
+    )
+    logger.info(
+        "replay: seeded recorded auth-dead LLM health "
+        "(source run died at %s, order %d < target %s, order %d)",
+        first_label, death_order, target.key, target.order,
+    )
+
+
 def _prepare_state(state: dict[str, Any], env: ReplayEnv) -> None:
     """Post-overlay fixups: point ctx at the replay run + restore flow
     object identity between features and the bipartite projection."""
@@ -147,6 +209,7 @@ def replay(
         busted = _fresh_llm_bust(target)
 
     env = ReplayEnv(run_dir=new_run_dir, run_id=new_run_id)
+    _seed_recorded_llm_health(source_run_dir, target, env)
     report = ReplayReport(
         source_run_dir=source_run_dir,
         new_run_dir=new_run_dir,

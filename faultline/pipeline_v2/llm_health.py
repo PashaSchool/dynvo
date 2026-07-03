@@ -166,6 +166,23 @@ class LlmHealth:
         with self._lock:
             self._successes += 1
 
+    def seed_auth_failure(self, *, stage: str, detail: str = "") -> None:
+        """Restore a RECORDED auth-dead state (replay fidelity).
+
+        Replay reconstructs each stage's input from artifacts, but
+        LlmHealth is a fresh service object; when the source run's LLM
+        auth died at an EARLIER stage, the replayed stage entered with
+        ``should_call() == False`` live — reproduce that, otherwise a
+        warm llm-cache makes the replay healthier than the recorded run
+        (WS1 identity gate). Idempotent; never overwrites an existing
+        failure record.
+        """
+        with self._lock:
+            if not self._auth_failed:
+                self._auth_failed = True
+                self._first_stage = stage
+                self._detail = sanitize_detail(detail)
+
     def record_failure(self, exc: BaseException, *, stage: str) -> bool:
         """Record one failed LLM call.
 

@@ -206,6 +206,7 @@ def run_intake_phase(
     # finalize phase (libraries/CLIs/daemons get no hallucinated user
     # journeys); ambiguity fails open to product-app. Pure structural
     # probes over Stage 0/0.6 signals; writes 06-stage-repo_class.json.
+    write_stage_input(run_dir, 6, "repo_class", {"ctx": ctx})
     repo_class_result = classify_repo_class(ctx)
     write_repo_class_artifact(ctx, repo_class_result)
     with StageLogger(run_dir, 6, "repo_class") as log_rc:
