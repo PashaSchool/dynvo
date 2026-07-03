@@ -27,14 +27,14 @@
     "polar": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/polar",
       "commit_sha": "aef390d613b2649cccdfc680eb9cc2b0b00c3940",
-      "profile": "fastapi-family",
-      "digest": "sha256:0aef849c865c32f68d33ccc393c19ed2c49a597df3776229312872be301e94c9"
+      "profile": "hybrid(default+fastapi-family+next-app-router)",
+      "digest": "sha256:61d7d7ce6e373aeaffc926b97102815bba29280451e70e73e59330733ba72e7c"
     },
     "dispatch": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/dispatch",
       "commit_sha": "dd2837e82a0bf5565b1b4b4b91ea30b7262d4061",
-      "profile": "fastapi-family",
-      "digest": "sha256:9bc419e69901b34ebf9df6bb63042a4ac0866b64bbaf8747b6e03bd8e6d1fda9"
+      "profile": "hybrid(default+fastapi-family)",
+      "digest": "sha256:75601b47dcd10f554c4ce14b4ce31b933c244b9d65ce66ac756813329bc86d9d"
     },
     "fastapi-template": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/fastapi-template",
@@ -70,7 +70,7 @@
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/opensign",
       "commit_sha": "f2ada473027e9b36e0af7a459ebe703b83bc2e25",
       "profile": "next-pages-react",
-      "digest": "sha256:631178c02802966a7fd678c00e5056c0b53ea1425fd4082725a5e2960d5e5989"
+      "digest": "sha256:ead03201e5eaf73a8bd0c5d2aed1424819496b185d9d5c95e5d5ee42937bbd12"
     }
   }
 }
