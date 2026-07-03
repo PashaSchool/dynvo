@@ -28,6 +28,11 @@ from faultline.pipeline_v2.stack_auditor import (
     run_stack_auditor,
 )
 from faultline.pipeline_v2.stage_0_6_shape import classify_repo_shape
+from faultline.pipeline_v2.stage_0_7_repo_class import (
+    classify_repo_class,
+    should_suppress_user_flows,
+    write_repo_class_artifact,
+)
 from faultline.pipeline_v2.stage_0_intake import stage_0_intake
 from faultline.pipeline_v2.stage_7_output import write_stage_artifact
 
@@ -40,6 +45,10 @@ class IntakeResult:
     verdict: Any
     shape_result: Any
     run_dir: Path
+    # Stage 0.7 — repo-class exit gate (StackProfile Phase C). Always
+    # populated; ``None`` only for legacy callers constructing the
+    # result by hand.
+    repo_class_result: Any = None
 
 
 def run_intake_phase(
@@ -190,11 +199,29 @@ def run_intake_phase(
             f"matched_signals={list(shape_result.matched_signals)}",
         )
 
+    # ── Stage 0.7 — repo-class exit gate (deterministic, NO LLM) ───
+    # StackProfile Phase C: classify the scan unit as product-app /
+    # library / cli-tool / infra-daemon / framework. A CONFIDENT
+    # non-product verdict suppresses the UF-synthesis stages in the
+    # finalize phase (libraries/CLIs/daemons get no hallucinated user
+    # journeys); ambiguity fails open to product-app. Pure structural
+    # probes over Stage 0/0.6 signals; writes 06-stage-repo_class.json.
+    repo_class_result = classify_repo_class(ctx)
+    write_repo_class_artifact(ctx, repo_class_result)
+    with StageLogger(run_dir, 6, "repo_class") as log_rc:
+        log_rc.info(
+            f"repo_class={repo_class_result.repo_class} "
+            f"confidence={repo_class_result.confidence:.2f} "
+            f"uf_suppression={should_suppress_user_flows(repo_class_result)} "
+            f"matched_signals={list(repo_class_result.matched_signals)}",
+        )
+
     return IntakeResult(
         ctx=ctx,
         verdict=verdict,
         shape_result=shape_result,
         run_dir=run_dir,
+        repo_class_result=repo_class_result,
     )
 
 

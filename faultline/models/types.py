@@ -998,6 +998,14 @@ class FeatureMap(BaseModel):
     base_scan_commit: str = ""
     scan_commit: str = ""
     engine_version: str = ""
+    # Stage 0.7 (2026-07, StackProfile Phase C) — the deterministic
+    # repo-class exit-gate verdict for this scan unit:
+    # ``product-app | library | cli-tool | infra-daemon | framework``.
+    # A confident non-product class suppresses UF synthesis (the scan
+    # then carries ``user_flows: []`` + ``scan_meta.uf_suppressed_reason``).
+    # Default ``""`` so legacy scans rehydrate unchanged; detail
+    # (confidence, rationale, signals) lives in ``scan_meta.repo_class``.
+    repo_class: str = ""
     # Stage 6.6 (2026-06) — MONOREPO ASSEMBLY VIEW. A deterministic, $0,
     # ADDITIVE re-projection of the flat ``developer_features[]`` into a
     # per-PROJECT structure plus the internal cross-project dependency

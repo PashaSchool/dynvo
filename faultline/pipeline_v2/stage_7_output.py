@@ -168,7 +168,17 @@ def build_feature_map(
     :func:`faultline.pipeline_v2.stage_6_6_monorepo_assembly.build_monorepo_assembly`.
     Defaults to ``{}`` (no field churn) for non-monorepo repos and for
     callers that don't compute it. NEVER mutates ``features``.
+
+    ``repo_class`` (Stage 0.7, Phase C) is projected from
+    ``scan_meta['repo_class']['class']`` — one source of truth, no new
+    parameter for callers (the replay registry's Stage 7 call picks it
+    up for free). ``""`` when the classifier didn't run (legacy
+    callers / hand-built scan_meta).
     """
+    repo_class = ""
+    rc_block = scan_meta.get("repo_class")
+    if isinstance(rc_block, dict):
+        repo_class = str(rc_block.get("class") or "")
     return FeatureMap(
         schema_version=SCHEMA_VERSION,
         repo_path=str(ctx.repo_path),
@@ -189,6 +199,7 @@ def build_feature_map(
         scan_commit=scan_commit,
         engine_version=engine_version,
         monorepo=dict(monorepo or {}),
+        repo_class=repo_class,
     )
 
 

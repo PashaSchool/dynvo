@@ -319,6 +319,7 @@ def assemble_scan_meta(
     stage_8_5_backfill_telemetry: dict[str, Any],
     stage_8_6_telemetry: dict[str, Any],
     shape_result: Any,
+    repo_class_result: Any = None,
     stage_8_7_telemetry: dict[str, Any] | None = None,
     stage_8_8_telemetry: dict[str, Any] | None = None,
     stage_8_9_telemetry: dict[str, Any] | None = None,
@@ -571,6 +572,13 @@ def assemble_scan_meta(
             "fallback_used": shape_result.shape == "universal-residual",
         },
     }
+    # Stage 0.7 — repo-class exit gate (StackProfile Phase C). Additive
+    # key: {class, confidence, rationale, matched_signals, gate_enabled,
+    # uf_suppression_eligible}. Absent only for legacy callers that
+    # don't classify (default None).
+    if repo_class_result is not None:
+        from faultline.pipeline_v2.stage_0_7_repo_class import scan_meta_block
+        scan_meta["repo_class"] = scan_meta_block(repo_class_result)
     return scan_meta
 
 

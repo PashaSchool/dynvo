@@ -339,6 +339,7 @@ def run_pipeline_v2(
     ctx = intake.ctx
     verdict = intake.verdict
     shape_result = intake.shape_result
+    repo_class_result = intake.repo_class_result
     run_dir = intake.run_dir
 
     # ── Framework Knowledge Layer — select the active profile (P4) ──
@@ -798,6 +799,7 @@ def run_pipeline_v2(
         stage_8_9_6_telemetry=stage_8_9_6_telemetry,
         stage_5_4_telemetry=stage_5_4_telemetry,
         shape_result=shape_result,
+        repo_class_result=repo_class_result,
     )
 
     # Stage 2.6 membership-closure telemetry — additive key (consumers
@@ -843,6 +845,7 @@ def run_pipeline_v2(
         days=days,
         feature_history=feature_history,
         llm_health=llm_health,
+        repo_class_result=repo_class_result,
     )
 
     # ── Flush any buffered cache writes (no-op for fs backend) ──────
