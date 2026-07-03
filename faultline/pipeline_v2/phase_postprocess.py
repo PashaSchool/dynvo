@@ -17,6 +17,7 @@ from typing import Any
 
 from faultline.pipeline_v2.incremental_wiring import splice_untouched_features
 from faultline.pipeline_v2.run_logger import StageLogger
+from faultline.replay.capture import write_stage_input
 from faultline.pipeline_v2.stage_5_3_sibling_collapse import (
     collapse_sibling_routes,
 )
@@ -64,6 +65,14 @@ def run_postprocess_phase(
     from faultline.pipeline_v2 import run as _run
 
     # ── Stage 5 — post-process (naming discipline + A1 validation) ─
+    write_stage_input(run_dir, 5, "postprocess", {
+        "deterministic_features": deterministic_features,
+        "stage3_features_with_flows": stage3_features_with_flows,
+        "residual_features": residual_features,
+        "ctx": ctx,
+        "is_full_scan": is_full_scan,
+        "incremental_untouched": incremental_untouched,
+    })
     with StageLogger(run_dir, 5, "postprocess") as log5:
         stage5_result = stage_5_from_stage3_result_with_telemetry(
             deterministic=_run._isolate(deterministic_features),
@@ -133,6 +142,11 @@ def run_postprocess_phase(
         # list means "no anchor signal"; the collapser falls back to
         # confidence and treats them as collapsible.
         sources_by_name.setdefault(f.name, [])
+    write_stage_input(run_dir, 5, "sibling_collapse", {
+        "features": features,
+        "deterministic_features": deterministic_features,
+        "residual_features": residual_features,
+    })
     with StageLogger(run_dir, 5, "sibling_collapse") as log5_3:
         s53 = collapse_sibling_routes(
             features,
@@ -165,6 +179,7 @@ def run_postprocess_phase(
     # owner of the entry file keeps the flow. Default OFF (measured F1
     # cost — twins partially inflate golden recall; see the stage module);
     # FAULTLINE_STAGE_5_4_CROSS_FLOW_DEDUP=1 to enable.
+    write_stage_input(run_dir, 5, "cross_flow_dedup", {"features": features})
     with StageLogger(run_dir, 5, "cross_flow_dedup") as log5_4:
         s54 = dedup_cross_feature_flows(features)
         s54_telemetry = s54.as_telemetry()
@@ -186,6 +201,7 @@ def run_postprocess_phase(
     # (id, primary_feature, secondary_features, shared_with_*_count,
     # cross_cutting), then returns a top-level flows[] projection and
     # the feature_flow_edges[] list. NO LLM — path-overlap only.
+    write_stage_input(run_dir, 5, "bipartite", {"features": features})
     with StageLogger(run_dir, 5, "bipartite") as log5_5:
         bipartite = stage_5_5_bipartite(features, log=log5_5)
         log5_5.info(

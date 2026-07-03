@@ -29,6 +29,7 @@ from faultline.pipeline_v2.incremental_wiring import (
     plan_uf_domain_allowlist,
 )
 from faultline.pipeline_v2.run_logger import StageLogger
+from faultline.replay.capture import write_stage_input
 from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
@@ -91,6 +92,20 @@ def run_finalize_phase(
     if base_scan_dict is None and base_scan_path is not None:
         base_scan_dict = _load_base_scan(base_scan_path)
 
+    # Replay v2 — input-only capture for the lineage connector (Stage 6.8
+    # writes no output artifact; the replay chain needs its input to
+    # re-stamp UUIDs + rebuild indexes when chaining into the finalize
+    # stages). ``base_scan`` is captured as a PATH reference, not inline.
+    write_stage_input(run_dir, 6, "lineage", {
+        "features": features,
+        "bipartite_flows": list(bipartite.flows),
+        "stage1_out": stage1_out,
+        "scan_meta": scan_meta,
+        "base_scan_path": str(base_scan_path) if base_scan_path else None,
+        "lineage_jaccard_threshold": rename_threshold,
+        "since": since,
+        "repo_path": str(repo_path),
+    })
     lineage_result = run_stage_6_8(
         features,
         list(bipartite.flows),
@@ -149,6 +164,13 @@ def run_finalize_phase(
     #   - lineage-stable UUIDs are present on every Flow for the
     #     ``top_level_flows`` mirror pass.
     from faultline.pipeline_v2.flow_expansion import expand_flows
+    write_stage_input(run_dir, 3, "flow_expansion", {
+        "features": features,
+        "ctx": ctx,
+        "routes_index": lineage_result.routes_index,
+        "bipartite_flows": list(bipartite.flows),
+        "scan_meta": scan_meta,
+    })
     with StageLogger(run_dir, 3, "flow_expansion") as log3_5:
         # max_depth=1 — a flow's attributed implementation is the entry
         # symbol + its DIRECT callees (same-file AND imported), with no
@@ -208,6 +230,11 @@ def run_finalize_phase(
         "flows_dropped": 0,
         "flow_entries_recomputed": 0,
     }
+    write_stage_input(run_dir, 6, "test_strip", {
+        "features": features,
+        "bipartite_flows": list(bipartite.flows),
+        "scan_meta": scan_meta,
+    })
     with StageLogger(run_dir, 6, "test_strip") as log6_9:
         if stage_6_9_enabled():
             test_strip_telemetry = strip_test_paths(features, bipartite.flows)
@@ -249,6 +276,12 @@ def run_finalize_phase(
         "features_dropped": 0,
         "flows_dropped": 0,
     }
+    write_stage_input(run_dir, 6, "generated_strip", {
+        "features": features,
+        "bipartite_flows": list(bipartite.flows),
+        "product_features": product_features,
+        "scan_meta": scan_meta,
+    })
     with StageLogger(run_dir, 6, "generated_strip") as log6_9b:
         if stage_6_9b_enabled():
             generated_strip_telemetry = strip_generated_paths(
@@ -319,6 +352,13 @@ def run_finalize_phase(
     product_strings = collect_product_strings(repo_path, ps_candidates)
 
     user_flows: list = []
+    write_stage_input(run_dir, 6, "user_flows", {
+        "bipartite_flows": list(bipartite.flows),
+        "features": features,
+        "routes_index": lineage_result.routes_index,
+        "scan_meta": scan_meta,
+        "repo_path": str(repo_path),
+    })
     with StageLogger(run_dir, 6, "user_flows") as log6_7:
         user_flows, uf_telemetry = run_user_flow_rollup(
             bipartite.flows, features,
@@ -365,6 +405,12 @@ def run_finalize_phase(
     # per-stage env opt-outs) behaves exactly as pre-cache. Best-effort —
     # any cache fault inside the stages degrades to a live call.
     _uf_llm_cache = getattr(ctx, "cache_backend", None)
+    write_stage_input(run_dir, 6, "uf_splitter", {
+        "user_flows": user_flows,
+        "bipartite_flows": list(bipartite.flows),
+        "ctx": ctx,
+        "scan_meta": scan_meta,
+    })
     with StageLogger(run_dir, 6, "uf_splitter") as log6_7c:
         user_flows, uf_split_telemetry = split_mega_user_flows(
             user_flows,
@@ -395,6 +441,16 @@ def run_finalize_phase(
     # name/intent. Uses the SAME shared CostTracker + model_id as the
     # rest of the LLM stages; no README, no .ai/specs.
     from faultline.pipeline_v2.stage_6_7b_uf_refiner import refine_user_flows
+    write_stage_input(run_dir, 6, "uf_refiner", {
+        "user_flows": user_flows,
+        "bipartite_flows": list(bipartite.flows),
+        "model_id": model_id,
+        "ctx": ctx,
+        "scan_meta": scan_meta,
+        "features": features,
+        "repo_path": str(repo_path),
+        "is_full_scan": is_full_scan,
+    })
     with StageLogger(run_dir, 6, "uf_refiner") as log6_7b:
         # ── Incremental UF-refiner reuse (--since path ONLY) ───────
         # Only domains with a changed UF still get a Haiku call — see
@@ -442,6 +498,15 @@ def run_finalize_phase(
         run_journey_abstraction,
     )
     if _s67d_enabled():
+        write_stage_input(run_dir, 6, "journey_abstraction", {
+            "user_flows": user_flows,
+            "product_features": product_features,
+            "features": features,
+            "routes_index": lineage_result.routes_index,
+            "model_id": model_id,
+            "scan_meta": scan_meta,
+            "repo_path": str(repo_path),
+        })
         with StageLogger(run_dir, 6, "journey_abstraction") as log6_7d:
             # A content-hash cache backend makes a re-scan of an unchanged repo
             # byte-identical (same digest + models → same key → replayed LLM
@@ -514,6 +579,12 @@ def run_finalize_phase(
     # confirms a name), not a naming constraint — safe on noisy pools. Best-effort.
     from faultline.pipeline_v2.dual_evidence import dual_evidence_enabled
     if dual_evidence_enabled():
+        write_stage_input(run_dir, 6, "dual_evidence", {
+            "product_features": product_features,
+            "user_flows": user_flows,
+            "scan_meta": scan_meta,
+            "repo_path": str(repo_path),
+        })
         with StageLogger(run_dir, 6, "dual_evidence") as log_de:
             try:
                 from faultline.pipeline_v2.anchor_extractors import (
@@ -541,6 +612,15 @@ def run_finalize_phase(
     # skips the stage entirely (telemetry records the skip).
     from faultline.pipeline_v2.stage_6_95_history import stage_6_95_history
     history_telemetry: dict[str, Any] = {"skipped": True}
+    write_stage_input(run_dir, 6, "history", {
+        "product_features": product_features,
+        "user_flows": user_flows,
+        "bipartite_flows": list(bipartite.flows),
+        "features": features,
+        "ctx": ctx,
+        "feature_history": feature_history,
+        "scan_meta": scan_meta,
+    })
     with StageLogger(run_dir, 6, "history") as log6_95:
         if feature_history:
             history_telemetry = stage_6_95_history(
@@ -590,6 +670,16 @@ def run_finalize_phase(
     # budget degrade to fewer points, never a failed scan.
     from faultline.pipeline_v2.stage_6_96_impact import stage_6_96_impact
     impact_telemetry: dict[str, Any] = {"skipped": True}
+    write_stage_input(run_dir, 6, "impact", {
+        "product_features": product_features,
+        "user_flows": user_flows,
+        "bipartite_flows": list(bipartite.flows),
+        "features": features,
+        "ctx": ctx,
+        "repo_path": str(repo_path),
+        "feature_history": feature_history,
+        "scan_meta": scan_meta,
+    })
     with StageLogger(run_dir, 6, "impact") as log6_96:
         if feature_history:
             impact_telemetry = stage_6_96_impact(
@@ -645,6 +735,11 @@ def run_finalize_phase(
     #    ``features``. Defensive: an assembly failure degrades to ``{}`` +
     #    a warning so it can NEVER break a scan.
     monorepo_view: dict[str, Any] = {}
+    write_stage_input(run_dir, 6, "monorepo_assembly", {
+        "ctx": ctx,
+        "features": features,
+        "scan_meta": scan_meta,
+    })
     with StageLogger(run_dir, 6, "monorepo_assembly") as log66:
         try:
             from faultline.pipeline_v2.stage_6_6_monorepo_assembly import (
@@ -680,6 +775,22 @@ def run_finalize_phase(
 
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
+    write_stage_input(run_dir, 7, "output", {
+        "features": features,
+        "ctx": ctx,
+        "scan_meta": scan_meta,
+        "bipartite_flows": list(bipartite.flows),
+        "bipartite_edges": list(bipartite.edges),
+        "product_features": product_features,
+        "user_flows": user_flows,
+        "path_index": lineage_result.path_index,
+        "routes_index": lineage_result.routes_index,
+        "is_full_scan": is_full_scan,
+        "since": since,
+        "head": head,
+        "days": days,
+        "monorepo_view": monorepo_view,
+    })
     with StageLogger(run_dir, 7, "output") as log7:
         out = stage_7_output(
             features, ctx, scan_meta, out_path,

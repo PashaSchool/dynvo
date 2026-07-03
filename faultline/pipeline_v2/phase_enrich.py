@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from faultline.replay.capture import write_stage_input
 from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stage_6_3_import_tree import (
     DEFAULT_MAX_FILES_PER_FEATURE as _IMPORT_TREE_MAX_FILES,
@@ -73,6 +74,10 @@ def run_enrich_phase(
     # into the final output. Stage 6's contract is to fill blame /
     # coverage / commit fields; it MUST NOT mutate Feature.paths or
     # Flow.paths (which the bipartite IDs were minted from).
+    write_stage_input(run_dir, 6, "metrics", {
+        "features": features,
+        "ctx": ctx,
+    })
     with StageLogger(run_dir, 6, "metrics") as log6:
         features = stage_6_metrics(features, _run._isolate(ctx))
         with_commits = sum(1 for f in features if f.total_commits > 0)
@@ -97,6 +102,10 @@ def run_enrich_phase(
     # Pure rule-based clustering — workspace concentration + dep-anchor
     # imports + optional ``faultlines.yaml`` override. NO LLM. Folds
     # Stage 6 dev features into customer-facing product features.
+    write_stage_input(run_dir, 6, "product_clusterer", {
+        "ctx": ctx,
+        "features": features,
+    })
     with StageLogger(run_dir, 6, "product_clusterer") as log6_5:
         product_features, dev_to_product_map, product_telemetry = (
             run_product_clusterer(_run._isolate(ctx), features, log=log6_5)
@@ -143,6 +152,11 @@ def run_enrich_phase(
     # The stage runs AFTER 6.5 so the deterministic product
     # clusterer (which uses paths[0] as a workspace heuristic) is
     # unaffected by path explosion. NO LLM.
+    write_stage_input(run_dir, 6, "import_tree", {
+        "ctx": ctx,
+        "features": features,
+        "effective_max_tree_depth": effective_max_tree_depth,
+    })
     with StageLogger(run_dir, 6, "import_tree") as log6_3:
         enrichment = enrich_with_import_tree(
             ctx, features, log=log6_3,
@@ -184,6 +198,10 @@ def run_enrich_phase(
     # string. v1 ships ONE linker — Next.js HTTP route. Future linkers
     # plug in via Python entry-points without modifying Stage 6.4 core.
     # NO LLM, NO network — pure file IO + regex.
+    write_stage_input(run_dir, 6, "framework_enrich", {
+        "ctx": ctx,
+        "features": features,
+    })
     with StageLogger(run_dir, 6, "framework_enrich") as log6_4:
         enrich_result = run_stage_6_4(ctx, features, log6_4)
         features = list(enrich_result.enriched_features)
@@ -211,6 +229,10 @@ def run_enrich_phase(
     # installed, stage is a no-op and the rest of the pipeline runs
     # unchanged. NO LLM. NO network. See
     # `faultline/pipeline_v2/stage_6_6_branch_slicer.py` docstring.
+    write_stage_input(run_dir, 6, "branch_slicer", {
+        "ctx": ctx,
+        "features": features,
+    })
     with StageLogger(run_dir, 6, "branch_slicer") as log6_6:
         branch_result = run_stage_6_6(ctx, features, log6_6)
         branch_slicer_telemetry = branch_result.telemetry()

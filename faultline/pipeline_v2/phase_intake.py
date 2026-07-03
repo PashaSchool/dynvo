@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from faultline.pipeline_v2.llm_health import LlmHealth
 
 from faultline.llm.cost import CostTracker
+from faultline.replay.capture import write_stage_input
 from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stack_auditor import (
     MIN_CONFIDENCE_TO_APPLY,
@@ -79,6 +80,14 @@ def run_intake_phase(
     run_dir = ctx.run_dir
     assert run_dir is not None, "Stage 0 must populate ctx.run_dir"
 
+    # Replay v2 — Stage 0's exact input is the CLI argument set. Captured
+    # after intake only because the run_dir doesn't exist any earlier.
+    write_stage_input(run_dir, 0, "intake", {
+        "repo_path": str(repo_path),
+        "days": days,
+        "subpath": subpath,
+    })
+
     with StageLogger(run_dir, 0, "intake") as log0:
         log0.info(
             f"intake: stack={ctx.stack} monorepo={ctx.monorepo} "
@@ -112,6 +121,10 @@ def run_intake_phase(
     # that we fold into ``ctx`` ONLY when confidence ≥ 0.5. Stage 0's
     # ``stack`` field is never mutated — the verdict is surfaced via
     # ``ctx.audited_stack`` so downstream code can prefer either.
+    write_stage_input(run_dir, 0, "auditor", {
+        "ctx": ctx,
+        "model_id": model_id,
+    })
     with StageLogger(run_dir, 0, "auditor") as log_aud:
         # Content-keyed llm-cache (determinism): identical repo state must
         # replay identical hints, else the volatile auditor prose re-rolls
@@ -167,6 +180,7 @@ def run_intake_phase(
     # framework-repo / universal-residual). Pure function over Stage 0 +
     # 0.5 + structural manifest reads. Writes 06-stage-shape.json
     # artifact directly to run_dir.
+    write_stage_input(run_dir, 6, "shape", {"ctx": ctx})
     shape_result = classify_repo_shape(ctx)
     ctx = ctx.with_shape(shape_result)
     with StageLogger(run_dir, 6, "shape") as log_shape:

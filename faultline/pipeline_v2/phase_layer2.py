@@ -21,6 +21,7 @@ from faultline.llm.cost import CostTracker
 from faultline.pipeline_v2.incremental_wiring import reuse_base_layer2
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.run_logger import StageLogger
+from faultline.replay.capture import write_stage_input
 from faultline.pipeline_v2.stage_7_output import write_stage_artifact
 from faultline.pipeline_v2.stage_8_5_member_backfill import (
     run_stage_8_5_backfill,
@@ -117,6 +118,16 @@ def run_layer2_phase(
         "source": "deterministic-only",
         "haiku_called": False,
     }
+    write_stage_input(run_dir, 8, "marketing_clusterer", {
+        "ctx": ctx,
+        "features": features,
+        "product_features": product_features,
+        "dev_to_product_map": dev_to_product_map,
+        "product_telemetry": product_telemetry,
+        "bipartite_flows": bipartite_flows,
+        "model_id": model_id,
+        "incremental_layer2_noop": incremental_layer2_noop,
+    })
     with StageLogger(run_dir, 8, "marketing_clusterer") as log8:
         s8_client = _stage_8_default_client_factory()
         # Source-breakdown was already computed by Stage 6.5 and stamped
@@ -226,6 +237,12 @@ def run_layer2_phase(
     # / framework-repo strategies still degrade gracefully (no
     # attachments, logged warning) in that case.
     s8_member_flows_map = getattr(stage_8_result, "member_flows_map", {}) or {}
+    write_stage_input(run_dir, 8, "rollup", {
+        "product_features": product_features,
+        "bipartite_flows": bipartite_flows,
+        "ctx": ctx,
+        "member_flows_map": s8_member_flows_map,
+    })
     with StageLogger(run_dir, 8, "rollup") as log8_rollup:
         rollup_result = stage_8_rollup_flows(
             product_features,
@@ -263,6 +280,11 @@ def run_layer2_phase(
     # already-mapped feature → Layer-2 product P/R are invariant. Scale-
     # invariant majority-overlap threshold (see module docstring).
     # Default ON; disable via FAULTLINE_STAGE_8_5_BACKFILL=0.
+    write_stage_input(run_dir, 8, "member_backfill", {
+        "features": features,
+        "product_features": product_features,
+        "dev_to_product_map": dev_to_product_map,
+    })
     with StageLogger(run_dir, 8, "member_backfill") as log8_bf:
         backfill_result = run_stage_8_5_backfill(
             features,
@@ -307,6 +329,11 @@ def run_layer2_phase(
         "pf_recomputed": 0,
         "pf_dropped_empty": 0,
     }
+    write_stage_input(run_dir, 8, "nonsource_drop", {
+        "features": features,
+        "product_features": product_features,
+        "dev_to_product_map": dev_to_product_map,
+    })
     with StageLogger(run_dir, 8, "nonsource_drop") as log8_ns:
         features_before_ns = len(features)
         features, nonsource_dropped = drop_all_nonsource_features(features)
@@ -390,6 +417,7 @@ def run_layer2_phase(
     # with recall protected (validated: documenso + inbox-zero recall flat-or-up,
     # inbox-zero micro precision +10pp). Scale-invariant, deterministic, no LLM.
     # Default ON; disable via FAULTLINE_STAGE_8_6_5_SCAFFOLD_FILTER=0.
+    write_stage_input(run_dir, 8, "scaffold_filter", {"features": features})
     with StageLogger(run_dir, 8, "scaffold_filter") as log8_65:
         scaffold_result = filter_shared_scaffold(features)
         stage_8_6_5_telemetry = scaffold_result.as_telemetry()
@@ -422,6 +450,10 @@ def run_layer2_phase(
     # (machine-identities recall 0.17→0.64, platform_share −8pp, precision held).
     # Deterministic, no LLM. Default ON; disable via
     # FAULTLINE_STAGE_8_6_7_DI_ATTRIBUTION=0.
+    write_stage_input(run_dir, 8, "di_attribution", {
+        "ctx": ctx,
+        "features": features,
+    })
     with StageLogger(run_dir, 8, "di_attribution") as log8_67:
         di_result = attribute_di_services(ctx, features)
         stage_8_6_7_telemetry = di_result.as_telemetry()
@@ -452,6 +484,10 @@ def run_layer2_phase(
     # product features' path union itself (the Stage 8.6 reconcile above
     # is conditional). Deterministic, no LLM, scale-invariant. Default ON;
     # disable via FAULTLINE_STAGE_8_7_DESINK=0.
+    write_stage_input(run_dir, 8, "anchor_desink", {
+        "features": features,
+        "product_features": product_features,
+    })
     with StageLogger(run_dir, 8, "anchor_desink") as log8_7:
         desink_result = desink_workspace_anchors(features, product_features)
         stage_8_7_telemetry = desink_result.as_telemetry()
@@ -482,6 +518,10 @@ def run_layer2_phase(
     # Honest: a shared <Button> shows on every feature that imports it;
     # genuinely-shared leaves with no importer stay residual. Deterministic, no
     # LLM. Default ON; disable via FAULTLINE_STAGE_8_8_SHARED_MEMBERS=0.
+    write_stage_input(run_dir, 8, "shared_members", {
+        "ctx": ctx,
+        "features": features,
+    })
     with StageLogger(run_dir, 8, "shared_members") as log8_8:
         shared_result = enrich_shared_members(ctx, features)
         stage_8_8_telemetry = shared_result.as_telemetry()
@@ -511,6 +551,7 @@ def run_layer2_phase(
     # sub-features inherit the anchor's product_feature_id so product paths
     # are byte-stable. Deterministic, no LLM, scale-invariant (grain floor =
     # repo median feature size). Default ON; FAULTLINE_STAGE_8_9_SUBDECOMPOSE=0.
+    write_stage_input(run_dir, 8, "anchor_subdecompose", {"features": features})
     with StageLogger(run_dir, 8, "anchor_subdecompose") as log8_9:
         subdecompose_result = subdecompose_workspace_anchors(features)
         stage_8_9_telemetry = subdecompose_result.as_telemetry()
@@ -540,6 +581,11 @@ def run_layer2_phase(
     # casing rule provably cannot make. Coverage-preserving (files move into
     # real features, never a sink); ONE cheap call per blob, cached by
     # prompt-hash. Default OFF; FAULTLINE_STAGE_8_9_5_LLM_COMPONENT_SPLIT=1.
+    write_stage_input(run_dir, 8, "llm_component_split", {
+        "features": features,
+        "ctx": ctx,
+        "model_id": model_id,
+    })
     with StageLogger(run_dir, 8, "llm_component_split") as log8_9_5:
         # model_id (the scan's RESOLVED model) — the stage's bare "haiku"
         # default only resolves through the subscription proxy; the real
@@ -575,6 +621,10 @@ def run_layer2_phase(
     # UNIQUELY names an existing dev feature transfer to it (the unowned-
     # ledger blob class 8.9.5 cannot reach — infisical hooks/api/<domain>).
     # $0 LLM, deterministic. Default OFF; FAULTLINE_STAGE_8_9_6_DOMAIN_ATTRIBUTION=1.
+    write_stage_input(run_dir, 8, "domain_member_attribution", {
+        "features": features,
+        "product_features": product_features,
+    })
     with StageLogger(run_dir, 8, "domain_member_attribution") as log8_9_6:
         dom_attr_result = attribute_domain_members(features)
         stage_8_9_6_telemetry = dom_attr_result.as_telemetry()

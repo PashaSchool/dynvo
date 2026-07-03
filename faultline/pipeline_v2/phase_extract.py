@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from faultline.replay.capture import write_stage_input
 from faultline.pipeline_v2.run_logger import StageLogger
 from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
 from faultline.pipeline_v2.stage_1_per_workspace import (
@@ -48,6 +49,8 @@ def run_extract_phase(ctx: Any, run_dir: Path) -> ExtractResult:
     # workspace at a time. This unblocks NestJS+Next, Fastify+Vite,
     # Rust-WASM+Next, etc. — repos where a single-stack global pass
     # emits zero anchors and Stage 4 LLM-fallback synthesises 100%.
+    write_stage_input(run_dir, 1, "extractors", {"ctx": ctx})
+
     per_ws_active = should_activate_per_workspace(ctx)
     per_ws_telemetry: dict[str, Any] = {
         "stage_1_per_workspace_active": False,
