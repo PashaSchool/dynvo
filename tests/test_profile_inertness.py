@@ -15,6 +15,9 @@ from faultline.pipeline_v2.profiles import AttributionSpec, FileRole
 from faultline.pipeline_v2.profiles.django import DjangoProfile
 from faultline.pipeline_v2.profiles.fastapi_family import FastApiFamilyProfile
 from faultline.pipeline_v2.profiles.next_app_router import NextAppRouterProfile
+from faultline.pipeline_v2.profiles.next_pages_react import (
+    NextPagesReactProfile,
+)
 from tests._profile_inertness import (
     NON_NEXT_FIXTURE,
     assert_profile_inert,
@@ -51,6 +54,18 @@ def test_django_inert_on_non_django_repo(
     extractor-override seam)."""
     repo = make_fixture_repo(tmp_path, NON_NEXT_FIXTURE)
     assert_profile_inert(repo, DjangoProfile(), tmp_path, monkeypatch)
+
+
+def test_next_pages_react_inert_on_non_react_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G4 (Phase B #3): NextPagesReactProfile must not touch a scan it
+    does not win — the flask fixture has no react/next dep, no pages
+    tree, no router grammar, no render entry, so ``detects`` is 0.0 and
+    registration must be byte-inert (including the Stage-1
+    extractor-override seam)."""
+    repo = make_fixture_repo(tmp_path, NON_NEXT_FIXTURE)
+    assert_profile_inert(repo, NextPagesReactProfile(), tmp_path, monkeypatch)
 
 
 class _NeverMatchingProfile:

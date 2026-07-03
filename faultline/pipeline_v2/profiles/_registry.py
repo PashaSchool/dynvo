@@ -72,6 +72,8 @@ def _load_default_profiles() -> list[FrameworkProfile]:
          "FastApiFamilyProfile")
     _try("faultline.pipeline_v2.profiles.django",
          "DjangoProfile")
+    _try("faultline.pipeline_v2.profiles.next_pages_react",
+         "NextPagesReactProfile")
 
     return out
 
