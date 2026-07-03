@@ -57,6 +57,7 @@ def run_finalize_phase(
     days: int,
     feature_history: bool = True,
     llm_health: LlmHealth | None = None,
+    repo_class_result: Any = None,
 ) -> Path:
     """Run Stage 6.8 → 3.5 → 6.9 → 6.7/6.7c/6.7b → 6.95 → 7 and write output.
 
@@ -327,6 +328,51 @@ def run_finalize_phase(
         )
         scan_meta["stage_6_9_test_strip"]["pf_dropped_phantom"] = pf_phantom_post
 
+    # ── Stage 0.7 exit gate — UF-synthesis suppression (Phase C) ────
+    # A CONFIDENT non-product repo_class verdict (library / cli-tool /
+    # infra-daemon / framework) means this scan unit has no user
+    # journeys to synthesize: the whole UF family (6.7 rollup, 6.7c
+    # splitter, 6.7b refiner, 6.7d abstraction) is SKIPPED and
+    # ``user_flows: []`` is emitted with an explicit
+    # ``scan_meta.uf_suppressed_reason``. The developer-feature/flow
+    # skeleton above is untouched. Fail-open by construction: ambiguous
+    # verdicts classify product-app and never reach here; the
+    # ``FAULTLINE_REPO_CLASS_GATE=0`` kill-switch disables suppression
+    # (the verdict itself is still emitted). Spec: StackProfile Phase C.
+    from faultline.pipeline_v2.stage_0_7_repo_class import (
+        should_suppress_user_flows,
+        suppression_reason,
+    )
+
+    uf_suppressed = should_suppress_user_flows(repo_class_result)
+    if uf_suppressed:
+        uf_reason = suppression_reason(repo_class_result)
+        scan_meta["uf_suppressed_reason"] = uf_reason
+        uf_marker = {"suppressed": True, "reason": uf_reason}
+        user_flows: list = []
+        with StageLogger(run_dir, 6, "user_flows") as log6_7:
+            log6_7.info(
+                "user_flows: SUPPRESSED (%s, confidence=%.2f) — "
+                "non-product scan unit exits the product funnel; "
+                "developer features/flows unaffected"
+                % (uf_reason, repo_class_result.confidence),
+            )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=6,
+                stage_name="user_flows",
+                payload={
+                    **uf_marker,
+                    "repo_class": repo_class_result.repo_class,
+                    "confidence": repo_class_result.confidence,
+                    "user_flows": [],
+                },
+                run_dir=run_dir,
+            )
+        scan_meta["stage_6_7_user_flows"] = dict(uf_marker)
+        scan_meta["stage_6_7c_uf_splitter"] = dict(uf_marker)
+        scan_meta["stage_6_7b_uf_refiner"] = dict(uf_marker)
+
     # ── Stage 6.7 — User-Flow rollup (Layer-2-for-flows, $0 LLM) ────
     # Deterministic post-pass: rolls the code-grain flow store up into
     # product-grain user_flows[] and stamps Flow.user_flow_id. Runs
@@ -341,149 +387,150 @@ def run_finalize_phase(
     # Stage 6.7 (slot-consistent resource labels) and Stage 6.7b (UF
     # refiner evidence + name validation). Deterministic, $0 LLM,
     # README structurally excluded inside the collector.
-    ps_candidates: set[str] = set()
-    for f in features:
-        ps_candidates.update(f.paths or [])
-        ps_candidates.update(mf.path for mf in (f.member_files or []))
-    for fl in bipartite.flows:
-        ps_candidates.update(fl.paths or [])
-        if fl.entry_point_file:
-            ps_candidates.add(fl.entry_point_file)
-    product_strings = collect_product_strings(repo_path, ps_candidates)
+    if not uf_suppressed:
+        ps_candidates: set[str] = set()
+        for f in features:
+            ps_candidates.update(f.paths or [])
+            ps_candidates.update(mf.path for mf in (f.member_files or []))
+        for fl in bipartite.flows:
+            ps_candidates.update(fl.paths or [])
+            if fl.entry_point_file:
+                ps_candidates.add(fl.entry_point_file)
+        product_strings = collect_product_strings(repo_path, ps_candidates)
 
-    user_flows: list = []
-    write_stage_input(run_dir, 6, "user_flows", {
-        "bipartite_flows": list(bipartite.flows),
-        "features": features,
-        "routes_index": lineage_result.routes_index,
-        "scan_meta": scan_meta,
-        "repo_path": str(repo_path),
-    })
-    with StageLogger(run_dir, 6, "user_flows") as log6_7:
-        user_flows, uf_telemetry = run_user_flow_rollup(
-            bipartite.flows, features,
-            routes_index=lineage_result.routes_index,
-            product_strings=product_strings,
-        )
-        log6_7.info(
-            "user_flows: %d flows -> %d unique -> %d UF, %d domains, "
-            "%d with cross_links (dedup_dropped=%d)"
-            % (
-                uf_telemetry["total_flows"],
-                uf_telemetry["unique_flows"],
-                uf_telemetry["user_flows"],
-                uf_telemetry["domains"],
-                uf_telemetry["uf_with_cross_links"],
-                uf_telemetry["dedup_dropped"],
-            ),
-        )
-        write_stage_artifact(
-            ctx.repo_path,
-            stage_index=6,
-            stage_name="user_flows",
-            payload={
-                **uf_telemetry,
-                "user_flows": [uf.model_dump() for uf in user_flows],
-            },
-            run_dir=run_dir,
-        )
-    scan_meta["stage_6_7_user_flows"] = dict(uf_telemetry)
-
-    # ── Stage 6.7c — Mega-UF semantic split (additive Sonnet) ──────
-    # 6.7's deterministic clusterer over-merges genuinely-distinct journeys
-    # into a few mega-UFs (cal.com: one 'availability' UF spanned 33
-    # journeys). A handful of LLM calls partition ONLY those mega-mixed UFs
-    # into per-journey sub-UFs (recall-safe — unplaced members fall to a
-    # residual sub-UF, no flow dropped). Runs BEFORE 6.7b so the refiner
-    # names the split UFs. Shared CostTracker; graceful degrade keeps the
-    # mega-UF on any LLM failure. Measured F1 64→74 on cal.com vs uf-golden.
-    from faultline.pipeline_v2.stage_6_7c_uf_splitter import split_mega_user_flows
-    # Content-hash LLM cache for the UF-path stages (6.7c split + 6.7b
-    # refine): same backend Stage 3 / Stage 8 use (threaded on the scan
-    # context by run.py). A warm entry replays the stage's PARSED LLM
-    # output byte-identically at $0 on an unchanged repo; ``None`` (or the
-    # per-stage env opt-outs) behaves exactly as pre-cache. Best-effort —
-    # any cache fault inside the stages degrades to a live call.
-    _uf_llm_cache = getattr(ctx, "cache_backend", None)
-    write_stage_input(run_dir, 6, "uf_splitter", {
-        "user_flows": user_flows,
-        "bipartite_flows": list(bipartite.flows),
-        "ctx": ctx,
-        "scan_meta": scan_meta,
-    })
-    with StageLogger(run_dir, 6, "uf_splitter") as log6_7c:
-        user_flows, uf_split_telemetry = split_mega_user_flows(
-            user_flows,
-            bipartite.flows,
-            cost_tracker=tracker,
-            log=log6_7c,
-            llm_health=llm_health,
-            cache=_uf_llm_cache,
-        )
-        write_stage_artifact(
-            ctx.repo_path,
-            stage_index=6,
-            stage_name="uf_splitter",
-            payload={
-                **uf_split_telemetry,
-                "user_flows": [uf.model_dump() for uf in user_flows],
-            },
-            run_dir=run_dir,
-        )
-    scan_meta["stage_6_7c_uf_splitter"] = dict(uf_split_telemetry)
-
-    # ── Stage 6.7b — User-Flow LLM refiner (additive Haiku) ─────────
-    # One Haiku call per domain over the deterministic 6.7 UF clusters:
-    # journey-grain name/description, resolves intent="other", infers
-    # ui_tier from the frontend surface, drafts AC from test-reach.
-    # Membership/grain from 6.7 are NOT changed. Graceful per-domain
-    # degrade: on any LLM failure the UFs keep their deterministic
-    # name/intent. Uses the SAME shared CostTracker + model_id as the
-    # rest of the LLM stages; no README, no .ai/specs.
-    from faultline.pipeline_v2.stage_6_7b_uf_refiner import refine_user_flows
-    write_stage_input(run_dir, 6, "uf_refiner", {
-        "user_flows": user_flows,
-        "bipartite_flows": list(bipartite.flows),
-        "model_id": model_id,
-        "ctx": ctx,
-        "scan_meta": scan_meta,
-        "features": features,
-        "repo_path": str(repo_path),
-        "is_full_scan": is_full_scan,
-    })
-    with StageLogger(run_dir, 6, "uf_refiner") as log6_7b:
-        # ── Incremental UF-refiner reuse (--since path ONLY) ───────
-        # Only domains with a changed UF still get a Haiku call — see
-        # ``incremental_wiring.plan_uf_domain_allowlist``. On a full /
-        # cold scan ``domain_allowlist`` stays None → every domain is
-        # refined, byte-identical to before (cold-scan rule).
-        uf_domain_allowlist: set[str | None] | None = None
-        if not is_full_scan and incremental_base_scan is not None:
-            uf_domain_allowlist = plan_uf_domain_allowlist(
-                user_flows, incremental_base_scan, log6_7b,
+        user_flows: list = []
+        write_stage_input(run_dir, 6, "user_flows", {
+            "bipartite_flows": list(bipartite.flows),
+            "features": features,
+            "routes_index": lineage_result.routes_index,
+            "scan_meta": scan_meta,
+            "repo_path": str(repo_path),
+        })
+        with StageLogger(run_dir, 6, "user_flows") as log6_7:
+            user_flows, uf_telemetry = run_user_flow_rollup(
+                bipartite.flows, features,
+                routes_index=lineage_result.routes_index,
+                product_strings=product_strings,
             )
-        user_flows, uf_refine_telemetry = refine_user_flows(
-            user_flows,
-            bipartite.flows,
-            model=model_id,
-            cost_tracker=tracker,
-            log=log6_7b,
-            domain_allowlist=uf_domain_allowlist,
-            llm_health=llm_health,
-            product_strings=product_strings,
-            cache=_uf_llm_cache,
-        )
-        write_stage_artifact(
-            ctx.repo_path,
-            stage_index=6,
-            stage_name="uf_refiner",
-            payload={
-                **uf_refine_telemetry,
-                "user_flows": [uf.model_dump() for uf in user_flows],
-            },
-            run_dir=run_dir,
-        )
-    scan_meta["stage_6_7b_uf_refiner"] = dict(uf_refine_telemetry)
+            log6_7.info(
+                "user_flows: %d flows -> %d unique -> %d UF, %d domains, "
+                "%d with cross_links (dedup_dropped=%d)"
+                % (
+                    uf_telemetry["total_flows"],
+                    uf_telemetry["unique_flows"],
+                    uf_telemetry["user_flows"],
+                    uf_telemetry["domains"],
+                    uf_telemetry["uf_with_cross_links"],
+                    uf_telemetry["dedup_dropped"],
+                ),
+            )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=6,
+                stage_name="user_flows",
+                payload={
+                    **uf_telemetry,
+                    "user_flows": [uf.model_dump() for uf in user_flows],
+                },
+                run_dir=run_dir,
+            )
+        scan_meta["stage_6_7_user_flows"] = dict(uf_telemetry)
+
+        # ── Stage 6.7c — Mega-UF semantic split (additive Sonnet) ──────
+        # 6.7's deterministic clusterer over-merges genuinely-distinct journeys
+        # into a few mega-UFs (cal.com: one 'availability' UF spanned 33
+        # journeys). A handful of LLM calls partition ONLY those mega-mixed UFs
+        # into per-journey sub-UFs (recall-safe — unplaced members fall to a
+        # residual sub-UF, no flow dropped). Runs BEFORE 6.7b so the refiner
+        # names the split UFs. Shared CostTracker; graceful degrade keeps the
+        # mega-UF on any LLM failure. Measured F1 64→74 on cal.com vs uf-golden.
+        from faultline.pipeline_v2.stage_6_7c_uf_splitter import split_mega_user_flows
+        # Content-hash LLM cache for the UF-path stages (6.7c split + 6.7b
+        # refine): same backend Stage 3 / Stage 8 use (threaded on the scan
+        # context by run.py). A warm entry replays the stage's PARSED LLM
+        # output byte-identically at $0 on an unchanged repo; ``None`` (or the
+        # per-stage env opt-outs) behaves exactly as pre-cache. Best-effort —
+        # any cache fault inside the stages degrades to a live call.
+        _uf_llm_cache = getattr(ctx, "cache_backend", None)
+        write_stage_input(run_dir, 6, "uf_splitter", {
+            "user_flows": user_flows,
+            "bipartite_flows": list(bipartite.flows),
+            "ctx": ctx,
+            "scan_meta": scan_meta,
+        })
+        with StageLogger(run_dir, 6, "uf_splitter") as log6_7c:
+            user_flows, uf_split_telemetry = split_mega_user_flows(
+                user_flows,
+                bipartite.flows,
+                cost_tracker=tracker,
+                log=log6_7c,
+                llm_health=llm_health,
+                cache=_uf_llm_cache,
+            )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=6,
+                stage_name="uf_splitter",
+                payload={
+                    **uf_split_telemetry,
+                    "user_flows": [uf.model_dump() for uf in user_flows],
+                },
+                run_dir=run_dir,
+            )
+        scan_meta["stage_6_7c_uf_splitter"] = dict(uf_split_telemetry)
+
+        # ── Stage 6.7b — User-Flow LLM refiner (additive Haiku) ─────────
+        # One Haiku call per domain over the deterministic 6.7 UF clusters:
+        # journey-grain name/description, resolves intent="other", infers
+        # ui_tier from the frontend surface, drafts AC from test-reach.
+        # Membership/grain from 6.7 are NOT changed. Graceful per-domain
+        # degrade: on any LLM failure the UFs keep their deterministic
+        # name/intent. Uses the SAME shared CostTracker + model_id as the
+        # rest of the LLM stages; no README, no .ai/specs.
+        from faultline.pipeline_v2.stage_6_7b_uf_refiner import refine_user_flows
+        write_stage_input(run_dir, 6, "uf_refiner", {
+            "user_flows": user_flows,
+            "bipartite_flows": list(bipartite.flows),
+            "model_id": model_id,
+            "ctx": ctx,
+            "scan_meta": scan_meta,
+            "features": features,
+            "repo_path": str(repo_path),
+            "is_full_scan": is_full_scan,
+        })
+        with StageLogger(run_dir, 6, "uf_refiner") as log6_7b:
+            # ── Incremental UF-refiner reuse (--since path ONLY) ───────
+            # Only domains with a changed UF still get a Haiku call — see
+            # ``incremental_wiring.plan_uf_domain_allowlist``. On a full /
+            # cold scan ``domain_allowlist`` stays None → every domain is
+            # refined, byte-identical to before (cold-scan rule).
+            uf_domain_allowlist: set[str | None] | None = None
+            if not is_full_scan and incremental_base_scan is not None:
+                uf_domain_allowlist = plan_uf_domain_allowlist(
+                    user_flows, incremental_base_scan, log6_7b,
+                )
+            user_flows, uf_refine_telemetry = refine_user_flows(
+                user_flows,
+                bipartite.flows,
+                model=model_id,
+                cost_tracker=tracker,
+                log=log6_7b,
+                domain_allowlist=uf_domain_allowlist,
+                llm_health=llm_health,
+                product_strings=product_strings,
+                cache=_uf_llm_cache,
+            )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=6,
+                stage_name="uf_refiner",
+                payload={
+                    **uf_refine_telemetry,
+                    "user_flows": [uf.model_dump() for uf in user_flows],
+                },
+                run_dir=run_dir,
+            )
+        scan_meta["stage_6_7b_uf_refiner"] = dict(uf_refine_telemetry)
 
     # ── Stage 6.7d — LLM product/journey abstraction (opt-in, OFF) ──
     # Crosses the code-grain → product-grain gap the deterministic stages
@@ -497,7 +544,7 @@ def run_finalize_phase(
         is_enabled as _s67d_enabled,
         run_journey_abstraction,
     )
-    if _s67d_enabled():
+    if _s67d_enabled() and not uf_suppressed:
         write_stage_input(run_dir, 6, "journey_abstraction", {
             "user_flows": user_flows,
             "product_features": product_features,
