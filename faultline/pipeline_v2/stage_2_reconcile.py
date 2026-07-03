@@ -93,6 +93,10 @@ _SOURCE_PRIORITY: dict[str, int] = {
     # router file itself belongs to the route anchor), above schema.
     "fastapi-domain":  3,
     "route-fastify":   4,   # Fastify .get/.post route registrations
+    # Profile-supplied react-router route-element anchors (Phase B #3).
+    # Declared route table parsed from source — same semantics as
+    # ``route`` / the other declared-entry-point sources, same tier.
+    "react-router-spa": 4,
     "route-express":   4,   # Express .get/.post route registrations
     "go-router":       4,   # Go HTTP mux/handler registrations
     "django-route":    4,   # Django/DRF urls.py urlpatterns + views

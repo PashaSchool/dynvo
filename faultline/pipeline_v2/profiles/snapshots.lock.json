@@ -59,6 +59,18 @@
       "commit_sha": "16a3c863ee5330c8c209d4f9bf52e2236bb0b795",
       "profile": "django",
       "digest": "sha256:e4cab4d5e458b12abcf696041361dc968e078af45175e314202465b6cc7c1333"
+    },
+    "dittofeed": {
+      "path": "/Users/pkuzina/workspace/_faultlines-tier1/dittofeed",
+      "commit_sha": "52b2bee909744d07dd5d409fd3974d4b95c66766",
+      "profile": "next-pages-react",
+      "digest": "sha256:0d71ff881dfc4519132e424a754d854ee993f61b3a2e4b24a5197d3d4b8de5af"
+    },
+    "opensign": {
+      "path": "/Users/pkuzina/workspace/_faultlines-freshblood/opensign",
+      "commit_sha": "f2ada473027e9b36e0af7a459ebe703b83bc2e25",
+      "profile": "next-pages-react",
+      "digest": "sha256:f6ab2093db52ef8247344dc32a5ccf964351f5d87444bf4831e3a0de565bb564"
     }
   }
 }
