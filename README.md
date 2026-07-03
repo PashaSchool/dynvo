@@ -183,6 +183,13 @@ Dynvo is the only layer that joins **structure + git history + runtime** into on
 
 Issues, ideas and PRs are welcome. Dynvo is built to map *any* codebase — if it mis-reads your stack, that's a bug we want to hear about.
 
+Working on the scan pipeline? Every stage persists its exact input
+next to its output artifact, and `dynvo replay --run <run> --stage
+<name> [--through output]` re-runs a single stage (or the downstream
+chain) from those artifacts with your edited code — no full rescan.
+See [docs/replay-v2.md](docs/replay-v2.md) for the isolated-stage
+experiment workflow and the `--fresh-llm` cache-bust semantics.
+
 ## License
 
 [Functional Source License, v1.1, Apache-2.0 future](LICENSE) (FSL-1.1-ALv2).

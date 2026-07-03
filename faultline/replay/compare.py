@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -50,11 +51,20 @@ _STAGE_VOLATILE: frozenset[str] = (
     | _VOLATILE_SCAN_META
     | frozenset({
         "run_id", "run_dir", "cache_hits", "llm_calls",
+        # per-feature wall-clock timing in the import-tree artifact
+        # (the scan normalizer covers duration_ms but not this spelling).
+        "elapsed_ms",
         # additive replay marker (scan_meta.replayed_from) — a replayed
         # stage-7 artifact differs from the original ONLY by this stamp.
         "replayed_from",
     })
 )
+
+# Anthropic request ids leak into auth-degradation detail strings
+# (scan_meta.llm_degraded.detail / degradations[].detail) — the only
+# run-scoped token inside otherwise-meaningful text. Mask the id, keep
+# the message.
+_REQUEST_ID_RE = re.compile(r"req_[A-Za-z0-9]+")
 
 
 def _scrub_everywhere(node: Any) -> Any:
@@ -70,6 +80,8 @@ def _scrub_everywhere(node: Any) -> Any:
         }
     if isinstance(node, list):
         return [_scrub_everywhere(item) for item in node]
+    if isinstance(node, str):
+        return _REQUEST_ID_RE.sub("req_x", node)
     return node
 
 
