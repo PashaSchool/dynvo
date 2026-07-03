@@ -23,9 +23,14 @@ live in ``eval/stacks/fastapi.yaml`` (per ``stack-pattern-library``);
 this module only compiles + applies them.
 
 Activation gate: the extractor fires when Stage 0 / the auditor
-classified the repo as ``fastapi`` (primary OR secondary stack), or
-when a Python repo otherwise exposes FastAPI source markers. Self-skips
-to ``[]`` on non-FastAPI repos.
+classified the repo as ``fastapi`` (primary OR secondary stack).
+Structural activation for repos whose stack TAG is inconclusive
+(hybrid monorepos tagged ``js-generic``, python-lib repos with FastAPI
+source) is folded into the FastAPI-family framework profile
+(StackProfile Phase B): the profile detects the framework from
+manifests + source fingerprints and supplies an always-active instance
+of this extractor through the Stage-1 override seam. Self-skips to
+``[]`` on non-FastAPI repos.
 
 No LLM. No network. Pure file-system scan + regex.
 """
@@ -109,39 +114,19 @@ class _Compiled:
 # ── Activation gate ────────────────────────────────────────────────────────
 
 
-def _has_fastapi_source(ctx: "ScanContext") -> bool:
-    """Cheap structural check — a tracked .py file uses FastAPI/APIRouter.
-
-    Only consulted when the stack tags are inconclusive. Scans at most a
-    bounded number of candidate router files (``routers/`` / ``main.py``
-    shaped) to keep the gate cheap on large repos.
-    """
-    checked = 0
-    for rel in ctx.tracked_files:
-        if not rel.endswith(".py"):
-            continue
-        norm = rel.replace("\\", "/")
-        if "/site-packages/" in f"/{norm}" or "/.venv/" in f"/{norm}":
-            continue
-        text = read_text(ctx.repo_path / rel)
-        if text and ("APIRouter(" in text or "FastAPI(" in text):
-            return True
-        checked += 1
-        if checked >= 200:
-            break
-    return False
-
-
 def _is_fastapi_repo(ctx: "ScanContext") -> bool:
+    """Stack-tag gate only — structural detection lives in the profile.
+
+    The pre-profile fallback (probe .py source for ``FastAPI(`` when the
+    Stage-0 tag was an inconclusive python flavour) moved into
+    ``profiles/fastapi_family.py`` (Phase B activation fold): the
+    profile's ``detects()`` covers every structural case — including the
+    hybrid-monorepo shapes the tag-based branch could never reach — and
+    force-activates this extractor via the Stage-1 override seam.
+    """
     if is_any_stack(ctx, "fastapi"):
         return True
-    if (ctx.audited_stack or "").lower().startswith("fastapi"):
-        return True
-    # Python repo with inconclusive stack tag → confirm via source marker.
-    stack = (ctx.stack or "").lower()
-    if stack in ("python", "python-lib", "python-library", "") or not stack:
-        return _has_fastapi_source(ctx)
-    return False
+    return (ctx.audited_stack or "").lower().startswith("fastapi")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

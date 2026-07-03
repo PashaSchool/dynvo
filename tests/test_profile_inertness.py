@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from faultline.pipeline_v2.profiles import AttributionSpec, FileRole
+from faultline.pipeline_v2.profiles.fastapi_family import FastApiFamilyProfile
 from faultline.pipeline_v2.profiles.next_app_router import NextAppRouterProfile
 from tests._profile_inertness import (
     NON_NEXT_FIXTURE,
@@ -26,6 +27,17 @@ def test_next_app_router_inert_on_non_next_repo(
     """Registering NextAppRouterProfile must not touch a non-Next scan."""
     repo = make_fixture_repo(tmp_path, NON_NEXT_FIXTURE)
     assert_profile_inert(repo, NextAppRouterProfile(), tmp_path, monkeypatch)
+
+
+def test_fastapi_family_inert_on_non_fastapi_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G4 (Phase B #1): FastApiFamilyProfile must not touch a scan it
+    does not win — the flask fixture has no family dep, no family
+    source fingerprints, so ``detects`` is 0.0 and registration must be
+    byte-inert (including the Stage-1 extractor-override seam)."""
+    repo = make_fixture_repo(tmp_path, NON_NEXT_FIXTURE)
+    assert_profile_inert(repo, FastApiFamilyProfile(), tmp_path, monkeypatch)
 
 
 class _NeverMatchingProfile:

@@ -68,6 +68,8 @@ def _load_default_profiles() -> list[FrameworkProfile]:
     # the entry-point; a colliding entry-point is ignored — in-tree wins).
     _try("faultline.pipeline_v2.profiles.next_app_router",
          "NextAppRouterProfile")
+    _try("faultline.pipeline_v2.profiles.fastapi_family",
+         "FastApiFamilyProfile")
 
     return out
 

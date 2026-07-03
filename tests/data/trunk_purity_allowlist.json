@@ -26,12 +26,6 @@
       "class": "extractor-activation"
     },
     {
-      "file": "faultline/pipeline_v2/extractors/fastapi.py",
-      "line": "if stack in (\"python\", \"python-lib\", \"python-library\", \"\") or not stack:",
-      "pattern": "stack-branch",
-      "class": "extractor-activation"
-    },
-    {
       "file": "faultline/pipeline_v2/extractors/fastify.py",
       "line": "- ``ctx.audited_stack == \"fastify\"``",
       "pattern": "stack-literal-cmp",

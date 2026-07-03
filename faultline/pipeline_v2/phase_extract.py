@@ -31,10 +31,17 @@ class ExtractResult:
     workspace_telemetry: dict[str, Any]
 
 
-def run_extract_phase(ctx: Any, run_dir: Path) -> ExtractResult:
+def run_extract_phase(
+    ctx: Any, run_dir: Path, *, profile: Any | None = None,
+) -> ExtractResult:
     """Run Stage 1 — extractors (global or per-workspace dispatch).
 
-    Body moved verbatim from ``run_pipeline_v2``.
+    Body moved verbatim from ``run_pipeline_v2``. ``profile`` is the
+    ACTIVE framework profile, threaded to both the global and the
+    per-workspace Stage-1 pass for the optional extractor-override seam
+    (StackProfile Phase B activation fold — see
+    ``stage_1_extractors.merge_profile_extractors``). ``None`` /
+    DefaultProfile is a strict no-op.
     """
     # ``_isolate`` / telemetry helpers are looked up through the run
     # module so external monkeypatches on ``run`` keep working and the
@@ -61,7 +68,9 @@ def run_extract_phase(ctx: Any, run_dir: Path) -> ExtractResult:
     }
     with StageLogger(run_dir, 1, "extractors") as log1:
         if per_ws_active:
-            pw_result = run_stage_1_per_workspace(_run._isolate(ctx))
+            pw_result = run_stage_1_per_workspace(
+                _run._isolate(ctx), profile=profile,
+            )
             if not pw_result.workspaces_used:
                 # Activation passed but no workspaces materialised
                 # (synthesis returned empty + no declared list).
@@ -71,7 +80,9 @@ def run_extract_phase(ctx: Any, run_dir: Path) -> ExtractResult:
                     "per-workspace dispatch activated but no workspaces "
                     "found — falling back to global Stage 1",
                 )
-                stage1_out = stage_1_extractors(_run._isolate(ctx))
+                stage1_out = stage_1_extractors(
+                    _run._isolate(ctx), profile=profile,
+                )
             else:
                 stage1_out = pw_result.stage1_out
                 per_ws_telemetry["stage_1_per_workspace_active"] = True
@@ -103,7 +114,9 @@ def run_extract_phase(ctx: Any, run_dir: Path) -> ExtractResult:
                     f"{per_ws_telemetry['stage_1_per_workspace_anchors_total']}",
                 )
         else:
-            stage1_out = stage_1_extractors(_run._isolate(ctx))
+            stage1_out = stage_1_extractors(
+                _run._isolate(ctx), profile=profile,
+            )
 
         extractor_hits = _run._extractor_hits(stage1_out)
         for name, count in extractor_hits.items():

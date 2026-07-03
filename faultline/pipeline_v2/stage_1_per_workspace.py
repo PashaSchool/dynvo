@@ -69,6 +69,7 @@ from faultline.pipeline_v2.stage_0_intake import (
 from faultline.pipeline_v2.stage_1_extractors import (
     _discover_extractors,
     _safe_extract,
+    merge_profile_extractors,
 )
 
 if TYPE_CHECKING:
@@ -437,12 +438,18 @@ class PerWorkspaceResult:
 def run_stage_1_per_workspace(
     ctx: ScanContext,
     extractors: list[AnchorExtractor] | None = None,
+    *,
+    profile: object | None = None,
 ) -> PerWorkspaceResult:
     """Run Stage 1 extractors per workspace and merge.
 
     Args:
         ctx: Stage 0 output (post-auditor).
         extractors: optional explicit registry. ``None`` → discover.
+        profile: the ACTIVE framework profile — its optional Stage-1
+            extractor overrides are merged into the registry exactly as
+            in the global pass (:func:`merge_profile_extractors`); a
+            ``None`` / DefaultProfile is a strict no-op.
 
     Returns:
         ``PerWorkspaceResult`` containing the merged Stage-1 dict
@@ -457,6 +464,7 @@ def run_stage_1_per_workspace(
     """
     if extractors is None:
         extractors = _discover_extractors()
+    extractors = merge_profile_extractors(extractors, profile, ctx)
 
     # Source the workspace list — declared first, synthesised second.
     workspaces = list(ctx.workspaces or [])
