@@ -292,3 +292,50 @@ def test_all_anchors_tagged_django_route(tmp_path: Path) -> None:
     for a in out:
         assert a.source == "django-route"
         assert a.name and a.name == a.name.lower()
+
+
+def test_residual_anchor_name_deterministic_on_length_ties(
+    tmp_path: Path,
+) -> None:
+    """Weblate flake 2026-07-03: ``min(classes, key=len)`` over a SET
+    resolved length ties by set-iteration order (PYTHONHASHSEED), so the
+    residual-anchor NAME flipped between runs (``user`` vs ``unit`` vs
+    ``role``) and cascaded into Stage-2 merge/suppression flutter. The
+    tie-break must be lexicographic among the shortest class names.
+    """
+    views = "\n".join(
+        [
+            "from rest_framework import viewsets",
+            "",
+            "class UserViewSet(viewsets.ModelViewSet):",
+            "    pass",
+            "",
+            "class UnitViewSet(viewsets.ModelViewSet):",
+            "    pass",
+            "",
+            "class RoleViewSet(viewsets.ModelViewSet):",
+            "    pass",
+            "",
+            "class ComponentViewSet(viewsets.ModelViewSet):",
+            "    pass",
+        ],
+    )
+    _write(tmp_path / "app/urls.py", "urlpatterns = []\n")
+    _write(tmp_path / "app/views.py", views)
+    out = DjangoExtractor().extract(
+        _ctx(
+            repo_path=tmp_path,
+            tracked_files=["app/urls.py", "app/views.py"],
+        ),
+    )
+    residual = [a for a in out if not a.routes]
+    assert len(residual) == 1
+    # Shortest names tie at 11 chars (User/Unit/Role); lexicographic
+    # tie-break picks RoleViewSet → slug "role", every run, every seed.
+    assert residual[0].name == "role"
+    # The rationale sample must list classes in sorted order (stable
+    # text regardless of set-iteration order).
+    assert (
+        "ComponentViewSet, RoleViewSet, UnitViewSet, UserViewSet"
+        in residual[0].rationale
+    )

@@ -412,8 +412,12 @@ class DjangoExtractor:
 
         for file_str, classes in residual_by_file.items():
             # Name by the shortest class stem (most resource-like), e.g.
-            # ``UserViewSet`` → ``user``.
-            best = min(classes, key=len)
+            # ``UserViewSet`` → ``user``. ``classes`` is a SET — a bare
+            # ``min(..., key=len)`` resolves length ties by set-iteration
+            # order (PYTHONHASHSEED), which made the residual anchor NAME
+            # nondeterministic (weblate flake 2026-07-03). Tie-break
+            # lexicographically for a stable pick.
+            best = min(classes, key=lambda n: (len(n), n))
             stem = re.sub(
                 r"(ViewSet|APIView|View)$", "", best,
             ) or best
