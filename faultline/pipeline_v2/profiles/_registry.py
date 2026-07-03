@@ -70,6 +70,8 @@ def _load_default_profiles() -> list[FrameworkProfile]:
          "NextAppRouterProfile")
     _try("faultline.pipeline_v2.profiles.fastapi_family",
          "FastApiFamilyProfile")
+    _try("faultline.pipeline_v2.profiles.django",
+         "DjangoProfile")
 
     return out
 

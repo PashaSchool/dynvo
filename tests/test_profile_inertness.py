@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from faultline.pipeline_v2.profiles import AttributionSpec, FileRole
+from faultline.pipeline_v2.profiles.django import DjangoProfile
 from faultline.pipeline_v2.profiles.fastapi_family import FastApiFamilyProfile
 from faultline.pipeline_v2.profiles.next_app_router import NextAppRouterProfile
 from tests._profile_inertness import (
@@ -38,6 +39,18 @@ def test_fastapi_family_inert_on_non_fastapi_repo(
     byte-inert (including the Stage-1 extractor-override seam)."""
     repo = make_fixture_repo(tmp_path, NON_NEXT_FIXTURE)
     assert_profile_inert(repo, FastApiFamilyProfile(), tmp_path, monkeypatch)
+
+
+def test_django_inert_on_non_django_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G4 (Phase B #2): DjangoProfile must not touch a scan it does not
+    win — the flask fixture has no Django dep and no project grammar
+    (no manage.py / INSTALLED_APPS / urlpatterns), so ``detects`` is
+    0.0 and registration must be byte-inert (including the Stage-1
+    extractor-override seam)."""
+    repo = make_fixture_repo(tmp_path, NON_NEXT_FIXTURE)
+    assert_profile_inert(repo, DjangoProfile(), tmp_path, monkeypatch)
 
 
 class _NeverMatchingProfile:

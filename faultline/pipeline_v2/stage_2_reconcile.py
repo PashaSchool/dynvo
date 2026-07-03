@@ -96,6 +96,10 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "route-express":   4,   # Express .get/.post route registrations
     "go-router":       4,   # Go HTTP mux/handler registrations
     "django-route":    4,   # Django/DRF urls.py urlpatterns + views
+    # Profile-supplied Django app-directory anchors (Phase B #2). Same
+    # code-layout tier as fastapi-domain: below declared URLConf routes
+    # (the urls/views files belong to the route anchor), above schema.
+    "django-app":      3,
     "mvc":             3,
     # Rails models name the domain resource and are higher-precision
     # than the schema (which only has table names without methods).
