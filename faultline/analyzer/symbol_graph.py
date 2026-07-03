@@ -74,11 +74,11 @@ _RE_SIDE_EFFECT_IMPORT = re.compile(
 # for BFS purposes — flows that touch the re-exporting barrel reach
 # through to the original definitions.
 _RE_NAMED_REEXPORT = re.compile(
-    r"^\s*export\s*\{([^}]+)\}\s*from\s*['\"]([^'\"]+)['\"]",
+    r"^\s*export\s*(?:type\s+)?\{([^}]+)\}\s*from\s*['\"]([^'\"]+)['\"]",
     re.MULTILINE,
 )
 _RE_STAR_REEXPORT = re.compile(
-    r"^\s*export\s*\*(?:\s+as\s+\w+)?\s+from\s*['\"]([^'\"]+)['\"]",
+    r"^\s*export\s*(?:type\s+)?\*(?:\s+as\s+\w+)?\s+from\s*['\"]([^'\"]+)['\"]",
     re.MULTILINE,
 )
 # Dynamic imports: ``const X = await import('./y')`` or
@@ -89,8 +89,9 @@ _RE_DYNAMIC_IMPORT = re.compile(
 from .import_graph import (
     _resolve_import,
     detect_monorepo_packages,
-    load_tsconfig_paths,
+    detect_workspace_package_map,
 )
+from .tsconfig_paths import build_path_alias_map
 
 
 logger = logging.getLogger(__name__)
@@ -565,11 +566,22 @@ def build_symbol_graph(
     """
     repo_root = str(repo_root)
     file_set = set(source_files)
-    alias_map = load_tsconfig_paths(repo_root)
+    # Per-workspace tsconfig aliases (nearest-enclosing-workspace
+    # resolution) — the repo-root-only ``load_tsconfig_paths`` map
+    # missed every per-app alias in monorepos (WS3 oracle: ~90% of
+    # missed reference edges were resolution failures).
+    try:
+        alias_entries = build_path_alias_map(repo_root)
+    except Exception:  # noqa: BLE001 — defensive on partial repos
+        alias_entries = []
     try:
         monorepo_packages = detect_monorepo_packages(repo_root)
     except Exception:  # noqa: BLE001 — defensive on partial repos
         monorepo_packages = set()
+    try:
+        workspace_package_map = detect_workspace_package_map(repo_root)
+    except Exception:  # noqa: BLE001 — defensive on partial repos
+        workspace_package_map = {}
 
     signatures = extract_signatures(source_files, repo_root)
 
@@ -738,63 +750,74 @@ def build_symbol_graph(
             continue
 
         # Collect (module, symbol) pairs from all import shapes.
+        #
+        # NO prefix pre-filter: the old ``./`` / ``@/`` / ``~/`` guard
+        # silently dropped every workspace-scoped module
+        # (``@formbricks/types``, ``@usesend/ui``) and every custom
+        # alias (``#/``, ``$lib/``) before resolution even ran.
+        # External modules are cheap no-ops — ``_resolve_import``
+        # returns ``None`` for anything not in the tracked file set.
         per_module: dict[str, set[str]] = {}
         for module, symbols in extract_named_imports(source).items():
             per_module.setdefault(module, set()).update(symbols)
         for m in _RE_DEFAULT_IMPORT.finditer(source):
             sym = m.group(1)
             module = m.group(2)
-            if module.startswith(".") or module.startswith("@/") or module.startswith("~/"):
-                per_module.setdefault(module, set()).add(sym)
+            per_module.setdefault(module, set()).add(sym)
         for m in _RE_COMBINED_IMPORT.finditer(source):
             names_str = m.group(1)
             module = m.group(2)
-            if not (module.startswith(".") or module.startswith("@/") or module.startswith("~/")):
-                continue
             for tok in names_str.split(","):
                 parts = tok.strip().split(" as ")
                 original = parts[0].strip()
+                # Inline type modifier: ``{ type Foo, Bar }``.
+                if original.startswith("type "):
+                    original = original[len("type "):].strip()
                 if original:
                     per_module.setdefault(module, set()).add(original)
         for m in _RE_SIDE_EFFECT_IMPORT.finditer(source):
             module = m.group(1)
-            if module.startswith(".") or module.startswith("@/") or module.startswith("~/"):
-                per_module.setdefault(module, set()).add("@import")
+            per_module.setdefault(module, set()).add("@import")
         # Named re-exports — pass each symbol through to BFS.
         for m in _RE_NAMED_REEXPORT.finditer(source):
             names_str = m.group(1)
             module = m.group(2)
-            if not (module.startswith(".") or module.startswith("@/") or module.startswith("~/")):
-                continue
             for tok in names_str.split(","):
                 parts = tok.strip().split(" as ")
                 original = parts[0].strip()
+                # Inline type modifier: ``{ type Foo, Bar }``.
+                if original.startswith("type "):
+                    original = original[len("type "):].strip()
                 if original:
                     per_module.setdefault(module, set()).add(original)
         # Star re-exports — record as namespace ("*") so BFS pulls
         # every export of the target.
         for m in _RE_STAR_REEXPORT.finditer(source):
             module = m.group(1)
-            if module.startswith(".") or module.startswith("@/") or module.startswith("~/"):
-                per_module.setdefault(module, set()).add("*")
+            per_module.setdefault(module, set()).add("*")
         # Dynamic imports — treated as side-effect for BFS purposes
         # since we can't statically know which symbol is destructured
         # off the resolved module.
         for m in _RE_DYNAMIC_IMPORT.finditer(source):
             module = m.group(1)
-            if module.startswith(".") or module.startswith("@/") or module.startswith("~/"):
-                per_module.setdefault(module, set()).add("@import")
+            per_module.setdefault(module, set()).add("@import")
 
         edges: list[ImportEdge] = []
-        for module, symbols in per_module.items():
+        for module, symbols in sorted(
+            per_module.items(), key=lambda kv: kv[0],
+        ):
             target = _resolve_import(
                 path, module, file_set,
-                alias_map=alias_map,
+                alias_entries=alias_entries,
                 monorepo_packages=monorepo_packages,
+                workspace_package_map=workspace_package_map,
+                repo_root=repo_root,
             )
             if not target:
                 continue
-            for sym in symbols:
+            # SORTED: ``symbols`` is a set — hash-order iteration would
+            # make edge order PYTHONHASHSEED-dependent across processes.
+            for sym in sorted(symbols):
                 edges.append(ImportEdge(
                     target_file=target, target_symbol=sym,
                 ))

@@ -449,13 +449,21 @@ def _resolve_import(
     monorepo_packages: set[str] | None = None,
     workspace_package_map: dict[str, str] | None = None,
     repo_root: str | None = None,
+    alias_entries: list | None = None,
 ) -> str | None:
     """Resolves an import path to an actual file in the project.
 
     Handles:
     - Relative imports: ./foo, ../bar/baz
+    - Per-workspace tsconfig paths (``alias_entries`` — the
+      :class:`faultline.analyzer.tsconfig_paths.AliasEntry` list from
+      :func:`~faultline.analyzer.tsconfig_paths.build_path_alias_map`):
+      resolved against the NEAREST ENCLOSING workspace's mapping, so
+      per-app aliases (``~/* → ./src/*`` in ``apps/marketing``) hit the
+      right base directory. Preferred over the legacy flat map.
+    - Legacy flat tsconfig paths (``alias_map`` — repo-root aliases from
+      :func:`load_tsconfig_paths`); kept for callers not yet migrated.
     - Alias imports: @/foo, ~/bar (mapped to root and src/ root)
-    - tsconfig paths: custom aliases from tsconfig.json
     - Monorepo bare imports: 'react-reconciler/src/...' → 'packages/react-reconciler/src/...'
     - Workspace scoped imports: '@calcom/lib' → 'packages/lib', resolved via
       ``workspace_package_map`` (package.json#name → dir). ADDITIVE fallback,
@@ -474,7 +482,17 @@ def _resolve_import(
             return None
         return _try_extensions(base, file_set)
 
-    # Try tsconfig path aliases first (most specific)
+    # Per-workspace tsconfig aliases (nearest enclosing workspace wins).
+    if alias_entries:
+        from faultline.analyzer.tsconfig_paths import resolve_alias_import
+
+        result = resolve_alias_import(
+            importer, import_path, alias_entries, file_set,
+        )
+        if result:
+            return result
+
+    # Try legacy flat tsconfig path aliases (repo-root only)
     if alias_map:
         for alias_prefix, dir_prefix in alias_map.items():
             if import_path.startswith(alias_prefix):

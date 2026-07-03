@@ -22,8 +22,8 @@ from faultline.pipeline_v2.flow_expansion import expand_flows
 from faultline.pipeline_v2.flow_expansion.call_graph import build_call_graph
 from faultline.pipeline_v2.flow_reach import (
     ReachContext,
+    build_path_alias_map,
     detect_monorepo_packages,
-    load_tsconfig_paths,
 )
 from faultline.pipeline_v2.stage_0_intake import stage_0_intake
 
@@ -119,9 +119,10 @@ def _reach_context(repo: Path, files: list[str]) -> ReachContext:
         repo_path=repo,
         file_set=frozenset(files),
         signatures=sigs,
-        alias_map=load_tsconfig_paths(str(repo)),
+        alias_map={},
         monorepo_packages=detect_monorepo_packages(str(repo)),
         go_module_prefix=None,
+        alias_entries=build_path_alias_map(repo),
     )
 
 

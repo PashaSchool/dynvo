@@ -507,6 +507,7 @@ def build_call_graph(
                 repo_path=rctx.repo_path,
                 python_source_roots=rctx.python_source_roots,
                 workspace_package_map=rctx.workspace_package_map,
+                alias_entries=getattr(rctx, "alias_entries", None),
             )
         except Exception as exc:  # noqa: BLE001 — defensive
             logger.debug(

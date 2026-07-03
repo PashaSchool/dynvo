@@ -20,7 +20,7 @@ Resolver design — lean re-use, not a re-implementation
 ======================================================
 TS/JS import RESOLUTION is delegated verbatim to the engine's existing
 machinery (:func:`faultline.analyzer.import_graph._resolve_import` with
-``load_tsconfig_paths`` / ``detect_monorepo_packages`` /
+``build_path_alias_map`` / ``detect_monorepo_packages`` /
 ``detect_workspace_package_map`` pointed at the SNAPSHOT tree, so each
 snapshot is resolved against its OWN manifests). Only import-specifier
 EXTRACTION is local: the pipeline's ``extract_signatures`` keeps whole
@@ -75,8 +75,8 @@ from faultline.analyzer.import_graph import (
     _resolve_import,
     detect_monorepo_packages,
     detect_workspace_package_map,
-    load_tsconfig_paths,
 )
+from faultline.analyzer.tsconfig_paths import build_path_alias_map
 from faultline.analyzer.reverse_imports import (
     _MAX_FILE_BYTES,
     _TEST_PATH_MARKERS,
@@ -446,7 +446,7 @@ def build_snapshot_import_index(
         files = list_snapshot_files(scan_root)
     file_set = frozenset(files)
     root = str(scan_root)
-    alias_map = load_tsconfig_paths(root)
+    alias_entries = build_path_alias_map(scan_root)
     monorepo_packages = detect_monorepo_packages(root)
     workspace_map = detect_workspace_package_map(root)
 
@@ -472,8 +472,11 @@ def build_snapshot_import_index(
                         break
             else:
                 resolved = _resolve_import(
-                    rel, spec, file_set, alias_map,
-                    monorepo_packages, workspace_map, root,
+                    rel, spec, file_set,
+                    alias_entries=alias_entries,
+                    monorepo_packages=monorepo_packages,
+                    workspace_package_map=workspace_map,
+                    repo_root=root,
                 )
             if resolved and resolved != rel:
                 importers_of.setdefault(resolved, set()).add(rel)

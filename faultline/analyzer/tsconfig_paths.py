@@ -55,6 +55,7 @@ NO LLM. Pure file parsing.
 from __future__ import annotations
 
 import logging
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -392,51 +393,50 @@ def _alias_entries_for(
             continue
         if not targets:
             continue
-        # Take the first target (TS spec — the resolver tries each in
-        # order; we approximate with first-match since later targets
-        # are usually fallbacks for npm-published packages).
-        target = targets[0]
-        if not isinstance(target, str):
-            continue
+        # Emit one entry per target, in DECLARED order (TS spec — the
+        # resolver tries each target in order until one resolves).
+        for target in targets:
+            if not isinstance(target, str):
+                continue
 
-        # Normalise the prefix.
-        if pattern.endswith("/*"):
-            prefix = pattern[:-1]  # ``@/*`` → ``@/``
-            target_clean = target[:-1] if target.endswith("/*") else target
-        else:
-            prefix = pattern
-            target_clean = target
+            # Normalise the prefix.
+            if pattern.endswith("/*"):
+                prefix = pattern[:-1]  # ``@/*`` → ``@/``
+                target_clean = target[:-1] if target.endswith("/*") else target
+            else:
+                prefix = pattern
+                target_clean = target
 
-        # Resolve target against (ts_dir, baseUrl). Combine and
-        # normalise to repo-relative POSIX.
-        absolute_target = (ts_dir_abs / base_url / target_clean).resolve()
-        try:
-            target_rel = absolute_target.relative_to(repo_root_abs).as_posix()
-        except ValueError:
-            # Target escapes repo root — skip (e.g. ``../../node_modules/...``).
-            continue
+            # Resolve target against (ts_dir, baseUrl). Combine and
+            # normalise to repo-relative POSIX.
+            absolute_target = (ts_dir_abs / base_url / target_clean).resolve()
+            try:
+                target_rel = absolute_target.relative_to(repo_root_abs).as_posix()
+            except ValueError:
+                # Target escapes repo root — skip (e.g. ``../../node_modules/...``).
+                continue
 
-        # Normalise the "same directory" sentinel from pathlib to an
-        # empty string so prefix concatenation produces clean paths.
-        if target_rel == ".":
-            target_rel = ""
+            # Normalise the "same directory" sentinel from pathlib to an
+            # empty string so prefix concatenation produces clean paths.
+            if target_rel == ".":
+                target_rel = ""
 
-        # Wildcard aliases get a trailing ``/`` for unambiguous prefix
-        # matching in the resolver — UNLESS the target is the repo
-        # root, in which case the empty string ``""`` is the correct
-        # prefix (avoids producing ``"/foo.ts"`` lookups).
-        if (
-            pattern.endswith("/*")
-            and target_rel
-            and not target_rel.endswith("/")
-        ):
-            target_rel += "/"
+            # Wildcard aliases get a trailing ``/`` for unambiguous prefix
+            # matching in the resolver — UNLESS the target is the repo
+            # root, in which case the empty string ``""`` is the correct
+            # prefix (avoids producing ``"/foo.ts"`` lookups).
+            if (
+                pattern.endswith("/*")
+                and target_rel
+                and not target_rel.endswith("/")
+            ):
+                target_rel += "/"
 
-        entries.append(AliasEntry(
-            prefix=prefix,
-            workspace_root=workspace_root,
-            target_prefix=target_rel,
-        ))
+            entries.append(AliasEntry(
+                prefix=prefix,
+                workspace_root=workspace_root,
+                target_prefix=target_rel,
+            ))
 
     return entries
 
@@ -455,7 +455,10 @@ def _walk_tsconfigs(repo_root: Path) -> list[Path]:
         if depth > _MAX_WALK_DEPTH:
             return
         try:
-            entries = list(current.iterdir())
+            # SORTED for deterministic discovery order — iterdir() order
+            # is filesystem-dependent and would leak into alias-entry
+            # ordering (and thus resolution tie-breaks) between machines.
+            entries = sorted(current.iterdir(), key=lambda p: p.name)
         except OSError:
             return
         for entry in entries:
@@ -518,7 +521,7 @@ def build_path_alias_map(
 # ── Resolver ─────────────────────────────────────────────────────────────
 
 
-def _try_extensions(base: str, tracked_files: frozenset[str]) -> str | None:
+def _try_extensions(base: str, tracked_files: AbstractSet[str]) -> str | None:
     """Try ``base`` with TS/JS extensions + index files; return the
     first match found in ``tracked_files``."""
     # Already has an extension that resolves directly.
@@ -549,12 +552,83 @@ def _try_extensions(base: str, tracked_files: frozenset[str]) -> str | None:
     return None
 
 
+def _workspace_encloses(workspace_root: str, importer_file: str) -> bool:
+    """True when ``importer_file`` lives inside ``workspace_root``.
+
+    The repo-root workspace (``""``) encloses every file. Paths are
+    repo-relative POSIX on both sides.
+    """
+    if not workspace_root:
+        return True
+    return importer_file.startswith(workspace_root + "/")
+
+
+def resolve_alias_import(
+    importer_file: str,
+    import_spec: str,
+    alias_map: list[AliasEntry],
+    tracked_files: AbstractSet[str],
+) -> str | None:
+    """Resolve ``import_spec`` through tsconfig path aliases, honouring
+    the NEAREST ENCLOSING workspace's mapping.
+
+    TypeScript resolves a file's imports against exactly ONE tsconfig —
+    the nearest one walking up from the file (its project). A monorepo
+    routinely declares the SAME alias prefix per app with different
+    targets (``~/* → ./src/*`` in ``apps/marketing`` AND ``apps/web``),
+    so matching by prefix alone can cross app boundaries. This resolver:
+
+      1. Considers only alias entries whose ``workspace_root`` encloses
+         the importer (repo-root entries always apply). Entries from a
+         sibling workspace are NEVER used — that would fabricate edges
+         the compiler wouldn't make.
+      2. Tries the nearest (deepest) enclosing workspace first, walking
+         up toward the repo root when nothing resolves.
+      3. Within one workspace, tries longest alias prefix first
+         (tsconfig precedence), then each target in declared order.
+
+    Returns ``None`` when no enclosing alias resolves to a tracked file.
+    """
+    if not import_spec:
+        return None
+
+    # Collect matching entries from enclosing workspaces only, keeping
+    # the alias_map's stable order as the final tie-break (declared
+    # target order within one pattern).
+    candidates = [
+        (idx, entry)
+        for idx, entry in enumerate(alias_map)
+        if import_spec.startswith(entry.prefix)
+        and _workspace_encloses(entry.workspace_root, importer_file)
+    ]
+    if not candidates:
+        return None
+    # Nearest workspace first; longest prefix next; declared order last.
+    candidates.sort(key=lambda pair: (
+        -len(pair[1].workspace_root),
+        -len(pair[1].prefix),
+        pair[0],
+    ))
+
+    for _, entry in candidates:
+        remainder = import_spec[len(entry.prefix):]
+        base = entry.target_prefix + remainder
+        # Normalise — target_prefix already ends with ``/`` for
+        # wildcard aliases; for exact aliases (rare) the remainder
+        # is empty and ``base == target_prefix``.
+        resolved = _try_extensions(base, tracked_files)
+        if resolved is not None:
+            return resolved
+
+    return None
+
+
 def resolve_ts_import(
     importer_file: str,
     import_spec: str,
     *,
     alias_map: list[AliasEntry],
-    tracked_files: frozenset[str],
+    tracked_files: AbstractSet[str],
 ) -> str | None:
     """Resolve a TS/JS import to a tracked file path.
 
@@ -562,7 +636,8 @@ def resolve_ts_import(
 
       1. Relative imports (``./foo`` / ``../bar``) against the
          importer's directory.
-      2. Path aliases — longest matching prefix wins.
+      2. Path aliases — nearest enclosing workspace wins, then longest
+         matching prefix (see :func:`resolve_alias_import`).
       3. Bare imports are treated as external (``node_modules`` /
          stdlib) and return ``None``.
 
@@ -583,21 +658,12 @@ def resolve_ts_import(
             return None
         return _try_extensions(base, tracked_files)
 
-    # 2. Path aliases — longest match first (already sorted).
-    for entry in alias_map:
-        if import_spec.startswith(entry.prefix):
-            remainder = import_spec[len(entry.prefix):]
-            base = entry.target_prefix + remainder
-            # Normalise — target_prefix already ends with ``/`` for
-            # wildcard aliases; for exact aliases (rare) the remainder
-            # is empty and ``base == target_prefix``.
-            resolved = _try_extensions(base, tracked_files)
-            if resolved is not None:
-                return resolved
-            # First match consumed but didn't resolve — keep trying
-            # shorter prefixes (rare; happens when ``@/`` shadows a
-            # more permissive workspace mapping).
-            continue
+    # 2. Path aliases — nearest enclosing workspace, longest prefix.
+    resolved = resolve_alias_import(
+        importer_file, import_spec, alias_map, tracked_files,
+    )
+    if resolved is not None:
+        return resolved
 
     # 3. Bare — external.
     return None
@@ -609,5 +675,6 @@ def resolve_ts_import(
 __all__ = [
     "AliasEntry",
     "build_path_alias_map",
+    "resolve_alias_import",
     "resolve_ts_import",
 ]

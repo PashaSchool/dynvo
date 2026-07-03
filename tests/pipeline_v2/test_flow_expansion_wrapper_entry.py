@@ -30,8 +30,8 @@ from pathlib import Path
 from faultline.analyzer.ast_extractor import extract_signatures, extract_symbol_ranges
 from faultline.pipeline_v2.flow_reach import (
     ReachContext,
+    build_path_alias_map,
     detect_monorepo_packages,
-    load_tsconfig_paths,
 )
 from faultline.pipeline_v2.flow_expansion.call_graph import build_call_graph
 
@@ -48,9 +48,10 @@ def _reach_context(repo: Path, files: list[str]) -> ReachContext:
         repo_path=repo,
         file_set=frozenset(files),
         signatures=sigs,
-        alias_map=load_tsconfig_paths(str(repo)),
+        alias_map={},
         monorepo_packages=detect_monorepo_packages(str(repo)),
         go_module_prefix=None,
+        alias_entries=build_path_alias_map(repo),
     )
 
 

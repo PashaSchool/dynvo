@@ -68,8 +68,8 @@ from faultline.analyzer.import_graph import (
     _resolve_import,
     detect_monorepo_packages,
     detect_workspace_package_map,
-    load_tsconfig_paths,
 )
+from faultline.analyzer.tsconfig_paths import AliasEntry, build_path_alias_map
 
 if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext
@@ -400,6 +400,7 @@ def _file_edges(
     repo_path: Path,
     python_source_roots: tuple[str, ...] = ("",),
     workspace_package_map: dict[str, str] | None = None,
+    alias_entries: list[AliasEntry] | None = None,
 ) -> list[str]:
     """Return the set of files ``rel_path`` reaches via one hop.
 
@@ -427,6 +428,7 @@ def _file_edges(
                 monorepo_packages=monorepo_packages,
                 workspace_package_map=workspace_package_map,
                 repo_root=str(repo_path),
+                alias_entries=alias_entries,
             )
             if resolved and resolved != rel_path:
                 out[resolved] = None
@@ -521,6 +523,9 @@ class ReachContext:
     # package.json#name → dir map for scoped workspace import resolution
     # ('@calcom/lib' → 'packages/lib'). Empty for non-workspace repos.
     workspace_package_map: dict[str, str] = field(default_factory=dict)
+    # Per-workspace tsconfig alias entries (nearest-enclosing-workspace
+    # resolution). Preferred over the legacy repo-root-only alias_map.
+    alias_entries: list[AliasEntry] = field(default_factory=list)
 
 
 def build_reach_context(ctx: "ScanContext") -> ReachContext:
@@ -534,7 +539,7 @@ def build_reach_context(ctx: "ScanContext") -> ReachContext:
     repo_path = Path(ctx.repo_path)
     file_set = frozenset(ctx.tracked_files)
     signatures = extract_signatures(list(ctx.tracked_files), str(repo_path))
-    alias_map = load_tsconfig_paths(str(repo_path))
+    alias_entries = build_path_alias_map(repo_path)
     monorepo_packages = detect_monorepo_packages(str(repo_path))
     go_module_prefix = _go_module_path(repo_path)
     python_source_roots = compute_python_source_roots(file_set)
@@ -543,11 +548,12 @@ def build_reach_context(ctx: "ScanContext") -> ReachContext:
         repo_path=repo_path,
         file_set=file_set,
         signatures=signatures,
-        alias_map=alias_map,
+        alias_map={},
         monorepo_packages=monorepo_packages,
         go_module_prefix=go_module_prefix,
         python_source_roots=python_source_roots,
         workspace_package_map=workspace_package_map,
+        alias_entries=alias_entries,
     )
 
 
@@ -602,6 +608,7 @@ def compute_flow_reach(
                     repo_path=rctx.repo_path,
                     python_source_roots=rctx.python_source_roots,
                     workspace_package_map=rctx.workspace_package_map,
+                    alias_entries=rctx.alias_entries,
                 )
             except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug("flow_reach: edge extraction failed for %s: %s",

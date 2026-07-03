@@ -130,7 +130,7 @@ _RE_RUBY_ROUTE = re.compile(
 
 # Named import destructuring: import { FOO, BAR as Baz } from './path'
 _RE_NAMED_IMPORT = re.compile(
-    r"import\s*\{([^}]+)\}\s*from\s*['\"]([^'\"]+)['\"]"
+    r"import\s*(?:type\s+)?\{([^}]+)\}\s*from\s*['\"]([^'\"]+)['\"]"
 )
 # Namespace import: import * as X from './path'
 _RE_NAMESPACE_IMPORT = re.compile(
@@ -1086,15 +1086,21 @@ def extract_named_imports(source: str) -> dict[str, set[str]]:
     """
     result: dict[str, set[str]] = {}
 
+    # NO module-prefix filter here: the old ``./`` / ``@/`` / ``~/``
+    # guard dropped workspace-scoped modules (``@scope/pkg/...``) and
+    # custom aliases before resolution ever ran (WS3 oracle, 2026-07-03).
+    # Callers resolve each module against the tracked file set — external
+    # packages simply resolve to ``None`` and stay silent.
     for match in _RE_NAMED_IMPORT.finditer(source):
         names_str = match.group(1)
         module = match.group(2)
-        if not (module.startswith(".") or module.startswith("@/") or module.startswith("~/")):
-            continue
         names = set()
         for token in names_str.split(","):
             parts = token.strip().split(" as ")
             original = parts[0].strip()
+            # Inline type modifier: ``import { type Foo, Bar } from …``.
+            if original.startswith("type "):
+                original = original[len("type "):].strip()
             if original:
                 names.add(original)
         if names:
@@ -1102,7 +1108,6 @@ def extract_named_imports(source: str) -> dict[str, set[str]]:
 
     for match in _RE_NAMESPACE_IMPORT.finditer(source):
         module = match.group(1)
-        if module.startswith(".") or module.startswith("@/") or module.startswith("~/"):
-            result.setdefault(module, set()).add("*")
+        result.setdefault(module, set()).add("*")
 
     return result
