@@ -138,7 +138,7 @@ def start_daemon(
     if existing.running:
         raise RuntimeError(
             f"Watcher already running for {repo_path} (pid {existing.pid}). "
-            f"Stop it first with `faultlines watch-stop`."
+            f"Stop it first with `dynvo watch-stop`."
         )
 
     if sys.platform == "win32":
@@ -216,7 +216,7 @@ def run_watcher(
     if resolved_map is None:
         raise RuntimeError(
             f"No feature map found in {_DEFAULT_MAP_DIR}. "
-            f"Run `faultlines analyze {repo_path} --llm --flows` first."
+            f"Run `dynvo scan {repo_path}` first."
         )
 
     if pid_tracking:
@@ -245,7 +245,7 @@ def run_watcher(
     observer.start()
 
     if verbose:
-        print(f"faultlines watch: monitoring {repo_path} (debounce {debounce_seconds}s)")
+        print(f"dynvo watch: monitoring {repo_path} (debounce {debounce_seconds}s)")
 
     try:
         while True:
@@ -261,7 +261,7 @@ def run_watcher(
             _run_refresh(resolved_map, repo_path, verbose=verbose)
     except KeyboardInterrupt:
         if verbose:
-            print("\nfaultlines watch: stopped")
+            print("\ndynvo watch: stopped")
     finally:
         observer.stop()
         observer.join()

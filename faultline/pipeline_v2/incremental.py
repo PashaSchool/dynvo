@@ -1,4 +1,4 @@
-"""Incremental scan support — ``scan-v2 --since <commit>``.
+"""Incremental scan support — ``dynvo scan --since <commit>``.
 
 Sprint 1 (2026-05-23). Phase 1 strategy:
 

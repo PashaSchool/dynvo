@@ -1,4 +1,4 @@
-"""Tests for Phase 5a — the ``scan-v2 --auto-partition`` CLI flag.
+"""Tests for Phase 5a — the ``scan --auto-partition`` CLI flag.
 
 Uses Typer's :class:`CliRunner` so the full argument parsing + dispatch
 is exercised without spawning real scans (the orchestrators are patched).
@@ -229,10 +229,10 @@ def test_auto_partition_off_is_byte_identical_default(
     )
 
     # Bare (no flag) — default OFF.
-    r1 = runner.invoke(app, ["scan-v2", str(repo)])
+    r1 = runner.invoke(app, ["scan", str(repo)])
     assert r1.exit_code == 0, r1.stdout
     # Explicit --no-auto-partition — identical.
-    r2 = runner.invoke(app, ["scan-v2", str(repo), "--no-auto-partition"])
+    r2 = runner.invoke(app, ["scan", str(repo), "--no-auto-partition"])
     assert r2.exit_code == 0, r2.stdout
 
     assert len(calls) == 2
@@ -276,7 +276,7 @@ def test_auto_partition_on_monorepo_feeds_subpaths(
     out_json = tmp_path / "assembly.json"
     result = runner.invoke(
         app,
-        ["scan-v2", str(repo), "--auto-partition", "--partition-output", str(out_json)],
+        ["scan", str(repo), "--auto-partition", "--partition-output", str(out_json)],
     )
     assert result.exit_code == 0, result.stdout
     # The planner's subpaths reached run_pipeline_multi.
@@ -320,7 +320,7 @@ def test_auto_partition_on_monorepo_default_output_path(
     )
     monkeypatch.setattr("faultline.cli._default_monorepo_out_path", _spy_default_path)
 
-    result = runner.invoke(app, ["scan-v2", str(repo), "--auto-partition"])
+    result = runner.invoke(app, ["scan", str(repo), "--auto-partition"])
     assert result.exit_code == 0, result.stdout
     assert written["path"].exists()
 
@@ -363,7 +363,7 @@ def test_auto_partition_on_single_repo_falls_back_to_whole_repo(
         ),
     )
 
-    result = runner.invoke(app, ["scan-v2", str(repo), "--auto-partition"])
+    result = runner.invoke(app, ["scan", str(repo), "--auto-partition"])
     assert result.exit_code == 0, result.stdout
     assert captured.get("ran") is True
     assert captured["subpath"] is None  # whole-repo scan.
@@ -399,7 +399,7 @@ def test_auto_partition_library_monorepo_falls_back_to_whole_repo(
         ),
     )
 
-    result = runner.invoke(app, ["scan-v2", str(repo), "--auto-partition"])
+    result = runner.invoke(app, ["scan", str(repo), "--auto-partition"])
     assert result.exit_code == 0, result.stdout
     assert captured.get("ran") is True
     assert captured["subpath"] is None
@@ -413,7 +413,7 @@ def test_auto_partition_with_subpath_is_rejected(tmp_path: Path) -> None:
     repo.mkdir()
     result = runner.invoke(
         app,
-        ["scan-v2", str(repo), "--auto-partition", "--subpath", "apps/web"],
+        ["scan", str(repo), "--auto-partition", "--subpath", "apps/web"],
     )
     assert result.exit_code == 2
     assert "cannot be combined with" in result.stdout
@@ -439,7 +439,7 @@ def test_auto_partition_failed_subproject_writes_assembly_and_exits_nonzero(
     # Use the REAL assembly here so a failed entry is reflected in stats.
     result = runner.invoke(
         app,
-        ["scan-v2", str(repo), "--auto-partition", "--partition-output", str(out_json)],
+        ["scan", str(repo), "--auto-partition", "--partition-output", str(out_json)],
     )
     assert result.exit_code == 1, result.stdout
     assert "Scan failed subpath=apps/api" in result.stdout

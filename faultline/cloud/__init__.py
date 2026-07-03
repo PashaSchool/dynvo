@@ -1,7 +1,7 @@
 """Cloud sync for Faultlines SaaS dashboard.
 
 Optional, opt-in module. When ``FAULTLINE_API_KEY`` is set:
-  - ``faultlines analyze --push`` uploads the feature map to the SaaS
+  - ``dynvo scan`` + push upload the feature map to the SaaS
   - The MCP server batches tool-call events and sends them every minute
 
 Without an API key, all cloud calls become silent no-ops. The CLI and

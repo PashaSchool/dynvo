@@ -1,6 +1,6 @@
 """Orphan file discovery and new feature proposals.
 
-When `faultlines refresh` encounters files that don't map to any
+When `dynvo refresh` encounters files that don't map to any
 existing feature (new code added since the last full scan), this
 module decides whether each file:
 

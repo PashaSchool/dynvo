@@ -88,7 +88,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 dynvo /path/to/your/repo --model sonnet
 ```
 
-> `scan-v2` is the explicit name of the same pipeline (`dynvo scan-v2 <repo>`); the bare form is just shorthand for it.
+> `scan` is the explicit name of the same pipeline (`dynvo scan <repo>`); the bare form is just shorthand for it. The old `scan-v2` spelling still works as a deprecated alias.
 
 That writes a versioned **feature-map JSON** to `~/.faultline/`. Explore it, diff it across runs, ship it to CI, or hand it to your AI agent (below).
 
