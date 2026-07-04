@@ -188,11 +188,21 @@ def test_aggregator_is_deterministic(tmp_path: Path) -> None:
     second = extract_product_anchors(tmp_path)
     # Same input → byte-identical output (no randomness, stable sort).
     assert first == second
-    # Ordering key is (source priority, lowercased text, locator) — verify
-    # the emitted sequence matches that documented sort key exactly.
-    from faultline.pipeline_v2.anchor_extractors import _SOURCE_PRIORITY
+    # Ordering key is (source priority, tier rank, lowercased text, locator) —
+    # verify the emitted sequence matches that documented sort key exactly
+    # (tier rank keeps action-grain i18n NAMESPACE keys ahead of leaf values).
+    from faultline.pipeline_v2.anchor_extractors import (
+        _SOURCE_PRIORITY,
+        TIER1_ACTION,
+        anchor_tier,
+    )
 
-    keys = [(_SOURCE_PRIORITY[a.source], a.text.lower(), a.locator) for a in first]
+    keys = [
+        (_SOURCE_PRIORITY[a.source],
+         0 if anchor_tier(a) == TIER1_ACTION else 1,
+         a.text.lower(), a.locator)
+        for a in first
+    ]
     assert keys == sorted(keys)
 
 

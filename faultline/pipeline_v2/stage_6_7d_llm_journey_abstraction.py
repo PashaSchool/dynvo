@@ -105,12 +105,16 @@ MAX_USER_FLOWS_DIGEST = 120
 # the align prompt (a prompt-size bound). The GATE below decides align-vs-free-gen.
 MAX_ANCHOR_TEXTS_DIGEST = 160
 # improve-or-no-op gate floor: align only with a viable product taxonomy (a small
-# absolute bound; the primary gate is the anchors>=features ratio — scale-invariant).
+# absolute bound; the primary gate is the tier1>=candidate-UFs ratio — scale-invariant).
 _MIN_ANCHORS_FLOOR = 8
-# ALIGN is OPT-IN (default OFF). Empirically it DEGRADES stability on noisy anchor
-# pools (Soc0 i18n leaf values: PF name-Jaccard 0.72 free-gen → 0.03 align) — the
-# quantity gate can't tell a clean pool from UI-string noise. Until a QUALITY gate
-# exists, free-gen is the default; align is opt-in for clean-anchor repos.
+# ALIGN is OPT-IN (default OFF — default-ON is Phase 3.2 after a corpus A/B).
+# When ON, the per-repo GRAIN gate below decides align-vs-free-gen: Phase 3.0
+# (2026-07-02) killed the all-or-nothing align-v1 — a DOMAIN-grain pool
+# (formbricks: 11 coarse i18n namespaces bounding 37 journeys) cost −9..−14.5
+# UF-F1 while ACTION-grain pools (supabase analytics+nav, cal-com fine i18n
+# namespaces) won +7..+12. Only tier-1 (action-grain) anchors count toward the
+# gate and only tier-1 texts reach the prompt; i18n leaf VALUES never do (Soc0:
+# aligning to leaf values took PF name-Jaccard 0.72 free-gen → 0.03 align).
 ALIGN_ENV = "FAULTLINE_STAGE_6_7D_ALIGN"
 
 
@@ -440,16 +444,22 @@ def _content_tokens(*texts: str | None) -> set[str]:
 def _canonical_anchor_texts(
     product_anchors: "list[ProductAnchor] | None",
 ) -> list[str]:
-    """Deduped, bounded, stable list of anchor texts for the align prompt.
+    """Deduped, bounded, stable list of TIER-1 anchor texts for the align prompt.
 
-    Anchors arrive pre-sorted by source trust (analytics > nav > i18n > test).
+    Tier-2 (advisory: i18n leaf values, test titles, docs-site nav) anchors are
+    NEVER sent — prompt size + the Soc0 leaf-value noise lesson. Anchors arrive
+    pre-sorted by (source trust, tier, text), so the capped subset is stable.
     Dedup case-insensitively preserving the first/highest-trust occurrence, cap
     at MAX_ANCHOR_TEXTS_DIGEST. Pure + stable → identical anchors yield an
     identical list (a cache-key precondition, and the source of name stability).
     """
+    from faultline.pipeline_v2.anchor_extractors import TIER1_ACTION, anchor_tier
+
     out: list[str] = []
     seen: set[str] = set()
     for a in product_anchors or []:
+        if anchor_tier(a) != TIER1_ACTION:
+            continue
         text = (getattr(a, "text", "") or "").strip()
         if not text:
             continue
@@ -463,23 +473,53 @@ def _canonical_anchor_texts(
     return out
 
 
-def _anchors_sufficient(
-    product_anchors: "list[ProductAnchor] | None",
-    product_features: list["Feature"],
-) -> bool:
-    """Improve-or-no-op gate: ALIGN only when the clean anchor pool is rich
-    enough to be an authoritative product taxonomy — i.e. at least as many
-    distinct capability anchors as deterministic product features (you cannot
-    align to a bounded target smaller than the #capabilities without
-    under-producing — the documenso 4-anchor failure), and above a small floor.
-    Below that → free-generate (the validated default). Scale-invariant: the
-    primary test is the anchors>=features ratio, not a per-repo tuned number."""
-    distinct = len({
-        (getattr(a, "text", "") or "").strip().lower()
-        for a in (product_anchors or [])
-        if (getattr(a, "text", "") or "").strip()
-    })
-    return distinct >= _MIN_ANCHORS_FLOOR and distinct >= len(product_features or [])
+def _candidate_journeys(user_flows: list["UserFlow"]) -> int:
+    """Journey-grain candidate count for the grain gate.
+
+    The deterministic walk emits ~one user_flow per CRUD op; the abstraction's
+    FIRST move (align prompt rule 2 / free-gen rule 2) merges redundant CRUD
+    variants of the SAME resource into one journey — so the journey set the
+    anchor vocabulary must cover is ~one per DISTINCT RESOURCE, not one per
+    input flow. Gating on the raw flow count would demand a ~1.5-2x larger
+    vocabulary than the journeys need and wrongly refuse repos where align
+    measurably pays (supabase, Phase 3.0: 89 tier-1 anchors, 126 input flows
+    but only 61 distinct resources → aligned and won +7..+10). Distinct
+    non-empty resources (case-folded); falls back to the flow count when the
+    flows carry no resources at all (conservative).
+    """
+    resources = {
+        r for u in user_flows or []
+        if (r := str(getattr(u, "resource", "") or "").strip().lower())
+    }
+    return len(resources) if resources else len(user_flows or [])
+
+
+def _grain_gate(
+    anchors: "list[ProductAnchor] | None",
+    candidate_journeys: int,
+) -> tuple[bool, int, int]:
+    """Align-v2 GRAIN gate. Returns ``(granted, tier1_count, tier2_count)``.
+
+    Align iff the repo's distinct TIER-1 (action-grain) anchor vocabulary is at
+    least as large as the candidate JOURNEY set entering 6.7d (one journey per
+    distinct resource — see :func:`_candidate_journeys`; you cannot bound N
+    journeys to a vocabulary of fewer than N action labels without
+    under-producing — the formbricks 11-anchors-vs-103-resources failure,
+    Phase 3.0) AND above a small floor. Scale-invariant ratio — no per-repo
+    tuned constants. Tier-2 anchors (i18n leaf values, test titles, docs-site
+    nav) NEVER count (Soc0 leaf-value lesson). Counts are DISTINCT
+    case-insensitive texts, computed over the RAW extraction when the caller
+    supplies it (the pool's per-source caps would understate a fine-grained
+    vocabulary). Measured separation (2026-07-02, current extractor):
+    formbricks 11 vs 103 → refuse; supabase 89 vs 61 → align; cal-com 3076 vs
+    ~240 → align; documenso 5 vs ~55-86 → refuse. Matches the Phase 3.0
+    win/loss table exactly.
+    """
+    from faultline.pipeline_v2.anchor_extractors import distinct_tier_counts
+
+    tier1, tier2 = distinct_tier_counts(anchors or [])
+    granted = tier1 >= _MIN_ANCHORS_FLOOR and tier1 >= candidate_journeys
+    return granted, tier1, tier2
 
 
 _SPLIT_MARKER = "sub-domain"
@@ -1158,6 +1198,7 @@ def run_journey_abstraction(
     routes_index: list[dict[str, Any]],
     *,
     product_anchors: "list[ProductAnchor] | None" = None,
+    raw_anchors: "list[ProductAnchor] | None" = None,
     client: Any | None = None,
     model: str = DEFAULT_MODEL,
     cost_tracker: CostTracker | None = None,
@@ -1239,13 +1280,48 @@ def run_journey_abstraction(
         "digest_user_flows": len(digest["current_user_flows"]),
         "digest_routes": len(digest["routes"]),
     })
-    # Phase 2: decide ALIGN (bounded, anchor-verbatim naming → stable) vs FREE-GEN
-    # (validated default). The gate is improve-or-no-op: sparse-anchor repos fall
-    # back so they never regress. anchor_sig makes align/free-gen cache separately.
+    # Align-v2 (grain-gated): decide ALIGN (bounded, anchor-verbatim naming →
+    # stable) vs FREE-GEN (validated default). The GRAIN gate is improve-or-no-op
+    # per repo: a domain-grain / sparse tier-1 vocabulary falls back to free-gen
+    # so it never regresses (formbricks Phase 3.0). The gate counts the RAW
+    # extraction when supplied (pool caps understate fine vocabularies); the
+    # prompt reads the curated pool (tier-1 texts only). anchor_sig makes
+    # align/free-gen cache separately; when the gate refuses, sig is "" and the
+    # cache key is byte-identical to an align-OFF scan.
     anchor_texts = _canonical_anchor_texts(product_anchors)
-    aligned = align_enabled() and _anchors_sufficient(product_anchors, product_features)
+    align_requested = align_enabled()
+    candidate_journeys = _candidate_journeys(user_flows)
+    gate_granted, tier1_count, tier2_count = _grain_gate(
+        raw_anchors if raw_anchors is not None else product_anchors,
+        candidate_journeys,
+    )
+    aligned = align_requested and gate_granted and bool(anchor_texts)
     tele["aligned"] = aligned
     tele["anchor_count"] = len(anchor_texts)
+    if align_requested:
+        # Telemetry ONLY when align was requested — an align-OFF scan's
+        # telemetry stays byte-identical to today.
+        tele["align_decision"] = {
+            "requested": True,
+            "granted": aligned,
+            "tier1_count": tier1_count,
+            "tier2_count": tier2_count,
+            "candidate_ufs": len(user_flows),
+            "candidate_journeys": candidate_journeys,
+        }
+        if not aligned:
+            from faultline.pipeline_v2 import degradations as _degradations
+
+            # Requested-but-refused → a structured degradation record (no
+            # silent behaviour change); phase_finalize lifts it into
+            # scan_meta.degradations[].
+            tele["degradations"] = [_degradations.align_gate_refused(
+                tier1_count=tier1_count,
+                tier2_count=tier2_count,
+                candidate_ufs=len(user_flows),
+                candidate_journeys=candidate_journeys,
+                floor=_MIN_ANCHORS_FLOOR,
+            )]
     anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""
     key = _cache_key(digest, abstraction_model, reattrib_model, anchor_sig)
 
