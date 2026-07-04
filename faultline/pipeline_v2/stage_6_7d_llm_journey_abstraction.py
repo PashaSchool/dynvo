@@ -122,7 +122,10 @@ def align_enabled() -> bool:
 #: transparently invalidates every stale entry. "contract-3" invalidates the
 #: frozen uncompressed draws that motivated the grain-contract gate
 #: (2026-07-04: inbox-zero 140-in -> 140-emitted cached under "ground-2").
-ABSTRACTION_CACHE_VERSION = "contract-3"
+#: "contract-4" invalidates draws frozen before the jpf structural anchor
+#: (MISSION-92 lever #3): entries cached under "contract-3" may be
+#: two-axis-inflated draws the jpf prong would now retry.
+ABSTRACTION_CACHE_VERSION = "contract-4"
 
 # ── Grain-contract gate (2026-07-04) ────────────────────────────────────────
 # Call 1 is the ABSTRACTION layer: its whole job is a grain LIFT (merge CRUD /
@@ -139,6 +142,28 @@ UF_CONTRACT_RATIO = 0.9
 CONTRACT_PASS = "pass"
 CONTRACT_PASS_AFTER_RETRY = "pass_after_retry"
 CONTRACT_UNCOMPRESSED = "uncompressed"
+#: arming reasons for scan_meta...contract_armed_by (MISSION-92 lever #3)
+CONTRACT_ARMED_RATIO = "ratio"
+CONTRACT_ARMED_JPF = "jpf"
+
+# ── JPF structural anchor — second arming prong (2026-07-04, lever #3) ──────
+# The ratio prong alone misses a real inflation class: draws that stay under
+# 0.9 x digest UFs yet still run 1.5-2.7x the golden journey grain (inbox-zero
+# 79-96 built vs golden 35; supabase 85 vs 46 — Jul-4 recorded draws). The
+# naive "draw journeys-per-PF > digest journeys-per-PF" test is structurally
+# GAMEABLE and empirically dead on those draws: an inflated draw inflates its
+# OWN product_features list too (inbox-zero r3: 50 PFs vs digest 31), so its
+# j/pf reads a healthy 1.55-1.81 — below ANY digest-derived prior (2.58/3.87).
+# The anchor therefore tests the same journeys-per-capability contract in
+# DECOMPOSED two-axis form: a draw performed NO grain lift when it emitted
+#   (a) MORE journeys than the digest has distinct flow resources, AND
+#   (b) MORE capabilities than the deterministic product layer found.
+# Both comparisons are ratios of THIS repo's own digest structure with the
+# structural threshold 1.0 — no tuned constant (rule-no-magic-tuning).
+# Recorded-draw check (Jul-4 baseline + replays): arms 4/4 known-inflated
+# (inbox-zero base/r3/r4, supabase r1) with 0/4 false fires on known-good
+# (dub 80.0, cal-com 80.4, formbricks 77.3/83.8); also arms supabase base
+# 48.2 + documenso base 64.2 (the class the corrective retry lifted +8.5).
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -345,6 +370,22 @@ capability. Judge your journey count against your OWN product_features list —
 a healthy journey list has a small number of user_flows PER product feature —
 never against the size of current_user_flows. Merge aggressively; keep only
 genuinely DISTINCT capabilities separate. Re-emit the full JSON now."""
+
+# jpf-anchor corrective for a draw armed by the JPF prong ALONE (a ratio-armed
+# draw keeps the validated _MERGE_CORRECTIVE above — the prompt behind the
+# documenso +8.5 retry — unchanged). Names the structural anchor explicitly
+# (MISSION-92 lever #3).
+_JPF_CORRECTIVE = """
+
+PREVIOUS ATTEMPT REJECTED — it emitted MORE journeys than the repository has
+distinct flow resources AND multiplied product capabilities beyond what the
+deterministic scanner found (no grain lift on either axis). You are the
+ABSTRACTION layer. Structural anchor: emit roughly ONE journey per distinct
+capability of each product feature — merge the CRUD / settings / variant
+journeys of the SAME capability into that single journey — and consolidate
+near-duplicate capabilities instead of multiplying them. Judge your journey
+count against your OWN product_features list: a healthy journey list has a
+small number of user_flows PER product feature. Re-emit the full JSON now."""
 
 _REATTRIB_SYSTEM = """You assign each developer feature (a code module) to exactly ONE product
 capability from the given list, using the module name and its directory. Every
@@ -610,6 +651,17 @@ def _build_digest(
     }
 
 
+def _digest_resource_keys(digest: dict[str, Any]) -> set[str]:
+    """Distinct-resource keys of the digest user_flows. UFs without a resource
+    count as distinct (unknown mergeability -> conservative). Shared by the
+    ratio prong (redundancy arming) and the jpf prong (resource-grain prior)."""
+    keys: set[str] = set()
+    for u in digest.get("current_user_flows") or []:
+        res = str(u.get("resource") or "").strip().lower()
+        keys.add(res if res else f"name:{u.get('name') or u.get('id') or id(u)}")
+    return keys
+
+
 def _contract_gate_armed(digest: dict[str, Any]) -> bool:
     """Arm the grain-contract gate ONLY when the digest shows mergeable
     same-resource redundancy — i.e. collapsing the CRUD variants of each
@@ -623,17 +675,56 @@ def _contract_gate_armed(digest: dict[str, Any]) -> bool:
     ufs = digest.get("current_user_flows") or []
     if not ufs:
         return False
-    keys: set[str] = set()
-    for u in ufs:
-        res = str(u.get("resource") or "").strip().lower()
-        keys.add(res if res else f"name:{u.get('name') or u.get('id') or id(u)}")
-    return len(keys) < UF_CONTRACT_RATIO * len(ufs)
+    return len(_digest_resource_keys(digest)) < UF_CONTRACT_RATIO * len(ufs)
 
 
 def _contract_ok(n_emitted: int, n_digest_ufs: int) -> bool:
     """True when the draw performed a grain lift: emitted user_flows sit BELOW
     ``UF_CONTRACT_RATIO`` x the digest user_flows the model saw."""
     return n_emitted < UF_CONTRACT_RATIO * n_digest_ufs
+
+
+def _distinct_pf_count(pf_specs: list[dict[str, Any]]) -> int:
+    """Distinct emitted capabilities (case-folded name dedup — the LLM
+    occasionally echoes a capability twice)."""
+    return len({s["name"].strip().lower() for s in pf_specs})
+
+
+def _jpf_armed(
+    uf_specs: list[dict[str, Any]],
+    pf_specs: list[dict[str, Any]],
+    digest: dict[str, Any],
+) -> bool:
+    """JPF structural-anchor prong (see the module-level rationale at
+    :data:`CONTRACT_ARMED_JPF`): True when the draw shows NO grain lift on
+    EITHER axis of the journeys-per-capability contract —
+      journeys axis:     emitted user_flows exceed the digest's distinct
+                         flow resources (journeys above resource grain);
+      capabilities axis: emitted product_features exceed the deterministic
+                         product layer's count (capabilities multiplied).
+    A lift on either axis (dub: 80 journeys but 44 <= 45 capabilities;
+    formbricks: 66 <= 74 resources) means the draw abstracted SOMETHING and
+    must not be rejected. Priors are THIS repo's own digest structure; the
+    threshold on both axes is the structural 1.0 (rule-no-magic-tuning).
+
+    Two preconditions keep the prong out of regimes where its priors are
+    meaningless:
+      * the digest must show same-resource redundancy
+        (:func:`_contract_gate_armed`) — at resource grain (libraries) Call 1
+        legitimately EXPANDS (the validated fastapi 41->73 lift) and
+        "emitted > resources" would reject exactly that lift;
+      * the deterministic product layer must be a viable capability taxonomy
+        (>= :data:`_MIN_ANCHORS_FLOOR` features — the SAME viability bound
+        the align gate uses, not a new constant): on a 1-3 PF repo every
+        multi-capability draw would trivially exceed the prior."""
+    ufs = digest.get("current_user_flows") or []
+    pfs = digest.get("current_product_features") or []
+    if not ufs or not pfs:
+        return False  # nothing structural to anchor on -> never arm
+    if len(pfs) < _MIN_ANCHORS_FLOOR or not _contract_gate_armed(digest):
+        return False
+    return (len(uf_specs) > len(_digest_resource_keys(digest))
+            and _distinct_pf_count(pf_specs) > len(pfs))
 
 
 def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: str,
@@ -1282,17 +1373,47 @@ def run_journey_abstraction(
     # ── First draw + grain-contract gate (2026-07-04) ──────────────────
     # A draw that emits >= UF_CONTRACT_RATIO x the digest UFs performed no
     # grain lift (inbox-zero: 140-in -> 140 emitted -> F1 36.7 vs golden 35
-    # journeys). Reject ONCE with the merge-corrective addendum; if the retry
-    # still fails the ratio we KEEP the retry (never-worse: more UFs beats
-    # degrading the whole stage) and flag ``abstraction_contract`` so the
-    # uncompressed draw is visible in scan_meta.
+    # journeys) — the RATIO prong. The JPF prong (lever #3) additionally arms
+    # on draws under that ratio which still inflate BOTH the journey axis
+    # (emitted > distinct digest resources) and the capability axis (emitted
+    # PFs > deterministic PF count) — see :func:`_jpf_armed`. Reject ONCE with
+    # a corrective addendum; if the retry still fails its armed prongs we KEEP
+    # the retry (never-worse: more UFs beats degrading the whole stage) and
+    # flag ``abstraction_contract`` so the uncompressed draw is visible in
+    # scan_meta.
     uf_specs, pf_specs, fail1 = _draw(sys1)
     if fail1:
         return _degrade(fail1)
     n_digest_ufs = len(digest["current_user_flows"])
+    n_digest_pfs = len(digest.get("current_product_features") or [])
     tele["uf_specs_emitted"] = len(uf_specs)
+
+    def _armed_prongs(ufs_: list[dict[str, Any]], pfs_: list[dict[str, Any]],
+                      restrict: list[str] | None = None) -> list[str]:
+        """Arming reasons for a draw; ``restrict`` (the retry re-check) only
+        re-evaluates the prongs that armed the FIRST draw, so a ratio-only
+        arming keeps the exact lever-1 pass_after_retry semantics."""
+        out: list[str] = []
+        if ((restrict is None or CONTRACT_ARMED_RATIO in restrict)
+                and _contract_gate_armed(digest)
+                and not _contract_ok(len(ufs_), n_digest_ufs)):
+            out.append(CONTRACT_ARMED_RATIO)
+        if ((restrict is None or CONTRACT_ARMED_JPF in restrict)
+                and _jpf_armed(ufs_, pfs_, digest)):
+            out.append(CONTRACT_ARMED_JPF)
+        return out
+
+    # jpf telemetry (always on a live draw, armed or not): the draw's
+    # journeys-per-capability vs the repo's structural prior
+    # (distinct flow resources per deterministic product feature).
+    tele["jpf_draw"] = round(len(uf_specs) / max(_distinct_pf_count(pf_specs), 1), 3)
+    tele["jpf_prior"] = round(
+        len(_digest_resource_keys(digest)) / max(n_digest_pfs, 1), 3)
+
     contract = CONTRACT_PASS
-    if _contract_gate_armed(digest) and not _contract_ok(len(uf_specs), n_digest_ufs):
+    armed = _armed_prongs(uf_specs, pf_specs)
+    if armed:
+        tele["contract_armed_by"] = armed
         # A retry costs ≈ the first draw; skip it when a second same-shape
         # call could bust the whole-stage cost cap (structural x2, not tuned).
         if tele["cost_usd"] * 2 > COST_CAP_USD:
@@ -1300,14 +1421,18 @@ def run_journey_abstraction(
             tele["abstraction_retry_skipped_cost"] = True
         else:
             tele["abstraction_retried"] = True
-            r_ufs, r_pfs, r_fail = _draw(sys1 + _MERGE_CORRECTIVE)
+            # Ratio-armed draws keep the VALIDATED merge corrective verbatim
+            # (documenso +8.5); the jpf corrective serves the jpf-only class.
+            corrective = (_MERGE_CORRECTIVE if CONTRACT_ARMED_RATIO in armed
+                          else _JPF_CORRECTIVE)
+            r_ufs, r_pfs, r_fail = _draw(sys1 + corrective)
             if r_fail is None:
                 # Per spec: keep the RETRY result either way; flag when it
-                # still failed the ratio.
+                # still failed the prongs that armed it.
                 uf_specs, pf_specs = r_ufs, r_pfs
                 tele["uf_specs_emitted_retry"] = len(r_ufs)
                 contract = (CONTRACT_PASS_AFTER_RETRY
-                            if _contract_ok(len(r_ufs), n_digest_ufs)
+                            if not _armed_prongs(r_ufs, r_pfs, restrict=armed)
                             else CONTRACT_UNCOMPRESSED)
             else:
                 # Retry unusable → the valid FIRST draw stands (never-worse).
