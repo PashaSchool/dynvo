@@ -847,6 +847,46 @@ def _intent_for(name: str) -> str:
     return "other"
 
 
+# Hard byte bound on the first-draw record (names + tuples only, no member
+# lists) — a runaway draw must never bloat the artifact / cache entry.
+_FIRST_DRAW_SPEC_MAX_BYTES = 100_000
+
+
+def _first_draw_summary(
+    uf_specs: list[dict[str, Any]], pf_specs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compact record of a parsed Call-1 draw: uf names + (resource,
+    intent-class) per uf + pf names + emitted counts. NO member lists.
+
+    Persisted when a contract retry REPLACES the first draw (mission-92
+    band-guard post-mortem: the first draw's specs were unrecoverable from
+    any artifact or cache, so offline both-candidate calibration had zero
+    data). Pure observability — nothing in the pipeline consumes it. If the
+    JSON record would exceed :data:`_FIRST_DRAW_SPEC_MAX_BYTES` the per-spec
+    lists are dropped and ``truncated`` is flagged (counts always survive).
+    """
+    summary: dict[str, Any] = {
+        "uf": [
+            {"name": str(s.get("name") or ""),
+             "resource": str(s.get("resource") or "").strip().lower(),
+             "intent": _intent_for(str(s.get("name") or ""))}
+            for s in uf_specs
+        ],
+        "pf": [str(s.get("name") or "") for s in pf_specs],
+        "uf_emitted": len(uf_specs),
+        "pf_emitted": len(pf_specs),
+    }
+    try:
+        oversized = (len(json.dumps(summary, ensure_ascii=False).encode("utf-8"))
+                     > _FIRST_DRAW_SPEC_MAX_BYTES)
+    except Exception:  # noqa: BLE001 — recording must never break the stage
+        oversized = True
+    if oversized:
+        summary = {"uf": [], "pf": [], "uf_emitted": len(uf_specs),
+                   "pf_emitted": len(pf_specs), "truncated": True}
+    return summary
+
+
 def _flow_member_id(flow: Any) -> str:
     """Stable member identifier — mirrors Stage 6.7's ``_flow_key`` (uuid when
     present, else name) so grounded members join the same id space the
@@ -1319,6 +1359,10 @@ def run_journey_abstraction(
             if c_abs.get("user_flows") and c_abs.get("product_features") and c_map:
                 tele["cache_hit"] = True
                 tele["abstraction_contract"] = cached.get("contract", CONTRACT_PASS)
+                # Replay reports the SAME retry observability the live run
+                # did (absent for pre-recording cache entries — no bump).
+                if isinstance(cached.get("first_draw_spec"), dict):
+                    tele["first_draw_spec"] = cached["first_draw_spec"]
                 try:
                     result = _finish(c_abs, c_map)
                 except Exception:  # noqa: BLE001 — malformed cache must never crash
@@ -1326,6 +1370,7 @@ def run_journey_abstraction(
                 if result is not None:
                     return result
                 tele["cache_hit"] = False  # malformed → fall through to live call
+                tele.pop("first_draw_spec", None)  # stale restore must not leak
 
     cli = client if client is not None else _client_factory()
     if cli is None:
@@ -1427,6 +1472,13 @@ def run_journey_abstraction(
                           else _JPF_CORRECTIVE)
             r_ufs, r_pfs, r_fail = _draw(sys1 + corrective)
             if r_fail is None:
+                # Persist the FIRST draw's parsed-spec summary BEFORE the
+                # retry replaces it — the only moment both candidates exist
+                # (mission-92: closes the NO-DATA gap that blocked offline
+                # both-candidate calibration). Recording only; the retry-keep
+                # decision below is untouched. (When the retry is unusable
+                # the first draw IS the kept result — nothing extra to save.)
+                tele["first_draw_spec"] = _first_draw_summary(uf_specs, pf_specs)
                 # Per spec: keep the RETRY result either way; flag when it
                 # still failed the prongs that armed it.
                 uf_specs, pf_specs = r_ufs, r_pfs
@@ -1473,14 +1525,20 @@ def run_journey_abstraction(
     # ── Persist the two structured outputs for byte-identical replay ──
     if cache is not None:
         try:
-            cache.set(CacheKind.LLM_ABSTRACTION.value, key, {
+            cache_payload: dict[str, Any] = {
                 "v": ABSTRACTION_CACHE_VERSION,
                 "abstraction": {"product_features": pf_specs, "user_flows": uf_specs},
                 "map": dev_map,
                 # Persisted so a cache-hit replay reports the SAME contract
                 # status the live run did (byte-identical telemetry).
                 "contract": tele.get("abstraction_contract", CONTRACT_PASS),
-            })
+            }
+            if "first_draw_spec" in tele:
+                # Alongside the kept result, so offline both-candidate
+                # calibration can read the cache without the run dir.
+                # Extra key is version-compatible (reader checks "v" only).
+                cache_payload["first_draw_spec"] = tele["first_draw_spec"]
+            cache.set(CacheKind.LLM_ABSTRACTION.value, key, cache_payload)
         except Exception:  # noqa: BLE001 — a cache write fault must not abort
             pass
 
