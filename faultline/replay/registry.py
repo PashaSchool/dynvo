@@ -1375,7 +1375,11 @@ def _run_journey_abstraction(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
             },
             run_dir=env.run_dir,
         )
-    scan_meta["stage_6_7d_journey_abstraction"] = dict(s67d_telemetry)
+    # first_draw_spec is artifact/llm-cache-only observability (mission-92)
+    # -- filtered here so replayed scan_meta matches the live-run shape.
+    scan_meta["stage_6_7d_journey_abstraction"] = {
+        k: v for k, v in s67d_telemetry.items() if k != "first_draw_spec"
+    }
     return {
         "user_flows": user_flows,
         "product_features": product_features,

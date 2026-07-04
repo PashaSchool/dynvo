@@ -618,7 +618,12 @@ def run_finalize_phase(
                 },
                 run_dir=run_dir,
             )
-        scan_meta["stage_6_7d_journey_abstraction"] = dict(s67d_telemetry)
+        # ``first_draw_spec`` (mission-92 retry observability) is artifact +
+        # llm-cache ONLY — keep it out of scan_meta so the final scan JSON
+        # stays lean and byte-unchanged even on keyed runs that retried.
+        scan_meta["stage_6_7d_journey_abstraction"] = {
+            k: v for k, v in s67d_telemetry.items() if k != "first_draw_spec"
+        }
 
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to

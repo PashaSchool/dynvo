@@ -1336,3 +1336,134 @@ def test_cache_version_bumped_for_contract_fix() -> None:
     entry-validity check. 'contract-4' = the jpf structural anchor (lever #3):
     contract-3 entries may hold two-axis-inflated draws the jpf prong retries."""
     assert ABSTRACTION_CACHE_VERSION == "contract-4"
+
+
+# ── first_draw_spec retry observability (mission-92, 2026-07-05) ────────────
+# When a contract retry REPLACES the first draw, its parsed-spec summary is
+# the ONLY surviving record of the discarded candidate — persisted to the
+# stage artifact (via telemetry) + the LLM_ABSTRACTION cache entry so offline
+# both-candidate calibration has data. Pure recording: no output change.
+
+from faultline.cache.backend import CacheKind as _CK
+from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+    _FIRST_DRAW_SPEC_MAX_BYTES,
+    _first_draw_summary,
+)
+
+
+def test_retry_records_first_draw_spec_output_unchanged() -> None:
+    """pass_after_retry: telemetry carries the FIRST draw's uf names +
+    (resource, intent) tuples + pf names + counts; the kept output is the
+    retry result exactly as before the recording change."""
+    cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    fds = tel["first_draw_spec"]
+    assert [u["name"] for u in fds["uf"]] == [
+        "Create account", "Update account", "Sign in"]
+    assert [(u["resource"], u["intent"]) for u in fds["uf"]] == [
+        ("account", "author"), ("account", "author"), ("session", "execute")]
+    assert fds["pf"] == ["Account Management"]
+    assert fds["uf_emitted"] == 3 and fds["pf_emitted"] == 1
+    assert "truncated" not in fds
+    # Behavior untouched: retry result kept, same contract, same call count.
+    assert tel["abstraction_contract"] == CONTRACT_PASS_AFTER_RETRY
+    assert tel["llm_calls"] == 3
+    assert {u.name for u in ufs} == {"Manage accounts", "Sign in"}
+
+
+def test_retry_still_uncompressed_also_records_first_draw() -> None:
+    """Both candidates existed (retry parsed valid, kept although still
+    uncompressed) -> the discarded first draw is recorded."""
+    cli = _seq_client([_UNCOMPRESSED, _UNCOMPRESSED], _MAP_FULL)
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["abstraction_contract"] == CONTRACT_UNCOMPRESSED
+    assert tel["first_draw_spec"]["uf_emitted"] == 3
+
+
+def test_no_retry_no_first_draw_spec() -> None:
+    """Contract pass on the first draw -> nothing recorded."""
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    assert tel["abstraction_contract"] == CONTRACT_PASS
+    assert "first_draw_spec" not in tel
+
+
+def test_retry_unparseable_no_first_draw_spec() -> None:
+    """Retry unusable -> the first draw IS the kept result (already in the
+    cache/artifact as the final specs) -> no duplicate record."""
+    cli = _seq_client([_UNCOMPRESSED, "not json at all"], _MAP_FULL)
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["abstraction_retry_failed"] == "abstraction_parse_failed"
+    assert "first_draw_spec" not in tel
+
+
+def test_retry_skipped_cost_no_first_draw_spec(monkeypatch: Any) -> None:
+    """No retry fired (cost guard) -> only one candidate -> no record."""
+    from faultline.llm.cost import estimate_call_cost
+    one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
+    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 1.5)
+    cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["abstraction_retry_skipped_cost"] is True
+    assert "first_draw_spec" not in tel
+
+
+def test_keyless_degrade_no_first_draw_spec() -> None:
+    """Keyless / deterministic runs (no client) must not grow the field —
+    replay-identity guarantee."""
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=None, _client_factory=lambda: None)
+    assert tel["degraded_reason"] == "no_client"
+    assert "first_draw_spec" not in tel
+
+
+def test_first_draw_spec_persisted_in_cache_and_replayed() -> None:
+    """The cache entry carries first_draw_spec alongside the kept result, and
+    a cache-hit replay restores it into telemetry (live-run parity)."""
+    cache = _FakeCache()
+    cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
+    _u1, _p1, _m1, tel1 = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli, cache=cache)
+    (payload,) = [v for (k, _), v in cache.store.items()
+                  if k == _CK.LLM_ABSTRACTION.value]
+    assert payload["first_draw_spec"] == tel1["first_draw_spec"]
+    # Kept result in the cache is the RETRY draw, not the recorded first.
+    assert {u["name"] for u in payload["abstraction"]["user_flows"]} == {
+        "Manage accounts", "Sign in"}
+    _u2, _p2, _m2, tel2 = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_raising_client(), cache=cache)
+    assert tel2["cache_hit"] is True
+    assert tel2["first_draw_spec"] == tel1["first_draw_spec"]
+
+
+def test_first_draw_spec_absent_in_cache_on_pass() -> None:
+    """No retry -> the cache entry gains no first_draw_spec key (old-shape
+    entries and pass entries stay byte-compatible)."""
+    cache = _FakeCache()
+    _u, _p, _m, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL), cache=cache)
+    (payload,) = [v for (k, _), v in cache.store.items()
+                  if k == _CK.LLM_ABSTRACTION.value]
+    assert "first_draw_spec" not in payload
+
+
+def test_first_draw_summary_size_bound() -> None:
+    """A runaway draw (huge names x thousands of specs) collapses to a
+    counts-only record flagged truncated, under the byte bound."""
+    big_ufs = [{"name": f"Flow {'x' * 200} {i}", "resource": f"res{i}"}
+               for i in range(2000)]
+    big_pfs = [{"name": f"Cap {'y' * 200} {i}"} for i in range(500)]
+    s = _first_draw_summary(big_ufs, big_pfs)
+    assert s["truncated"] is True
+    assert s["uf"] == [] and s["pf"] == []
+    assert s["uf_emitted"] == 2000 and s["pf_emitted"] == 500
+    assert len(json.dumps(s).encode()) < _FIRST_DRAW_SPEC_MAX_BYTES
+    # Normal-shape record stays intact and well under the bound.
+    small = _first_draw_summary(
+        [{"name": "Create account", "resource": "account"}], [{"name": "A"}])
+    assert "truncated" not in small
+    assert len(json.dumps(small).encode()) < 1000
