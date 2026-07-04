@@ -357,24 +357,160 @@ GROUPING_MODEL_ENV = "FAULTLINE_UF_LATTICE_MODEL"
 DEFAULT_GROUPING_MODEL = "claude-haiku-4-5-20251001"
 GROUPING_MAX_TOKENS = 8000
 #: bump to invalidate cached groupings when the prompt/build changes.
-LATTICE_CACHE_VERSION = "lattice-1"
+LATTICE_CACHE_VERSION = "lattice-2-famfold"
+
+
+# ── Resource-family pre-fold (deterministic, MISSION-92 cycle-3) ────────────
+# MEASURED (2026-07-04, combined lattice+band replays): the Haiku grouping
+# call alone returns ~1:1 singletons when the 6.7d abstraction emits leaves
+# with route-grain-unique resource nouns ("link", "link-tags",
+# "links-analytics" are three DIFFERENT strings, so the model sees three
+# unrelated journeys and rule-3 caution keeps them apart — dub 125 caps /
+# 126 leaves, supabase 93/101). The lattice then absorbs nothing.
+#
+# Fix: a deterministic RESOURCE-FAMILY fold runs BEFORE the LLM call and
+# hands the model PRE-GROUPED candidate capabilities: leaves whose resources
+# share a token family (token-prefix after per-token singularisation and
+# kebab/underscore splitting, vendor prefixes/suffixes stripped) + the same
+# intent class start as ONE candidate group. The model's job shifts from
+# "discover groups among N strangers" to "keep / split / merge these
+# candidates" — the direction the over-merge guards below already protect.
+#
+# Vendor-vocabulary provenance: ``naming_validator.VENDOR_TOKENS`` — the
+# engine's universal PUBLIC SaaS-ecosystem brand list (documented there as
+# "not derived from any one repo"), plus the additive public-brand tokens
+# below under the same provenance rule. Structural, never repo-tuned.
+
+#: Additive public SaaS/consumer brand tokens missing from the shared list.
+#: Same provenance contract as naming_validator.VENDOR_TOKENS: well-known
+#: public vendors only — NEVER nouns tuned to a benchmark repo.
+_EXTRA_VENDOR_TOKENS = frozenset({
+    "zoom", "bitly", "customerio", "mailchimp", "segment", "mixpanel",
+    "amplitude", "klaviyo", "braze", "twitter", "youtube", "tiktok",
+    "instagram", "reddit", "spotify", "dropbox", "asana", "jira",
+    "confluence", "trello", "linear", "calendly", "typeform", "webflow",
+    "wordpress", "ghost", "substack", "outlook", "gmail", "icloud",
+})
+
+#: Generic scaffold / qualifier / action heads that never name a product
+#: surface on their own — skipped as family head while more tokens remain
+#: ("api-cron-export" → "cron", "delete-page-type" → "page"). Structural
+#: English/routing vocabulary, not repo-derived.
+_SKIP_HEAD_TOKENS = frozenset({
+    "api", "default", "custom", "legacy", "internal", "public", "misc",
+    "other", "new", "old", "all", "my",
+    "create", "add", "delete", "remove", "update", "edit", "view", "browse",
+    "list", "manage", "get", "set", "run", "execute", "sync", "import",
+    "export", "invite", "ban", "bulk",
+})
+
+_vendor_vocab_cache: frozenset[str] | None = None
+
+
+def _vendor_vocab() -> frozenset[str]:
+    global _vendor_vocab_cache
+    if _vendor_vocab_cache is None:
+        from faultline.pipeline_v2.naming_validator import VENDOR_TOKENS
+        _vendor_vocab_cache = frozenset(VENDOR_TOKENS) | _EXTRA_VENDOR_TOKENS
+    return _vendor_vocab_cache
+
+
+def _singular_token(tok: str) -> str:
+    """Same crude singularisation rule as :func:`_norm_resource`, per token."""
+    if len(tok) > 3 and tok.endswith("s") and not tok.endswith("ss"):
+        return tok[:-1]
+    return tok
+
+
+def resource_family(resource: str | None) -> str:
+    """Deterministic family key for a leaf resource ("" = no resource).
+
+    Pure string function — no repo state, no ordering dependence:
+      * split on non-alphanumerics (kebab / underscore / space variants);
+      * per-token singularisation (plural/singular fold);
+      * vendor tokens stripped (prefix OR suffix: "stripe-webhook" and
+        "meeting-zoom" both fold to their non-vendor core) unless the
+        resource is ONLY vendor tokens (then it keeps itself);
+      * generic scaffold/action heads skipped while more tokens remain;
+      * family = first remaining token (token-prefix family: "link",
+        "link-tags", "links-analytics" → "link").
+    """
+    r = _norm_resource(resource)
+    if not r:
+        return ""
+    toks = [_singular_token(t) for t in re.split(r"[^a-z0-9]+", r) if t]
+    if not toks:
+        return ""
+    core = [t for t in toks if t not in _vendor_vocab()] or toks
+    while len(core) > 1 and core[0] in _SKIP_HEAD_TOKENS:
+        core = core[1:]
+    return core[0]
+
+
+def _prefold_candidates(
+    user_flows: list["UserFlow"],
+) -> list[dict[str, Any]]:
+    """Group leaves into candidate capabilities by (family, intent class).
+
+    Content-stable for any input order (grouping keys + sort keys are
+    content-derived). Leaves with no resource stay singleton candidates —
+    unknown mergeability is treated conservatively, same rule as the
+    deterministic lattice."""
+    grouped: dict[tuple[str, str], list["UserFlow"]] = defaultdict(list)
+    singles: list["UserFlow"] = []
+    for uf in user_flows:
+        fam = resource_family(uf.resource)
+        if not fam:
+            singles.append(uf)
+            continue
+        grouped[(fam, _family(uf.intent))].append(uf)
+    cands: list[dict[str, Any]] = []
+    for (fam, ifam), leaves in grouped.items():
+        cands.append({
+            "family": fam,
+            "intent_family": ifam,
+            "leaves": sorted(leaves, key=_leaf_sort_key),
+        })
+    for uf in singles:
+        cands.append({
+            "family": "",
+            "intent_family": _family(uf.intent),
+            "leaves": [uf],
+        })
+    cands.sort(key=lambda c: (
+        c["family"], c["intent_family"], _leaf_sort_key(c["leaves"][0]),
+    ))
+    return cands
 
 _GROUPING_SYSTEM = """You organise the user journeys of one software product into product CAPABILITIES.
+
+The journeys arrive PRE-GROUPED into candidate groups by a deterministic
+resource normaliser (journeys whose resource nouns belong to one token
+family — plural/singular, kebab route variants, vendor prefixes/suffixes —
+with the same action class). Treat each candidate group as ONE PROPOSED
+capability.
 
 Rules, in priority order:
  1. Every journey id must appear in EXACTLY ONE capability. Never drop or
     invent ids.
- 2. A capability groups journeys that serve the SAME capability of the SAME
-    primary resource / feature area: CRUD + browse variants of one resource,
-    its settings/configuration, lifecycle steps of one pipeline, list+detail
-    views. Example: "Create content pages" + "Bulk delete page types" +
-    "Reorder pages" -> one "Manage content pages" capability.
- 3. NEVER create broad multi-resource buckets ("Manage everything",
+ 2. KEEP a candidate group together when its journeys serve the SAME product
+    surface: CRUD + browse variants of one resource, route variants of one
+    surface, vendor/provider-specific variants of one integration surface,
+    subtype resources (a resource and its types/settings/templates),
+    lifecycle steps of one pipeline, list+detail views. Example: "Create
+    content pages" + "Bulk delete page types" + "Reorder pages" -> one
+    "Manage content pages" capability.
+ 3. SPLIT a candidate group when it mixes genuinely DIFFERENT product
+    surfaces that merely share a word. You may also MERGE whole groups (or
+    move single journeys) when they clearly serve the same product surface
+    under different nouns.
+ 4. NEVER create broad multi-resource buckets ("Manage everything",
     "Workspace administration", "Platform management"). A capability spans
-    ONE resource / feature area. When in doubt, keep journeys separate.
- 4. Singleton capabilities (one journey) are normal and common — a journey
-    with no true siblings stays alone, keeping its own name.
- 5. Each capability: short Title Case verb-phrase `name` grounded in its
+    ONE resource / feature area.
+ 5. Keep a journey as a singleton ONLY when it is a genuinely distinct
+    surface with no true siblings — when in doubt WITHIN a candidate group,
+    keep the group together; when in doubt ACROSS groups, keep them apart.
+ 6. Each capability: short Title Case verb-phrase `name` grounded in its
     journeys' wording; one lowercase `resource` (the shared primary noun);
     `intent` one of manage|execute|bulk|export|other.
 
@@ -393,10 +529,19 @@ def _default_client_factory() -> Any | None:  # pragma: no cover - IO
     return Anthropic()
 
 
-def _leaf_digest(user_flows: list["UserFlow"]) -> list[dict[str, Any]]:
+def _candidate_digest(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The prompt/cache digest: family-pre-grouped candidate capabilities."""
     return [
-        {"id": u.id, "name": u.name, "resource": u.resource, "intent": u.intent}
-        for u in user_flows
+        {
+            "family": c["family"] or None,
+            "intent": c["intent_family"],
+            "journeys": [
+                {"id": u.id, "name": u.name,
+                 "resource": u.resource, "intent": u.intent}
+                for u in c["leaves"]
+            ],
+        }
+        for c in candidates
     ]
 
 
@@ -421,9 +566,11 @@ def _llm_group_specs(
     from faultline.llm.cost import deterministic_params
     from faultline.llm.model_gateway import resolve_model as gateway_model
 
-    user = ("User journeys (id, name, resource, intent):\n"
+    user = ("Candidate groups (family; journeys with id, name, resource, "
+            "intent):\n"
             + _json.dumps(digest, ensure_ascii=False)
-            + "\nGroup them into capabilities. Return the JSON now.")
+            + "\nGroup every journey into capabilities — keep, split, or "
+              "merge the candidate groups. Return the JSON now.")
     try:
         msg = client.messages.create(
             model=gateway_model(model), max_tokens=GROUPING_MAX_TOKENS,
@@ -596,7 +743,8 @@ def build_uf_lattice_llm(
     if not user_flows:
         return _fallback("no_leaves")
 
-    digest = _leaf_digest(user_flows)
+    candidates = _prefold_candidates(user_flows)
+    digest = _candidate_digest(candidates)
     key = _grouping_cache_key(digest, model)
     specs: list[dict[str, Any]] | None = None
     cache_hit = False
@@ -640,6 +788,10 @@ def build_uf_lattice_llm(
         "enabled": True,
         "grouping": "llm",
         "grouping_model": model,
+        "prefold_candidates": len(candidates),
+        "prefold_multi_candidates": sum(
+            1 for c in candidates if len(c["leaves"]) > 1
+        ),
         "cache_hit": cache_hit,
         "cost_usd": round(cost, 6),
         "leaves": len(user_flows),
@@ -708,4 +860,5 @@ __all__ = [
     "build_uf_lattice_llm",
     "lattice_enabled",
     "make_llm_namer",
+    "resource_family",
 ]
