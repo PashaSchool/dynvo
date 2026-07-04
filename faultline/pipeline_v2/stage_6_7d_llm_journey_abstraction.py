@@ -838,6 +838,21 @@ def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: s
 
 # ── LLM call (mirrors stage_6_7b._call_haiku) ───────────────────────────────
 
+def _stream_final_message(
+    client: Any, *, model: str, system: str, user: str, max_tokens: int,
+) -> Any:
+    """Streaming variant of a draw request, returning the FINAL message
+    (same shape as ``messages.create``). The SDK REJECTS non-streaming
+    requests whose ``max_tokens`` implies a >10-minute operation — which
+    the input-scaled output budget (fix 3) can legitimately request on
+    large digests — so big draws stream and accumulate instead."""
+    with client.messages.stream(
+        model=gateway_model(model), max_tokens=max_tokens, system=system,
+        messages=[{"role": "user", "content": user}], **deterministic_params(model),
+    ) as stream:
+        return stream.get_final_message()
+
+
 def _call_haiku(
     client: Any, *, model: str, system: str, user: str, max_tokens: int,
     llm_health: LlmHealth | None = None,
@@ -845,10 +860,22 @@ def _call_haiku(
     if llm_health is not None and not llm_health.should_call():
         return "", 0, 0
     try:
-        msg = client.messages.create(
-            model=gateway_model(model), max_tokens=max_tokens, system=system,
-            messages=[{"role": "user", "content": user}], **deterministic_params(model),
-        )
+        try:
+            msg = client.messages.create(
+                model=gateway_model(model), max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": user}], **deterministic_params(model),
+            )
+        except Exception as exc:  # noqa: BLE001 — inspect for the streaming gate
+            # REACTIVE fallback (not proactive): every existing client —
+            # including test fakes without ``.stream`` — keeps the plain
+            # create path; only the SDK's explicit long-request rejection
+            # reroutes to the streaming variant.
+            if "streaming is required" not in str(exc).lower():
+                raise
+            msg = _stream_final_message(
+                client, model=model, system=system, user=user,
+                max_tokens=max_tokens,
+            )
     except Exception as exc:  # noqa: BLE001 — non-fatal at scan-time
         if llm_health is not None and llm_health.record_failure(
             exc, stage="stage_6_7d_llm_journey_abstraction",
