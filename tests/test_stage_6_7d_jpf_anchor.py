@@ -295,11 +295,12 @@ def test_jpf_retry_unparseable_keeps_first_draw() -> None:
 
 
 def test_jpf_retry_skipped_when_cost_capped(monkeypatch: Any) -> None:
-    """Same structural x2 cost guard as the ratio prong: a jpf retry that
-    could bust the whole-stage cap is skipped; first draw ships flagged."""
+    """Same proportional admission rule as the ratio prong (fix 2): a jpf
+    retry is skipped once the spend so far consumed the single-draw cap;
+    first draw ships flagged."""
     from faultline.llm.cost import estimate_call_cost
     one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
-    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 1.5)
+    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 0.6)
     cli = _seq_client([_INFLATED, _COMPRESSED], _MAP)
     ufs, _p, _m, tel = _run(cli)
     assert tel["applied"] is True
