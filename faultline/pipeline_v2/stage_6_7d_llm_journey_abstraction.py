@@ -169,6 +169,29 @@ CONTRACT_ARMED_JPF = "jpf"
 # (dub 80.0, cal-com 80.4, formbricks 77.3/83.8); also arms supabase base
 # 48.2 + documenso base 64.2 (the class the corrective retry lifted +8.5).
 
+# ── ALIGN echo contract (align-v2, 2026-07-04) ──────────────────────────────
+# ALIGN mode has its OWN catastrophic draw class the count-contract cannot see:
+# the model echoes a handful of coarse NAV-label anchors as user_flows and
+# swallows the whole flow graph into them (supabase draw 2026-07-03: 10 UFs,
+# "Dashboard" inheriting 322/470 member flows -> F1 18.2 vs 55-63 healthy).
+# Two scale-invariant prongs, both ratios over the draw's OWN citations:
+#   * blob prong — the top journey's share of all inherited member flows.
+#     Calibrated on the 19 recorded Phase-3.0 + align-v2 draws: the
+#     catastrophe sits at 0.685; every healthy draw (incl. the winning
+#     supabase 55.5/56.2 pair) is <= 0.219. 0.5 ("no journey may absorb the
+#     majority") splits the two populations with margin on both sides.
+#   * citation prong — distinct digest UF ids cited via `from_flows` over the
+#     digest UFs shown. Catches the complementary echo shape (anchor labels
+#     emitted with near-zero grouping); every recorded healthy draw cites far
+#     above 0.2 (inheriting 292-919 members), so 0.2 = "ignored >= 80% of the
+#     journeys it was told to group".
+# NOTE: the count-contract alone provably MISSES the recorded catastrophe
+# (10 emitted << 0.9 x 120 digest) — hence this mode-aware contract.
+ALIGN_TOP_MEMBER_SHARE = 0.5
+ALIGN_CITATION_FLOOR = 0.2
+CONTRACT_ANCHOR_ECHO = "anchor_echo"
+CONTRACT_ECHO_FREEGEN = "anchor_echo_freegen_fallback"
+
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
 # verb → intent class (subset of Stage 6.7's fixed table; scale-invariant).
@@ -390,6 +413,21 @@ journeys of the SAME capability into that single journey — and consolidate
 near-duplicate capabilities instead of multiplying them. Judge your journey
 count against your OWN product_features list: a healthy journey list has a
 small number of user_flows PER product feature. Re-emit the full JSON now."""
+
+# Echo-corrective addendum for the ALIGN-mode retry. The rejected shape:
+# a handful of coarse navigation labels emitted as journeys, one of them
+# swallowing the majority of the current flows (or almost none cited at all).
+_ALIGN_ECHO_CORRECTIVE = """
+
+PREVIOUS ATTEMPT REJECTED — it echoed a few coarse anchor/navigation labels
+("Dashboard", "Projects", section headings) as user_flows, leaving the current
+user-flows either swallowed by one giant journey or largely unclaimed. You are
+the ALIGNMENT layer: choose the ACTION-grain anchors (things a user DOES), not
+site-navigation or section labels, and produce ONE journey per distinct
+capability the anchors + code evidence support. GROUP every relevant current
+user-flow id under the journey that realises it via `from_flows`; no single
+journey may absorb the majority of the current flows. Re-emit the full JSON
+now."""
 
 _REATTRIB_SYSTEM = """You assign each developer feature (a code module) to exactly ONE product
 capability from the given list, using the module name and its directory. Every
@@ -765,6 +803,45 @@ def _jpf_armed(
         return False
     return (len(uf_specs) > len(_digest_resource_keys(digest))
             and _distinct_pf_count(pf_specs) > len(pfs))
+
+
+def _align_echo_stats(
+    uf_specs: list[dict[str, Any]],
+    old_ufs: list["UserFlow"],
+    n_digest_ufs: int,
+) -> tuple[bool, float, float]:
+    """ALIGN echo contract — ``(violated, top_member_share, citation_coverage)``.
+
+    Evaluated on the draw's RAW ``from_flows`` citations (what the model
+    grouped), BEFORE reconstruction rescues can mask the shape:
+      * ``top_member_share`` — the largest single journey's share of all
+        inherited member flows (blob prong, > :data:`ALIGN_TOP_MEMBER_SHARE`
+        rejects — the supabase "Dashboard" 0.685 catastrophe).
+      * ``citation_coverage`` — distinct valid UF ids cited / digest UFs shown
+        (< :data:`ALIGN_CITATION_FLOOR` rejects — the near-zero-grouping echo).
+    Both prongs are ratios of the draw's own output — scale-invariant, no
+    per-repo constants. Single-journey draws skip the blob prong (a repo with
+    one genuine journey must not self-reject); an empty citation set still
+    fails the citation prong when there were digest UFs to group.
+    """
+    members_by_id = {u.id: (u.member_count or 0) for u in old_ufs}
+    cited: set[str] = set()
+    per_spec: list[int] = []
+    for s in uf_specs:
+        ids = {
+            r for r in (s.get("from_flows") or [])
+            if isinstance(r, str) and r in members_by_id
+        }
+        cited |= ids
+        per_spec.append(sum(members_by_id[i] for i in ids))
+    total = sum(per_spec)
+    top_share = (max(per_spec) / total) if total else 0.0
+    coverage = (len(cited) / n_digest_ufs) if n_digest_ufs else 1.0
+    violated = (
+        (len(per_spec) > 1 and top_share > ALIGN_TOP_MEMBER_SHARE)
+        or (n_digest_ufs > 0 and coverage < ALIGN_CITATION_FLOOR)
+    )
+    return violated, round(top_share, 3), round(coverage, 3)
 
 
 def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: str,
@@ -1416,9 +1493,12 @@ def run_journey_abstraction(
     else:
         sys1 = _ABSTRACTION_SYSTEM
         anchor_block = ""
-    user1 = ("Repository evidence (code-grounded, no README):\n```json\n"
-             + json.dumps(digest, ensure_ascii=False) + "\n```" + anchor_block
-             + "\nEmit the JSON now.")
+    def _mk_user(extra: str) -> str:
+        return ("Repository evidence (code-grounded, no README):\n```json\n"
+                + json.dumps(digest, ensure_ascii=False) + "\n```" + extra
+                + "\nEmit the JSON now.")
+
+    user1 = _mk_user(anchor_block)
 
     # Sanitise at the boundary: keep only specs whose "name" is a non-empty
     # string. An LLM can emit a numeric/None name in otherwise-valid JSON, and
@@ -1429,11 +1509,16 @@ def run_journey_abstraction(
         return (isinstance(s, dict) and isinstance(s.get("name"), str)
                 and bool(s.get("name").strip()))
 
-    def _draw(system: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    def _draw(
+        system: str, user_msg: str | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
         """One Call-1 draw → sanitised ``(uf_specs, pf_specs, fail_reason)``.
-        ``fail_reason`` is None on a usable draw."""
+        ``fail_reason`` is None on a usable draw. ``user_msg`` overrides the
+        default (aligned) user prompt — the free-gen fallback drops the
+        anchor block."""
         text, in_t, out_t = _call_haiku(
-            cli, model=abstraction_model, system=system, user=user1,
+            cli, model=abstraction_model, system=system,
+            user=user1 if user_msg is None else user_msg,
             max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
         tele["llm_calls"] += 1
         tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in_t, out_t), 6)
@@ -1446,17 +1531,19 @@ def run_journey_abstraction(
             return [], [], "abstraction_empty"
         return ufs, pfs, None
 
-    # ── First draw + grain-contract gate (2026-07-04) ──────────────────
-    # A draw that emits >= UF_CONTRACT_RATIO x the digest UFs performed no
-    # grain lift (inbox-zero: 140-in -> 140 emitted -> F1 36.7 vs golden 35
-    # journeys) — the RATIO prong. The JPF prong (lever #3) additionally arms
-    # on draws under that ratio which still inflate BOTH the journey axis
-    # (emitted > distinct digest resources) and the capability axis (emitted
-    # PFs > deterministic PF count) — see :func:`_jpf_armed`. Reject ONCE with
-    # a corrective addendum; if the retry still fails its armed prongs we KEEP
-    # the retry (never-worse: more UFs beats degrading the whole stage) and
-    # flag ``abstraction_contract`` so the uncompressed draw is visible in
-    # scan_meta.
+    # ── First draw + contract gates (2026-07-04, mode-aware) ───────────
+    # FREE-GEN failure classes: the RATIO prong (a draw emitting >=
+    # UF_CONTRACT_RATIO x the digest UFs performed no grain lift; inbox-zero:
+    # 140-in -> 140 emitted -> F1 36.7 vs golden 35 journeys) and the JPF
+    # prong (lever #3 — draws under that ratio which still inflate BOTH the
+    # journey axis and the capability axis, see :func:`_jpf_armed`).
+    # ALIGN failure class: the anchor-echo blob (see _align_echo_stats — the
+    # count-contract cannot see it; checked FIRST, its failure class is
+    # catastrophic: F1 18.2 vs free-gen ~48). Reject ONCE with the
+    # violation-specific corrective; keep the retry (never-worse for the
+    # count classes) — EXCEPT a retry that STILL echoes anchors, which falls
+    # back to ONE free-gen draw (align must never end below the validated
+    # free-gen mode).
     uf_specs, pf_specs, fail1 = _draw(sys1)
     if fail1:
         return _degrade(fail1)
@@ -1467,9 +1554,19 @@ def run_journey_abstraction(
     def _armed_prongs(ufs_: list[dict[str, Any]], pfs_: list[dict[str, Any]],
                       restrict: list[str] | None = None) -> list[str]:
         """Arming reasons for a draw; ``restrict`` (the retry re-check) only
-        re-evaluates the prongs that armed the FIRST draw, so a ratio-only
-        arming keeps the exact lever-1 pass_after_retry semantics."""
+        re-evaluates the count prongs that armed the FIRST draw, so a
+        ratio-only arming keeps the exact lever-1 pass_after_retry semantics.
+        The ALIGN echo prong is checked FIRST and is ALWAYS evaluated in
+        ALIGN mode (catastrophic class — a retry that newly develops the
+        echo shape must still be caught and floored at free-gen)."""
         out: list[str] = []
+        if aligned:
+            echo, top_share, coverage = _align_echo_stats(
+                ufs_, user_flows, n_digest_ufs)
+            tele["align_top_member_share"] = top_share
+            tele["align_citation_coverage"] = coverage
+            if echo:
+                out.append(CONTRACT_ANCHOR_ECHO)
         if ((restrict is None or CONTRACT_ARMED_RATIO in restrict)
                 and _contract_gate_armed(digest)
                 and not _contract_ok(len(ufs_), n_digest_ufs)):
@@ -1478,6 +1575,11 @@ def run_journey_abstraction(
                 and _jpf_armed(ufs_, pfs_, digest)):
             out.append(CONTRACT_ARMED_JPF)
         return out
+
+    def _contract_of(armed_: list[str]) -> str:
+        """scan_meta contract label for a non-empty armed-prong list."""
+        return (CONTRACT_ANCHOR_ECHO if CONTRACT_ANCHOR_ECHO in armed_
+                else CONTRACT_UNCOMPRESSED)
 
     # jpf telemetry (always on a live draw, armed or not): the draw's
     # journeys-per-capability vs the repo's structural prior
@@ -1490,30 +1592,55 @@ def run_journey_abstraction(
     armed = _armed_prongs(uf_specs, pf_specs)
     if armed:
         tele["contract_armed_by"] = armed
+        v1 = _contract_of(armed)
         # A retry costs ≈ the first draw; skip it when a second same-shape
         # call could bust the whole-stage cost cap (structural x2, not tuned).
         if tele["cost_usd"] * 2 > COST_CAP_USD:
-            contract = CONTRACT_UNCOMPRESSED
+            contract = v1
             tele["abstraction_retry_skipped_cost"] = True
         else:
             tele["abstraction_retried"] = True
-            # Ratio-armed draws keep the VALIDATED merge corrective verbatim
-            # (documenso +8.5); the jpf corrective serves the jpf-only class.
-            corrective = (_MERGE_CORRECTIVE if CONTRACT_ARMED_RATIO in armed
-                          else _JPF_CORRECTIVE)
+            # Echo-armed draws take the echo corrective (catastrophic class
+            # first); ratio-armed draws keep the VALIDATED merge corrective
+            # verbatim (documenso +8.5); the jpf corrective serves the
+            # jpf-only class.
+            if CONTRACT_ANCHOR_ECHO in armed:
+                corrective = _ALIGN_ECHO_CORRECTIVE
+            elif CONTRACT_ARMED_RATIO in armed:
+                corrective = _MERGE_CORRECTIVE
+            else:
+                corrective = _JPF_CORRECTIVE
             r_ufs, r_pfs, r_fail = _draw(sys1 + corrective)
             if r_fail is None:
                 # Per spec: keep the RETRY result either way; flag when it
                 # still failed the prongs that armed it.
                 uf_specs, pf_specs = r_ufs, r_pfs
                 tele["uf_specs_emitted_retry"] = len(r_ufs)
-                contract = (CONTRACT_PASS_AFTER_RETRY
-                            if not _armed_prongs(r_ufs, r_pfs, restrict=armed)
-                            else CONTRACT_UNCOMPRESSED)
+                v2 = _armed_prongs(r_ufs, r_pfs, restrict=armed)
+                contract = (CONTRACT_PASS_AFTER_RETRY if not v2
+                            else _contract_of(v2))
             else:
                 # Retry unusable → the valid FIRST draw stands (never-worse).
-                contract = CONTRACT_UNCOMPRESSED
+                contract = v1
                 tele["abstraction_retry_failed"] = r_fail
+        if contract == CONTRACT_ANCHOR_ECHO:
+            # ALIGN never-worse floor: both align draws echoed anchors →
+            # one FREE-GEN draw (plain system, no anchor block) bounds the
+            # result at the validated default mode instead of shipping the
+            # echo blob. Cost-guarded (structural x1.5: one more same-shape
+            # call on top of two already spent); unusable → the align retry
+            # stands, still flagged anchor_echo for scan_meta visibility.
+            if tele["cost_usd"] * 1.5 > COST_CAP_USD:
+                tele["align_freegen_fallback_skipped_cost"] = True
+            else:
+                tele["abstraction_retried_freegen"] = True
+                f_ufs, f_pfs, f_fail = _draw(_ABSTRACTION_SYSTEM, _mk_user(""))
+                if f_fail is None:
+                    uf_specs, pf_specs = f_ufs, f_pfs
+                    tele["uf_specs_emitted_freegen_fallback"] = len(f_ufs)
+                    contract = CONTRACT_ECHO_FREEGEN
+                else:
+                    tele["align_freegen_fallback_failed"] = f_fail
     tele["abstraction_contract"] = contract
     parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
     if tele["cost_usd"] > COST_CAP_USD:

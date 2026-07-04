@@ -484,3 +484,213 @@ def test_degradations_builder_shape() -> None:
     assert "11" in rec["detail"] and "103" in rec["detail"]
     assert rec["metrics"]["floor"] == 8
     assert rec["metrics"]["candidate_journeys"] == 103
+
+
+# ── 6. contract × align interaction (anchor-echo contract, 2026-07-04) ──────
+#
+# The count-contract (grain-contract gate) cannot see ALIGN's catastrophic
+# draw class: the supabase 2026-07-03 echo draw emitted 10 coarse nav labels
+# (10 << 0.9 x 120 digest UFs) yet "Dashboard" swallowed 322/470 member flows
+# → F1 18.2. The echo contract rejects such a draw, retries with the
+# align-specific corrective, and — if the retry STILL echoes — bounds the
+# result at ONE free-gen draw (align must never end below free-gen).
+
+from faultline.pipeline_v2 import stage_6_7d_llm_journey_abstraction as _mod67d
+from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+    CONTRACT_ANCHOR_ECHO,
+    CONTRACT_ECHO_FREEGEN,
+    CONTRACT_PASS,
+    CONTRACT_PASS_AFTER_RETRY,
+    DEFAULT_ABSTRACTION_MODEL,
+    _align_echo_stats,
+)
+
+
+def _seq_client(abstraction_payloads: list[str], reattrib: str) -> Any:
+    """Fake client returning abstraction_payloads[i] on the i-th Call-1 draw
+    (last repeats); records system + user prompts of every Call-1."""
+    state: dict[str, Any] = {"i": 0, "systems": [], "users": []}
+
+    class _C:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                sysp = kw.get("system", "")
+                if "assign each developer feature" in sysp:
+                    return _Msg(reattrib)
+                state["systems"].append(sysp)
+                state["users"].append(kw["messages"][0]["content"])
+                i = min(state["i"], len(abstraction_payloads) - 1)
+                state["i"] += 1
+                return _Msg(abstraction_payloads[i])
+        messages = _M()
+
+    c = _C()
+    c.state = state  # type: ignore[attr-defined]
+    return c
+
+
+def _four_ufs():
+    """4 UFs, 4 DISTINCT resources (count-contract disarmed → echo isolated),
+    3 member flows each (balanced, so only a blob draw trips the prong)."""
+    return [
+        _uf("UF-001", "Create thing", ["f1", "f2", "f3"], resource="alpha"),
+        _uf("UF-002", "Update widget", ["f4", "f5", "f6"], resource="beta"),
+        _uf("UF-003", "Delete gadget", ["f7", "f8", "f9"], resource="gamma"),
+        _uf("UF-004", "View report", ["f10", "f11", "f12"], resource="delta"),
+    ]
+
+
+# Echo shape: one journey inherits 9/12 members (share 0.75 > 0.5).
+_ECHO = json.dumps({
+    "product_features": [{"name": "Dashboard", "description": "nav echo"}],
+    "user_flows": [
+        {"name": "Dashboard", "resource": "dashboard",
+         "product_feature": "Dashboard",
+         "from_flows": ["UF-001", "UF-002", "UF-003"]},
+        {"name": "Subpage", "resource": "subpage",
+         "product_feature": "Dashboard", "from_flows": ["UF-004"]},
+    ],
+})
+
+# Healthy shape: 6/12 + 6/12 (top share 0.5, NOT > 0.5), full coverage.
+_BALANCED = json.dumps({
+    "product_features": [
+        {"name": "Alpha Suite", "description": "a"},
+        {"name": "Delta Suite", "description": "d"},
+    ],
+    "user_flows": [
+        {"name": "Manage alpha things", "resource": "alpha",
+         "product_feature": "Alpha Suite", "from_flows": ["UF-001", "UF-002"]},
+        {"name": "Review delta reports", "resource": "delta",
+         "product_feature": "Delta Suite", "from_flows": ["UF-003", "UF-004"]},
+    ],
+})
+
+_DEVS_MAP = json.dumps({"map": {
+    "accounts": "Alpha Suite", "auth": "Delta Suite",
+}})
+
+
+def _run_aligned(payloads: list[str], monkeypatch, **kw: Any):
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    cli = _seq_client(payloads, _DEVS_MAP)
+    devs = [_feat("accounts", ["app/accounts/a.ts"]),
+            _feat("auth", ["app/auth/l.ts"])]
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _four_ufs(), [_feat("web", ["app/a.ts"])], devs, [],
+        product_anchors=_n_anchors(8), client=cli, **kw)
+    return ufs, pfs, tel, cli
+
+
+def test_align_echo_stats_blob_prong() -> None:
+    """The recorded catastrophe shape (one journey swallowing the majority of
+    inherited members) violates; a balanced draw does not."""
+    specs = json.loads(_ECHO)["user_flows"]
+    violated, top, cov = _align_echo_stats(specs, _four_ufs(), 4)
+    assert violated is True
+    assert top == 0.75
+    assert cov == 1.0
+    specs_ok = json.loads(_BALANCED)["user_flows"]
+    violated, top, cov = _align_echo_stats(specs_ok, _four_ufs(), 4)
+    assert violated is False
+    assert top == 0.5
+
+
+def test_align_echo_stats_citation_prong() -> None:
+    """Anchor labels emitted with near-zero grouping (the task-described echo
+    shape): distinct citations under 20% of the digest → violated."""
+    specs = [{"name": "Dashboard", "from_flows": []},
+             {"name": "Projects", "from_flows": []}]
+    violated, top, cov = _align_echo_stats(specs, _four_ufs(), 4)
+    assert violated is True
+    assert cov == 0.0
+    # ...but with no digest UFs at all there is nothing to group → clean.
+    violated, _t, cov = _align_echo_stats(specs, [], 0)
+    assert violated is False
+    assert cov == 1.0
+
+
+def test_align_echo_stats_single_journey_skips_blob_prong() -> None:
+    """A single-journey draw must not self-reject on the blob prong (its top
+    share is trivially 1.0); only the citation prong may fire."""
+    specs = [{"name": "Everything", "from_flows": ["UF-001", "UF-002",
+                                                   "UF-003", "UF-004"]}]
+    violated, top, cov = _align_echo_stats(specs, _four_ufs(), 4)
+    assert violated is False
+    assert top == 1.0 and cov == 1.0
+
+
+def test_align_echo_draw_retried_with_echo_corrective(monkeypatch) -> None:
+    """Echo first draw → ONE retry carrying the ALIGN echo corrective (not the
+    merge corrective); healthy retry ships as pass_after_retry."""
+    ufs, pfs, tel, cli = _run_aligned([_ECHO, _BALANCED], monkeypatch)
+    assert tel["aligned"] is True
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_PASS_AFTER_RETRY
+    assert tel["abstraction_retried"] is True
+    assert {u.name for u in ufs} == {"Manage alpha things",
+                                     "Review delta reports"}
+    systems = cli.state["systems"]
+    assert len(systems) == 2
+    assert "echoed a few coarse anchor" in systems[1]
+    assert "product_features list" not in systems[1]  # merge corrective absent
+    # telemetry carries the prong values of the last evaluated draw
+    assert tel["align_top_member_share"] == 0.5
+    assert tel["align_citation_coverage"] == 1.0
+
+
+def test_align_double_echo_falls_back_to_freegen(monkeypatch) -> None:
+    """Retry STILL echoes → ONE free-gen draw (plain abstraction system, no
+    anchor block) bounds the result at the validated free-gen mode."""
+    ufs, pfs, tel, cli = _run_aligned([_ECHO, _ECHO, _BALANCED], monkeypatch)
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_ECHO_FREEGEN
+    assert tel["abstraction_retried_freegen"] is True
+    assert {u.name for u in ufs} == {"Manage alpha things",
+                                     "Review delta reports"}
+    systems = cli.state["systems"]
+    assert len(systems) == 3
+    assert "Your job is ALIGNMENT" in systems[0]
+    assert "Your job is ALIGNMENT" in systems[1]
+    assert "Your job is ALIGNMENT" not in systems[2]   # free-gen system
+    assert "product_capability_anchors" not in cli.state["users"][2]
+    assert tel["llm_calls"] == 4  # draw + retry + free-gen + reattrib
+
+
+def test_align_double_echo_fallback_unparseable_keeps_retry(monkeypatch) -> None:
+    """Free-gen fallback unusable → the align retry stands, flagged
+    anchor_echo (never-worse: a bad fallback must not degrade the stage)."""
+    ufs, pfs, tel, cli = _run_aligned(
+        [_ECHO, _ECHO, "garbage not json"], monkeypatch)
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_ANCHOR_ECHO
+    assert tel["align_freegen_fallback_failed"] == "abstraction_parse_failed"
+    assert {u.name for u in ufs} == {"Dashboard", "Subpage"}  # retry kept
+
+
+def test_align_freegen_fallback_skipped_when_cost_capped(monkeypatch) -> None:
+    """Structural cost guard: cap admits the retry (2 draws) but not a third
+    same-shape call → fallback skipped, flagged anchor_echo."""
+    from faultline.llm.cost import estimate_call_cost
+    one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
+    monkeypatch.setattr(_mod67d, "COST_CAP_USD", one_call * 2.5)
+    ufs, pfs, tel, cli = _run_aligned([_ECHO, _ECHO, _BALANCED], monkeypatch)
+    assert tel["abstraction_contract"] == CONTRACT_ANCHOR_ECHO
+    assert tel["align_freegen_fallback_skipped_cost"] is True
+    assert len(cli.state["systems"]) == 2               # no third draw issued
+    assert {u.name for u in ufs} == {"Dashboard", "Subpage"}
+
+
+def test_echo_contract_never_arms_in_freegen(monkeypatch) -> None:
+    """Align OFF: an echo-shaped draw sails through (the echo contract is
+    ALIGN-only) and no align prong telemetry is emitted."""
+    monkeypatch.delenv(ALIGN_ENV, raising=False)
+    cli = _seq_client([_ECHO], _DEVS_MAP)
+    devs = [_feat("accounts", ["app/accounts/a.ts"]),
+            _feat("auth", ["app/auth/l.ts"])]
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _four_ufs(), [_feat("web", ["app/a.ts"])], devs, [], client=cli)
+    assert tel["aligned"] is False
+    assert tel["abstraction_contract"] == CONTRACT_PASS
+    assert "align_top_member_share" not in tel
+    assert len(cli.state["systems"]) == 1               # no retry

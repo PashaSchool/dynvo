@@ -1332,14 +1332,20 @@ def _run_journey_abstraction(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
     repo_path = Path(state["repo_path"])
     with StageLogger(env.run_dir, 6, "journey_abstraction") as log6_7d:
         _anchors = None
+        _raw_anchors = None
         try:
             if align_enabled():
                 from faultline.pipeline_v2.anchor_extractors import (
                     build_alignment_pool, extract_raw_anchors,
                 )
-                _anchors = build_alignment_pool(extract_raw_anchors(repo_path))
+                # RAW extraction feeds the grain gate (pool caps understate a
+                # fine-grained vocabulary); the curated pool feeds the prompt
+                # — mirrors phase_finalize exactly.
+                _raw_anchors = extract_raw_anchors(repo_path)
+                _anchors = build_alignment_pool(_raw_anchors)
         except Exception:  # noqa: BLE001 — anchors are optional
             _anchors = None
+            _raw_anchors = None
         (
             user_flows,
             product_features,
@@ -1351,6 +1357,7 @@ def _run_journey_abstraction(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
             features,
             state["routes_index"],
             product_anchors=_anchors,
+            raw_anchors=_raw_anchors,
             model=state["model_id"],
             cost_tracker=env.tracker,
             cache=env.cache_backend(),
@@ -1375,7 +1382,13 @@ def _run_journey_abstraction(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
             },
             run_dir=env.run_dir,
         )
-    scan_meta["stage_6_7d_journey_abstraction"] = dict(s67d_telemetry)
+    _s67d_meta = dict(s67d_telemetry)
+    # Lift structured degradation records (align requested-but-refused) into
+    # the canonical scan_meta.degradations[] — mirrors phase_finalize.
+    _s67d_degr = _s67d_meta.pop("degradations", None) or []
+    if _s67d_degr:
+        scan_meta.setdefault("degradations", []).extend(_s67d_degr)
+    scan_meta["stage_6_7d_journey_abstraction"] = _s67d_meta
     return {
         "user_flows": user_flows,
         "product_features": product_features,
