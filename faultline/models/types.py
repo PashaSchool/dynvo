@@ -938,6 +938,29 @@ class UserFlow(BaseModel):
     dual_evidence: dict[str, Any] | None = None
 
 
+class UfCapability(BaseModel):
+    """One capability node of the UF grain lattice (docs spec: grain-lattice,
+    2026-07-04). The lattice is a two-level, ADDITIVE view over the flat
+    ``user_flows[]`` list: leaves stay exactly the journeys Stage 6.7/6.7d
+    emitted; every leaf belongs to exactly ONE capability (surjective, no
+    orphans — enforced by Stage 6.7e's structural post-validation). A
+    capability with a single leaf is a legal degenerate node.
+
+    Grounding mirrors the leaves' shape: ``member_flow_ids`` is the union of
+    the children's member flows, ``routes`` the union of their routes — a
+    capability never carries evidence its children don't have.
+    """
+
+    id: str                          # "UFC-001" — content-sorted, stable per scan
+    name: str                        # capability label (deterministic template or namer)
+    intent: str                      # capability intent family (manage|execute|bulk|export|other)
+    resource: str                    # shared normalized resource noun ("" for no-resource degenerates)
+    member_uf_ids: list[str] = []    # leaf children (UserFlow.id), each leaf in exactly one node
+    member_flow_ids: list[str] = []  # union of children's member flows (same id space as leaves)
+    routes: list[str] = []           # union of children's routes (grounding evidence)
+    member_count: int = 0            # len(member_uf_ids) — denormalised for consumers
+
+
 class FeatureMap(BaseModel):
     # On-disk schema version. Default 0 = "pre-versioning scan" so any
     # JSON produced before this field existed rehydrates as 0, which is
@@ -982,6 +1005,11 @@ class FeatureMap(BaseModel):
     # ``developer_features``). Default empty so legacy scans and
     # Layer-1-only callers rehydrate unchanged.
     user_flows: list[UserFlow] = []
+    # Grain lattice (2026-07-04) — capability rollup nodes over the
+    # ``user_flows`` leaves (Stage 6.7e, deterministic, $0 LLM by default).
+    # ADDITIVE: the flat leaf list above is untouched; consumers opt in.
+    # Default empty so legacy scans and lattice-off runs rehydrate unchanged.
+    uf_capabilities: list[UfCapability] = []
     # Sprint 1 (2026-05-23) — additive lineage / incremental surfaces.
     # ``path_index`` is a deterministic projection of features + flows
     # for O(1) file → (feature_uuid, flow_uuids) lookup. ``routes_index``

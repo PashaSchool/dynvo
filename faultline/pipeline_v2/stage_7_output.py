@@ -41,6 +41,7 @@ from faultline.models.types import (
     FeatureFlowEdge,
     FeatureMap,
     Flow,
+    UfCapability,
     UserFlow,
 )
 from faultline.output.writer import write_feature_map
@@ -146,6 +147,7 @@ def build_feature_map(
     scan_commit: str = "",
     engine_version: str = "",
     monorepo: dict[str, Any] | None = None,
+    uf_capabilities: list[UfCapability] | None = None,
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
 
@@ -192,6 +194,7 @@ def build_feature_map(
         flows=list(flows or []),
         feature_flow_edges=list(feature_flow_edges or []),
         user_flows=list(user_flows or []),
+        uf_capabilities=list(uf_capabilities or []),
         path_index=dict(path_index or {}),
         routes_index=list(routes_index or []),
         is_full_scan=is_full_scan,
@@ -239,11 +242,32 @@ def stage_7_output(
     Returns:
         The :class:`Path` the feature map was written to.
     """
+    # ── Stage 6.7e — UF grain lattice (deterministic, $0, additive) ──
+    # Built here (not as a separate pipeline stage) so EVERY producer of a
+    # feature map — live scan, replay chains from any recorded run, tests —
+    # gets the capability rollup for free from the final ``user_flows``
+    # leaves. Default ON (``FAULTLINE_UF_LATTICE=0`` disables); failure
+    # degrades to an empty lattice, never a failed scan.
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import (
+        build_uf_lattice,
+        lattice_enabled,
+    )
+    uf_capabilities: list[UfCapability] = []
+    if user_flows and lattice_enabled():
+        try:
+            uf_capabilities, lattice_tele = build_uf_lattice(user_flows)
+            scan_meta["uf_lattice"] = lattice_tele
+        except Exception as exc:  # noqa: BLE001 — additive view, never fatal
+            logger.warning("stage_6_7e: lattice build failed: %s", exc)
+            uf_capabilities = []
+            scan_meta["uf_lattice"] = {"enabled": True, "error": str(exc)}
+
     fm = build_feature_map(
         features, ctx, scan_meta,
         days=days, flows=flows, feature_flow_edges=feature_flow_edges,
         product_features=product_features,
         user_flows=user_flows,
+        uf_capabilities=uf_capabilities,
         path_index=path_index,
         routes_index=routes_index,
         is_full_scan=is_full_scan,
