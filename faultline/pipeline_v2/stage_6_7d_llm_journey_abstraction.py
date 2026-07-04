@@ -171,7 +171,13 @@ def align_enabled() -> bool:
 #: correctives now target the band edge instead of "merge aggressively",
 #: and the digest caps scale with input — cached draws frozen under the old
 #: crush-prone semantics would mask all three changes.
-ABSTRACTION_CACHE_VERSION = "band-5"
+#: "band-lattice-6" (MISSION-92 cycle-3 combined): the band now coexists with
+#: the downstream 6.7e grain lattice — fine-grain accepted first draws are the
+#: designed input to the capability rollup. Combined semantics differ from
+#: either branch alone (band draws frozen under "band-5" were scored without
+#: the lattice absorbing their fan-out), so invalidate once more for a clean
+#: combined-experiment draw pool.
+ABSTRACTION_CACHE_VERSION = "band-lattice-6"
 
 # ── Grain-contract gate (2026-07-04) ────────────────────────────────────────
 # Call 1 is the ABSTRACTION layer: its whole job is a grain LIFT (merge CRUD /

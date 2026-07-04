@@ -1342,5 +1342,8 @@ def test_cache_version_bumped_for_contract_fix() -> None:
     invalidated — the version participates in the cache key AND the
     entry-validity check. 'band-5' = the two-sided contract band + band-edge
     correctives + input-scaled digest (MISSION-92 recall-at-depth): older
-    entries hold crush-prone draws produced under the one-sided contract."""
-    assert ABSTRACTION_CACHE_VERSION == "band-5"
+    entries hold crush-prone draws produced under the one-sided contract.
+    'band-lattice-6' = band + downstream 6.7e lattice combined semantics
+    (MISSION-92 cycle-3): band-5 draws were scored without the lattice
+    absorbing their fan-out."""
+    assert ABSTRACTION_CACHE_VERSION == "band-lattice-6"
