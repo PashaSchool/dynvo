@@ -13,9 +13,10 @@ are LOCAL clones (not vendored); missing clones skip (CI boxes without
 the corpus still run every other G1 test).
 
 Selection is exercised at the same seam the orchestrator uses
-(``stage_0_intake`` → ``select_profile``); the snapshot gate
-additionally asserts the END-TO-END selection (``scan_meta.
-framework_profile``) on every gate run.
+(``stage_0_intake`` → ``select_scan_profile``, the Phase B+ per-unit
+entry point — hybrid repos pin their ``hybrid(...)`` composite name);
+the snapshot gate additionally asserts the END-TO-END selection
+(``scan_meta.framework_profile``) on every gate run.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from faultline.pipeline_v2.profiles import select_profile
+from faultline.pipeline_v2.profiles import select_scan_profile
 from faultline.pipeline_v2.stage_0_intake import stage_0_intake
 
 _LOCK = (
@@ -55,7 +56,7 @@ def test_pinned_repo_selects_expected_profile(
     # days=7 keeps the git pass cheap — selection depends on the file
     # tree + manifests (stack / workspaces), never on history depth.
     ctx = stage_0_intake(repo, days=7)
-    assert select_profile(ctx).name == expected_profile
+    assert select_scan_profile(ctx).name == expected_profile
 
 
 def test_lock_file_shape() -> None:
