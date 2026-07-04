@@ -375,3 +375,83 @@ def test_i18n_per_value_cap(tmp_path: Path) -> None:
     anchors = extract_i18n_anchors(tmp_path)
     # The recursive walker bails at the per-value ceiling (F1) — no 85MB blowout.
     assert len(anchors) <= MAX_I18N_VALUES
+
+
+# ── widget-vocabulary / design-system demotion (MISSION-92 lever #3) ────────
+
+
+def test_widget_labels_demoted_to_tier2() -> None:
+    from faultline.pipeline_v2.anchor_extractors import (
+        TIER1_ACTION,
+        TIER2_ADVISORY,
+        anchor_tier,
+        demote_widget_anchors,
+        is_widget_label,
+    )
+
+    # Every spelling variant of a widget noun matches the fixed public list.
+    for label in ("Tooltip", "Alert Dialog", "Hover Card", "Tabs",
+                  "Scroll-area", "scroll_area", "AlertDialog", "Dropdown Menu"):
+        assert is_widget_label(label), label
+    # Whole-label match only: compound product labels never demote.
+    for label in ("Tabs Settings", "Form Builder", "Alert Rules",
+                  "Booking Calendar Sync"):
+        assert not is_widget_label(label), label
+
+    anchors = [
+        ProductAnchor("Tooltip", "nav", "apps/web/Sidebar.tsx"),
+        ProductAnchor("Create Booking", "nav", "apps/web/Sidebar.tsx"),
+    ]
+    out, n = demote_widget_anchors(anchors)
+    assert n == 1
+    assert anchor_tier(out[0]) == TIER2_ADVISORY
+    assert anchor_tier(out[1]) == TIER1_ACTION
+
+
+def test_design_system_paths_always_tier2() -> None:
+    from faultline.pipeline_v2.anchor_extractors import (
+        TIER2_ADVISORY,
+        anchor_tier,
+        demote_widget_anchors,
+    )
+
+    # A NON-widget label still demotes when it comes from a design-system
+    # surface — those packages document widgets, not product capabilities.
+    ds_locators = [
+        "packages/ui/src/components/nav-menu.tsx",
+        "apps/design-system/Sidebar.tsx",
+        "apps/studio/components/Tabs.stories.tsx",
+        "lib/ui-kit/menu.tsx",
+    ]
+    anchors = [ProductAnchor("Realtime Inspector", "nav", loc) for loc in ds_locators]
+    out, n = demote_widget_anchors(anchors)
+    assert n == len(ds_locators)
+    assert all(anchor_tier(a) == TIER2_ADVISORY for a in out)
+
+
+def test_demotion_applied_in_raw_extraction(tmp_path: Path) -> None:
+    from faultline.pipeline_v2.anchor_extractors import distinct_tier_counts
+
+    comp = tmp_path / "packages" / "ui" / "components"
+    comp.mkdir(parents=True)
+    (comp / "Tabs.tsx").write_text('const x = { label: "Tooltip" };')
+    app = tmp_path / "apps" / "web"
+    app.mkdir(parents=True)
+    (app / "Sidebar.tsx").write_text('const x = { label: "Create Booking" };')
+
+    raw = extract_raw_anchors(tmp_path)
+    by_text = {a.text: a for a in raw}
+    assert by_text["Tooltip"].tier == "tier2_advisory"
+    assert by_text["Create Booking"].tier == "tier1_action"
+    t1, _t2 = distinct_tier_counts(raw)
+    assert t1 == 1  # only the genuine app-nav label arms the gate
+
+
+def test_telemetry_reports_tier_counts() -> None:
+    anchors = [
+        ProductAnchor("Create Booking", "nav", "apps/web/Sidebar.tsx"),
+        ProductAnchor("Some copy value", "i18n", "locales/en.json"),
+    ]
+    tel = anchor_telemetry(anchors)
+    assert tel["tier1_distinct"] == 1
+    assert tel["tier2_distinct"] == 1

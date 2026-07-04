@@ -187,6 +187,83 @@ _DOCS_SITE_PATH_MARKERS = (
 #: Basename prefixes of known docs-site nav configs (docusaurus ``sidebars.*``,
 #: nextra ``_meta.*``) — treated as docs-site nav regardless of their location.
 _DOCS_NAV_BASENAME_PREFIXES = ("sidebars.", "_meta.")
+# ── Widget-vocabulary demotion (align-v2 revival, MISSION-92 lever #3) ──────
+# Root cause fixed here: design-system/ui-kit component files match the nav
+# filename markers (``Tabs.stories.tsx``, ``DropdownMenu.tsx``, ``Sidebar.tsx``)
+# and their ``label``/``title``/``name`` props are WIDGET nouns ("Tooltip",
+# "Alert Dialog", "Hover Card"), which then classified as tier-1 nav anchors
+# and steered ALIGN into the anchor-echo catastrophe (supabase F1 18.2/21.1).
+# Two STRUCTURAL demotions (no per-repo tuning):
+#
+# 1. PATH demotion — any anchor extracted from a design-system / ui-kit /
+#    storybook / component-library surface is ALWAYS tier-2: those packages
+#    document WIDGETS, not product capabilities.
+_DESIGN_SYSTEM_PATH_MARKERS = (
+    "packages/ui/",
+    "/design-system/",
+    "design-system/",
+    "/ui-kit/",
+    "/component-library/",
+    "/components-library/",
+    ".stories.",          # storybook story files, wherever they live
+    "/storybook/",
+    ".storybook/",
+)
+# 2. VOCABULARY demotion — a tier-1 label whose ENTIRE text (separator- and
+#    case-normalised) is a bare widget name is demoted to tier-2. The list is
+#    FIXED and PUBLIC (structural, not per-repo tuning). Provenance:
+#      (a) WAI-ARIA 1.2 widget, composite-widget and window role names
+#          (W3C Recommendation, §5.3.2/5.3.3 — https://www.w3.org/TR/wai-aria-1.2/)
+#      (b) WHATWG HTML interactive/form element names
+#          (https://html.spec.whatwg.org/ — forms + interactive elements)
+#      (c) Component-library primitive names from the two dominant public
+#          TS design-system indexes: Radix UI Primitives (radix-ui.com/primitives)
+#          and shadcn/ui components (ui.shadcn.com/docs/components)
+#    Matching is EXACT on the normalised whole label ("Tabs", "Scroll-area",
+#    "Hover Card" demote; "Tabs Settings" or "Form Builder" do NOT).
+_WIDGET_VOCABULARY: frozenset[str] = frozenset({
+    # (a) WAI-ARIA 1.2 widget + composite + window roles
+    "alert", "alertdialog", "button", "checkbox", "combobox", "dialog",
+    "feed", "grid", "gridcell", "link", "listbox", "log", "marquee", "menu",
+    "menubar", "menuitem", "menuitemcheckbox", "menuitemradio", "meter",
+    "option", "progressbar", "radio", "radiogroup", "scrollbar", "searchbox",
+    "separator", "slider", "spinbutton", "status", "switch", "tab", "tablist",
+    "tabpanel", "textbox", "timer", "toolbar", "tooltip", "tree", "treegrid",
+    "treeitem",
+    # (b) WHATWG HTML form / interactive element names
+    "input", "select", "form", "label", "fieldset", "legend", "datalist",
+    "output", "textarea", "details", "summary", "table",
+    # (c) Radix UI Primitives + shadcn/ui component names (normalised:
+    # separators removed, lowercased)
+    "accordion", "aspectratio", "avatar", "badge", "breadcrumb", "calendar",
+    "card", "carousel", "chart", "collapsible", "command", "contextmenu",
+    "datatable", "datepicker", "drawer", "dropdownmenu", "hovercard",
+    "inputotp", "navigationmenu", "onetimepassword", "pagination", "popover",
+    "progress", "resizable", "scrollarea", "sheet", "sidebar", "skeleton",
+    "sonner", "tabs", "toast", "toggle", "togglegroup", "toolbarbutton",
+    "typography",
+})
+#: Separator characters removed by widget-label normalisation.
+_WIDGET_NORM_RX = re.compile(r"[\s_\-./]+")
+
+
+def _is_design_system_path(locator: str) -> bool:
+    """True when the anchor's provenance path is a design-system surface."""
+    low = locator.replace(os.sep, "/").lower()
+    return any(marker in low for marker in _DESIGN_SYSTEM_PATH_MARKERS)
+
+
+def is_widget_label(text: str) -> bool:
+    """True when the WHOLE label is a bare widget noun from the fixed list.
+
+    Normalisation removes separators and case so every author spelling of
+    the same widget matches: ``Tabs`` / ``Scroll-area`` / ``Hover Card`` /
+    ``hover_card`` / ``AlertDialog`` → ``tabs`` / ``scrollarea`` /
+    ``hovercard`` / ``hovercard`` / ``alertdialog``.
+    """
+    return _WIDGET_NORM_RX.sub("", text.strip().lower()) in _WIDGET_VOCABULARY
+
+
 #: Path substrings (lowercased) that mark a test file.
 _TEST_PATH_MARKERS = (
     ".test.",
@@ -513,6 +590,34 @@ def extract_docs_anchors(repo_root: Path) -> list[ProductAnchor]:
     return []
 
 
+def demote_widget_anchors(
+    anchors: list[ProductAnchor],
+) -> tuple[list[ProductAnchor], int]:
+    """Demote widget/design-system tier-1 anchors to tier-2 (structural).
+
+    Returns ``(anchors, n_demoted)``. Applied at the aggregation chokepoint
+    so EVERY source is covered: a tier-1 anchor is demoted when it was
+    extracted from a design-system surface (:data:`_DESIGN_SYSTEM_PATH_MARKERS`)
+    or its whole text is a bare widget noun (:func:`is_widget_label`).
+    Demoted anchors stay in the extraction (telemetry / dual evidence) but
+    can no longer arm the 6.7d align gate nor reach the align prompt —
+    tier-2 never does either.
+    """
+    out: list[ProductAnchor] = []
+    demoted = 0
+    for a in anchors:
+        if anchor_tier(a) == TIER1_ACTION and (
+            _is_design_system_path(a.locator) or is_widget_label(a.text)
+        ):
+            out.append(
+                ProductAnchor(a.text, a.source, a.locator, tier=TIER2_ADVISORY),
+            )
+            demoted += 1
+        else:
+            out.append(a)
+    return out, demoted
+
+
 # ── Aggregator ──────────────────────────────────────────────────────────────
 
 #: Registry of Phase-1 (local, deterministic, network-free) sources.
@@ -576,6 +681,13 @@ def extract_raw_anchors(repo_root: Path) -> list[ProductAnchor]:
             logger.warning(
                 "anchor_extractors: %s failed: %s", extractor.__name__, exc,
             )
+    # Widget/design-system demotion BEFORE sort+dedup: demoted anchors carry
+    # tier-2 rank, so a same-text genuine tier-1 anchor from another source
+    # wins the dedup collision and the per-source pool caps keep real
+    # action-grain vocabulary ahead of widget noise.
+    collected, demoted = demote_widget_anchors(collected)
+    if demoted:
+        logger.info("anchor_extractors: %d widget/design-system labels demoted to tier-2", demoted)
     collected.sort(key=_sort_key)
     return _dedup_capped(collected, MAX_RAW_ANCHORS)
 
@@ -671,9 +783,12 @@ def anchor_telemetry(
             by[a.source] = by.get(a.source, 0) + 1
         return dict(sorted(by.items()))
 
+    t1, t2 = distinct_tier_counts(anchors)
     tel: dict[str, object] = {
         "total": len(anchors),
         "by_source": _counts(anchors),
+        "tier1_distinct": t1,
+        "tier2_distinct": t2,
         "sample": [a.text for a in anchors[:15]],
     }
     if raw is not None:
@@ -692,6 +807,8 @@ __all__ = [
     "anchor_tier",
     "distinct_tier_counts",
     "build_alignment_pool",
+    "demote_widget_anchors",
+    "is_widget_label",
     "extract_analytics_anchors",
     "extract_docs_anchors",
     "extract_i18n_anchors",
