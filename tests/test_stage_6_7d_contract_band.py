@@ -217,6 +217,54 @@ def test_scaled_max_tokens_passed_to_call1() -> None:
     assert cli.state["calls"][0]["max_tokens"] == 22200
 
 
+def test_streaming_required_reroutes_to_stream() -> None:
+    """The SDK rejects non-streaming calls whose max_tokens implies a
+    >10-minute operation (which the scaled budget can request). The call
+    helper reroutes THAT rejection — and only that one — to
+    messages.stream and returns the final message."""
+    state: dict[str, Any] = {"streamed": 0}
+
+    class _Stream:
+        def __enter__(self):  # noqa: ANN204
+            return self
+        def __exit__(self, *a):  # noqa: ANN002, ANN204
+            return False
+        def get_final_message(self):  # noqa: ANN202
+            return _Msg(_payload(3))
+
+    class _C:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                if "assign each developer feature" in kw.get("system", ""):
+                    return _Msg(_MAP)
+                raise RuntimeError(
+                    "Streaming is required for operations that may take "
+                    "longer than 10 minutes.")
+            def stream(self, **kw: Any) -> Any:
+                state["streamed"] += 1
+                return _Stream()
+        messages = _M()
+
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _banded_ufs(), [_feat("web", ["app/x.ts"])], _devs(), [], client=_C())
+    assert state["streamed"] == 1
+    assert tel["applied"] is True
+    assert tel["fallback"] is None
+
+
+def test_other_create_errors_still_degrade() -> None:
+    class _C:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                raise RuntimeError("boom")
+        messages = _M()
+
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _banded_ufs(), [_feat("web", ["app/x.ts"])], _devs(), [], client=_C())
+    assert tel["fallback"] == "abstraction_parse_failed"
+    assert tel["applied"] is False
+
+
 # ── input-scaled digest (fix 3) ──────────────────────────────────────────────
 
 def test_digest_shows_all_ufs_and_routes() -> None:
