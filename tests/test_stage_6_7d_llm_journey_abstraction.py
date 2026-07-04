@@ -1110,3 +1110,227 @@ def test_cache_hit_propagates_capability_to_subs() -> None:
     assert tel2["applied"] and tel2["cache_hit"]
     assert dm2["issues"] == ("issue-tracking",)   # re-propagated on replay
     assert dm2 == dm1
+
+
+# ── Grain-contract gate + route-rescue collision rule (2026-07-04) ──────────
+
+from faultline.pipeline_v2 import stage_6_7d_llm_journey_abstraction as _mod
+from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+    ABSTRACTION_CACHE_VERSION,
+    CONTRACT_PASS,
+    CONTRACT_PASS_AFTER_RETRY,
+    CONTRACT_UNCOMPRESSED,
+)
+
+
+def _seq_client(abstraction_payloads: list[str], reattrib: str) -> Any:
+    """Fake client returning abstraction_payloads[i] on the i-th Call-1 draw
+    (last payload repeats) and the reattrib map for Call 2. Records the system
+    prompt of every abstraction call."""
+    state: dict[str, Any] = {"i": 0, "systems": []}
+
+    class _C:
+        class _M:
+            def create(self, **kw: Any) -> Any:
+                sysp = kw.get("system", "")
+                if "assign each developer feature" in sysp:
+                    return _Msg(reattrib)
+                state["systems"].append(sysp)
+                i = min(state["i"], len(abstraction_payloads) - 1)
+                state["i"] += 1
+                return _Msg(abstraction_payloads[i])
+        messages = _M()
+
+    c = _C()
+    c.state = state  # type: ignore[attr-defined]
+    return c
+
+
+# 3 uf specs vs a 3-UF digest whose UFs share ONE resource ("thing" via _uf):
+# gate armed (1 distinct resource < 0.9*3) and 3 emitted >= 0.9*3 → violation.
+_UNCOMPRESSED = json.dumps({
+    "product_features": [{"name": "Account Management", "description": "acc"}],
+    "user_flows": [
+        {"name": "Create account", "resource": "account",
+         "product_feature": "Account Management", "from_flows": ["UF-001"]},
+        {"name": "Update account", "resource": "account",
+         "product_feature": "Account Management", "from_flows": ["UF-002"]},
+        {"name": "Sign in", "resource": "session",
+         "product_feature": "Account Management", "from_flows": ["UF-003"]},
+    ],
+})
+
+
+def test_contract_pass_no_retry() -> None:
+    """A compressed first draw (2 journeys vs 3 digest UFs) passes the gate:
+    no retry, contract=pass, exactly 2 LLM calls (abstraction + reattrib)."""
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_PASS
+    assert tel["llm_calls"] == 2
+    assert "abstraction_retried" not in tel
+
+
+def test_contract_violation_retries_with_merge_corrective() -> None:
+    """No-grain-lift draw (3 emitted vs 3 digest UFs, mergeable redundancy) is
+    REJECTED; the ONE retry carries the merge-corrective system addendum and
+    its compressed result ships with contract=pass_after_retry."""
+    cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_PASS_AFTER_RETRY
+    assert tel["abstraction_retried"] is True
+    assert tel["llm_calls"] == 3  # draw + retry + reattrib
+    assert tel["uf_specs_emitted"] == 3
+    assert tel["uf_specs_emitted_retry"] == 2
+    assert {u.name for u in ufs} == {"Manage accounts", "Sign in"}
+    systems = cli.state["systems"]
+    assert len(systems) == 2
+    assert "PREVIOUS ATTEMPT REJECTED" not in systems[0]
+    assert "PREVIOUS ATTEMPT REJECTED" in systems[1]
+    assert "product_features list" in systems[1]  # journeys-per-PF anchor
+
+
+def test_contract_retry_still_uncompressed_kept_and_flagged() -> None:
+    """Retry also fails the ratio → keep the RETRY result (never-worse: more
+    UFs beats degrading) but flag contract=uncompressed for scan_meta."""
+    cli = _seq_client([_UNCOMPRESSED, _UNCOMPRESSED], _MAP_FULL)
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["applied"] is True                       # NOT a degrade
+    assert tel["abstraction_contract"] == CONTRACT_UNCOMPRESSED
+    assert tel["llm_calls"] == 3
+    assert len(ufs) == 3                                # retry result kept
+    assert tel["fallback"] is None
+
+
+def test_contract_retry_unparseable_keeps_first_draw() -> None:
+    """Retry draw unusable (garbage JSON) → the valid FIRST draw stands,
+    flagged uncompressed. Never-worse: a bad retry must not degrade a stage
+    that already holds a valid draw."""
+    cli = _seq_client([_UNCOMPRESSED, "not json at all"], _MAP_FULL)
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_UNCOMPRESSED
+    assert tel["abstraction_retry_failed"] == "abstraction_parse_failed"
+    assert len(ufs) == 3                                # first draw kept
+    assert {u.name for u in ufs} == {"Create account", "Update account", "Sign in"}
+
+
+def test_contract_gate_disarmed_at_resource_grain() -> None:
+    """A digest already at resource grain (every UF a distinct resource) has
+    nothing to compress — a 1:1 draw is legitimate expansion territory
+    (libraries), so the gate must NOT fire."""
+    ufs_in = _ufs()
+    for i, u in enumerate(ufs_in):
+        u.resource = f"res{i}"                          # 3 distinct resources
+    cli = _seq_client([_UNCOMPRESSED], _MAP_FULL)
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        ufs_in, _pfs(), _devs(), [], client=cli)
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_PASS
+    assert tel["llm_calls"] == 2                        # no retry
+    assert "abstraction_retried" not in tel
+
+
+def test_contract_retry_skipped_when_cost_capped(monkeypatch: Any) -> None:
+    """Structural cost guard: when a second same-shape Sonnet call could bust
+    the whole-stage cap, the retry is skipped and the first draw ships
+    flagged uncompressed (never a cap-degrade caused BY the gate)."""
+    from faultline.llm.cost import estimate_call_cost
+    one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
+    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 1.5)
+    cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["applied"] is True
+    assert tel["abstraction_contract"] == CONTRACT_UNCOMPRESSED
+    assert tel["abstraction_retry_skipped_cost"] is True
+    assert len(cli.state["systems"]) == 1               # no retry call issued
+    assert len(ufs) == 3
+
+
+def test_route_rescue_collision_single_survivor() -> None:
+    """Pass-2c collision rule: N otherwise-empty journeys resolving to the
+    SAME route set → only the first is route-rescued; the rest are phantoms
+    dropped as ungrounded, counted in uf_rescue_dropped_collisions
+    (inbox-zero: 15 zero-member journeys on ONE /items route)."""
+    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": "webhook"}]
+    abs_payload = json.dumps({
+        "product_features": [{"name": "Webhooks", "description": "wh"}],
+        "user_flows": [
+            {"name": "Receive webhook", "resource": "webhook",
+             "product_feature": "Webhooks", "from_flows": []},
+            {"name": "Replay webhook delivery", "resource": "webhook",
+             "product_feature": "Webhooks", "from_flows": []},
+            {"name": "Inspect webhook payload", "resource": "webhook",
+             "product_feature": "Webhooks", "from_flows": []},
+        ],
+    })
+    reattrib = json.dumps({"map": {"accounts": "Webhooks", "auth": "Webhooks",
+                                   "shared-ui": "Shared Platform"}})
+    ufs_in = _ufs()
+    for i, u in enumerate(ufs_in):
+        u.resource = f"res{i}"                          # disarm the grain gate
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        ufs_in, _pfs(), _devs(), routes, client=_client(abs_payload, reattrib))
+    assert tel["applied"] is True
+    survivors = [u for u in ufs if u.routes == ["/api/webhooks/{id}"]]
+    assert len(survivors) == 1
+    assert survivors[0].name == "Receive webhook"       # first in emission order
+    assert tel["uf_rescued_routes"] == 1
+    assert tel["uf_rescue_dropped_collisions"] == 2
+    assert tel["uf_dropped_ungrounded"] == 2
+
+
+def test_route_rescue_distinct_route_sets_no_collision() -> None:
+    """Different route sets are NOT collisions — each empty journey keeps its
+    own grounding."""
+    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": None},
+              {"pattern": "/api/invoices", "method": "GET", "trigger": None}]
+    abs_payload = json.dumps({
+        "product_features": [{"name": "Ops", "description": "o"}],
+        "user_flows": [
+            {"name": "Receive webhook", "resource": "webhook",
+             "product_feature": "Ops", "from_flows": []},
+            {"name": "Browse invoices", "resource": "invoice",
+             "product_feature": "Ops", "from_flows": []},
+        ],
+    })
+    reattrib = json.dumps({"map": {"accounts": "Ops", "auth": "Ops",
+                                   "shared-ui": "Shared Platform"}})
+    ufs_in = _ufs()
+    for i, u in enumerate(ufs_in):
+        u.resource = f"res{i}"
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        ufs_in, _pfs(), _devs(), routes, client=_client(abs_payload, reattrib))
+    assert tel["applied"] is True
+    assert tel["uf_rescued_routes"] == 2
+    assert tel["uf_rescue_dropped_collisions"] == 0
+
+
+def test_cache_hit_restores_contract_flag() -> None:
+    """The contract status is persisted in the cache entry so a cache-hit
+    replay reports the SAME abstraction_contract as the live run."""
+    cache = _FakeCache()
+    cli = _seq_client([_UNCOMPRESSED, _UNCOMPRESSED], _MAP_FULL)
+    _u1, _p1, _m1, tel1 = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli, cache=cache)
+    assert tel1["abstraction_contract"] == CONTRACT_UNCOMPRESSED
+    # Second run: a client that WOULD return a compressed draw — but the
+    # cache hit replays the recorded draw + its contract flag.
+    _u2, _p2, _m2, tel2 = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL), cache=cache)
+    assert tel2["cache_hit"] is True
+    assert tel2["llm_calls"] == 0
+    assert tel2["abstraction_contract"] == CONTRACT_UNCOMPRESSED
+    assert [u.name for u in _u2] == [u.name for u in _u1]
+
+
+def test_cache_version_bumped_for_contract_fix() -> None:
+    """Frozen pre-fix draws (cached under 'ground-2') must be invalidated —
+    the version participates in the cache key AND the entry-validity check."""
+    assert ABSTRACTION_CACHE_VERSION == "contract-3"

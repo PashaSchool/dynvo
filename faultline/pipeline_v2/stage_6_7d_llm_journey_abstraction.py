@@ -119,8 +119,26 @@ def align_enabled() -> bool:
 
 #: Bumped whenever the prompt / reconstruction changes in a way that would make
 #: a previously-cached answer wrong. Part of the cache key, so a bump
-#: transparently invalidates every stale entry.
-ABSTRACTION_CACHE_VERSION = "ground-2"
+#: transparently invalidates every stale entry. "contract-3" invalidates the
+#: frozen uncompressed draws that motivated the grain-contract gate
+#: (2026-07-04: inbox-zero 140-in -> 140-emitted cached under "ground-2").
+ABSTRACTION_CACHE_VERSION = "contract-3"
+
+# ── Grain-contract gate (2026-07-04) ────────────────────────────────────────
+# Call 1 is the ABSTRACTION layer: its whole job is a grain LIFT (merge CRUD /
+# variant flows of the same resource into one journey). A draw that emits
+# roughly one user_flow per digest user_flow performed NO lift — it echoed the
+# input grain. Ratio justified against corpus draws (rule-no-magic-tuning §6):
+# broken draws sit at emitted/digest >= 1.0 (inbox-zero 140/120=1.17,
+# documenso 89/61=1.46, cal-com 119/120=0.99 — all Jul-3/4 baselines), healthy
+# draws at <= ~0.7 (inbox-zero Jul-2: 145->84 = 0.58; supabase 74 emitted on a
+# larger digest). 0.9 splits the two populations with margin on both sides.
+# SCALE-INVARIANT: both prongs are ratios of the digest the model actually saw.
+UF_CONTRACT_RATIO = 0.9
+#: telemetry values for scan_meta.stage_6_7d_journey_abstraction.abstraction_contract
+CONTRACT_PASS = "pass"
+CONTRACT_PASS_AFTER_RETRY = "pass_after_retry"
+CONTRACT_UNCOMPRESSED = "uncompressed"
 
 ENV_FLAG = "FAULTLINE_STAGE_6_7D_LLM_ABSTRACTION"
 
@@ -313,6 +331,20 @@ Return STRICT JSON only, no prose:
 {"product_features":[{"name":"...","description":"..."}],
  "user_flows":[{"name":"...","resource":"...","product_feature":"...",
   "from_flows":["UF-001", ...],"from_dev_features":["<dev feature name>", ...]}]}"""
+
+# Merge-corrective system addendum for the ONE contract retry. Structural
+# anchor: the journey count is judged against the model's OWN product_features
+# (journeys-per-capability), never against a fixed count or the input UF count
+# (rule-no-magic-tuning).
+_MERGE_CORRECTIVE = """
+
+PREVIOUS ATTEMPT REJECTED — it emitted roughly one user_flow per input
+current_user_flow (no grain lift). You are the ABSTRACTION layer: consolidate
+the redundant CRUD/variant flows of the SAME resource into ONE journey per
+capability. Judge your journey count against your OWN product_features list —
+a healthy journey list has a small number of user_flows PER product feature —
+never against the size of current_user_flows. Merge aggressively; keep only
+genuinely DISTINCT capabilities separate. Re-emit the full JSON now."""
 
 _REATTRIB_SYSTEM = """You assign each developer feature (a code module) to exactly ONE product
 capability from the given list, using the module name and its directory. Every
@@ -578,6 +610,32 @@ def _build_digest(
     }
 
 
+def _contract_gate_armed(digest: dict[str, Any]) -> bool:
+    """Arm the grain-contract gate ONLY when the digest shows mergeable
+    same-resource redundancy — i.e. collapsing the CRUD variants of each
+    resource into one journey would already pass the ratio. A repo whose
+    deterministic UF list is ALREADY at resource grain (libraries: ~one flow
+    per distinct resource) has nothing to compress, and Call 1 legitimately
+    EXPANDS there (surfacing capabilities the CRUD walk missed — the validated
+    fastapi lift), so the gate must never fire. UFs without a resource are
+    counted as distinct (unknown mergeability -> conservative). Scale-invariant
+    on both sides (rule-no-magic-tuning)."""
+    ufs = digest.get("current_user_flows") or []
+    if not ufs:
+        return False
+    keys: set[str] = set()
+    for u in ufs:
+        res = str(u.get("resource") or "").strip().lower()
+        keys.add(res if res else f"name:{u.get('name') or u.get('id') or id(u)}")
+    return len(keys) < UF_CONTRACT_RATIO * len(ufs)
+
+
+def _contract_ok(n_emitted: int, n_digest_ufs: int) -> bool:
+    """True when the draw performed a grain lift: emitted user_flows sit BELOW
+    ``UF_CONTRACT_RATIO`` x the digest user_flows the model saw."""
+    return n_emitted < UF_CONTRACT_RATIO * n_digest_ufs
+
+
 def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: str,
                anchor_sig: str = "") -> str:
     """Stable content hash of (digest + both model ids + version).
@@ -773,6 +831,7 @@ def _build_user_flows(
     tele: dict[str, Any] = {
         "uf_dev_grounded": 0, "uf_rescued_flows": 0,
         "uf_rescued_routes": 0, "uf_dropped_ungrounded": 0,
+        "uf_rescue_dropped_collisions": 0,
         "uf_dropped_names": [],
     }
 
@@ -816,6 +875,13 @@ def _build_user_flows(
 
     # ── Pass 2 — ground still-empty UFs (cited devs → token rescue → routes) ─
     out: list["UserFlow"] = []
+    # Collision rule (2026-07-04): at most ONE otherwise-empty journey may be
+    # route-rescued onto the SAME route set. N journeys grounded on one route
+    # are N-1 phantoms (inbox-zero: 15 zero-member journeys all citing
+    # /api/user/group/:groupId/items) — the first (emission order, hence
+    # deterministic) keeps the grounding, the rest fall through to the
+    # ungrounded drop.
+    rescued_route_sets: set[frozenset[str]] = set()
     for spec, uf in built:
         if not uf.member_flow_ids:
             utok = _content_tokens(uf.name, uf.resource)
@@ -854,8 +920,16 @@ def _build_user_flows(
             # (route detected, flow-walk missed it).
             route_hits = _route_patterns_for(uf.resource)
             if route_hits:
-                uf.routes = route_hits
-                tele["uf_rescued_routes"] += 1
+                route_set = frozenset(route_hits)
+                if route_set in rescued_route_sets:
+                    # Phantom: this route set already grounds another empty
+                    # journey. Leave uf.routes empty → the drop branch below
+                    # removes it as ungrounded.
+                    tele["uf_rescue_dropped_collisions"] += 1
+                else:
+                    rescued_route_sets.add(route_set)
+                    uf.routes = route_hits
+                    tele["uf_rescued_routes"] += 1
         if not uf.member_flow_ids and not uf.routes:
             # Still 0-LOC → drop. Never emit a code-less journey name.
             tele["uf_dropped_ungrounded"] += 1
@@ -1153,6 +1227,7 @@ def run_journey_abstraction(
                      if isinstance(k, str) and isinstance(v, str)}
             if c_abs.get("user_flows") and c_abs.get("product_features") and c_map:
                 tele["cache_hit"] = True
+                tele["abstraction_contract"] = cached.get("contract", CONTRACT_PASS)
                 try:
                     result = _finish(c_abs, c_map)
                 except Exception:  # noqa: BLE001 — malformed cache must never crash
@@ -1177,14 +1252,6 @@ def run_journey_abstraction(
     user1 = ("Repository evidence (code-grounded, no README):\n```json\n"
              + json.dumps(digest, ensure_ascii=False) + "\n```" + anchor_block
              + "\nEmit the JSON now.")
-    text1, in1, out1 = _call_haiku(
-        cli, model=abstraction_model, system=sys1, user=user1,
-        max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
-    tele["llm_calls"] += 1
-    tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in1, out1), 6)
-    parsed1 = _parse_json(text1)
-    if not parsed1:
-        return _degrade("abstraction_parse_failed")
 
     # Sanitise at the boundary: keep only specs whose "name" is a non-empty
     # string. An LLM can emit a numeric/None name in otherwise-valid JSON, and
@@ -1195,10 +1262,58 @@ def run_journey_abstraction(
         return (isinstance(s, dict) and isinstance(s.get("name"), str)
                 and bool(s.get("name").strip()))
 
-    uf_specs = [s for s in (parsed1.get("user_flows") or []) if _valid_spec(s)]
-    pf_specs = [s for s in (parsed1.get("product_features") or []) if _valid_spec(s)]
-    if not uf_specs or not pf_specs:
-        return _degrade("abstraction_empty")
+    def _draw(system: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+        """One Call-1 draw → sanitised ``(uf_specs, pf_specs, fail_reason)``.
+        ``fail_reason`` is None on a usable draw."""
+        text, in_t, out_t = _call_haiku(
+            cli, model=abstraction_model, system=system, user=user1,
+            max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
+        tele["llm_calls"] += 1
+        tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in_t, out_t), 6)
+        parsed = _parse_json(text)
+        if not parsed:
+            return [], [], "abstraction_parse_failed"
+        ufs = [s for s in (parsed.get("user_flows") or []) if _valid_spec(s)]
+        pfs = [s for s in (parsed.get("product_features") or []) if _valid_spec(s)]
+        if not ufs or not pfs:
+            return [], [], "abstraction_empty"
+        return ufs, pfs, None
+
+    # ── First draw + grain-contract gate (2026-07-04) ──────────────────
+    # A draw that emits >= UF_CONTRACT_RATIO x the digest UFs performed no
+    # grain lift (inbox-zero: 140-in -> 140 emitted -> F1 36.7 vs golden 35
+    # journeys). Reject ONCE with the merge-corrective addendum; if the retry
+    # still fails the ratio we KEEP the retry (never-worse: more UFs beats
+    # degrading the whole stage) and flag ``abstraction_contract`` so the
+    # uncompressed draw is visible in scan_meta.
+    uf_specs, pf_specs, fail1 = _draw(sys1)
+    if fail1:
+        return _degrade(fail1)
+    n_digest_ufs = len(digest["current_user_flows"])
+    tele["uf_specs_emitted"] = len(uf_specs)
+    contract = CONTRACT_PASS
+    if _contract_gate_armed(digest) and not _contract_ok(len(uf_specs), n_digest_ufs):
+        # A retry costs ≈ the first draw; skip it when a second same-shape
+        # call could bust the whole-stage cost cap (structural x2, not tuned).
+        if tele["cost_usd"] * 2 > COST_CAP_USD:
+            contract = CONTRACT_UNCOMPRESSED
+            tele["abstraction_retry_skipped_cost"] = True
+        else:
+            tele["abstraction_retried"] = True
+            r_ufs, r_pfs, r_fail = _draw(sys1 + _MERGE_CORRECTIVE)
+            if r_fail is None:
+                # Per spec: keep the RETRY result either way; flag when it
+                # still failed the ratio.
+                uf_specs, pf_specs = r_ufs, r_pfs
+                tele["uf_specs_emitted_retry"] = len(r_ufs)
+                contract = (CONTRACT_PASS_AFTER_RETRY
+                            if _contract_ok(len(r_ufs), n_digest_ufs)
+                            else CONTRACT_UNCOMPRESSED)
+            else:
+                # Retry unusable → the valid FIRST draw stands (never-worse).
+                contract = CONTRACT_UNCOMPRESSED
+                tele["abstraction_retry_failed"] = r_fail
+    tele["abstraction_contract"] = contract
     parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
     if tele["cost_usd"] > COST_CAP_USD:
         return _degrade(f"cost_cap ${tele['cost_usd']:.4f}")
@@ -1237,6 +1352,9 @@ def run_journey_abstraction(
                 "v": ABSTRACTION_CACHE_VERSION,
                 "abstraction": {"product_features": pf_specs, "user_flows": uf_specs},
                 "map": dev_map,
+                # Persisted so a cache-hit replay reports the SAME contract
+                # status the live run did (byte-identical telemetry).
+                "contract": tele.get("abstraction_contract", CONTRACT_PASS),
             })
         except Exception:  # noqa: BLE001 — a cache write fault must not abort
             pass
