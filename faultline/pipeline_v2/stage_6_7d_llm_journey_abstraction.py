@@ -117,6 +117,88 @@ ALIGN_ENV = "FAULTLINE_STAGE_6_7D_ALIGN"
 def align_enabled() -> bool:
     return os.environ.get(ALIGN_ENV, "0").strip() not in {"0", "false", "False", ""}
 
+
+# ── Draw-2 pick-best (2026-07-04, MISSION-92 lever #4) ──────────────────────
+# Fresh Call-1 draws of the SAME digest swing ±6+ F1 (formbricks 77.3 vs 83.8,
+# inbox-zero 46.0 vs 42.7, supabase align 51.7 vs 21.1). When enabled, the
+# stage ends Call 1 with >=2 parsed candidate draws (the grain-contract retry
+# counts as one; otherwise ONE extra draw is sampled, cost-guarded) and keeps
+# the winner of a deterministic structural selector — calibrated on 16
+# recorded corpus draws with known F1 (10/10 same-repo pairs ranked correctly;
+# see architect-state-layer1-67d-draw2-20260704). Default OFF: the single-draw
+# path (code, cache keys, telemetry) is byte-identical when the flag is unset.
+DRAW2_ENV = "FAULTLINE_STAGE_6_7D_DRAW2"
+
+# Echo-shape prong: a draw whose reconstructed journey names are MAJORITY
+# single-token is echoing nav/widget labels, not naming journeys ("Tooltip",
+# "Tabs" — the supabase F1-21.1 catastrophe sat at 0.577 single-token share;
+# every healthy recorded draw is <= 0.019 — 30x separation). 0.5 = "majority",
+# a structural definition, not a tuned knob (rule-no-magic-tuning).
+DRAW2_ECHO_SINGLE_TOKEN_SHARE = 0.5
+
+
+def draw2_enabled() -> bool:
+    return os.environ.get(DRAW2_ENV, "0").strip() not in {"0", "false", "False", ""}
+
+
+def _draw_rank(c: dict[str, Any]) -> tuple[int, int, float, int]:
+    """Lexicographic rank of a candidate draw — LOWER wins. Prongs, calibrated
+    on 16 recorded corpus draws with known F1 (10/10 same-repo pairs ranked
+    correctly; architect-state-layer1-67d-draw2-20260704):
+
+      1. reconstructs to a non-empty flow list (a draw that grounds to
+         nothing loses to any draw that grounds);
+      2. NOT echo-shaped — majority-single-token journey names lose
+         (:data:`DRAW2_ECHO_SINGLE_TOKEN_SHARE`; the supabase F1-21.1 class);
+      3. lower zero-member share (the fraction of journeys that had to be
+         route-rescued because the draw failed to cite their flows — a
+         draw-incompleteness signal; decided 7/10 calibration pairs
+         including the formbricks 77.3→83.8 upside pair);
+      4. tie → ``tie_rank``: the INCUMBENT draw (the one the single-draw
+         engine would have kept — retry over first, per the grain-contract
+         "keep the retry" rule) wins, so selector-indifference is a no-op.
+
+    Parse validity is implicit: unparseable draws never become candidates.
+    """
+    return (
+        0 if c["built_n"] else 1,
+        0 if c["single_tok_frac"] <= DRAW2_ECHO_SINGLE_TOKEN_SHARE else 1,
+        c["zero_member_frac"],
+        c.get("tie_rank", c.get("order", 0)),
+    )
+
+
+def _select_draw(
+    candidates: list[dict[str, Any]],
+    old_ufs: list["UserFlow"],
+    developer_features: list["Feature"],
+    routes_index: list[dict[str, Any]],
+    incumbent_kind: str,
+) -> dict[str, Any]:
+    """Pick the best parsed draw via the calibrated structural selector
+    (:func:`_draw_rank`). Each candidate is reconstructed through the pure,
+    deterministic :func:`_build_user_flows` (no LLM, no side effects) to
+    compute its feature vector. Mutates each candidate dict with the vector
+    (telemetry). ``incumbent_kind`` names the draw the single-draw engine
+    would have kept; it wins all selector ties."""
+    for i, c in enumerate(candidates):
+        try:
+            built, _ = _build_user_flows(
+                c["ufs"], old_ufs, developer_features, routes_index)
+        except Exception:  # noqa: BLE001 — a broken candidate must only lose, never crash
+            built = []
+        n = len(built) or 1
+        single = sum(
+            1 for u in built
+            if len(re.findall(r"[a-z0-9]+", (u.name or "").lower())) <= 1)
+        zero = sum(1 for u in built if not u.member_flow_ids)
+        c["order"] = i
+        c["tie_rank"] = 0 if c["kind"] == incumbent_kind else i + 1
+        c["built_n"] = len(built)
+        c["single_tok_frac"] = round(single / n, 3)
+        c["zero_member_frac"] = round(zero / n, 3)
+    return min(candidates, key=_draw_rank)
+
 #: Bumped whenever the prompt / reconstruction changes in a way that would make
 #: a previously-cached answer wrong. Part of the cache key, so a bump
 #: transparently invalidates every stale entry. "contract-3" invalidates the
@@ -637,7 +719,7 @@ def _contract_ok(n_emitted: int, n_digest_ufs: int) -> bool:
 
 
 def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: str,
-               anchor_sig: str = "") -> str:
+               anchor_sig: str = "", variant: str = "") -> str:
     """Stable content hash of (digest + both model ids + version).
 
     Same repo state + same models → same key → cache hit → byte-identical
@@ -646,17 +728,24 @@ def _cache_key(digest: dict[str, Any], abstraction_model: str, reattrib_model: s
     transparently invalidates stale entries. Content-keyed (same input → same
     answer), so this is a deterministic short-circuit, NOT per-repo memory —
     compliant with rule-cold-scan.
+
+    ``variant`` namespaces draw-2 entries ("draw2" main result, and per-draw
+    "draw2-cand-<i>" raw candidates). It is added to the payload ONLY when
+    non-empty, so the default single-draw payload — and therefore every
+    existing cache key — is byte-identical to the pre-draw-2 engine (no
+    ABSTRACTION_CACHE_VERSION bump needed), and a draw-2 session can never
+    pollute the cache a default-OFF scan reads.
     """
-    payload = json.dumps(
-        {
-            "v": ABSTRACTION_CACHE_VERSION,
-            "abstraction_model": abstraction_model,
-            "reattrib_model": reattrib_model,
-            "anchor_sig": anchor_sig,
-            "digest": digest,
-        },
-        sort_keys=True, ensure_ascii=False,
-    )
+    body: dict[str, Any] = {
+        "v": ABSTRACTION_CACHE_VERSION,
+        "abstraction_model": abstraction_model,
+        "reattrib_model": reattrib_model,
+        "anchor_sig": anchor_sig,
+        "digest": digest,
+    }
+    if variant:
+        body["variant"] = variant
+    payload = json.dumps(body, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -1156,7 +1245,14 @@ def run_journey_abstraction(
     tele["aligned"] = aligned
     tele["anchor_count"] = len(anchor_texts)
     anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""
-    key = _cache_key(digest, abstraction_model, reattrib_model, anchor_sig)
+    # Draw-2 pick-best (default OFF). The main cache key gets a "draw2"
+    # variant so selected winners never shadow (or read) the single-draw
+    # cache namespace — the default path stays byte-identical.
+    draw2 = draw2_enabled()
+    if draw2:  # key set only when ON — default-OFF telemetry stays byte-identical
+        tele["draw2_enabled"] = True
+    key = _cache_key(digest, abstraction_model, reattrib_model, anchor_sig,
+                     "draw2" if draw2 else "")
 
     def _finish(
         abstraction: dict[str, Any], dev_map: dict[str, str],
@@ -1287,12 +1383,19 @@ def run_journey_abstraction(
     # degrading the whole stage) and flag ``abstraction_contract`` so the
     # uncompressed draw is visible in scan_meta.
     uf_specs, pf_specs, fail1 = _draw(sys1)
-    if fail1:
+    if fail1 and not draw2:
         return _degrade(fail1)
     n_digest_ufs = len(digest["current_user_flows"])
-    tele["uf_specs_emitted"] = len(uf_specs)
+    candidates: list[dict[str, Any]] = []
+    if not fail1:
+        candidates.append({"kind": "first", "ufs": uf_specs, "pfs": pf_specs})
+        tele["uf_specs_emitted"] = len(uf_specs)
+    else:
+        # draw-2 only: a parse-failed first draw is no longer terminal — the
+        # extra draw below is its rescue (the cal-com 63.1 degrade class).
+        tele["abstraction_first_draw_failed"] = fail1
     contract = CONTRACT_PASS
-    if _contract_gate_armed(digest) and not _contract_ok(len(uf_specs), n_digest_ufs):
+    if candidates and _contract_gate_armed(digest) and not _contract_ok(len(uf_specs), n_digest_ufs):
         # A retry costs ≈ the first draw; skip it when a second same-shape
         # call could bust the whole-stage cost cap (structural x2, not tuned).
         if tele["cost_usd"] * 2 > COST_CAP_USD:
@@ -1303,7 +1406,9 @@ def run_journey_abstraction(
             r_ufs, r_pfs, r_fail = _draw(sys1 + _MERGE_CORRECTIVE)
             if r_fail is None:
                 # Per spec: keep the RETRY result either way; flag when it
-                # still failed the ratio.
+                # still failed the ratio. (Under draw-2 the retry is a
+                # CANDIDATE and the selector makes the final call below.)
+                candidates.append({"kind": "retry", "ufs": r_ufs, "pfs": r_pfs})
                 uf_specs, pf_specs = r_ufs, r_pfs
                 tele["uf_specs_emitted_retry"] = len(r_ufs)
                 contract = (CONTRACT_PASS_AFTER_RETRY
@@ -1313,6 +1418,43 @@ def run_journey_abstraction(
                 # Retry unusable → the valid FIRST draw stands (never-worse).
                 contract = CONTRACT_UNCOMPRESSED
                 tele["abstraction_retry_failed"] = r_fail
+
+    # ── Draw-2 pick-best (opt-in, MISSION-92 lever #4) ─────────────────
+    if draw2:
+        if len(candidates) < 2:
+            # Same structural cost guard as the contract retry: another
+            # same-shape call must not bust the whole-stage cap.
+            if tele["cost_usd"] * 2 > COST_CAP_USD:
+                tele["draw2_skipped_cost"] = True
+            else:
+                e_ufs, e_pfs, e_fail = _draw(sys1)
+                if e_fail is None:
+                    candidates.append({"kind": "extra", "ufs": e_ufs, "pfs": e_pfs})
+                else:
+                    tele["draw2_extra_failed"] = e_fail
+        if not candidates:
+            return _degrade(fail1 or "abstraction_parse_failed")
+        kinds = {c["kind"] for c in candidates}
+        incumbent = ("retry" if "retry" in kinds
+                     else "first" if "first" in kinds else "extra")
+        winner = _select_draw(
+            candidates, user_flows, developer_features, routes_index, incumbent)
+        uf_specs, pf_specs = winner["ufs"], winner["pfs"]
+        tele["draws_sampled"] = len(candidates)
+        tele["selector_winner"] = winner["kind"]
+        tele["draw2_candidates"] = [
+            {"kind": c["kind"], "emitted": len(c["ufs"]), "built": c["built_n"],
+             "single_tok_frac": c["single_tok_frac"],
+             "zero_member_frac": c["zero_member_frac"]}
+            for c in candidates
+        ]
+        # Contract status reflects the WINNING draw. "pass_after_retry" keeps
+        # its meaning: the kept draw came after another parsed draw.
+        if not _contract_gate_armed(digest) or _contract_ok(len(uf_specs), n_digest_ufs):
+            contract = (CONTRACT_PASS if winner["kind"] == "first" or fail1
+                        else CONTRACT_PASS_AFTER_RETRY)
+        else:
+            contract = CONTRACT_UNCOMPRESSED
     tele["abstraction_contract"] = contract
     parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
     if tele["cost_usd"] > COST_CAP_USD:
@@ -1358,6 +1500,23 @@ def run_journey_abstraction(
             })
         except Exception:  # noqa: BLE001 — a cache write fault must not abort
             pass
+        if draw2:
+            # Persist EVERY candidate draw raw under an indexed variant key so
+            # a draw-2 session is fully auditable/reproducible from the cache
+            # (the winner above already replays byte-identically via the main
+            # "draw2" key). Write-only: nothing on the read path consumes these.
+            for c in candidates:
+                try:
+                    cache.set(
+                        CacheKind.LLM_ABSTRACTION.value,
+                        _cache_key(digest, abstraction_model, reattrib_model,
+                                   anchor_sig, f"draw2-cand-{c['order']}"),
+                        {"v": ABSTRACTION_CACHE_VERSION, "kind": c["kind"],
+                         "draw": {"product_features": c["pfs"],
+                                  "user_flows": c["ufs"]}},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
     # ── Reconstruct (conservation guaranteed — residual catches omits) ─
     # Never-worse: any reconstruction error (e.g. LLM returns a non-string
