@@ -250,17 +250,21 @@ def test_jpf_not_armed_when_capability_axis_lifted() -> None:
     assert tel["llm_calls"] == 2
 
 
-def test_ratio_armed_keeps_validated_merge_corrective() -> None:
-    """A ratio-armed draw (even when jpf also fires) retries with the
-    VALIDATED merge corrective verbatim — the documenso +8.5 prompt — never
+def test_ratio_armed_keeps_merge_corrective() -> None:
+    """A ratio-armed draw (even when jpf also fires) retries with the MERGE
+    corrective (band-edge wording — MISSION-92 recall-at-depth fix 1), never
     the jpf one."""
     cli = _seq_client([_RATIO_FAIL, _COMPRESSED], _MAP)
     _u, _p, _m, tel = _run(cli)
     assert tel["contract_armed_by"] == [CONTRACT_ARMED_RATIO, CONTRACT_ARMED_JPF]
     assert tel["abstraction_contract"] == CONTRACT_PASS_AFTER_RETRY
     systems = cli.state["systems"]
-    assert "Merge aggressively" in systems[1]           # _MERGE_CORRECTIVE
+    assert "one user_flow per input" in systems[1]      # _MERGE_CORRECTIVE
     assert "distinct flow resources" not in systems[1]  # not _JPF_CORRECTIVE
+    # the band-edge contract: correctives must NEVER instruct a collapse to
+    # ~1 journey per capability (the dub 96->40 crush)
+    assert "Merge aggressively" not in systems[1]
+    assert "(resource, intent) pair" in systems[1]
 
 
 def test_ratio_only_pass_after_retry_semantics_preserved() -> None:
@@ -295,11 +299,12 @@ def test_jpf_retry_unparseable_keeps_first_draw() -> None:
 
 
 def test_jpf_retry_skipped_when_cost_capped(monkeypatch: Any) -> None:
-    """Same structural x2 cost guard as the ratio prong: a jpf retry that
-    could bust the whole-stage cap is skipped; first draw ships flagged."""
+    """Same proportional admission as the ratio prong: a retry is admitted
+    only while spend so far is under the single-draw cap; a first draw that
+    already consumed it ships flagged, no retry issued."""
     from faultline.llm.cost import estimate_call_cost
     one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
-    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 1.5)
+    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 0.9)
     cli = _seq_client([_INFLATED, _COMPRESSED], _MAP)
     ufs, _p, _m, tel = _run(cli)
     assert tel["applied"] is True
