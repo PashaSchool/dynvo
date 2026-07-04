@@ -669,11 +669,12 @@ def test_align_double_echo_fallback_unparseable_keeps_retry(monkeypatch) -> None
 
 
 def test_align_freegen_fallback_skipped_when_cost_capped(monkeypatch) -> None:
-    """Structural cost guard: cap admits the retry (2 draws) but not a third
-    same-shape call → fallback skipped, flagged anchor_echo."""
+    """Proportional admission (fix 2): cap admits the retry (spend c < cap)
+    but not a third same-shape call (spend 2c >= cap) → fallback skipped,
+    flagged anchor_echo."""
     from faultline.llm.cost import estimate_call_cost
     one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
-    monkeypatch.setattr(_mod67d, "COST_CAP_USD", one_call * 2.5)
+    monkeypatch.setattr(_mod67d, "COST_CAP_USD", one_call * 1.5)
     ufs, pfs, tel, cli = _run_aligned([_ECHO, _ECHO, _BALANCED], monkeypatch)
     assert tel["abstraction_contract"] == CONTRACT_ANCHOR_ECHO
     assert tel["align_freegen_fallback_skipped_cost"] is True
@@ -694,3 +695,112 @@ def test_echo_contract_never_arms_in_freegen(monkeypatch) -> None:
     assert tel["abstraction_contract"] == CONTRACT_PASS
     assert "align_top_member_share" not in tel
     assert len(cli.state["systems"]) == 1               # no retry
+
+# ── Count-contract arming + input-scaled max_tokens in ALIGN mode ────────────
+# (MISSION-92 lever #3 fix 3 verification)
+
+
+def _redundant_ufs():
+    """4 UFs on only 2 distinct resources → the grain-contract RATIO prong is
+    armed (2 < 0.9 x 4), while balanced members keep the echo prong quiet."""
+    return [
+        _uf("UF-001", "Create thing", ["f1", "f2", "f3"], resource="alpha"),
+        _uf("UF-002", "Update thing", ["f4", "f5", "f6"], resource="alpha"),
+        _uf("UF-003", "Delete thing", ["f7", "f8", "f9"], resource="alpha"),
+        _uf("UF-004", "View report", ["f10", "f11", "f12"], resource="delta"),
+    ]
+
+
+# No grain lift (4 emitted >= 0.9 x 4 digest UFs) but NOT echo-shaped:
+# spread citations (top share 0.25) + full coverage.
+_UNMERGED_ALIGNED = json.dumps({
+    "product_features": [
+        {"name": "Alpha Suite", "description": "a"},
+        {"name": "Delta Suite", "description": "d"},
+    ],
+    "user_flows": [
+        {"name": "Create alpha thing", "resource": "alpha",
+         "product_feature": "Alpha Suite", "from_flows": ["UF-001"]},
+        {"name": "Update alpha thing", "resource": "alpha",
+         "product_feature": "Alpha Suite", "from_flows": ["UF-002"]},
+        {"name": "Delete alpha thing", "resource": "alpha",
+         "product_feature": "Alpha Suite", "from_flows": ["UF-003"]},
+        {"name": "Review delta reports", "resource": "delta",
+         "product_feature": "Delta Suite", "from_flows": ["UF-004"]},
+    ],
+})
+
+
+def test_count_contract_arms_in_align_mode(monkeypatch) -> None:
+    """The grain-contract RATIO prong must keep working in ALIGN mode (the
+    6.7d merging pressure the revival relies on): an aligned draw with no
+    grain lift is retried with the MERGE corrective — not the echo one —
+    and the compressed retry ships as pass_after_retry."""
+    monkeypatch.setenv(ALIGN_ENV, "1")
+    cli = _seq_client([_UNMERGED_ALIGNED, _BALANCED], _DEVS_MAP)
+    devs = [_feat("accounts", ["app/accounts/a.ts"]),
+            _feat("auth", ["app/auth/l.ts"])]
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _redundant_ufs(), [_feat("web", ["app/a.ts"])], devs, [],
+        product_anchors=_n_anchors(8), client=cli)
+    assert tel["aligned"] is True
+    assert tel["applied"] is True
+    assert tel["abstraction_retried"] is True
+    assert tel["contract_armed_by"] == ["ratio"]
+    assert tel["abstraction_contract"] == CONTRACT_PASS_AFTER_RETRY
+    systems = cli.state["systems"]
+    assert len(systems) == 2
+    assert "consolidate\nthe redundant CRUD" in systems[1] or \
+        "consolidate the redundant CRUD" in systems[1].replace("\n", " ")
+    assert "echoed a few coarse anchor" not in systems[1]  # not the echo corrective
+
+
+def test_align_max_tokens_scales_with_input(monkeypatch) -> None:
+    """Fix 3: Call-1 max_tokens is computed from the digest size — floor for
+    small inputs, per-item budget at ALIGN scale, structural ceiling."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        ABSTRACTION_MAX_TOKENS,
+        ABSTRACTION_MAX_TOKENS_CEILING,
+        _abstraction_max_tokens,
+    )
+    # Small repo (free-gen or align): validated 16k floor unchanged.
+    assert _abstraction_max_tokens(4, 0) == ABSTRACTION_MAX_TOKENS
+    assert _abstraction_max_tokens(120, 0) == ABSTRACTION_MAX_TOKENS
+    # cal-com ALIGN scale: 120 digest UFs + 160 anchor texts → 28k (> 16k
+    # that truncated the draw), still under the ceiling.
+    assert _abstraction_max_tokens(120, 160) == 28000
+    # Pathological input never exceeds the structural ceiling.
+    assert _abstraction_max_tokens(10_000, 10_000) == ABSTRACTION_MAX_TOKENS_CEILING
+
+
+def test_align_off_uses_floor_max_tokens(monkeypatch) -> None:
+    """Align-OFF scans keep the exact validated 16k request (byte-stability
+    of the free-gen path — anchors never count when the gate refuses)."""
+    monkeypatch.delenv(ALIGN_ENV, raising=False)
+    captured: list[int] = []
+
+    class _C:
+        class _M:
+            def create(self, **kw):
+                if "assign each developer feature" not in kw.get("system", ""):
+                    captured.append(kw["max_tokens"])
+                return _Msg(_BALANCED if captured else _DEVS_MAP)
+        messages = _M()
+
+    class _C2(_C):
+        class _M2(_C._M):
+            def create(self, **kw):
+                if "assign each developer feature" in kw.get("system", ""):
+                    return _Msg(_DEVS_MAP)
+                captured.append(kw["max_tokens"])
+                return _Msg(_BALANCED)
+        messages = _M2()
+
+    devs = [_feat("accounts", ["app/accounts/a.ts"]),
+            _feat("auth", ["app/auth/l.ts"])]
+    run_journey_abstraction(
+        _four_ufs(), [_feat("web", ["app/a.ts"])], devs, [], client=_C2())
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        ABSTRACTION_MAX_TOKENS,
+    )
+    assert captured == [ABSTRACTION_MAX_TOKENS]

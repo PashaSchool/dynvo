@@ -1240,12 +1240,12 @@ def test_contract_gate_disarmed_at_resource_grain() -> None:
 
 
 def test_contract_retry_skipped_when_cost_capped(monkeypatch: Any) -> None:
-    """Structural cost guard: when a second same-shape Sonnet call could bust
-    the whole-stage cap, the retry is skipped and the first draw ships
-    flagged uncompressed (never a cap-degrade caused BY the gate)."""
+    """Proportional retry economics (fix 2): the retry is skipped only when
+    the spend SO FAR already consumed the single-draw cap — the first draw
+    ships flagged uncompressed (never a cap-degrade caused BY the gate)."""
     from faultline.llm.cost import estimate_call_cost
     one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
-    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 1.5)
+    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 0.6)
     cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
     ufs, pfs, dm, tel = run_journey_abstraction(
         _ufs(), _pfs(), _devs(), [], client=cli)
@@ -1254,6 +1254,24 @@ def test_contract_retry_skipped_when_cost_capped(monkeypatch: Any) -> None:
     assert tel["abstraction_retry_skipped_cost"] is True
     assert len(cli.state["systems"]) == 1               # no retry call issued
     assert len(ufs) == 3
+
+
+def test_contract_retry_admitted_in_old_starvation_band(monkeypatch: Any) -> None:
+    """Fix 2 regression guard: with cap = 1.5 x draw cost the OLD flat x2
+    guard skipped the retry (2c > 1.5c — the cal-com $0.33 starvation);
+    the proportional rule admits it (c < 1.5c) and the retry ships, with
+    the total 2-draw spend tolerated by the x2 hard ceiling."""
+    from faultline.llm.cost import estimate_call_cost
+    one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
+    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 1.5)
+    cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), _devs(), [], client=cli)
+    assert tel["applied"] is True
+    assert tel["abstraction_retried"] is True
+    assert len(cli.state["systems"]) == 2               # retry WAS issued
+    assert tel["abstraction_contract"] == CONTRACT_PASS_AFTER_RETRY
+    assert "abstraction_retry_skipped_cost" not in tel
 
 
 def test_route_rescue_collision_single_survivor() -> None:
@@ -1336,6 +1354,7 @@ def test_cache_hit_restores_contract_flag() -> None:
 def test_cache_version_bumped_for_contract_fix() -> None:
     """Frozen pre-fix draws (cached under 'contract-3' and earlier) must be
     invalidated — the version participates in the cache key AND the
-    entry-validity check. 'contract-4' = the jpf structural anchor (lever #3):
-    contract-3 entries may hold two-axis-inflated draws the jpf prong retries."""
-    assert ABSTRACTION_CACHE_VERSION == "contract-4"
+    entry-validity check. 'contract-5' = the proportional retry economics +
+    input-scaled align max_tokens (MISSION-92 lever #3 fix 2/3): contract-4
+    entries may hold draws whose retry was skipped by the flat x2 guard."""
+    assert ABSTRACTION_CACHE_VERSION == "contract-5"

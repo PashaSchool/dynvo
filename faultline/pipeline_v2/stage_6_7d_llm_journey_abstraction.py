@@ -91,9 +91,44 @@ DEFAULT_ABSTRACTION_MODEL = "claude-sonnet-4-6"
 ABSTRACTION_MODEL_ENV = "FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL"
 # ~50-120 coarsened UFs + ~30-60 PFs must fit in ONE structured response on a
 # large repo (dub). 8k truncated the JSON on big repos → parse-fail → degrade.
+# ALIGN mode adds `from_flows` citations (every digest UF id re-emitted once)
+# plus one journey line per usable anchor — at cal-com scale (120 digest UFs +
+# 160 anchor texts) 16k TRUNCATED the JSON → parse-fail. Call-1 max_tokens is
+# therefore COMPUTED from the input size (see _abstraction_max_tokens):
+# floor 16000 (the validated free-gen shape), plus a per-digest-item output
+# budget, capped by a structural ceiling. Nothing per-repo tuned.
 ABSTRACTION_MAX_TOKENS = 16000
+ABSTRACTION_MAX_TOKENS_CEILING = 32000
+#: Output budget per digest item (one emitted JSON line ≈ name + resource +
+#: capability + citations ≈ 40-120 tokens; each digest UF id is re-cited ~once).
+_TOKENS_PER_DIGEST_ITEM = 100
 REATTRIB_MAX_TOKENS = 16000
-COST_CAP_USD = 0.60            # whole-stage guard against a runaway response
+COST_CAP_USD = 0.60            # single-draw / base-stage cost guard
+#: Hard whole-stage ceiling multiplier for Call 1 (MISSION-92 lever #3, fix 2).
+#: An ADDITIONAL draw (corrective retry, free-gen floor) is admitted only while
+#: the spend SO FAR is under COST_CAP_USD, and each draw's own size is bounded
+#: by max_tokens — so legitimate spend can never exceed ~2 x COST_CAP_USD.
+#: Anything beyond that is a runaway → degrade. Structural (admission bound +
+#: one bounded draw), not a tuned budget.
+_STAGE_COST_CEILING_X = 2
+
+
+def _abstraction_max_tokens(n_digest_ufs: int, n_anchor_texts: int) -> int:
+    """Call-1 max_tokens computed from the input size (fix 3, lever #3).
+
+    ``max(floor, min(ceiling, per_item * (digest UFs + anchor texts)))`` —
+    the floor keeps the validated free-gen behaviour byte-stable on small
+    repos; the per-item budget covers ALIGN's citation-heavy output at
+    86-315-candidate scale (cal-com 16k truncation); the ceiling bounds a
+    runaway request structurally.
+    """
+    return max(
+        ABSTRACTION_MAX_TOKENS,
+        min(
+            ABSTRACTION_MAX_TOKENS_CEILING,
+            _TOKENS_PER_DIGEST_ITEM * (n_digest_ufs + n_anchor_texts),
+        ),
+    )
 MAX_DEV_FEATURES_DIGEST = 200  # abstraction digest cap (re-attrib sees all)
 MAX_ROUTES_DIGEST = 160
 # The CURRENT user flows are SUPPORTING detail in the abstraction prompt (the
@@ -129,7 +164,10 @@ def align_enabled() -> bool:
 #: "contract-4" invalidates draws frozen before the jpf structural anchor
 #: (MISSION-92 lever #3): entries cached under "contract-3" may be
 #: two-axis-inflated draws the jpf prong would now retry.
-ABSTRACTION_CACHE_VERSION = "contract-4"
+#: "contract-5" invalidates draws frozen under the flat x2 retry guard
+#: (fix 2): entries whose retry was skipped for cost (cal-com $0.33 draw)
+#: would now be retried, and align draws may now use a larger max_tokens.
+ABSTRACTION_CACHE_VERSION = "contract-5"
 
 # ── Grain-contract gate (2026-07-04) ────────────────────────────────────────
 # Call 1 is the ABSTRACTION layer: its whole job is a grain LIFT (merge CRUD /
@@ -1500,6 +1538,18 @@ def run_journey_abstraction(
 
     user1 = _mk_user(anchor_block)
 
+    # Call-1 output budget scaled from input size (fix 3, lever #3). Anchor
+    # texts only count in ALIGN mode (free-gen prompts carry no anchor block),
+    # so an align-OFF scan keeps the exact validated 16k floor.
+    call1_max_tokens = _abstraction_max_tokens(
+        len(digest["current_user_flows"]),
+        len(anchor_texts) if aligned else 0,
+    )
+    if aligned:
+        # Telemetry only when align was requested+granted — an align-OFF
+        # scan's telemetry stays byte-identical to today.
+        tele["abstraction_max_tokens"] = call1_max_tokens
+
     # Sanitise at the boundary: keep only specs whose "name" is a non-empty
     # string. An LLM can emit a numeric/None name in otherwise-valid JSON, and
     # every downstream consumer calls ``.strip()``/``.get()`` on it — dropping
@@ -1519,7 +1569,7 @@ def run_journey_abstraction(
         text, in_t, out_t = _call_haiku(
             cli, model=abstraction_model, system=system,
             user=user1 if user_msg is None else user_msg,
-            max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
+            max_tokens=call1_max_tokens, llm_health=llm_health)
         tele["llm_calls"] += 1
         tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in_t, out_t), 6)
         parsed = _parse_json(text)
@@ -1593,9 +1643,14 @@ def run_journey_abstraction(
     if armed:
         tele["contract_armed_by"] = armed
         v1 = _contract_of(armed)
-        # A retry costs ≈ the first draw; skip it when a second same-shape
-        # call could bust the whole-stage cost cap (structural x2, not tuned).
-        if tele["cost_usd"] * 2 > COST_CAP_USD:
+        # Retry economics (fix 2, lever #3): the old flat "x2 prediction"
+        # guard (skip when cost*2 > cap) STARVED big repos — cal-com's $0.33
+        # first draw always skipped its corrective retry. Structural rule:
+        # an additional draw is admitted while the spend SO FAR is within
+        # the single-draw cap (fraction 1.0 of COST_CAP_USD — the untuned
+        # fraction); the whole Call-1 sequence stays bounded by
+        # COST_CAP_USD x _STAGE_COST_CEILING_X below.
+        if tele["cost_usd"] >= COST_CAP_USD:
             contract = v1
             tele["abstraction_retry_skipped_cost"] = True
         else:
@@ -1627,10 +1682,11 @@ def run_journey_abstraction(
             # ALIGN never-worse floor: both align draws echoed anchors →
             # one FREE-GEN draw (plain system, no anchor block) bounds the
             # result at the validated default mode instead of shipping the
-            # echo blob. Cost-guarded (structural x1.5: one more same-shape
-            # call on top of two already spent); unusable → the align retry
-            # stands, still flagged anchor_echo for scan_meta visibility.
-            if tele["cost_usd"] * 1.5 > COST_CAP_USD:
+            # echo blob. Same admission rule as the corrective retry (fix 2):
+            # one more draw while spend so far is within the single-draw cap;
+            # unusable → the align retry stands, still flagged anchor_echo
+            # for scan_meta visibility.
+            if tele["cost_usd"] >= COST_CAP_USD:
                 tele["align_freegen_fallback_skipped_cost"] = True
             else:
                 tele["abstraction_retried_freegen"] = True
@@ -1643,7 +1699,10 @@ def run_journey_abstraction(
                     tele["align_freegen_fallback_failed"] = f_fail
     tele["abstraction_contract"] = contract
     parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
-    if tele["cost_usd"] > COST_CAP_USD:
+    # Hard runaway ceiling (fix 2): admission above already bounds legitimate
+    # multi-draw spend under ~2 x the single-draw cap; only a runaway response
+    # can land beyond the ceiling → degrade.
+    if tele["cost_usd"] > COST_CAP_USD * _STAGE_COST_CEILING_X:
         return _degrade(f"cost_cap ${tele['cost_usd']:.4f}")
 
     # ── Call 2 — dev → capability re-attribution (Haiku / passed model) ─
