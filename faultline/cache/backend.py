@@ -112,6 +112,15 @@ class CacheKind(str, Enum):
     # on an unchanged repo. NOT the marketing-page cache (kind ``marketing``),
     # which stays as-is.
     LLM_PRODUCT_CLUSTER = "llm-product-cluster"
+    # Stage 6.7e UF grain lattice: one entry per grouping call (Haiku) —
+    # keyed on {cache version, canonical model, the full leaf digest
+    # (id/name/resource/intent rows)}. The cached value is the PARSED
+    # capability specs — replayed through the SAME deterministic
+    # validation/build code as a live call, so an unchanged repo re-scan
+    # emits a byte-identical lattice at $0. Content-keyed (same input →
+    # same answer): a deterministic short-circuit, not per-repo memory
+    # (rule-cold-scan safe).
+    LLM_UF_LATTICE = "llm-uf-lattice"
     # Stage 0.5 stack auditor: raw response text keyed on
     # (cache version + model + system + user prompt). The auditor prompt is
     # deterministic for an identical repo state, but Anthropic temp=0 is NOT

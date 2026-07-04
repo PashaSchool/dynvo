@@ -337,6 +337,308 @@ def build_uf_lattice(
     return caps, tele
 
 
+# ── LLM grouping pass (the spec's "cheap Haiku grouping call") ──────────────
+# MEASURED (2026-07-04, mission-92 replays): the deterministic (resource,
+# family) grouping alone is a structural NO-OP on 6.7d-abstracted leaves —
+# the abstraction already emits ~one leaf per distinct resource (dub 40
+# leaves / 40 degenerate nodes, saleor 56/56, supabase 52 leaves → 3 multi
+# nodes), so a deterministic-only lattice equals the flat list and cannot
+# move coverage. The spec sanctions exactly this fork: "same draw or cheap
+# Haiku grouping call over the emitted leaves — architect's choice,
+# measured". The LLM pass groups semantically-same-capability leaves that
+# carry DIFFERENT resource nouns ("page", "page-type", "delete-page-type"),
+# then the DETERMINISTIC post-validation below enforces the spec's
+# structural contract (surjectivity, parent/child token consistency,
+# reject-and-regroup). On any failure — no key, call error, bad JSON — the
+# deterministic lattice above is the never-worse fallback.
+
+GROUPING_MODEL_ENV = "FAULTLINE_UF_LATTICE_MODEL"
+DEFAULT_GROUPING_MODEL = "claude-haiku-4-5-20251001"
+GROUPING_MAX_TOKENS = 8000
+#: bump to invalidate cached groupings when the prompt/build changes.
+LATTICE_CACHE_VERSION = "lattice-1"
+
+_GROUPING_SYSTEM = """You organise the user journeys of one software product into product CAPABILITIES.
+
+Rules, in priority order:
+ 1. Every journey id must appear in EXACTLY ONE capability. Never drop or
+    invent ids.
+ 2. A capability groups journeys that serve the SAME capability of the SAME
+    primary resource / feature area: CRUD + browse variants of one resource,
+    its settings/configuration, lifecycle steps of one pipeline, list+detail
+    views. Example: "Create content pages" + "Bulk delete page types" +
+    "Reorder pages" -> one "Manage content pages" capability.
+ 3. NEVER create broad multi-resource buckets ("Manage everything",
+    "Workspace administration", "Platform management"). A capability spans
+    ONE resource / feature area. When in doubt, keep journeys separate.
+ 4. Singleton capabilities (one journey) are normal and common — a journey
+    with no true siblings stays alone, keeping its own name.
+ 5. Each capability: short Title Case verb-phrase `name` grounded in its
+    journeys' wording; one lowercase `resource` (the shared primary noun);
+    `intent` one of manage|execute|bulk|export|other.
+
+Return STRICT JSON only, no prose:
+{"capabilities":[{"name":"...","resource":"...","intent":"manage",
+  "member_ids":["UF-001", ...]}, ...]}"""
+
+
+def _default_client_factory() -> Any | None:  # pragma: no cover - IO
+    try:
+        from anthropic import Anthropic
+    except ImportError:
+        return None
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    return Anthropic()
+
+
+def _leaf_digest(user_flows: list["UserFlow"]) -> list[dict[str, Any]]:
+    return [
+        {"id": u.id, "name": u.name, "resource": u.resource, "intent": u.intent}
+        for u in user_flows
+    ]
+
+
+def _grouping_cache_key(digest: list[dict[str, Any]], model: str) -> str:
+    import hashlib
+    import json as _json
+
+    payload = _json.dumps(
+        {"v": LATTICE_CACHE_VERSION, "model": model, "leaves": digest},
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _llm_group_specs(
+    client: Any, model: str, digest: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]] | None, int, int]:
+    """One grouping call → ``(capability specs | None, in_tok, out_tok)``."""
+    import json as _json
+
+    from faultline.llm.cost import deterministic_params
+    from faultline.llm.model_gateway import resolve_model as gateway_model
+
+    user = ("User journeys (id, name, resource, intent):\n"
+            + _json.dumps(digest, ensure_ascii=False)
+            + "\nGroup them into capabilities. Return the JSON now.")
+    try:
+        msg = client.messages.create(
+            model=gateway_model(model), max_tokens=GROUPING_MAX_TOKENS,
+            system=_GROUPING_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+            **deterministic_params(model),
+        )
+    except Exception:  # noqa: BLE001 — fallback path handles it
+        return None, 0, 0
+    text = "\n".join(t for b in msg.content if (t := getattr(b, "text", None)))
+    in_tok = int(getattr(getattr(msg, "usage", None), "input_tokens", 0) or 0)
+    out_tok = int(getattr(getattr(msg, "usage", None), "output_tokens", 0) or 0)
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None, in_tok, out_tok
+    try:
+        parsed = _json.loads(text[start:end + 1])
+    except (ValueError, _json.JSONDecodeError):
+        return None, in_tok, out_tok
+    specs = parsed.get("capabilities")
+    if not isinstance(specs, list) or not specs:
+        return None, in_tok, out_tok
+    return specs, in_tok, out_tok
+
+
+def _tokens_of(*texts: str | None) -> set[str]:
+    """Content tokens for the consistency check — same convention as the
+    6.7d grounding tokens (nouns matter, glue doesn't)."""
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _content_tokens,
+    )
+    return _content_tokens(*texts)
+
+
+def _build_from_llm_specs(
+    specs: list[dict[str, Any]], user_flows: list["UserFlow"],
+) -> tuple[list["UfCapability"], dict[str, Any]]:
+    """Deterministic reconstruction + the spec's structural post-validation.
+
+    * unknown / duplicate member ids: first claim wins, later dropped;
+    * TOKEN CONSISTENCY (parent/child): a child in a multi-leaf node must
+      share >=1 content token with the node's name+resource — an
+      inconsistent child is EVICTED to its own degenerate node
+      (reject-and-regroup, ``regroup_count`` telemetry);
+    * ORPHANS (leaves the model never placed): own degenerate node;
+    * node intent: the model's when valid, else majority child family;
+    * empty / nameless specs are skipped (their members become orphans).
+    """
+    from faultline.models.types import UfCapability
+
+    by_id = {u.id: u for u in user_flows}
+    claimed: set[str] = set()
+    regroups = 0
+    built: list[tuple[str, str, str, list["UserFlow"]]] = []
+
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        name = spec.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        name = name.strip()
+        resource = _norm_resource(str(spec.get("resource") or ""))
+        members: list["UserFlow"] = []
+        for mid in spec.get("member_ids") or []:
+            leaf = by_id.get(mid) if isinstance(mid, str) else None
+            if leaf is None or leaf.id in claimed:
+                continue
+            claimed.add(leaf.id)
+            members.append(leaf)
+        if not members:
+            continue
+        if len(members) > 1:
+            node_tok = _tokens_of(name, resource)
+            kept: list["UserFlow"] = []
+            for leaf in members:
+                if _tokens_of(leaf.name, leaf.resource) & node_tok:
+                    kept.append(leaf)
+                else:  # evict — parent/child inconsistency; the orphan
+                    # pass below re-adds it as a degenerate node
+                    regroups += 1
+                    claimed.discard(leaf.id)
+            members = kept
+            if not members:
+                continue
+        members = sorted(members, key=_leaf_sort_key)
+        families = [_family(leaf.intent) for leaf in members]
+        intent = str(spec.get("intent") or "").strip().lower()
+        if intent not in set(_INTENT_FAMILY.values()):
+            intent = max(sorted(set(families)), key=families.count)
+        if len(members) == 1:
+            intent = members[0].intent or "other"
+        built.append((name, resource, intent, members))
+
+    orphans = 0
+    for uf in user_flows:
+        if uf.id not in claimed:
+            orphans += 1
+            built.append((
+                uf.name,
+                _norm_resource(uf.resource),
+                uf.intent or "other",
+                [uf],
+            ))
+
+    caps: list["UfCapability"] = []
+    for name, resource, intent, members in built:
+        member_flow_ids: list[str] = []
+        seen_m: set[str] = set()
+        routes: set[str] = set()
+        for c in members:
+            for mid in c.member_flow_ids:
+                if mid not in seen_m:
+                    seen_m.add(mid)
+                    member_flow_ids.append(mid)
+            routes.update(c.routes or [])
+        caps.append(UfCapability(
+            id="UFC-000",
+            name=name,
+            intent=intent,
+            resource=resource,
+            member_uf_ids=[c.id for c in members],
+            member_flow_ids=member_flow_ids,
+            routes=sorted(routes),
+            member_count=len(members),
+        ))
+    caps.sort(key=lambda c: (c.name.lower(), c.resource, c.member_uf_ids))
+    for i, c in enumerate(caps, start=1):
+        c.id = f"UFC-{i:03d}"
+
+    tele = {
+        "regroup_count": regroups,
+        "orphan_rescued": orphans,
+    }
+    return caps, tele
+
+
+def build_uf_lattice_llm(
+    user_flows: list["UserFlow"],
+    *,
+    client: Any | None = None,
+    model: str | None = None,
+    cache: Any | None = None,
+    _client_factory: Callable[[], Any | None] = _default_client_factory,
+) -> tuple[list["UfCapability"], dict[str, Any]]:
+    """LLM-grouped lattice with deterministic validation + never-worse
+    fallback to :func:`build_uf_lattice`. Content-cached (byte-identical
+    re-scan of an unchanged repo at $0)."""
+    from faultline.cache.backend import CacheKind
+    from faultline.llm.cost import estimate_call_cost
+
+    model = model or os.environ.get(GROUPING_MODEL_ENV, "").strip() or DEFAULT_GROUPING_MODEL
+
+    def _fallback(reason: str) -> tuple[list["UfCapability"], dict[str, Any]]:
+        caps, tele = build_uf_lattice(user_flows)
+        tele["grouping"] = "deterministic"
+        tele["grouping_fallback"] = reason
+        return caps, tele
+
+    if not user_flows:
+        return _fallback("no_leaves")
+
+    digest = _leaf_digest(user_flows)
+    key = _grouping_cache_key(digest, model)
+    specs: list[dict[str, Any]] | None = None
+    cache_hit = False
+    cost = 0.0
+    if cache is not None:
+        try:
+            cached = cache.get(CacheKind.LLM_UF_LATTICE.value, key)
+        except Exception:  # noqa: BLE001
+            cached = None
+        if (isinstance(cached, dict) and cached.get("v") == LATTICE_CACHE_VERSION
+                and isinstance(cached.get("capabilities"), list)):
+            specs = cached["capabilities"]
+            cache_hit = True
+
+    if specs is None:
+        cli = client if client is not None else _client_factory()
+        if cli is None:
+            return _fallback("no_client")
+        specs, in_tok, out_tok = _llm_group_specs(cli, model, digest)
+        cost = estimate_call_cost(model, in_tok, out_tok) if (in_tok or out_tok) else 0.0
+        if specs is None:
+            return _fallback("grouping_call_failed")
+        if cache is not None:
+            try:
+                cache.set(CacheKind.LLM_UF_LATTICE.value, key, {
+                    "v": LATTICE_CACHE_VERSION, "capabilities": specs,
+                })
+            except Exception:  # noqa: BLE001
+                pass
+
+    caps, vtele = _build_from_llm_specs(specs, user_flows)
+    if not caps:
+        return _fallback("empty_reconstruction")
+
+    sizes = sorted(c.member_count for c in caps)
+    tele: dict[str, Any] = {
+        "enabled": True,
+        "grouping": "llm",
+        "grouping_model": model,
+        "cache_hit": cache_hit,
+        "cost_usd": round(cost, 6),
+        "leaves": len(user_flows),
+        "capabilities_count": len(caps),
+        "leaves_per_capability_p50": _percentile(sizes, 0.50),
+        "leaves_per_capability_p90": _percentile(sizes, 0.90),
+        "degenerate_count": sum(1 for c in caps if c.member_count == 1),
+        "multi_leaf_count": sum(1 for c in caps if c.member_count > 1),
+        "llm_named_count": sum(1 for c in caps if c.member_count > 1),
+        "orphans": 0,  # post-validation rescues every orphan
+        **vtele,
+    }
+    return caps, tele
+
+
 # ── Optional LLM namer (band-revival hook — NOT wired by default) ───────────
 
 _NAMER_SYSTEM = """You name product capability groups. Each item groups several
@@ -387,6 +689,7 @@ __all__ = [
     "ENV_FLAG",
     "Namer",
     "build_uf_lattice",
+    "build_uf_lattice_llm",
     "lattice_enabled",
     "make_llm_namer",
 ]

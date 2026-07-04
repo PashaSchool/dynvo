@@ -261,6 +261,108 @@ def test_manage_multi_leaf_never_llm_named() -> None:
     assert manage.name == "Manage links"
 
 
+# ── LLM grouping pass (fake client / fake cache) ────────────────────────────
+
+
+class _FakeCache:
+    def __init__(self):
+        self.store: dict = {}
+
+    def get(self, kind, key):
+        return self.store.get((kind, key))
+
+    def set(self, kind, key, value):
+        self.store[(kind, key)] = value
+
+
+def _grouping_leaves() -> list[UserFlow]:
+    return [
+        _uf("UF-001", "Create content pages", resource="page", intent="author"),
+        _uf("UF-002", "Bulk delete page types", resource="delete-page-type", intent="lifecycle"),
+        _uf("UF-003", "Connect Stripe", resource="integration", intent="execute"),
+        _uf("UF-004", "Browse channels", resource="channel", intent="browse"),
+    ]
+
+
+def test_llm_grouping_groups_cross_resource_and_validates() -> None:
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
+
+    payload = json.dumps({"capabilities": [
+        {"name": "Manage content pages", "resource": "page", "intent": "manage",
+         # UF-003 is INCONSISTENT (no token overlap with the node) → evicted;
+         # "UF-999" unknown → ignored; UF-004 never placed → orphan rescue.
+         "member_ids": ["UF-001", "UF-002", "UF-003", "UF-999"]},
+    ]})
+    client = _fake_client(payload)
+    caps, tele = build_uf_lattice_llm(_grouping_leaves(), client=client)
+    by_name = {c.name: c for c in caps}
+    assert tele["grouping"] == "llm"
+    node = by_name["Manage content pages"]
+    assert node.member_uf_ids == ["UF-001", "UF-002"] or set(node.member_uf_ids) == {"UF-001", "UF-002"}
+    assert tele["regroup_count"] == 1          # UF-003 evicted
+    assert tele["orphan_rescued"] == 2         # UF-003 + UF-004 → degenerates
+    claimed = sorted(uid for c in caps for uid in c.member_uf_ids)
+    assert claimed == ["UF-001", "UF-002", "UF-003", "UF-004"]
+    assert by_name["Connect Stripe"].member_count == 1
+
+
+def test_llm_grouping_failure_falls_back_deterministic() -> None:
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
+
+    client = _fake_client("", raise_exc=True)
+    caps, tele = build_uf_lattice_llm(_grouping_leaves(), client=client)
+    assert tele["grouping"] == "deterministic"
+    assert tele["grouping_fallback"] == "grouping_call_failed"
+    det, _ = build_uf_lattice(_grouping_leaves())
+    assert [c.model_dump() for c in caps] == [c.model_dump() for c in det]
+
+
+def test_llm_grouping_no_client_falls_back() -> None:
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
+
+    caps, tele = build_uf_lattice_llm(
+        _grouping_leaves(), _client_factory=lambda: None)
+    assert tele["grouping_fallback"] == "no_client"
+    assert caps  # deterministic lattice still emitted
+
+
+def test_llm_grouping_cache_roundtrip_identical_no_second_call() -> None:
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
+
+    payload = json.dumps({"capabilities": [
+        {"name": "Manage content pages", "resource": "page", "intent": "manage",
+         "member_ids": ["UF-001", "UF-002"]},
+        {"name": "Connect Stripe", "resource": "integration", "intent": "execute",
+         "member_ids": ["UF-003"]},
+        {"name": "Browse channels", "resource": "channel", "intent": "manage",
+         "member_ids": ["UF-004"]},
+    ]})
+    cache = _FakeCache()
+    c1 = _fake_client(payload)
+    caps1, t1 = build_uf_lattice_llm(_grouping_leaves(), client=c1, cache=cache)
+    assert not t1["cache_hit"] and len(c1.calls) == 1
+    c2 = _fake_client("SHOULD NOT BE CALLED", raise_exc=True)
+    caps2, t2 = build_uf_lattice_llm(_grouping_leaves(), client=c2, cache=cache)
+    assert t2["cache_hit"] and len(c2.calls) == 0
+    assert [c.model_dump() for c in caps1] == [c.model_dump() for c in caps2]
+
+
+def test_llm_grouping_mega_parent_children_evicted_by_token_check() -> None:
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
+
+    payload = json.dumps({"capabilities": [
+        {"name": "Manage everything in the workspace", "resource": "workspace",
+         "intent": "manage",
+         "member_ids": ["UF-001", "UF-002", "UF-003", "UF-004"]},
+    ]})
+    caps, tele = build_uf_lattice_llm(_grouping_leaves(), client=_fake_client(payload))
+    # none of the leaves shares a token with "everything/workspace" → all
+    # evicted → the blob node vanishes, every leaf lands degenerate
+    assert all(c.member_count == 1 for c in caps)
+    assert len(caps) == 4
+    assert tele["regroup_count"] == 4
+
+
 # ── Env gate + Stage 7 wiring ───────────────────────────────────────────────
 
 

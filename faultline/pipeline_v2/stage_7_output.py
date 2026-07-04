@@ -249,13 +249,22 @@ def stage_7_output(
     # leaves. Default ON (``FAULTLINE_UF_LATTICE=0`` disables); failure
     # degrades to an empty lattice, never a failed scan.
     from faultline.pipeline_v2.stage_6_7e_uf_lattice import (
-        build_uf_lattice,
+        build_uf_lattice_llm,
         lattice_enabled,
     )
     uf_capabilities: list[UfCapability] = []
     if user_flows and lattice_enabled():
         try:
-            uf_capabilities, lattice_tele = build_uf_lattice(user_flows)
+            from faultline.cache import get_cache_backend
+            try:
+                _lat_cache = get_cache_backend()
+            except Exception:  # noqa: BLE001 — cache is best-effort
+                _lat_cache = None
+            # One cheap cached Haiku grouping call; keyless / failed calls
+            # degrade to the deterministic (resource, family) lattice.
+            uf_capabilities, lattice_tele = build_uf_lattice_llm(
+                user_flows, cache=_lat_cache,
+            )
             scan_meta["uf_lattice"] = lattice_tele
         except Exception as exc:  # noqa: BLE001 — additive view, never fatal
             logger.warning("stage_6_7e: lattice build failed: %s", exc)
