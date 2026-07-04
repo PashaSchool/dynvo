@@ -326,6 +326,53 @@ def test_llm_grouping_no_client_falls_back() -> None:
     assert caps  # deterministic lattice still emitted
 
 
+def test_llm_grouping_respects_scan_wide_auth_kill_switch() -> None:
+    """After a dead-key failure anywhere in the scan (LlmHealth flipped),
+    the lattice grouping must NOT issue its own doomed call — deterministic
+    fallback, zero client calls."""
+    from faultline.pipeline_v2.llm_health import LlmHealth
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
+
+    class _AuthExc(Exception):
+        status_code = 401
+
+    health = LlmHealth()
+    health.record_failure(_AuthExc("invalid x-api-key"), stage="stack_auditor")
+    assert not health.should_call()
+
+    client = _fake_client('{"capabilities": []}')
+    caps, tele = build_uf_lattice_llm(
+        _grouping_leaves(), client=client, llm_health=health)
+    assert tele["grouping"] == "deterministic"
+    assert tele["grouping_fallback"] == "llm_unhealthy"
+    assert client.calls == []
+    assert caps  # deterministic lattice still emitted
+
+
+def test_llm_grouping_auth_failure_flips_kill_switch() -> None:
+    """An auth-class failure IN the grouping call itself must flip the
+    scan-wide switch so later stages skip their calls too."""
+    from faultline.pipeline_v2.llm_health import LlmHealth
+    from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
+
+    class _AuthExc(Exception):
+        status_code = 401
+
+    class _Messages:
+        def create(self, **kwargs):
+            raise _AuthExc("invalid x-api-key")
+
+    class _Client:
+        messages = _Messages()
+
+    health = LlmHealth()
+    caps, tele = build_uf_lattice_llm(
+        _grouping_leaves(), client=_Client(), llm_health=health)
+    assert tele["grouping_fallback"] == "grouping_call_failed"
+    assert not health.should_call()
+    assert caps
+
+
 def test_llm_grouping_cache_roundtrip_identical_no_second_call() -> None:
     from faultline.pipeline_v2.stage_6_7e_uf_lattice import build_uf_lattice_llm
 

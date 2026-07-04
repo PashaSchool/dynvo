@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from faultline.models.types import UfCapability, UserFlow
+    from faultline.pipeline_v2.llm_health import LlmHealth
 
 ENV_FLAG = "FAULTLINE_UF_LATTICE"
 
@@ -412,6 +413,7 @@ def _grouping_cache_key(digest: list[dict[str, Any]], model: str) -> str:
 
 def _llm_group_specs(
     client: Any, model: str, digest: list[dict[str, Any]],
+    llm_health: "LlmHealth | None" = None,
 ) -> tuple[list[dict[str, Any]] | None, int, int]:
     """One grouping call → ``(capability specs | None, in_tok, out_tok)``."""
     import json as _json
@@ -429,8 +431,17 @@ def _llm_group_specs(
             messages=[{"role": "user", "content": user}],
             **deterministic_params(model),
         )
-    except Exception:  # noqa: BLE001 — fallback path handles it
+    except Exception as exc:  # noqa: BLE001 — fallback path handles it
+        if llm_health is not None and llm_health.record_failure(
+            exc, stage="stage_6_7e_uf_lattice",
+        ):
+            import logging
+            logging.getLogger(__name__).error(
+                "stage_6_7e: LLM auth failed — skipping remaining calls: %s", exc,
+            )
         return None, 0, 0
+    if llm_health is not None:
+        llm_health.record_success()
     text = "\n".join(t for b in msg.content if (t := getattr(b, "text", None)))
     in_tok = int(getattr(getattr(msg, "usage", None), "input_tokens", 0) or 0)
     out_tok = int(getattr(getattr(msg, "usage", None), "output_tokens", 0) or 0)
@@ -565,6 +576,7 @@ def build_uf_lattice_llm(
     client: Any | None = None,
     model: str | None = None,
     cache: Any | None = None,
+    llm_health: "LlmHealth | None" = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UfCapability"], dict[str, Any]]:
     """LLM-grouped lattice with deterministic validation + never-worse
@@ -600,10 +612,14 @@ def build_uf_lattice_llm(
             cache_hit = True
 
     if specs is None:
+        # Scan-wide auth kill-switch: after a dead-key failure anywhere in
+        # the scan, no further doomed LLM calls — deterministic fallback.
+        if llm_health is not None and not llm_health.should_call():
+            return _fallback("llm_unhealthy")
         cli = client if client is not None else _client_factory()
         if cli is None:
             return _fallback("no_client")
-        specs, in_tok, out_tok = _llm_group_specs(cli, model, digest)
+        specs, in_tok, out_tok = _llm_group_specs(cli, model, digest, llm_health)
         cost = estimate_call_cost(model, in_tok, out_tok) if (in_tok or out_tok) else 0.0
         if specs is None:
             return _fallback("grouping_call_failed")

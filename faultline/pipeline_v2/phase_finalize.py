@@ -853,6 +853,7 @@ def run_finalize_phase(
             scan_commit=head,
             engine_version=_engine_version,
             monorepo=monorepo_view,
+            llm_health=llm_health,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
 

@@ -227,6 +227,7 @@ def stage_7_output(
     scan_commit: str = "",
     engine_version: str = "",
     monorepo: dict[str, Any] | None = None,
+    llm_health: Any | None = None,
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -263,7 +264,7 @@ def stage_7_output(
             # One cheap cached Haiku grouping call; keyless / failed calls
             # degrade to the deterministic (resource, family) lattice.
             uf_capabilities, lattice_tele = build_uf_lattice_llm(
-                user_flows, cache=_lat_cache,
+                user_flows, cache=_lat_cache, llm_health=llm_health,
             )
             scan_meta["uf_lattice"] = lattice_tele
         except Exception as exc:  # noqa: BLE001 — additive view, never fatal
