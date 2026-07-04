@@ -1331,6 +1331,8 @@ def test_cache_hit_restores_contract_flag() -> None:
 
 
 def test_cache_version_bumped_for_contract_fix() -> None:
-    """Frozen pre-fix draws (cached under 'ground-2') must be invalidated —
-    the version participates in the cache key AND the entry-validity check."""
-    assert ABSTRACTION_CACHE_VERSION == "contract-3"
+    """Frozen pre-fix draws (cached under 'contract-3' and earlier) must be
+    invalidated — the version participates in the cache key AND the
+    entry-validity check. 'contract-4' = the jpf structural anchor (lever #3):
+    contract-3 entries may hold two-axis-inflated draws the jpf prong retries."""
+    assert ABSTRACTION_CACHE_VERSION == "contract-4"
