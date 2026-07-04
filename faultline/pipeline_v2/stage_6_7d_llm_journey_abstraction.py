@@ -91,16 +91,56 @@ DEFAULT_ABSTRACTION_MODEL = "claude-sonnet-4-6"
 ABSTRACTION_MODEL_ENV = "FAULTLINE_STAGE_6_7D_ABSTRACTION_MODEL"
 # ~50-120 coarsened UFs + ~30-60 PFs must fit in ONE structured response on a
 # large repo (dub). 8k truncated the JSON on big repos → parse-fail → degrade.
+# With the input-scaled digest below, Call-1 max_tokens is COMPUTED from the
+# input size (:func:`_abstraction_max_tokens`): floor 16000 (the validated
+# free-gen shape on small repos), plus a per-digest-item output budget, capped
+# by a structural ceiling. Nothing per-repo tuned. (Mirrors the approach the
+# parked align-v2 branch validated, implemented independently here —
+# MISSION-92 recall-at-depth fix 3.)
 ABSTRACTION_MAX_TOKENS = 16000
+ABSTRACTION_MAX_TOKENS_CEILING = 32000
+#: Output budget per digest item (one emitted JSON journey line ≈ name +
+#: resource + capability + citations ≈ 40-120 tokens; each digest UF id is
+#: re-cited ~once via from_flows).
+_TOKENS_PER_DIGEST_ITEM = 100
 REATTRIB_MAX_TOKENS = 16000
-COST_CAP_USD = 0.60            # whole-stage guard against a runaway response
+COST_CAP_USD = 0.60            # single-draw / base-stage cost guard
+#: Hard whole-stage ceiling multiplier for Call 1. An ADDITIONAL draw (the
+#: corrective retry) is admitted only while the spend SO FAR is under
+#: COST_CAP_USD, and each draw's own size is bounded by max_tokens — so
+#: legitimate spend can never exceed ~2 x COST_CAP_USD. Anything beyond that
+#: is a runaway → degrade. Structural (admission bound + one bounded draw),
+#: not a tuned budget. Replaces the flat "cost*2 > cap" prediction that
+#: STARVED big repos of their corrective retry once digests scaled with input.
+_STAGE_COST_CEILING_X = 2
 MAX_DEV_FEATURES_DIGEST = 200  # abstraction digest cap (re-attrib sees all)
+# The CURRENT user flows + routes are the abstraction evidence. The old fixed
+# caps (120 UFs / 160 routes) HID most of the pre-UF surface from the model on
+# large repos (dub: 168/288 pre-UFs hidden, 473/633 routes; cal-com: 261/381)
+# — the D3 recall-at-depth class. Both caps now scale with the input
+# (``max(floor, n_input)`` — i.e. show everything; the floors are kept as the
+# legacy small-repo bounds so tiny inputs behave byte-identically), and the
+# OUTPUT budget scales via :func:`_abstraction_max_tokens`. Prompt-size
+# bounds, NOT accuracy knobs (rule-no-magic-tuning).
 MAX_ROUTES_DIGEST = 160
-# The CURRENT user flows are SUPPORTING detail in the abstraction prompt (the
-# model coarsens them). On dub (222 UFs) the raw list blew the prompt/output
-# budget and forced a degrade. Cap to the top-N by member_count (the heaviest,
-# most-supported journeys) — a prompt-size bound, NOT a tuned threshold.
 MAX_USER_FLOWS_DIGEST = 120
+
+
+def _abstraction_max_tokens(n_digest_ufs: int, n_anchor_texts: int = 0) -> int:
+    """Call-1 max_tokens computed from the input size (fix 3).
+
+    ``max(floor, min(ceiling, per_item * (digest UFs + anchor texts)))`` —
+    the floor keeps the validated free-gen behaviour byte-stable on small
+    repos; the per-item budget covers citation-heavy output at 200-400-UF
+    scale; the ceiling bounds a runaway request structurally.
+    """
+    return max(
+        ABSTRACTION_MAX_TOKENS,
+        min(
+            ABSTRACTION_MAX_TOKENS_CEILING,
+            _TOKENS_PER_DIGEST_ITEM * (n_digest_ufs + n_anchor_texts),
+        ),
+    )
 # Anchor-alignment (Phase 2): cap the authoritative anchor vocabulary fed into
 # the align prompt (a prompt-size bound). The GATE below decides align-vs-free-gen.
 MAX_ANCHOR_TEXTS_DIGEST = 160
@@ -125,7 +165,13 @@ def align_enabled() -> bool:
 #: "contract-4" invalidates draws frozen before the jpf structural anchor
 #: (MISSION-92 lever #3): entries cached under "contract-3" may be
 #: two-axis-inflated draws the jpf prong would now retry.
-ABSTRACTION_CACHE_VERSION = "contract-4"
+#: "band-5" (MISSION-92 recall-at-depth) invalidates every pre-band entry:
+#: the contract gained a two-sided acceptance band (a first draw at-or-below
+#: the digest's distinct (resource, intent) grain is ACCEPTED), the
+#: correctives now target the band edge instead of "merge aggressively",
+#: and the digest caps scale with input — cached draws frozen under the old
+#: crush-prone semantics would mask all three changes.
+ABSTRACTION_CACHE_VERSION = "band-5"
 
 # ── Grain-contract gate (2026-07-04) ────────────────────────────────────────
 # Call 1 is the ABSTRACTION layer: its whole job is a grain LIFT (merge CRUD /
@@ -358,34 +404,41 @@ Return STRICT JSON only, no prose:
   "from_flows":["UF-001", ...],"from_dev_features":["<dev feature name>", ...]}]}"""
 
 # Merge-corrective system addendum for the ONE contract retry. Structural
-# anchor: the journey count is judged against the model's OWN product_features
-# (journeys-per-capability), never against a fixed count or the input UF count
-# (rule-no-magic-tuning).
+# anchor: the BAND EDGE — golden journey grain sits at roughly one journey
+# per distinct (resource, intent) pair the evidence shows (~2-3 per
+# capability), NOT at ~1 per capability. The pre-band correctives anchored
+# the retry on "few journeys PER product feature" and CRUSHED first draws
+# that were already at golden grain (dub 96→40 vs golden 99, supabase 72→52,
+# cal-com 126→65 — the D3=81 recall-at-depth class). Never re-add a
+# "merge aggressively / ~1 per capability" instruction here.
 _MERGE_CORRECTIVE = """
 
 PREVIOUS ATTEMPT REJECTED — it emitted roughly one user_flow per input
 current_user_flow (no grain lift). You are the ABSTRACTION layer: consolidate
-the redundant CRUD/variant flows of the SAME resource into ONE journey per
-capability. Judge your journey count against your OWN product_features list —
-a healthy journey list has a small number of user_flows PER product feature —
-never against the size of current_user_flows. Merge aggressively; keep only
-genuinely DISTINCT capabilities separate. Re-emit the full JSON now."""
+ONLY the redundant variants that act on the SAME resource with the SAME kind
+of intent (create/edit/configure X are ONE authoring journey; browse/view X
+stays its OWN journey; delete/archive X its own lifecycle journey). Do NOT
+merge different resources together, and do NOT merge different intents on the
+same resource — a healthy journey list keeps roughly ONE journey per distinct
+(resource, intent) pair the evidence shows, which is usually SEVERAL journeys
+per product feature. Re-emit the full JSON now."""
 
 # jpf-anchor corrective for a draw armed by the JPF prong ALONE (a ratio-armed
-# draw keeps the validated _MERGE_CORRECTIVE above — the prompt behind the
-# documenso +8.5 retry — unchanged). Names the structural anchor explicitly
-# (MISSION-92 lever #3).
+# draw keeps the _MERGE_CORRECTIVE above). Names the two-axis anchor
+# explicitly, targeting the same band edge (MISSION-92 recall-at-depth).
 _JPF_CORRECTIVE = """
 
 PREVIOUS ATTEMPT REJECTED — it emitted MORE journeys than the repository has
 distinct flow resources AND multiplied product capabilities beyond what the
 deterministic scanner found (no grain lift on either axis). You are the
-ABSTRACTION layer. Structural anchor: emit roughly ONE journey per distinct
-capability of each product feature — merge the CRUD / settings / variant
-journeys of the SAME capability into that single journey — and consolidate
-near-duplicate capabilities instead of multiplying them. Judge your journey
-count against your OWN product_features list: a healthy journey list has a
-small number of user_flows PER product feature. Re-emit the full JSON now."""
+ABSTRACTION layer. Consolidate ONLY the redundant variants that act on the
+SAME resource with the SAME kind of intent into one journey each — different
+resources, and different intents on the same resource (authoring vs browsing
+vs lifecycle), stay SEPARATE journeys — and consolidate near-duplicate
+capabilities instead of multiplying them. A healthy journey list keeps
+roughly ONE journey per distinct (resource, intent) pair the evidence shows,
+which is usually SEVERAL journeys per product feature. Re-emit the full JSON
+now."""
 
 _REATTRIB_SYSTEM = """You assign each developer feature (a code module) to exactly ONE product
 capability from the given list, using the module name and its directory. Every
@@ -622,25 +675,29 @@ def _build_digest(
         {"name": p.display_name or p.name, "what": _short(p.description, 110)}
         for p in product_features
     ]
-    # CURRENT user flows are only SUPPORTING detail — cap to the top-N by
-    # member_count so a large repo (dub: 222 UFs) can't blow the prompt/output
-    # budget and force a degrade. The heaviest journeys carry the most signal;
-    # the rest are redundant CRUD variants the model would coarsen away anyway.
+    # CURRENT user flows are the abstraction evidence. The cap scales with
+    # the input (``max(floor, n_input)`` — show everything; the floor keeps
+    # the legacy small-repo bound). The old fixed 120 hid most of the pre-UF
+    # surface on large repos (dub 168/288, cal-com 261/381 hidden) — the
+    # journeys the model never saw could never be abstracted (D3 class).
+    # Weight-sort kept for a deterministic, stable digest order.
     ufs_by_weight = sorted(user_flows, key=lambda u: (-(u.member_count or 0), u.id or ""))
+    uf_cap = max(MAX_USER_FLOWS_DIGEST, len(user_flows))
     uf_lines = [
         {"id": u.id, "name": u.name, "resource": u.resource,
          "domain": u.domain, "intent": u.intent}
-        for u in ufs_by_weight[:MAX_USER_FLOWS_DIGEST]
+        for u in ufs_by_weight[:uf_cap]
     ]
     seen: set[tuple] = set()
     routes: list[dict[str, Any]] = []
+    route_cap = max(MAX_ROUTES_DIGEST, len(routes_index))  # scaled likewise
     for r in routes_index:
         key = (r.get("pattern"), r.get("method"))
         if key in seen:
             continue
         seen.add(key)
         routes.append({"p": r.get("pattern"), "m": r.get("method"), "t": r.get("trigger")})
-        if len(routes) >= MAX_ROUTES_DIGEST:
+        if len(routes) >= route_cap:
             break
     return {
         "n_dev_features": len(developer_features),
@@ -660,6 +717,34 @@ def _digest_resource_keys(digest: dict[str, Any]) -> set[str]:
         res = str(u.get("resource") or "").strip().lower()
         keys.add(res if res else f"name:{u.get('name') or u.get('id') or id(u)}")
     return keys
+
+
+def _band_pairs(digest: dict[str, Any]) -> int:
+    """Distinct (resource, intent-class) pairs in the digest user_flows —
+    the two-sided abstraction-contract BAND (MISSION-92 recall-at-depth
+    fix 1).
+
+    Golden journey grain empirically sits at resource x intent (~2-3
+    journeys per capability): measured first draws landed AT golden grain
+    (dub 96 emitted vs golden 99, cal-com 126 vs 102) and the old one-sided
+    contract still retried and crushed them (dub 96→40). A draw whose
+    journey count is at-or-below this pair count has NOT echoed the input
+    grain — the digest UF list itself is strictly larger wherever the gate
+    can arm (same-resource redundancy exists) — so it must be ACCEPTED.
+
+    Resource fallback mirrors :func:`_digest_resource_keys` (a UF without a
+    resource counts as its own pair — unknown mergeability → conservative).
+    ``intent`` is Stage 6.7's fixed intent class (author|browse|...);
+    missing intents fold to "" rather than inventing a class. Both sides
+    are ratios/structures of THIS repo's own digest — no tuned constant
+    (rule-no-magic-tuning).
+    """
+    pairs: set[tuple[str, str]] = set()
+    for u in digest.get("current_user_flows") or []:
+        res = str(u.get("resource") or "").strip().lower()
+        key = res if res else f"name:{u.get('name') or u.get('id') or id(u)}"
+        pairs.add((key, str(u.get("intent") or "").strip().lower()))
+    return len(pairs)
 
 
 def _contract_gate_armed(digest: dict[str, Any]) -> bool:
@@ -1353,12 +1438,22 @@ def run_journey_abstraction(
         return (isinstance(s, dict) and isinstance(s.get("name"), str)
                 and bool(s.get("name").strip()))
 
+    # Call-1 output budget scaled from the input size (fix 3): the digest now
+    # shows ALL user flows (+ anchor texts in ALIGN mode), so the response
+    # must be allowed to cite them all. Floor 16k = the validated free-gen
+    # shape on small repos (byte-stable there).
+    call1_max_tokens = _abstraction_max_tokens(
+        len(digest["current_user_flows"]),
+        len(anchor_texts) if aligned else 0,
+    )
+    tele["abstraction_max_tokens"] = call1_max_tokens
+
     def _draw(system: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
         """One Call-1 draw → sanitised ``(uf_specs, pf_specs, fail_reason)``.
         ``fail_reason`` is None on a usable draw."""
         text, in_t, out_t = _call_haiku(
             cli, model=abstraction_model, system=system, user=user1,
-            max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
+            max_tokens=call1_max_tokens, llm_health=llm_health)
         tele["llm_calls"] += 1
         tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in_t, out_t), 6)
         parsed = _parse_json(text)
@@ -1388,11 +1483,22 @@ def run_journey_abstraction(
     n_digest_pfs = len(digest.get("current_product_features") or [])
     tele["uf_specs_emitted"] = len(uf_specs)
 
+    band = _band_pairs(digest)
+    tele["contract_band_pairs"] = band
+
     def _armed_prongs(ufs_: list[dict[str, Any]], pfs_: list[dict[str, Any]],
                       restrict: list[str] | None = None) -> list[str]:
         """Arming reasons for a draw; ``restrict`` (the retry re-check) only
         re-evaluates the prongs that armed the FIRST draw, so a ratio-only
-        arming keeps the exact lever-1 pass_after_retry semantics."""
+        arming keeps the exact lever-1 pass_after_retry semantics.
+
+        Two-sided BAND (fix 1): a draw at-or-below the digest's distinct
+        (resource, intent) grain performed a real lift — golden grain —
+        and is ACCEPTED outright; neither prong may arm on it. The band is
+        acceptance-only: it never adds an arming reason. It applies to the
+        retry re-check too (a retry landing inside the band passes)."""
+        if len(ufs_) <= band:
+            return []
         out: list[str] = []
         if ((restrict is None or CONTRACT_ARMED_RATIO in restrict)
                 and _contract_gate_armed(digest)
@@ -1411,12 +1517,16 @@ def run_journey_abstraction(
         len(_digest_resource_keys(digest)) / max(n_digest_pfs, 1), 3)
 
     contract = CONTRACT_PASS
+    tele["contract_band_accepted"] = len(uf_specs) <= band
     armed = _armed_prongs(uf_specs, pf_specs)
     if armed:
         tele["contract_armed_by"] = armed
-        # A retry costs ≈ the first draw; skip it when a second same-shape
-        # call could bust the whole-stage cost cap (structural x2, not tuned).
-        if tele["cost_usd"] * 2 > COST_CAP_USD:
+        # Retry economics: an additional draw is admitted while the spend SO
+        # FAR is within the single-draw cap; the whole Call-1 sequence stays
+        # bounded by COST_CAP_USD x _STAGE_COST_CEILING_X below. (The old
+        # flat "cost*2 > cap" prediction starved big repos of their one
+        # corrective retry once the digest scaled with input.)
+        if tele["cost_usd"] >= COST_CAP_USD:
             contract = CONTRACT_UNCOMPRESSED
             tele["abstraction_retry_skipped_cost"] = True
         else:
@@ -1440,7 +1550,10 @@ def run_journey_abstraction(
                 tele["abstraction_retry_failed"] = r_fail
     tele["abstraction_contract"] = contract
     parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
-    if tele["cost_usd"] > COST_CAP_USD:
+    # Hard runaway ceiling: the admission rule above already bounds
+    # legitimate multi-draw spend under ~2 x the single-draw cap; only a
+    # runaway response can land beyond the ceiling → degrade.
+    if tele["cost_usd"] > COST_CAP_USD * _STAGE_COST_CEILING_X:
         return _degrade(f"cost_cap ${tele['cost_usd']:.4f}")
 
     # ── Call 2 — dev → capability re-attribution (Haiku / passed model) ─

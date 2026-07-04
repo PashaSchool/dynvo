@@ -550,17 +550,20 @@ def _many_ufs(n: int) -> list[UserFlow]:
     return [_uf(f"UF-{i:03d}", f"Do thing {i}", [f"f{i}"]) for i in range(1, n + 1)]
 
 
-def test_large_uf_input_capped_in_digest_no_crash() -> None:
-    """Change 3: a dub-scale UF count (222) must NOT crash and must be CAPPED
-    in the abstraction digest (supporting detail only)."""
+def test_large_uf_input_fully_digested_no_crash() -> None:
+    """Recall-at-depth fix 3: a dub-scale UF count (222) must NOT crash and
+    the digest cap SCALES with the input — every pre-UF is shown to the
+    abstraction model (the old fixed 120 hid 168/288 on dub), while the
+    output budget scales via abstraction_max_tokens."""
     big_ufs = _many_ufs(222)
     # from_flows in _ABS references UF-001..UF-003 which still exist here.
     _u, _p, _m, tel = run_journey_abstraction(
         big_ufs, _pfs(), _devs(), [], client=_client(_ABS, _MAP_FULL))
     assert tel["applied"] is True                       # abstracted, did not degrade
     assert tel["input_user_flows"] == 222
-    assert tel["digest_user_flows"] == MAX_USER_FLOWS_DIGEST  # capped to top-N
-    assert tel["digest_user_flows"] < tel["input_user_flows"]
+    assert tel["digest_user_flows"] == 222              # input-scaled: show all
+    assert tel["digest_user_flows"] > MAX_USER_FLOWS_DIGEST
+    assert tel["abstraction_max_tokens"] == 22200       # 100/item, under ceiling
 
 
 def test_cache_hit_returns_identical_output() -> None:
@@ -1190,7 +1193,10 @@ def test_contract_violation_retries_with_merge_corrective() -> None:
     assert len(systems) == 2
     assert "PREVIOUS ATTEMPT REJECTED" not in systems[0]
     assert "PREVIOUS ATTEMPT REJECTED" in systems[1]
-    assert "product_features list" in systems[1]  # journeys-per-PF anchor
+    # band-edge anchor (fix 1): consolidate same-resource same-intent only —
+    # never the old "few journeys per product feature" crush instruction.
+    assert "(resource, intent) pair" in systems[1]
+    assert "Merge aggressively" not in systems[1]
 
 
 def test_contract_retry_still_uncompressed_kept_and_flagged() -> None:
@@ -1237,12 +1243,13 @@ def test_contract_gate_disarmed_at_resource_grain() -> None:
 
 
 def test_contract_retry_skipped_when_cost_capped(monkeypatch: Any) -> None:
-    """Structural cost guard: when a second same-shape Sonnet call could bust
-    the whole-stage cap, the retry is skipped and the first draw ships
+    """Proportional retry admission: an additional draw is admitted only
+    while the spend SO FAR is under the single-draw cap. When the first draw
+    already consumed it, the retry is skipped and the first draw ships
     flagged uncompressed (never a cap-degrade caused BY the gate)."""
     from faultline.llm.cost import estimate_call_cost
     one_call = estimate_call_cost(DEFAULT_ABSTRACTION_MODEL, 400, 200)
-    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 1.5)
+    monkeypatch.setattr(_mod, "COST_CAP_USD", one_call * 0.9)
     cli = _seq_client([_UNCOMPRESSED, _ABS], _MAP_FULL)
     ufs, pfs, dm, tel = run_journey_abstraction(
         _ufs(), _pfs(), _devs(), [], client=cli)
@@ -1331,8 +1338,9 @@ def test_cache_hit_restores_contract_flag() -> None:
 
 
 def test_cache_version_bumped_for_contract_fix() -> None:
-    """Frozen pre-fix draws (cached under 'contract-3' and earlier) must be
+    """Frozen pre-fix draws (cached under 'contract-4' and earlier) must be
     invalidated — the version participates in the cache key AND the
-    entry-validity check. 'contract-4' = the jpf structural anchor (lever #3):
-    contract-3 entries may hold two-axis-inflated draws the jpf prong retries."""
-    assert ABSTRACTION_CACHE_VERSION == "contract-4"
+    entry-validity check. 'band-5' = the two-sided contract band + band-edge
+    correctives + input-scaled digest (MISSION-92 recall-at-depth): older
+    entries hold crush-prone draws produced under the one-sided contract."""
+    assert ABSTRACTION_CACHE_VERSION == "band-5"
