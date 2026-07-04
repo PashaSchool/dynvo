@@ -294,9 +294,14 @@ def build_routes_index(
                     continue
                 _emit(str(pat), str(meth or "GET"), str(file_str or ""))
 
-    # Pass B — the filesystem ``route`` extractor's candidates, mapped to
-    # ``(pattern, method)`` via the on-disk routing convention.
-    route_signals = extractor_signals.get("route") or []
+    # Pass B — the filesystem routing candidates, mapped to
+    # ``(pattern, method)`` via the on-disk routing convention. Two
+    # sources carry them: the stock ``route`` extractor and the
+    # profile-supplied ``route-pages`` extractor (the hybrid
+    # ``pages/`` + ``app/`` Next surface — same filesystem semantics).
+    route_signals = list(extractor_signals.get("route") or []) + list(
+        extractor_signals.get("route-pages") or []
+    )
     for sig in route_signals:
         # Path 1 — a signal that already carries an explicit
         # ``{pattern, method, file}`` (synthetic / future RouteSignal).

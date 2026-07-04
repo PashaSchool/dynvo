@@ -57,16 +57,15 @@ from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.extractors._util import is_noise, posix, slugify
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
-from faultline.pipeline_v2.extractors.route import RouteFileExtractor
+from faultline.pipeline_v2.profiles._pages_surface import (
+    _PagesIndex,
+    pages_flow_entries,
+)
 from faultline.pipeline_v2.profiles._splitter import split_workspaces
 from faultline.pipeline_v2.profiles.base import (
     AttributionSpec,
     FileRole,
     FlowEntry,
-)
-from faultline.pipeline_v2.profiles._pages_surface import (
-    _PagesIndex,
-    pages_flow_entries,
 )
 
 if TYPE_CHECKING:
@@ -353,59 +352,54 @@ def _owning_boundary(path: str) -> _Boundary | None:
 # wins can therefore still ship its dominant surface under ``pages/``
 # (supabase studio: a vestigial ``app/`` dir + 178 ``pages/**`` screens
 # → 0 routes extracted, 41 golden journeys with zero flows). The fix is
-# UNIVERSAL convention support, not a repo path: reuse the
-# ``next_pages_react`` Pages-Router machinery (``_PagesIndex``,
-# ``pages_flow_entries``) on top of the stock extraction.
+# UNIVERSAL convention support, not a repo path: reuse the shared
+# ``_pages_surface`` Pages-Router machinery (``_PagesIndex``,
+# ``pages_flow_entries``) ALONGSIDE the stock extraction.
 
 
-class _HybridPagesRouteExtractor(RouteFileExtractor):
-    """Stock route extraction + the Pages-Router pass for hybrid units.
+class _HybridPagesRouteExtractor:
+    """Pages-Router anchors for a HYBRID Next unit — a NEW source.
 
-    ``extract`` returns the stock :class:`RouteFileExtractor` output
-    BYTE-IDENTICAL when the tree has no accepted ``pages/`` root (the
-    pure App Router case — G4 inertness for every already-pinned repo).
-    When one exists, the pages buckets (shell files stripped — the
-    app-shell rule) are merged in: a slug already emitted by the stock
-    pass unions its paths; new slugs are appended in sorted order.
+    Deliberately carries its OWN name (``route-pages``) so Stage 1
+    APPENDS it instead of replacing the stock ``route`` extractor:
+    replacing by name would — through the composite profile's
+    scoped-override seam — narrow the GLOBAL stock route pass down to
+    this profile's unit and silently drop every other scope's routes
+    (measured on polar: routes_index 546→408, 31 features lost). The
+    stock pass stays untouched everywhere; this extractor only ADDS the
+    pages buckets (shell files stripped — the app-shell rule). Same-slug
+    anchors from both sources merge in Stage 2 by name, exactly like any
+    multi-source agreement.
+
+    Implements the Stage-1 ``AnchorExtractor`` Protocol; reaches Stage 1
+    exclusively via the profile's extractor overrides, and the profile
+    supplies it ONLY when an accepted ``pages/`` root exists — a pure
+    App Router repo carries no extra extractor at all (G4 inertness).
     """
 
+    name = "route-pages"
+
     def __init__(self, pages_index_of) -> None:  # noqa: ANN001 — profile memo hook
-        super().__init__()
         self._pages_index_of = pages_index_of
 
     def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        stock = super().extract(ctx)
         index: _PagesIndex = self._pages_index_of(ctx)
-        if not index.buckets:
-            return stock
-
         shell = index.shell_files
-        out = list(stock)
-        pos_by_name = {a.name: i for i, a in enumerate(out)}
-
-        def _candidate(slug: str, paths: tuple[str, ...]) -> AnchorCandidate:
-            return AnchorCandidate(
-                name=slug,
-                paths=paths,
-                source=self.name,
-                confidence_self=min(0.6 + 0.05 * len(paths), 0.95),
-                rationale=(
-                    f"route convention slug '{slug}' derived from "
-                    f"{len(paths)} routing file(s)"
-                ),
-            )
-
+        out: list[AnchorCandidate] = []
         for slug, paths in index.buckets.items():  # keys pre-sorted
-            clean = [p for p in paths if p not in shell]
+            clean = tuple(sorted({p for p in paths if p not in shell}))
             if not clean:
                 continue
-            at = pos_by_name.get(slug)
-            if at is not None:
-                merged = tuple(sorted(set(out[at].paths) | set(clean)))
-                out[at] = _candidate(slug, merged)
-            else:
-                pos_by_name[slug] = len(out)
-                out.append(_candidate(slug, tuple(sorted(set(clean)))))
+            out.append(AnchorCandidate(
+                name=slug,
+                paths=clean,
+                source=self.name,
+                confidence_self=min(0.6 + 0.05 * len(clean), 0.95),
+                rationale=(
+                    f"pages-router convention slug '{slug}' derived from "
+                    f"{len(clean)} routing file(s) (hybrid pages/+app/ unit)"
+                ),
+            ))
         return out
 
 
@@ -804,16 +798,20 @@ class NextAppRouterProfile:
     # ── Stage-1 activation (hybrid pages/ + app/ trees) ──────────────────────
 
     def stage_1_extractor_overrides(
-        self, ctx: "ScanContext",  # noqa: ARG002 — contract signature
+        self, ctx: "ScanContext",
     ) -> list[object]:
-        """Replace the stock ``route`` extractor with the hybrid variant.
+        """Append the pages-surface extractor — HYBRID trees only.
 
         Consumed duck-typed by ``merge_profile_extractors`` (the trunk
-        never names this profile). :class:`_HybridPagesRouteExtractor`
-        returns the stock output byte-identical when the tree has no
-        accepted ``pages/`` root, so pure App Router repos are untouched;
-        hybrid units additionally surface their Pages-Router buckets.
+        never names this profile). Supplied ONLY when the scope has an
+        accepted ``pages/`` root with routable files: a pure App Router
+        repo returns ``[]`` and its Stage-1 wiring stays byte-identical
+        (the stock ``route`` extractor is never replaced — see
+        :class:`_HybridPagesRouteExtractor` for why replacing it is
+        unsafe under the composite profile's scoped-override seam).
         """
+        if not self._pages(ctx).buckets:
+            return []
         return [_HybridPagesRouteExtractor(self._pages)]
 
     # ── internals ────────────────────────────────────────────────────────────
