@@ -40,6 +40,7 @@ TYPE_FLOW_WALLTIME_EXCEEDED = "flow_walltime_exceeded"
 TYPE_BUDGET_EXCEEDED = "budget_exceeded"
 TYPE_LLM_DEGRADED = "llm_degraded"
 TYPE_HIGH_LLM_FALLBACK = "high_llm_fallback"
+TYPE_ALIGN_GATE_REFUSED = "align_gate_refused"
 
 # ── severity ladder ─────────────────────────────────────────────────────────
 SEVERITY_PARTIAL = "partial"
@@ -129,12 +130,41 @@ def high_llm_fallback(*, share: float, threshold: float) -> Degradation:
     )
 
 
+def align_gate_refused(
+    *, tier1_count: int, tier2_count: int, candidate_ufs: int,
+    candidate_journeys: int, floor: int,
+) -> Degradation:
+    """Stage 6.7d anchor-ALIGNMENT was requested (``FAULTLINE_STAGE_6_7D_ALIGN``
+    on) but the grain gate refused it: the repo's ACTION-grain (tier-1) anchor
+    vocabulary is smaller than the candidate journey set (one journey per
+    distinct flow resource) or below the floor, so aligning would bound UF
+    production and cost recall (the formbricks −9..−14.5 F1 failure, Phase
+    3.0). The stage free-generated instead — no silent behaviour change."""
+    return make(
+        TYPE_ALIGN_GATE_REFUSED,
+        stage="stage_6_7d_journey_abstraction",
+        severity=SEVERITY_DEGRADED,
+        detail=(
+            f"6.7d anchor-alignment requested but the grain gate refused: "
+            f"{tier1_count} distinct tier-1 (action-grain) anchors < "
+            f"max(candidate journeys {candidate_journeys}, floor {floor}); "
+            f"free-generated instead"
+        ),
+        tier1_count=tier1_count,
+        tier2_count=tier2_count,
+        candidate_ufs=candidate_ufs,
+        candidate_journeys=candidate_journeys,
+        floor=floor,
+    )
+
+
 __all__ = [
     "Degradation",
     "TYPE_FLOW_WALLTIME_EXCEEDED",
     "TYPE_BUDGET_EXCEEDED",
     "TYPE_LLM_DEGRADED",
     "TYPE_HIGH_LLM_FALLBACK",
+    "TYPE_ALIGN_GATE_REFUSED",
     "SEVERITY_PARTIAL",
     "SEVERITY_DEGRADED",
     "SEVERITY_FAILED",
@@ -143,4 +173,5 @@ __all__ = [
     "budget_exceeded",
     "llm_degraded",
     "high_llm_fallback",
+    "align_gate_refused",
 ]
