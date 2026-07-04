@@ -81,6 +81,10 @@ _SOURCE_PRIORITY: dict[str, int] = {
     # Rails routes are the same shape as ``route`` (file-system /
     # declared HTTP entry points) — match its priority.
     "rails-routes":    4,
+    # Pages-Router buckets of a HYBRID Next unit (profile-supplied
+    # ``route-pages`` extractor, MISSION-92 recall-at-depth fix 2) —
+    # identical filesystem-routing semantics to ``route``, same tier.
+    "route-pages":     4,
     # Declared HTTP entry points parsed from source (decorators /
     # router-registration calls) — same semantics as ``route`` /
     # ``rails-routes``, so the same tier. All five added 2026-06

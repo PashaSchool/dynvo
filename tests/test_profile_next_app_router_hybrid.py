@@ -9,11 +9,15 @@ class) — previously produced ZERO routes/flows for the whole pages
 surface. Fixtures are SYNTHETIC framework-convention trees (never
 corpus paths — ``rule-no-repo-specific-paths``).
 
-Covers: the hybrid Stage-1 route extractor (stock output byte-identical
-on pure App Router trees; pages buckets merged in on hybrid trees; the
-app-shell rule; slug-collision union), ``flow_entries`` seeding both
-surfaces, ``feature_of`` alignment with the pages buckets, and the
-override merge seam.
+Covers: the appended ``route-pages`` Stage-1 extractor (supplied ONLY
+when an accepted pages root exists — a pure App Router repo keeps its
+Stage-1 wiring byte-identical, and the stock ``route`` extractor is
+NEVER replaced: replacing by name would, through the composite
+profile's scoped-override seam, narrow the global stock pass to this
+profile's unit — the polar 546→408 routes drift), the app-shell rule,
+same-slug coexistence with the stock anchors (Stage-2 merges by name),
+``flow_entries`` seeding both surfaces, and ``feature_of`` alignment
+with the pages buckets.
 """
 
 from __future__ import annotations
@@ -92,23 +96,38 @@ _PURE_FILES = {
 }
 
 
-def _route_extractor(profile: NextAppRouterProfile, ctx: ScanContext):
-    merged = merge_profile_extractors([RouteFileExtractor()], profile, ctx)
-    assert len(merged) == 1 and merged[0].name == "route"
-    return merged[0]
+def _merged_extractors(profile: NextAppRouterProfile, ctx: ScanContext):
+    return merge_profile_extractors([RouteFileExtractor()], profile, ctx)
+
+
+def _all_candidates(profile: NextAppRouterProfile, ctx: ScanContext):
+    out = []
+    for ex in _merged_extractors(profile, ctx):
+        out.extend(ex.extract(ctx))
+    return out
 
 
 # ── hybrid tree: both surfaces extracted ────────────────────────────────────
 
 
+def test_hybrid_merge_appends_route_pages_extractor(tmp_path: Path) -> None:
+    """The pages extractor is APPENDED under its own source name — the
+    stock ``route`` extractor is never replaced."""
+    profile = NextAppRouterProfile()
+    ctx = _ctx(tmp_path, _HYBRID_FILES)
+    merged = _merged_extractors(profile, ctx)
+    assert [ex.name for ex in merged] == ["route", "route-pages"]
+    assert isinstance(merged[0], RouteFileExtractor)  # the stock instance
+
+
 def test_hybrid_extractor_emits_pages_buckets(tmp_path: Path) -> None:
     profile = NextAppRouterProfile()
     ctx = _ctx(tmp_path, _HYBRID_FILES)
-    cands = _route_extractor(profile, ctx).extract(ctx)
+    cands = [c for c in _all_candidates(profile, ctx) if c.source == "route-pages"]
     by_name = {c.name: c for c in cands}
     # pages/ buckets surfaced ("api" is a noise segment, so the api page
     # buckets under its filename stem — stock next-pages behaviour)
-    assert set(by_name) >= {"database", "auth", "profile", "health", "status"}
+    assert set(by_name) >= {"database", "auth", "profile", "health"}
     assert "pages/database/tables.tsx" in by_name["database"].paths
     assert "pages/database/functions.tsx" in by_name["database"].paths
     assert "pages/auth/users.tsx" in by_name["auth"].paths
@@ -118,7 +137,7 @@ def test_hybrid_extractor_emits_pages_buckets(tmp_path: Path) -> None:
 def test_hybrid_extractor_strips_shell_and_ignores_fake_root(tmp_path: Path) -> None:
     profile = NextAppRouterProfile()
     ctx = _ctx(tmp_path, _HYBRID_FILES)
-    cands = _route_extractor(profile, ctx).extract(ctx)
+    cands = [c for c in _all_candidates(profile, ctx) if c.source == "route-pages"]
     all_paths = {p for c in cands for p in c.paths}
     assert "pages/_app.tsx" not in all_paths
     assert "pages/_document.tsx" not in all_paths
@@ -127,16 +146,34 @@ def test_hybrid_extractor_strips_shell_and_ignores_fake_root(tmp_path: Path) -> 
     assert not any(c.name in ("404", "500") for c in cands)
 
 
-def test_hybrid_slug_collision_unions_paths(tmp_path: Path) -> None:
-    """A pages bucket whose slug the app tree also emits (health) UNIONS
-    paths instead of duplicating the anchor."""
+def test_hybrid_same_slug_coexists_for_stage2_merge(tmp_path: Path) -> None:
+    """A pages bucket whose slug the app tree also emits (health) yields
+    one candidate per source with the SAME name — Stage 2 merges anchors
+    by name, and route-pages carries the same source priority as route."""
     profile = NextAppRouterProfile()
     ctx = _ctx(tmp_path, _HYBRID_FILES)
-    cands = _route_extractor(profile, ctx).extract(ctx)
-    health = [c for c in cands if c.name == "health"]
-    assert len(health) == 1
-    assert "app/(misc)/health/page.tsx" in health[0].paths
-    assert "pages/health/report.tsx" in health[0].paths
+    health = [c for c in _all_candidates(profile, ctx) if c.name == "health"]
+    assert {c.source for c in health} == {"route", "route-pages"}
+    paths = {p for c in health for p in c.paths}
+    assert "app/(misc)/health/page.tsx" in paths
+    assert "pages/health/report.tsx" in paths
+    from faultline.pipeline_v2.stage_2_reconcile import _priority
+    assert _priority("route-pages") == _priority("route")
+
+
+def test_routes_index_includes_pages_routes(tmp_path: Path) -> None:
+    """build_routes_index consumes the route-pages source too — the
+    hybrid unit's pages surface lands in routes_index (the D1 root:
+    'pages-router not in routes_index')."""
+    from faultline.pipeline_v2.indexes import build_routes_index
+    profile = NextAppRouterProfile()
+    ctx = _ctx(tmp_path, _HYBRID_FILES)
+    signals = {"route-pages": [c for c in _all_candidates(profile, ctx)
+                               if c.source == "route-pages"]}
+    idx = build_routes_index([], signals)
+    patterns = {r["pattern"] for r in idx}
+    assert "/database/tables" in patterns
+    assert "/auth/settings/:id" in patterns
 
 
 def test_hybrid_flow_entries_seed_both_surfaces(tmp_path: Path) -> None:
@@ -162,7 +199,7 @@ def test_hybrid_flow_entries_seed_both_surfaces(tmp_path: Path) -> None:
 def test_hybrid_feature_of_aligns_with_pages_buckets(tmp_path: Path) -> None:
     profile = NextAppRouterProfile()
     ctx = _ctx(tmp_path, _HYBRID_FILES)
-    cands = _route_extractor(profile, ctx).extract(ctx)
+    cands = [c for c in _all_candidates(profile, ctx) if c.source == "route-pages"]
     owned = {p: c.name for c in cands for p in c.paths if p.startswith("pages/")}
     assert owned  # sanity: pages files are anchored
     for path, slug in owned.items():
@@ -177,16 +214,16 @@ def test_hybrid_feature_of_aligns_with_pages_buckets(tmp_path: Path) -> None:
 # ── pure App Router tree: byte-identical no-op ──────────────────────────────
 
 
-def test_pure_app_router_extraction_byte_identical(tmp_path: Path) -> None:
-    """No accepted pages root → the hybrid extractor returns the STOCK
-    output (same candidates, same order) — G4 inertness for every
-    already-pinned App Router repo."""
+def test_pure_app_router_stage1_wiring_untouched(tmp_path: Path) -> None:
+    """No accepted pages root → the profile supplies NO override at all:
+    the merged registry is the exact stock instance (identity), so every
+    already-pinned App Router repo stays byte-identical (G4)."""
     profile = NextAppRouterProfile()
     ctx = _ctx(tmp_path, _PURE_FILES)
-    stock = RouteFileExtractor().extract(ctx)
-    hybrid = _route_extractor(profile, ctx).extract(ctx)
-    assert [(c.name, c.paths, c.source, c.confidence_self) for c in hybrid] \
-        == [(c.name, c.paths, c.source, c.confidence_self) for c in stock]
+    stock = RouteFileExtractor()
+    merged = merge_profile_extractors([stock], profile, ctx)
+    assert merged == [stock]                       # identity — no adapter
+    assert profile.stage_1_extractor_overrides(ctx) == []
 
 
 def test_pure_app_router_flow_entries_unchanged(tmp_path: Path) -> None:
