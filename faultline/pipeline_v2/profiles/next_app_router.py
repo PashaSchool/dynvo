@@ -56,6 +56,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.extractors._util import is_noise, posix, slugify
+from faultline.pipeline_v2.extractors.base import AnchorCandidate
+from faultline.pipeline_v2.profiles._pages_surface import (
+    _PagesIndex,
+    pages_flow_entries,
+)
 from faultline.pipeline_v2.profiles._splitter import split_workspaces
 from faultline.pipeline_v2.profiles.base import (
     AttributionSpec,
@@ -339,6 +344,65 @@ def _owning_boundary(path: str) -> _Boundary | None:
     return _container_boundary(segs)
 
 
+# ── hybrid pages/ + app/ route extraction (MISSION-92 recall-at-depth) ───────
+#
+# Next.js routes BOTH trees when a package carries a ``pages/`` root
+# alongside ``app/`` (the framework's app-over-pages precedence applies
+# per-conflicting-route, not per-repo). A repo the App Router profile
+# wins can therefore still ship its dominant surface under ``pages/``
+# (supabase studio: a vestigial ``app/`` dir + 178 ``pages/**`` screens
+# → 0 routes extracted, 41 golden journeys with zero flows). The fix is
+# UNIVERSAL convention support, not a repo path: reuse the shared
+# ``_pages_surface`` Pages-Router machinery (``_PagesIndex``,
+# ``pages_flow_entries``) ALONGSIDE the stock extraction.
+
+
+class _HybridPagesRouteExtractor:
+    """Pages-Router anchors for a HYBRID Next unit — a NEW source.
+
+    Deliberately carries its OWN name (``route-pages``) so Stage 1
+    APPENDS it instead of replacing the stock ``route`` extractor:
+    replacing by name would — through the composite profile's
+    scoped-override seam — narrow the GLOBAL stock route pass down to
+    this profile's unit and silently drop every other scope's routes
+    (measured on polar: routes_index 546→408, 31 features lost). The
+    stock pass stays untouched everywhere; this extractor only ADDS the
+    pages buckets (shell files stripped — the app-shell rule). Same-slug
+    anchors from both sources merge in Stage 2 by name, exactly like any
+    multi-source agreement.
+
+    Implements the Stage-1 ``AnchorExtractor`` Protocol; reaches Stage 1
+    exclusively via the profile's extractor overrides, and the profile
+    supplies it ONLY when an accepted ``pages/`` root exists — a pure
+    App Router repo carries no extra extractor at all (G4 inertness).
+    """
+
+    name = "route-pages"
+
+    def __init__(self, pages_index_of) -> None:  # noqa: ANN001 — profile memo hook
+        self._pages_index_of = pages_index_of
+
+    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
+        index: _PagesIndex = self._pages_index_of(ctx)
+        shell = index.shell_files
+        out: list[AnchorCandidate] = []
+        for slug, paths in index.buckets.items():  # keys pre-sorted
+            clean = tuple(sorted({p for p in paths if p not in shell}))
+            if not clean:
+                continue
+            out.append(AnchorCandidate(
+                name=slug,
+                paths=clean,
+                source=self.name,
+                confidence_self=min(0.6 + 0.05 * len(clean), 0.95),
+                rationale=(
+                    f"pages-router convention slug '{slug}' derived from "
+                    f"{len(clean)} routing file(s) (hybrid pages/+app/ unit)"
+                ),
+            ))
+        return out
+
+
 # ── the profile ──────────────────────────────────────────────────────────────
 
 
@@ -346,6 +410,12 @@ class NextAppRouterProfile:
     """Framework Knowledge Layer for Next.js App Router."""
 
     name = "next-app-router"
+
+    def __init__(self) -> None:
+        # Single-slot pages-surface memo (pure w.r.t. ctx; instance lives
+        # one scan) — same pattern as NextPagesReactProfile.
+        self._pages_key: tuple[int, int] | None = None
+        self._pages_index: _PagesIndex | None = None
 
     # ── detection ───────────────────────────────────────────────────────────
 
@@ -502,9 +572,21 @@ class NextAppRouterProfile:
         top-level shared ``components/`` / ``lib/`` / ``hooks/``) return
         ``None`` so they fall through to the generic residual / fan-out
         path UNCHANGED — they must not be force-homed into one feature.
+
+        HYBRID trees (a ``pages/`` root alongside ``app/`` — Next routes
+        both): a routed Pages-Router file returns its routing-bucket slug
+        (byte-identical to the hybrid route extractor's anchors — shared
+        ``_PagesIndex`` computation); shell files stay ``None``. Pure App
+        Router repos have no accepted pages root, so this arm is inert.
         """
         boundary = _owning_boundary(path)
-        return boundary.slug if boundary is not None else None
+        if boundary is not None:
+            return boundary.slug
+        p = posix(path)
+        pages = self._pages(ctx)
+        if p in pages.shell_files:
+            return None
+        return pages.owned.get(p)
 
     # ── feature synthesis (sub-decompose the workspace anchor) ──────────────────
 
@@ -610,6 +692,9 @@ class NextAppRouterProfile:
                         kind="http",
                         route=f"{method} {url or '/'}",
                     ))
+        # HYBRID trees: the Pages-Router surface seeds entries too (Next
+        # routes both trees). Reused machinery — no-op without a pages root.
+        entries.extend(pages_flow_entries(ctx, self._pages(ctx)))
         return entries
 
     @staticmethod
@@ -709,6 +794,34 @@ class NextAppRouterProfile:
             shared_roles=(FileRole.COMPONENT, FileRole.HOOK, FileRole.LIB),
             max_fanout=_SHARED_FANOUT_CAP,
         )
+
+    # ── Stage-1 activation (hybrid pages/ + app/ trees) ──────────────────────
+
+    def stage_1_extractor_overrides(
+        self, ctx: "ScanContext",
+    ) -> list[object]:
+        """Append the pages-surface extractor — HYBRID trees only.
+
+        Consumed duck-typed by ``merge_profile_extractors`` (the trunk
+        never names this profile). Supplied ONLY when the scope has an
+        accepted ``pages/`` root with routable files: a pure App Router
+        repo returns ``[]`` and its Stage-1 wiring stays byte-identical
+        (the stock ``route`` extractor is never replaced — see
+        :class:`_HybridPagesRouteExtractor` for why replacing it is
+        unsafe under the composite profile's scoped-override seam).
+        """
+        if not self._pages(ctx).buckets:
+            return []
+        return [_HybridPagesRouteExtractor(self._pages)]
+
+    # ── internals ────────────────────────────────────────────────────────────
+
+    def _pages(self, ctx: "ScanContext") -> _PagesIndex:
+        key = (id(ctx), len(ctx.tracked_files))
+        if self._pages_index is None or self._pages_key != key:
+            self._pages_index = _PagesIndex(ctx)
+            self._pages_key = key
+        return self._pages_index
 
 
 def _read(repo_root, rel_path: str) -> str | None:
