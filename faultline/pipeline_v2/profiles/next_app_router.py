@@ -56,11 +56,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from faultline.pipeline_v2.extractors._util import is_noise, posix, slugify
+from faultline.pipeline_v2.extractors.base import AnchorCandidate
+from faultline.pipeline_v2.extractors.route import RouteFileExtractor
 from faultline.pipeline_v2.profiles._splitter import split_workspaces
 from faultline.pipeline_v2.profiles.base import (
     AttributionSpec,
     FileRole,
     FlowEntry,
+)
+from faultline.pipeline_v2.profiles._pages_surface import (
+    _PagesIndex,
+    pages_flow_entries,
 )
 
 if TYPE_CHECKING:
@@ -339,6 +345,70 @@ def _owning_boundary(path: str) -> _Boundary | None:
     return _container_boundary(segs)
 
 
+# ── hybrid pages/ + app/ route extraction (MISSION-92 recall-at-depth) ───────
+#
+# Next.js routes BOTH trees when a package carries a ``pages/`` root
+# alongside ``app/`` (the framework's app-over-pages precedence applies
+# per-conflicting-route, not per-repo). A repo the App Router profile
+# wins can therefore still ship its dominant surface under ``pages/``
+# (supabase studio: a vestigial ``app/`` dir + 178 ``pages/**`` screens
+# → 0 routes extracted, 41 golden journeys with zero flows). The fix is
+# UNIVERSAL convention support, not a repo path: reuse the
+# ``next_pages_react`` Pages-Router machinery (``_PagesIndex``,
+# ``pages_flow_entries``) on top of the stock extraction.
+
+
+class _HybridPagesRouteExtractor(RouteFileExtractor):
+    """Stock route extraction + the Pages-Router pass for hybrid units.
+
+    ``extract`` returns the stock :class:`RouteFileExtractor` output
+    BYTE-IDENTICAL when the tree has no accepted ``pages/`` root (the
+    pure App Router case — G4 inertness for every already-pinned repo).
+    When one exists, the pages buckets (shell files stripped — the
+    app-shell rule) are merged in: a slug already emitted by the stock
+    pass unions its paths; new slugs are appended in sorted order.
+    """
+
+    def __init__(self, pages_index_of) -> None:  # noqa: ANN001 — profile memo hook
+        super().__init__()
+        self._pages_index_of = pages_index_of
+
+    def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
+        stock = super().extract(ctx)
+        index: _PagesIndex = self._pages_index_of(ctx)
+        if not index.buckets:
+            return stock
+
+        shell = index.shell_files
+        out = list(stock)
+        pos_by_name = {a.name: i for i, a in enumerate(out)}
+
+        def _candidate(slug: str, paths: tuple[str, ...]) -> AnchorCandidate:
+            return AnchorCandidate(
+                name=slug,
+                paths=paths,
+                source=self.name,
+                confidence_self=min(0.6 + 0.05 * len(paths), 0.95),
+                rationale=(
+                    f"route convention slug '{slug}' derived from "
+                    f"{len(paths)} routing file(s)"
+                ),
+            )
+
+        for slug, paths in index.buckets.items():  # keys pre-sorted
+            clean = [p for p in paths if p not in shell]
+            if not clean:
+                continue
+            at = pos_by_name.get(slug)
+            if at is not None:
+                merged = tuple(sorted(set(out[at].paths) | set(clean)))
+                out[at] = _candidate(slug, merged)
+            else:
+                pos_by_name[slug] = len(out)
+                out.append(_candidate(slug, tuple(sorted(set(clean)))))
+        return out
+
+
 # ── the profile ──────────────────────────────────────────────────────────────
 
 
@@ -346,6 +416,12 @@ class NextAppRouterProfile:
     """Framework Knowledge Layer for Next.js App Router."""
 
     name = "next-app-router"
+
+    def __init__(self) -> None:
+        # Single-slot pages-surface memo (pure w.r.t. ctx; instance lives
+        # one scan) — same pattern as NextPagesReactProfile.
+        self._pages_key: tuple[int, int] | None = None
+        self._pages_index: _PagesIndex | None = None
 
     # ── detection ───────────────────────────────────────────────────────────
 
@@ -502,9 +578,21 @@ class NextAppRouterProfile:
         top-level shared ``components/`` / ``lib/`` / ``hooks/``) return
         ``None`` so they fall through to the generic residual / fan-out
         path UNCHANGED — they must not be force-homed into one feature.
+
+        HYBRID trees (a ``pages/`` root alongside ``app/`` — Next routes
+        both): a routed Pages-Router file returns its routing-bucket slug
+        (byte-identical to the hybrid route extractor's anchors — shared
+        ``_PagesIndex`` computation); shell files stay ``None``. Pure App
+        Router repos have no accepted pages root, so this arm is inert.
         """
         boundary = _owning_boundary(path)
-        return boundary.slug if boundary is not None else None
+        if boundary is not None:
+            return boundary.slug
+        p = posix(path)
+        pages = self._pages(ctx)
+        if p in pages.shell_files:
+            return None
+        return pages.owned.get(p)
 
     # ── feature synthesis (sub-decompose the workspace anchor) ──────────────────
 
@@ -610,6 +698,9 @@ class NextAppRouterProfile:
                         kind="http",
                         route=f"{method} {url or '/'}",
                     ))
+        # HYBRID trees: the Pages-Router surface seeds entries too (Next
+        # routes both trees). Reused machinery — no-op without a pages root.
+        entries.extend(pages_flow_entries(ctx, self._pages(ctx)))
         return entries
 
     @staticmethod
@@ -709,6 +800,30 @@ class NextAppRouterProfile:
             shared_roles=(FileRole.COMPONENT, FileRole.HOOK, FileRole.LIB),
             max_fanout=_SHARED_FANOUT_CAP,
         )
+
+    # ── Stage-1 activation (hybrid pages/ + app/ trees) ──────────────────────
+
+    def stage_1_extractor_overrides(
+        self, ctx: "ScanContext",  # noqa: ARG002 — contract signature
+    ) -> list[object]:
+        """Replace the stock ``route`` extractor with the hybrid variant.
+
+        Consumed duck-typed by ``merge_profile_extractors`` (the trunk
+        never names this profile). :class:`_HybridPagesRouteExtractor`
+        returns the stock output byte-identical when the tree has no
+        accepted ``pages/`` root, so pure App Router repos are untouched;
+        hybrid units additionally surface their Pages-Router buckets.
+        """
+        return [_HybridPagesRouteExtractor(self._pages)]
+
+    # ── internals ────────────────────────────────────────────────────────────
+
+    def _pages(self, ctx: "ScanContext") -> _PagesIndex:
+        key = (id(ctx), len(ctx.tracked_files))
+        if self._pages_index is None or self._pages_key != key:
+            self._pages_index = _PagesIndex(ctx)
+            self._pages_key = key
+        return self._pages_index
 
 
 def _read(repo_root, rel_path: str) -> str | None:
