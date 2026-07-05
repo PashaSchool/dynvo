@@ -273,7 +273,15 @@ def attribute_domain_members(
 #   * name collisions with existing features skip that domain (conservative).
 # Rides the 8.9.6 flag; independently killable via
 # ``FAULTLINE_STAGE_8_9_6_SERVICE_CARVE=0``. Deterministic, $0 LLM.
-_SERVICE_CONTAINER_SEGS = frozenset({"services", "service"})
+# Domain-organised containers the carve lifts subsystems out of: the backend
+# ``services/<domain>/`` convention AND the React feature-folder conventions
+# (``features/<domain>/`` / ``modules/<domain>/``) — both are author-declared
+# product domains a mega-anchor (backend / <app>-frontend) can swallow whole.
+# Deliberately EXCLUDES the generic UI-layer containers (components / hooks):
+# those are presentational plumbing, not product subsystems.
+_SERVICE_CONTAINER_SEGS = frozenset({
+    "services", "service", "features", "feature", "modules", "module",
+})
 # Universal infra-domain conventions (never product subsystems). Mirrors the
 # 6.7d structure-leak / mock-scaffolding classes — not a repo list.
 _INFRA_DOMAIN_SKIP = frozenset({
