@@ -953,18 +953,38 @@ class UserFlow(BaseModel):
     # serialized JSON — see ``_omit_none_identity``) on every scan that
     # ran without a prev-scan input, keeping default output byte-identical.
     identity: dict[str, Any] | None = None
+    # Stage 6.7d PF-UF backstop (2026-07-05) — ``True`` for a THIN journey
+    # the deterministic backstop appended because a flowful product feature
+    # ended up with ZERO journeys referencing it (the operator's "фіча без
+    # юзер-фловів" anomaly, validator invariant I8). ``synthesis_reason``
+    # carries the subclass ("promoted_capability_backstop" — capability
+    # minted by the residual-guard tier-2 promotion AFTER the draw;
+    # "uncovered_product_feature_backstop" — draw coverage gap). EVAL
+    # INTEGRITY: scorers / the surfaced tier MUST be able to exclude these
+    # by tag — they exist for the board's completeness, never for recall.
+    # Both fields are OMITTED from dumps when default (see the serializer)
+    # so pre-existing scans and non-backstop UFs serialize byte-identically.
+    synthesized: bool = False
+    synthesis_reason: str | None = None
 
     @model_serializer(mode="wrap")
     def _omit_none_identity(self, handler: Any) -> Any:
-        """Drop ``identity`` from dumps when unset.
+        """Drop ``identity`` / backstop tags from dumps when unset.
 
         The keeper is strictly opt-in; scans without ``--prev-scan`` must
         serialize byte-identically to engines that predate the field
         (snapshot-gate digests + absent-input byte-identity contract).
+        Same contract for the 6.7d backstop tags: a non-synthesized UF
+        must dump exactly as it did before the fields existed.
         """
         data = handler(self)
-        if isinstance(data, dict) and data.get("identity") is None:
-            data.pop("identity", None)
+        if isinstance(data, dict):
+            if data.get("identity") is None:
+                data.pop("identity", None)
+            if data.get("synthesized") is False:
+                data.pop("synthesized", None)
+            if data.get("synthesis_reason") is None:
+                data.pop("synthesis_reason", None)
         return data
 
 
