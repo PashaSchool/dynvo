@@ -123,6 +123,10 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (8, "anchor_subdecompose"),
     (8, "llm_component_split"),
     (8, "domain_member_attribution"),
+    # Stage 8.9.7 (2026-07-05) — per-vendor connector split. Deterministic,
+    # $0, env-gated default OFF; the telemetry artifact is emitted on every
+    # run (enabled: false when gated off).
+    (8, "vendor_connector_split"),
     (3, "flow_expansion"),
     (6, "test_strip"),
     (6, "generated_strip"),

@@ -95,6 +95,14 @@ VENDOR_TOKENS = frozenset({
     "resend", "sendgrid", "mailgun", "postmark", "ses",
     "inngest", "temporal", "airflow",
     "plaid", "shopify", "zapier", "notion", "airtable", "figma",
+    # Security / EDR / SIEM / ITSM vendors (public products — same class as
+    # the rows above; added 2026-07-05 for the per-connector split, stage
+    # 8.9.7). Common-English collisions deliberately excluded ("checkpoint",
+    # "wiz", "elastic").
+    "sentinelone", "defender", "cortex", "claroty", "paloalto",
+    "fortinet", "zscaler", "splunk", "tanium", "sophos", "trellix",
+    "cybereason", "carbonblack", "rapid7", "qualys", "tenable", "wazuh",
+    "servicenow", "pagerduty", "opsgenie", "jira",
 })
 
 # Vendor-domination share: vendor token must appear in the evidence of

@@ -199,3 +199,55 @@ def test_cross_source_duplicate_claim_first_wins(monkeypatch):
     assert pam.paths.count(p) == 1
     assert _mnames(s1) == []          # transferred away
     assert _mnames(s2) == [p]         # kept as shared claim on the new owner
+
+
+def test_features_dir_container_transfers(monkeypatch):
+    """2026-07-05 extension: the React feature-folder conventions
+    (``features/<domain>``, ``modules/<domain>``) are domain containers too —
+    member-only files under them transfer to the same-named feature."""
+    monkeypatch.setenv(_ENV, "1")
+    anchor = _feat("frontend", ["fe/app.tsx"], members=[
+        "fe/src/features/anomalies/h1.ts",
+        "fe/src/modules/detection-studio/h2.ts",
+        "fe/src/features/common/h3.ts",       # generic domain → stays
+    ])
+    anomalies = _feat("anomalies", ["fe/src/features/anomalies/a.tsx"],
+                      uuid="an")
+    studio = _feat("detection-studio", ["fe/src/modules/detection-studio/s.tsx"],
+                   uuid="ds")
+    res = attribute_domain_members([anchor, anomalies, studio])
+    assert res.files_transferred == 2
+    assert "fe/src/features/anomalies/h1.ts" in anomalies.paths
+    assert "fe/src/modules/detection-studio/h2.ts" in studio.paths
+    assert _mnames(anchor) == ["fe/src/features/common/h3.ts"]
+
+
+def test_dialog_modal_domains_are_generic(monkeypatch):
+    """UI-widget container names (dialogs/modals/…) are never a product
+    domain — same class as the pre-existing widgets/forms/icons tokens."""
+    monkeypatch.setenv(_ENV, "1")
+    anchor = _feat("frontend", ["fe/app.tsx"], members=[
+        "fe/src/components/dialogs/h1.ts",
+        "fe/src/features/modals/h2.ts",
+    ])
+    dialogs = _feat("dialogs", ["fe/x/d.tsx"], uuid="d")
+    modals = _feat("modals", ["fe/x/m.tsx"], uuid="m")
+    res = attribute_domain_members([anchor, dialogs, modals])
+    assert res.files_transferred == 0
+    assert len(_mnames(anchor)) == 2
+
+
+def test_component_segs_frozen_for_8_9_5():
+    """Contract: the 8.9.5 fan-out set is UNCHANGED — 8.9.6 extends via its
+    own _CONTAINER_SEGS, never by mutating the split stage's vocabulary."""
+    from faultline.pipeline_v2.stage_8_9_5_llm_component_split import (
+        _COMPONENT_SEGS,
+    )
+    from faultline.pipeline_v2.stage_8_9_6_domain_member_attribution import (
+        _CONTAINER_SEGS,
+    )
+    assert _COMPONENT_SEGS == frozenset(
+        {"components", "component", "hooks", "hook"}
+    )
+    assert _CONTAINER_SEGS >= _COMPONENT_SEGS
+    assert {"features", "modules"} <= _CONTAINER_SEGS

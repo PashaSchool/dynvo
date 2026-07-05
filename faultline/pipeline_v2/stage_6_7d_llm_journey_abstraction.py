@@ -1107,6 +1107,138 @@ def _fallback_capability(
     return _RESIDUAL_CAP, False
 
 
+# ── Residual-confirmation guard (deterministic, $0) ────────────────────────
+# Call 2 EXPLICITLY assigning a dev feature to "Shared Platform" was trusted
+# blindly — on Soc0 (2026-07-05 audit) Haiku sent 60/155 devs there, including
+# `edr` while its OWN Call-1 output contained an "EDR Integrations" capability,
+# and whole feature-dir domains (frontend/src/{features,modules}/<domain>) like
+# anomalies / network-security. The guard treats an explicit residual claim on
+# a NON-container dev as unproven and tries two structural confirmations:
+#   tier 1 — STRONG token match: the dev name's content tokens (minus public
+#            vendor tokens, which name the connector INSTANCE while caps name
+#            the FAMILY) are fully covered by one capability's tokens;
+#   tier 2 — feature-dir promotion: the majority of the dev's owned paths sit
+#            under `<features|modules>/<domain>/` where <domain> names the dev
+#            itself — the author-declared React feature-folder convention —
+#            so the dev IS a product domain: promote it to its own capability.
+# No match → residual stands (honest platform bucket). Kill-switch:
+# ``FAULTLINE_STAGE_6_7D_RESIDUAL_GUARD=0`` (default ON inside the opt-in
+# 6.7d stage). Runs at reconstruction time → applies identically to live and
+# cache-hit replays.
+_FEATURE_DIR_CONTAINERS = frozenset({"features", "feature", "modules", "module"})
+
+
+def _residual_guard_enabled() -> bool:
+    return os.environ.get("FAULTLINE_STAGE_6_7D_RESIDUAL_GUARD", "1") != "0"
+
+
+def _kebab(name: str) -> str:
+    """camelCase/space/slash → kebab slug (dir↔name comparison tier)."""
+    s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "-", name or "")
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+
+def _kebab_singular(slug: str) -> str:
+    """Crude per-token singularisation of a kebab slug — same convention as
+    stage 8.9.6 / the uf-scorer tokenisers."""
+    return "-".join(
+        t[:-1] if len(t) > 3 and t.endswith("s") else t
+        for t in slug.split("-")
+    )
+
+
+def _strong_capability_match(
+    dev: "Feature", cap_tokens: dict[str, set[str]],
+) -> str | None:
+    """Capability whose content tokens FULLY COVER the dev feature's — a
+    subset match, strictly stronger than the 1-shared-token rescue (which
+    misroutes: 'network-security' → 'AI Security Chat Assistant' on the lone
+    'security' token). Vendor tokens are excluded from the dev side when
+    non-vendor tokens remain ('edr-crowdstrike' matches 'EDR Integrations')."""
+    from faultline.pipeline_v2.naming_validator import VENDOR_TOKENS
+
+    dtok = _content_tokens(dev.display_name or dev.name)
+    if not dtok:
+        return None
+    core = {t for t in dtok if t not in VENDOR_TOKENS and f"{t}s" not in VENDOR_TOKENS}
+    if not core:
+        core = dtok  # pure-vendor name ('teams') — match on the vendor itself
+    best: str | None = None
+    best_score: tuple[int, float] = (0, 0.0)
+    for cap in sorted(cap_tokens):  # deterministic tie-break
+        ctok = cap_tokens[cap]
+        if not ctok or not core <= ctok:
+            continue
+        # Prefer covering MORE tokens, then the more specific capability.
+        score = (len(core), len(core) / len(ctok))
+        if score > best_score:
+            best, best_score = cap, score
+    return best
+
+
+def _feature_dir_capability(dev: "Feature") -> str | None:
+    """Own-capability display name when the dev's owned footprint majority-
+    sits under ``<features|modules>/<domain>/`` and <domain> names the dev
+    itself (exact or crude-singular kebab match). Structural, scale-invariant:
+    no repo paths, majority ratio, generic domain tokens skipped."""
+    from faultline.pipeline_v2.stage_8_9_6_domain_member_attribution import (
+        _GENERIC_DOMAIN_SKIP,
+    )
+
+    paths = list(getattr(dev, "paths", None) or [])
+    if not paths:
+        return None
+    slugs = {_kebab(dev.name or ""), _kebab(dev.display_name or "")} - {""}
+    slugs |= {_kebab_singular(s) for s in set(slugs)}
+    hits = 0
+    for p in paths:
+        segs = p.split("/")
+        for i in range(len(segs) - 2):  # container + domain must both be dirs
+            if segs[i].lower() not in _FEATURE_DIR_CONTAINERS:
+                continue
+            dom = _kebab(segs[i + 1])
+            if (
+                dom
+                and dom not in _GENERIC_DOMAIN_SKIP
+                and dom not in _STRUCTURE_LEAK_SLUGS
+                and (dom in slugs or _kebab_singular(dom) in slugs)
+            ):
+                hits += 1
+            break  # first container segment decides
+    if hits * 2 <= len(paths):  # strict majority — tolerate stray helpers
+        return None
+    base = dev.display_name or dev.name or ""
+    # Titleize kebab/snake dev names so the promoted capability reads like the
+    # LLM-emitted ones ("network-security" → "Network Security").
+    words = re.split(r"[-_\s]+", base.strip())
+    return " ".join(w if (w.isupper() and len(w) > 1) else w.capitalize()
+                    for w in words if w) or None
+
+
+def _confirm_residual(
+    dev: "Feature",
+    cap_tokens: dict[str, set[str]],
+    pf_tele: dict[str, Any],
+) -> str:
+    """Confirmed capability for a dev feature Call 2 EXPLICITLY sent to the
+    residual — see the guard rationale above. Returns the residual unchanged
+    for genuine platform containers."""
+    from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
+
+    nm = dev.display_name or dev.name or ""
+    if _slug(nm) in _STRUCTURE_LEAK_SLUGS or _is_workspace_anchor(dev):
+        return _RESIDUAL_CAP
+    strong = _strong_capability_match(dev, cap_tokens)
+    if strong is not None:
+        pf_tele["devs_residual_rescued_strong"] += 1
+        return strong
+    promo = _feature_dir_capability(dev)
+    if promo is not None:
+        pf_tele["devs_residual_promoted"] += 1
+        return promo
+    return _RESIDUAL_CAP
+
+
 def _build_product_features(
     pf_specs: list[dict[str, Any]],
     dev_map: dict[str, str],
@@ -1123,9 +1255,13 @@ def _build_product_features(
     # Group dev features by their mapped capability. Omitted devs are token-
     # matched to an emitted capability when possible; only true platform
     # containers and unmatchable devs land in the (marked) residual.
-    pf_tele: dict[str, Any] = {"devs_token_rescued": 0, "devs_residual": 0}
+    pf_tele: dict[str, Any] = {
+        "devs_token_rescued": 0, "devs_residual": 0,
+        "devs_residual_rescued_strong": 0, "devs_residual_promoted": 0,
+    }
     cap_to_devs: dict[str, list["Feature"]] = defaultdict(list)
     dev_to_product: dict[str, tuple[str, ...]] = {}
+    residual_guard = _residual_guard_enabled()
     for dev in developer_features:
         nm = dev.display_name or dev.name
         cap = dev_map.get(nm)
@@ -1133,6 +1269,11 @@ def _build_product_features(
             cap, rescued = _fallback_capability(dev, cap_tokens)
             if rescued:
                 pf_tele["devs_token_rescued"] += 1
+        elif cap == _RESIDUAL_CAP and residual_guard:
+            # An EXPLICIT residual assignment is unproven — structural
+            # confirmation or re-route (strong token match / feature-dir
+            # promotion). See the guard rationale above _confirm_residual.
+            cap = _confirm_residual(dev, cap_tokens, pf_tele)
         if cap == _RESIDUAL_CAP:
             pf_tele["devs_residual"] += 1
         cap_to_devs[cap].append(dev)

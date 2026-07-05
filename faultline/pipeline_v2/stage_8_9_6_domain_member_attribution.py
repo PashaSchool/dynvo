@@ -46,13 +46,27 @@ if TYPE_CHECKING:
 
 # Generic grouping/container tokens that must never be read as a product
 # domain (they would match same-named infra features and mega-transfer).
+# The trailing row is the UI-widget-container class (same family as the
+# existing "widgets"/"primitives"/"forms" members): dialog/modal/overlay
+# dirs are presentational plumbing, never a product domain.
 _GENERIC_DOMAIN_SKIP = frozenset({
     "api", "ui", "ux", "common", "shared", "utils", "util", "helpers",
     "lib", "libs", "core", "components", "component", "hooks", "hook",
     "internal", "misc", "types", "styles", "assets", "base", "v1", "v2",
     "v3", "v4", "src", "app", "apps", "packages", "modules", "widgets",
     "primitives", "layouts", "icons", "forms",
+    "dialog", "dialogs", "modal", "modals", "drawer", "drawers",
+    "popover", "popovers", "overlay", "overlays",
 })
+# Domain-organised containers 8.9.6 walks. Extends the 8.9.5 fan-out set
+# (kept FROZEN — the split stage's behaviour must not change) with the
+# React feature-folder conventions: ``features/<domain>`` (feature-sliced
+# design) and ``modules/<domain>`` — both are author-declared product
+# domains, exactly the owner signal this stage corroborates. Universal
+# convention, not repo tuning (rule-no-repo-specific-paths).
+_CONTAINER_SEGS = frozenset(
+    _COMPONENT_SEGS | {"features", "feature", "modules", "module"}
+)
 # How many segments below the container may hold the domain dir — the domain
 # sits either directly under the container (``components/<domain>``) or under
 # ONE grouping dir (``hooks/api/<domain>``), mirroring the 8.9.5 v2 descent.
@@ -149,7 +163,7 @@ def _match_domain(
     ``_MAX_DESCENT`` levels deep; exact tier beats singular tier."""
     segs = path.split("/")
     comp_idx = next(
-        (i for i in range(len(segs) - 1) if segs[i].lower() in _COMPONENT_SEGS),
+        (i for i in range(len(segs) - 1) if segs[i].lower() in _CONTAINER_SEGS),
         None,
     )
     if comp_idx is None:
