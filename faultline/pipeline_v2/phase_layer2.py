@@ -61,6 +61,7 @@ from faultline.pipeline_v2.stage_8_marketing_clusterer import (
 )
 from faultline.pipeline_v2.stage_8_9_6_domain_member_attribution import (
     attribute_domain_members,
+    carve_service_domains,
 )
 from faultline.pipeline_v2.stage_8_9_7_vendor_connector_split import (
     split_vendor_connectors,
@@ -652,6 +653,36 @@ def run_layer2_phase(
                 product_features,
             )
             stage_8_9_6_telemetry["product_reconcile"] = s896_reconcile
+        # ── Stage 8.9.6b — mega-anchor service-domain carve-out ───────
+        # Service-domain flow subtrees (backend/services/<domain>/) owned by
+        # a shared workspace/infra anchor are lifted into their own dev
+        # feature so 6.7d maps them to a real capability and their journey
+        # resettles off the shared bucket (validator I10). Rides the 8.9.6
+        # flag; deterministic, $0 LLM.
+        carve_result = carve_service_domains(features)
+        # Only stamp the carve telemetry when the stage is ENABLED — when off
+        # (the deterministic snapshot-gate env) the 8.9.6 artifact stays
+        # byte-identical, so pinned digests never drift on a no-op carve.
+        if carve_result.enabled:
+            stage_8_9_6_telemetry["service_carve"] = carve_result.as_telemetry()
+            log8_9_6.info(
+                f"service_carve enabled={carve_result.enabled} "
+                f"anchors_carved={carve_result.anchors_carved} "
+                f"domains_carved={carve_result.domains_carved} "
+                f"flows_moved={carve_result.flows_moved} "
+                f"files_claimed={carve_result.files_claimed}",
+            )
+        if carve_result.anchors_carved:
+            # Carve mints new devs (inheriting the anchor's product_feature_id)
+            # and moves owned files onto them — re-union product paths so the
+            # Layer-2 surface stays consistent (mirrors the domain-attribution
+            # reconcile above). 6.7d, when enabled, re-maps them regardless.
+            product_features, s896b_reconcile = reconcile_product_features(
+                [f for f in features
+                 if getattr(f, "layer", "developer") == "developer"],
+                product_features,
+            )
+            stage_8_9_6_telemetry["service_carve_reconcile"] = s896b_reconcile
         write_stage_artifact(
             ctx.repo_path,
             stage_index=8,

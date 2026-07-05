@@ -1187,7 +1187,12 @@ def _fallback_capability(
 # ``FAULTLINE_STAGE_6_7D_RESIDUAL_GUARD=0`` (default ON inside the opt-in
 # 6.7d stage). Runs at reconstruction time → applies identically to live and
 # cache-hit replays.
-_FEATURE_DIR_CONTAINERS = frozenset({"features", "feature", "modules", "module"})
+_FEATURE_DIR_CONTAINERS = frozenset(
+    # React feature-folder conventions AND the backend service convention: a dev
+    # majority-owning ``<container>/<its-own-name>/`` IS that product domain.
+    # Mirrors the stage-8.9.6 carve container set so a carve-minted domain dev
+    # promotes to its own capability instead of falling to the shared bucket.
+    {"features", "feature", "modules", "module", "services", "service"})
 
 
 def _residual_guard_enabled() -> bool:
@@ -1207,6 +1212,137 @@ def _kebab_singular(slug: str) -> str:
         t[:-1] if len(t) > 3 and t.endswith("s") else t
         for t in slug.split("-")
     )
+
+
+# ── Iteration-5 grain surgery: token-family stemming + join-over-mint ────────
+# The residual-guard tier-2/tier-3 promotions minted THIN DUPLICATE SHELLS on
+# Soc0 (2026-07-05): a flowless `detection-studio` dev under
+# ``modules/detection-studio`` minted its own "Detection Studio" product
+# feature while the SAME product area already lived in "Custom Detector
+# Builder" (detectors-page + detector-detail-page + api-detectors). Fix 1
+# (JOIN-OVER-MINT) folds such a dev into the token-FAMILY capability that
+# already exists instead of minting a duplicate; fix 2 (FLOWFUL REQUIREMENT)
+# forbids a flowless dev from minting a standalone PF at all. Both are
+# structural + scale-invariant (rule-no-magic-tuning / rule-no-repo-specific-
+# paths): a light derivational stemmer folds ``detection`` / ``detector`` /
+# ``detect`` to one stem, and the join target is chosen by the LARGEST
+# established family home (gravitational-mass tie-break), not by any repo list.
+_MIN_STEM_LEN = 4
+# Longest-first: strip ONE derivational suffix past the singular form, keeping
+# a stem of at least _MIN_STEM_LEN so short/ambiguous stems never collapse.
+_STEM_SUFFIXES: tuple[str, ...] = (
+    "ization", "isation", "ations", "ation", "ition", "ision", "ements",
+    "ement", "ings", "ing", "ion", "ors", "ers", "ment", "ies", "or", "er",
+)
+# Generic container/surface tokens that must NEVER drive a family join (they
+# name a page/app shell, not a product domain). Mirrors validator I11's
+# container-page vocabulary + the 8.9.6 generic-domain class. A join on "page"
+# would wrongly fold "home-page" into "detections-page".
+_FAMILY_GENERIC_TOKENS = frozenset({
+    "page", "home", "landing", "index", "main", "root", "app", "apps",
+    "ui", "ux", "api", "web", "site", "portal", "dashboard", "console",
+    "screen", "view", "panel", "tab", "layout", "shell",
+})
+
+
+def _stem(token: str) -> str:
+    """Light dependency-free derivational stem for family folding.
+
+    Singularises first (reusing the naming_validator convention, safe on
+    ``status``/``analysis``), then strips ONE derivational suffix while the
+    remaining stem stays >= _MIN_STEM_LEN: ``detection``→``detect``,
+    ``detector``→``detect``, ``suggestions``→``suggest``. Idempotent on stems
+    that carry no suffix (``studio``→``studio``)."""
+    from faultline.pipeline_v2.naming_validator import _singular
+
+    t = _singular(token.lower())
+    for suf in _STEM_SUFFIXES:
+        if t.endswith(suf) and len(t) - len(suf) >= _MIN_STEM_LEN:
+            return t[: -len(suf)]
+    return t
+
+
+def _family_stems(name: str | None) -> set[str]:
+    """Discriminative family stems of a produced name — content tokens
+    (``_content_tokens`` already drops generic verbs/glue), minus the generic
+    container/surface tokens, minus public vendor tokens (which name the
+    connector INSTANCE, not the product family), stemmed."""
+    from faultline.pipeline_v2.naming_validator import VENDOR_TOKENS
+
+    out: set[str] = set()
+    for t in _content_tokens(name):
+        if t in _FAMILY_GENERIC_TOKENS or t in VENDOR_TOKENS:
+            continue
+        s = _stem(t)
+        if len(s) >= _MIN_STEM_LEN:
+            out.add(s)
+    return out
+
+
+def _family_capability_match(
+    dev: "Feature",
+    cap_context: dict[str, dict[str, Any]],
+) -> str | None:
+    """Existing capability whose token FAMILY the dev shares — the JOIN target
+    for a would-be thin-shell mint (fix 1). ``cap_context`` maps each candidate
+    capability display-name to ``{stems, members, flows, paths}`` (the family
+    stems of its NAME + established gravitational mass from its already-assigned
+    member devs). Returns the best join target, or ``None`` when the dev shares
+    no discriminative family stem with any OTHER capability.
+
+    Selection is structural and deterministic: prefer the capability sharing
+    the MOST family stems, then the LARGEST established home by BEHAVIOURAL mass
+    — member flows first (journeys are the product weight of a capability), then
+    member devs, then owned paths — then the alphabetically-first slug. A
+    residual dev joins the family's biggest existing home, never a repo-named
+    target. A capability whose slug equals the dev's own slug (its self-mint)
+    is never a join target."""
+    dev_stems = _family_stems(dev.display_name or dev.name)
+    if not dev_stems:
+        return None
+    dev_slug = _slug(dev.display_name or dev.name or "")
+    best: str | None = None
+    best_key: tuple[int, int, int, int, str] | None = None
+    for cap, ctx in cap_context.items():
+        if _slug(cap) == dev_slug:
+            continue  # never join a dev to its own self-capability
+        overlap = dev_stems & ctx["stems"]
+        if not overlap:
+            continue
+        # Descending preference; alpha slug ASCENDING → keep slug for a stable
+        # final tie-break. Flows rank above member count: a capability's
+        # journeys are its behavioural mass (a 62-flow detector home outranks a
+        # thinner 8-member one).
+        key = (len(overlap), ctx["flows"], ctx["members"], ctx["paths"])
+        cand_key = (*key, _slug(cap))
+        if best_key is None or key > best_key[:4] or (
+            key == best_key[:4] and _slug(cap) < best_key[4]
+        ):
+            best, best_key = cap, cand_key
+    return best
+
+
+# ── Container-page guard (fix 3) ─────────────────────────────────────────────
+# A page container is a SURFACE that HOSTS features, never a feature itself
+# (operator 2026-07-05: "хом пейдж фічою апріорі бути не може"). The tier-3
+# route-surface promotion minted "Home Page" from a `home-page` dev that owns
+# the landing route + 5 flows (inline-suggestions / ghost-text / knowledge-
+# chips) — but those flows belong to their OWN capabilities, and the page
+# skeleton belongs to the app shell. Structural identity check mirrors
+# validator I11's regex on the kebab slug.
+_CONTAINER_PAGE_SLUG_RE = re.compile(
+    r"^(home|landing|index|main|root)(-page)?$"
+)
+
+
+def _is_container_page(dev: "Feature") -> bool:
+    """True when the dev's IDENTITY is a page container (name is one of the
+    home/landing/index/main/root page classes) — structural, mirrors the
+    validator I11 container-page regex on the dev's kebab slug."""
+    for raw in (dev.name, getattr(dev, "display_name", None)):
+        if raw and _CONTAINER_PAGE_SLUG_RE.match(_kebab(raw)):
+            return True
+    return False
 
 
 def _strong_capability_match(
@@ -1321,10 +1457,21 @@ def _confirm_residual(
     route_files: frozenset[str] = frozenset(),
     route_uuids: frozenset[str] = frozenset(),
     minted_descs: dict[str, str] | None = None,
+    cap_context: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """Confirmed capability for a dev feature Call 2 EXPLICITLY sent to the
     residual — see the guard rationale above. Returns the residual unchanged
-    for genuine platform containers."""
+    for genuine platform containers.
+
+    Iteration-5 grain order (join over mint, flowful requirement):
+      1. structure-leak / workspace-anchor  -> residual
+      2. STRONG token-subset match          -> JOIN existing capability
+      3. token-FAMILY match (fix 1)         -> JOIN existing capability
+      4. tier-2 feature-dir / tier-3 route-surface MINT — ONLY when the dev
+         has >= 1 flow (fix 2: a flowless dev never mints a standalone PF —
+         it joins a family above or stays in the explainable residual)
+      5. residual
+    """
     from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
 
     def _promote(promo: str) -> str:
@@ -1345,6 +1492,19 @@ def _confirm_residual(
     if strong is not None:
         pf_tele["devs_residual_rescued_strong"] += 1
         return strong
+    # fix 1 — JOIN-OVER-MINT: fold a would-be thin-shell mint into the existing
+    # token-family capability (its biggest established home) instead of minting
+    # a duplicate. Runs BEFORE both tier-2 and tier-3 mints.
+    if cap_context:
+        fam = _family_capability_match(dev, cap_context)
+        if fam is not None:
+            pf_tele["devs_residual_family_joined"] = (
+                pf_tele.get("devs_residual_family_joined", 0) + 1
+            )
+            return fam
+    # fix 2 — FLOWFUL REQUIREMENT: a flowless dev never mints a standalone PF.
+    if not (getattr(dev, "flows", None) or []):
+        return _RESIDUAL_CAP
     promo = _feature_dir_capability(dev)
     if promo is not None:
         return _promote(promo)
@@ -1359,14 +1519,89 @@ def _confirm_residual(
     return _RESIDUAL_CAP
 
 
+def _container_page_guard_enabled() -> bool:
+    """Default ON inside the opt-in 6.7d stage —
+    ``FAULTLINE_STAGE_6_7D_CONTAINER_GUARD=0`` disables the container-page
+    guard (fix 3)."""
+    return os.environ.get("FAULTLINE_STAGE_6_7D_CONTAINER_GUARD", "1") != "0"
+
+
+def _dev_dir(path: str) -> str:
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+def _build_cap_context(
+    cap_to_devs: dict[str, list["Feature"]],
+) -> dict[str, dict[str, Any]]:
+    """Family-join context per capability: its NAME family stems + the
+    established gravitational mass (member devs / flows / owned paths) from the
+    direct (phase-1) assignments. The residual bucket is never a join target."""
+    ctx: dict[str, dict[str, Any]] = {}
+    for cap, devs in cap_to_devs.items():
+        if cap == _RESIDUAL_CAP:
+            continue
+        ctx[cap] = {
+            "stems": _family_stems(cap),
+            "members": len(devs),
+            "flows": sum(len(getattr(d, "flows", None) or []) for d in devs),
+            "paths": sum(len(_paths_of(d)) for d in devs),
+        }
+    return ctx
+
+
+def _redistribute_container_flows(
+    container_devs: list["Feature"],
+    other_devs: list["Feature"],
+) -> dict[str, str]:
+    """Map each flow owned by a container-page dev to the NON-container
+    developer feature that owns the flow's home directory (fix 3).
+
+    A page container HOSTS features — its flows (``inline-suggestions`` /
+    ``ghost-text`` / ``knowledge-chips``) belong to those features, whose devs
+    own sibling files in the same ``features/<domain>/`` directory. Returns
+    ``{flow_member_id: owning_dev_name}``. Structural + deterministic: pick the
+    non-container dev owning the MOST files in the flow's directories, then the
+    alphabetically-first name."""
+    dir_owners: dict[str, Counter[str]] = defaultdict(Counter)
+    for d in other_devs:
+        for p in _paths_of(d):
+            dir_owners[_dev_dir(p)][d.name] += 1
+    override: dict[str, str] = {}
+    for cd in container_devs:
+        for fl in getattr(cd, "flows", None) or []:
+            mid = _flow_member_id(fl)
+            if not mid or mid in override:
+                continue
+            dirs: list[str] = []
+            ep = getattr(fl, "entry_point_file", None)
+            if ep:
+                dirs.append(_dev_dir(ep))
+            for p in getattr(fl, "paths", None) or []:
+                dirs.append(_dev_dir(p))
+            tally: Counter[str] = Counter()
+            for dr in dirs:
+                for dev_name, cnt in dir_owners.get(dr, {}).items():
+                    tally[dev_name] += cnt
+            if not tally:
+                continue
+            best = max(tally.values())
+            override[mid] = min(n for n, c in tally.items() if c == best)
+    return override
+
+
 def _build_product_features(
     pf_specs: list[dict[str, Any]],
     dev_map: dict[str, str],
     developer_features: list["Feature"],
     routes_index: list[dict[str, Any]] | None = None,
-) -> tuple[list["Feature"], dict[str, tuple[str, ...]], int, dict[str, Any]]:
+) -> tuple[list["Feature"], dict[str, tuple[str, ...]], int, dict[str, Any],
+           dict[str, str]]:
     """Aggregate dev features into the abstracted capabilities. Returns
-    (product_features, dev_to_product_map, files_attributed, pf_telemetry)."""
+    (product_features, dev_to_product_map, files_attributed, pf_telemetry,
+    flow_owner_override). ``flow_owner_override`` maps a container-page dev's
+    flow member-ids to the product-feature slug of the flow's real owner
+    (fix 3) — the PF-UF backstop / shared-UF reassignment honour it so a
+    hosted flow's journey follows its feature, not the page shell."""
     desc_by_cap = {
         (s.get("name") or "").strip(): _short(s.get("description"), 240)
         for s in pf_specs if (s.get("name") or "").strip()
@@ -1390,24 +1625,78 @@ def _build_product_features(
     cap_to_devs: dict[str, list["Feature"]] = defaultdict(list)
     dev_to_product: dict[str, tuple[str, ...]] = {}
     residual_guard = _residual_guard_enabled()
-    for dev in developer_features:
-        nm = dev.display_name or dev.name
-        cap = dev_map.get(nm)
-        if not cap:
-            cap, rescued = _fallback_capability(dev, cap_tokens)
-            if rescued:
-                pf_tele["devs_token_rescued"] += 1
-        elif cap == _RESIDUAL_CAP and residual_guard:
-            # An EXPLICIT residual assignment is unproven — structural
-            # confirmation or re-route (strong token match / feature-dir
-            # promotion / route-surface promotion). See the guard rationale
-            # above _confirm_residual.
-            cap = _confirm_residual(dev, cap_tokens, pf_tele,
-                                    route_files, route_uuids, minted_descs)
+    container_guard = _container_page_guard_enabled()
+
+    def _assign(dev: "Feature", cap: str) -> None:
         if cap == _RESIDUAL_CAP:
             pf_tele["devs_residual"] += 1
         cap_to_devs[cap].append(dev)
         dev_to_product[dev.name] = (_slug(cap),)
+
+    # Phase 1 — direct (non-residual, non-container) assignments establish the
+    # family-join context (the gravitational mass a would-be thin-shell mint
+    # folds into). Container-page devs and explicit-residual / unmapped devs
+    # are deferred so fix 1's family match and fix 3's redistribution see the
+    # full set of real capabilities.
+    deferred: list[tuple["Feature", str | None]] = []
+    container_devs: list["Feature"] = []
+    for dev in developer_features:
+        nm = dev.display_name or dev.name
+        cap = dev_map.get(nm)
+        if container_guard and _is_container_page(dev):
+            container_devs.append(dev)  # skeleton -> residual in phase 3
+            continue
+        if cap and cap != _RESIDUAL_CAP:
+            _assign(dev, cap)
+        else:
+            deferred.append((dev, cap))
+
+    cap_context = _build_cap_context(cap_to_devs)
+
+    # Phase 2 — resolve deferred devs with the family context available.
+    for dev, cap in deferred:
+        if not cap:
+            cap, rescued = _fallback_capability(dev, cap_tokens)
+            if rescued:
+                pf_tele["devs_token_rescued"] += 1
+            elif cap == _RESIDUAL_CAP and residual_guard:
+                # An UNMAPPED dev the LLM never saw (a carve-minted domain
+                # subsystem, a late split) deserves the full residual-guard
+                # treatment — family join / flowful feature-dir or route-surface
+                # promotion — so it resettles instead of sinking into the shared
+                # bucket (validator I9).
+                cap = _confirm_residual(dev, cap_tokens, pf_tele,
+                                        route_files, route_uuids, minted_descs,
+                                        cap_context)
+        elif cap == _RESIDUAL_CAP and residual_guard:
+            # An EXPLICIT residual assignment is unproven — structural
+            # confirmation or re-route (strong token match / token-family
+            # join / flowful feature-dir or route-surface promotion). See the
+            # guard rationale above _confirm_residual.
+            cap = _confirm_residual(dev, cap_tokens, pf_tele,
+                                    route_files, route_uuids, minted_descs,
+                                    cap_context)
+        _assign(dev, cap)
+
+    # Phase 3 — container-page guard (fix 3): the page skeleton joins the
+    # residual (app-shell), and each hosted flow's product ownership follows
+    # the non-container dev owning its home directory.
+    flow_owner_override: dict[str, str] = {}
+    if container_devs:
+        container_ids = {id(d) for d in container_devs}
+        non_container = [d for d in developer_features
+                         if id(d) not in container_ids]
+        mid_to_owner = _redistribute_container_flows(container_devs,
+                                                     non_container)
+        for dev in container_devs:
+            _assign(dev, _RESIDUAL_CAP)
+        residual_slug = _slug(_RESIDUAL_CAP)
+        for mid, owner_name in mid_to_owner.items():
+            slugs = dev_to_product.get(owner_name)
+            if slugs and slugs[0] != residual_slug:
+                flow_owner_override[mid] = slugs[0]
+        pf_tele["container_pages_guarded"] = len(container_devs)
+        pf_tele["container_flows_redistributed"] = len(flow_owner_override)
 
     out: list["Feature"] = []
     files_attributed = 0
@@ -1457,7 +1746,7 @@ def _build_product_features(
             pf_tele["residual_files"] = (len(merged_mf) if merged_mf
                                          else len(feat.paths))
         out.append(feat)
-    return out, dev_to_product, files_attributed, pf_tele
+    return out, dev_to_product, files_attributed, pf_tele, flow_owner_override
 
 
 # ── PF-UF backstop (deterministic, $0) ──────────────────────────────────────
@@ -1515,6 +1804,7 @@ def _backstop_uncovered_pfs(
     dev_to_product: dict[str, tuple[str, ...]],
     developer_features: list["Feature"],
     promoted_caps: set[str],
+    flow_owner_override: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Guarantee every flowful product feature is referenced by >= 1 UF.
 
@@ -1541,6 +1831,7 @@ def _backstop_uncovered_pfs(
     # Flow ownership registry: member id → owning PF slug (via the flow's
     # containment dev + dev_to_product), LOC and display label for the
     # synthesis pick. First containment owner wins (input order is stable).
+    override = flow_owner_override or {}
     flow_pf: dict[str, str] = {}
     flow_loc: dict[str, int] = {}
     pf_flows: dict[str, list[str]] = defaultdict(list)
@@ -1551,10 +1842,13 @@ def _backstop_uncovered_pfs(
             mid = _flow_member_id(fl)
             if not mid or mid in flow_pf:
                 continue
-            flow_pf[mid] = slug
+            # Container-page redistribution (fix 3): a hosted flow's ownership
+            # follows its real feature, not the page shell it was swept into.
+            slug_for = override.get(mid, slug)
+            flow_pf[mid] = slug_for
             flow_loc[mid] = _flow_loc_of(fl)
-            if slug:
-                pf_flows[slug].append(mid)
+            if slug_for:
+                pf_flows[slug_for].append(mid)
 
     covered: Counter[str] = Counter(
         u.product_feature_id for u in new_ufs if u.product_feature_id)
@@ -1679,6 +1973,7 @@ def _reassign_shared_ufs(
     new_ufs: list["UserFlow"],
     developer_features: list["Feature"],
     dev_to_product: dict[str, tuple[str, ...]],
+    flow_owner_override: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Reassign every UF left on the shared/platform capability to the
     non-shared PF owning the plurality of its member flows (see the block
@@ -1700,6 +1995,7 @@ def _reassign_shared_ufs(
     # member id -> owning PF slug via the flow's owning dev (containment; first
     # owner wins — input order stable). Mirrors _backstop_uncovered_pfs.flow_pf
     # so "owning PF" stays one consistent notion across the two passes.
+    override = flow_owner_override or {}
     flow_pf: dict[str, str] = {}
     for dev in developer_features:
         slugs = dev_to_product.get(dev.name) or ()
@@ -1707,7 +2003,9 @@ def _reassign_shared_ufs(
         for fl in getattr(dev, "flows", None) or []:
             mid = _flow_member_id(fl)
             if mid and mid not in flow_pf:
-                flow_pf[mid] = slug
+                # Container-page redistribution (fix 3): honour the hosted
+                # flow's real owner over the page shell it was swept into.
+                flow_pf[mid] = override.get(mid, slug)
     # Total flows each PF owns — the specificity tie-break (smaller = narrower).
     pf_size: Counter[str] = Counter(flow_pf.values())
 
@@ -1852,7 +2150,8 @@ def run_journey_abstraction(
         # Cache stores the PARENT-level map; propagation is deterministic
         # from (map, current features), so live and cache-hit replays agree.
         dev_map = _propagate_dev_map(dev_map, sub_to_parent)
-        new_pfs, dev_to_product, files_after, pf_tele = _build_product_features(
+        (new_pfs, dev_to_product, files_after, pf_tele,
+         flow_owner_override) = _build_product_features(
             pf_specs_, dev_map, developer_features, routes_index)
         new_ufs, uf_tele = _build_user_flows(
             uf_specs_, user_flows, developer_features, routes_index)
@@ -1867,6 +2166,7 @@ def run_journey_abstraction(
             bs_tele = _backstop_uncovered_pfs(
                 new_ufs, new_pfs, dev_to_product, developer_features,
                 set(pf_tele.get("promoted_cap_names") or []),
+                flow_owner_override,
             )
             tele.update(bs_tele)
         # Shared Platform may own CODE, never JOURNEYS (operator 2026-07-05,
@@ -1877,7 +2177,8 @@ def run_journey_abstraction(
         # and cache-hit replay paths.
         if _uf_reshare_enabled():
             rs_tele = _reassign_shared_ufs(
-                new_ufs, developer_features, dev_to_product)
+                new_ufs, developer_features, dev_to_product,
+                flow_owner_override)
             tele.update(rs_tele)
         # Deterministic output ordering (Phase 1 stability): the LLM emits
         # features/flows in an order that drifts run-to-run. Sort by a stable key

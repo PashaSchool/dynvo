@@ -52,7 +52,7 @@ def test_explicit_residual_rescued_by_strong_match():
     """`detections` → "Security Findings & Detections Feed" even though
     Call 2 explicitly said Shared Platform."""
     dev = _dev("detections", ["fe/src/features/detections/a.tsx"])
-    pfs, d2p, _, tele = _build_product_features(
+    pfs, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Findings & Detections Feed"),
         {"detections": _RESIDUAL_CAP},
         [dev],
@@ -68,7 +68,7 @@ def test_weak_single_token_does_not_rescue():
     the old omit-rescue suffers from). No feature-dir footprint here → the
     dev honestly stays residual."""
     dev = _dev("network-security", ["fe/src/net/a.tsx", "fe/src/net/b.tsx"])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("AI Security Chat Assistant"),
         {"network-security": _RESIDUAL_CAP},
         [dev],
@@ -83,7 +83,7 @@ def test_vendor_tokens_stripped_for_match():
     capability "EDR Integrations" — the vendor token names the instance,
     the capability names the family."""
     dev = _dev("edr-crowdstrike", ["backend/services/edr/crowdstrike.py"])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("EDR Integrations"),
         {"edr-crowdstrike": _RESIDUAL_CAP},
         [dev],
@@ -96,7 +96,7 @@ def test_pure_vendor_name_matches_on_vendor_token():
     """A dev named ONLY by a vendor ('teams') still matches the capability
     carrying that vendor token."""
     dev = _dev("teams", ["fe/src/features/teams/a.tsx"])
-    _, d2p, _, _ = _build_product_features(
+    _, d2p, _, _, _ovr = _build_product_features(
         _specs("Microsoft Teams Integration"),
         {"teams": _RESIDUAL_CAP},
         [dev],
@@ -107,15 +107,25 @@ def test_pure_vendor_name_matches_on_vendor_token():
 # ── tier 2: feature-dir promotion ───────────────────────────────────────
 
 
+def _add_flow(dev: Feature, entry: str) -> Feature:
+    from faultline.models.types import Flow
+    dev.flows = [Flow(
+        name=f"{dev.name}-flow", uuid=f"fx-{dev.name}", paths=[entry],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=datetime.now(timezone.utc), health_score=90.0)]
+    return dev
+
+
 def test_feature_dir_promotion_mints_own_capability():
     """`anomalies` fully under features/anomalies/ with no matching
-    capability → its own "Anomalies" product feature."""
-    dev = _dev("anomalies", [
+    capability → its own "Anomalies" product feature. FLOWFUL — a flowless
+    feature-dir dev no longer mints a standalone PF (fix 2)."""
+    dev = _add_flow(_dev("anomalies", [
         "frontend/src/features/anomalies/list.tsx",
         "frontend/src/features/anomalies/detail.tsx",
         "frontend/src/features/anomalies/api.ts",
-    ])
-    pfs, d2p, _, tele = _build_product_features(
+    ]), "frontend/src/features/anomalies/list.tsx")
+    pfs, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Cases Management"),
         {"anomalies": _RESIDUAL_CAP},
         [dev],
@@ -126,17 +136,41 @@ def test_feature_dir_promotion_mints_own_capability():
 
 
 def test_modules_container_promotes_too():
-    dev = _dev("network-security", [
+    # Spec deliberately shares NO family stem with the dev so tier-2 mint (not
+    # the fix-1 family join) is what's under test. FLOWFUL (fix 2).
+    dev = _add_flow(_dev("network-security", [
         "frontend/src/modules/network-security/a.tsx",
         "frontend/src/modules/network-security/b.tsx",
-    ])
-    _, d2p, _, tele = _build_product_features(
-        _specs("AI Security Chat Assistant"),
+    ]), "frontend/src/modules/network-security/a.tsx")
+    _, d2p, _, tele, _ovr = _build_product_features(
+        _specs("Billing & Invoicing Platform"),
         {"network-security": _RESIDUAL_CAP},
         [dev],
     )
     assert _cap_of(d2p, "network-security") == "network-security"
     assert tele["devs_residual_promoted"] == 1
+
+
+def test_flowless_feature_dir_dev_family_joins_not_mints():
+    """Fix 1 + fix 2: a FLOWLESS feature-dir dev sharing a family stem with an
+    existing capability JOINS it instead of minting a thin-shell duplicate."""
+    devs = [
+        _add_flow(_dev("api-detectors", ["backend/routers/detectors.py"]),
+                  "backend/routers/detectors.py"),
+        _dev("detection-studio", [
+            "frontend/src/modules/detection-studio/a.tsx",
+            "frontend/src/modules/detection-studio/b.tsx",
+        ]),  # flowless
+    ]
+    _, d2p, _, tele, _ovr = _build_product_features(
+        _specs("Custom Detector Builder"),
+        {"api-detectors": "Custom Detector Builder",
+         "detection-studio": _RESIDUAL_CAP},
+        devs,
+    )
+    assert _cap_of(d2p, "detection-studio") == "custom-detector-builder"
+    assert tele["devs_residual_promoted"] == 0
+    assert tele.get("devs_residual_family_joined", 0) == 1
 
 
 def test_promotion_requires_domain_to_name_the_dev():
@@ -146,7 +180,7 @@ def test_promotion_requires_domain_to_name_the_dev():
         "frontend/src/features/integrations/dialogs/a.tsx",
         "frontend/src/features/integrations/dialogs/b.tsx",
     ])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Integrations Hub"),
         {"dialogs": _RESIDUAL_CAP},
         [dev],
@@ -183,7 +217,7 @@ def test_workspace_anchor_stays_residual():
         "backend", ["backend/app.py", "backend/services/edr/base.py"],
         description="workspace anchor 'backend' from monorepo package 'backend/'",
     )
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("EDR Integrations"),
         {"backend": _RESIDUAL_CAP},
         [anchor],
@@ -195,7 +229,7 @@ def test_workspace_anchor_stays_residual():
 
 def test_structure_leak_slug_stays_residual():
     dev = _dev("api", ["backend/api/routes.py"])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("API Key Management"),
         {"api": _RESIDUAL_CAP},
         [dev],
@@ -209,7 +243,7 @@ def test_structure_leak_slug_stays_residual():
 def test_kill_switch_restores_blind_trust(monkeypatch):
     monkeypatch.setenv(_KILL, "0")
     dev = _dev("detections", ["fe/src/features/detections/a.tsx"])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Findings & Detections Feed"),
         {"detections": _RESIDUAL_CAP},
         [dev],
@@ -222,7 +256,7 @@ def test_kill_switch_restores_blind_trust(monkeypatch):
 def test_omitted_dev_weak_rescue_unchanged():
     """The pre-existing omit path (weak 1-token rescue) is untouched."""
     dev = _dev("account-billing", ["src/billing/a.ts"])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Billing"),
         {},  # omitted from the map entirely
         [dev],
@@ -234,7 +268,7 @@ def test_omitted_dev_weak_rescue_unchanged():
 def test_explicit_non_residual_assignment_untouched():
     """The guard only inspects explicit RESIDUAL assignments."""
     dev = _dev("detections", ["fe/a.tsx"])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Findings & Detections Feed", "Threat Hunt Management"),
         {"detections": "Threat Hunt Management"},
         [dev],
@@ -281,7 +315,7 @@ def test_route_file_owner_promoted_to_own_capability():
     )
     routes = [{"pattern": "/api/widget-library", "method": "GET",
                "file": "backend/routers/widget_library.py"}]
-    pfs, d2p, _, tele = _build_product_features(
+    pfs, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Cases Management"),
         {"api-widget-library": _RESIDUAL_CAP},
         [dev], routes,
@@ -297,18 +331,19 @@ def test_route_file_owner_promoted_to_own_capability():
 
 def test_route_uuid_owner_promoted():
     """Route ownership via routes_index feature_uuid attribution (no route
-    file among owned paths needed — e.g. after de-sink path moves)."""
-    dev = _flowful("home-page", ["frontend/src/pages/HomePage.tsx"],
-                   ["view-home-page-flow"])
-    dev.uuid = "u-home"
-    routes = [{"pattern": "/HomePage", "method": "PAGE",
-               "feature_uuid": "u-home", "file": "frontend/src/other.tsx"}]
-    _, d2p, _, tele = _build_product_features(
+    file among owned paths needed — e.g. after de-sink path moves). Uses a
+    NON-container page name (a container page is guarded by fix 3)."""
+    dev = _flowful("insights-page", ["frontend/src/pages/InsightsPage.tsx"],
+                   ["view-insights-flow"])
+    dev.uuid = "u-insights"
+    routes = [{"pattern": "/InsightsPage", "method": "PAGE",
+               "feature_uuid": "u-insights", "file": "frontend/src/other.tsx"}]
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Cases Management"),
-        {"home-page": _RESIDUAL_CAP},
+        {"insights-page": _RESIDUAL_CAP},
         [dev], routes,
     )
-    assert _cap_of(d2p, "home-page") == "home-page"
+    assert _cap_of(d2p, "insights-page") == "insights-page"
     assert tele["devs_residual_promoted"] == 1
 
 
@@ -317,7 +352,7 @@ def test_flowless_route_owner_stays_residual():
     dev = _dev("api-diag", ["backend/routers/diag.py"])
     routes = [{"pattern": "/api/_diag", "method": "GET",
                "file": "backend/routers/diag.py"}]
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Cases Management"),
         {"api-diag": _RESIDUAL_CAP},
         [dev], routes,
@@ -331,7 +366,7 @@ def test_flowful_dev_without_routes_stays_residual():
     tier 3 must NOT fire on route-less internals."""
     dev = _flowful("network-mock", ["frontend/src/mocks/net.ts"],
                    ["mock-net-flow"])
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Cases Management"),
         {"network-mock": _RESIDUAL_CAP},
         [dev], [],
@@ -347,7 +382,7 @@ def test_main_entry_module_stays_residual_despite_routes_and_flows():
     dev = _flowful("main", ["backend/main.py"], ["run-migration-flow"])
     routes = [{"pattern": "/api/_admin/migrate", "method": "POST",
                "file": "backend/main.py"}]
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Cases Management"),
         {"main": _RESIDUAL_CAP},
         [dev], routes,
@@ -362,7 +397,7 @@ def test_tier3_kill_switch(monkeypatch):
                    ["check-trial-status-flow"])
     routes = [{"pattern": "/api/trial/status", "method": "GET",
                "file": "backend/routers/trial.py"}]
-    _, d2p, _, tele = _build_product_features(
+    _, d2p, _, tele, _ovr = _build_product_features(
         _specs("Security Cases Management"),
         {"api-trial-status": _RESIDUAL_CAP},
         [dev], routes,
