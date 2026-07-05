@@ -176,26 +176,46 @@ def test_non_anchor_multi_domain_carves():
     assert {"investigation-playbook", "edr"} <= {f.name for f in feats}
 
 
-def test_mixed_flow_not_carved():
-    """A flow whose files are NOT majority under one service domain stays with
-    the anchor."""
-    mixed = Flow(
-        name="mixed-flow", uuid="m1",
-        entry_point_file="backend/services/edr/a.py",
-        paths=["backend/services/edr/a.py", "backend/routers/x.py",
-               "backend/routers/y.py"],
-        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
-        last_modified=_TS, health_score=90.0,
-        line_ranges=[FlowLineRange(path="backend/services/edr/a.py",
-                                   start_line=1, end_line=5)],
-    )
-    anchor = _anchor("backend", _svc_flows("investigation_playbook", 3)
-                     + [mixed])
+def test_entry_point_attribution_over_shared_infra():
+    """A flow whose ENTRY sits under a service domain is carved there even when
+    it also touches shared infra (database/models) — the Soc0 playbook shape
+    (entry services/investigation_playbook/*, plus a shared model read)."""
+    playbook = [
+        Flow(name=f"pb{i}", uuid=f"pb{i}",
+             entry_point_file="backend/services/investigation_playbook/loader.py",
+             paths=[f"backend/services/investigation_playbook/svc{i}.py",
+                    "backend/database.py",
+                    "backend/models/investigation_playbook.py"],
+             authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+             last_modified=_TS, health_score=90.0,
+             line_ranges=[FlowLineRange(
+                 path="backend/services/investigation_playbook/loader.py",
+                 start_line=1, end_line=5)])
+        for i in range(3)
+    ]
+    anchor = _anchor("backend", playbook + _svc_flows("edr", 4))
     feats = [anchor]
     carve_service_domains(feats)
-    # mixed flow stays on the anchor (edr had only the 1 minority file)
-    assert any(f.uuid == "m1" for f in anchor.flows)
-    assert "edr" not in {f.name for f in feats}
+    assert "investigation-playbook" in {f.name for f in feats}
+    carved = next(f for f in feats if f.name == "investigation-playbook")
+    assert len(carved.flows) == 3
+
+
+def test_flow_without_service_entry_not_carved():
+    """A flow whose entry is NOT under any service domain and which touches no
+    service files stays with the anchor."""
+    plain = Flow(
+        name="plain-flow", uuid="p1", entry_point_file="backend/routers/x.py",
+        paths=["backend/routers/x.py", "backend/routers/y.py"],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_TS, health_score=90.0,
+        line_ranges=[FlowLineRange(path="backend/routers/x.py",
+                                   start_line=1, end_line=5)])
+    anchor = _anchor("backend", _svc_flows("investigation_playbook", 3)
+                     + [plain])
+    feats = [anchor]
+    carve_service_domains(feats)
+    assert any(f.uuid == "p1" for f in anchor.flows)
 
 
 # ── discipline: disabled, determinism, scale ─────────────────────────────────

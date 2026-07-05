@@ -341,22 +341,30 @@ def _service_domain_of(path: str) -> str | None:
 
 
 def _flow_domain(flow: Any) -> tuple[str, list[str]] | None:
-    """(domain, service-files) when the MAJORITY of a flow's files sit under a
-    single service-domain subtree, else None. The service-files are the flow's
-    files that live under that domain dir."""
+    """(domain, service-files) for the service subsystem a flow belongs to.
+
+    Entry-point attribution: a flow whose ENTRY file sits under a
+    ``services/<domain>/`` subtree IS that subsystem's flow — even when it also
+    touches shared infra (``database.py`` / ``models/``), which must not dilute
+    the decision (the Soc0 playbook flows enter at
+    ``services/investigation_playbook/*`` but each also reads a shared model).
+    When the entry is not under a service domain, fall back to the plurality
+    service domain among the flow's files. Returns the domain plus the flow's
+    files that live under it, or None when no file is service-domain-anchored."""
     files = _flow_files(flow)
     if not files:
         return None
-    by_dom: dict[str, list[str]] = {}
-    for f in files:
-        dom = _service_domain_of(f)
-        if dom is not None:
-            by_dom.setdefault(dom, []).append(f)
-    if not by_dom:
-        return None
-    dom, dom_files = max(by_dom.items(), key=lambda kv: (len(kv[1]), kv[0]))
-    if len(dom_files) * 2 <= len(files):  # strict majority under one domain
-        return None
+    dom = _service_domain_of(files[0])  # entry file (first) is definitive
+    if dom is None:
+        by_dom: dict[str, list[str]] = {}
+        for f in files:
+            dd = _service_domain_of(f)
+            if dd is not None:
+                by_dom.setdefault(dd, []).append(f)
+        if not by_dom:
+            return None
+        dom = max(by_dom.items(), key=lambda kv: (len(kv[1]), kv[0]))[0]
+    dom_files = [f for f in files if _service_domain_of(f) == dom]
     return dom, dom_files
 
 
