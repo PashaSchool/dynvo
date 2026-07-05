@@ -52,13 +52,71 @@ _TEST_FEATURE_NAMES = frozenset({
 })
 
 
+# Monorepo package-container directories. When one of these is
+# immediately followed by a segment in ``_TEST_SUPPORT_PACKAGE_ROOTS``,
+# EVERY file under that package is test-origin, regardless of its own
+# filename or sub-path — the package's very existence declares "I am
+# test support", not "I am product code that happens to live near tests".
+_WORKSPACE_PACKAGE_CONTAINERS = frozenset({"packages", "tooling"})
+
+# Universal test-support workspace-package root names (pnpm/yarn/npm
+# workspaces convention: ``packages/<name>/`` or ``tooling/<name>/``).
+# Observed provenance: rallly ships a whole ``packages/test-helpers``
+# package (mailbox polling / auth-code retrieval helpers used only by
+# its Playwright e2e suite) whose files match NO structural test
+# pattern — not ``test_*``, not under a ``tests/`` dir — because the
+# convention lives at the PACKAGE level, not the file level. Stage 3
+# still promoted its exports (``authenticateWithEmail`` etc.) to
+# feature flows before this rule existed.
+#
+# Deliberately narrow and exact-match (never substring) so a real
+# product package like ``packages/testimonials`` is never caught —
+# same discipline as ``_TEST_DIR_SEGMENTS``. Scoped to package ROOTS
+# (the segment immediately after the container dir), not matched at
+# arbitrary depth, so this stays a distinct, auditable rule rather than
+# silently widening the generic per-segment test-dir list above.
+_TEST_SUPPORT_PACKAGE_ROOTS = frozenset({
+    "test-helpers", "test-utils", "testutils", "testing", "e2e", "fixtures",
+})
+
+
+def is_test_support_package_file(path: str) -> bool:
+    """Return True if ``path`` lives under a whole test-support workspace package.
+
+    Structural, package-root-scoped convention for pnpm/yarn/npm
+    monorepos: ``packages/<test-name>/**`` or ``tooling/<test-name>/**``
+    where ``<test-name>`` is a universal test-support package name (see
+    ``_TEST_SUPPORT_PACKAGE_ROOTS``). Every file in such a package is
+    test-origin even if its own name/sub-path matches no test pattern.
+
+    >>> is_test_support_package_file("packages/test-helpers/src/index.ts")
+    True
+    >>> is_test_support_package_file("packages/test-helpers/src/email.ts")
+    True
+    >>> is_test_support_package_file("packages/ui/src/button.tsx")
+    False
+    >>> is_test_support_package_file("packages/testimonials/src/index.ts")
+    False
+    >>> is_test_support_package_file("tooling/e2e/playwright.config.ts")
+    True
+    """
+    parts = [seg.lower() for seg in PurePosixPath(path).parts[:-1]]
+    for i, segment in enumerate(parts):
+        if segment in _WORKSPACE_PACKAGE_CONTAINERS and i + 1 < len(parts):
+            if parts[i + 1] in _TEST_SUPPORT_PACKAGE_ROOTS:
+                return True
+    return False
+
+
 def is_test_file(path: str) -> bool:
     """Return True if a file path represents test code.
 
     A file is considered a test file if any of its directory segments
-    match a known test directory name OR its filename ends with a known
-    test suffix. This is the single source of truth used by both the
-    legacy detector and the new pipeline.
+    match a known test directory name, its filename ends with a known
+    test suffix, OR it lives under a whole test-support workspace
+    package (``is_test_support_package_file``). This is the single
+    source of truth used by both the legacy detector and the new
+    pipeline.
 
     >>> is_test_file("src/auth/login.test.ts")
     True
@@ -79,7 +137,17 @@ def is_test_file(path: str) -> bool:
     True
     >>> is_test_file("backend/services/contest.py")
     False
+
+    Whole test-support workspace packages count too, even when the
+    file itself looks like ordinary source:
+
+    >>> is_test_file("packages/test-helpers/src/index.ts")
+    True
+    >>> is_test_file("packages/testimonials/src/index.ts")
+    False
     """
+    if is_test_support_package_file(path):
+        return True
     p = PurePosixPath(path)
     for segment in p.parts[:-1]:
         if segment.lower() in _TEST_DIR_SEGMENTS:
