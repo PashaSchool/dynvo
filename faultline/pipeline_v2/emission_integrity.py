@@ -129,13 +129,24 @@ def _feature_zero_loc(feat: "Feature") -> bool:
     return True
 
 
+def _is_platform_bucket(feat: "Feature") -> bool:
+    """Only the shared/platform bucket itself is immune to phantom drop."""
+    name = canonical_slug(getattr(feat, "name", None))
+    pfid = getattr(feat, "product_feature_id", None) or ""
+    return name in _SHARED_PF_KEYS or pfid in _SHARED_PF_KEYS
+
+
 def _is_phantom(feat: "Feature") -> bool:
     """A phantom carries only structural-marker paths, zero loc/loc_shared,
-    zero flows, and is neither a workspace anchor nor the platform bucket."""
+    zero flows. The workspace-anchor marker does NOT save a content-less
+    row (Soc0 'ai': description carries the anchor marker yet its only
+    path is the repo-root '.') — only the platform bucket itself is
+    immune; anchors with real content never reach this predicate anyway
+    (_has_real_path or loc/flows are non-zero)."""
     return (
         not _has_real_path(feat)
         and _feature_zero_loc(feat)
-        and not _is_anchor_or_platform(feat)
+        and not _is_platform_bucket(feat)
     )
 
 
