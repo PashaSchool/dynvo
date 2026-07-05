@@ -660,14 +660,18 @@ def run_layer2_phase(
         # resettles off the shared bucket (validator I10). Rides the 8.9.6
         # flag; deterministic, $0 LLM.
         carve_result = carve_service_domains(features)
-        stage_8_9_6_telemetry["service_carve"] = carve_result.as_telemetry()
-        log8_9_6.info(
-            f"service_carve enabled={carve_result.enabled} "
-            f"anchors_carved={carve_result.anchors_carved} "
-            f"domains_carved={carve_result.domains_carved} "
-            f"flows_moved={carve_result.flows_moved} "
-            f"files_claimed={carve_result.files_claimed}",
-        )
+        # Only stamp the carve telemetry when the stage is ENABLED — when off
+        # (the deterministic snapshot-gate env) the 8.9.6 artifact stays
+        # byte-identical, so pinned digests never drift on a no-op carve.
+        if carve_result.enabled:
+            stage_8_9_6_telemetry["service_carve"] = carve_result.as_telemetry()
+            log8_9_6.info(
+                f"service_carve enabled={carve_result.enabled} "
+                f"anchors_carved={carve_result.anchors_carved} "
+                f"domains_carved={carve_result.domains_carved} "
+                f"flows_moved={carve_result.flows_moved} "
+                f"files_claimed={carve_result.files_claimed}",
+            )
         if carve_result.anchors_carved:
             # Carve mints new devs (inheriting the anchor's product_feature_id)
             # and moves owned files onto them — re-union product paths so the
