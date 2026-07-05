@@ -906,6 +906,8 @@ def run_finalize_phase(
                     features, product_features, ctx.repo_path,
                 )
                 scan_meta["feature_loc"] = loc_telemetry
+                if loc_telemetry.get("loc_accounting"):
+                    scan_meta["loc_accounting"] = loc_telemetry["loc_accounting"]
                 log697.info(
                     "feature_loc: %d/%d dev features with loc>0 "
                     "(%d zero-loc-with-paths), %d files counted"
