@@ -287,3 +287,74 @@ class TestTestEvidenceSurvives:
         attach_flow_test_files([flow], rctx)  # type: ignore[arg-type]
         assert flow.test_files == ["backend/tests/routers/test_admin.py"]
         assert flow.test_file_count == 1
+
+
+# ── 5. Whole test-support workspace packages (iteration-3, package-root) ───
+#
+# Measured miss (rallly board-refresh scan): PackageAnchorExtractor anchors
+# every declared workspace as a feature with its FULL file list (Sprint D3
+# design — see extractors/package.py), including a whole
+# ``packages/test-helpers`` package (mailbox-polling / auth-code helpers
+# consumed only by the Playwright e2e suite). None of its files match a
+# structural test pattern — not ``test_*``, not under ``tests/`` — because
+# the "this is test support" signal lives at the PACKAGE level. Stage 3's
+# ``_enumerate_candidates_paths`` (line ~607) still filters via
+# ``is_test_file`` before minting export/route candidates, so extending
+# that single predicate closes the gap with no call-site changes.
+
+
+class TestTestSupportPackageRootFlows:
+    def test_rallly_shaped_package_yields_no_flow_candidates(
+        self, tmp_path: Path,
+    ) -> None:
+        _write(
+            tmp_path / "packages/test-helpers/src/index.ts",
+            "export function authenticateWithEmail() { return true; }\n",
+        )
+        _write(
+            tmp_path / "packages/test-helpers/src/email.ts",
+            "export function retrieveAuthenticationCode() { return '1'; }\n",
+        )
+        exports, routes, symbol_to_loc, content_sig = _enumerate_candidates_paths(
+            [
+                "packages/test-helpers/src/index.ts",
+                "packages/test-helpers/src/email.ts",
+            ],
+            str(tmp_path),
+        )
+        assert exports == []
+        assert routes == []
+        assert symbol_to_loc == {}
+        assert content_sig == {}
+
+    def test_sibling_production_package_unaffected(self, tmp_path: Path) -> None:
+        """packages/ui is a real product package — the package-root rule
+        is an exact-name allowlist, not a blanket ``packages/*`` drop."""
+        _write(
+            tmp_path / "packages/ui/src/button.tsx",
+            "export function Button() { return null; }\n",
+        )
+        exports, _routes, _map, content_sig = _enumerate_candidates_paths(
+            ["packages/ui/src/button.tsx"], str(tmp_path),
+        )
+        assert "Button" in exports
+        assert "packages/ui/src/button.tsx" in content_sig
+
+    def test_real_feature_named_testimonials_survives(self, tmp_path: Path) -> None:
+        """Substring trap: 'testimonials' contains 'test' but is not in
+        the curated test-support package-root name set."""
+        _write(
+            tmp_path / "packages/testimonials/src/index.ts",
+            "export function renderTestimonials() { return []; }\n",
+        )
+        assert not is_test_file("packages/testimonials/src/index.ts")
+        exports, _routes, _map, content_sig = _enumerate_candidates_paths(
+            ["packages/testimonials/src/index.ts"], str(tmp_path),
+        )
+        assert "renderTestimonials" in exports
+        assert "packages/testimonials/src/index.ts" in content_sig
+
+    def test_package_root_convention_covers_tooling_container_too(self) -> None:
+        assert is_test_file("tooling/e2e/playwright.config.ts")
+        assert is_test_file("tooling/fixtures/seed.ts")
+        assert not is_test_file("tooling/codegen/generate.ts")

@@ -16,6 +16,7 @@ from faultline.analyzer.validation import (
     is_documentation_file,
     is_test_feature_name,
     is_test_file,
+    is_test_support_package_file,
     partition_docs_vs_code,
 )
 
@@ -58,6 +59,73 @@ class TestIsTestFile:
     )
     def test_rejects_production_files(self, path: str) -> None:
         assert not is_test_file(path), f"expected {path!r} NOT to be a test file"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # rallly — measured miss (board-refresh scan): whole package
+            # is e2e mailbox-polling support, files match no structural
+            # test pattern on their own.
+            "packages/test-helpers/src/index.ts",
+            "packages/test-helpers/src/email.ts",
+            "packages/test-helpers/src/mailpit.ts",
+            "packages/test-helpers/package.json",
+            "tooling/e2e/playwright.config.ts",
+            "packages/testing/src/render.tsx",
+        ],
+    )
+    def test_detects_test_support_package_files(self, path: str) -> None:
+        assert is_test_file(path), f"expected {path!r} to be test-support-package origin"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "packages/ui/src/button.tsx",
+            "packages/database/src/client.ts",
+            # substring trap: "testimonials" contains "test" but is not
+            # a member of _TEST_SUPPORT_PACKAGE_ROOTS — must survive.
+            "packages/testimonials/src/index.ts",
+            "packages/testimonials/src/widget.tsx",
+            # container match without a test-support root name — must survive.
+            "packages/attestation-service/src/index.ts",
+            "tooling/codegen/generate.ts",
+        ],
+    )
+    def test_package_root_rule_does_not_catch_real_packages(self, path: str) -> None:
+        assert not is_test_file(path), f"expected {path!r} NOT to be a test file"
+
+
+# ── is_test_support_package_file ──────────────────────────────────────────
+
+
+class TestIsTestSupportPackageFile:
+    """Direct coverage of the package-root helper (monorepo convention)."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "packages/test-helpers/src/index.ts",
+            "packages/test-helpers/src/nested/deep/email.ts",
+            "packages/test-utils/index.ts",
+            "packages/fixtures/seed.ts",
+            "tooling/e2e/config.ts",
+        ],
+    )
+    def test_matches_test_support_package_roots(self, path: str) -> None:
+        assert is_test_support_package_file(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "packages/ui/src/button.tsx",
+            "packages/testimonials/src/index.ts",
+            "apps/web/test-helpers/mock.ts",  # not under a package CONTAINER
+            "src/test-helpers/mock.ts",
+            "test-helpers/index.ts",  # no container prefix at all
+        ],
+    )
+    def test_does_not_match_outside_package_root_convention(self, path: str) -> None:
+        assert not is_test_support_package_file(path)
 
 
 # ── is_test_feature_name ─────────────────────────────────────────────────
