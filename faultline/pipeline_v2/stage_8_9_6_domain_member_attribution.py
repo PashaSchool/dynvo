@@ -250,4 +250,209 @@ def attribute_domain_members(
     return result
 
 
-__all__ = ["DomainAttributionResult", "attribute_domain_members"]
+# ── Iteration-5: mega-anchor service-domain carve-out ────────────────────────
+# A workspace/infra anchor (Soc0 ``backend`` — 330 owned paths, 165 flows,
+# pf=shared-platform) swallows whole product subsystems as FLOWS whose files
+# sit under ``backend/services/<domain>/`` (investigation_playbook, edr,
+# threat_hunts …). Because those flows are owned by the shared anchor, a
+# journey built from them ("Manage investigation playbooks") is stuck on the
+# shared/platform bucket (validator I10) — the 6.7d shared-UF reassignment
+# finds no non-shared owner. The carve-out lifts each service-domain subtree
+# into its OWN developer feature (name = the domain) that carries those flows,
+# so 6.7d maps it to a real capability and the journey resettles.
+#
+# Structural rails (rule-no-magic-tuning / rule-no-repo-specific-paths):
+#   * SOURCE must be a mega-anchor — a workspace anchor OR a dev whose flows
+#     span >= 2 distinct carve-eligible service domains (a multi-domain flow
+#     container, not a focused service);
+#   * a flow joins a domain only when the MAJORITY of its files sit under one
+#     ``services|service/<domain>/`` subtree (mixed flows stay with the anchor);
+#   * the domain needs >= 3 distinct owned files (the operator floor — a
+#     subsystem dir, not a stray helper) and a non-generic, non-infra name;
+#   * a domain that names the source dev itself is never carved (no self-carve);
+#   * name collisions with existing features skip that domain (conservative).
+# Rides the 8.9.6 flag; independently killable via
+# ``FAULTLINE_STAGE_8_9_6_SERVICE_CARVE=0``. Deterministic, $0 LLM.
+_SERVICE_CONTAINER_SEGS = frozenset({"services", "service"})
+# Universal infra-domain conventions (never product subsystems). Mirrors the
+# 6.7d structure-leak / mock-scaffolding classes — not a repo list.
+_INFRA_DOMAIN_SKIP = frozenset({
+    "mock", "mocks", "mock-data", "fixture", "fixtures", "seed", "seeds",
+    "test", "tests", "testing", "migration", "migrations", "scripts",
+})
+_CARVE_MIN_FILES = 3  # subsystem floor; validated tiny/medium/large in tests
+
+
+def _carve_enabled() -> bool:
+    """Rides the 8.9.6 opt-in flag; killable via
+    ``FAULTLINE_STAGE_8_9_6_SERVICE_CARVE=0``."""
+    return (
+        _is_enabled()
+        and os.environ.get("FAULTLINE_STAGE_8_9_6_SERVICE_CARVE", "1") != "0"
+    )
+
+
+@dataclass
+class ServiceCarveResult:
+    """Per-scan carve-out telemetry."""
+
+    enabled: bool = False
+    anchors_examined: int = 0
+    anchors_carved: int = 0
+    domains_carved: int = 0
+    flows_moved: int = 0
+    files_claimed: int = 0
+    collisions_skipped: int = 0
+    sample: list[dict[str, Any]] = field(default_factory=list)
+
+    def as_telemetry(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "anchors_examined": self.anchors_examined,
+            "anchors_carved": self.anchors_carved,
+            "domains_carved": self.domains_carved,
+            "flows_moved": self.flows_moved,
+            "files_claimed": self.files_claimed,
+            "collisions_skipped": self.collisions_skipped,
+            "sample": list(self.sample[:20]),
+        }
+
+
+def _flow_files(flow: Any) -> list[str]:
+    out: list[str] = []
+    ep = getattr(flow, "entry_point_file", None)
+    if ep:
+        out.append(ep)
+    for p in getattr(flow, "paths", None) or []:
+        if isinstance(p, str):
+            out.append(p)
+    return out
+
+
+def _service_domain_of(path: str) -> str | None:
+    """The ``services|service/<domain>/`` domain a file sits under (a file must
+    remain BELOW the domain dir — ``services/<domain>/<file>``), else None."""
+    segs = path.split("/")
+    for i in range(len(segs) - 2):
+        if segs[i].lower() in _SERVICE_CONTAINER_SEGS:
+            dom = segs[i + 1]
+            return dom if dom else None
+    return None
+
+
+def _flow_domain(flow: Any) -> tuple[str, list[str]] | None:
+    """(domain, service-files) when the MAJORITY of a flow's files sit under a
+    single service-domain subtree, else None. The service-files are the flow's
+    files that live under that domain dir."""
+    files = _flow_files(flow)
+    if not files:
+        return None
+    by_dom: dict[str, list[str]] = {}
+    for f in files:
+        dom = _service_domain_of(f)
+        if dom is not None:
+            by_dom.setdefault(dom, []).append(f)
+    if not by_dom:
+        return None
+    dom, dom_files = max(by_dom.items(), key=lambda kv: (len(kv[1]), kv[0]))
+    if len(dom_files) * 2 <= len(files):  # strict majority under one domain
+        return None
+    return dom, dom_files
+
+
+def carve_service_domains(features: list["Feature"]) -> ServiceCarveResult:
+    """Carve service-domain flow subtrees out of mega-anchor devs into their
+    own developer features. Appends the minted features to *features* in place;
+    returns telemetry. No-op when disabled — safe to wire unconditionally."""
+    from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
+    from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import _make_subfeature
+
+    result = ServiceCarveResult(enabled=_carve_enabled())
+    if not result.enabled:
+        return result
+
+    devs = [f for f in features
+            if getattr(f, "layer", "developer") == "developer"]
+    taken_names = {f.name for f in features if getattr(f, "name", None)}
+    minted_all: list["Feature"] = []
+
+    for source in devs:
+        flows = list(getattr(source, "flows", None) or [])
+        if not flows:
+            continue
+        # Group flows by their dominant service domain; collect domain files.
+        dom_flows: dict[str, list[Any]] = {}
+        dom_files: dict[str, set[str]] = {}
+        for fl in flows:
+            hit = _flow_domain(fl)
+            if hit is None:
+                continue
+            dom, files = hit
+            dom_flows.setdefault(dom, []).append(fl)
+            dom_files.setdefault(dom, set()).update(files)
+        src_slug = _norm(source.name or "")
+        eligible = {
+            dom for dom, files in dom_files.items()
+            if len(files) >= _CARVE_MIN_FILES
+            and _norm(dom) not in _GENERIC_DOMAIN_SKIP
+            and _norm(dom) not in _INFRA_DOMAIN_SKIP
+            and _norm(dom) != src_slug and _singular(_norm(dom)) != src_slug
+        }
+        # SOURCE gate: a workspace anchor OR a multi-domain flow container.
+        if not eligible:
+            continue
+        if not _is_workspace_anchor(source) and len(eligible) < 2:
+            continue
+        result.anchors_examined += 1
+        minted: list["Feature"] = []
+        moved_ids: set[int] = set()
+        carved_files: set[str] = set()
+        for dom in sorted(eligible):
+            name = _norm(dom)
+            if name in taken_names:
+                result.collisions_skipped += 1
+                continue
+            files = sorted(dom_files[dom])
+            sub = _make_subfeature(source, dom, files, name)
+            # _make_subfeature leaves flows on the source by contract; the carve
+            # MOVES the domain's flows onto the carved dev (its identity is
+            # those journeys — the point of the lift).
+            sub.flows = list(dom_flows[dom])
+            taken_names.add(name)
+            minted.append(sub)
+            moved_ids.update(id(fl) for fl in dom_flows[dom])
+            carved_files.update(files)
+            result.domains_carved += 1
+            result.flows_moved += len(dom_flows[dom])
+            result.files_claimed += len(files)
+        if not minted:
+            continue
+        # Source keeps the rest: carved flows leave; carved files (now owned by
+        # the sub) leave the source's paths/member ledger.
+        source.flows = [fl for fl in flows if id(fl) not in moved_ids]
+        if carved_files:
+            source.paths = [p for p in (source.paths or [])
+                            if p not in carved_files]
+            source.member_files = [
+                mf for mf in (getattr(source, "member_files", None) or [])
+                if _member_path(mf) not in carved_files
+            ]
+        minted_all.extend(minted)
+        result.anchors_carved += 1
+        if len(result.sample) < 20:
+            result.sample.append({
+                "source": source.name,
+                "domains": [m.name for m in minted],
+                "flows_moved": sum(len(m.flows) for m in minted),
+            })
+
+    features.extend(minted_all)
+    return result
+
+
+__all__ = [
+    "DomainAttributionResult",
+    "attribute_domain_members",
+    "ServiceCarveResult",
+    "carve_service_domains",
+]
