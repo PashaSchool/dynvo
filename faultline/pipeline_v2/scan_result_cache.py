@@ -92,6 +92,7 @@ ENV_OUTPUT_FLAGS = (
     "FAULTLINE_PF_ANCHOR_NAME_GUARD",
     "FAULTLINE_STAGE_8_9_5_LLM_COMPONENT_SPLIT",
     "FAULTLINE_STAGE_6_7D_PF_UF_BACKSTOP",
+    "FAULTLINE_STAGE_6_7D_RESIDUAL_GUARD",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
