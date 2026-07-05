@@ -58,6 +58,7 @@ def run_finalize_phase(
     feature_history: bool = True,
     llm_health: LlmHealth | None = None,
     repo_class_result: Any = None,
+    prev_scan_json: dict[str, Any] | None = None,
 ) -> Path:
     """Run Stage 6.8 → 3.5 → 6.9 → 6.7/6.7c/6.7b → 6.95 → 7 and write output.
 
@@ -824,6 +825,63 @@ def run_finalize_phase(
         scan_meta["monorepo_assembly"] = {
             k: v for k, v in monorepo_view.get("stats", {}).items()
         }
+
+    # ── UF identity keeper (opt-in, output layer, $0 LLM) ──────────
+    # Pins user-flow ``id`` + ``name`` across rescans against an
+    # EXPLICITLY provided previous scan artifact (``--prev-scan`` /
+    # ``prev_scan_json``). Per ``rule-cold-scan`` there is NO ambient
+    # discovery: when the input is absent this block is skipped and the
+    # scan output is byte-identical to today. Deterministic matching
+    # only (member/route Jaccard + unique (resource,intent) key);
+    # disappeared UFs are RETIRED in telemetry, never resurrected.
+    if prev_scan_json is not None:
+        from faultline.pipeline_v2.uf_identity_keeper import (
+            apply_identity_keeper,
+        )
+        write_stage_input(run_dir, 7, "uf_identity", {
+            "user_flows": user_flows,
+            "bipartite_flows": list(bipartite.flows),
+            "prev_scan_json": prev_scan_json,
+            "scan_meta": scan_meta,
+        })
+        with StageLogger(run_dir, 7, "uf_identity") as log_uid:
+            try:
+                uid_telemetry = apply_identity_keeper(
+                    user_flows, list(bipartite.flows), prev_scan_json,
+                )
+                scan_meta["uf_identity"] = uid_telemetry
+                log_uid.info(
+                    "uf_identity: pinned %d/%d new UFs (prev %d, "
+                    "pin_rate %.2f, renames_prevented %d, retired %d, "
+                    "fk_remapped %d, basis %s)"
+                    % (
+                        uid_telemetry["pinned"],
+                        uid_telemetry["new_total"],
+                        uid_telemetry["prev_total"],
+                        uid_telemetry["pin_rate"],
+                        uid_telemetry["renames_prevented"],
+                        len(uid_telemetry["retired"]),
+                        uid_telemetry["fk_remapped"],
+                        uid_telemetry["basis_counts"],
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — identity is best-effort, never fatal
+                scan_meta["uf_identity"] = {"enabled": False, "error": str(exc)}
+                scan_meta.setdefault("warnings", []).append(
+                    f"uf-identity-keeper failed ({exc}); scan continued unpinned"
+                )
+                log_uid.info(
+                    f"uf_identity: FAILED ({exc}) — continuing unpinned",
+                    feature=None,
+                )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=7,
+                stage_name="uf_identity",
+                payload=dict(scan_meta.get("uf_identity") or {}),
+                run_dir=run_dir,
+            )
 
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import

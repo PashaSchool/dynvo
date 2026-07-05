@@ -781,6 +781,20 @@ def scan(
             "--lineage-jaccard-threshold keep their base UUID."
         ),
     ),
+    prev_scan: Optional[str] = typer.Option(
+        None,
+        "--prev-scan",
+        help=(
+            "Path to the previous scan's feature-map JSON enabling CROSS-"
+            "SCAN USER-FLOW IDENTITY: user flows structurally matched to "
+            "the previous scan keep its id + name (deterministic member/"
+            "route overlap — no LLM); disappeared flows are retired in "
+            "scan_meta.uf_identity, never resurrected. EXPLICIT input "
+            "only (rule-cold-scan): omitting it keeps the scan byte-"
+            "identical to today, so eval paths are provably unaffected. "
+            "Not combinable with multiple --subpath or --auto-partition."
+        ),
+    ),
     lineage_jaccard_threshold: float = typer.Option(
         0.70,
         "--lineage-jaccard-threshold",
@@ -900,6 +914,17 @@ def scan(
             "[red]Error:[/red] --auto-partition cannot be combined with "
             "--subpath. Use --auto-partition to let the engine pick the "
             "sub-projects, OR pass --subpath to declare them yourself."
+        )
+        raise typer.Exit(code=2)
+
+    # --prev-scan pins UF identity against ONE previous FeatureMap; the
+    # multi-output paths (auto-partition / multiple subpaths) would need
+    # one artifact per sub-scan — reject loudly instead of mis-pinning.
+    if prev_scan and (auto_partition or len([s for s in scopes if s]) > 1):
+        rprint(
+            "[red]Error:[/red] --prev-scan cannot be combined with "
+            "--auto-partition or multiple --subpath values (one previous "
+            "feature map maps to one scan output)."
         )
         raise typer.Exit(code=2)
 
@@ -1094,6 +1119,7 @@ def scan(
                 subpath=scope,
                 feature_history=feature_history,
                 max_cost=max_cost,
+                prev_scan_path=Path(prev_scan).resolve() if prev_scan else None,
             )
         except Exception as exc:  # noqa: BLE001 — surface clean error to CLI user
             rprint(f"[red]Scan failed{scope_label}:[/red] {type(exc).__name__}: {exc}")

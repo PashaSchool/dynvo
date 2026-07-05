@@ -198,6 +198,8 @@ def run_pipeline_v2(
     git_snapshot: "GitSnapshot | None" = None,
     feature_history: bool = True,
     max_cost: float | None = None,
+    prev_scan_path: Path | str | None = None,
+    prev_scan_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the Layer 1 pipeline end-to-end against ``repo_path``.
 
@@ -231,6 +233,18 @@ def run_pipeline_v2(
             per-user-flow git-history timeline). Default ``True`` —
             it is cheap ($0 LLM, one in-memory commit sweep). Set
             ``False`` (CLI ``--no-feature-history``) to skip.
+        prev_scan_path: EXPLICIT path to the previous scan's
+            feature-map JSON, enabling the UF identity keeper (pin
+            user-flow ids/names across rescans — see
+            :mod:`faultline.pipeline_v2.uf_identity_keeper`). Per
+            ``rule-cold-scan`` there is NO ambient discovery: ``None``
+            (default) keeps behaviour byte-identical to today. A
+            load failure degrades to an unpinned scan with a
+            ``scan_meta`` warning (never fatal).
+        prev_scan_json: same as ``prev_scan_path`` but as an
+            already-loaded dict (worker/API callers holding the
+            artifact from the DB). ``prev_scan_path`` wins when both
+            are provided.
 
     Returns:
         A dict containing ``path`` (the written FeatureMap path) and
@@ -262,8 +276,30 @@ def run_pipeline_v2(
     # and behaviour is byte-identical to today. Incremental (--since) runs
     # are diff-based and never served from the full-scan cache. Every fault
     # is swallowed → fall through to a normal scan; a scan NEVER crashes here.
+    # ── UF identity keeper input (EXPLICIT only — rule-cold-scan) ──────
+    # Resolve the optional previous-scan artifact BEFORE the scan-result
+    # cache gate: a pinned output must never be stored under (or served
+    # from) the plain cache key, otherwise a later scan WITHOUT
+    # --prev-scan would replay pinned names — exactly the ambient-state
+    # poisoning class the legacy prev_assignments reader had. A load
+    # failure degrades to an unpinned scan + scan_meta warning.
+    prev_scan_warning: str | None = None
+    if prev_scan_path is not None:
+        from faultline.pipeline_v2.uf_identity_keeper import load_prev_scan
+        try:
+            prev_scan_json = load_prev_scan(prev_scan_path)
+        except ValueError as exc:
+            prev_scan_warning = (
+                f"uf-identity-keeper: prev-scan unusable ({exc}); "
+                "scan continued unpinned"
+            )
+            logger.warning("pipeline_v2: %s", prev_scan_warning)
+            prev_scan_json = None
+
     scan_cache_key: str | None = None
-    scan_cache_active = _scan_cache.is_enabled() and since is None
+    scan_cache_active = (
+        _scan_cache.is_enabled() and since is None and prev_scan_json is None
+    )
     if scan_cache_active:
         try:
             _cfg_sig = _scan_cache.scan_config_signature(
@@ -811,6 +847,11 @@ def run_pipeline_v2(
         repo_class_result=repo_class_result,
     )
 
+    # UF identity keeper — surface a failed prev-scan load VISIBLY
+    # (the keeper itself runs in the finalize phase when input loaded).
+    if prev_scan_warning:
+        scan_meta.setdefault("warnings", []).append(prev_scan_warning)
+
     # Stage 2.6 membership-closure telemetry — additive key (consumers
     # treat absence as "stage not present"). Per-feature detail and
     # wall-clock timing stay in the 02-stage-membership_closure.json
@@ -867,6 +908,7 @@ def run_pipeline_v2(
         feature_history=feature_history,
         llm_health=llm_health,
         repo_class_result=repo_class_result,
+        prev_scan_json=prev_scan_json,
     )
 
     # ── Flush any buffered cache writes (no-op for fs backend) ──────

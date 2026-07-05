@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 SCHEMA_VERSION: int = 1
 """Current FeatureMap JSON schema version, stamped on every new scan.
@@ -936,6 +936,28 @@ class UserFlow(BaseModel):
     # locator}], "confidence": 0-1} — code + product-source corroboration, attached
     # deterministically by dual_evidence.py. Additive/optional; None when not computed.
     dual_evidence: dict[str, Any] | None = None
+    # Cross-scan identity keeper (2026-07-05, opt-in via an EXPLICIT
+    # ``--prev-scan`` artifact — see ``uf_identity_keeper.py``). When this
+    # UF was matched to a UF of the previous scan, carries
+    # ``{"pinned_from": <prev run_id>, "prev_id": ..., "match_basis":
+    # "member"|"route"|"resource-intent", "overlap": float,
+    # "renamed_prevented": bool}``. ``None`` (and OMITTED from the
+    # serialized JSON — see ``_omit_none_identity``) on every scan that
+    # ran without a prev-scan input, keeping default output byte-identical.
+    identity: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_none_identity(self, handler: Any) -> Any:
+        """Drop ``identity`` from dumps when unset.
+
+        The keeper is strictly opt-in; scans without ``--prev-scan`` must
+        serialize byte-identically to engines that predate the field
+        (snapshot-gate digests + absent-input byte-identity contract).
+        """
+        data = handler(self)
+        if isinstance(data, dict) and data.get("identity") is None:
+            data.pop("identity", None)
+        return data
 
 
 class FeatureMap(BaseModel):
