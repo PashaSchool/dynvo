@@ -154,14 +154,18 @@ def test_feature_with_flows_never_dropped() -> None:
     assert [f.name for f in feats] == ["hasflow"]
 
 
-def test_workspace_anchor_marker_only_never_dropped() -> None:
+def test_workspace_anchor_marker_drops_when_contentless() -> None:
+    # SEMANTIC CHANGE (Soc0 'ai' survivor): the anchor marker no longer
+    # shields a row with only structural paths, zero loc and zero flows —
+    # operator law: no zero-code feature may surface. Content-FULL anchors
+    # never reach the phantom predicate (real paths / loc / flows).
     anchor = _feat(
         "backend", ["."], loc=0, loc_shared=0,
         description="workspace anchor 'backend' from monorepo package 'backend/'",
     )
     feats, _, res = enforce_emission_integrity([anchor], [], [], [])
-    assert [f.name for f in feats] == ["backend"]
-    assert res.phantom_features_dropped == []
+    assert feats == []
+    assert res.phantom_features_dropped == ["backend"]
 
 
 def test_platform_bucket_marker_only_never_dropped() -> None:
@@ -291,3 +295,27 @@ def test_full_round_trip_all_three_classes() -> None:
     assert uf.product_feature_id == "poll-editing-management"
     # I14: flow backpointer synced to the final UF
     assert fl.user_flow_id == "UF-001"
+
+
+def test_contentless_anchor_marker_drops():
+    """Soc0 'ai' case: workspace-anchor marker + only '.' path + zero code
+    must DROP; the shared-platform bucket itself must survive."""
+    from faultline.pipeline_v2.emission_integrity import _is_phantom
+
+    ai = _feat(name="ai", paths=["."],
+                  description="stage-2 workspace anchor (sources=package)")
+    assert _is_phantom(ai)
+
+    bucket = _feat(name="shared-platform", paths=["."],
+                      description="workspace anchor bucket")
+    assert not _is_phantom(bucket)
+
+
+def test_contentless_bucket_resident_drops() -> None:
+    """A content-less dev ASSIGNED to shared-platform (pf_id) is a phantom;
+    only the bucket row itself (by name) is immune."""
+    from faultline.pipeline_v2.emission_integrity import _is_phantom
+
+    resident = _feat("ai", ["."], product_feature_id="shared-platform",
+                     description="[package] per-workspace merged")
+    assert _is_phantom(resident)
