@@ -154,14 +154,18 @@ def test_feature_with_flows_never_dropped() -> None:
     assert [f.name for f in feats] == ["hasflow"]
 
 
-def test_workspace_anchor_marker_only_never_dropped() -> None:
+def test_workspace_anchor_marker_drops_when_contentless() -> None:
+    # SEMANTIC CHANGE (Soc0 'ai' survivor): the anchor marker no longer
+    # shields a row with only structural paths, zero loc and zero flows —
+    # operator law: no zero-code feature may surface. Content-FULL anchors
+    # never reach the phantom predicate (real paths / loc / flows).
     anchor = _feat(
         "backend", ["."], loc=0, loc_shared=0,
         description="workspace anchor 'backend' from monorepo package 'backend/'",
     )
     feats, _, res = enforce_emission_integrity([anchor], [], [], [])
-    assert [f.name for f in feats] == ["backend"]
-    assert res.phantom_features_dropped == []
+    assert feats == []
+    assert res.phantom_features_dropped == ["backend"]
 
 
 def test_platform_bucket_marker_only_never_dropped() -> None:
