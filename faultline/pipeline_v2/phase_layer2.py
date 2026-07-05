@@ -62,6 +62,9 @@ from faultline.pipeline_v2.stage_8_marketing_clusterer import (
 from faultline.pipeline_v2.stage_8_9_6_domain_member_attribution import (
     attribute_domain_members,
 )
+from faultline.pipeline_v2.stage_8_9_7_vendor_connector_split import (
+    split_vendor_connectors,
+)
 from faultline.pipeline_v2.stage_8_rollup_strategies import (
     stage_8_rollup_flows,
     write_rollup_artifact,
@@ -86,6 +89,7 @@ class Layer2Result:
     stage_8_9_telemetry: dict[str, Any]
     stage_8_9_5_telemetry: dict[str, Any]
     stage_8_9_6_telemetry: dict[str, Any]
+    stage_8_9_7_telemetry: dict[str, Any]
 
 
 def run_layer2_phase(
@@ -656,6 +660,36 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
+    # ── Stage 8.9.7 — per-vendor connector split (opt-in, default OFF) ──
+    # Integration-hub dev features (majority of owned files stem-named after
+    # DISTINCT public vendors) split into <parent>-<vendor> sub-features —
+    # the per-connector grain users think in (dub golden: Connect Stripe /
+    # Connect Shopify). Subfeatures inherit product_feature_id → product
+    # unions conserved, no reconcile needed. $0 LLM, deterministic.
+    # Default OFF; FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=1.
+    write_stage_input(run_dir, 8, "vendor_connector_split", {
+        "features": features,
+        "product_features": product_features,
+    })
+    with StageLogger(run_dir, 8, "vendor_connector_split") as log8_9_7:
+        vendor_split_result = split_vendor_connectors(features)
+        stage_8_9_7_telemetry = vendor_split_result.as_telemetry()
+        log8_9_7.info(
+            f"vendor_connector_split enabled={vendor_split_result.enabled} "
+            f"examined={vendor_split_result.features_examined} "
+            f"hubs_split={vendor_split_result.hubs_split} "
+            f"connectors={vendor_split_result.connectors_created} "
+            f"files_moved={vendor_split_result.files_moved} "
+            f"collisions_skipped={vendor_split_result.collisions_skipped}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="vendor_connector_split",
+            payload=stage_8_9_7_telemetry,
+            run_dir=run_dir,
+        )
+
     return Layer2Result(
         features=features,
         product_features=product_features,
@@ -671,6 +705,7 @@ def run_layer2_phase(
         stage_8_9_telemetry=stage_8_9_telemetry,
         stage_8_9_5_telemetry=stage_8_9_5_telemetry,
         stage_8_9_6_telemetry=stage_8_9_6_telemetry,
+        stage_8_9_7_telemetry=stage_8_9_7_telemetry,
     )
 
 

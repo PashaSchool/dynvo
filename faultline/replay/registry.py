@@ -1027,6 +1027,29 @@ def _run_domain_member_attribution(
     return {"features": features, "product_features": product_features}
 
 
+def _run_vendor_connector_split(
+    env: ReplayEnv, state: dict[str, Any],
+) -> dict[str, Any]:
+    from faultline.pipeline_v2.stage_8_9_7_vendor_connector_split import (
+        split_vendor_connectors,
+    )
+
+    features = state["features"]
+    product_features = state["product_features"]
+    with StageLogger(env.run_dir, 8, "vendor_connector_split") as log8_9_7:
+        vendor_split_result = split_vendor_connectors(features)
+        log8_9_7.info(
+            f"vendor_connector_split enabled={vendor_split_result.enabled}",
+        )
+        write_stage_artifact(
+            Path(state.get("repo_path", ".")), stage_index=8,
+            stage_name="vendor_connector_split",
+            payload=vendor_split_result.as_telemetry(),
+            run_dir=env.run_dir,
+        )
+    return {"features": features, "product_features": product_features}
+
+
 def _run_pf_hotspots(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     from faultline.pipeline_v2.stage_6_metrics import (
         attach_hotspots_to_product_features,
@@ -1575,24 +1598,28 @@ STAGES: list[StageSpec] = [
         llm_cache_dir="llm-component-split",
     ),
     StageSpec("domain_member_attribution", 8, 28, _run_domain_member_attribution),
-    StageSpec("pf_hotspots", 8, 29, _run_pf_hotspots, connector=True),
-    StageSpec("lineage", 6, 30, _run_lineage, connector=True),
-    StageSpec("flow_expansion", 3, 31, _run_flow_expansion),
-    StageSpec("test_strip", 6, 32, _run_test_strip),
-    StageSpec("generated_strip", 6, 33, _run_generated_strip),
-    StageSpec("user_flows", 6, 34, _run_user_flows),
-    StageSpec("uf_splitter", 6, 35, _run_uf_splitter, llm_cache_dir="uf-split"),
-    StageSpec("uf_refiner", 6, 36, _run_uf_refiner, llm_cache_dir="uf-refine"),
+    # optional: recorded runs that predate the stage have no input artifact
+    # for it — replay chains over them must skip it silently.
+    StageSpec("vendor_connector_split", 8, 29, _run_vendor_connector_split,
+              optional=True),
+    StageSpec("pf_hotspots", 8, 30, _run_pf_hotspots, connector=True),
+    StageSpec("lineage", 6, 31, _run_lineage, connector=True),
+    StageSpec("flow_expansion", 3, 32, _run_flow_expansion),
+    StageSpec("test_strip", 6, 33, _run_test_strip),
+    StageSpec("generated_strip", 6, 34, _run_generated_strip),
+    StageSpec("user_flows", 6, 35, _run_user_flows),
+    StageSpec("uf_splitter", 6, 36, _run_uf_splitter, llm_cache_dir="uf-split"),
+    StageSpec("uf_refiner", 6, 37, _run_uf_refiner, llm_cache_dir="uf-refine"),
     StageSpec(
-        "journey_abstraction", 6, 37, _run_journey_abstraction,
+        "journey_abstraction", 6, 38, _run_journey_abstraction,
         optional=True, llm_cache_dir="abstraction",
     ),
-    StageSpec("dual_evidence", 6, 38, _run_dual_evidence,
+    StageSpec("dual_evidence", 6, 39, _run_dual_evidence,
               optional=True, connector=True),
-    StageSpec("history", 6, 39, _run_history),
-    StageSpec("impact", 6, 40, _run_impact),
-    StageSpec("monorepo_assembly", 6, 41, _run_monorepo_assembly),
-    StageSpec("output", 7, 42, _run_output),
+    StageSpec("history", 6, 40, _run_history),
+    StageSpec("impact", 6, 41, _run_impact),
+    StageSpec("monorepo_assembly", 6, 42, _run_monorepo_assembly),
+    StageSpec("output", 7, 43, _run_output),
 ]
 
 _BY_KEY = {s.key: s for s in STAGES}
