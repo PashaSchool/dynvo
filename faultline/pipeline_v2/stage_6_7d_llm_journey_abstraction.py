@@ -2122,10 +2122,19 @@ def _carve_shared_uf(
 # reference). Extend the join-over-mint + flowful discipline to these shells,
 # in order: (1) ABSORB a residual dev whose whole footprint sits inside the
 # shell's claimed paths and which HAS flows (makes it flowful); (2) JOIN a
-# token-family flowful PF (fold its devs in, drop the shell); (3) if the shell
+# token-family flowful PF (fold its devs in, drop the shell); (2) if the shell
 # still owns >= 1k LOC with no flows, DEMOTE its devs to the shared bucket and
 # DROP the shell (honest platform code, not a product feature); smaller flowless
 # PFs are tolerated (I8 only fires >= 1k LOC).
+#
+# NOTE (2026-07-06): a naive "absorb a footprint-matched residual dev" rung was
+# considered + rejected — a shell's claimed paths are often an anchor ROOT
+# (``apps/web``), so prefix-matching swept an unrelated flowful dev into the
+# shell and manufactured a has-flows I8. It is also unsound in principle: if a
+# flowful dev genuinely belonged to the shell's domain, the Call-1 draw would
+# have mapped it there (making the PF flowful). A truly flowless shell has
+# nothing safe to absorb — so join-over-mint then demote-and-drop is the whole
+# ladder.
 #
 # PLACEMENT: this runs as a POST-``feature_loc`` deterministic pass, NOT inside
 # 6.7d ``_finish``. The >= 1k-LOC prong needs owned ``loc``, and Stage 6.97
@@ -2225,28 +2234,7 @@ def resolve_flowless_shells(
             continue  # flowful (or empty) — not a shell
         display = pf.display_name or slug
 
-        # (1) ABSORB — a residual dev whose whole footprint sits inside the
-        # shell's claimed paths AND which HAS flows makes the shell flowful.
-        claimed = tuple(sorted({p for m in members for p in _paths_of(m)}))
-        absorbed = False
-        for cand in sorted(developer_features, key=lambda d: d.name or ""):
-            if _pf_of(cand) != shared_slug:
-                continue
-            if not (getattr(cand, "flows", None) or []):
-                continue
-            cpaths = _paths_of(cand)
-            if cpaths and all(
-                    any(p == c or p.startswith(c.rstrip("/") + "/")
-                        for c in claimed) for p in cpaths):
-                _rehome(cand, slug)
-                members.append(cand)
-                absorbed = True
-        if absorbed and _flows(members) > 0:
-            tele["shell_absorbed"] += 1
-            _record(display, "absorbed", slug)
-            continue
-
-        # (2) JOIN a token-family flowful PF (drop the shell).
+        # (1) JOIN a token-family flowful PF (drop the shell).
         fam = _family_capability_match(pf, cap_context)
         if fam is not None:
             fam_slug = _slug(fam)
@@ -2257,7 +2245,7 @@ def resolve_flowless_shells(
             _record(display, "joined", fam_slug)
             continue
 
-        # (3) DEMOTE + DROP — only when the shell is journeys-worthy by LOC
+        # (2) DEMOTE + DROP — only when the shell is journeys-worthy by LOC
         # (>= 1k owned). Smaller flowless PFs are tolerated (mirror I8).
         owned = _owned_loc_of(pf) or sum(_owned_loc_of(m) for m in members)
         if owned < _SHELL_LOC_FLOOR:

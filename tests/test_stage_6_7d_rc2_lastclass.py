@@ -250,19 +250,23 @@ def test_shell_below_loc_floor_kept() -> None:
     assert small.product_feature_id == "mini-cap"
 
 
-def test_shell_absorbs_footprint_dev_with_flows() -> None:
-    """A residual dev whose whole footprint sits inside the shell's claimed
-    paths AND which has flows is absorbed → the shell becomes flowful, kept."""
-    shell = _dev("reports", [], paths=["apps/reports"], loc=1200,
-                 pfid="reports")
-    inside = _dev("report-export", [("r1", "apps/reports/export.ts")],
-                  paths=["apps/reports/export.ts"], pfid=SHARED)
-    devs = [shell, inside]
-    pfs = [_pf("reports", "Reports")]
+def test_shell_never_absorbs_unrelated_dev_under_anchor_root() -> None:
+    """Regression (linkwarden Localization): a flowless shell whose claimed
+    paths are an anchor ROOT (apps/web) must NOT sweep in an unrelated flowful
+    dev by prefix — that manufactured a has-flows I8. The shell demotes+drops;
+    the unrelated dev is untouched."""
+    shell = _dev("i18n", [], paths=["apps/web", "packages/router"], loc=1297,
+                 pfid="localization")
+    other = _dev("settings", [("s1", "apps/web/settings/page.tsx")],
+                 paths=["apps/web/settings/page.tsx"], pfid=SHARED)
+    devs = [shell, other]
+    pfs = [_pf("localization", "Localization")]
     out, tele = resolve_flowless_shells(devs, pfs)
-    assert tele["shell_absorbed"] == 1
-    assert inside.product_feature_id == "reports"
-    assert any(p.name == "reports" for p in out)  # kept (now flowful)
+    assert tele["shell_demoted"] == 1
+    assert tele["shell_absorbed"] == 0
+    assert other.product_feature_id == SHARED   # NOT swept into the shell
+    assert shell.product_feature_id == SHARED   # demoted
+    assert not any(p.name == "localization" for p in out)  # shell dropped
 
 
 def test_flowful_pf_never_absorbed() -> None:
