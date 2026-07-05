@@ -46,8 +46,12 @@ Design (deterministic, $0 LLM, output layer — the flow graph and Stage
    overlap ("shares at least as much as it differs"), per
    ``rule-no-magic-tuning``. The 2026-07-05 sensitivity sweep on the 5
    recorded same-repo draw pairs (dub / cal-com / formbricks / saleor /
-   supabase) showed pin-rate varies smoothly with no cliff around 0.5;
-   0.5 is the scale-invariant midpoint, not a per-repo tuned value.
+   supabase; 501 prev UFs total) showed pin-rate varies smoothly with
+   no cliff: 76.7% @0.3 → 75.3% @0.4 → 74.7% @0.5 → 71.1% @0.6 →
+   68.1% @0.7 → 65.7% @0.8. 0.5 is the scale-invariant majority
+   midpoint, not a per-repo tuned value. Measured name-churn reduction
+   on the same pairs: share of new UFs carrying a previous scan's name
+   25.4% → 79.8% with the keeper.
 """
 
 from __future__ import annotations
