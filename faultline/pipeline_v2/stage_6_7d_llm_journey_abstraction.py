@@ -1973,20 +1973,340 @@ def _reshare_rank(
     return (cnt, share, -size)
 
 
+# ── All-shared-UF resolution ladder (RC2 fix-3, 2026-07-06) ─────────────────
+# The plurality reshare above resolves a shared UF only when SOME member flow
+# is owned by a NON-shared product feature. An "all-shared" UF — every member
+# flow owned by an infra/anchor dev (studio / packages/ui / apps/worker) — has
+# no non-shared candidate, so it stayed on the residual and tripped validator
+# I10 corpus-wide (rallly command-palette, supabase 11, typebot/openstatus/…).
+# These are REAL journeys whose implementation lives in SHARED packages. The
+# ladder resolves them deterministically, in order:
+#   (i)  TOKEN-FAMILY match of the UF NAME against an existing non-shared,
+#        FLOWFUL capability (verb-folded stems so "…navigate" folds to the
+#        "Navigation" capability, "authorize…" to "…authorization"); reassign.
+#   (ii) ENTRY-FILE carve: the UF's member flows majority-sit under one
+#        feature-dir domain owned by a domain-DEDICATED dev that was mis-sunk
+#        to the residual — MINT that dev its own capability (tier-2/3 path,
+#        flowful by construction). Anchors/app-shells never qualify.
+#   (iii) neither fires — a legitimate rarity; LEFT on the residual and counted
+#        in ``uf_shared_unresolved`` (I10 flags it; reported honestly).
+# Verb folding is LADDER-LOCAL (does NOT touch the global ``_stem`` used by the
+# dev-side join-over-mint) so existing family joins + snapshots stay byte-inert.
+_VERB_FOLD_SUFFIXES: tuple[str, ...] = ("ate", "ize", "ise")
+
+
+def _verb_fold(stem: str) -> str:
+    """Fold a common verb ending onto its noun stem for NAME↔capability
+    matching: ``navigate``→``navig`` (== ``navigation``), ``authorize``→
+    ``author`` (== ``authorization``), ``integrate``→``integr``. Keeps a stem
+    of >= _MIN_STEM_LEN so short/ambiguous stems (``create``→stays,
+    ``state``→stays) never collapse. Idempotent on non-verb stems."""
+    for suf in _VERB_FOLD_SUFFIXES:
+        if stem.endswith(suf) and len(stem) - len(suf) >= _MIN_STEM_LEN:
+            return stem[: -len(suf)]
+    return stem
+
+
+def _uf_family_capability(
+    uf_name: str | None, cap_context: dict[str, dict[str, Any]],
+) -> str | None:
+    """Slug of the flowful non-shared capability whose token FAMILY the UF NAME
+    shares — ladder step (i). ``cap_context`` maps each candidate display-name
+    to ``{slug, stems, members, flows, paths}`` (only FLOWFUL non-shared PFs).
+    Verb-folded on both sides. Deterministic: most shared stems, then the
+    LARGEST behavioural home (flows → members → paths), then alpha slug."""
+    uf_stems = {_verb_fold(s) for s in _family_stems(uf_name)}
+    if not uf_stems:
+        return None
+    best: str | None = None
+    best_key: tuple[int, int, int, int, str] | None = None
+    for cap, ctx in cap_context.items():
+        cap_stems = {_verb_fold(s) for s in ctx["stems"]}
+        overlap = uf_stems & cap_stems
+        if not overlap:
+            continue
+        key = (len(overlap), ctx["flows"], ctx["members"], ctx["paths"])
+        slug = ctx["slug"]
+        if best_key is None or key > best_key[:4] or (
+            key == best_key[:4] and slug < best_key[4]
+        ):
+            best, best_key = slug, (*key, slug)
+    return best
+
+
+def _flowful_cap_context(
+    new_pfs: list["Feature"],
+    dev_to_product: dict[str, tuple[str, ...]],
+    developer_features: list["Feature"],
+) -> dict[str, dict[str, Any]]:
+    """Family-match context keyed by display-name for every FLOWFUL non-shared
+    product feature — its NAME stems + behavioural mass from its member devs.
+    Only flowful caps are join targets (a UF/journey must land on a capability
+    that actually owns journeys)."""
+    dev_by_slug: dict[str, list["Feature"]] = defaultdict(list)
+    for dev in developer_features:
+        slugs = dev_to_product.get(dev.name) or ()
+        if slugs:
+            dev_by_slug[slugs[0]].append(dev)
+    ctx: dict[str, dict[str, Any]] = {}
+    for pf in new_pfs:
+        slug = pf.name or ""
+        if not slug or slug in _SHARED_PF_SLUGS:
+            continue
+        devs = dev_by_slug.get(slug, [])
+        flows = sum(len(getattr(d, "flows", None) or []) for d in devs)
+        if flows == 0:
+            continue  # flowless shells are never a journey home
+        disp = pf.display_name or slug
+        ctx[disp] = {
+            "slug": slug, "stems": _family_stems(disp), "flows": flows,
+            "members": len(devs), "paths": sum(len(_paths_of(d)) for d in devs),
+        }
+    return ctx
+
+
+def _carve_shared_uf(
+    uf: "UserFlow",
+    flow_owner_dev: dict[str, str],
+    dev_by_name: dict[str, "Feature"],
+    dev_to_product: dict[str, tuple[str, ...]],
+    new_pfs: list["Feature"],
+    route_files: frozenset[str],
+    route_uuids: frozenset[str],
+) -> str | None:
+    """Ladder step (ii) — MINT a capability for an all-shared UF whose member
+    flows are owned by a domain-DEDICATED dev that was mis-sunk to the residual.
+
+    The plurality owning dev of the UF's member flows is promoted via the SAME
+    tier-2 feature-dir / tier-3 route-surface test used at reconstruction
+    (``_feature_dir_capability`` / ``_route_surface_capability``). A workspace
+    anchor / app-shell mega-dev (``apps/studio`` / ``packages/ui``) never
+    qualifies, so a broad shared package is never carved. On a hit the dev is
+    re-homed onto the minted PF (flowful by construction — it owns these flows)
+    and the new PF slug is returned; otherwise ``None`` (→ ladder iii)."""
+    counts: Counter[str] = Counter()
+    for m in uf.member_flow_ids or []:
+        dn = flow_owner_dev.get(m)
+        if dn:
+            counts[dn] += 1
+    if not counts:
+        return None
+    top = max(counts.values())
+    dev_name = min(n for n, c in counts.items() if c == top)
+    dev = dev_by_name.get(dev_name)
+    if dev is None:
+        return None
+    promo = _feature_dir_capability(dev) or _route_surface_capability(
+        dev, route_files, route_uuids)
+    if not promo:
+        return None
+    slug = _slug(promo)
+    if slug in _SHARED_PF_SLUGS:
+        return None
+    existing = {p.name or "" for p in new_pfs}
+    if slug not in existing:
+        new_pfs.append(aggregate_product_feature(
+            name=slug, display_name=promo,
+            description=_flows_surface_description(dev), contrib=[dev]))
+    dev_to_product[dev.name] = (slug,)
+    return slug
+
+
+# ── Draw-native flowless-shell resolution (RC2 fix-3, Part B) ────────────────
+# The PF-UF backstop guarantees a UF for every FLOWFUL capability, and the
+# residual guard's flowful-requirement stops a FLOWLESS residual dev from
+# minting a shell — but a Call-1 draw can still EMIT a capability whose devs own
+# real code yet ZERO flows (linkwarden "Highlights"=AI worker, "Localization"=
+# i18n): a draw-native flowless shell. With >= 1k owned LOC it trips validator
+# I8 (journeys-worthy code, no UF) and the backstop can't cover it (no flow to
+# reference). Extend the join-over-mint + flowful discipline to these shells,
+# in order: (1) ABSORB a residual dev whose whole footprint sits inside the
+# shell's claimed paths and which HAS flows (makes it flowful); (2) JOIN a
+# token-family flowful PF (fold its devs in, drop the shell); (2) if the shell
+# still owns >= 1k LOC with no flows, DEMOTE its devs to the shared bucket and
+# DROP the shell (honest platform code, not a product feature); smaller flowless
+# PFs are tolerated (I8 only fires >= 1k LOC).
+#
+# NOTE (2026-07-06): a naive "absorb a footprint-matched residual dev" rung was
+# considered + rejected — a shell's claimed paths are often an anchor ROOT
+# (``apps/web``), so prefix-matching swept an unrelated flowful dev into the
+# shell and manufactured a has-flows I8. It is also unsound in principle: if a
+# flowful dev genuinely belonged to the shell's domain, the Call-1 draw would
+# have mapped it there (making the PF flowful). A truly flowless shell has
+# nothing safe to absorb — so join-over-mint then demote-and-drop is the whole
+# ladder.
+#
+# PLACEMENT: this runs as a POST-``feature_loc`` deterministic pass, NOT inside
+# 6.7d ``_finish``. The >= 1k-LOC prong needs owned ``loc``, and Stage 6.97
+# (feature_loc) is what populates ``Feature.loc`` — it runs AFTER 6.7d. Running
+# here (right before emission-integrity) is the only point where the exact I8
+# LOC signal exists; the pass is deterministic + always-run, so replay identity
+# is preserved. Operates on the stamped ``feat.product_feature_id`` membership.
+# Kill-switch: FAULTLINE_STAGE_6_7D_SHELL_ABSORB=0.
+_SHELL_LOC_FLOOR = 1000  # mirrors validator I8's journeys-worthy LOC prong
+
+
+def _shell_absorb_enabled() -> bool:
+    return os.environ.get("FAULTLINE_STAGE_6_7D_SHELL_ABSORB", "1") != "0"
+
+
+def _owned_loc_of(feat: "Feature") -> int:
+    """A feature's OWNED LOC (never ``loc_shared`` — mirrors validator
+    ``feature_loc``): the ``loc`` field, else 0."""
+    v = getattr(feat, "loc", None)
+    return v if isinstance(v, int) and v > 0 else 0
+
+
+def resolve_flowless_shells(
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+) -> tuple[list["Feature"], dict[str, Any]]:
+    """Resettle draw-native flowless shells (see the block above), post-
+    feature_loc. Reads/writes ``feat.product_feature_id`` membership + reads
+    ``feat.loc``. Returns ``(filtered_product_features, telemetry)`` with the
+    dropped shells removed. Fully deterministic — sorted iteration, no
+    wall-clock, no randomness."""
+    tele: dict[str, Any] = {
+        "shell_absorbed": 0, "shell_joined": 0, "shell_demoted": 0,
+        "shell_resolutions": [],  # bounded [{shell, action, target}]
+    }
+
+    def _record(shell: str, action: str, target: str | None) -> None:
+        if len(tele["shell_resolutions"]) < 50:
+            tele["shell_resolutions"].append(
+                {"shell": shell, "action": action, "target": target})
+
+    shared_slug = _slug(_RESIDUAL_CAP)
+
+    def _pf_of(dev: "Feature") -> str:
+        return getattr(dev, "product_feature_id", None) or ""
+
+    slug_members: dict[str, list["Feature"]] = defaultdict(list)
+    for dev in developer_features:
+        pid = _pf_of(dev)
+        if pid:
+            slug_members[pid].append(dev)
+    pf_by_slug = {p.name or "": p for p in product_features}
+
+    def _flows(devs: list["Feature"]) -> int:
+        return sum(len(getattr(d, "flows", None) or []) for d in devs)
+
+    def _rehome(dev: "Feature", target_slug: str) -> None:
+        dev.product_feature_id = target_slug
+        tgt = pf_by_slug.get(target_slug)
+        if tgt is not None:
+            _extend_pf_membership(tgt, dev)
+
+    def _ensure_shared_pf(contrib: list["Feature"]) -> "Feature":
+        pf = pf_by_slug.get(shared_slug)
+        if pf is None:
+            # aggregate_product_feature averages over contrib → needs >= 1 dev;
+            # the demote members are exactly that seed (idempotent re-home).
+            pf = aggregate_product_feature(
+                name=shared_slug, display_name=_RESIDUAL_CAP,
+                description=_RESIDUAL_DESCRIPTION, contrib=list(contrib))
+            product_features.append(pf)
+            pf_by_slug[shared_slug] = pf
+        return pf
+
+    dropped: set[int] = set()
+    # Family-join context = the FLOWFUL non-shared PFs (a shell may only fold
+    # into a capability that actually owns journeys).
+    cap_context = {
+        (p.display_name or p.name or ""): {
+            "stems": _family_stems(p.display_name or p.name),
+            "members": len(slug_members.get(p.name or "", [])),
+            "flows": _flows(slug_members.get(p.name or "", [])),
+            "paths": sum(len(_paths_of(d))
+                         for d in slug_members.get(p.name or "", [])),
+        }
+        for p in product_features
+        if (p.name or "") not in _SHARED_PF_SLUGS
+        and _flows(slug_members.get(p.name or "", [])) > 0
+    }
+
+    for pf in sorted(product_features, key=lambda p: p.name or ""):
+        slug = pf.name or ""
+        if not slug or slug in _SHARED_PF_SLUGS:
+            continue
+        members = slug_members.get(slug, [])
+        if not members or _flows(members) > 0:
+            continue  # flowful (or empty) — not a shell
+        display = pf.display_name or slug
+
+        # (1) JOIN a token-family flowful PF (drop the shell).
+        fam = _family_capability_match(pf, cap_context)
+        if fam is not None:
+            fam_slug = _slug(fam)
+            for dev in members:
+                _rehome(dev, fam_slug)
+            dropped.add(id(pf))
+            tele["shell_joined"] += 1
+            _record(display, "joined", fam_slug)
+            continue
+
+        # (2) DEMOTE + DROP — only when the shell is journeys-worthy by LOC
+        # (>= 1k owned). Smaller flowless PFs are tolerated (mirror I8).
+        owned = _owned_loc_of(pf) or sum(_owned_loc_of(m) for m in members)
+        if owned < _SHELL_LOC_FLOOR:
+            continue
+        _ensure_shared_pf(members)
+        for dev in members:
+            _rehome(dev, shared_slug)
+        dropped.add(id(pf))
+        tele["shell_demoted"] += 1
+        _record(display, "demoted", shared_slug)
+
+    if dropped:
+        product_features = [p for p in product_features if id(p) not in dropped]
+    return product_features, tele
+
+
+def _extend_pf_membership(pf: "Feature", dev: "Feature") -> None:
+    """Fold a re-homed dev's owned files into a target PF's registries so the
+    PF's ``paths`` / ``member_files`` stay coherent after a shell resettle
+    (dedup by path, order-stable)."""
+    seen = set(pf.paths or [])
+    for p in _paths_of(dev):
+        if p not in seen:
+            pf.paths.append(p)
+            seen.add(p)
+    existing_mf = getattr(pf, "member_files", None)
+    if existing_mf is None:
+        return
+    seen_mf = {
+        (mf.get("path") if isinstance(mf, dict) else getattr(mf, "path", None))
+        for mf in existing_mf
+    }
+    for mf in (getattr(dev, "member_files", None) or []):
+        p = mf.get("path") if isinstance(mf, dict) else getattr(mf, "path", None)
+        if p and p not in seen_mf:
+            existing_mf.append(mf)
+            seen_mf.add(p)
+
+
 def _reassign_shared_ufs(
     new_ufs: list["UserFlow"],
     developer_features: list["Feature"],
     dev_to_product: dict[str, tuple[str, ...]],
     flow_owner_override: dict[str, str] | None = None,
+    *,
+    new_pfs: list["Feature"] | None = None,
+    routes_index: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Reassign every UF left on the shared/platform capability to the
     non-shared PF owning the plurality of its member flows (see the block
-    rationale above). Mutates ``new_ufs[*].product_feature_id`` in place;
-    returns bounded telemetry. Fully deterministic — sorted iteration, no
-    wall-clock, no randomness."""
+    rationale above). An ALL-SHARED UF (no non-shared owner) runs the
+    resolution ladder — token-family NAME match → entry-file carve → honest
+    unresolved (see the ladder block above ``_verb_fold``). Mutates
+    ``new_ufs[*].product_feature_id`` (and, on a carve, ``new_pfs`` /
+    ``dev_to_product``) in place; returns bounded telemetry. Fully
+    deterministic — sorted iteration, no wall-clock, no randomness."""
     tele: dict[str, Any] = {
         "uf_shared_reassigned": 0,
         "uf_shared_unresolved": 0,
+        "uf_shared_family_resolved": 0,
+        "uf_shared_carved": 0,
         "uf_shared_reassignments": [],  # bounded [{uf, from, to, basis}]
     }
 
@@ -1996,11 +2316,21 @@ def _reassign_shared_ufs(
             tele["uf_shared_reassignments"].append(
                 {"uf": uf_name, "from": donor, "to": target, "basis": basis})
 
+    pf_list = new_pfs if new_pfs is not None else []
+    cap_context = _flowful_cap_context(pf_list, dev_to_product,
+                                       developer_features)
+    dev_by_name = {d.name: d for d in developer_features}
+    route_files = frozenset(
+        str(r.get("file") or "") for r in (routes_index or [])) - {""}
+    route_uuids = frozenset(
+        str(r.get("feature_uuid") or "") for r in (routes_index or [])) - {""}
+
     # member id -> owning PF slug via the flow's owning dev (containment; first
     # owner wins — input order stable). Mirrors _backstop_uncovered_pfs.flow_pf
     # so "owning PF" stays one consistent notion across the two passes.
     override = flow_owner_override or {}
     flow_pf: dict[str, str] = {}
+    flow_owner_dev: dict[str, str] = {}
     for dev in developer_features:
         slugs = dev_to_product.get(dev.name) or ()
         slug = slugs[0] if slugs else ""
@@ -2010,6 +2340,7 @@ def _reassign_shared_ufs(
                 # Container-page redistribution (fix 3): honour the hosted
                 # flow's real owner over the page shell it was swept into.
                 flow_pf[mid] = override.get(mid, slug)
+                flow_owner_dev[mid] = dev.name
     # Total flows each PF owns — the specificity tie-break (smaller = narrower).
     pf_size: Counter[str] = Counter(flow_pf.values())
 
@@ -2024,10 +2355,29 @@ def _reassign_shared_ufs(
             if owner and owner not in _SHARED_PF_SLUGS:
                 owner_counts[owner] += 1
         if not owner_counts:
-            # All members are shared-owned (infra-anchor code only) — the
-            # legitimate rarity. Leave on the residual; flag for I10.
+            # ALL-SHARED UF — no non-shared owner. Run the resolution ladder.
+            donor0 = uf.product_feature_id
+            # (i) token-family NAME match against a flowful non-shared cap.
+            fam_slug = _uf_family_capability(uf.name, cap_context)
+            if fam_slug:
+                uf.product_feature_id = fam_slug
+                tele["uf_shared_family_resolved"] += 1
+                _record(uf.name, donor0, fam_slug, "name_family_match")
+                continue
+            # (ii) entry-file carve — mint a domain-dedicated owning dev its own
+            # capability (flowful by construction).
+            carved = _carve_shared_uf(
+                uf, flow_owner_dev, dev_by_name, dev_to_product, pf_list,
+                route_files, route_uuids)
+            if carved:
+                uf.product_feature_id = carved
+                tele["uf_shared_carved"] += 1
+                _record(uf.name, donor0, carved, "entry_file_carve")
+                # keep cap_context fresh so a later UF can family-match the mint
+                continue
+            # (iii) legitimate rarity — leave on the residual; flag for I10.
             tele["uf_shared_unresolved"] += 1
-            _record(uf.name, uf.product_feature_id, None, "all_members_shared_owned")
+            _record(uf.name, donor0, None, "all_members_shared_owned")
             continue
         best_key = max(_reshare_rank(pf, owner_counts, pf_size) for pf in owner_counts)
         target = min(
@@ -2182,7 +2532,7 @@ def run_journey_abstraction(
         if _uf_reshare_enabled():
             rs_tele = _reassign_shared_ufs(
                 new_ufs, developer_features, dev_to_product,
-                flow_owner_override)
+                flow_owner_override, new_pfs=new_pfs, routes_index=routes_index)
             tele.update(rs_tele)
         # Deterministic output ordering (Phase 1 stability): the LLM emits
         # features/flows in an order that drifts run-to-run. Sort by a stable key

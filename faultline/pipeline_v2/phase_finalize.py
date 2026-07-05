@@ -936,6 +936,37 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Draw-native flowless-shell resolution (RC2 fix-3 Part B, $0) ──
+    # A 6.7d Call-1 draw can emit a capability whose devs own >= 1k LOC but
+    # ZERO flows (validator I8 LOC prong). Resettle those shells — absorb a
+    # footprint-matched residual dev, JOIN a token-family flowful PF, or DEMOTE
+    # to the shared bucket + DROP the shell. Runs HERE (post-feature_loc) because
+    # the >= 1k-LOC prong needs owned ``loc`` (Stage 6.97 populates it), and ONLY
+    # when 6.7d actually applied — so keyless scans (no draw, no shells) stay
+    # byte-inert (snapshot gate). Before emission-integrity so the dropped PF
+    # never reaches the referential round-trip.
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _shell_absorb_enabled,
+        resolve_flowless_shells,
+    )
+    if (_shell_absorb_enabled()
+            and (scan_meta.get("stage_6_7d_journey_abstraction") or {}).get("applied")):
+        with StageLogger(run_dir, 6, "flowless_shells") as log_shell:
+            try:
+                product_features, shell_tele = resolve_flowless_shells(
+                    features, product_features)
+                scan_meta["flowless_shells"] = shell_tele
+                log_shell.info(
+                    "flowless_shells: absorbed=%d joined=%d demoted=%d"
+                    % (shell_tele["shell_absorbed"], shell_tele["shell_joined"],
+                       shell_tele["shell_demoted"]),
+                    feature=None)
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"flowless-shell resolution failed ({exc}); shells left as-is")
+                log_shell.info(
+                    f"flowless_shells: FAILED ({exc}) — continuing", feature=None)
+
     # ── Emission integrity — referential round-trip guarantee ($0) ──
     # Runs LAST, after every UF / PF / flow / loc mutation, so the emitted
     # JSON is self-consistent by construction:
