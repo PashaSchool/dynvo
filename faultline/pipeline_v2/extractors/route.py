@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from faultline.analyzer.validation import is_test_file
 from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     is_noise,
@@ -346,7 +347,16 @@ class RouteFileExtractor:
     name = "route"
 
     def extract(self, ctx: "ScanContext") -> list[AnchorCandidate]:
-        files = list(ctx.tracked_files)
+        # Test files never declare product routes — a test file matching a
+        # routing convention (``backend/tests/routers/test_admin.py`` hits
+        # the FastAPI ``routers/<resource>.py`` rule; ``pages/foo.test.tsx``
+        # hits a Pages-Router suffix) must not become a feature anchor.
+        # Without this guard every such file minted a per-file ``test-*``
+        # feature whose pytest functions Stage 3 then promoted to flows
+        # (the Soc0 15%%-test-flow / test-polluted-UF bug). Same structural
+        # exclusion the fastapi-route extractor (YAML ``excludes``) and the
+        # django / fastapi_family profile boundary indexes already apply.
+        files = [f for f in ctx.tracked_files if not is_test_file(posix(f))]
         buckets: dict[str, list[str]] = defaultdict(list)
 
         # Iterate stacks we should consider. Single-app: ``ctx.stack``
@@ -356,7 +366,9 @@ class RouteFileExtractor:
         considered: list[tuple[str | None, list[str], str]] = []
         if ctx.monorepo and ctx.workspaces:
             for ws in ctx.workspaces:
-                ws_files = list(ws.files) if ws.files else []
+                ws_files = [
+                    f for f in (ws.files or []) if not is_test_file(posix(f))
+                ]
                 if ws_files:
                     ws_prefix = posix(ws.path).rstrip("/") + "/" if ws.path else ""
                     considered.append((ws.stack, ws_files, ws_prefix))

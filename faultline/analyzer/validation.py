@@ -68,12 +68,29 @@ def is_test_file(path: str) -> bool:
     False
     >>> is_test_file("README.md")
     False
+
+    Colocated pytest conventions (``test_*.py`` prefix next to code,
+    ``conftest.py`` anywhere) count too — the same structural rule the
+    django / fastapi_family profiles apply to boundary candidacy:
+
+    >>> is_test_file("backend/services/test_runner_helpers.py")
+    True
+    >>> is_test_file("backend/conftest.py")
+    True
+    >>> is_test_file("backend/services/contest.py")
+    False
     """
     p = PurePosixPath(path)
     for segment in p.parts[:-1]:
         if segment.lower() in _TEST_DIR_SEGMENTS:
             return True
     name = p.name.lower()
+    # Pytest filename conventions: prefix form ``test_*.py`` (the
+    # dominant convention for colocated tests) and ``conftest.py``.
+    # Exact-prefix / exact-name matching — never substring — so
+    # ``contest.py`` / ``attest.py`` / ``latest_stats.py`` stay clean.
+    if name == "conftest.py" or (name.startswith("test_") and name.endswith(".py")):
+        return True
     return any(name.endswith(suffix) for suffix in _TEST_FILENAME_SUFFIXES)
 
 

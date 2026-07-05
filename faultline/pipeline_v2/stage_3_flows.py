@@ -55,6 +55,7 @@ from faultline.analyzer.ast_extractor import (
     FileSignature,
     extract_signatures,
 )
+from faultline.analyzer.validation import is_test_file
 from faultline.cache.backend import CacheKind
 from faultline.llm.cost import CostTracker, deterministic_params
 
@@ -591,9 +592,19 @@ def _enumerate_candidates_paths(
       the cache (belt-and-suspenders beyond the exports/routes already in
       the prompt). Only parsed files (TS/JS/PY/Go/Rust/Ruby) appear, which
       is exactly the set that can influence the LLM's flow output.
+
+    Test files never contribute flow candidates. A feature can carry
+    test paths (package anchors claim whole directories; Stage 2.6
+    closure can attach colocated tests) — but a pytest / vitest function
+    is test EVIDENCE, not a user-facing capability, so it must not be
+    enumerated as an export / route / entry-point candidate (the Soc0
+    test-flow bug). Test files stay countable downstream via
+    ``flow_test_mapper`` (``test_files`` / ``test_file_count``) and the
+    behavioral-coverage signals, which read them independently of this
+    enumeration.
     """
     sigs: dict[str, FileSignature] = extract_signatures(
-        list(paths), repo_path,
+        [p for p in paths if not is_test_file(p)], repo_path,
     )
 
     exports: list[str] = []
