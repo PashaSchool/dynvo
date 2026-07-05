@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from faultline.models.types import Feature
+from faultline.models.types import Feature, MemberFile
 from faultline.pipeline_v2.stage_6_97_feature_loc import (
     STAGE_6_97_ENV_FLAG,
     apply_feature_loc,
@@ -150,6 +150,146 @@ def test_pf_without_members_falls_back_to_own_paths(tmp_path):
 
 
 # ── stage plumbing ──────────────────────────────────────────────────────
+
+
+# ── OWNED vs SHARED split (loc-truth fix 2026-07-05) ────────────────────
+
+
+def test_shared_file_counted_once_at_primary_owner(tmp_path):
+    # invoice.ts is sole-owned by d1; shared.ts is claimed by both. d1 has
+    # more sibling files in app/billing → d1 is the primary owner of the
+    # shared file; d2 (pure sharer) records it as loc_shared, not loc.
+    root = _repo(tmp_path)
+    d1 = _feature("billing-invoices",
+                  ["app/billing/invoice.ts", "app/billing/shared.ts"])
+    d2 = _feature("billing-consumer", ["app/billing/shared.ts"])
+    apply_feature_loc([d1, d2], [], root)
+    assert d1.loc == 3            # invoice(2) + primary shared(1)
+    assert d1.loc_shared == 0
+    # d2 owns nothing exclusively; the shared file's lines land in loc_shared
+    assert d2.loc_shared == 1
+    # I2-safety floor: a pure-sharer still reports its largest file as owned
+    assert d2.loc == 1
+
+
+def test_primary_owner_tiebreak_by_flow_count_then_slug(tmp_path):
+    # Two features share ONE file and neither has sibling files in that dir
+    # (equal dir-count 1). Tiebreak 2 = flow count → the flowful one wins.
+    root = _repo(tmp_path)
+    hi = _feature("zeta", ["app/billing/shared.ts"])
+    hi.flows.append(object())  # bump flow count (list mutation is unvalidated)
+    lo = _feature("alpha", ["app/billing/shared.ts"])
+    apply_feature_loc([hi, lo], [], root)
+    assert hi.loc == 1            # flowful → primary
+    assert lo.loc_shared == 1
+    # Now with equal flows, the smaller slug wins (deterministic).
+    a = _feature("alpha", ["app/billing/shared.ts"])
+    z = _feature("zeta", ["app/billing/shared.ts"])
+    apply_feature_loc([a, z], [], root)
+    assert a.loc == 1 and a.loc_shared == 0
+    assert z.loc_shared == 1
+
+
+def test_dirwalk_skips_build_dirs_and_nonsource_ext(tmp_path):
+    # A bare directory path must NOT pull build output (dist/) or data
+    # blobs (.json) — the 13x inflation vector.
+    root = tmp_path / "repo"
+    _write(root, "frontend/src/app.tsx", "export const A = 1;\n")
+    _write(root, "frontend/dist/bundle.js", "var x=1;\n" * 5000)  # build output
+    _write(root, "frontend/coverage/lcov.info", "DA:1\n" * 5000)  # coverage
+    _write(root, "frontend/data/huge.json", '{"k":1}\n' * 5000)   # data blob
+    feat = _feature("frontend-app", ["frontend"])
+    apply_feature_loc([feat], [], root)
+    assert feat.loc == 1  # ONLY frontend/src/app.tsx counted
+
+
+def test_explicit_json_file_still_counts(tmp_path):
+    # config-as-product: an EXPLICITLY listed .json file bypasses the
+    # source-ext dir-walk gate.
+    root = _repo(tmp_path)
+    feat = _feature("i18n", ["app/i18n/messages.json"])
+    apply_feature_loc([feat], [], root)
+    assert feat.loc == 3
+
+
+def test_member_files_loc_populated(tmp_path):
+    root = _repo(tmp_path)
+    feat = _feature(
+        "auth",
+        ["app/auth/login.ts"],
+        member_files=[
+            MemberFile(path="app/auth/login.ts", role="anchor", confidence=1.0),
+            MemberFile(path="app/auth/login.test.ts", role="closure", confidence=0.5),
+        ],
+    )
+    apply_feature_loc([feat], [], root)
+    assert feat.member_files[0].loc == 2   # login.ts executable lines
+    assert feat.member_files[1].loc == 0   # test file → 0
+
+
+def test_loc_accounting_sanity_meta(tmp_path):
+    root = _repo(tmp_path)
+    d1 = _feature("billing-invoices",
+                  ["app/billing/invoice.ts", "app/billing/shared.ts"],
+                  product_feature_id="billing")
+    d2 = _feature("billing-consumer", ["app/billing/shared.ts"],
+                  product_feature_id="billing")
+    pf = _feature("billing", [], layer="product")
+    telemetry = apply_feature_loc([d1, d2], [pf], root)
+    acct = telemetry["loc_accounting"]
+    assert acct["repo_loc"] == 3          # invoice(2) + shared(1), each once
+    assert acct["sum_pf_owned"] == 3
+    # sanity invariant (validator I13)
+    assert acct["sum_pf_owned"] <= acct["repo_loc"]
+
+
+def test_product_layer_dup_in_features_mirrors_rollup(tmp_path):
+    # A product feature that ALSO appears in features[] (the two-layer
+    # dup) must be EXCLUDED from ownership and mirror its PF rollup.
+    root = _repo(tmp_path)
+    dev = _feature("billing-invoices", ["app/billing/invoice.ts"],
+                   product_feature_id="billing")
+    pf_dup = _feature("billing", ["app/billing/invoice.ts"], layer="product",
+                      product_feature_id=None)
+    telemetry = apply_feature_loc([dev, pf_dup], [pf_dup], root)
+    # invoice.ts counted ONCE — repo_loc is 2, not 4
+    assert telemetry["loc_accounting"]["repo_loc"] == 2
+    assert dev.loc == 2
+    assert pf_dup.loc == 2  # mirrors the rollup, does not re-own
+
+
+def test_repo_root_path_contributes_zero_loc(tmp_path):
+    # papermark corruption: a feature carrying the repo-root marker "."
+    # (or "" / "./") must NOT count the entire repo.
+    root = _repo(tmp_path)
+    for marker in (".", "", "./", ".."):
+        feat = _feature(f"root-{marker or 'empty'}", [marker, "app/auth/login.ts"])
+        apply_feature_loc([feat], [], root)
+        assert feat.loc == 2, marker  # only login.ts, NOT the whole repo
+
+
+def test_root_anchor_member_file_contributes_zero(tmp_path):
+    # {"path": ".", "role": "anchor"} is a structural marker — 0 loc, and
+    # it must not inflate the feature's owned loc either.
+    root = _repo(tmp_path)
+    feat = _feature(
+        "auth",
+        ["app/auth/login.ts"],
+        member_files=[
+            MemberFile(path=".", role="anchor", confidence=1.0),
+            MemberFile(path="app/auth/login.ts", role="anchor", confidence=1.0),
+        ],
+    )
+    apply_feature_loc([feat], [], root)
+    assert feat.loc == 2  # login.ts only
+    assert feat.member_files[0].loc == 0  # "." root anchor → 0
+    assert feat.member_files[1].loc == 2
+
+
+def test_loc_shared_field_defaults_none():
+    feat = _feature("legacy", ["a.ts"])
+    assert feat.loc_shared is None
+    assert feat.model_dump()["loc_shared"] is None
 
 
 def test_env_kill_switch(monkeypatch):

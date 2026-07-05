@@ -1544,6 +1544,8 @@ def _run_feature_loc(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
                 features, product_features, ctx.repo_path,
             )
             scan_meta["feature_loc"] = loc_telemetry
+            if loc_telemetry.get("loc_accounting"):
+                scan_meta["loc_accounting"] = loc_telemetry["loc_accounting"]
             write_stage_artifact(
                 ctx.repo_path, stage_index=6, stage_name="feature_loc",
                 payload=loc_telemetry,

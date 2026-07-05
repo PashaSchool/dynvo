@@ -489,6 +489,13 @@ class MemberFile(BaseModel):
     confidence: float
     evidence: str = ""
     primary: bool = False
+    # Stage 6.97 (2026-07-05) — per-file executable-line count for THIS
+    # file (test / generated / lockfile / binary → 0). Populated from the
+    # scan-wide per-file LOC cache; ``None`` on scans produced before the
+    # stage existed (old JSONs rehydrate unchanged). Provenance-level count:
+    # the SAME file carries the same ``loc`` on every claimant's ledger — it
+    # is NOT the feature's owned share (see ``Feature.loc`` for that).
+    loc: int | None = None
 
 
 class FlowSymbolAttribution(BaseModel):
@@ -868,7 +875,20 @@ class Feature(BaseModel):
     # member-dev rollup with shared files counted once. ``None`` on scans
     # produced before the stage existed (old JSONs rehydrate unchanged);
     # the dashboard prefers this flat field over the flow-span rollup.
+    #
+    # OWNED vs SHARED (2026-07-05 loc-truth fix): ``loc`` is the feature's
+    # OWNED line count — files attributed ONLY to this feature PLUS the
+    # shared files for which this feature is the deterministic PRIMARY
+    # owner, each counted ONCE. Shared files owned by a sibling are NOT
+    # summed here; their lines live in ``loc_shared`` (visible, not double
+    # counted). This makes ``sum(product_features[].loc)`` a real repo-size
+    # figure instead of the historical N× inflation.
     loc: int | None = None
+    # Stage 6.97 (2026-07-05) — SHARED line count: lines in files this
+    # feature references/touches but does NOT primarily own (they are the
+    # primary owner's ``loc``). Visibility metric only — never summed into
+    # ``loc``. ``None`` on scans produced before the split existed.
+    loc_shared: int | None = None
 
 
 class FeatureFlowEdge(BaseModel):
