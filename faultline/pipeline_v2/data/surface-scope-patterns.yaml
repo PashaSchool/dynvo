@@ -1,0 +1,122 @@
+# Product-surface scope classification patterns (authoring copy).
+#
+# Runtime copy packaged at faultline/pipeline_v2/data/surface-scope-patterns.yaml —
+# keep the two byte-identical (manual dual-commit, same convention as
+# eval/system-flow-patterns.yaml and eval/stacks/).
+#
+# WHY (MISSION-92R P1b, 2026-07-05): the dominant class of high-confidence FALSE
+# surfaced claims is REAL, grounded code that sits OUTSIDE the product's user
+# journeys — the marketing site (blog / pricing / legal / landing pages), the
+# docs site, webhook/cron system surfaces, and MCP/CLI dev-tooling (52% of
+# rule-FALSEs lexicon-match this class). Stage 6.85 tags every user_flow with a
+# `surface_scope` so downstream surfacing can rank product journeys separately.
+# ADDITIVE ONLY: nothing is removed from output; the explore tier keeps
+# everything.
+#
+# Deterministic, no LLM, no network. UNIVERSAL across stacks and repos
+# (rule-no-repo-specific-paths): every token below is a structural web
+# convention, never a project name. Provenance per block:
+#   route_groups   — Next.js App Router route-group folder names `(group)`;
+#                    the group name is the author's own surface declaration
+#                    (universal Next convention, e.g. `(marketing)`, `(docs)`).
+#   url_segments   — universal website information-architecture vocabulary:
+#                    the near-invariant URL slugs of marketing sites
+#                    (/blog, /pricing, /legal, /about, /careers, /changelog),
+#                    documentation sites (/docs, /guides, /tutorials) and
+#                    developer tooling (mcp). Matched only against URL-context
+#                    segments (after app/ | pages/ | routes/) of route files
+#                    and against route patterns — NOT against arbitrary source
+#                    dirs, so `src/features/…` or a "blog product" model dir
+#                    never matches.
+#   workspace_dirs — monorepo workspace naming convention `apps/<name>` /
+#                    `packages/<name>` where <name> declares a whole
+#                    non-product surface (apps/www, apps/docs, packages/cli).
+#                    First-two-segment match only.
+# Ambiguous / no-signal → product (conservative: never hide product journeys).
+# No magic numbers (rule-no-magic-tuning): membership is a pattern match.
+#
+# `system` scope comes ONLY from the existing Stage 6.8b aggregate verdict
+# (`UserFlow.category == "system"`). It is deliberately NOT re-derived from
+# path segments here: /webhooks and /cron segments also appear in PRODUCT
+# settings pages (configure-webhooks UIs), and golden journals legitimately
+# contain system journeys (webhook management, scheduled exports) — measured
+# on the recorded 24-draw claim table (MISSION-92R Lane C v1 run: re-deriving
+# system from segments/triggers misclassified ~60 golden-matched claims).
+#
+# Tokens measured OUT on the same recorded table (golden-matched product
+# journeys hit them — do not re-add without re-running the claim re-score):
+#   partners, customers, affiliates (partner/customer portals are product —
+#   dub partners.dub.co), playground (admin product page — cal.com),
+#   contact, testimonials (never fired; dropped to keep the lexicon minimal),
+#   sdk (products ship SDK packages whose journeys goldens include).
+#
+# Precedence when several scopes match one path (fixed, documented):
+# system > dev_tooling > docs > marketing.
+
+route_groups:
+  marketing:
+    - marketing
+    - landing
+    - www
+    - web-marketing
+    - promo
+    - legal
+  docs:
+    - docs
+    - documentation
+  dev_tooling:
+    - devtools
+
+url_segments:
+  marketing:
+    - blog
+    - pricing
+    - about
+    - about-us
+    - careers
+    - legal
+    - terms
+    - terms-of-service
+    - privacy
+    - privacy-policy
+    - imprint
+    - press
+    - newsroom
+    - brand
+    - changelog
+    - landing
+    - landings
+    - marketing
+    - solutions
+    - glossary
+  docs:
+    - docs
+    - documentation
+    - guides
+    - guide
+    - tutorials
+    - tutorial
+    - learn
+    - api-reference
+  dev_tooling:
+    - mcp
+    - mcp-server
+    - devtools
+
+workspace_dirs:
+  marketing:
+    - www
+    - website
+    - marketing
+    - landing
+    - landings
+    - blog
+    - brand
+  docs:
+    - docs
+    - documentation
+  dev_tooling:
+    - cli
+    - mcp
+    - mcp-server
+    - devtools
