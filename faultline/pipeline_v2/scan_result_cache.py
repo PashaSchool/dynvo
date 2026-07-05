@@ -94,6 +94,7 @@ ENV_OUTPUT_FLAGS = (
     "FAULTLINE_STAGE_6_7D_PF_UF_BACKSTOP",
     "FAULTLINE_STAGE_6_7D_RESIDUAL_GUARD",
     "FAULTLINE_STAGE_6_7D_UF_RESHARE",
+    "FAULTLINE_STAGE_6_7D_SHELL_ABSORB",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
