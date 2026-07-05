@@ -883,6 +883,57 @@ def run_finalize_phase(
                 run_dir=run_dir,
             )
 
+    # ── Stage 6.97 — feature-level LOC ($0, deterministic, additive) ──
+    #    Flat ``loc`` on every dev feature (sum of owned-file line counts;
+    #    test/generated/lockfile/binary files excluded from the count) +
+    #    dedup rollup on product features. Output-layer metric: NEVER
+    #    mutates paths/flows. Defensive: a failure degrades to loc=None
+    #    + a warning so it can NEVER break a scan.
+    from faultline.pipeline_v2.stage_6_97_feature_loc import (
+        apply_feature_loc,
+        stage_6_97_enabled,
+    )
+    if stage_6_97_enabled():
+        write_stage_input(run_dir, 6, "feature_loc", {
+            "ctx": ctx,
+            "features": features,
+            "product_features": product_features,
+            "scan_meta": scan_meta,
+        })
+        with StageLogger(run_dir, 6, "feature_loc") as log697:
+            try:
+                loc_telemetry = apply_feature_loc(
+                    features, product_features, ctx.repo_path,
+                )
+                scan_meta["feature_loc"] = loc_telemetry
+                log697.info(
+                    "feature_loc: %d/%d dev features with loc>0 "
+                    "(%d zero-loc-with-paths), %d files counted"
+                    % (
+                        loc_telemetry["features_with_loc"],
+                        loc_telemetry["features_total"],
+                        loc_telemetry["features_zero_loc_with_paths"],
+                        loc_telemetry["files_counted"],
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=6,
+                    stage_name="feature_loc",
+                    payload=loc_telemetry,
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — metric must never break a scan
+                scan_meta["feature_loc"] = {"enabled": False, "error": str(exc)}
+                scan_meta.setdefault("warnings", []).append(
+                    f"feature-loc stage failed ({exc}); loc fields left unset"
+                )
+                log697.info(
+                    f"feature_loc: FAILED ({exc}) — continuing without loc",
+                    feature=None,
+                )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {

@@ -1531,6 +1531,34 @@ def _run_monorepo_assembly(env: ReplayEnv, state: dict[str, Any]) -> dict[str, A
     return {"monorepo_view": monorepo_view, "scan_meta": scan_meta}
 
 
+def _run_feature_loc(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    from faultline.pipeline_v2.stage_6_97_feature_loc import apply_feature_loc
+
+    ctx = prepare_ctx(state["ctx"], env)
+    scan_meta = state["scan_meta"]
+    features = state["features"]
+    product_features = state["product_features"]
+    with StageLogger(env.run_dir, 6, "feature_loc") as log697:
+        try:
+            loc_telemetry = apply_feature_loc(
+                features, product_features, ctx.repo_path,
+            )
+            scan_meta["feature_loc"] = loc_telemetry
+            write_stage_artifact(
+                ctx.repo_path, stage_index=6, stage_name="feature_loc",
+                payload=loc_telemetry,
+                run_dir=env.run_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 — metric must never break a scan
+            scan_meta["feature_loc"] = {"enabled": False, "error": str(exc)}
+            log697.info(f"feature_loc: FAILED ({exc})", feature=None)
+    return {
+        "features": features,
+        "product_features": product_features,
+        "scan_meta": scan_meta,
+    }
+
+
 def _run_output(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     from faultline import __version__ as _engine_version
     from faultline.pipeline_v2.stage_7_output import stage_7_output
@@ -1619,7 +1647,10 @@ STAGES: list[StageSpec] = [
     StageSpec("history", 6, 40, _run_history),
     StageSpec("impact", 6, 41, _run_impact),
     StageSpec("monorepo_assembly", 6, 42, _run_monorepo_assembly),
-    StageSpec("output", 7, 43, _run_output),
+    # optional: recorded runs that predate Stage 6.97 have no input
+    # artifact — replay chains over them must skip it silently.
+    StageSpec("feature_loc", 6, 43, _run_feature_loc, optional=True),
+    StageSpec("output", 7, 44, _run_output),
 ]
 
 _BY_KEY = {s.key: s for s in STAGES}

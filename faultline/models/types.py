@@ -861,6 +861,14 @@ class Feature(BaseModel):
     # locator}], "confidence": 0-1} — code + product-source corroboration, attached
     # deterministically by dual_evidence.py. Additive/optional; None when not computed.
     dual_evidence: dict[str, Any] | None = None
+    # Stage 6.97 (2026-07-05) — deterministic feature-level LOC over OWNED
+    # ``paths`` (executable-line convention from tools.line_completeness;
+    # test / generated / lockfile / binary files excluded from the COUNT
+    # but never removed from ``paths``). Product features carry the
+    # member-dev rollup with shared files counted once. ``None`` on scans
+    # produced before the stage existed (old JSONs rehydrate unchanged);
+    # the dashboard prefers this flat field over the flow-span rollup.
+    loc: int | None = None
 
 
 class FeatureFlowEdge(BaseModel):
