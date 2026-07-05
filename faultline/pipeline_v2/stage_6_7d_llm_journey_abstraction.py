@@ -206,6 +206,10 @@ _STRUCTURE_LEAK_SLUGS = frozenset({
     "backend", "server", "client", "api", "ui", "config", "scripts", "docs",
     "types", "hooks", "styles", "assets", "public", "internal", "tools",
     "vendor", "misc", "helpers", "tests", "test",
+    # Entry-module / mock-scaffolding classes (tier-3 resettle, 2026-07-05):
+    # `main` (backend/main.py app entry) OWNS diag/admin routes + flows yet is
+    # an infra anchor, never a customer capability; mock fixtures likewise.
+    "main", "mock", "mocks",
 })
 # Generic verbs/glue excluded from grounding-match content tokens (mirrors the
 # uf-scorer convention: journeys are matched on NOUNS, not on CRUD verbs).
@@ -914,6 +918,9 @@ def _build_user_flows(
     A UF still holding 0 members AND 0 routes after all three is DROPPED —
     an LLM-invented capability name with no code is exactly the 0-LOC defect
     the trustworthy-core mission forbids (2026-07-01 audit: 5-53% of UFs).
+    A UF holding routes but 0 members (validator I7, 2026-07-05) gets its
+    members BACKFILLED from the route-owning devs' unclaimed flows — or is
+    dropped when none remain (a memberless twin of an already-claimed flow).
     Returns ``(user_flows, grounding_telemetry)``.
     """
     from faultline.models.types import UserFlow
@@ -963,8 +970,45 @@ def _build_user_flows(
         "uf_dev_grounded": 0, "uf_rescued_flows": 0,
         "uf_rescued_routes": 0, "uf_dropped_ungrounded": 0,
         "uf_rescue_dropped_collisions": 0,
+        "uf_route_member_backfill": 0, "uf_dropped_memberless": 0,
         "uf_dropped_names": [],
     }
+
+    # Route-ownership lookup for the memberless-UF backfill (validator I7):
+    # pattern → owning dev (routes_index feature_uuid first, route file in the
+    # dev's owned paths second; first dev wins — input order is stable).
+    dev_by_uuid: dict[str, "Feature"] = {}
+    dev_by_path: dict[str, "Feature"] = {}
+    for d in developer_features:
+        u = getattr(d, "uuid", "") or ""
+        if u and u not in dev_by_uuid:
+            dev_by_uuid[u] = d
+        for p in getattr(d, "paths", None) or []:
+            dev_by_path.setdefault(p, d)
+    route_owner: dict[str, "Feature"] = {}
+    for r in routes_index:
+        pat = str(r.get("pattern") or "")
+        if not pat or pat in route_owner:
+            continue
+        owner = (dev_by_uuid.get(str(r.get("feature_uuid") or ""))
+                 or dev_by_path.get(str(r.get("file") or "")))
+        if owner is not None:
+            route_owner[pat] = owner
+
+    def _backfill_members(route_patterns: list[str], claimed: set[str]) -> list[str]:
+        """UNCLAIMED flows of the devs owning *route_patterns* — the
+        deterministic member backfill for a route-grounded, flow-less UF."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for pat in route_patterns:
+            owner = route_owner.get(pat)
+            if owner is None:
+                continue
+            for mid in dev_flow_ids.get(owner.name, []):
+                if mid not in claimed and mid not in seen:
+                    seen.add(mid)
+                    out.append(mid)
+        return out
 
     # ── Pass 1 — from_flows inheritance (unchanged, validated channel) ──
     built: list[tuple[dict[str, Any], "UserFlow"]] = []
@@ -1061,6 +1105,24 @@ def _build_user_flows(
                     rescued_route_sets.add(route_set)
                     uf.routes = route_hits
                     tele["uf_rescued_routes"] += 1
+        if not uf.member_flow_ids and uf.routes:
+            # Route-grounded but flow-less. The old emission gate allowed this
+            # ("a journey may be real yet flow-less") — validator I7 (operator,
+            # 2026-07-05) forbids a memberless UF: backfill deterministically
+            # from the route-owning devs' unclaimed flows, else DROP (Soc0
+            # "Look up users by email": the owner's flows were all claimed by
+            # another journey — emitting a memberless twin is dup inflation).
+            fill = _backfill_members(uf.routes, claimed)
+            if fill:
+                uf.member_flow_ids = fill
+                uf.member_count = len(fill)
+                claimed.update(fill)
+                tele["uf_route_member_backfill"] += 1
+            else:
+                tele["uf_dropped_memberless"] += 1
+                if len(tele["uf_dropped_names"]) < 30:  # scan_meta size bound
+                    tele["uf_dropped_names"].append(uf.name)
+                continue
         if not uf.member_flow_ids and not uf.routes:
             # Still 0-LOC → drop. Never emit a code-less journey name.
             tele["uf_dropped_ungrounded"] += 1
@@ -1207,23 +1269,74 @@ def _feature_dir_capability(dev: "Feature") -> str | None:
             break  # first container segment decides
     if hits * 2 <= len(paths):  # strict majority — tolerate stray helpers
         return None
-    base = dev.display_name or dev.name or ""
-    # Titleize kebab/snake dev names so the promoted capability reads like the
-    # LLM-emitted ones ("network-security" → "Network Security").
+    return _titleize(dev.display_name or dev.name or "")
+
+
+def _titleize(base: str) -> str | None:
+    """Titleize kebab/snake dev names so a promoted capability reads like the
+    LLM-emitted ones ("network-security" → "Network Security")."""
     words = re.split(r"[-_\s]+", base.strip())
     return " ".join(w if (w.isupper() and len(w) > 1) else w.capitalize()
                     for w in words if w) or None
+
+
+def _route_surface_capability(
+    dev: "Feature", route_files: frozenset[str], route_uuids: frozenset[str],
+) -> str | None:
+    """Tier 3 — own-capability display name for a flowful residual dev that
+    owns a ROUTE SURFACE: any ``routes_index`` entry is attributed to it
+    (``feature_uuid``) or one of its owned paths IS a route file. A dev with
+    user-visible flows AND an HTTP/page routing surface is a product surface,
+    not platform glue — the operator's resettle rule ("краще нова PF, ніж
+    агрегатор", 2026-07-05). Structural only: infra anchors (workspace-anchor
+    markers, structure-leak slugs incl. main/mock/scripts classes) never reach
+    this helper — the caller excludes them first."""
+    if not (getattr(dev, "flows", None) or []):
+        return None
+    owns = (getattr(dev, "uuid", "") or "") in route_uuids or any(
+        p in route_files for p in (getattr(dev, "paths", None) or []))
+    if not owns:
+        return None
+    return _titleize(dev.display_name or dev.name or "")
+
+
+def _flows_surface_description(dev: "Feature") -> str:
+    """Deterministic description for a tier-3 minted capability — grounded in
+    the dev's own flow names (the promotion evidence), bounded for output."""
+    names: list[str] = []
+    for fl in getattr(dev, "flows", None) or []:
+        nm = getattr(fl, "display_name", None) or getattr(fl, "name", None)
+        if nm and nm not in names:
+            names.append(nm)
+    return _short(
+        "Route-owning product surface (resettled from the shared platform "
+        "bucket). Flows: " + ", ".join(names), 240,
+    )
 
 
 def _confirm_residual(
     dev: "Feature",
     cap_tokens: dict[str, set[str]],
     pf_tele: dict[str, Any],
+    route_files: frozenset[str] = frozenset(),
+    route_uuids: frozenset[str] = frozenset(),
+    minted_descs: dict[str, str] | None = None,
 ) -> str:
     """Confirmed capability for a dev feature Call 2 EXPLICITLY sent to the
     residual — see the guard rationale above. Returns the residual unchanged
     for genuine platform containers."""
     from faultline.pipeline_v2.stage_8_7_anchor_desink import _is_workspace_anchor
+
+    def _promote(promo: str) -> str:
+        pf_tele["devs_residual_promoted"] += 1
+        # Record the minted capability NAME too (bounded): the PF-UF
+        # backstop tags journeys it synthesizes for these caps with the
+        # "promoted_capability_backstop" reason — a promotion happens
+        # AFTER the draw assigned journeys, so it is structurally UF-less.
+        names = pf_tele.setdefault("promoted_cap_names", [])
+        if promo not in names and len(names) < 50:
+            names.append(promo)
+        return promo
 
     nm = dev.display_name or dev.name or ""
     if _slug(nm) in _STRUCTURE_LEAK_SLUGS or _is_workspace_anchor(dev):
@@ -1234,15 +1347,15 @@ def _confirm_residual(
         return strong
     promo = _feature_dir_capability(dev)
     if promo is not None:
-        pf_tele["devs_residual_promoted"] += 1
-        # Record the minted capability NAME too (bounded): the PF-UF
-        # backstop tags journeys it synthesizes for these caps with the
-        # "promoted_capability_backstop" reason — a promotion happens
-        # AFTER the draw assigned journeys, so it is structurally UF-less.
-        names = pf_tele.setdefault("promoted_cap_names", [])
-        if promo not in names and len(names) < 50:
-            names.append(promo)
-        return promo
+        return _promote(promo)
+    # tier 3 — route-surface promotion: a flowful dev owning routes / a route
+    # file is a user-facing surface; resettle it as its own capability rather
+    # than aggregating it (validator I9). Description grounded in its flows.
+    promo3 = _route_surface_capability(dev, route_files, route_uuids)
+    if promo3 is not None:
+        if minted_descs is not None:
+            minted_descs.setdefault(promo3, _flows_surface_description(dev))
+        return _promote(promo3)
     return _RESIDUAL_CAP
 
 
@@ -1250,6 +1363,7 @@ def _build_product_features(
     pf_specs: list[dict[str, Any]],
     dev_map: dict[str, str],
     developer_features: list["Feature"],
+    routes_index: list[dict[str, Any]] | None = None,
 ) -> tuple[list["Feature"], dict[str, tuple[str, ...]], int, dict[str, Any]]:
     """Aggregate dev features into the abstracted capabilities. Returns
     (product_features, dev_to_product_map, files_attributed, pf_telemetry)."""
@@ -1258,6 +1372,13 @@ def _build_product_features(
         for s in pf_specs if (s.get("name") or "").strip()
     }
     cap_tokens = {cap: _content_tokens(cap) for cap in desc_by_cap}
+    # Route-surface ownership signals for the tier-3 residual promotion —
+    # structural, straight from the deterministic routes_index.
+    route_files = frozenset(
+        str(r.get("file") or "") for r in (routes_index or [])) - {""}
+    route_uuids = frozenset(
+        str(r.get("feature_uuid") or "") for r in (routes_index or [])) - {""}
+    minted_descs: dict[str, str] = {}
 
     # Group dev features by their mapped capability. Omitted devs are token-
     # matched to an emitted capability when possible; only true platform
@@ -1279,8 +1400,10 @@ def _build_product_features(
         elif cap == _RESIDUAL_CAP and residual_guard:
             # An EXPLICIT residual assignment is unproven — structural
             # confirmation or re-route (strong token match / feature-dir
-            # promotion). See the guard rationale above _confirm_residual.
-            cap = _confirm_residual(dev, cap_tokens, pf_tele)
+            # promotion / route-surface promotion). See the guard rationale
+            # above _confirm_residual.
+            cap = _confirm_residual(dev, cap_tokens, pf_tele,
+                                    route_files, route_uuids, minted_descs)
         if cap == _RESIDUAL_CAP:
             pf_tele["devs_residual"] += 1
         cap_to_devs[cap].append(dev)
@@ -1311,7 +1434,7 @@ def _build_product_features(
         # blurb — so downstream blob metrics recognise it as a platform
         # bucket, never as the top product feature.
         desc = (_RESIDUAL_DESCRIPTION if cap == _RESIDUAL_CAP
-                else desc_by_cap.get(cap, ""))
+                else desc_by_cap.get(cap) or minted_descs.get(cap, ""))
         feat = aggregate_product_feature(
             name=_slug(cap), display_name=cap,
             description=desc, contrib=contrib,
@@ -1617,7 +1740,7 @@ def run_journey_abstraction(
         # from (map, current features), so live and cache-hit replays agree.
         dev_map = _propagate_dev_map(dev_map, sub_to_parent)
         new_pfs, dev_to_product, files_after, pf_tele = _build_product_features(
-            pf_specs_, dev_map, developer_features)
+            pf_specs_, dev_map, developer_features, routes_index)
         new_ufs, uf_tele = _build_user_flows(
             uf_specs_, user_flows, developer_features, routes_index)
         if not new_pfs or not new_ufs:
