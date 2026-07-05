@@ -374,6 +374,7 @@ def carve_service_domains(features: list["Feature"]) -> ServiceCarveResult:
     devs = [f for f in features
             if getattr(f, "layer", "developer") == "developer"]
     taken_names = {f.name for f in features if getattr(f, "name", None)}
+    by_name = {f.name: f for f in devs if getattr(f, "name", None)}
     minted_all: list["Feature"] = []
 
     for source in devs:
@@ -407,25 +408,52 @@ def carve_service_domains(features: list["Feature"]) -> ServiceCarveResult:
         minted: list["Feature"] = []
         moved_ids: set[int] = set()
         carved_files: set[str] = set()
+        touched_any = False
         for dom in sorted(eligible):
             name = _norm(dom)
-            if name in taken_names:
-                result.collisions_skipped += 1
-                continue
             files = sorted(dom_files[dom])
-            sub = _make_subfeature(source, dom, files, name)
-            # _make_subfeature leaves flows on the source by contract; the carve
-            # MOVES the domain's flows onto the carved dev (its identity is
-            # those journeys — the point of the lift).
-            sub.flows = list(dom_flows[dom])
-            taken_names.add(name)
-            minted.append(sub)
-            moved_ids.update(id(fl) for fl in dom_flows[dom])
+            dom_flow_list = list(dom_flows[dom])
+            existing = by_name.get(name)
+            if existing is not None:
+                # A same-named developer feature already exists — TRANSFER the
+                # anchor's domain flows onto it (it already carries the domain's
+                # identity + a real product-feature mapping) instead of minting
+                # a duplicate. Never transfer to the source or to another anchor.
+                if existing is source or _is_workspace_anchor(existing):
+                    result.collisions_skipped += 1
+                    continue
+                from faultline.models.types import MemberFile  # local: cycle
+                existing.flows = list(getattr(existing, "flows", None) or []) \
+                    + dom_flow_list
+                owned = {p for p in (existing.paths or [])}
+                for p in files:
+                    if p not in owned:
+                        existing.paths.append(p)
+                        existing.member_files = (
+                            getattr(existing, "member_files", None) or [])
+                        existing.member_files.append(MemberFile(
+                            path=p, role="anchor", confidence=1.0, primary=True,
+                            evidence=f"service-domain carve from '{source.name}'"))
+                        owned.add(p)
+                result.domains_carved += 1
+                result.flows_moved += len(dom_flow_list)
+                result.files_claimed += len(files)
+            else:
+                sub = _make_subfeature(source, dom, files, name)
+                # _make_subfeature leaves flows on the source by contract; the
+                # carve MOVES the domain's flows onto the carved dev (its
+                # identity is those journeys — the point of the lift).
+                sub.flows = dom_flow_list
+                taken_names.add(name)
+                by_name[name] = sub
+                minted.append(sub)
+                result.domains_carved += 1
+                result.flows_moved += len(dom_flow_list)
+                result.files_claimed += len(files)
+            moved_ids.update(id(fl) for fl in dom_flow_list)
             carved_files.update(files)
-            result.domains_carved += 1
-            result.flows_moved += len(dom_flows[dom])
-            result.files_claimed += len(files)
-        if not minted:
+            touched_any = True
+        if not touched_any:
             continue
         # Source keeps the rest: carved flows leave; carved files (now owned by
         # the sub) leave the source's paths/member ledger.
@@ -442,8 +470,9 @@ def carve_service_domains(features: list["Feature"]) -> ServiceCarveResult:
         if len(result.sample) < 20:
             result.sample.append({
                 "source": source.name,
-                "domains": [m.name for m in minted],
-                "flows_moved": sum(len(m.flows) for m in minted),
+                "carved_domains": sorted(_norm(d) for d in eligible
+                                         if id(dom_flows[d][0]) in moved_ids),
+                "flows_moved": len(moved_ids),
             })
 
     features.extend(minted_all)

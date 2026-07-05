@@ -74,6 +74,51 @@ def test_carves_service_domain_and_moves_flows():
     assert len(carved["investigation-playbook"].paths) == 5
 
 
+def test_collision_transfers_flows_to_existing_dev():
+    """When a same-named developer feature already exists, the anchor's domain
+    flows TRANSFER onto it (it already carries the domain identity + a real PF)
+    rather than minting a duplicate — the Soc0 investigation-playbook case."""
+    ipb = _svc_flows("investigation_playbook", 5)
+    edr = _svc_flows("edr", 4)
+    anchor = _anchor("backend", ipb + edr)
+    existing = Feature(
+        name="investigation-playbook", display_name="investigation-playbook",
+        paths=["backend/models/investigation_playbook.py"], authors=["a"],
+        total_commits=1, bug_fixes=0, bug_fix_ratio=0.0, last_modified=_TS,
+        health_score=90.0, layer="developer", flows=[],
+        product_feature_id="ai-powered-security-investigations")
+    feats = [anchor, existing]
+    res = carve_service_domains(feats)
+    # no new investigation-playbook dev minted; flows landed on the existing one
+    assert sum(1 for f in feats if f.name == "investigation-playbook") == 1
+    assert len(existing.flows) == 5
+    assert existing.product_feature_id == "ai-powered-security-investigations"
+    assert all(fl.uuid.startswith("investigation_playbook")
+               for fl in existing.flows)
+    # the domain's files became owned paths on the existing dev
+    assert any("services/investigation_playbook/" in p for p in existing.paths)
+    # anchor released those flows; edr (no collision) minted fresh
+    assert not any(fl.uuid.startswith("investigation_playbook")
+                   for fl in anchor.flows)
+    assert "edr" in {f.name for f in feats}
+
+
+def test_collision_with_anchor_target_skips():
+    """A collision whose target is itself an anchor is skipped (never transfer
+    into another shared bucket)."""
+    anchor = _anchor("backend", _svc_flows("investigation_playbook", 4)
+                     + _svc_flows("edr", 4))
+    other_anchor = Feature(
+        name="edr", display_name="edr", paths=["backend/x.py"], authors=["a"],
+        total_commits=1, bug_fixes=0, bug_fix_ratio=0.0, last_modified=_TS,
+        health_score=90.0, layer="developer", flows=[],
+        description="workspace anchor 'edr' from monorepo package 'edr/'")
+    feats = [anchor, other_anchor]
+    carve_service_domains(feats)
+    assert other_anchor.flows == []  # anchor target untouched
+    assert "investigation-playbook" in {f.name for f in feats}  # minted
+
+
 def test_below_floor_domain_not_carved():
     anchor = _anchor("backend",
                      _svc_flows("investigation_playbook", 5)
