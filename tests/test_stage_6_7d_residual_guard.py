@@ -250,3 +250,122 @@ def test_strong_match_prefers_more_specific_capability():
     }
     dev = _dev("billing", ["src/billing/a.ts"])
     assert _strong_capability_match(dev, caps) == "Billing"
+
+
+# ── tier 3: route-surface promotion (resettle, 2026-07-05) ──────────────
+
+
+def _flow(name: str, uuid: str):
+    from faultline.models.types import Flow
+    return Flow(
+        name=name, uuid=uuid, paths=[f"app/{name}.ts"], authors=["a"],
+        total_commits=2, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=datetime.now(timezone.utc), health_score=95.0,
+    )
+
+
+def _flowful(name: str, paths: list[str], flow_names: list[str]) -> Feature:
+    dev = _dev(name, paths)
+    dev.flows = [_flow(fn, f"fx-{name}-{i}") for i, fn in enumerate(flow_names)]
+    return dev
+
+
+def test_route_file_owner_promoted_to_own_capability():
+    """`api-widget-library` owns a router file + real flows but matches no
+    capability → tier 3 mints "Api Widget Library" instead of aggregating
+    a user-facing surface into the shared bucket (validator I9)."""
+    dev = _flowful(
+        "api-widget-library",
+        ["backend/routers/widget_library.py", "frontend/src/pages/WidgetLibraryPage.tsx"],
+        ["view-widget-details-flow", "edit-widget-flow"],
+    )
+    routes = [{"pattern": "/api/widget-library", "method": "GET",
+               "file": "backend/routers/widget_library.py"}]
+    pfs, d2p, _, tele = _build_product_features(
+        _specs("Security Cases Management"),
+        {"api-widget-library": _RESIDUAL_CAP},
+        [dev], routes,
+    )
+    assert _cap_of(d2p, "api-widget-library") == "api-widget-library"
+    assert tele["devs_residual_promoted"] == 1
+    assert "Api Widget Library" in tele["promoted_cap_names"]
+    promoted = next(p for p in pfs if p.display_name == "Api Widget Library")
+    # Description is grounded in the dev's own flows (the promotion evidence).
+    assert "view-widget-details-flow" in (promoted.description or "")
+    assert "resettled" in (promoted.description or "")
+
+
+def test_route_uuid_owner_promoted():
+    """Route ownership via routes_index feature_uuid attribution (no route
+    file among owned paths needed — e.g. after de-sink path moves)."""
+    dev = _flowful("home-page", ["frontend/src/pages/HomePage.tsx"],
+                   ["view-home-page-flow"])
+    dev.uuid = "u-home"
+    routes = [{"pattern": "/HomePage", "method": "PAGE",
+               "feature_uuid": "u-home", "file": "frontend/src/other.tsx"}]
+    _, d2p, _, tele = _build_product_features(
+        _specs("Security Cases Management"),
+        {"home-page": _RESIDUAL_CAP},
+        [dev], routes,
+    )
+    assert _cap_of(d2p, "home-page") == "home-page"
+    assert tele["devs_residual_promoted"] == 1
+
+
+def test_flowless_route_owner_stays_residual():
+    """Routes without flows = no user-visible surface evidence — stays."""
+    dev = _dev("api-diag", ["backend/routers/diag.py"])
+    routes = [{"pattern": "/api/_diag", "method": "GET",
+               "file": "backend/routers/diag.py"}]
+    _, d2p, _, tele = _build_product_features(
+        _specs("Security Cases Management"),
+        {"api-diag": _RESIDUAL_CAP},
+        [dev], routes,
+    )
+    assert _cap_of(d2p, "api-diag") == "shared-platform"
+    assert tele["devs_residual_promoted"] == 0
+
+
+def test_flowful_dev_without_routes_stays_residual():
+    """Flows without a route surface (tier 2 already covers feature dirs) —
+    tier 3 must NOT fire on route-less internals."""
+    dev = _flowful("network-mock", ["frontend/src/mocks/net.ts"],
+                   ["mock-net-flow"])
+    _, d2p, _, tele = _build_product_features(
+        _specs("Security Cases Management"),
+        {"network-mock": _RESIDUAL_CAP},
+        [dev], [],
+    )
+    assert _cap_of(d2p, "network-mock") == "shared-platform"
+    assert tele["devs_residual_promoted"] == 0
+
+
+def test_main_entry_module_stays_residual_despite_routes_and_flows():
+    """`main` (backend/main.py app entry) owns diag/admin routes + flows on
+    Soc0 yet is an infra anchor class — the structure-leak exemption must
+    hold it in the residual (never a minted "Main" capability)."""
+    dev = _flowful("main", ["backend/main.py"], ["run-migration-flow"])
+    routes = [{"pattern": "/api/_admin/migrate", "method": "POST",
+               "file": "backend/main.py"}]
+    _, d2p, _, tele = _build_product_features(
+        _specs("Security Cases Management"),
+        {"main": _RESIDUAL_CAP},
+        [dev], routes,
+    )
+    assert _cap_of(d2p, "main") == "shared-platform"
+    assert tele["devs_residual_promoted"] == 0
+
+
+def test_tier3_kill_switch(monkeypatch):
+    monkeypatch.setenv(_KILL, "0")
+    dev = _flowful("api-trial-status", ["backend/routers/trial.py"],
+                   ["check-trial-status-flow"])
+    routes = [{"pattern": "/api/trial/status", "method": "GET",
+               "file": "backend/routers/trial.py"}]
+    _, d2p, _, tele = _build_product_features(
+        _specs("Security Cases Management"),
+        {"api-trial-status": _RESIDUAL_CAP},
+        [dev], routes,
+    )
+    assert _cap_of(d2p, "api-trial-status") == "shared-platform"
+    assert tele["devs_residual_promoted"] == 0

@@ -749,9 +749,16 @@ def test_rescue_by_resource_token_match() -> None:
 
 def test_rescue_by_route_pattern() -> None:
     """Fix B channel 2c: a flow-less UF whose resource appears as a segment in
-    routes_index keeps the route patterns as grounding (real but flow-less)."""
-    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": "webhook"},
+    routes_index keeps the route patterns as grounding — and (validator I7,
+    2026-07-05) its members are BACKFILLED from the route-owning dev's
+    unclaimed flows so no memberless UF is ever emitted."""
+    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": "webhook",
+               "file": "app/hooks/handler.ts"},
               {"pattern": "/api/accounts", "method": "GET", "trigger": None}]
+    # NB: neither the dev name nor its flow name shares tokens with the UF —
+    # channels 2a/2b must miss so this exercises 2c + the owner backfill.
+    devs = _devs() + [_feat("gateway", ["app/hooks/handler.ts"])]
+    devs[-1].flows = [_flow("deliver-payload-flow", "fx-9")]
     abs_payload = json.dumps({
         "product_features": [{"name": "Webhooks", "description": "wh"}],
         "user_flows": [
@@ -760,13 +767,43 @@ def test_rescue_by_route_pattern() -> None:
         ],
     })
     reattrib = json.dumps({"map": {"accounts": "Webhooks", "auth": "Webhooks",
+                                   "gateway": "Webhooks",
+                                   "shared-ui": "Shared Platform"}})
+    ufs, pfs, dm, tel = run_journey_abstraction(
+        _ufs(), _pfs(), devs, routes, client=_client(abs_payload, reattrib))
+    assert tel["applied"] is True
+    uf = next(u for u in ufs if u.name == "Receive webhook")
+    assert uf.routes == ["/api/webhooks/{id}"]
+    assert uf.member_flow_ids == ["fx-9"]  # backfilled from the route owner
+    assert uf.member_count == 1
+    assert tel["uf_rescued_routes"] == 1
+    assert tel["uf_route_member_backfill"] == 1
+    assert all(u.member_flow_ids for u in ufs)  # I7: no memberless UF ships
+
+
+def test_memberless_route_uf_dropped_when_no_backfill() -> None:
+    """Validator I7: a route-rescued UF whose route has no resolvable owner
+    (or whose owner's flows are all claimed elsewhere) must be DROPPED, not
+    emitted memberless (Soc0 'Look up users by email' class)."""
+    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": "webhook"}]
+    abs_payload = json.dumps({
+        "product_features": [{"name": "Webhooks", "description": "wh"}],
+        "user_flows": [
+            {"name": "Receive webhook", "resource": "webhook",
+             "product_feature": "Webhooks", "from_flows": []},
+            {"name": "Manage accounts", "resource": "account",
+             "product_feature": "Webhooks", "from_flows": ["UF-001"]},
+        ],
+    })
+    reattrib = json.dumps({"map": {"accounts": "Webhooks", "auth": "Webhooks",
                                    "shared-ui": "Shared Platform"}})
     ufs, pfs, dm, tel = run_journey_abstraction(
         _ufs(), _pfs(), _devs(), routes, client=_client(abs_payload, reattrib))
     assert tel["applied"] is True
-    uf = next(u for u in ufs if u.name == "Receive webhook")
-    assert uf.routes == ["/api/webhooks/{id}"]
-    assert tel["uf_rescued_routes"] == 1
+    assert "Receive webhook" not in {u.name for u in ufs}
+    assert tel["uf_dropped_memberless"] == 1
+    assert "Receive webhook" in tel["uf_dropped_names"]
+    assert all(u.member_flow_ids for u in ufs)
 
 
 def test_residual_carries_platform_marker() -> None:
@@ -1258,7 +1295,10 @@ def test_route_rescue_collision_single_survivor() -> None:
     SAME route set → only the first is route-rescued; the rest are phantoms
     dropped as ungrounded, counted in uf_rescue_dropped_collisions
     (inbox-zero: 15 zero-member journeys on ONE /items route)."""
-    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": "webhook"}]
+    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": "webhook",
+               "file": "app/hooks/handler.ts"}]
+    devs = _devs() + [_feat("gateway", ["app/hooks/handler.ts"])]
+    devs[-1].flows = [_flow("deliver-payload-flow", "fx-9")]
     abs_payload = json.dumps({
         "product_features": [{"name": "Webhooks", "description": "wh"}],
         "user_flows": [
@@ -1271,16 +1311,18 @@ def test_route_rescue_collision_single_survivor() -> None:
         ],
     })
     reattrib = json.dumps({"map": {"accounts": "Webhooks", "auth": "Webhooks",
+                                   "gateway": "Webhooks",
                                    "shared-ui": "Shared Platform"}})
     ufs_in = _ufs()
     for i, u in enumerate(ufs_in):
         u.resource = f"res{i}"                          # disarm the grain gate
     ufs, pfs, dm, tel = run_journey_abstraction(
-        ufs_in, _pfs(), _devs(), routes, client=_client(abs_payload, reattrib))
+        ufs_in, _pfs(), devs, routes, client=_client(abs_payload, reattrib))
     assert tel["applied"] is True
     survivors = [u for u in ufs if u.routes == ["/api/webhooks/{id}"]]
     assert len(survivors) == 1
     assert survivors[0].name == "Receive webhook"       # first in emission order
+    assert survivors[0].member_flow_ids == ["fx-9"]     # I7 owner backfill
     assert tel["uf_rescued_routes"] == 1
     assert tel["uf_rescue_dropped_collisions"] == 2
     assert tel["uf_dropped_ungrounded"] == 2
@@ -1289,8 +1331,14 @@ def test_route_rescue_collision_single_survivor() -> None:
 def test_route_rescue_distinct_route_sets_no_collision() -> None:
     """Different route sets are NOT collisions — each empty journey keeps its
     own grounding."""
-    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": None},
-              {"pattern": "/api/invoices", "method": "GET", "trigger": None}]
+    routes = [{"pattern": "/api/webhooks/{id}", "method": "POST", "trigger": None,
+               "file": "app/hooks/handler.ts"},
+              {"pattern": "/api/invoices", "method": "GET", "trigger": None,
+               "file": "app/ledger/stmt.ts"}]
+    devs = _devs() + [_feat("gateway", ["app/hooks/handler.ts"]),
+                      _feat("ledger", ["app/ledger/stmt.ts"])]
+    devs[-2].flows = [_flow("deliver-payload-flow", "fx-a")]
+    devs[-1].flows = [_flow("monthly-statement-flow", "fx-b")]
     abs_payload = json.dumps({
         "product_features": [{"name": "Ops", "description": "o"}],
         "user_flows": [
@@ -1301,15 +1349,18 @@ def test_route_rescue_distinct_route_sets_no_collision() -> None:
         ],
     })
     reattrib = json.dumps({"map": {"accounts": "Ops", "auth": "Ops",
+                                   "gateway": "Ops", "ledger": "Ops",
                                    "shared-ui": "Shared Platform"}})
     ufs_in = _ufs()
     for i, u in enumerate(ufs_in):
         u.resource = f"res{i}"
     ufs, pfs, dm, tel = run_journey_abstraction(
-        ufs_in, _pfs(), _devs(), routes, client=_client(abs_payload, reattrib))
+        ufs_in, _pfs(), devs, routes, client=_client(abs_payload, reattrib))
     assert tel["applied"] is True
     assert tel["uf_rescued_routes"] == 2
     assert tel["uf_rescue_dropped_collisions"] == 0
+    assert tel["uf_route_member_backfill"] == 2
+    assert all(u.member_flow_ids for u in ufs)
 
 
 def test_cache_hit_restores_contract_flag() -> None:
