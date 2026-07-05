@@ -140,6 +140,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # {"is_monorepo": False} view for single repos). See
     # stage_6_6_monorepo_assembly.py.
     (6, "monorepo_assembly"),
+    # Stage 6.97 (2026-07-05) — deterministic feature-level LOC. $0,
+    # additive flat ``loc`` on dev features + dedup PF rollup; telemetry
+    # artifact emitted on every run (default ON). See
+    # stage_6_97_feature_loc.py.
+    (6, "feature_loc"),
 ]
 
 
