@@ -1235,6 +1235,13 @@ def _confirm_residual(
     promo = _feature_dir_capability(dev)
     if promo is not None:
         pf_tele["devs_residual_promoted"] += 1
+        # Record the minted capability NAME too (bounded): the PF-UF
+        # backstop tags journeys it synthesizes for these caps with the
+        # "promoted_capability_backstop" reason — a promotion happens
+        # AFTER the draw assigned journeys, so it is structurally UF-less.
+        names = pf_tele.setdefault("promoted_cap_names", [])
+        if promo not in names and len(names) < 50:
+            names.append(promo)
         return promo
     return _RESIDUAL_CAP
 
@@ -1328,6 +1335,172 @@ def _build_product_features(
                                          else len(feat.paths))
         out.append(feat)
     return out, dev_to_product, files_attributed, pf_tele
+
+
+# ── PF-UF backstop (deterministic, $0) ──────────────────────────────────────
+# Operator invariant (2026-07-05, CRITICAL): a product feature whose member
+# devs own >= 1 flow but which NO user flow references ("фіча без
+# юзер-фловів", validator I8) must never ship. Two subclasses on Soc0:
+#   (A) residual-guard tier-2 PROMOTIONS — the capability is minted at
+#       reconstruction time, AFTER the draw assigned journeys → structurally
+#       UF-less;
+#   (B) draw coverage gaps — the model emitted the capability but attached
+#       every journey elsewhere.
+# Mechanism (runs inside ``_finish`` → applies identically to live and
+# cache-hit replays):
+#   1. REASSIGN journeys whose member flows are MAJORITY-owned by the
+#      uncovered PF's devs (donor keeps >= 1 journey — never trade one I8
+#      violation for another);
+#   2. else SYNTHESIZE one THIN journey from the PF's highest-LOC flows —
+#      the FAULTLINE_SEED_SYSTEM_UFS output-only precedent: appended to
+#      user_flows[], flow graph untouched. Tagged ``synthesized: true`` +
+#      ``synthesis_reason`` so eval / the surfaced tier can EXCLUDE them
+#      (board completeness, never silent recall inflation).
+# Kill-switch: FAULTLINE_STAGE_6_7D_PF_UF_BACKSTOP=0 (default ON inside the
+# opt-in 6.7d stage; registered in scan_result_cache.ENV_OUTPUT_FLAGS).
+_BACKSTOP_MEMBER_CAP = 8
+_REASON_PROMOTED = "promoted_capability_backstop"
+_REASON_UNCOVERED = "uncovered_product_feature_backstop"
+
+
+def _pf_uf_backstop_enabled() -> bool:
+    return os.environ.get("FAULTLINE_STAGE_6_7D_PF_UF_BACKSTOP", "1") != "0"
+
+
+def _flow_loc_of(flow: Any) -> int:
+    """Deterministic LOC of a typed Flow — merged line_ranges first (the
+    flow's own span), loc_nodes spans as fallback. 0 when neither resolved."""
+    total = 0
+    for lr in getattr(flow, "line_ranges", None) or []:
+        start = getattr(lr, "start_line", None)
+        end = getattr(lr, "end_line", None)
+        if isinstance(start, int) and isinstance(end, int):
+            total += max(0, end - start + 1)
+    if total:
+        return total
+    for nd in getattr(flow, "loc_nodes", None) or []:
+        start = getattr(nd, "start_line", None)
+        end = getattr(nd, "end_line", None)
+        if isinstance(start, int) and isinstance(end, int):
+            total += max(0, end - start + 1)
+    return total
+
+
+def _backstop_uncovered_pfs(
+    new_ufs: list["UserFlow"],
+    new_pfs: list["Feature"],
+    dev_to_product: dict[str, tuple[str, ...]],
+    developer_features: list["Feature"],
+    promoted_caps: set[str],
+) -> dict[str, Any]:
+    """Guarantee every flowful product feature is referenced by >= 1 UF.
+
+    Mutates ``new_ufs`` in place (reassigns ``product_feature_id`` /
+    appends tagged thin journeys — the caller's content-sort + renumber
+    runs AFTER this, so synthesized journeys get content-stable ids).
+    Returns bounded telemetry. Fully deterministic: sorted iteration
+    orders, no wall-clock, no randomness.
+    """
+    from faultline.models.types import UserFlow
+
+    tele: dict[str, Any] = {
+        "pf_backstop_uncovered": 0,
+        "pf_backstop_reassigned_ufs": 0,
+        "pf_backstop_synthesized": 0,
+        "pf_backstop_resolutions": [],  # bounded [{pf, action, ufs|members}]
+    }
+
+    def _resolve(pf_slug: str, action: str, detail: Any) -> None:
+        if len(tele["pf_backstop_resolutions"]) < 50:
+            tele["pf_backstop_resolutions"].append(
+                {"pf": pf_slug, "action": action, "detail": detail})
+
+    # Flow ownership registry: member id → owning PF slug (via the flow's
+    # containment dev + dev_to_product), LOC and display label for the
+    # synthesis pick. First containment owner wins (input order is stable).
+    flow_pf: dict[str, str] = {}
+    flow_loc: dict[str, int] = {}
+    pf_flows: dict[str, list[str]] = defaultdict(list)
+    for dev in developer_features:
+        slugs = dev_to_product.get(dev.name) or ()
+        slug = slugs[0] if slugs else ""
+        for fl in getattr(dev, "flows", None) or []:
+            mid = _flow_member_id(fl)
+            if not mid or mid in flow_pf:
+                continue
+            flow_pf[mid] = slug
+            flow_loc[mid] = _flow_loc_of(fl)
+            if slug:
+                pf_flows[slug].append(mid)
+
+    covered: Counter[str] = Counter(
+        u.product_feature_id for u in new_ufs if u.product_feature_id)
+    claimed: set[str] = {m for u in new_ufs for m in (u.member_flow_ids or [])}
+    flowful = frozenset(pf_flows)
+
+    for pf in sorted(new_pfs, key=lambda p: p.name or ""):
+        slug = pf.name or ""
+        if not slug or not pf_flows.get(slug) or covered.get(slug, 0) > 0:
+            continue  # covered already (no duplicate backstop) or flow-less
+        tele["pf_backstop_uncovered"] += 1
+        display = pf.display_name or slug
+        reason = (_REASON_PROMOTED if display in promoted_caps
+                  else _REASON_UNCOVERED)
+
+        # ── 1. reassign majority-owned journeys ────────────────────────
+        reassigned: list[str] = []
+        for uf in sorted(new_ufs, key=lambda u: ((u.name or "").lower(),
+                                                 str(u.resource or ""))):
+            mids = uf.member_flow_ids or []
+            if not mids or uf.product_feature_id == slug or uf.synthesized:
+                continue
+            owned = sum(1 for m in mids if flow_pf.get(m) == slug)
+            if owned * 2 <= len(mids):
+                continue  # not majority-owned by this PF's devs
+            donor = uf.product_feature_id
+            if donor and donor in flowful and covered.get(donor, 0) <= 1:
+                continue  # would uncover the donor — no violation trades
+            if donor:
+                covered[donor] -= 1
+            uf.product_feature_id = slug
+            covered[slug] += 1
+            reassigned.append(uf.name)
+        if reassigned:
+            tele["pf_backstop_reassigned_ufs"] += len(reassigned)
+            _resolve(slug, "reassigned", reassigned[:10])
+            continue
+
+        # ── 2. synthesize ONE thin journey (output-only, tagged) ───────
+        pool = [m for m in pf_flows[slug] if m not in claimed]
+        if not pool:
+            # Every owned flow is claimed by other journeys (all minority
+            # shares). Board completeness wins: reference the top flows
+            # anyway — the journey is tagged, eval excludes it by tag.
+            pool = list(pf_flows[slug])
+        pool.sort(key=lambda m: (-flow_loc.get(m, 0), m))
+        members = pool[:_BACKSTOP_MEMBER_CAP]
+        if not members:
+            continue  # defensive — pf_flows guaranteed non-empty above
+        new_ufs.append(UserFlow(
+            id="UF-000",  # provisional — caller renumbers after content sort
+            name=display,
+            resource=slug,
+            domain=None,
+            product_feature_id=slug,
+            intent=_intent_for(display),
+            member_flow_ids=members,
+            member_count=len(members),
+            routes=[],
+            refined=True,
+            name_confidence="low",
+            synthesized=True,
+            synthesis_reason=reason,
+        ))
+        claimed.update(members)
+        covered[slug] += 1
+        tele["pf_backstop_synthesized"] += 1
+        _resolve(slug, "synthesized", {"reason": reason, "members": len(members)})
+    return tele
 
 
 # ── Public entrypoint ───────────────────────────────────────────────────────
@@ -1449,6 +1622,17 @@ def run_journey_abstraction(
             uf_specs_, user_flows, developer_features, routes_index)
         if not new_pfs or not new_ufs:
             return None
+        # PF-UF backstop: every flowful capability must be referenced by
+        # >= 1 journey (validator I8 — see the block above
+        # _backstop_uncovered_pfs). BEFORE the content sort so synthesized
+        # journeys join the stable renumbering like any other UF. Shared
+        # by the live and cache-hit paths → byte-identical replays.
+        if _pf_uf_backstop_enabled():
+            bs_tele = _backstop_uncovered_pfs(
+                new_ufs, new_pfs, dev_to_product, developer_features,
+                set(pf_tele.get("promoted_cap_names") or []),
+            )
+            tele.update(bs_tele)
         # Deterministic output ordering (Phase 1 stability): the LLM emits
         # features/flows in an order that drifts run-to-run. Sort by a stable key
         # so the output array order never churns — applies identically to the
