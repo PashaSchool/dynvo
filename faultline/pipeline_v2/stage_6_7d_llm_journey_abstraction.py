@@ -1626,6 +1626,119 @@ def _backstop_uncovered_pfs(
     return tele
 
 
+# ── Shared-Platform UF reassignment (deterministic, $0) ─────────────────────
+# Operator directive (2026-07-05, validator I10, CRITICAL): "Shared Platform
+# may own CODE, never JOURNEYS." A user journey is by definition a product
+# journey — the residual/platform bucket is an infrastructure container, so a
+# user_flow must never carry its capability. On Soc0 (2026-07-05 audit) Call-2
+# assigned journeys like "Browse and manage unified alert queue" / "Browse and
+# triage detections feed" / "Manage investigation playbooks" to the residual
+# even though their member flows belong to REAL product features
+# (alert-ingestion / detections-page). Yesterday's residual guard protects the
+# DEV -> PF mapping only; a UF's product_feature_id is set independently from
+# Call-1's `product_feature` string, so a cross-feature journey can still land
+# on the residual.
+#
+# Mechanism (runs inside ``_finish`` AFTER the PF-UF backstop -> applies
+# identically to live and cache-hit replays): every UF still on the
+# shared/platform capability is REASSIGNED to the non-shared product feature
+# owning the PLURALITY of its member flows (flow -> owning dev -> dev's new
+# capability via ``dev_to_product`` — the SAME "owning PF" notion the PF-UF
+# backstop's ``flow_pf`` uses; shared-owned flows are IGNORED in the count).
+# Ties break to the PF capturing the higher share of its OWN flows here, then
+# the more specific (smaller) PF, then the alphabetically-first slug (stable).
+# When EVERY member is shared-owned (no product PF at any share) the journey is
+# a legitimate rarity — its code genuinely lives only in infra anchors
+# (backend/main/frontend/mock) — so it is LEFT on the residual and counted in
+# ``uf_shared_unresolved`` (validator I10 flags it; reported honestly). Leaving
+# it there is also what keeps a flowful residual bucket's I8 satisfied.
+# Kill-switch: FAULTLINE_STAGE_6_7D_UF_RESHARE=0 (default ON inside the opt-in
+# 6.7d stage; registered in scan_result_cache.ENV_OUTPUT_FLAGS).
+_SHARED_PF_SLUGS = frozenset({_slug(_RESIDUAL_CAP), "platform"})
+
+
+def _uf_reshare_enabled() -> bool:
+    return os.environ.get("FAULTLINE_STAGE_6_7D_UF_RESHARE", "1") != "0"
+
+
+def _reshare_rank(
+    pf: str, owner_counts: "Counter[str]", pf_size: "Counter[str]",
+) -> tuple[int, float, int]:
+    """Descending-preference key for a candidate non-shared owner PF:
+    (plurality count, share of the PF's OWN flows captured here, -total flows
+    owned). Higher wins; the caller applies an alphabetical slug tie-break for
+    full determinism. ``share`` and ``-size`` agree (both favour the narrower
+    PF on a count tie), so a tie is broken toward the more specific feature."""
+    cnt = owner_counts[pf]
+    size = pf_size.get(pf, 0)
+    share = cnt / size if size else 0.0
+    return (cnt, share, -size)
+
+
+def _reassign_shared_ufs(
+    new_ufs: list["UserFlow"],
+    developer_features: list["Feature"],
+    dev_to_product: dict[str, tuple[str, ...]],
+) -> dict[str, Any]:
+    """Reassign every UF left on the shared/platform capability to the
+    non-shared PF owning the plurality of its member flows (see the block
+    rationale above). Mutates ``new_ufs[*].product_feature_id`` in place;
+    returns bounded telemetry. Fully deterministic — sorted iteration, no
+    wall-clock, no randomness."""
+    tele: dict[str, Any] = {
+        "uf_shared_reassigned": 0,
+        "uf_shared_unresolved": 0,
+        "uf_shared_reassignments": [],  # bounded [{uf, from, to, basis}]
+    }
+
+    def _record(uf_name: str, donor: str | None, target: str | None,
+                basis: str) -> None:
+        if len(tele["uf_shared_reassignments"]) < 50:
+            tele["uf_shared_reassignments"].append(
+                {"uf": uf_name, "from": donor, "to": target, "basis": basis})
+
+    # member id -> owning PF slug via the flow's owning dev (containment; first
+    # owner wins — input order stable). Mirrors _backstop_uncovered_pfs.flow_pf
+    # so "owning PF" stays one consistent notion across the two passes.
+    flow_pf: dict[str, str] = {}
+    for dev in developer_features:
+        slugs = dev_to_product.get(dev.name) or ()
+        slug = slugs[0] if slugs else ""
+        for fl in getattr(dev, "flows", None) or []:
+            mid = _flow_member_id(fl)
+            if mid and mid not in flow_pf:
+                flow_pf[mid] = slug
+    # Total flows each PF owns — the specificity tie-break (smaller = narrower).
+    pf_size: Counter[str] = Counter(flow_pf.values())
+
+    for uf in sorted(new_ufs, key=lambda u: ((u.name or "").lower(),
+                                             str(u.resource or ""))):
+        if (uf.product_feature_id or "") not in _SHARED_PF_SLUGS:
+            continue
+        mids = uf.member_flow_ids or []
+        owner_counts: Counter[str] = Counter()
+        for m in mids:
+            owner = flow_pf.get(m, "")
+            if owner and owner not in _SHARED_PF_SLUGS:
+                owner_counts[owner] += 1
+        if not owner_counts:
+            # All members are shared-owned (infra-anchor code only) — the
+            # legitimate rarity. Leave on the residual; flag for I10.
+            tele["uf_shared_unresolved"] += 1
+            _record(uf.name, uf.product_feature_id, None, "all_members_shared_owned")
+            continue
+        best_key = max(_reshare_rank(pf, owner_counts, pf_size) for pf in owner_counts)
+        target = min(
+            pf for pf in owner_counts
+            if _reshare_rank(pf, owner_counts, pf_size) == best_key)
+        donor = uf.product_feature_id
+        uf.product_feature_id = target
+        tele["uf_shared_reassigned"] += 1
+        _record(uf.name, donor, target,
+                f"plurality {owner_counts[target]}/{len(mids)}")
+    return tele
+
+
 # ── Public entrypoint ───────────────────────────────────────────────────────
 
 def run_journey_abstraction(
@@ -1756,6 +1869,16 @@ def run_journey_abstraction(
                 set(pf_tele.get("promoted_cap_names") or []),
             )
             tele.update(bs_tele)
+        # Shared Platform may own CODE, never JOURNEYS (operator 2026-07-05,
+        # validator I10). Reassign every UF still on the shared/platform
+        # capability to the non-shared PF owning the plurality of its member
+        # flows. Runs AFTER the backstop (so a backstop-synthesized residual
+        # journey is caught too) and INSIDE _finish -> identical on the live
+        # and cache-hit replay paths.
+        if _uf_reshare_enabled():
+            rs_tele = _reassign_shared_ufs(
+                new_ufs, developer_features, dev_to_product)
+            tele.update(rs_tele)
         # Deterministic output ordering (Phase 1 stability): the LLM emits
         # features/flows in an order that drifts run-to-run. Sort by a stable key
         # so the output array order never churns — applies identically to the
