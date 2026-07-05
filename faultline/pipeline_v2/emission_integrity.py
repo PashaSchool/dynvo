@@ -130,10 +130,12 @@ def _feature_zero_loc(feat: "Feature") -> bool:
 
 
 def _is_platform_bucket(feat: "Feature") -> bool:
-    """Only the shared/platform bucket itself is immune to phantom drop."""
+    """Only the shared/platform bucket row ITSELF is immune to phantom
+    drop — residents assigned to it (product_feature_id) are not; a
+    content-less resident of the bucket is still a phantom (Soc0 'ai',
+    pf_id=shared-platform, sole path '.')."""
     name = canonical_slug(getattr(feat, "name", None))
-    pfid = getattr(feat, "product_feature_id", None) or ""
-    return name in _SHARED_PF_KEYS or pfid in _SHARED_PF_KEYS
+    return name in _SHARED_PF_KEYS
 
 
 def _is_phantom(feat: "Feature") -> bool:

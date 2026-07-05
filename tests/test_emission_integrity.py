@@ -309,3 +309,13 @@ def test_contentless_anchor_marker_drops():
     bucket = _feat(name="shared-platform", paths=["."],
                       description="workspace anchor bucket")
     assert not _is_phantom(bucket)
+
+
+def test_contentless_bucket_resident_drops() -> None:
+    """A content-less dev ASSIGNED to shared-platform (pf_id) is a phantom;
+    only the bucket row itself (by name) is immune."""
+    from faultline.pipeline_v2.emission_integrity import _is_phantom
+
+    resident = _feat("ai", ["."], product_feature_id="shared-platform",
+                     description="[package] per-workspace merged")
+    assert _is_phantom(resident)
