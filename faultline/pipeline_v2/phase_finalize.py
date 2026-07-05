@@ -936,6 +936,46 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Emission integrity — referential round-trip guarantee ($0) ──
+    # Runs LAST, after every UF / PF / flow / loc mutation, so the emitted
+    # JSON is self-consistent by construction:
+    #   * I2  — drop phantom features (marker-only paths, 0 loc/loc_shared,
+    #           0 flows); workspace anchors + shared-platform are exempt.
+    #   * I12 — every user_flows[].product_feature_id ∈ emitted PF key-set
+    #           (canonical re-match else null).
+    #   * I14 — flows[].user_flow_id re-derived from final user_flows[]
+    #           membership (first owning UF in emit order wins).
+    # Deterministic, output-layer only; never touches the flow graph.
+    from faultline.pipeline_v2.emission_integrity import (
+        enforce_emission_integrity,
+    )
+    with StageLogger(run_dir, 7, "emission_integrity") as log_ei:
+        features, product_features, ei_result = enforce_emission_integrity(
+            features, product_features, user_flows, bipartite.flows,
+        )
+        scan_meta["emission_integrity"] = ei_result.as_dict()
+        log_ei.info(
+            "emission_integrity: dropped %d dev + %d pf phantoms, "
+            "relinked %d / nulled %d uf→pf refs, "
+            "rewrote %d / nulled %d flow backpointers"
+            % (
+                len(ei_result.phantom_features_dropped),
+                len(ei_result.phantom_product_features_dropped),
+                ei_result.uf_pf_refs_relinked,
+                ei_result.uf_pf_refs_nulled,
+                ei_result.flow_backpointers_rewritten,
+                ei_result.flow_backpointers_nulled,
+            ),
+            feature=None,
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=7,
+            stage_name="emission_integrity",
+            payload=ei_result.as_dict(),
+            run_dir=run_dir,
+        )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {

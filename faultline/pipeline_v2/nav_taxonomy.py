@@ -305,7 +305,12 @@ def aggregate_product_feature(
 
 
 def _slugify(label: str) -> str:
-    return label.lower().replace(" ", "-").replace("/", "-")
+    # Route through the single capability-name normalizer so nav-pinned PF
+    # names key-match UF product_feature_id refs (emission-integrity fix). The
+    # old .replace() left ``_``/multi-space/unicode un-collapsed → divergent
+    # keys vs 6.7d's regex; canonical_slug is byte-identical for ASCII labels.
+    from faultline.pipeline_v2.emission_integrity import canonical_slug
+    return canonical_slug(label)
 
 
 def pin_nav_labels(

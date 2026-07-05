@@ -918,7 +918,12 @@ def _call_rename_retry(
 
 
 def _slugify(label: str) -> str:
-    return label.lower().replace(" ", "-").replace("/", "-")
+    # Single capability-name normalizer (emission-integrity fix): analyst PF
+    # names must key-match UF product_feature_id refs slugged in 6.7d. The old
+    # .replace() diverged on ``_``/multi-space/unicode; canonical_slug is
+    # byte-identical for ASCII single-spaced labels → digest-safe.
+    from faultline.pipeline_v2.emission_integrity import canonical_slug
+    return canonical_slug(label)
 
 
 def _anchor_blob_owner(contrib: list["Feature"]) -> "Feature | None":

@@ -840,8 +840,12 @@ def _parse_json(text: str) -> dict[str, Any] | None:
 # ── Reconstruction ──────────────────────────────────────────────────────────
 
 def _slug(name: str) -> str:
-    s = re.sub(r"[\s_/]+", "-", (name or "").strip().lower())
-    return re.sub(r"-+", "-", s).strip("-")
+    # Single capability/PF-name normalizer (emission-integrity fix): both the
+    # UF's product_feature_id and the PF's name now slug through the SAME
+    # function, so a special-char capability yields one consistent key. ASCII
+    # single-spaced labels are byte-identical to the legacy regex → digest-safe.
+    from faultline.pipeline_v2.emission_integrity import canonical_slug
+    return canonical_slug(name)
 
 
 def _intent_for(name: str) -> str:

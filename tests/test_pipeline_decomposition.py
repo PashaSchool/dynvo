@@ -145,6 +145,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # artifact emitted on every run (default ON). See
     # stage_6_97_feature_loc.py.
     (6, "feature_loc"),
+    # Emission integrity (2026-07-05) — referential round-trip guarantee.
+    # $0, deterministic, runs LAST before Stage 7 output: I2 phantom drop,
+    # I12 UF→PF ref reconcile, I14 flow-backpointer rewrite. Telemetry
+    # artifact emitted on every run. See emission_integrity.py.
+    (7, "emission_integrity"),
 ]
 
 
