@@ -85,6 +85,22 @@ def test_family_match_prefers_largest_established_home():
     assert _family_capability_match(dev, ctx) == "Custom Detector Builder"
 
 
+def test_family_match_flows_outrank_member_count():
+    """When member count and flow count disagree, the capability with more
+    JOURNEYS wins (behavioural mass) — the Soc0 detector case: detection-studio
+    joins Custom Detector Builder (62 flows / 3 members) over AI-Suggested
+    Detector Recommendations (35 flows / 8 members)."""
+    dev = _dev("detection-studio", ["modules/detection-studio/a.ts"])
+    ctx = {
+        "Custom Detector Builder": {"stems": {"custom", "detect", "build"},
+                                    "members": 3, "flows": 62, "paths": 97},
+        "AI-Suggested Detector Recommendations": {
+            "stems": {"suggest", "detect", "recommend"},
+            "members": 8, "flows": 35, "paths": 93},
+    }
+    assert _family_capability_match(dev, ctx) == "Custom Detector Builder"
+
+
 def test_family_match_skips_own_self_capability():
     dev = _dev("detection-studio", ["modules/detection-studio/a.ts"])
     ctx = {"Detection Studio": {"stems": {"detect"}, "members": 1,

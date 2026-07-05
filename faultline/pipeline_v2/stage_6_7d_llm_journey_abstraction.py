@@ -1291,8 +1291,9 @@ def _family_capability_match(
     no discriminative family stem with any OTHER capability.
 
     Selection is structural and deterministic: prefer the capability sharing
-    the MOST family stems, then the LARGEST established home (member devs, then
-    member flows, then owned paths), then the alphabetically-first slug — a
+    the MOST family stems, then the LARGEST established home by BEHAVIOURAL mass
+    — member flows first (journeys are the product weight of a capability), then
+    member devs, then owned paths — then the alphabetically-first slug. A
     residual dev joins the family's biggest existing home, never a repo-named
     target. A capability whose slug equals the dev's own slug (its self-mint)
     is never a join target."""
@@ -1308,9 +1309,11 @@ def _family_capability_match(
         overlap = dev_stems & ctx["stems"]
         if not overlap:
             continue
-        # Descending preference; alpha slug ASCENDING → negate rank, keep slug
-        # for a stable final tie-break.
-        key = (len(overlap), ctx["members"], ctx["flows"], ctx["paths"])
+        # Descending preference; alpha slug ASCENDING → keep slug for a stable
+        # final tie-break. Flows rank above member count: a capability's
+        # journeys are its behavioural mass (a 62-flow detector home outranks a
+        # thinner 8-member one).
+        key = (len(overlap), ctx["flows"], ctx["members"], ctx["paths"])
         cand_key = (*key, _slug(cap))
         if best_key is None or key > best_key[:4] or (
             key == best_key[:4] and _slug(cap) < best_key[4]
