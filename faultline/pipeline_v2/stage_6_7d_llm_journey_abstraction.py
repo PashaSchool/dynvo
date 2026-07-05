@@ -1187,7 +1187,12 @@ def _fallback_capability(
 # ``FAULTLINE_STAGE_6_7D_RESIDUAL_GUARD=0`` (default ON inside the opt-in
 # 6.7d stage). Runs at reconstruction time → applies identically to live and
 # cache-hit replays.
-_FEATURE_DIR_CONTAINERS = frozenset({"features", "feature", "modules", "module"})
+_FEATURE_DIR_CONTAINERS = frozenset(
+    # React feature-folder conventions AND the backend service convention: a dev
+    # majority-owning ``<container>/<its-own-name>/`` IS that product domain.
+    # Mirrors the stage-8.9.6 carve container set so a carve-minted domain dev
+    # promotes to its own capability instead of falling to the shared bucket.
+    {"features", "feature", "modules", "module", "services", "service"})
 
 
 def _residual_guard_enabled() -> bool:
@@ -1651,6 +1656,15 @@ def _build_product_features(
             cap, rescued = _fallback_capability(dev, cap_tokens)
             if rescued:
                 pf_tele["devs_token_rescued"] += 1
+            elif cap == _RESIDUAL_CAP and residual_guard:
+                # An UNMAPPED dev the LLM never saw (a carve-minted domain
+                # subsystem, a late split) deserves the full residual-guard
+                # treatment — family join / flowful feature-dir or route-surface
+                # promotion — so it resettles instead of sinking into the shared
+                # bucket (validator I9).
+                cap = _confirm_residual(dev, cap_tokens, pf_tele,
+                                        route_files, route_uuids, minted_descs,
+                                        cap_context)
         elif cap == _RESIDUAL_CAP and residual_guard:
             # An EXPLICIT residual assignment is unproven — structural
             # confirmation or re-route (strong token match / token-family
