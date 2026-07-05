@@ -293,20 +293,15 @@ def test_full_round_trip_all_three_classes() -> None:
     assert fl.user_flow_id == "UF-001"
 
 
-def test_contentless_anchor_marker_drops(feature_factory=None):
+def test_contentless_anchor_marker_drops():
     """Soc0 'ai' case: workspace-anchor marker + only '.' path + zero code
     must DROP; the shared-platform bucket itself must survive."""
     from faultline.pipeline_v2.emission_integrity import _is_phantom
-    from faultline.models.types import Feature
 
-    ai = Feature(name="ai", paths=["."], flows=[],
-                 description="stage-2 workspace anchor (sources=package)")
-    ai.loc = 0
-    ai.loc_shared = 0
+    ai = _feat(name="ai", paths=["."],
+                  description="stage-2 workspace anchor (sources=package)")
     assert _is_phantom(ai)
 
-    bucket = Feature(name="shared-platform", paths=["."], flows=[],
-                     description="workspace anchor bucket")
-    bucket.loc = 0
-    bucket.loc_shared = 0
+    bucket = _feat(name="shared-platform", paths=["."],
+                      description="workspace anchor bucket")
     assert not _is_phantom(bucket)
