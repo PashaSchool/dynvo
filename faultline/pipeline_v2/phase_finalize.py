@@ -537,6 +537,7 @@ def run_finalize_phase(
         scan_meta["uf_suppressed_reason"] = uf_reason
         uf_marker = {"suppressed": True, "reason": uf_reason}
         user_flows: list = []
+        product_strings = None  # UF family skipped — no string index built
         with StageLogger(run_dir, 6, "user_flows") as log6_7:
             log6_7.info(
                 "user_flows: SUPPRESSED (%s, confidence=%.2f) — "
@@ -1123,7 +1124,17 @@ def run_finalize_phase(
     # scan output is byte-identical to today. Deterministic matching
     # only (member/route Jaccard + unique (resource,intent) key);
     # disappeared UFs are RETIRED in telemetry, never resurrected.
-    if prev_scan_json is not None:
+    # W3 (§4.8): keeper default-ON on the production path (worker passes
+    # the prev scan) — ``FAULTLINE_KEEPER=0`` disables pinning even with
+    # input present (eval scrub-mode; rule-cold-scan stays provable).
+    from faultline.pipeline_v2.uf_identity_keeper import (
+        keeper_enabled as _keeper_enabled,
+    )
+    if prev_scan_json is not None and not _keeper_enabled():
+        scan_meta["uf_identity"] = {
+            "enabled": False, "reason": "FAULTLINE_KEEPER=0",
+        }
+    if prev_scan_json is not None and _keeper_enabled():
         from faultline.pipeline_v2.uf_identity_keeper import (
             apply_identity_keeper,
         )
@@ -1437,6 +1448,94 @@ def run_finalize_phase(
                 ),
                 feature=None,
             )
+
+    # ── Stage 6.87 — display-name contract (Product-Spine §4.8, W3) ────
+    # SELECTION-not-generation display polish on the FINAL product list:
+    # laws (single-letter / param / file-stem / PF==UF twin / acronym
+    # casing / display collisions), keeper pin channel (content-derived
+    # prev-scan join by anchor_id/slug, FAULTLINE_KEEPER-gated), ranked
+    # deterministic candidates, and the PM-Labeler persona seam (keyed
+    # scans). Runs AFTER emission integrity + terminal home (the PF set
+    # is final — no naming spend on phantoms) and BEFORE the platform
+    # lane + Stage-7 write. Writes ONLY the display channel
+    # (Feature.display_name / UserFlow.name) — identity is untouched.
+    # Kill-switch: FAULTLINE_NAMING_CONTRACT=0 (pre-W3 output
+    # byte-identical).
+    from faultline.pipeline_v2.naming_contract import (
+        naming_contract_enabled,
+        run_naming_contract,
+    )
+    from faultline.pipeline_v2.uf_identity_keeper import keeper_enabled
+    if naming_contract_enabled():
+        write_stage_input(run_dir, 7, "naming_contract", {
+            "product_features": product_features,
+            "user_flows": user_flows,
+            "bipartite_flows": list(bipartite.flows),
+            "prev_scan_json": prev_scan_json,
+            "scan_meta": scan_meta,
+        })
+        with StageLogger(run_dir, 7, "naming_contract") as log_nc:
+            try:
+                # PM Labeler (Wave-3 persona): keyed scans only — the
+                # deterministic top choice is the keyless display path.
+                _nc_labeler = None
+                try:
+                    from faultline.pipeline_v2.personas import (
+                        build_pm_labeler,
+                    )
+                    _nc_labeler = build_pm_labeler(
+                        model_id=model_id,
+                        cost_tracker=tracker,
+                        cache=getattr(ctx, "cache_backend", None),
+                        llm_health=llm_health,
+                        log=log_nc,
+                    )
+                except Exception:  # noqa: BLE001 — persona is optional
+                    _nc_labeler = None
+                nc_tele = run_naming_contract(
+                    product_features,
+                    user_flows,
+                    list(bipartite.flows),
+                    prev_scan=prev_scan_json,
+                    keeper_on=keeper_enabled(),
+                    product_strings=product_strings,
+                    routes_index=lineage_result.routes_index,
+                    labeler=_nc_labeler,
+                )
+                scan_meta["naming_contract"] = nc_tele
+                log_nc.info(
+                    "naming_contract: pf %d (renamed %d, pinned %d, "
+                    "cased %d), uf %d (renamed %d, twins %d, synth %d), "
+                    "laws %s, labeler_pending %d"
+                    % (
+                        nc_tele.get("pf_total", 0),
+                        nc_tele.get("pf_renamed", 0),
+                        nc_tele.get("pf_pinned", 0),
+                        nc_tele.get("casing_polished", 0),
+                        nc_tele.get("uf_total", 0),
+                        nc_tele.get("uf_renamed", 0),
+                        nc_tele.get("uf_twins_resolved", 0),
+                        nc_tele.get("uf_synth_named", 0),
+                        nc_tele.get("laws_fixed"),
+                        nc_tele.get("labeler_pending", 0),
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=7,
+                    stage_name="naming_contract",
+                    payload=dict(nc_tele),
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — naming must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"naming-contract failed ({exc}); displays unpolished"
+                )
+                log_nc.info(
+                    f"naming_contract: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
 
     # ── platform_infrastructure[] lane (Wave 2b, operator amendment) ───
     # The anchored path's residual surface: one row per lane resident

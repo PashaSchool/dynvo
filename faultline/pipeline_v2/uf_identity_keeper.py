@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -68,6 +69,23 @@ logger = logging.getLogger(__name__)
 
 #: Structural majority-overlap eligibility cutoff (see module docstring).
 OVERLAP_THRESHOLD = 0.5
+
+#: Wave-3 (§4.8) keeper master switch. Default ON — the PRODUCTION path
+#: (worker passes ``prev_scan_json`` from the DB) pins identities and
+#: display names by default. ``FAULTLINE_KEEPER=0`` disables BOTH the UF
+#: identity keeper and the naming-contract display-pin channel even when
+#: a prev scan is provided — eval runners set it (alongside simply not
+#: passing a prev scan) so cold-scan purity stays provable
+#: (rule-cold-scan). Absent prev-scan input the keeper never runs either
+#: way — there is still NO ambient filesystem discovery.
+KEEPER_ENV = "FAULTLINE_KEEPER"
+
+
+def keeper_enabled() -> bool:
+    """Default ON; ``FAULTLINE_KEEPER=0`` disables all cross-scan pinning."""
+    return os.environ.get(KEEPER_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
 
 _UF_ID_RE = re.compile(r"^UF-(\d+)$")
 
@@ -357,9 +375,11 @@ def apply_identity_keeper(
 
 
 __all__ = [
+    "KEEPER_ENV",
     "OVERLAP_THRESHOLD",
     "UFMatch",
     "apply_identity_keeper",
+    "keeper_enabled",
     "load_prev_scan",
     "match_user_flows",
 ]

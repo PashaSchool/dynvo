@@ -1,0 +1,335 @@
+# Naming-contract vocabulary (Product-Spine §4.8, Wave 3).
+#
+# Universal display-name material — SaaS-ecosystem-wide, never tuned to
+# any one repo (rule-no-magic-tuning). Consumed by
+# faultline/pipeline_v2/naming_contract.py; authoring copy lives at
+# eval/naming-contract-vocab.yaml (byte-identical, drift-guarded by
+# tests/pipeline_v2/test_naming_contract.py).
+version: 1
+
+# Tokens that render UPPERCASE in display names (dictionary of known
+# industry acronyms/initialisms). Deliberately excludes English-word
+# collisions ("it", "us", "an", "at", "in", "id" — id reads fine
+# lowercase-titled). A token that is ALSO a vendor token is cased by
+# brand_casing first (vendor identity wins over acronym reading).
+known_acronyms:
+  - ai
+  - api
+  - bi
+  - cdn
+  - ci
+  - cli
+  - cms
+  - crm
+  - csv
+  - db
+  - dlp
+  - dns
+  - edr
+  - erp
+  - etl
+  - faq
+  - ftp
+  - gdpr
+  - grpc
+  - html
+  - http
+  - https
+  - iam
+  - imap
+  - itsm
+  - jwt
+  - kpi
+  - kyc
+  - ldap
+  - llm
+  - mcp
+  - mfa
+  - ndr
+  - nlp
+  - ocr
+  - oidc
+  - orm
+  - ot
+  - otx
+  - pdf
+  - pii
+  - pos
+  - qa
+  - rag
+  - rbac
+  - rss
+  - saml
+  - sast
+  - scim
+  - sdk
+  - seo
+  - siem
+  - sla
+  - sli
+  - slo
+  - smtp
+  - soar
+  - soc
+  - sql
+  - ssh
+  - sso
+  - ssl
+  - tls
+  - totp
+  - ui
+  - uri
+  - url
+  - ux
+  - vpc
+  - vpn
+  - waf
+  - xdr
+
+# Canonical brand casings for well-known vendor/product tokens the
+# titleizer would otherwise mangle ("Gocardless", "Chatgpt"). Same
+# universal-vocabulary class as naming_validator.VENDOR_TOKENS — public
+# products only, no common-English collisions.
+brand_casing:
+  airtable: Airtable
+  anthropic: Anthropic
+  bigquery: BigQuery
+  bitbucket: Bitbucket
+  carbonblack: Carbon Black
+  chatgpt: ChatGPT
+  claroty: Claroty
+  clickhouse: ClickHouse
+  cloudflare: Cloudflare
+  crowdstrike: CrowdStrike
+  datadog: Datadog
+  deel: Deel
+  dropbox: Dropbox
+  dynamodb: DynamoDB
+  elasticsearch: Elasticsearch
+  enablebanking: Enable Banking
+  fortnox: Fortnox
+  freshdesk: Freshdesk
+  github: GitHub
+  gitlab: GitLab
+  gmail: Gmail
+  gocardless: GoCardless
+  graphql: GraphQL
+  hubspot: HubSpot
+  iot: IoT
+  javascript: JavaScript
+  klaviyo: Klaviyo
+  lemonsqueezy: Lemon Squeezy
+  linkedin: LinkedIn
+  mailchimp: Mailchimp
+  mailgun: Mailgun
+  mixpanel: Mixpanel
+  mongodb: MongoDB
+  mysql: MySQL
+  newrelic: New Relic
+  openai: OpenAI
+  opengraph: OpenGraph
+  opentelemetry: OpenTelemetry
+  opsgenie: Opsgenie
+  outlook: Outlook
+  pagerduty: PagerDuty
+  paloalto: Palo Alto
+  paypal: PayPal
+  postgres: Postgres
+  postgresql: PostgreSQL
+  posthog: PostHog
+  powerpoint: PowerPoint
+  quickbooks: QuickBooks
+  rabbitmq: RabbitMQ
+  salesforce: Salesforce
+  sendgrid: SendGrid
+  sentinelone: SentinelOne
+  servicenow: ServiceNow
+  sqlite: SQLite
+  supabase: Supabase
+  tiktok: TikTok
+  trpc: tRPC
+  typescript: TypeScript
+  whatsapp: WhatsApp
+  wordpress: WordPress
+  youtube: YouTube
+  zendesk: Zendesk
+
+# File extensions that must never appear in a display name (the
+# "Schema.json" class — a file stem is a dev artifact, not a product
+# capability). Checked as a trailing ".<ext>" token on any word.
+file_extensions:
+  - cfg
+  - conf
+  - css
+  - csv
+  - env
+  - go
+  - html
+  - ini
+  - java
+  - js
+  - json
+  - jsx
+  - lock
+  - md
+  - php
+  - py
+  - rb
+  - rs
+  - scss
+  - sh
+  - sql
+  - toml
+  - ts
+  - tsx
+  - txt
+  - xml
+  - yaml
+  - yml
+
+# The journey grammar (PM-Labeler compose surface + deterministic
+# templates). A composed journey display must start with one of these
+# verb phrases; the remainder is validated by token evidence
+# (naming_validator) against the entity's own files/routes/strings.
+journey_verb_phrases:
+  - Browse & filter
+  - Browse
+  - Bulk-manage
+  - Complete
+  - Configure
+  - Connect
+  - Create & edit
+  - Create
+  - Export
+  - Import
+  - Ingest
+  - Install
+  - Manage
+  - Monitor
+  - Receive
+  - Review
+  - Run
+  - Search
+  - Send
+  - Set up
+  - Sign in to
+  - Track
+  - Transition
+  - Trigger
+  - Unsubscribe from
+  - Upload
+  - Verify
+  - View
+
+# Member-flow verb evidence → journey intent verdict for synthesized /
+# twin user flows. First matching class by flow-name token wins
+# (deterministic order below); "manage" is the fallback class.
+flow_verb_classes:
+  connect:
+    - auth
+    - authorize
+    - callback
+    - connect
+    - install
+    - link
+    - oauth
+    - register
+    - setup
+  ingest:
+    - crawl
+    - fetch
+    - import
+    - index
+    - ingest
+    - poll
+    - pull
+    - sync
+  send:
+    - deliver
+    - dispatch
+    - notify
+    - post
+    - publish
+    - send
+    - share
+  receive:
+    - consume
+    - inbound
+    - listen
+    - receive
+    - webhook
+  run:
+    - build
+    - execute
+    - invoke
+    - process
+    - run
+    - schedule
+    - trigger
+  view:
+    - browse
+    - display
+    - get
+    - list
+    - read
+    - render
+    - show
+    - view
+
+# Journey display templates per intent verdict. "{v}" = vendor / hub
+# subject display, "{r}" = resource phrase (lowercased PF display).
+journey_templates:
+  vendor:
+    connect: "Connect {v}"
+    ingest: "Ingest data from {v}"
+    send: "Send notifications via {v}"
+    receive: "Receive events from {v}"
+    run: "Run {v} jobs"
+    view: "View {v} data"
+    manage: "Manage {v} integration"
+  generic:
+    connect: "Connect {r}"
+    ingest: "Ingest {r}"
+    send: "Send {r}"
+    receive: "Receive {r}"
+    run: "Run {r}"
+    view: "View {r}"
+    manage: "Manage {r}"
+
+# Generic connector-container segments (the §4.4 hub lexicon) — skipped
+# when deriving a hub FAMILY display word ("backend/services/edr" names
+# the EDR family, never a "Services" one). Same universal list class as
+# the spine vocab's hub families.
+hub_container_segments:
+  - adapters
+  - channels
+  - connectors
+  - destinations
+  - handlers
+  - integrations
+  - plugins
+  - providers
+  - routers
+  - services
+  - sources
+
+# Structural path segments never used as display words when humanizing
+# a route/anchor id (they locate code, they don't name capabilities).
+structural_segments:
+  - app
+  - apps
+  - backend
+  - frontend
+  - index
+  - lib
+  - packages
+  - pages
+  - routes
+  - server
+  - src
+  - web
+  - www
+
+# Compose bounds for labeler-composed displays (grammar hard limits).
+compose_max_words: 8
+compose_max_chars: 60
