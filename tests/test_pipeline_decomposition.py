@@ -147,6 +147,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # artifact emitted on every run (default ON). See
     # stage_6_97_feature_loc.py.
     (6, "feature_loc"),
+    # Stage 6.85 emission lane (Wave 2a, 2026-07-06) — product-surface
+    # taxonomy: UF/PF tags + non_product_surfaces[] lane split + info-page
+    # dissolution + shared_reason stamping. $0, deterministic, default ON;
+    # telemetry artifact emitted on every run. See surface_taxonomy.py.
+    (6, "surface_taxonomy"),
     # Emission integrity (2026-07-05) — referential round-trip guarantee.
     # $0, deterministic, runs LAST before Stage 7 output: I2 phantom drop,
     # I12 UF→PF ref reconcile, I14 flow-backpointer rewrite. Telemetry
