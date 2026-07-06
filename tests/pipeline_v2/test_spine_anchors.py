@@ -246,6 +246,31 @@ def test_param_named_raw_segment_is_barred():
     assert _bar_reason("blog", vre, raw_seg="blog") is None
 
 
+def test_pages_api_routes_classify_api_despite_page_method():
+    """W2b.1 fix (d1), supabase get-utc-time class: the Pages-Router
+    extractor stamps method=PAGE on pages/api/* files; the URL pattern
+    (/api/...) is the structural truth — such routes are API surface and
+    carry NO page evidence."""
+    routes = [
+        {"pattern": "/api/get-utc-time", "method": "PAGE",
+         "file": "apps/studio/pages/api/get-utc-time.ts"},
+        {"pattern": "/api/trpc/edge/:trpc", "method": "PAGE",
+         "file": "apps/web/src/app/api/trpc/edge/[trpc]/route.ts"},
+        {"pattern": "/maintenance", "method": "PAGE",
+         "file": "apps/studio/pages/maintenance.tsx"},
+    ]
+    devs = [dev("d", sorted({r["file"] for r in routes}))]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    gut = [a for a in anchors if a.key == "get-utc-time"]
+    assert gut, [a.canonical_id for a in anchors]
+    assert not gut[0].page_route_files
+    assert gut[0].api_route_files == frozenset(
+        {"apps/studio/pages/api/get-utc-time.ts"})
+    # a REAL page keeps page evidence
+    mt = [a for a in anchors if a.key == "maintenance"]
+    assert mt and mt[0].page_route_files
+
+
 def test_central_router_files_anchor_the_handler_file():
     """FastAPI class: no routing-root run in the path → the handler FILE
     is the subtree (never a phantom ``routers``-dir anchor)."""

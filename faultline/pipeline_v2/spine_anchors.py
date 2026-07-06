@@ -410,6 +410,25 @@ def _bar_reason(
     return None
 
 
+def _is_api_route(pattern: str, method: str, vocab: dict[str, Any]) -> bool:
+    """API-vs-page classification of one route entry — STRUCTURAL, never
+    trusting the stamped method alone (W2b.1 fix d1): the Next
+    Pages-Router extractor stamps ``method="PAGE"`` for everything under
+    ``pages/`` including ``pages/api/*`` (94 such routes on supabase
+    studio), which armed ``get-utc-time``-class api leaves with fake
+    page evidence. A route whose URL pattern rides an api-class
+    transparent segment (``/api/…``, ``/trpc/…``, ``/rest/…``,
+    ``/graphql``) IS an API surface in every dialect — pages/api is
+    Next's own API convention."""
+    if (method or "").upper() != "PAGE":
+        return True
+    transparent = set(vocab.get("route_transparent_segments") or [])
+    for seg in (pattern or "").split("/"):
+        if seg.lower() in transparent:
+            return True
+    return False
+
+
 def _build_route_anchors(
     routes_index: list[dict[str, Any]],
     vocab: dict[str, Any],
@@ -419,7 +438,7 @@ def _build_route_anchors(
     acc: dict[tuple[str, str | None], dict[str, Any]] = {}
 
     def _add(seg: str, prefix: str | None, depth: int, file: str,
-             method: str, groups: list[str]) -> None:
+             is_api: bool, groups: list[str]) -> None:
         key = normalize_anchor_key(seg)
         if not key:
             return
@@ -429,21 +448,22 @@ def _build_route_anchors(
         })
         slot["files"].add(file)
         slot["groups"].update(groups)
-        if (method or "").upper() == "PAGE":
-            slot["page"].add(file)
-        else:
+        if is_api:
             slot["api"].add(file)
+        else:
+            slot["page"].add(file)
 
     for entry in routes_index or []:
         file = str(entry.get("file") or "")
         if not file:
             continue
-        method = str(entry.get("method") or "GET")
+        pattern = str(entry.get("pattern") or "")
+        is_api = _is_api_route(pattern, str(entry.get("method") or "GET"),
+                               vocab)
         groups = [str(g) for g in (entry.get("route_groups") or [])]
-        chain = _route_chain(
-            file, str(entry.get("pattern") or ""), vocab, version_re)
+        chain = _route_chain(file, pattern, vocab, version_re)
         for seg, prefix, depth in chain:
-            _add(seg, prefix, depth, file, method, groups)
+            _add(seg, prefix, depth, file, is_api, groups)
 
     out: list[SpineAnchor] = []
     for (key, prefix) in sorted(acc, key=lambda kp: (kp[0], kp[1] or "")):
