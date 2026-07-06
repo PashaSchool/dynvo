@@ -553,3 +553,34 @@ def test_naming_stage_verifier_exception_never_blocks() -> None:
     tele = run_naming_contract([pf], [uf], [], verifier=_verifier)
     assert uf.name == "Manage settings"  # law fix still applied
     assert "verifier_error" in tele
+
+
+def test_emission_taxonomy_journey_guard_blocks_adjudication() -> None:
+    """W3 mini-A/B finding (openstatus `notifications`, 8 journeys):
+    a PF referenced by >=2 user flows is product-evidenced — never sent
+    to the adjudicator (the I9 flowful-never-in-lane law at PF grain)."""
+    from faultline.models.types import UserFlow
+    from faultline.pipeline_v2.surface_taxonomy import apply_emission_taxonomy
+
+    pfs = _emission_fixture()  # 'pricing' is the ambiguous one
+
+    def _uf(uid: str) -> UserFlow:
+        return UserFlow(
+            id=uid, name=f"Journey {uid}", resource="pricing", domain=None,
+            product_feature_id="pricing", intent="manage",
+            member_flow_ids=[f"flow-{uid}"], member_count=1,
+        )
+
+    seen: list[dict] = []
+
+    def _adjudicator(items):
+        seen.extend(items)
+        return {i["id"]: "marketing" for i in items}
+
+    ufs = [_uf("UF-001"), _uf("UF-002")]
+    tele, lane, kept = apply_emission_taxonomy(
+        [], pfs, ufs, [], None, adjudicator=_adjudicator)
+    assert seen == []  # journey-rich PF never reached the persona
+    assert tele["adjudicator"]["journey_guarded"] == 1
+    assert tele["adjudicator"]["flips"] == 0
+    assert [p.name for p in kept] == ["pricing", "billing"]

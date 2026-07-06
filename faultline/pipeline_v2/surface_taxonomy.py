@@ -992,15 +992,32 @@ def apply_emission_taxonomy(
     # lane split so a flipped marketing/docs PF leaves the product list
     # like any deterministically-classified one. Deterministic verdicts
     # stand on any failure/reject (never blocks).
+    #
+    # JOURNEY GUARD (W3 mini-A/B finding, openstatus `notifications`):
+    # a PF referenced by >=2 user journeys carries product-declared
+    # evidence the path lexicon can't see — the flowful-never-in-lane
+    # law (I9) at PF grain, and the same denominator doctrine as the
+    # marketing workspace-class override ("zero product-declared
+    # signals"). Such PFs are never sent for adjudication; the flip
+    # class is journey-thin info/tool surfaces only.
     if adjudicator is not None and ambiguous_pfs:
+        uf_refs: dict[str, int] = {}
+        for uf in user_flows:
+            ref = str(_get(uf, "product_feature_id") or "")
+            if ref:
+                uf_refs[ref] = uf_refs.get(ref, 0) + 1
         assignable = frozenset(NON_PRODUCT_PF_SCOPES) | {SCOPE_PRODUCT}
         items = []
+        journey_guarded = 0
         for pf, sc, sig in ambiguous_pfs:
             allowed = sorted(
                 ({SCOPE_PRODUCT} | set(sig)) & assignable
             )
             if len(allowed) < 2:
                 continue  # nothing to adjudicate
+            if uf_refs.get(_pf_key(pf), 0) >= 2:
+                journey_guarded += 1
+                continue  # journey-rich ⇒ product-evidenced, never flip
             paths = [str(p) for p in (_get(pf, "paths") or [])][:5]
             items.append({
                 "id": _pf_key(pf),
@@ -1033,6 +1050,7 @@ def apply_emission_taxonomy(
                 flips += 1
         tele["adjudicator"] = {
             "ambiguous": len(ambiguous_pfs),
+            "journey_guarded": journey_guarded,
             "sent": len(items),
             "verdicts": len(verdicts),
             "flips": flips,
