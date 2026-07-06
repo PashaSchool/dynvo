@@ -348,3 +348,125 @@ def test_naming_stage_applies_labeler_choices_with_law_recheck() -> None:
     assert pf.display_name == "GoCardless"          # labeler pick applied
     assert uf.name == "Ingest data from GoCardless"  # law re-check blocked twin
     assert tele["labeler"]["applied"] == 1
+
+
+# ── Surface-taxonomy adjudication wiring (W3 commit N4) ─────────────────
+
+
+def test_classify_feature_with_signals_verdict_matches_legacy() -> None:
+    from faultline.pipeline_v2.surface_taxonomy import SurfaceScopeClassifier
+
+    clf = SurfaceScopeClassifier()
+    shapes = [
+        SimpleNamespace(name="pricing", display_name="Pricing",
+                        paths=["app/pricing/page.tsx",
+                               "app/workspace/pricing-table.tsx"]),
+        SimpleNamespace(name="billing", display_name="Billing",
+                        paths=["app/workspace/billing/page.tsx"]),
+        SimpleNamespace(name="home-page", display_name="Home Page",
+                        paths=["app/page.tsx"]),
+        SimpleNamespace(name="mkt", display_name="Mkt",
+                        paths=["app/(marketing)/pricing/page.tsx",
+                               "app/(marketing)/about/page.tsx"]),
+        SimpleNamespace(name="empty", display_name="Empty", paths=[]),
+    ]
+    for f in shapes:
+        scope, _amb, _sig = clf.classify_feature_with_signals(f, {})
+        assert scope == clf.classify_feature(f, {}), f.name
+
+
+def test_ambiguity_narrow_notion() -> None:
+    from faultline.pipeline_v2.surface_taxonomy import SurfaceScopeClassifier
+
+    clf = SurfaceScopeClassifier()
+    # Non-product signal denied the majority by abstains → ambiguous.
+    _s, amb, _w = clf.classify_feature_with_signals(SimpleNamespace(
+        name="pricing", display_name="Pricing",
+        paths=["app/pricing/page.tsx", "src/x.ts", "src/y.ts"]), {})
+    assert amb is True
+    # Unanimous non-product → NOT ambiguous (nothing to adjudicate).
+    _s, amb, _w = clf.classify_feature_with_signals(SimpleNamespace(
+        name="mkt", display_name="Mkt",
+        paths=["app/(marketing)/pricing/page.tsx",
+               "app/(marketing)/about/page.tsx"]), {})
+    assert amb is False
+    # No signal at all → NOT ambiguous.
+    _s, amb, _w = clf.classify_feature_with_signals(SimpleNamespace(
+        name="billing", display_name="Billing",
+        paths=["app/workspace/billing/page.tsx"]), {})
+    assert amb is False
+    # Shell container → NOT ambiguous (its interior names things, §4.6).
+    _s, amb, _w = clf.classify_feature_with_signals(SimpleNamespace(
+        name="home-page", display_name="Home Page",
+        paths=["app/page.tsx"]), {})
+    assert amb is False
+
+
+def _emission_fixture():
+    from datetime import datetime, timezone
+
+    from faultline.models.types import Feature
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def _feat(name, paths, layer):
+        return Feature(
+            name=name, display_name=name.title(), layer=layer, paths=paths,
+            authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+            last_modified=now, health_score=100.0,
+        )
+
+    # Ambiguous: one marketing path + two abstains (observed shape).
+    pricing = _feat("pricing", ["app/pricing/page.tsx", "src/x.ts",
+                                "src/y.ts"], "product")
+    billing = _feat("billing", ["app/workspace/billing/page.tsx"], "product")
+    return [pricing, billing]
+
+
+def test_emission_taxonomy_adjudicator_flip_moves_pf_to_lane() -> None:
+    from faultline.pipeline_v2.surface_taxonomy import apply_emission_taxonomy
+
+    pfs = _emission_fixture()
+    seen_items: list[dict] = []
+
+    def _adjudicator(items):
+        seen_items.extend(items)
+        return {i["id"]: "marketing" for i in items}
+
+    tele, lane, kept = apply_emission_taxonomy(
+        [], pfs, [], [], None, adjudicator=_adjudicator)
+    # Only the ambiguous PF was sent; billing (no signal) was not.
+    assert [i["id"] for i in seen_items] == ["pricing"]
+    assert "marketing" in seen_items[0]["allowed"]
+    assert tele["adjudicator"]["flips"] == 1
+    assert [p.name for p in kept] == ["billing"]
+    assert [e["name"] for e in lane] == ["pricing"]
+
+
+def test_emission_taxonomy_invalid_adjudicator_scope_ignored() -> None:
+    from faultline.pipeline_v2.surface_taxonomy import apply_emission_taxonomy
+
+    pfs = _emission_fixture()
+
+    def _adjudicator(items):
+        return {i["id"]: "legal" for i in items}  # NOT in allowed set
+
+    tele, lane, kept = apply_emission_taxonomy(
+        [], pfs, [], [], None, adjudicator=_adjudicator)
+    assert tele["adjudicator"]["flips"] == 0
+    assert [p.name for p in kept] == ["pricing", "billing"]
+    assert lane == []
+
+
+def test_emission_taxonomy_none_adjudicator_deterministic() -> None:
+    from faultline.pipeline_v2.surface_taxonomy import apply_emission_taxonomy
+
+    pfs_a = _emission_fixture()
+    pfs_b = _emission_fixture()
+    tele_a, lane_a, kept_a = apply_emission_taxonomy(
+        [], pfs_a, [], [], None, adjudicator=None)
+    tele_b, lane_b, kept_b = apply_emission_taxonomy(
+        [], pfs_b, [], [], None)
+    assert [p.surface_scope for p in pfs_a] == [
+        p.surface_scope for p in pfs_b]
+    assert "adjudicator" not in tele_a and "adjudicator" not in tele_b

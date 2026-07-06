@@ -1296,11 +1296,30 @@ def run_finalize_phase(
     non_product_surfaces: list[dict[str, Any]] = []
     with StageLogger(run_dir, 6, "surface_taxonomy") as log_st:
         try:
+            # Surface Adjudicator (W3 §4.7): keyed scans resolve the
+            # conflicting-signal PF minority; keyless / kill-switch →
+            # None → the deterministic verdicts stand byte-identically.
+            _st_adjudicator = None
+            try:
+                from faultline.pipeline_v2.personas import (
+                    build_surface_adjudicator,
+                )
+                _st_adjudicator = build_surface_adjudicator(
+                    model_id=model_id,
+                    cost_tracker=tracker,
+                    cache=getattr(ctx, "cache_backend", None),
+                    llm_health=llm_health,
+                    log=log_st,
+                    thesis=scan_meta.get("product_thesis"),
+                )
+            except Exception:  # noqa: BLE001 — persona is optional
+                _st_adjudicator = None
             st_tele, non_product_surfaces, product_features = (
                 apply_emission_taxonomy(
                     features, product_features, user_flows,
                     list(bipartite.flows), lineage_result.routes_index,
                     repo_path=repo_path,
+                    adjudicator=_st_adjudicator,
                 )
             )
             scan_meta["surface_taxonomy_emission"] = st_tele
