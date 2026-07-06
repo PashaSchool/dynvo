@@ -1426,12 +1426,17 @@ def run_stack_auditor(
     call_cost = 0.0
     if in_tok or out_tok:
         tracker = cost_tracker or CostTracker(max_cost=None)
+        from faultline.llm.decision_log import digest_hash as _dl_hash
         entry = tracker.record(
             provider="anthropic",
             model=model,
             input_tokens=in_tok,
             output_tokens=out_tok,
             label="stage-0.5-auditor",
+            # Phase-0 decision logging (Wave 2a): prompt as hash only.
+            decision_meta={
+                "input_digest_hash": _dl_hash(_SYSTEM_PROMPT, user_prompt),
+            },
         )
         call_cost = float(getattr(entry, "cost_usd", 0.0) or 0.0)
 

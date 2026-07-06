@@ -186,6 +186,20 @@ def run_finalize_phase(
         lineage_result.routes_index, repo_path,
     )
 
+    # ── Stage 6.85 — product-surface taxonomy, Layer-1 tagging ─────────
+    # Product-Spine §4.2 (Wave 2a): stamp ``surface_scope`` on every
+    # routes_index entry + developer feature (product | marketing | docs |
+    # legal | system | dev_tooling | shell). Runs AFTER 6.8b so the system
+    # trigger verdicts exist; BEFORE the UF/PF stages so 6.7d's residual
+    # ladder + container guard can consume the dev tags. Deterministic,
+    # $0 LLM. Kill-switch FAULTLINE_SURFACE_TAXONOMY=0 (tags absent →
+    # every consumer no-ops; the omit-unset serializers keep output
+    # byte-identical to pre-W2a engines).
+    from faultline.pipeline_v2.surface_taxonomy import tag_layer1
+    scan_meta["surface_taxonomy"] = tag_layer1(
+        features, lineage_result.routes_index, repo_path=repo_path,
+    )
+
     # ── Incremental scan bookkeeping ───────────────────────────────
     # Head SHA + Stage 6 metric carry-forward for untouched features —
     # see ``incremental_wiring.apply_incremental_bookkeeping``.
@@ -1083,6 +1097,61 @@ def run_finalize_phase(
                 log_shell.info(
                     f"flowless_shells: FAILED ({exc}) — continuing", feature=None)
 
+    # ── Stage 6.85 — product-surface taxonomy, emission lane ($0) ──────
+    # Product-Spine §4.2 (Wave 2a) consequences on the FINAL arrays:
+    # tag UFs + PFs; move marketing/docs/legal/dev_tooling/shell PFs (and
+    # their journeys) into the additive non_product_surfaces[] lane
+    # (validator I20); dissolve info-page journeys into their hosting UF
+    # (consequence b); re-bind non-product shared devs to their lane
+    # surface; stamp shared_reason on every shared-bucket resident
+    # (validator I22). Runs AFTER 6.97 LOC (lane rows carry loc) and the
+    # flowless-shell resolution (final PF set), BEFORE emission integrity
+    # (which then reconciles refs against the surviving product list).
+    from faultline.pipeline_v2.surface_taxonomy import apply_emission_taxonomy
+    non_product_surfaces: list[dict[str, Any]] = []
+    with StageLogger(run_dir, 6, "surface_taxonomy") as log_st:
+        try:
+            st_tele, non_product_surfaces, product_features = (
+                apply_emission_taxonomy(
+                    features, product_features, user_flows,
+                    list(bipartite.flows), lineage_result.routes_index,
+                    repo_path=repo_path,
+                )
+            )
+            scan_meta["surface_taxonomy_emission"] = st_tele
+            log_st.info(
+                "surface_taxonomy: pf_scopes=%s lane=%d ufs_moved=%d "
+                "info_dissolved=%d rebound=%d shared_reasons=%s"
+                % (
+                    st_tele.get("pf_scopes"),
+                    st_tele.get("pfs_moved_to_lane", 0),
+                    st_tele.get("ufs_moved_to_lane", 0),
+                    st_tele.get("info_ufs_dissolved", 0),
+                    st_tele.get("devs_rebound_to_lane", 0),
+                    st_tele.get("shared_reasons"),
+                ),
+                feature=None,
+            )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=6,
+                stage_name="surface_taxonomy",
+                payload={**st_tele, "non_product_surfaces": [
+                    {k: v for k, v in e.items() if k != "user_flows"}
+                    for e in non_product_surfaces
+                ]},
+                run_dir=run_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 — taxonomy must never break a scan
+            non_product_surfaces = []
+            scan_meta.setdefault("warnings", []).append(
+                f"surface-taxonomy emission failed ({exc}); "
+                f"lane left empty, tags may be partial"
+            )
+            log_st.info(
+                f"surface_taxonomy: FAILED ({exc}) — continuing", feature=None,
+            )
+
     # ── Emission integrity — referential round-trip guarantee ($0) ──
     # Runs LAST, after every UF / PF / flow / loc mutation, so the emitted
     # JSON is self-consistent by construction:
@@ -1162,6 +1231,34 @@ def run_finalize_phase(
             ),
             feature=None,
         )
+        # ── No-signal UF terminal home (Wave 2a, validator I21) ────────
+        # Runs AFTER the integrity passes so it binds only SURVIVING
+        # product-list keys and nothing downstream can re-null its work:
+        # every journey the conservation nulling / I12 repair left orphan
+        # gets a deterministic real-PF home (system-scope preference →
+        # ownership argmax → nearest-directory argmax), tagged
+        # binding_confidence="low". A UF never ships null / shared.
+        from faultline.pipeline_v2.uf_terminal_home import (
+            assign_terminal_homes,
+            terminal_home_enabled,
+        )
+        if terminal_home_enabled():
+            th_tele = assign_terminal_homes(
+                user_flows, features, product_features,
+            )
+            scan_meta["uf_terminal_home"] = th_tele
+            log_ei.info(
+                "uf_terminal_home: orphans=%d homed(votes=%d system=%d "
+                "dir=%d) unhomed=%d"
+                % (
+                    th_tele.get("orphans", 0),
+                    th_tele.get("homed_votes", 0),
+                    th_tele.get("homed_system", 0),
+                    th_tele.get("homed_dir", 0),
+                    th_tele.get("unhomed", 0),
+                ),
+                feature=None,
+            )
 
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
@@ -1180,6 +1277,7 @@ def run_finalize_phase(
         "head": head,
         "days": days,
         "monorepo_view": monorepo_view,
+        "non_product_surfaces": non_product_surfaces,
     })
     with StageLogger(run_dir, 7, "output") as log7:
         out = stage_7_output(
@@ -1196,6 +1294,7 @@ def run_finalize_phase(
             scan_commit=head,
             engine_version=_engine_version,
             monorepo=monorepo_view,
+            non_product_surfaces=non_product_surfaces,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
 

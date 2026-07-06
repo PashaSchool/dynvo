@@ -1,0 +1,223 @@
+# Product-surface scope classification patterns (authoring copy).
+#
+# Runtime copy packaged at faultline/pipeline_v2/data/surface-scope-patterns.yaml —
+# keep the two byte-identical (drift-guard test test_surface_taxonomy.py; same
+# convention as eval/concern-facets.yaml and eval/system-flow-patterns.yaml).
+#
+# WHY (Product-Spine Wave 2a, spec §4.2; evidence-report class C3; rootcause
+# RC4): route containers and info surfaces mint product features — 39 info-page
+# PFs on the 10-scan board, 26 of them in supabase alone ("Marketing Site
+# Pages" 1090 files, "Docs Site & API Reference", Blog, Brand Assets…), each
+# padded with exactly 1 UF. The engine had NO product-surface taxonomy: the one
+# structural signal that separates marketing from product surfaces (Next
+# route-groups) was stripped at Stage 1. Stage 6.85 now tags every
+# route / developer feature / user flow / product feature with a
+# `surface_scope`, and the emission lane moves non-product surfaces out of the
+# product PF list into `non_product_surfaces[]` (validator I20).
+#
+# `surface_scope` vocabulary (spec §4.2):
+#   product | marketing | docs | legal | system | dev_tooling | shell
+#
+# Deterministic, no LLM, no network. UNIVERSAL across stacks and repos
+# (rule-no-repo-specific-paths): every token below is a structural web
+# convention, never a project name. Provenance per block:
+#   route_groups   — Next.js App Router route-group folder names `(group)`;
+#                    the group name is the author's own surface declaration
+#                    (universal Next convention, e.g. `(marketing)`, `(docs)`,
+#                    `(dashboard)`). The `product` list marks the author's
+#                    explicit PRODUCT surface declarations — a decisive
+#                    product vote, mirroring the "real product route blocks
+#                    non-product verdicts" rule.
+#   url_segments   — universal website information-architecture vocabulary:
+#                    the near-invariant URL slugs of marketing sites
+#                    (/blog, /pricing, /about, /careers, /changelog),
+#                    legal surfaces (/legal, /terms, /privacy, /imprint),
+#                    documentation sites (/docs, /guides, /tutorials) and
+#                    developer tooling (mcp). Matched only against URL-context
+#                    segments (after app/ | pages/ | routes/) of route files
+#                    and against route patterns — NOT against arbitrary source
+#                    dirs, so `src/features/…` or a "blog product" model dir
+#                    never matches.
+#   workspace_dirs — monorepo workspace naming convention `apps/<name>` /
+#                    `packages/<name>` where <name> declares a whole
+#                    non-product surface (apps/www, apps/docs, packages/cli).
+#                    First-two-segment match only.
+#                    PUBLISHED-CLI OVERRIDE (operator doctrine 2026-07-06,
+#                    midday review): a dev_tooling-named workspace whose
+#                    package.json declares a non-empty `bin` AND is not
+#                    `private: true` is a SHIPPED PRODUCT CLI (midday
+#                    packages/cli — published npm package customers
+#                    install; its 'Authenticate via CLI' journeys are real
+#                    product journeys) — the classifier overrides the
+#                    dev_tooling vote to product. cli dirs without
+#                    bin/published stay dev_tooling.
+#   root_dirs      — repo-ROOT directory names that declare a whole surface
+#                    without a workspace container (formbricks docs/,
+#                    classic website/ folders). Deliberately a CONSERVATIVE
+#                    subset of workspace_dirs: only the unambiguous surface
+#                    dir names — `blog`/`brand` are excluded because a
+#                    root `blog/` dir can BE the product (blog engines).
+#                    First-segment match only.
+#   shell_slugs    — page-container identities (home/landing/index/main/root):
+#                    a dev feature whose NAME is one of these (optionally with
+#                    a `-page` suffix) is an app-shell container, never a
+#                    capability. Mirrors the 6.7d container guard + validator
+#                    I11 vocabulary — the guard now CONSUMES the tag.
+#   info_page_segments — the operator's "contacts/about class" (spec §4.2
+#                    consequence b): single info PAGES whose journeys must
+#                    dissolve into the hosting UF instead of standing as
+#                    their own UF/PF. Matched at URL-segment grain like
+#                    url_segments; the legal url_segments are ALSO info
+#                    pages by definition (terms/privacy pages).
+#
+# Ambiguous / no-signal → product (conservative: never hide product journeys).
+# No magic numbers (rule-no-magic-tuning): membership is a pattern match;
+# aggregation uses strict-majority/argmax ratios only.
+#
+# `system` scope comes ONLY from the existing Stage 6.8b verdicts
+# (`routes_index[].trigger` at route/dev/PF grain; `UserFlow.category ==
+# "system"` at UF grain). It is deliberately NOT lexicon-derived here:
+# /webhooks and /cron segments also appear in PRODUCT settings pages
+# (configure-webhooks UIs), and golden journals legitimately contain system
+# journeys — measured on the recorded 24-draw claim table (MISSION-92R
+# Lane C v1: re-deriving system from segments misclassified ~60
+# golden-matched claims).
+#
+# Tokens measured OUT on the same recorded table (golden-matched product
+# journeys hit them — do not re-add without re-running the claim re-score):
+#   partners, customers, affiliates (partner/customer portals are product —
+#   dub partners.dub.co), playground (admin product page — cal.com),
+#   testimonials (never fired — misfire risk), sdk (products ship SDK
+#   packages whose journeys goldens include), support (support inboxes are
+#   product). `contact`/`contact-us` were dropped from the parked Lane-C
+#   lexicon because they NEVER FIRED there (minimalism), not because they
+#   misfired — the operator's contacts doctrine (spec §4.2 consequence b)
+#   needs them, so they are IN: as marketing url_segments (scope) and as
+#   info_page_segments (page-grain dissolution marker).
+#
+# Precedence when several non-product scopes match one subject (fixed,
+# documented): system > dev_tooling > legal > docs > marketing > shell.
+# Product wins ties against non-product at feature grain (conservative).
+
+# NOTE — shell is deliberately ABSENT from route_groups: a shell-named
+# group wraps a whole SUBTREE, not a page — polar's `(main)` contains the
+# entire product app (dashboard/analytics/portal), and dub nests leaf
+# `(index)` groups inside product routes (measured on the pinned gate
+# clones, 2026-07-06: group-voted shell falsely demoted polar's Analytics
+# and Usage PFs to the lane). True shells are caught by the TWO
+# page-grain signals instead: the bare root route pattern (`/`) and the
+# container NAME identity (shell_slugs below).
+route_groups:
+  product:
+    - dashboard
+    - dash
+    - app
+    - auth
+    - authenticated
+    - protected
+    - admin
+    - console
+    - platform
+    - workspace
+  marketing:
+    - marketing
+    - landing
+    - www
+    - web-marketing
+    - promo
+  legal:
+    - legal
+  docs:
+    - docs
+    - documentation
+  dev_tooling:
+    - devtools
+
+url_segments:
+  marketing:
+    - blog
+    - pricing
+    - about
+    - about-us
+    - contact
+    - contact-us
+    - careers
+    - press
+    - newsroom
+    - brand
+    - changelog
+    - landing
+    - landings
+    - marketing
+    - solutions
+    - glossary
+    - newsletter
+  legal:
+    - legal
+    - terms
+    - terms-of-service
+    - terms-and-conditions
+    - privacy
+    - privacy-policy
+    - imprint
+    - cookie-policy
+    - cookies
+    - gdpr
+    - dpa
+    - tos
+    - eula
+  docs:
+    - docs
+    - documentation
+    - guides
+    - guide
+    - tutorials
+    - tutorial
+    - learn
+    - api-reference
+  dev_tooling:
+    - mcp
+    - mcp-server
+    - devtools
+
+workspace_dirs:
+  marketing:
+    - www
+    - website
+    - marketing
+    - landing
+    - landings
+    - blog
+    - brand
+  docs:
+    - docs
+    - documentation
+  dev_tooling:
+    - cli
+    - mcp
+    - mcp-server
+    - devtools
+    - storybook
+
+root_dirs:
+  marketing:
+    - www
+    - website
+  docs:
+    - docs
+    - documentation
+
+shell_slugs:
+  - home
+  - landing
+  - index
+  - main
+  - root
+
+info_page_segments:
+  - contact
+  - contact-us
+  - about
+  - about-us
+  - imprint
+  - faq

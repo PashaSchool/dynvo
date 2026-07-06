@@ -108,9 +108,31 @@ def _strip_route_groups(segments: list[str]) -> list[str]:
     """Drop Next.js route-group segments like ``(marketing)``.
 
     Route groups are organisational only — they do not appear in URLs
-    and must not become anchor names.
+    and must not become anchor names. Their NAMES are still carried as
+    anchor metadata (see :func:`route_groups_of`) — Product-Spine Wave 2a
+    stopped discarding the author's surface declaration (rootcause RC4).
     """
     return [s for s in segments if not (s.startswith("(") and s.endswith(")"))]
+
+
+def route_groups_of(path: str) -> tuple[str, ...]:
+    """Route-group names present in *path*, sorted + deduped.
+
+    ``apps/web/app/(marketing)/pricing/page.tsx`` → ``("marketing",)``.
+    Intercepting-route markers (``(.)folder`` / ``(..)folder``) are not
+    groups and are skipped. Lowercased — group names are surface labels,
+    not identifiers.
+    """
+    groups: set[str] = set()
+    for seg in posix(path).split("/"):
+        if (
+            seg.startswith("(")
+            and seg.endswith(")")
+            and len(seg) > 2
+            and not seg[1:-1].startswith(".")
+        ):
+            groups.add(seg[1:-1].lower())
+    return tuple(sorted(groups))
 
 
 def _first_meaningful_segment(segments: list[str]) -> str | None:
@@ -400,6 +422,12 @@ class RouteFileExtractor:
         out: list[AnchorCandidate] = []
         for slug, paths in buckets.items():
             unique_paths = tuple(sorted(set(paths)))
+            # Product-Spine Wave 2a (RC4): carry the route-group names
+            # observed on this anchor's paths as metadata. The slug/paths
+            # semantics above are UNCHANGED — groups stay URL-invisible.
+            groups: set[str] = set()
+            for p in unique_paths:
+                groups.update(route_groups_of(p))
             out.append(
                 AnchorCandidate(
                     name=slug,
@@ -411,6 +439,7 @@ class RouteFileExtractor:
                     confidence_self=min(0.6 + 0.05 * len(unique_paths), 0.95),
                     rationale=f"route convention slug '{slug}' "
                               f"derived from {len(unique_paths)} routing file(s)",
+                    route_groups=tuple(sorted(groups)),
                 ),
             )
         return out

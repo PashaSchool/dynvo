@@ -1342,7 +1342,17 @@ _CONTAINER_PAGE_SLUG_RE = re.compile(
 def _is_container_page(dev: "Feature") -> bool:
     """True when the dev's IDENTITY is a page container (name is one of the
     home/landing/index/main/root page classes) — structural, mirrors the
-    validator I11 container-page regex on the dev's kebab slug."""
+    validator I11 container-page regex on the dev's kebab slug.
+
+    Product-Spine §4.2 (Wave 2a, consequence c): the surface-taxonomy
+    ``shell`` tag is consumed FIRST — Stage 6.85 stamps it from the
+    YAML-documented shell vocabulary + (home)-group path evidence, so shell
+    containers never name anything. The slug regex stays as the fallback so
+    the guard keeps working when the taxonomy stage is disabled
+    (FAULTLINE_SURFACE_TAXONOMY=0 → tag absent → regex decides, exactly the
+    pre-W2a behavior)."""
+    if getattr(dev, "surface_scope", None) == "shell":
+        return True
     for raw in (dev.name, getattr(dev, "display_name", None)):
         if raw and _CONTAINER_PAGE_SLUG_RE.match(_kebab(raw)):
             return True
@@ -1491,6 +1501,19 @@ def _confirm_residual(
 
     nm = dev.display_name or dev.name or ""
     if _slug(nm) in _STRUCTURE_LEAK_SLUGS or _is_workspace_anchor(dev):
+        return _RESIDUAL_CAP
+    # Product-Spine §4.2 (Wave 2a, consequence a): a NON-PRODUCT surface dev
+    # (marketing / docs / legal / dev_tooling per the Stage 6.85 tag) never
+    # mints a capability (tier-2/tier-3) and never token-joins a PRODUCT
+    # capability — a marketing-site blog dev folding into a product "Blog
+    # Publishing" capability is exactly the C3 pollution. It stays in the
+    # residual; the emission lane then re-binds it to its non-product
+    # surface row. Tag absent (taxonomy off) → no-op.
+    from faultline.pipeline_v2.surface_taxonomy import is_non_product_dev
+    if is_non_product_dev(dev):
+        pf_tele["devs_residual_non_product"] = (
+            pf_tele.get("devs_residual_non_product", 0) + 1
+        )
         return _RESIDUAL_CAP
     strong = _strong_capability_match(dev, cap_tokens)
     if strong is not None:
@@ -2710,12 +2733,14 @@ def run_journey_abstraction(
     if not developer_features:
         return _degrade("no_dev_features")
 
-    def _record(model_: str, in_tok: int, out_tok: int) -> float:
+    def _record(model_: str, in_tok: int, out_tok: int,
+                meta: dict[str, Any] | None = None) -> float:
         cost = estimate_call_cost(model_, in_tok, out_tok) if (in_tok or out_tok) else 0.0
         if cost_tracker is not None and (in_tok or out_tok):
             try:
                 cost_tracker.record(model=model_, input_tokens=in_tok,
-                                    output_tokens=out_tok, label="stage_6_7d")
+                                    output_tokens=out_tok, label="stage_6_7d",
+                                    decision_meta=meta)
             except Exception:  # noqa: BLE001 — budget cap is enforced elsewhere
                 pass
         return cost
@@ -2899,14 +2924,27 @@ def run_journey_abstraction(
         return (isinstance(s, dict) and isinstance(s.get("name"), str)
                 and bool(s.get("name").strip()))
 
+    # Phase-0 decision logging (Wave 2a): the prompt is logged as a HASH,
+    # the parsed outcome as a decision record — 6.7d Call 1/2 are exactly
+    # the membership/naming oracle the training spec targets.
+    from faultline.llm.decision_log import digest_hash as _dhash
+    from faultline.llm.decision_log import log_decision as _dlog
+
     def _draw(system: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
         """One Call-1 draw → sanitised ``(uf_specs, pf_specs, fail_reason)``.
         ``fail_reason`` is None on a usable draw."""
+        in_hash = _dhash(system, user1)
         text, in_t, out_t = _call_haiku(
             cli, model=abstraction_model, system=system, user=user1,
             max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
         tele["llm_calls"] += 1
-        tele["cost_usd"] = round(tele["cost_usd"] + _record(abstraction_model, in_t, out_t), 6)
+        tele["cost_usd"] = round(
+            tele["cost_usd"]
+            + _record(abstraction_model, in_t, out_t,
+                      {"role": "journey_abstraction_draw",
+                       "input_digest_hash": in_hash}),
+            6,
+        )
         parsed = _parse_json(text)
         if not parsed:
             return [], [], "abstraction_parse_failed"
@@ -2914,6 +2952,20 @@ def run_journey_abstraction(
         pfs = [s for s in (parsed.get("product_features") or []) if _valid_spec(s)]
         if not ufs or not pfs:
             return [], [], "abstraction_empty"
+        try:  # decision tap — names/counts only, never content
+            _dlog(
+                role="journey_abstraction_draw",
+                model=abstraction_model,
+                input_digest_hash=in_hash,
+                decision={
+                    "uf_specs": len(ufs), "pf_specs": len(pfs),
+                    "pf_names": [
+                        (s.get("name") or "").strip() for s in pfs
+                    ][:80],
+                },
+            )
+        except Exception:  # noqa: BLE001 — tap must never break the stage
+            pass
         return ufs, pfs, None
 
     # ── First draw + grain-contract gate (2026-07-04) ──────────────────
@@ -3008,14 +3060,31 @@ def run_journey_abstraction(
              "\n\nDeveloper features (name, dir, file count):\n" +
              json.dumps(dev_items, ensure_ascii=False) +
              "\n\nReturn the full map now (every dev feature mapped).")
+    in2_hash = _dhash(_REATTRIB_SYSTEM, user2)
     text2, in2, out2 = _call_haiku(
         cli, model=reattrib_model, system=_REATTRIB_SYSTEM, user=user2,
         max_tokens=REATTRIB_MAX_TOKENS, llm_health=llm_health)
     tele["llm_calls"] += 1
-    tele["cost_usd"] = round(tele["cost_usd"] + _record(reattrib_model, in2, out2), 6)
+    tele["cost_usd"] = round(
+        tele["cost_usd"]
+        + _record(reattrib_model, in2, out2,
+                  {"role": "dev_reattribution",
+                   "input_digest_hash": in2_hash}),
+        6,
+    )
     parsed2 = _parse_json(text2)
     dev_map_raw = (parsed2 or {}).get("map") or {}
     dev_map = {k: v for k, v in dev_map_raw.items() if isinstance(k, str) and isinstance(v, str)}
+    try:  # Phase-0 decision tap — the RC1 oracle's full verdict (names only)
+        _dlog(
+            role="dev_reattribution",
+            model=reattrib_model,
+            input_digest_hash=in2_hash,
+            candidates=caps_with_residual,
+            decision=dev_map,
+        )
+    except Exception:  # noqa: BLE001 — tap must never break the stage
+        pass
     # Re-attribution failed entirely (LLM error / bad JSON / health-blocked):
     # without it every dev feature would collapse into the Shared Platform
     # residual, emitting a degenerate single-blob product layer. Degrade fully

@@ -378,6 +378,19 @@ def run_pipeline_v2(
     repo_class_result = intake.repo_class_result
     run_dir = intake.run_dir
 
+    # ── Phase-0 LLM decision logging (Wave 2a) — open the scan bracket ──
+    # Every LLM call from here on appends one JSONL record to
+    # ``<training dir>/decisions-<run_id>.jsonl`` via the CostTracker
+    # chokepoint (see :mod:`faultline.llm.decision_log`; env-gated
+    # FAULTLINE_DECISION_LOG default ON, dir override
+    # FAULTLINE_DECISION_LOG_DIR). The bracket closes right before the
+    # final return; a scan aborted by an exception leaves it open only
+    # until the next scan's ``begin_scan`` overwrites it (best-effort
+    # tap, documented in the module).
+    from faultline.llm.decision_log import begin_scan as _dl_begin
+    from faultline.llm.decision_log import end_scan as _dl_end
+    _dl_begin(ctx.run_id or run_dir.name)
+
     # ── Framework Knowledge Layer — select the active profile (P4) ──
     # Highest-``detects`` profile wins; the DefaultProfile (positive
     # floor, null-object) wins when no concrete profile matches, so this
@@ -950,6 +963,7 @@ def run_pipeline_v2(
         ctx.run_id, total_features, cost_usd, elapsed, out,
     )
 
+    _dl_end()  # close the Phase-0 decision-log scan bracket
     return {"path": str(out), **scan_meta}
 
 
