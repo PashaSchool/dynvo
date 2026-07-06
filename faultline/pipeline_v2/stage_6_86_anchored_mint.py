@@ -532,7 +532,8 @@ def run_anchored_mint(
         # Winner exists but cannot mint → parent fold, entry fold, then
         # import fold.
         parent = _parent_fold(w)
-        if parent is not None and w.barred in {"version_dir", "single_letter"}:
+        if parent is not None and w.barred in {"version_dir", "single_letter",
+                                               "param_leaf"}:
             assignment[f.name] = (parent, f"fold:parent->{w.canonical_id}")
             tele["fold_parent"] += 1
             continue

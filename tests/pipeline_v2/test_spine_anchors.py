@@ -204,6 +204,48 @@ def test_group_and_param_dirs_never_locate_the_key():
         "apps/dashboard/src/app/[locale]/(app)/apps",)
 
 
+def test_param_segments_transparent_in_all_router_dialects():
+    """W2b.1 fix (c2), typebot `$slug` x30: TanStack/Remix `$param`,
+    Django/Flask `<int:id>` and `*splat` segments are URL machinery —
+    never a chain key, never an anchor. The dir key is the collection
+    segment (`blog`), and a param-keyed leaf can never mint."""
+    routes = [
+        {"pattern": "/_layout/blog/$slug", "method": "PAGE",
+         "file": "apps/landing-page/src/routes/_layout/blog/$slug.tsx"},
+        {"pattern": "/_layout/blog", "method": "PAGE",
+         "file": "apps/landing-page/src/routes/_layout/blog/index.tsx"},
+        {"pattern": "/articles/<int:pk>", "method": "GET",
+         "file": "backend/articles/urls.py"},
+        {"pattern": "/files/*splat", "method": "PAGE",
+         "file": "app/routes/files.tsx"},
+    ]
+    devs = [dev("d", sorted({r["file"] for r in routes}))]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    keys = {a.key for a in anchors if a.source == "route"}
+    assert "slug" not in keys, keys          # $slug never a key
+    assert not any(k.startswith(("pk", "int")) for k in keys), keys
+    assert "splat" not in keys, keys
+    blog = [a for a in anchors if a.source == "route" and a.key == "blog"]
+    assert blog and blog[0].prefixes == (
+        "apps/landing-page/src/routes/_layout/blog",)
+
+
+def test_param_named_raw_segment_is_barred():
+    """Defense-in-depth: a dialect the transparency regex misses still
+    hits the param_leaf mint bar via the RAW segment."""
+    import re as _re
+
+    from faultline.pipeline_v2.spine_anchors import _bar_reason
+
+    vre = _re.compile(r"^v\d+$")
+    assert _bar_reason("slug", vre, raw_seg="$slug") == "param_leaf"
+    assert _bar_reason("id", vre, raw_seg="[id]") == "param_leaf"
+    assert _bar_reason("id", vre, raw_seg="{id}") == "param_leaf"
+    assert _bar_reason("id", vre, raw_seg=":id") == "param_leaf"
+    assert _bar_reason("pk", vre, raw_seg="<int:pk>") == "param_leaf"
+    assert _bar_reason("blog", vre, raw_seg="blog") is None
+
+
 def test_central_router_files_anchor_the_handler_file():
     """FastAPI class: no routing-root run in the path → the handler FILE
     is the subtree (never a phantom ``routers``-dir anchor)."""

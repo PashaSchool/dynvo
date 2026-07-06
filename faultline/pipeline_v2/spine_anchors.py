@@ -249,7 +249,13 @@ class SpineAnchor:
 # ── Route anchors ────────────────────────────────────────────────────────
 
 _GROUP_RE = re.compile(r"^\(.*\)$")
-_DYNAMIC_RE = re.compile(r"^\[+\.{0,3}[^\]]*\]+$|^[:{]")
+#: Dynamic route-param segment across EVERY router dialect (W2b.1 fix c2 —
+#: typebot `$slug` ×30 leaf mints): ``[id]``/``[[...id]]`` (Next/Svelte/
+#: Astro/Nuxt3), ``:id`` (Express/Rails/Vue), ``{id}`` (FastAPI/OpenAPI/
+#: Laravel), ``$id`` (TanStack/Remix), ``<int:id>`` (Django/Flask),
+#: ``*splat`` (catch-alls). A param segment is URL machinery, never a
+#: capability key.
+_DYNAMIC_RE = re.compile(r"^\[+\.{0,3}[^\]]*\]+$|^[:{$<*]")
 _PAGE_MARKERS = {"page", "layout", "index", "+page", "default", "route", "+server"}
 _MAX_DESCEND = 3
 
@@ -375,17 +381,27 @@ def _route_chain(
         chain.append((key_seg, prefix, depth))
     if not chain:
         # Pattern had no meaningful segment (``/`` root, pure-param) —
-        # fall back to the leaf file stem when it is a real name.
+        # fall back to the leaf file stem when it is a real name (and
+        # never a param-named leaf file: ``$slug.tsx`` / ``[id].tsx``).
         stem = _stem(segs[-1])
         if (stem and stem not in _PAGE_MARKERS and not stem.startswith("_")
-                and leaf_key):
+                and not _DYNAMIC_RE.match(stem) and leaf_key):
             chain.append((stem, None, 0))
     return chain
 
 
-def _bar_reason(key: str, version_re: re.Pattern[str]) -> str | None:
+def _bar_reason(
+    key: str, version_re: re.Pattern[str], raw_seg: str = "",
+) -> str | None:
     """Never-mint key classes (calibration traps): single-letter route
-    keys (midday i/p/r/s) and version-dir keys (linkwarden v1/v2)."""
+    keys (midday i/p/r/s), version-dir keys (linkwarden v1/v2) and
+    param-named segments of ANY router dialect (typebot ``$slug`` —
+    W2b.1 fix c2: the tokenizer strips ``$``/brackets, so the KEY looks
+    like a word; the RAW segment is the truth)."""
+    raw = (raw_seg or "").strip()
+    if raw and (_DYNAMIC_RE.match(raw) or _GROUP_RE.match(raw)
+                or raw.endswith(("]", "}", ">"))):
+        return "param_leaf"
     alnum = re.sub(r"[^a-z0-9]+", "", key.lower())
     if len(alnum) <= 1:
         return "single_letter"
@@ -450,7 +466,7 @@ def _build_route_anchors(
             sources=frozenset({"route"}),
             page_route_files=frozenset(slot["page"]),
             api_route_files=frozenset(slot["api"]),
-            barred=_bar_reason(key, version_re),
+            barred=_bar_reason(key, version_re, raw_seg=str(slot["seg"])),
             route_groups=frozenset(slot["groups"]),
             depth=slot["depth"],
         ))
