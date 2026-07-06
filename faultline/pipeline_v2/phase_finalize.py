@@ -615,6 +615,19 @@ def run_finalize_phase(
                 _hub_tele = _hub_bind(features, product_features)
                 if _hub_tele.get("hubs"):
                     s67d_telemetry["hub_binding_post_67d"] = _hub_tele
+                # Product-Spine §4.5 — final conservation pass: the hub
+                # binding above moves dev→PF, so UF↔PF closures moved with
+                # it; re-settle violators and null any residual
+                # Shared-Platform attachment that no real PF's code
+                # supports (a UF may never ship attached to shared).
+                from faultline.pipeline_v2.conservation import (
+                    apply_uf_conservation as _apply_cons,
+                )
+                _cons_tele = _apply_cons(
+                    user_flows, features, product_features,
+                    null_shared_without_signal=True,
+                )
+                s67d_telemetry["conservation_finalize"] = _cons_tele
             write_stage_artifact(
                 ctx.repo_path,
                 stage_index=6,
@@ -915,6 +928,10 @@ def run_finalize_phase(
             try:
                 loc_telemetry = apply_feature_loc(
                     features, product_features, ctx.repo_path,
+                    # §4.5 conservation flow accounting (on-flow ≤ 1 by
+                    # construction) — needs the final journey attachments.
+                    user_flows=user_flows,
+                    flows=list(bipartite.flows),
                 )
                 scan_meta["feature_loc"] = loc_telemetry
                 if loc_telemetry.get("loc_accounting"):

@@ -124,9 +124,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (8, "llm_component_split"),
     (8, "domain_member_attribution"),
     # Stage 8.9.7 (2026-07-05) — per-vendor connector split. Deterministic,
-    # $0, env-gated default OFF; the telemetry artifact is emitted on every
-    # run (enabled: false when gated off).
+    # $0; default ON since Product-Spine Wave 1 (2026-07-06, opt-out =0).
     (8, "vendor_connector_split"),
+    # Stage 8.9.8 (2026-07-06, Product-Spine §4.4) — hub/child PF binding:
+    # connector-hub members land on ONE product feature (sibling parity).
+    (8, "hub_pf_binding"),
     (3, "flow_expansion"),
     (6, "test_strip"),
     (6, "generated_strip"),

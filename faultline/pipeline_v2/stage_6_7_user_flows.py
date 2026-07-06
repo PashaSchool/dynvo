@@ -1038,6 +1038,24 @@ def cluster_user_flows(
     flows = scan.get("flows") or []
     df_by_name = {f["name"]: f for f in (scan.get("developer_features") or [])}
 
+    # Product-Spine §4.5 — conservation law (construction-time). The
+    # majority-vote pfid below is checked against the members' spans /
+    # entries over the REAL product features' file ownership; violators
+    # resettle to the actual majority owner (never Shared Platform).
+    # Kill-switch: FAULTLINE_SPINE_CONSERVATION=0.
+    from faultline.pipeline_v2.conservation import (
+        build_file_pf_owner,
+        conservation_enabled,
+        conserved_pfid,
+    )
+
+    _conserve = conservation_enabled()
+    _file_pf_owner = (
+        build_file_pf_owner(scan.get("developer_features") or [])
+        if _conserve else {}
+    )
+    _conservation_resettled = 0
+
     # file -> system trigger (scheduled|queue|webhook), from the Stage 6.8b
     # route classification. Interactive routes are omitted, so a lookup miss
     # means "interactive". Lets each UF inherit system/background status from
@@ -1224,6 +1242,13 @@ def cluster_user_flows(
             # members. domain is the cluster key (a short code token);
             # product_feature_id is the marketing roll-up link — never the same.
             pfid = _pfid_of(members, df_by_name)
+            if _conserve:
+                # §4.5 — the vote is only a CANDIDATE: entries + span
+                # majority must lie inside the chosen PF's dev closure,
+                # else the journey resettles to the real majority owner.
+                pfid, _moved = conserved_pfid(members, _file_pf_owner, pfid)
+                if _moved:
+                    _conservation_resettled += 1
             enriched = _enrich(members, pfid, df_by_name)
             for m in members:
                 flow_to_uf[_flow_key(m)] = uf_id
@@ -1332,6 +1357,7 @@ def cluster_user_flows(
         "uf_plugin_roots": sorted(plugin_roots),
         "uf_hub_clustered": hub_clustered,
         "uf_hub_dirs": sorted(d for d, _ in (hub_dirs or [])),
+        "uf_conservation_resettled": _conservation_resettled,
     }
 
 
@@ -1416,6 +1442,13 @@ def _flow_view(flow: "Flow") -> dict:
         "secondary_features": flow.secondary_features,
         "test_files": flow.test_files,
         "coverage_pct": flow.coverage_pct,
+        # §4.5 conservation — span-majority voting reads the flow's own
+        # line ranges (file-count fallback when a flow carries none).
+        "line_ranges": [
+            {"path": lr.path, "start_line": lr.start_line,
+             "end_line": lr.end_line}
+            for lr in (flow.line_ranges or [])
+        ],
     }
 
 

@@ -2721,6 +2721,19 @@ def run_journey_abstraction(
             uf_specs_, user_flows, developer_features, routes_index)
         if not new_pfs or not new_ufs:
             return None
+        # Product-Spine §4.5 — conservation law, applied to the freshly
+        # reconstructed bindings BEFORE the backstop/reshare ladders: the
+        # backstop then re-covers any PF a resettle emptied, and the
+        # reshare ladder operates on conservation-clean bindings (its own
+        # plurality/carve moves are conservation-shaped by construction).
+        # Kill-switch: FAULTLINE_SPINE_CONSERVATION=0.
+        from faultline.pipeline_v2.conservation import apply_uf_conservation
+
+        cons_tele = apply_uf_conservation(
+            new_ufs, developer_features, new_pfs,
+            dev_to_product=dev_to_product,
+        )
+        tele["conservation"] = cons_tele
         # PF-UF backstop: every flowful capability must be referenced by
         # >= 1 journey (validator I8 — see the block above
         # _backstop_uncovered_pfs). BEFORE the content sort so synthesized
