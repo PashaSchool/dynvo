@@ -1,0 +1,399 @@
+"""Product-Spine Wave 2b — anchor-candidate builder tests.
+
+Covers the FIVE calibration traps (each shipped as a live bug in some
+prior engine iteration — see calib-report F-traps, 2026-07-06) plus the
+per-source construction rules and the hub-family amendment grain.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+from faultline.models.types import Feature, MemberFile
+from faultline.pipeline_v2.spine_anchors import (
+    SpineAnchor,
+    build_spine_anchors,
+    load_spine_vocab,
+    normalize_anchor_key,
+    owned_paths_of,
+)
+
+_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def dev(name: str, paths: list[str], **kw) -> Feature:
+    return Feature(
+        name=name,
+        paths=list(paths),
+        member_files=[
+            MemberFile(path=p, role="anchor", confidence=1.0, primary=True)
+            for p in paths
+        ],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_NOW, health_score=100.0, **kw,
+    )
+
+
+def ctx_of(workspaces=None, tracked=None) -> SimpleNamespace:
+    return SimpleNamespace(
+        workspaces=workspaces, tracked_files=tracked or [],
+        repo_path=Path("."), monorepo=bool(workspaces),
+    )
+
+
+def by_id(anchors: list[SpineAnchor]) -> dict[str, SpineAnchor]:
+    return {a.canonical_id: a for a in anchors}
+
+
+# ── Trap 2 — singularizer guards (js/us/is/os/ss) ────────────────────────
+
+
+def test_trap_singularizer_guards():
+    assert normalize_anchor_key("nextjs") == "nextjs"      # js guard
+    assert normalize_anchor_key("status") == "status"      # us guard
+    assert normalize_anchor_key("analysis") == "analysis"  # is guard
+    assert normalize_anchor_key("macos") == "macos"        # os guard
+    assert normalize_anchor_key("address") == "address"    # ss guard
+    assert normalize_anchor_key("cases") == "case"
+    assert normalize_anchor_key("WidgetQuery") == "widget-query"
+    assert normalize_anchor_key("context_items") == "context-item"
+
+
+# ── Trap 1 — structural-vocabulary stoplist for schema matching ──────────
+
+
+def test_trap_schema_structural_stoplist():
+    """A schema model named ``apps``/``page`` must NEVER become a
+    name-match anchor — it would claim the framework tree (measured:
+    drizzle table `apps` swallowed midday at share 1.0)."""
+    devs = [
+        dev("d1", ["apps/dashboard/src/app/(public)/i/[token]/page.tsx"]),
+        dev("d2", ["pages/settings.tsx"]),
+    ]
+    schema_cands = [
+        SimpleNamespace(name="apps"),   # framework vocabulary → banned
+        SimpleNamespace(name="page"),   # framework vocabulary → banned
+        SimpleNamespace(name="invoice"),  # real domain noun → allowed
+    ]
+    anchors = build_spine_anchors(
+        devs, [], ctx_of(), extractor_signals={"schema": schema_cands})
+    keys = {a.canonical_id for a in anchors}
+    assert not any(c.startswith("schema:app") for c in keys)
+    assert not any(c.startswith("schema:page") for c in keys)
+
+
+# ── Trap 3 — workspace classes: only example excluded; tool included ─────
+
+
+def test_trap_workspace_tool_included_example_excluded():
+    ws = [
+        SimpleNamespace(name="cli", path="packages/cli", stack="ts"),
+        SimpleNamespace(name="demo", path="examples/demo", stack="ts"),
+        SimpleNamespace(name="web", path="apps/web", stack="ts"),
+    ]
+    devs = [dev("cli", ["packages/cli/src/index.ts"])]
+    anchors = by_id(build_spine_anchors(devs, [], ctx_of(ws)))
+    # published-CLI doctrine: a tool-class package is a REAL product
+    # surface — present and mint-eligible (ws-pkg).
+    assert anchors["ws:packages/cli"].source == "ws-pkg"
+    # examples are the ONLY excluded class.
+    assert "ws:examples/demo" not in anchors
+    # apps/* are shells (never mint) but exist for lineage.
+    assert anchors["ws:apps/web"].source == "ws-app"
+    assert anchors["ws:apps/web"].shell
+
+
+def test_workspace_structural_unit_is_shell():
+    """A top-level ``frontend`` unit is a deployment shell even when the
+    workspace list calls it a package (fastapi-template smoke)."""
+    ws = [SimpleNamespace(name="frontend", path="frontend", stack="ts")]
+    devs = [dev("f", ["frontend/src/routes/login.tsx"])]
+    anchors = by_id(build_spine_anchors(devs, [], ctx_of(ws)))
+    assert anchors["ws:frontend"].source == "ws-app"
+
+
+# ── Trap 4 — basename collisions keep full-path identity ─────────────────
+
+
+def test_trap_basename_collision_no_merge():
+    ws = [
+        SimpleNamespace(name="studio", path="apps/studio", stack="ts"),
+        SimpleNamespace(name="studio-e2e", path="e2e/studio", stack="ts"),
+    ]
+    devs = [
+        dev("a", ["apps/studio/pages/x.tsx"]),
+        dev("b", ["e2e/studio/spec.ts"]),
+    ]
+    anchors = by_id(build_spine_anchors(devs, [], ctx_of(ws)))
+    assert "ws:apps/studio" in anchors
+    assert "ws:e2e/studio" in anchors  # distinct identity, no merge
+    a, b = anchors["ws:apps/studio"], anchors["ws:e2e/studio"]
+    assert not a.matches("e2e/studio/spec.ts")
+    assert not b.matches("apps/studio/pages/x.tsx")
+
+
+# ── Trap 5 — route mega-segments need collection-descend ─────────────────
+
+
+def test_trap_collection_descend_carves_mega_segment():
+    """papermark /api/teams/[teamId]/* = 168 routes — without descend the
+    route anchor goes coarse. The chain must carve ``documents``."""
+    routes = [
+        {"pattern": "/api/teams/:teamId/documents/:docId", "method": "GET",
+         "file": "pages/api/teams/[teamId]/documents/[docId]/index.ts"},
+        {"pattern": "/api/teams/:teamId/billing", "method": "GET",
+         "file": "pages/api/teams/[teamId]/billing/index.ts"},
+    ]
+    devs = [dev("d", [r["file"] for r in routes])]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    ids = {a.canonical_id for a in anchors}
+    assert "route:pages/api/teams" in ids
+    assert "route:pages/api/teams/[teamId]/documents" in ids  # descend d1
+    assert "route:pages/api/teams/[teamId]/billing" in ids
+
+
+# ── Version-dir + single-letter key classes ──────────────────────────────
+
+
+def test_version_dir_transparent_when_deeper_and_barred_when_leaf():
+    routes = [
+        {"pattern": "/api/v1/items", "method": "GET",
+         "file": "backend/app/api/routes/items.py"},
+        {"pattern": "/v1", "method": "PAGE",
+         "file": "apps/docs/app/guides/functions/v1/page.tsx"},
+    ]
+    devs = [dev("d", [r["file"] for r in routes])]
+    anchors = by_id(build_spine_anchors(devs, routes, ctx_of()))
+    # v1 transparent when deeper segments exist → key is `item`.
+    assert "route:item" in anchors
+    assert anchors["route:item"].barred is None
+    # a trailing version segment IS the key → version_dir bar.
+    v1 = [a for a in anchors.values() if a.key == "v1"]
+    assert v1 and v1[0].barred == "version_dir"
+
+
+def test_single_letter_route_keys_are_barred():
+    routes = [
+        {"pattern": "/i/:token", "method": "PAGE",
+         "file": "apps/dashboard/src/app/[locale]/(public)/i/[token]/page.tsx"},
+    ]
+    devs = [dev("i", [routes[0]["file"]])]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    i_anchor = [a for a in anchors if a.key == "i"]
+    assert i_anchor and i_anchor[0].barred == "single_letter"
+    # …and the prefix sits at the ROUTE-TREE (public)/i dir, never the
+    # workspace root (the phantom mega-anchor trap, route side).
+    assert i_anchor[0].prefixes == (
+        "apps/dashboard/src/app/[locale]/(public)/i",)
+
+
+def test_group_and_param_dirs_never_locate_the_key():
+    """midday: the ``(app)`` group dir normalized equal to the ``/apps``
+    key and truncated the prefix — groups/params are URL-invisible."""
+    routes = [
+        {"pattern": "/apps", "method": "PAGE",
+         "file": "apps/dashboard/src/app/[locale]/(app)/apps/page.tsx"},
+    ]
+    devs = [dev("apps", [routes[0]["file"]])]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    apps = [a for a in anchors if a.source == "route" and a.key == "app"]
+    assert apps
+    assert apps[0].prefixes == (
+        "apps/dashboard/src/app/[locale]/(app)/apps",)
+
+
+def test_central_router_files_anchor_the_handler_file():
+    """FastAPI class: no routing-root run in the path → the handler FILE
+    is the subtree (never a phantom ``routers``-dir anchor)."""
+    routes = [
+        {"pattern": "/context-items", "method": "GET",
+         "file": "backend/routers/context_items.py"},
+        {"pattern": "/context-items/:id", "method": "PUT",
+         "file": "backend/routers/context_items.py"},
+    ]
+    devs = [dev("api-context-items", ["backend/routers/context_items.py"])]
+    anchors = by_id(build_spine_anchors(devs, routes, ctx_of()))
+    assert "route:context-item" in anchors
+    assert anchors["route:context-item"].files == frozenset(
+        {"backend/routers/context_items.py"})
+    assert not any(a.key == "router" for a in anchors.values())
+
+
+# ── Cross-source key merge ───────────────────────────────────────────────
+
+
+def test_key_merge_route_plus_schema():
+    routes = [{"pattern": "/cases", "method": "PAGE",
+               "file": "app/cases/page.tsx"}]
+    devs = [
+        dev("cases", ["app/cases/page.tsx", "components/case/list.tsx"]),
+    ]
+    anchors = build_spine_anchors(
+        devs, routes, ctx_of(),
+        extractor_signals={"schema": [SimpleNamespace(name="case")]})
+    merged = [a for a in anchors if a.key == "case"]
+    assert len(merged) == 1
+    assert merged[0].sources == frozenset({"route", "schema"})
+    # schema matched the components/case dir into the same anchor
+    assert merged[0].matches("components/case/list.tsx")
+    assert merged[0].matches("app/cases/page.tsx")
+
+
+# ── Hub families (operator amendment: per-vendor grain) ──────────────────
+
+
+def _edr_devs() -> list[Feature]:
+    plumbing = dev("edr", [
+        "backend/services/edr/__init__.py",
+        "backend/services/edr/base.py",
+        "backend/services/edr/factory.py",
+        "backend/services/edr/normalizer.py",
+    ])
+    kids = [
+        dev("edr-claroty", ["backend/services/edr/claroty_xdome.py"]),
+        dev("edr-cortex", ["backend/services/edr/cortex.py",
+                           "backend/services/edr/schema/cortex_baseline.py"]),
+        dev("edr-crowdstrike", ["backend/services/edr/crowdstrike.py"]),
+        dev("edr-defender", ["backend/services/edr/defender.py"]),
+        dev("edr-sentinelone", ["backend/services/edr/sentinelone.py"]),
+    ]
+    return [plumbing, *kids]
+
+
+def test_hub_family_dev_arm_edr():
+    """Soc0 edr (amendment case 5a): 5 vendor children + the core."""
+    anchors = by_id(build_spine_anchors(_edr_devs(), [], ctx_of()))
+    for v in ("claroty", "cortex", "crowdstrike", "defender", "sentinelone"):
+        cid = f"hub:backend/services/edr/{v}"
+        assert cid in anchors, f"missing vendor child {v}"
+        assert anchors[cid].source == "hub-vendor"
+    core = anchors["hub:backend/services/edr"]
+    assert core.source == "hub-core"
+    # core excludes every child file → plumbing only
+    assert core.matches("backend/services/edr/base.py")
+    assert not core.matches("backend/services/edr/cortex.py")
+
+
+def test_hub_family_lexicon_arm_banking_providers_incl_nonvocab_vendor():
+    """midday banking (amendment case 5b): 4 provider dirs mint as
+    children INCLUDING ``teller`` (not in the public vendor vocabulary);
+    the lexicon parent never mints a '<providers> Core'."""
+    devs = [
+        dev("gocardless", [f"packages/banking/src/providers/gocardless/{f}"
+                           for f in ("gocardless-api.ts", "transform.ts")]),
+        dev("plaid", [f"packages/banking/src/providers/plaid/{f}"
+                      for f in ("plaid-api.ts", "transform.ts")]),
+        dev("enablebanking", [
+            "packages/banking/src/providers/enablebanking/enablebanking-api.ts"]),
+        dev("teller", ["packages/banking/src/providers/teller/teller-api.ts"]),
+        dev("banking", ["packages/banking/src/index.ts"]),
+    ]
+    anchors = by_id(build_spine_anchors(devs, [], ctx_of()))
+    for v in ("gocardless", "plaid", "enablebanking", "teller"):
+        assert f"hub:packages/banking/src/providers/{v}" in anchors, v
+    assert "hub:packages/banking/src/providers" not in anchors  # no core
+
+
+def test_hub_family_generic_parent_children_only():
+    """backend/routers holding slack/github/teams routers: vendor
+    children exist (flow-gated at mint time) but NO 'Routers Core'."""
+    devs = [
+        dev("api-slack", ["backend/routers/slack.py"]),
+        dev("api-github", ["backend/routers/github.py"]),
+        dev("api-teams", ["backend/routers/teams.py"]),
+        dev("api-context-items", ["backend/routers/context_items.py"]),
+    ]
+    anchors = by_id(build_spine_anchors(devs, [], ctx_of()))
+    assert "hub:backend/routers/slack" in anchors
+    assert anchors["hub:backend/routers/slack"].hub_parent_generic
+    assert "hub:backend/routers" not in anchors  # core suppressed
+
+
+def test_hub_family_needs_three_vendor_pure_devs():
+    """widget-query (operator case 1): ONE dev owning base + 5 vendor
+    adapters is NOT a family — no vendor-pure sibling devs exist, so no
+    hub anchors mint; the dir stays a service-dir (lineage-only)."""
+    devs = [dev("widget-query", [
+        "backend/services/widget_query/__init__.py",
+        "backend/services/widget_query/base.py",
+        "backend/services/widget_query/elasticsearch_adapter.py",
+        "backend/services/widget_query/zscaler_adapter.py",
+        "backend/services/widget_query/entra_adapter.py",
+        "backend/services/widget_query/sentinel_adapter.py",
+    ])]
+    anchors = build_spine_anchors(devs, [], ctx_of())
+    assert not any(a.source.startswith("hub") for a in anchors)
+    svc = [a for a in anchors if a.source == "svc"]
+    assert svc and svc[0].canonical_id == "svc:backend/services/widget_query"
+
+
+def test_hub_family_typebot_blocks_src_passthrough():
+    """typebot blocks (amendment case 5c): the family dir is
+    ``…/integrations/src`` — ``src`` is a passthrough; ``integrations``
+    (lexicon) classes it: children mint on code, core suppressed."""
+    devs = [
+        dev("chatwoot", [
+            "packages/blocks/integrations/src/chatwoot/constants.ts",
+            "packages/blocks/integrations/src/chatwoot/schema.ts"]),
+        dev("google-analytics", [
+            "packages/blocks/integrations/src/googleAnalytics/schema.ts"]),
+        dev("google-sheets", [
+            "packages/blocks/integrations/src/googleSheets/schema.ts"]),
+        dev("zapier", [
+            "packages/blocks/integrations/src/zapier/schema.ts"]),
+    ]
+    anchors = by_id(build_spine_anchors(devs, [], ctx_of()))
+    kid = "hub:packages/blocks/integrations/src/chatwoot"
+    assert kid in anchors
+    assert not anchors[kid].hub_parent_generic  # lexicon, not generic
+    assert "hub:packages/blocks/integrations/src" not in anchors
+
+
+# ── Feature-dirs + service-dirs (rider R1 sources) ───────────────────────
+
+
+def test_feature_dir_and_service_dir_sources():
+    devs = [
+        dev("anomalies", ["frontend/src/features/anomalies/Page.tsx",
+                          "frontend/src/features/anomalies/api.ts"]),
+        dev("billing-ee", ["ee/features/billing/index.ts"]),
+        dev("iot", ["backend/services/iot_ot/base.py"]),
+    ]
+    anchors = by_id(build_spine_anchors(devs, [], ctx_of()))
+    assert anchors["fdir:frontend/src/features/anomalies"].source == "fdir"
+    assert anchors["fdir:ee/features/billing"].source == "fdir"
+    assert anchors["svc:backend/services/iot_ot"].source == "svc"
+
+
+# ── Vocab drift guard (house pattern) ────────────────────────────────────
+
+
+def test_vocab_yaml_authoring_copy_is_byte_identical():
+    packaged = (
+        Path(__file__).resolve().parents[2]
+        / "faultline" / "pipeline_v2" / "data" / "spine-anchor-vocab.yaml"
+    )
+    authoring = (
+        Path(__file__).resolve().parents[2] / "eval" / "spine-anchor-vocab.yaml"
+    )
+    assert packaged.read_bytes() == authoring.read_bytes(), (
+        "data/spine-anchor-vocab.yaml drifted from eval/spine-anchor-vocab.yaml"
+    )
+
+
+def test_vocab_has_required_sections():
+    v = load_spine_vocab()
+    for key in ("structural_stoplist", "route_transparent_segments",
+                "version_segment_pattern", "feature_dir_containers",
+                "service_dir_containers", "workspace_shell_roots",
+                "workspace_excluded_segments", "unit_manifest_files",
+                "hub_plumbing_segments", "code_extensions"):
+        assert v.get(key), key
+
+
+def test_owned_paths_prefers_primary_member_files():
+    f = dev("x", ["a.py"])
+    f.paths = ["a.py", "reach/expanded.py"]  # expansion noise
+    assert owned_paths_of(f) == ["a.py"]

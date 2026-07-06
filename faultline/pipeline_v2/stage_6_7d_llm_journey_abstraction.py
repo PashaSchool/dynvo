@@ -398,6 +398,40 @@ shared infrastructure (ui kit, icons, generic lib/utils, build config, app
 shell) that serves many capabilities, assign it to "Shared Platform".
 Return STRICT JSON only: {"map": {"<dev feature name>": "<capability>", ...}}."""
 
+# ── Anchored system prompt (Product-Spine §4.3, Wave 2b) ────────────────────
+# With FAULTLINE_SPINE_ANCHORED_MINT on, the product-feature universe is FIXED
+# by the deterministic anchored mint (Stage 6.86) — the LLM may describe those
+# capabilities and write journeys that cite them, but it may NEVER invent a
+# product feature or move membership (rootcause RC1: Call-2 retired; Call-1
+# constrained). ``current_product_features`` in the digest IS the fixed list.
+_ANCHORED_SYSTEM = """You are the journey-abstraction layer of a code-intelligence engine.
+A deterministic scanner parsed a repository into CODE-GRAIN artifacts: developer
+features (one per code module/dir), user flows (one per CRUD op), HTTP routes —
+and a FIXED list of product capabilities (`current_product_features`), each
+already bound to its code by a deterministic anchor spine.
+
+THE CAPABILITY LIST IS FIXED. You must NOT invent, rename, split, or merge
+product features — any product_features entry whose name is not VERBATIM from
+`current_product_features` will be DROPPED by the engine. Your job:
+  1. user_flows — re-express the CRUD-grain flows as PRODUCT JOURNEYS. Merge
+     redundant CRUD variants of the SAME resource into one journey; keep
+     distinct capabilities separate; surface cross-cutting journeys (auth,
+     integrations, onboarding) the per-resource walk misses. Each user_flow:
+     a short verb phrase `name`, one lowercase `resource`, `product_feature`
+     = one name VERBATIM from `current_product_features`, `from_flows` = the
+     CURRENT user-flow ids it subsumes, `from_dev_features` = the developer
+     features (names VERBATIM) whose code implements it. GROUNDING IS
+     MANDATORY: every user_flow MUST cite at least one `from_flows` id OR one
+     `from_dev_features` name, or it will be DROPPED.
+  2. product_features — OPTIONAL descriptions: for capabilities you understand
+     from the evidence, emit {"name": "<verbatim from current_product_features>",
+     "description": "<one customer-voice sentence>"}. Emit NOTHING else.
+
+Return STRICT JSON only, no prose:
+{"product_features":[{"name":"...","description":"..."}],
+ "user_flows":[{"name":"...","resource":"...","product_feature":"...",
+  "from_flows":["UF-001", ...],"from_dev_features":["<dev feature name>", ...]}]}"""
+
 
 # ── Evidence digest (README-FORBIDDEN) ──────────────────────────────────────
 
@@ -1616,11 +1650,50 @@ def _redistribute_container_flows(
     return override
 
 
+def _entry_owner_overrides(
+    developer_features: list["Feature"],
+    dev_to_product: dict[str, tuple[str, ...]],
+) -> dict[str, str]:
+    """``{flow member-id → PF slug of the flow's ENTRY-FILE owner}`` for
+    flows held by one dev whose entry file is PRIMARY-owned by another
+    (Wave 2b, hub amendment: per-vendor journeys follow the vendor dev
+    even when the flow object rides the plumbing parent). Same ruler as
+    validator I16 (entry-owner consistency). Deterministic: primary
+    ownership is exclusive by construction; only cross-dev, cross-PF
+    entries emit an override."""
+    from faultline.pipeline_v2.spine_anchors import owned_paths_of
+
+    owner_of_file: dict[str, str] = {}
+    for d in sorted(developer_features, key=lambda x: getattr(x, "name", "") or ""):
+        for p in owned_paths_of(d):
+            owner_of_file.setdefault(p, d.name)
+    out: dict[str, str] = {}
+    for d in developer_features:
+        holder_slugs = dev_to_product.get(d.name) or ()
+        holder = holder_slugs[0] if holder_slugs else ""
+        for fl in getattr(d, "flows", None) or []:
+            ep = getattr(fl, "entry_point_file", None)
+            if not ep:
+                continue
+            owner = owner_of_file.get(str(ep))
+            if owner is None or owner == d.name:
+                continue
+            owner_slugs = dev_to_product.get(owner) or ()
+            if not owner_slugs or owner_slugs[0] == holder:
+                continue
+            mid = _flow_member_id(fl)
+            if mid and mid not in out:
+                out[mid] = owner_slugs[0]
+    return out
+
+
 def _build_product_features(
     pf_specs: list[dict[str, Any]],
     dev_map: dict[str, str],
     developer_features: list["Feature"],
     routes_index: list[dict[str, Any]] | None = None,
+    anchored: bool = False,
+    anchored_pf_by_name: dict[str, "Feature"] | None = None,
 ) -> tuple[list["Feature"], dict[str, tuple[str, ...]], int, dict[str, Any],
            dict[str, str]]:
     """Aggregate dev features into the abstracted capabilities. Returns
@@ -1628,7 +1701,15 @@ def _build_product_features(
     flow_owner_override). ``flow_owner_override`` maps a container-page dev's
     flow member-ids to the product-feature slug of the flow's real owner
     (fix 3) — the PF-UF backstop / shared-UF reassignment honour it so a
-    hosted flow's journey follows its feature, not the page shell."""
+    hosted flow's journey follows its feature, not the page shell.
+
+    ``anchored`` (Wave 2b): the map is the mint's lineage — TOTAL over
+    lineage devs. Unmapped devs are LANE RESIDENTS (platform
+    infrastructure): they are skipped outright — no token rescue, no
+    residual guard, no Shared Platform row (the name-stem repair ladders
+    are exactly the RC3 membership channel the spine retires). The
+    container-page guard is also upstream now (the mint consumed the
+    shell tags), so it is bypassed."""
     desc_by_cap = {
         (s.get("name") or "").strip(): _short(s.get("description"), 240)
         for s in pf_specs if (s.get("name") or "").strip()
@@ -1651,8 +1732,8 @@ def _build_product_features(
     }
     cap_to_devs: dict[str, list["Feature"]] = defaultdict(list)
     dev_to_product: dict[str, tuple[str, ...]] = {}
-    residual_guard = _residual_guard_enabled()
-    container_guard = _container_page_guard_enabled()
+    residual_guard = _residual_guard_enabled() and not anchored
+    container_guard = _container_page_guard_enabled() and not anchored
 
     def _assign(dev: "Feature", cap: str) -> None:
         if cap == _RESIDUAL_CAP:
@@ -1684,6 +1765,12 @@ def _build_product_features(
             continue
         if cap and cap != _RESIDUAL_CAP:
             _assign(dev, cap)
+        elif anchored:
+            # Lane resident (platform infrastructure) — the mint already
+            # decided: pfid stays None, reason stamped upstream; never a
+            # rescue target, never a Shared Platform row.
+            pf_tele["devs_lane_residents"] = (
+                pf_tele.get("devs_lane_residents", 0) + 1)
         else:
             deferred.append((dev, cap))
 
@@ -1764,6 +1851,10 @@ def _build_product_features(
             name=_slug(cap), display_name=cap,
             description=desc, contrib=contrib,
         )
+        if anchored and anchored_pf_by_name:
+            _src_pf = anchored_pf_by_name.get(cap)
+            if _src_pf is not None:
+                feat.anchor_id = getattr(_src_pf, "anchor_id", None)
         # aggregate_product_feature unions .paths only; carry the richer
         # member_files ledger too (the owned-files registry the dashboard
         # tree / coverage / blob metric read) — dedup by path, preserve order.
@@ -2542,6 +2633,7 @@ def _reassign_shared_ufs(
     *,
     new_pfs: list["Feature"] | None = None,
     routes_index: list[dict[str, Any]] | None = None,
+    anchored: bool = False,
 ) -> dict[str, Any]:
     """Reassign every UF left on the shared/platform capability to the
     non-shared PF owning the plurality of its member flows (see the block
@@ -2618,28 +2710,34 @@ def _reassign_shared_ufs(
                 tele["uf_shared_family_resolved"] += 1
                 _record(uf.name, donor0, fam_slug, "name_family_match")
                 continue
-            # (ii) entry-file carve — mint a domain-dedicated owning dev its own
-            # capability (flowful by construction).
-            carved = _carve_shared_uf(
-                uf, flow_owner_dev, dev_by_name, dev_to_product, pf_list,
-                route_files, route_uuids)
-            if carved:
-                uf.product_feature_id = carved
-                tele["uf_shared_carved"] += 1
-                _record(uf.name, donor0, carved, "entry_file_carve")
-                # keep cap_context fresh so a later UF can family-match the mint
-                continue
-            # (iii) DOCS/API-SURFACE family — flows genuinely route-grounded
-            # in an openapi/scalar/docs surface get their own home rather
-            # than defaulting to shared-platform.
-            docs_slug = _docs_surface_uf(
-                uf, flow_by_id, flow_owner_dev, dev_by_name, dev_to_product,
-                pf_list)
-            if docs_slug:
-                uf.product_feature_id = docs_slug
-                tele["uf_shared_docs_resolved"] += 1
-                _record(uf.name, donor0, docs_slug, "docs_api_surface")
-                continue
+            # (ii)+(iii) are PF-APPEND rungs — they mint capabilities that
+            # are NOT anchored nodes (no anchor_id). FORBIDDEN in anchored
+            # mode (review F2: "the PF universe is FIXED by the mint");
+            # the ladder falls through to the drop/unresolved rungs and
+            # conservation / terminal home place the journey by ownership.
+            if not anchored:
+                # (ii) entry-file carve — mint a domain-dedicated owning
+                # dev its own capability (flowful by construction).
+                carved = _carve_shared_uf(
+                    uf, flow_owner_dev, dev_by_name, dev_to_product, pf_list,
+                    route_files, route_uuids)
+                if carved:
+                    uf.product_feature_id = carved
+                    tele["uf_shared_carved"] += 1
+                    _record(uf.name, donor0, carved, "entry_file_carve")
+                    # keep cap_context fresh so a later UF can family-match
+                    continue
+                # (iii) DOCS/API-SURFACE family — flows genuinely
+                # route-grounded in an openapi/scalar/docs surface get
+                # their own home rather than defaulting to shared-platform.
+                docs_slug = _docs_surface_uf(
+                    uf, flow_by_id, flow_owner_dev, dev_by_name,
+                    dev_to_product, pf_list)
+                if docs_slug:
+                    uf.product_feature_id = docs_slug
+                    tele["uf_shared_docs_resolved"] += 1
+                    _record(uf.name, donor0, docs_slug, "docs_api_surface")
+                    continue
             # (iv) synthetic-fixture UF — every member is a whole-file
             # fallback attribution anchored in eval/fixture/mock data, not a
             # real journey. Drop it rather than force a home (see rung
@@ -2684,11 +2782,22 @@ def run_journey_abstraction(
     cache: "CacheBackend | None" = None,
     log: "StageLogger | None" = None,
     llm_health: LlmHealth | None = None,
+    anchored: bool = False,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], list["Feature"], dict[str, tuple[str, ...]] | None, dict[str, Any]]:
     """Rewrite user_flows[] + product_features[] at journey/capability grain.
 
     Returns ``(user_flows, product_features, dev_to_product_map, telemetry)``.
+
+    ``anchored=True`` (Product-Spine §4.3, Wave 2b — the Stage 6.86 mint
+    ran): the PF universe is FIXED. Call 1 runs CONSTRAINED (journeys must
+    cite the given capabilities; invented PF names are dropped) and Call 2
+    — the per-item membership oracle (rootcause RC1) — is RETIRED: dev→PF
+    is the mint's lineage stamps, no LLM call. Membership ladders that
+    joined by name stems are bypassed (the spine already decided); the
+    UF-side ladders (conservation / backstop / reshare) run unchanged on
+    spine relations. Residual devs stay OFF the product list (the
+    platform_infrastructure lane) — no Shared Platform PF exists here.
 
     NEVER-WORSE INVARIANT (operator's core requirement): on ANY failure path —
     no client, LLM exception, empty / unparseable output, re-attribution
@@ -2759,6 +2868,32 @@ def run_journey_abstraction(
     tele["facet_devs_excluded"] = len(developer_features) - len(non_facet_devs)
     dev_view, sub_to_parent = _rollup_split_view(non_facet_devs)
     digest = _build_digest(dev_view, product_features, user_flows, routes_index)
+
+    # ── Anchored mode (Wave 2b): dev→PF from the mint's lineage stamps ──
+    # The map is TOTAL over lineage devs; lane residents (pfid=None) are
+    # deliberately ABSENT — they never join a capability and never form a
+    # Shared Platform row (operator amendment 2026-07-06).
+    anchored_dev_map: dict[str, str] = {}
+    anchored_names: set[str] = set()
+    anchored_pf_by_name: dict[str, "Feature"] = {}
+    if anchored:
+        tele["anchored"] = True
+        pf_by_key = {getattr(p, "name", "") or "": p for p in product_features}
+        for p in product_features:
+            disp = getattr(p, "display_name", None) or getattr(p, "name", "")
+            anchored_names.add(disp)
+            anchored_pf_by_name[disp] = p
+        for f in non_facet_devs:
+            pid = getattr(f, "product_feature_id", None)
+            pf = pf_by_key.get(pid or "")
+            if pf is not None:
+                anchored_dev_map[_dev_key(f)] = (
+                    getattr(pf, "display_name", None) or getattr(pf, "name", "")
+                )
+        tele["anchored_dev_map"] = len(anchored_dev_map)
+        tele["anchored_lane_devs"] = (
+            len(non_facet_devs) - len(anchored_dev_map)
+        )
     tele.update({
         "digest_rolled_subs": len(sub_to_parent),
         "input_dev_features": len(developer_features),
@@ -2772,10 +2907,17 @@ def run_journey_abstraction(
     # (validated default). The gate is improve-or-no-op: sparse-anchor repos fall
     # back so they never regress. anchor_sig makes align/free-gen cache separately.
     anchor_texts = _canonical_anchor_texts(product_anchors)
-    aligned = align_enabled() and _anchors_sufficient(product_anchors, product_features)
+    aligned = (align_enabled() and not anchored
+               and _anchors_sufficient(product_anchors, product_features))
     tele["aligned"] = aligned
     tele["anchor_count"] = len(anchor_texts)
-    anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""
+    if anchored:
+        # Distinct cache namespace: the anchored prompt/reconstruction
+        # semantics differ from free-gen, and the =0 path's keys must
+        # stay byte-identical to pre-W2b (no new payload field there).
+        anchor_sig = "spine-anchored-mint-v1"
+    else:
+        anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""
     key = _cache_key(digest, abstraction_model, reattrib_model, anchor_sig)
 
     def _finish(
@@ -2793,11 +2935,26 @@ def run_journey_abstraction(
         dev_map = _propagate_dev_map(dev_map, sub_to_parent)
         (new_pfs, dev_to_product, files_after, pf_tele,
          flow_owner_override) = _build_product_features(
-            pf_specs_, dev_map, developer_features, routes_index)
+            pf_specs_, dev_map, developer_features, routes_index,
+            anchored=anchored, anchored_pf_by_name=anchored_pf_by_name)
         new_ufs, uf_tele = _build_user_flows(
             uf_specs_, user_flows, developer_features, routes_index)
         if not new_pfs or not new_ufs:
             return None
+        if anchored:
+            # ENTRY-OWNER overrides (amendment: a vendor child's journeys
+            # live in the vendor PF even when the flow object rides the
+            # plumbing dev — Soc0 edr build-cortex-filters): a flow whose
+            # entry file is PRIMARY-owned by a different dev follows that
+            # owner's capability. Same ruler as validator I16. Explicit
+            # container redistributions (none in anchored mode) would win.
+            entry_over = _entry_owner_overrides(
+                developer_features, dev_to_product)
+            merged_over = dict(entry_over)
+            merged_over.update(flow_owner_override)
+            flow_owner_override = merged_over
+            pf_tele["entry_owner_overrides"] = len(entry_over)
+            tele.update({"entry_owner_overrides": len(entry_over)})
         # Product-Spine §4.5 — conservation law, applied to the freshly
         # reconstructed bindings BEFORE the backstop/reshare ladders: the
         # backstop then re-covers any PF a resettle emptied, and the
@@ -2832,7 +2989,8 @@ def run_journey_abstraction(
         if _uf_reshare_enabled():
             rs_tele = _reassign_shared_ufs(
                 new_ufs, developer_features, dev_to_product,
-                flow_owner_override, new_pfs=new_pfs, routes_index=routes_index)
+                flow_owner_override, new_pfs=new_pfs, routes_index=routes_index,
+                anchored=anchored)
             tele.update(rs_tele)
         # Deterministic output ordering (Phase 1 stability): the LLM emits
         # features/flows in an order that drifts run-to-run. Sort by a stable key
@@ -2902,8 +3060,12 @@ def run_journey_abstraction(
     if cli is None:
         return _degrade("no_client")
 
-    # ── Call 1 — abstraction / grain-lift (Sonnet); ALIGN when anchors suffice ─
-    if aligned:
+    # ── Call 1 — abstraction / grain-lift (Sonnet). Prompt selection:
+    # ANCHORED (Wave 2b, PF list fixed) > ALIGN (opt-in) > free-gen.
+    if anchored:
+        sys1 = _ANCHORED_SYSTEM
+        anchor_block = ""
+    elif aligned:
         sys1 = _ALIGN_SYSTEM
         anchor_block = ("\n\nAUTHORITATIVE product_capability_anchors "
                         "(align the evidence to these; use verbatim as names):\n"
@@ -3044,9 +3206,80 @@ def run_journey_abstraction(
                 contract = CONTRACT_UNCOMPRESSED
                 tele["abstraction_retry_failed"] = r_fail
     tele["abstraction_contract"] = contract
+    if anchored:
+        # THE CAPABILITY LIST IS FIXED: keep the draw's descriptions for
+        # capabilities it cited VERBATIM (slug match), drop inventions,
+        # and guarantee every anchored capability is present so the
+        # reconstruction's ordered_caps covers the full anchored set
+        # (deterministic descriptions from the mint fill the gaps).
+        by_slug = {_slug(n): n for n in anchored_names}
+        kept: list[dict[str, Any]] = []
+        cited: set[str] = set()
+        dropped = 0
+        for s in pf_specs:
+            slug = _slug(str(s.get("name") or ""))
+            canon = by_slug.get(slug)
+            if canon is None:
+                dropped += 1
+                continue
+            if canon not in cited:
+                cited.add(canon)
+                kept.append({"name": canon,
+                             "description": s.get("description") or ""})
+        for name in sorted(anchored_names):
+            if name not in cited:
+                pf = anchored_pf_by_name.get(name)
+                kept.append({
+                    "name": name,
+                    "description": getattr(pf, "description", None) or "",
+                })
+        tele["anchored_pf_invented_dropped"] = dropped
+        pf_specs = kept
+        # Re-slug UF citations onto the fixed list (review F2 — this was
+        # a comment with no code): a journey citing a NON-anchored
+        # capability (incl. the "Shared Platform" string the retired
+        # Call-2 sink taught the models) gets its citation CLEARED — the
+        # conservation law / emission integrity / terminal home then
+        # place it by ownership evidence. Never let an invented name
+        # reach the reshare ladder as a shared-platform attachment.
+        scrubbed = 0
+        for u_spec in uf_specs:
+            cited = str(u_spec.get("product_feature") or "")
+            if cited and by_slug.get(_slug(cited)) is None:
+                u_spec["product_feature"] = ""
+                scrubbed += 1
+        tele["anchored_uf_citations_scrubbed"] = scrubbed
     parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
     if tele["cost_usd"] > COST_CAP_USD:
         return _degrade(f"cost_cap ${tele['cost_usd']:.4f}")
+
+    if anchored:
+        # ── Call 2 RETIRED (Product-Spine §4.3): dev→PF is the anchored
+        # mint's lineage stamps — deterministic, total over lineage devs,
+        # no LLM call, no Shared Platform sink. Lane residents are absent
+        # from the map by construction.
+        dev_map = dict(anchored_dev_map)
+        if cache is not None:
+            try:
+                cache_payload = {
+                    "v": ABSTRACTION_CACHE_VERSION,
+                    "abstraction": {"product_features": pf_specs,
+                                    "user_flows": uf_specs},
+                    "map": dev_map,
+                    "contract": tele.get("abstraction_contract", CONTRACT_PASS),
+                }
+                if "first_draw_spec" in tele:
+                    cache_payload["first_draw_spec"] = tele["first_draw_spec"]
+                cache.set(CacheKind.LLM_ABSTRACTION.value, key, cache_payload)
+            except Exception:  # noqa: BLE001 — cache faults never abort
+                pass
+        try:
+            result = _finish(parsed1, dev_map)
+        except Exception:  # noqa: BLE001
+            return _degrade("reconstruct_exception")
+        if result is None:
+            return _degrade("reconstruct_empty")
+        return result
 
     # ── Call 2 — dev → capability re-attribution (Haiku / passed model) ─
     caps = [s.get("name", "").strip() for s in pf_specs if s.get("name", "").strip()]

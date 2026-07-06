@@ -400,6 +400,121 @@ def run_finalize_phase(
         )
         scan_meta["stage_6_9_test_strip"]["pf_dropped_phantom"] = pf_phantom_post
 
+    # ── Stage 6.86 — Anchored PF minting (Product-Spine §4.3, Wave 2b) ──
+    # THE membership spine: PF candidates come ONLY from ranked anchor
+    # sources (route subtrees / workspaces / schema domains / hub
+    # families / authored feature-dirs / service-dirs); dev→PF derives
+    # deterministically from anchor lineage (θ=0.5 majority +
+    # specificity reduction + fixed source-rank near-ties). REPLACES the
+    # Stage 6.5/8 product layer wholesale and retires 6.7d Call-2 as the
+    # membership oracle. Runs AFTER the 6.9/6.9b strips (final dev
+    # membership) and BEFORE the UF stages so 6.7's UF→PF vote, the
+    # conservation law, and 6.7d all consume anchored stamps. Residual
+    # devs go to the platform_infrastructure[] lane (operator amendment
+    # 2026-07-06: the Shared Platform PF no longer exists on this path).
+    # Deterministic, $0 LLM. Kill-switch FAULTLINE_SPINE_ANCHORED_MINT=0
+    # restores the old path byte-identically.
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        anchored_mint_enabled,
+        run_anchored_mint,
+    )
+
+    anchored_mint_applied = False
+    anchored_hub_stamps: dict[str, str] = {}
+    if anchored_mint_enabled():
+        write_stage_input(run_dir, 6, "anchored_mint", {
+            "features": features,
+            "product_features": product_features,
+            "routes_index": lineage_result.routes_index,
+            "stage1_out": stage1_out,
+            "ctx": ctx,
+            "scan_meta": scan_meta,
+        })
+        with StageLogger(run_dir, 6, "anchored_mint") as log_mint:
+            try:
+                # Nav labels confirm anchors (ranking evidence only) —
+                # normalized first meaningful href segments from the
+                # deterministic product-string collector's nav pairs.
+                _nav_keys: set[str] = set()
+                try:
+                    from faultline.pipeline_v2.product_strings import (
+                        collect_product_strings,
+                        normalize_href,
+                    )
+                    from faultline.pipeline_v2.spine_anchors import (
+                        normalize_anchor_key,
+                    )
+                    _nav_candidates: set[str] = set()
+                    for _f in features:
+                        _nav_candidates.update(_f.paths or [])
+                    _nav_index = collect_product_strings(
+                        repo_path, _nav_candidates)
+                    for _pairs in _nav_index.nav_pairs_by_file.values():
+                        for _label, _href in _pairs:
+                            if not _href:
+                                continue
+                            norm = normalize_href(str(_href)) or ""
+                            for seg in norm.strip("/").split("/"):
+                                if seg and not seg.startswith(":"):
+                                    _nav_keys.add(normalize_anchor_key(seg))
+                                    break
+                except Exception:  # noqa: BLE001 — confirmers are optional
+                    _nav_keys = set()
+                mint_pfs, mint_tele = run_anchored_mint(
+                    features,
+                    lineage_result.routes_index,
+                    ctx,
+                    extractor_signals=stage1_out,
+                    nav_keys=frozenset(_nav_keys),
+                )
+                if mint_tele.get("applied"):
+                    product_features = mint_pfs
+                    anchored_mint_applied = True
+                    anchored_hub_stamps = dict(
+                        mint_tele.get("hub_family_stamps") or {})
+                scan_meta["stage_6_86_anchored_mint"] = {
+                    k: v for k, v in mint_tele.items()
+                    if k != "hub_family_stamps"
+                }
+                log_mint.info(
+                    "anchored_mint: applied=%s anchors=%d pf=%d "
+                    "U=%d(cap=%d shell=%d) tie=%d none=%d folds(u=%d p=%d "
+                    "i=%d) infra=%d churn=%.1f%%"
+                    % (
+                        mint_tele.get("applied"),
+                        mint_tele.get("anchors_total", 0),
+                        mint_tele.get("pf_minted", 0),
+                        mint_tele.get("unique", 0),
+                        mint_tele.get("unique_capability", 0),
+                        mint_tele.get("unique_shell", 0),
+                        mint_tele.get("near_tie", 0),
+                        mint_tele.get("none", 0),
+                        mint_tele.get("fold_union_plurality", 0),
+                        mint_tele.get("fold_parent", 0),
+                        mint_tele.get("fold_import", 0),
+                        mint_tele.get("infra_lane", 0),
+                        100.0 * mint_tele.get("churn_pct", 0.0),
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=6,
+                    stage_name="anchored_mint",
+                    payload={k: v for k, v in mint_tele.items()
+                             if k != "hub_family_stamps"},
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"anchored-mint failed ({exc}); "
+                    f"pre-spine product layer kept"
+                )
+                log_mint.info(
+                    f"anchored_mint: FAILED ({exc}) — old product layer kept",
+                    feature=None,
+                )
+
     # ── Stage 0.7 exit gate — UF-synthesis suppression (Phase C) ────
     # A CONFIDENT non-product repo_class verdict (library / cli-tool /
     # infra-daemon / framework) means this scan unit has no user
@@ -604,6 +719,37 @@ def run_finalize_phase(
             )
         scan_meta["stage_6_7b_uf_refiner"] = dict(uf_refine_telemetry)
 
+    # ── §4.5 conservation on the ANCHORED KEYLESS path ($0) ─────────
+    # With the anchored mint applied and 6.7d disabled (keyless scans),
+    # the deterministic UF set must still obey the conservation law
+    # against the anchored stamps: member flows' entries + span majority
+    # inside the UF's PF closure, violators resettle, and no journey may
+    # ride a lane resident (product_feature_id=None devs vote nothing —
+    # terminal home binds the leftovers). The keyed path runs the same
+    # law inside/after 6.7d, unchanged.
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        is_enabled as _s67d_enabled_probe,
+    )
+    if (anchored_mint_applied and not uf_suppressed
+            and not _s67d_enabled_probe() and user_flows):
+        from faultline.pipeline_v2.conservation import apply_uf_conservation
+        with StageLogger(run_dir, 6, "spine_conservation") as log_sc:
+            try:
+                sc_tele = apply_uf_conservation(
+                    user_flows, features, product_features,
+                    null_shared_without_signal=True,
+                )
+                scan_meta["spine_conservation_keyless"] = sc_tele
+                log_sc.info(
+                    "spine_conservation (keyless): %s" % (sc_tele,),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_sc.info(
+                    f"spine_conservation: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Stage 6.7d — LLM product/journey abstraction (opt-in, OFF) ──
     # Crosses the code-grain → product-grain gap the deterministic stages
     # structurally cannot: REWRITES user_flows[] + product_features[] at
@@ -667,6 +813,11 @@ def run_finalize_phase(
                 cache=_s67d_cache,
                 log=log6_7d,
                 llm_health=llm_health,
+                # Product-Spine §4.3 (Wave 2b): with the anchored mint
+                # applied, the PF universe is FIXED (Call-1 constrained
+                # to cite it) and dev→PF comes from the lineage stamps —
+                # Call-2, the per-item membership oracle (RC1), retires.
+                anchored=anchored_mint_applied,
             )
             # Re-stamp dev features' product_feature_id so the bipartite /
             # output linkage stays coherent with the rewritten product layer.
@@ -676,16 +827,28 @@ def run_finalize_phase(
                     if _slugs:
                         _dev.product_feature_id = _slugs[0]
             # Product-Spine §4.4 — re-enforce the hub/child relation on the
-            # REWRITTEN product layer (Call-2 re-attribution can scatter hub
-            # children back into Shared Platform / unrelated capabilities).
-            # Same construction rule as Stage 8.9.8; deterministic, $0.
-            if s67d_telemetry.get("applied"):
+            # REWRITTEN product layer. ANCHORED path (operator amendment
+            # 2026-07-06): every integration is its OWN sibling PF — the
+            # mint's per-vendor family stamps are construction law, so we
+            # re-assert THEM (never the W1 children-inherit-one-PF rule,
+            # which would re-collapse the vendor grain). =0 path keeps the
+            # W1 binding byte-identically.
+            if s67d_telemetry.get("applied") and anchored_mint_applied:
+                from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+                    enforce_hub_family_parity as _hub_parity,
+                )
+                _par_tele = _hub_parity(
+                    features, product_features, anchored_hub_stamps)
+                if _par_tele.get("checked"):
+                    s67d_telemetry["hub_family_parity_post_67d"] = _par_tele
+            elif s67d_telemetry.get("applied"):
                 from faultline.pipeline_v2.hub_relation import (
                     apply_hub_pf_binding as _hub_bind,
                 )
                 _hub_tele = _hub_bind(features, product_features)
                 if _hub_tele.get("hubs"):
                     s67d_telemetry["hub_binding_post_67d"] = _hub_tele
+            if s67d_telemetry.get("applied"):
                 # W1.1 — §4.5 at DEV grain (validator I9): Call-2 can
                 # scatter a small flowful surface dev into the shared
                 # bucket even when its flows' spans/entries sit inside ONE
@@ -1079,7 +1242,18 @@ def run_finalize_phase(
         _shell_absorb_enabled,
         resolve_flowless_shells,
     )
+    # NEVER on the ANCHORED path (Wave 2b review F1/F5, 2026-07-06): this
+    # ladder is a cure for FREE-GEN draw shells and both of its moving
+    # rungs violate the spine — the JOIN re-homes a minted anchor's devs
+    # by name-family against their own lineage (F5), and the DEMOTE
+    # resurrects the ABOLISHED "Shared Platform" PF via _ensure_shared_pf
+    # (F1 — the 18:2x amendment kills that bucket on every code path; the
+    # keyed leak survived the keyless gates precisely because this stage
+    # is 6.7d-gated). An anchored flowless >=1k-LOC PF is a REAL
+    # capability whose flows weren't detected — it stays, and validator
+    # I8's LOC prong honestly reports the flow-detection gap.
     if (_shell_absorb_enabled()
+            and not anchored_mint_applied
             and (scan_meta.get("stage_6_7d_journey_abstraction") or {}).get("applied")):
         with StageLogger(run_dir, 6, "flowless_shells") as log_shell:
             try:
@@ -1151,6 +1325,10 @@ def run_finalize_phase(
             log_st.info(
                 f"surface_taxonomy: FAILED ({exc}) — continuing", feature=None,
             )
+
+    # platform_infrastructure[] declared here; ASSEMBLED after emission
+    # integrity (the I2 phantom drop must not leave stale lane rows).
+    platform_infrastructure: list[dict[str, Any]] | None = None
 
     # ── Emission integrity — referential round-trip guarantee ($0) ──
     # Runs LAST, after every UF / PF / flow / loc mutation, so the emitted
@@ -1260,6 +1438,28 @@ def run_finalize_phase(
                 feature=None,
             )
 
+    # ── platform_infrastructure[] lane (Wave 2b, operator amendment) ───
+    # The anchored path's residual surface: one row per lane resident
+    # (product_feature_id=None + shared_reason). Assembled AFTER emission
+    # integrity (the I2 phantom drop must not leave stale lane rows) and
+    # after 6.97 (rows carry loc). None (omitted from output) when the
+    # anchored mint did not run — the =0 A/B path stays byte-identical.
+    if anchored_mint_applied:
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+            build_platform_infrastructure_lane,
+        )
+        try:
+            platform_infrastructure = build_platform_infrastructure_lane(
+                features)
+            scan_meta.setdefault("stage_6_86_anchored_mint", {})[
+                "platform_infrastructure_rows"
+            ] = len(platform_infrastructure)
+        except Exception as exc:  # noqa: BLE001 — lane must never break a scan
+            platform_infrastructure = []
+            scan_meta.setdefault("warnings", []).append(
+                f"platform-infrastructure lane failed ({exc}); lane empty"
+            )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {
@@ -1278,6 +1478,7 @@ def run_finalize_phase(
         "days": days,
         "monorepo_view": monorepo_view,
         "non_product_surfaces": non_product_surfaces,
+        "platform_infrastructure": platform_infrastructure,
     })
     with StageLogger(run_dir, 7, "output") as log7:
         out = stage_7_output(
@@ -1295,6 +1496,7 @@ def run_finalize_phase(
             engine_version=_engine_version,
             monorepo=monorepo_view,
             non_product_surfaces=non_product_surfaces,
+            platform_infrastructure=platform_infrastructure,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
 
