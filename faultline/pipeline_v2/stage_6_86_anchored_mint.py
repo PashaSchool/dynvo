@@ -456,14 +456,17 @@ def run_anchored_mint(
 
     def _parent_fold(a: SpineAnchor) -> str | None:
         """Nearest MINTING ancestor by prefix containment (version-dir /
-        collection-descend children fold into their API surface)."""
-        prefixes = a.prefixes or ()
+        collection-descend children fold into their API surface). File
+        anchors (api leaves) locate through their files' dirs — the
+        W2b.1 api-leaf-fold rung (fix d2) rides this."""
+        units = list(a.prefixes or ())
+        units.extend(f.rsplit("/", 1)[0] for f in sorted(a.files) if "/" in f)
         best: tuple[int, str] | None = None
         for cid in mintable:
             m = anchor_by_id[cid]
             for mp in m.prefixes:
-                for ap in prefixes:
-                    if ap.startswith(mp + "/"):
+                for ap in units:
+                    if ap.startswith(mp + "/") or ap == mp:
                         cand = (len(mp), cid)
                         if best is None or cand > best:
                             best = cand
@@ -505,6 +508,148 @@ def run_anchored_mint(
         best = tied[0]
         return best if votes[best] * 2 > len(entries) else None
 
+    def _anchor_of_target(t: str) -> str | None:
+        """The most specific MINTING anchor covering one file (exact
+        file > longest prefix). Shared by the import-fold and the
+        span-vote law rungs."""
+        best_cid: str | None = None
+        best_spec: tuple[int, int] | None = None
+        for cid in sorted(mintable):
+            a = anchor_by_id[cid]
+            if not a.matches(t):
+                continue
+            spec = (
+                1 if t in a.files else 0,
+                max((len(p) for p in a.prefixes
+                     if t.startswith(p + "/") or t == p), default=0),
+            )
+            if best_spec is None or spec > best_spec:
+                best_cid, best_spec = cid, spec
+        return best_cid
+
+    def _file_owner_map() -> dict[str, str]:
+        """file → first ASSIGNED dev primary-owning it (ownership
+        fallback channel of the vote rungs)."""
+        out: dict[str, str] = {}
+        for name in sorted(assignment):
+            for p in owned_by_dev.get(name, ()):
+                out.setdefault(p, name)
+        return out
+
+    def _entry_route_mint(f: "Feature") -> str | None:
+        """W2b.1 law rung L1 — entry-file ROUTE lineage: a flowful dev
+        whose flow entry files majority-sit inside ONE route anchor gets
+        that anchor MINTED ON DEMAND (openstatus login class: the dev's
+        journeys enter through a real page surface, so the surface is a
+        product feature even when lineage dilution starved the anchor of
+        winners). The on-demand anchor passes the FULL mint bar — an
+        api-only or param-barred surface never mints this way (those
+        fold via the api-leaf/span rungs instead)."""
+        entries = [str(ep) for fl in (getattr(f, "flows", None) or [])
+                   if (ep := getattr(fl, "entry_point_file", None))]
+        if not entries:
+            return None
+        votes: Counter[str] = Counter()
+        for ep in entries:
+            best_cid: str | None = None
+            best_spec: tuple[int, int, str] | None = None
+            for a in anchors:
+                if a.source != "route" or not a.matches(ep):
+                    continue
+                spec = (
+                    1 if ep in a.files else 0,
+                    max((len(p) for p in a.prefixes
+                         if ep.startswith(p + "/") or ep == p), default=0),
+                    a.canonical_id,
+                )
+                if best_spec is None or spec > best_spec:
+                    best_cid, best_spec = a.canonical_id, spec
+            if best_cid is not None:
+                votes[best_cid] += 1
+        if not votes:
+            return None
+        (_best, n), = votes.most_common(1)
+        tied = sorted(c for c, v in votes.items() if v == n)
+        best = tied[0]
+        if votes[best] * 2 <= len(entries):
+            return None
+        if best in mintable:
+            return best
+        a = anchor_by_id[best]
+        if a.shell:
+            return None
+        bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts)
+        if bar is not None:
+            return None
+        mintable.add(best)
+        bar_by_anchor[best] = None
+        return best
+
+    def _span_vote(f: "Feature") -> str | None:
+        """W2b.1 law rung L2 — the dev's flows' file SPANS vote for the
+        minting anchor (or assigned owner) holding them; PLURALITY wins
+        (terminal-rung semantics — a flowful dev must land in a real
+        capability, the binding is recorded in the provenance note)."""
+        file_owner = _file_owner_map()
+        votes: Counter[str] = Counter()
+        for fl in (getattr(f, "flows", None) or []):
+            span = [str(p) for p in (getattr(fl, "paths", None) or [])]
+            ep = getattr(fl, "entry_point_file", None)
+            if not span and ep:
+                span = [str(ep)]
+            for p in span:
+                cid = _anchor_of_target(p)
+                if cid is None:
+                    owner = file_owner.get(p)
+                    if owner is not None:
+                        cid = assignment[owner][0]
+                if cid is not None:
+                    votes[cid] += 1
+        if not votes:
+            return None
+        (_best, n), = votes.most_common(1)
+        tied = sorted(c for c, v in votes.items() if v == n)
+        return tied[0]
+
+    def _ancestor_walk(f: "Feature") -> str | None:
+        """W2b.1 law rung L3 — nearest-ancestor plurality: walk UP from
+        the dev's owned files' common dir; the first level where ANY
+        assigned dev owns files decides by plurality of their anchors.
+        Total whenever ≥1 dev is assigned (the repo-root level sees
+        every assigned file)."""
+        owned = owned_by_dev.get(f.name) or []
+        dirs = [p.rsplit("/", 1)[0] if "/" in p else "" for p in owned]
+        if dirs:
+            first = dirs[0].split("/") if dirs[0] else []
+            k = len(first)
+            for other_str in dirs[1:]:
+                other = other_str.split("/") if other_str else []
+                j = 0
+                while j < min(k, len(other)) and other[j] == first[j]:
+                    j += 1
+                k = j
+            common = "/".join(first[:k])
+        else:
+            common = ""
+        assigned_file_cid = {
+            p: assignment[name][0]
+            for name in sorted(assignment)
+            for p in owned_by_dev.get(name, ())
+        }
+        level = common
+        while True:
+            votes: Counter[str] = Counter()
+            for p, cid in assigned_file_cid.items():
+                if not level or p.startswith(level + "/"):
+                    votes[cid] += 1
+            if votes:
+                (_best, n), = votes.most_common(1)
+                tied = sorted(c for c, v in votes.items() if v == n)
+                return tied[0]
+            if not level:
+                return None
+            level = level.rsplit("/", 1)[0] if "/" in level else ""
+
     fold_pending: list[tuple["Feature", SpineAnchor | None, str]] = []
     for f in sorted(in_scope, key=lambda x: x.name):
         w = winner_by_dev[f.name]
@@ -529,8 +674,8 @@ def run_anchored_mint(
                 else:
                     fold_pending.append((f, None, _SHARED_REASON_NONE))
             continue
-        # Winner exists but cannot mint → parent fold, entry fold, then
-        # import fold.
+        # Winner exists but cannot mint → parent fold, entry fold,
+        # api-leaf fold, then import fold.
         parent = _parent_fold(w)
         if parent is not None and w.barred in {"version_dir", "single_letter",
                                                "param_leaf"}:
@@ -542,8 +687,34 @@ def run_anchored_mint(
             assignment[f.name] = (ef, f"fold:entry->{w.canonical_id}")
             tele["fold_entry"] = tele.get("fold_entry", 0) + 1
             continue
+        # API-LEAF FOLD (W2b.1 fix d2): a dev whose winner is an
+        # api-only-barred surface folds into the nearest MINTING
+        # ancestor capability (supabase pages/api singles were meant to
+        # die by this class; the parent rung above only served the
+        # barred-KEY classes).
+        if (bar_by_anchor.get(w.canonical_id) == "api_only_surface"
+                and parent is not None):
+            assignment[f.name] = (parent, f"fold:api-parent->{w.canonical_id}")
+            tele["fold_api_parent"] = tele.get("fold_api_parent", 0) + 1
+            continue
         reason = (_SHARED_REASON_SHELL if w.shell else _SHARED_REASON_BAR)
         fold_pending.append((f, w, reason))
+
+    # LAW RUNG L1 (W2b.1 fix a) — entry-route lineage BEFORE the import
+    # fold (task order: entry-file route lineage → import-fold →
+    # span-vote). Mint-on-demand may EXTEND ``mintable`` — iteration is
+    # name-sorted, so the extension is deterministic.
+    still_pending: list[tuple["Feature", SpineAnchor | None, str]] = []
+    for f, w, reason in fold_pending:
+        if getattr(f, "flows", None):
+            target = _entry_route_mint(f)
+            if target is not None:
+                src = w.canonical_id if w is not None else "none"
+                assignment[f.name] = (target, f"mint:entry-route->{src}")
+                tele["mint_entry_route"] = tele.get("mint_entry_route", 0) + 1
+                continue
+        still_pending.append((f, w, reason))
+    fold_pending = still_pending
 
     # Import fold — one deterministic round over the pass-3 residue.
     if fold_pending:
@@ -564,32 +735,8 @@ def run_anchored_mint(
         # primary-owns (`@midday/invoice/templates` → packages/invoice
         # inside the MERGED `invoices` anchor). Per target: the most
         # specific matching minting anchor (exact file > longest prefix).
-        mintable_sorted = sorted(mintable)
-
-        def _anchor_of_target(t: str) -> str | None:
-            best_cid: str | None = None
-            best_spec: tuple[int, int] | None = None
-            for cid in mintable_sorted:
-                a = anchor_by_id[cid]
-                if not a.matches(t):
-                    continue
-                spec = (
-                    1 if t in a.files else 0,
-                    max((len(p) for p in a.prefixes
-                         if t.startswith(p + "/") or t == p), default=0),
-                )
-                if best_spec is None or spec > best_spec:
-                    best_cid, best_spec = cid, spec
-            return best_cid
-
-        # Ownership fallback channel: a target file primary-owned by an
-        # already-assigned dev votes that dev's capability even when no
-        # anchor subtree covers the file (shared components class).
-        file_owner: dict[str, str] = {}
-        for name in sorted(assignment):
-            for p in owned_by_dev.get(name, ()):
-                file_owner.setdefault(p, name)
-
+        file_owner = _file_owner_map()
+        still_pending = []
         for f, w, reason in fold_pending:
             targets = _import_fold_targets(
                 owned_by_dev[f.name], repo_path, tracked, src_cache, alias_map)
@@ -615,7 +762,39 @@ def run_anchored_mint(
                     tele["fold_import"] += 1
                     resolved = True
             if not resolved:
-                infra[f.name] = reason
+                still_pending.append((f, w, reason))
+        fold_pending = still_pending
+
+    # LAW (W2b.1 fix a — operator): a dev with ≥1 flow must NEVER land
+    # in the platform_infrastructure lane. Terminal rungs: span-vote
+    # (flow-path plurality, rung L2) then ancestor-walk plurality
+    # (rung L3, total whenever ≥1 dev is assigned). The lane is for
+    # genuinely FLOWLESS plumbing only; the binding is low-confidence by
+    # construction and carries a provenance note (``fold:span->…`` /
+    # ``fold:walk->…``). Degenerate scans (zero mintable anchors) keep
+    # the honest lane — there is no capability to bind to.
+    for f, w, reason in fold_pending:
+        flowful = bool(getattr(f, "flows", None))
+        if flowful and mintable:
+            src = w.canonical_id if w is not None else "none"
+            target = _span_vote(f)
+            if target is not None:
+                assignment[f.name] = (target, f"fold:span->{src}")
+                tele["fold_span_vote"] = tele.get("fold_span_vote", 0) + 1
+                continue
+            target = _ancestor_walk(f)
+            if target is not None:
+                assignment[f.name] = (target, f"fold:walk->{src}")
+                tele["fold_ancestor_walk"] = (
+                    tele.get("fold_ancestor_walk", 0) + 1)
+                continue
+        if flowful:
+            # Reachable ONLY on degenerate scans (zero mintable anchors,
+            # or an assignment-less walk) — tracked so the smoke gates
+            # can assert the law held (0 on every real product scan).
+            tele["law_flowful_in_lane"] = (
+                tele.get("law_flowful_in_lane", 0) + 1)
+        infra[f.name] = reason
 
     # Pass 4 — build the anchored product features.
     devs_by_anchor: dict[str, list["Feature"]] = defaultdict(list)
