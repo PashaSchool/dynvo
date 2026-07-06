@@ -433,6 +433,21 @@ def run_pipeline_v2(
     per_ws_telemetry = extract.per_ws_telemetry
     workspace_telemetry = extract.workspace_telemetry
 
+    # ── Stage 0.8 — product thesis (deterministic, NO LLM) ─────────
+    # Anchor-arc W2: "what is this product" for PRODUCT repos only
+    # (Stage 0.7 gate). Numbered 0.8 (intake-family judgement) but
+    # invoked here because it CONSUMES the Stage-1 anchors (schema
+    # nouns / routes / nav labels / dep categories) instead of
+    # re-parsing anything. WRITE-ONLY: surfaces as the additive
+    # ``scan_meta.product_thesis`` key below; nothing downstream reads
+    # it (guard-tested) — membership/attribution stay untouched.
+    from faultline.pipeline_v2.stage_0_8_product_thesis import (
+        run_stage_0_8,
+        scan_meta_block as _thesis_scan_meta_block,
+    )
+
+    product_thesis_result = run_stage_0_8(ctx, stage1_out, repo_class_result)
+
     # ── Stage 2 — reconciliation ────────────────────────────────────
     write_stage_input(run_dir, 2, "reconcile", {
         "stage1_out": stage1_out,
@@ -878,6 +893,14 @@ def run_pipeline_v2(
         for k, v in closure.telemetry.as_dict().items()
         if k not in {"per_feature", "attached_sample", "elapsed_sec"}
     }
+
+    # Stage 0.8 — product thesis. Additive key, omit-when-absent:
+    # non-product repo classes (and the kill-switch) skip the stage
+    # entirely, so their scan_meta stays byte-identical.
+    if product_thesis_result is not None:
+        scan_meta["product_thesis"] = _thesis_scan_meta_block(
+            product_thesis_result,
+        )
 
     # Multi-subpath engine telemetry — additive key, only emitted when
     # this run consumed an injected shared git snapshot (no schema-
