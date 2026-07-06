@@ -44,6 +44,15 @@ class AnchorCandidate:
             Filesystem-routed stacks (Next.js etc.) leave this empty —
             ``build_routes_index`` derives their routes from ``paths``.
             Additive; existing extractors do not set it.
+        route_groups: Next-style route-group names (``(marketing)`` →
+            ``"marketing"``) observed on this anchor's routing paths.
+            Product-Spine Wave 2a (spec §4.2, rootcause RC4): route
+            groups stay URL-invisible and are still STRIPPED from the
+            anchor *slug* — but their NAME is the author's own surface
+            declaration, so it is carried as metadata instead of being
+            discarded. Sorted, deduped, lowercase. Empty for stacks
+            without route groups; additive — nothing downstream is
+            required to read it.
     """
 
     name: str
@@ -53,6 +62,7 @@ class AnchorCandidate:
     display_name: str | None = None
     rationale: str = ""
     routes: tuple[tuple[str, str, str], ...] = ()
+    route_groups: tuple[str, ...] = ()
 
 
 @runtime_checkable

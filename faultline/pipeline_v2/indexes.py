@@ -267,12 +267,24 @@ def build_routes_index(
         if key in seen:
             return
         seen.add(key)
-        out.append({
+        entry: dict[str, Any] = {
             "pattern": pattern,
             "method": method,
             "feature_uuid": file_owner.get(file_str, ""),
             "file": file_str,
-        })
+        }
+        # Product-Spine Wave 2a (spec §4.2, RC4): Next route-groups are
+        # URL-invisible (correctly absent from ``pattern``) but their
+        # NAME is the author's own surface declaration — carry it as
+        # route metadata instead of discarding it at Stage 1. The key is
+        # only present when the route file actually sits under a group,
+        # so groupless stacks emit byte-identical entries.
+        from faultline.pipeline_v2.extractors.route import route_groups_of
+
+        groups = route_groups_of(file_str)
+        if groups:
+            entry["route_groups"] = list(groups)
+        out.append(entry)
 
     # Pass A — explicit ``routes`` tuples emitted by decorator-/DSL-routed
     # extractors (FastAPI etc.) where the URL pattern lives in the source,
