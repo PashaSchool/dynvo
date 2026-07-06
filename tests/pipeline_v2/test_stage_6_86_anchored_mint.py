@@ -339,6 +339,28 @@ def test_hub_amendment_stub_children_stay_under_parent():
     assert wrappers.anchor_id and wrappers.anchor_id.startswith("fold:entry")
 
 
+def test_cross_family_same_vendor_stays_separate_with_unique_display():
+    """Soc0 claroty under BOTH edr and iot_ot: two separate PFs (different
+    capability families) with UNIQUE slugs AND displays — a shared display
+    would silently merge them in the 6.7d rebuild (dev_map keys by
+    display)."""
+    plumbing, kids = _edr_fixture()
+    iot = [
+        dev("iot-ot", ["backend/services/iot_ot/base.py",
+                       "backend/services/iot_ot/factory.py"],
+            flows=[flow("poll-iot-flow", "backend/services/iot_ot/claroty.py")]),
+        dev("iot-claroty", ["backend/services/iot_ot/claroty.py"]),
+        dev("iot-zscaler", ["backend/services/iot_ot/zscaler.py"]),
+        dev("iot-defender", ["backend/services/iot_ot/defender.py"]),
+    ]
+    pfs, tele = mint([plumbing, *kids, *iot])
+    claroty_pfs = [p for p in pfs if (p.name or "").startswith("claroty")]
+    assert len(claroty_pfs) == 2, [p.name for p in pfs]
+    names = {p.name for p in claroty_pfs}
+    displays = {p.display_name for p in claroty_pfs}
+    assert len(names) == 2 and len(displays) == 2, (names, displays)
+
+
 def test_hub_family_parity_restamps_moved_children():
     plumbing, kids = _edr_fixture()
     pfs, tele = mint([plumbing, *kids])

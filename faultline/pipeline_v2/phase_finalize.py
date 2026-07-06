@@ -1315,28 +1315,9 @@ def run_finalize_phase(
                 f"surface_taxonomy: FAILED ({exc}) — continuing", feature=None,
             )
 
-    # ── platform_infrastructure[] lane (Wave 2b, operator amendment) ───
-    # The anchored path's residual surface: one row per lane resident
-    # (product_feature_id=None + shared_reason). Assembled AFTER the
-    # emission taxonomy (final scopes/reasons) and 6.97 (rows carry loc),
-    # BEFORE emission integrity. None (omitted from output) when the
-    # anchored mint did not run — the =0 A/B path stays byte-identical.
+    # platform_infrastructure[] declared here; ASSEMBLED after emission
+    # integrity (the I2 phantom drop must not leave stale lane rows).
     platform_infrastructure: list[dict[str, Any]] | None = None
-    if anchored_mint_applied:
-        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
-            build_platform_infrastructure_lane,
-        )
-        try:
-            platform_infrastructure = build_platform_infrastructure_lane(
-                features)
-            scan_meta.setdefault("stage_6_86_anchored_mint", {})[
-                "platform_infrastructure_rows"
-            ] = len(platform_infrastructure)
-        except Exception as exc:  # noqa: BLE001 — lane must never break a scan
-            platform_infrastructure = []
-            scan_meta.setdefault("warnings", []).append(
-                f"platform-infrastructure lane failed ({exc}); lane empty"
-            )
 
     # ── Emission integrity — referential round-trip guarantee ($0) ──
     # Runs LAST, after every UF / PF / flow / loc mutation, so the emitted
@@ -1444,6 +1425,28 @@ def run_finalize_phase(
                     th_tele.get("unhomed", 0),
                 ),
                 feature=None,
+            )
+
+    # ── platform_infrastructure[] lane (Wave 2b, operator amendment) ───
+    # The anchored path's residual surface: one row per lane resident
+    # (product_feature_id=None + shared_reason). Assembled AFTER emission
+    # integrity (the I2 phantom drop must not leave stale lane rows) and
+    # after 6.97 (rows carry loc). None (omitted from output) when the
+    # anchored mint did not run — the =0 A/B path stays byte-identical.
+    if anchored_mint_applied:
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+            build_platform_infrastructure_lane,
+        )
+        try:
+            platform_infrastructure = build_platform_infrastructure_lane(
+                features)
+            scan_meta.setdefault("stage_6_86_anchored_mint", {})[
+                "platform_infrastructure_rows"
+            ] = len(platform_infrastructure)
+        except Exception as exc:  # noqa: BLE001 — lane must never break a scan
+            platform_infrastructure = []
+            scan_meta.setdefault("warnings", []).append(
+                f"platform-infrastructure lane failed ({exc}); lane empty"
             )
 
     # ── Stage 7 — output ───────────────────────────────────────────

@@ -623,17 +623,24 @@ def run_anchored_mint(
         a = anchor_by_id[cid]
         contrib = devs_by_anchor[cid]
         slug = _slug(a.display)
+        display = a.display
         if slug in used_slugs:
             # Same display from two anchors (cross-FAMILY vendor clash —
             # Soc0 claroty under both edr and iot_ot): qualify with the
             # family key first (readable: `claroty-iot-ot`), the
-            # canonical-id tail as the deterministic last resort.
+            # canonical-id tail as the deterministic last resort. The
+            # DISPLAY is qualified too — dev_map / the 6.7d rebuild key
+            # capabilities by display name, so two live PFs sharing one
+            # display would silently merge downstream (grain loss).
             fam = getattr(a, "family_key", "") or ""
             cand_slug = _slug(f"{a.display}-{fam}") if fam else ""
             if not cand_slug or cand_slug in used_slugs:
                 cand_slug = _slug(
                     f"{a.display}-{re.sub(r'[^a-z0-9]+', '-', cid.lower())}")
             slug = cand_slug
+            qual = (fam.replace("-", " ").title() if fam
+                    else slug[len(_slug(a.display)) + 1:])
+            display = f"{a.display} ({qual})"
         used_slugs.add(slug)
         slug_by_anchor[cid] = slug
         desc = (
@@ -642,7 +649,7 @@ def run_anchored_mint(
             f"{len(contrib)} developer feature(s))."
         )
         pf = aggregate_product_feature(
-            name=slug, display_name=a.display, description=desc,
+            name=slug, display_name=display, description=desc,
             contrib=contrib,
         )
         pf.layer = "product"
