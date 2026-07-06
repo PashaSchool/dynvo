@@ -278,14 +278,27 @@ def _mint_bar(
     if anchor.source == "hub-core":
         return None  # gated on sibling mints by the caller
     # PAGE-SURFACE RULE (only in repos that have a page surface at all).
+    # Authored capability declarations (feature-dirs, workspace packages,
+    # python domain packages) are product evidence of their own.
     if repo_has_pages:
         has_page_evidence = (
             bool(anchor.page_route_files)
-            or bool(anchor.sources & {"fdir", "ws-pkg"})
+            or bool(anchor.sources & {"fdir", "ws-pkg", "pypkg"})
             or anchor.nav_confirmed
         )
         if not has_page_evidence:
             return "api_only_surface"
+    # PYPKG THINNESS (W2b.1 fix b): a package-domain anchor with no flow
+    # evidence and fewer than two code files is structure, not a
+    # capability (onyx `redis`/`httpx` wrapper-package class).
+    if anchor.sources == frozenset({"pypkg"}):
+        evidence: set[str] = set(anchor.files)
+        for w in winners:
+            evidence.update(anchor.matched_set(owned_paths_of(w)))
+        code_files = [p for p in evidence if _is_code(p, code_exts)]
+        if (len(code_files) < 2
+                and not _anchor_flow_evidence(anchor, winners, flow_entries)):
+            return "pypkg_thin_surface"
     # SINGLE-CONTAINER RULE — an unmerged, non-authored anchor whose
     # entire evidence is one file AND no flow lands in it (a flowful
     # single-page capability — a real login/pricing page — is legal;

@@ -396,6 +396,54 @@ def test_entry_route_mint_on_demand_rescues_flowful_page_dev():
     assert search.shared_reason is None
 
 
+# ── W2b.1 fix (b) — pypkg domains mint (onyx class) ─────────────────────
+
+
+def test_pypkg_domains_mint_and_thin_packages_lane():
+    """onyx class: backend/onyx/<domain> packages give lineage to the
+    python-monolith devs (79% no_anchor_lineage before the fix); a
+    1-file flowless wrapper package (redis class) fails the thinness
+    bar and stays an honest lane resident."""
+    tracked = [
+        "backend/onyx/__init__.py",
+        "backend/onyx/chat/__init__.py",
+        "backend/onyx/chat/service.py",
+        "backend/onyx/chat/models.py",
+        "backend/onyx/connectors/__init__.py",
+        "backend/onyx/connectors/registry.py",
+        "backend/onyx/connectors/factory.py",
+        "backend/onyx/redis/__init__.py",
+        "backend/onyx/redis/redis_pool.py",
+        "backend/onyx/server/__init__.py",
+        "backend/onyx/server/documents/__init__.py",
+        "backend/onyx/server/documents/api.py",
+        "backend/onyx/server/documents/models.py",
+    ]
+    chat = dev("chat", ["backend/onyx/chat/service.py",
+                        "backend/onyx/chat/models.py"],
+               flows=[flow("send-chat-flow", "backend/onyx/chat/service.py")])
+    documents = dev("documents", ["backend/onyx/server/documents/api.py",
+                                  "backend/onyx/server/documents/models.py"],
+                    flows=[flow("manage-documents-flow",
+                                "backend/onyx/server/documents/api.py")])
+    connectors = dev("connectors", ["backend/onyx/connectors/registry.py",
+                                    "backend/onyx/connectors/factory.py"])
+    redis_wrap = dev("cache-management", ["backend/onyx/redis/redis_pool.py"])
+    pfs, tele = mint([chat, documents, connectors, redis_wrap], [],
+                     ctx_of(tracked=tracked))
+    names = {p.name for p in pfs}
+    assert "chat" in names and "documents" in names and "connectors" in names
+    assert chat.product_feature_id == "chat"
+    assert chat.anchor_id == "pypkg:backend/onyx/chat"
+    assert documents.product_feature_id == "documents"
+    # 1-file flowless wrapper package: thinness bar → honest lane.
+    assert redis_wrap.product_feature_id is None
+    assert redis_wrap.shared_reason == "sub_mint_bar_surface"
+    rows = build_platform_infrastructure_lane(
+        [chat, documents, connectors, redis_wrap])
+    assert [r["name"] for r in rows] == ["cache-management"]
+
+
 # ── Hub amendment unit cases ─────────────────────────────────────────────
 
 

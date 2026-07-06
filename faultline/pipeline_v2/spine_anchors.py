@@ -95,10 +95,11 @@ SOURCE_RANK: dict[str, int] = {
     "hub-core": 1,
     "route": 2,
     "fdir": 3,
-    "svc": 4,
-    "schema": 5,
-    "ws-pkg": 6,
-    "ws-app": 7,
+    "pypkg": 4,
+    "svc": 5,
+    "schema": 6,
+    "ws-pkg": 7,
+    "ws-app": 8,
 }
 
 _VOCAB_FILE = "spine-anchor-vocab.yaml"
@@ -684,6 +685,151 @@ def _build_dir_anchors(
     return out
 
 
+# ── Python-package domains (W2b.1 fix b — the onyx monolith class) ───────
+
+
+def _build_pypkg_anchors(
+    ctx: Any,
+    all_owned: set[str],
+    vocab: dict[str, Any],
+) -> list[SpineAnchor]:
+    """Domain anchors from PYTHON PACKAGE structure — the universal
+    python-monolith convention (W2b.1 fix b): a top-level package
+    (``__init__.py``-marked dir whose parent is NOT a package) with
+    ≥ 3 child packages is a DOMAIN-DIR FAMILY (onyx
+    ``backend/onyx/<domain>/``, saleor ``saleor/<domain>/``); each
+    non-structural child package is a mint-eligible ``pypkg`` anchor.
+
+    Structural children DESCEND instead of naming a domain:
+      * stoplisted names (``server``, ``utils``, ``api`` …) — their own
+        child packages are the domains (onyx ``server/documents``);
+      * NAMESPACE ECHOES — a child named after a top-level package or
+        the repo itself (``backend/ee/onyx`` mirroring ``backend/onyx``,
+        the enterprise-mirror pattern);
+      * short / version-like names.
+
+    A child whose IMMEDIATE container is a service-dir word keeps the
+    ``svc`` class (LINEAGE-ONLY — the Soc0 ``widget-query`` operator
+    case must not re-arm through this source); a ``features``-class
+    container keeps ``fdir``. Never fires on guard segments
+    (tests / site-packages / vendored envs — ``pypkg_guard_segments``).
+    """
+    stop = set(vocab.get("structural_stoplist") or [])
+    guards = set(vocab.get("pypkg_guard_segments") or [])
+    fdir_containers = set(vocab.get("feature_dir_containers") or [])
+    svc_containers = set(vocab.get("service_dir_containers") or [])
+    code_exts = tuple(vocab.get("code_extensions") or [])
+    version_re = re.compile(vocab.get("version_segment_pattern") or r"^v\d+$")
+
+    tracked = sorted(
+        str(p).replace("\\", "/")
+        for p in (getattr(ctx, "tracked_files", None) or [])
+    ) or sorted(all_owned)
+
+    def _guarded(d: str) -> bool:
+        return any(
+            seg.lower() in guards or seg.startswith(".")
+            for seg in d.split("/")
+        )
+
+    init_dirs: set[str] = set()
+    for p in tracked:
+        if p.endswith("/__init__.py"):
+            d = p[: -len("/__init__.py")]
+            if d and not _guarded(d):
+                init_dirs.add(d)
+    if not init_dirs:
+        return []
+
+    def _parent(d: str) -> str:
+        return d.rsplit("/", 1)[0] if "/" in d else ""
+
+    top_pkgs = sorted(d for d in init_dirs if _parent(d) not in init_dirs)
+    echo_keys = {normalize_anchor_key(t.rsplit("/", 1)[-1]) for t in top_pkgs}
+    repo_name = str(getattr(getattr(ctx, "repo_path", None), "name", "") or "")
+    if repo_name:
+        echo_keys.add(normalize_anchor_key(repo_name))
+
+    children_of: dict[str, list[str]] = defaultdict(list)
+    for d in sorted(init_dirs):
+        children_of[_parent(d)].append(d)
+
+    # Subtree indexes over TRACKED files (one pass — scale-safe).
+    has_code: set[str] = set()
+    has_owned: set[str] = set()
+    owned_set = all_owned
+    for p in tracked:
+        is_code = p.lower().endswith(code_exts)
+        is_owned = p in owned_set
+        if not is_code and not is_owned:
+            continue
+        segs = p.split("/")
+        for i in range(1, len(segs)):
+            d = "/".join(segs[:i])
+            if is_code:
+                has_code.add(d)
+            if is_owned:
+                has_owned.add(d)
+    for p in owned_set - set(tracked):
+        segs = p.split("/")
+        for i in range(1, len(segs)):
+            has_owned.add("/".join(segs[:i]))
+
+    out: list[SpineAnchor] = []
+    #: (container dir, family already ESTABLISHED). A top-level package
+    #: must show fan-out (≥ 3 child packages) to establish the family;
+    #: a structural/echo child of an established family stays inside it
+    #: — its child packages are domains regardless of their count
+    #: (onyx ``server/`` may hold any number of API domains).
+    queue: list[tuple[str, bool]] = [(t, False) for t in top_pkgs]
+    seen: set[str] = set()
+    while queue:
+        container, established = queue.pop(0)
+        if container in seen:
+            continue
+        seen.add(container)
+        kids = sorted(children_of.get(container, []))
+        if not kids:
+            continue
+        if not established and len(kids) < 3:
+            # Not (yet) a fan-out family — descend as candidates
+            # (namespace wrappers like ``backend/ee`` holding one
+            # mirror package).
+            queue.extend((k, False) for k in kids)
+            continue
+        cbase = container.rsplit("/", 1)[-1].lower()
+        child_cls = ("svc" if cbase in svc_containers
+                     else "fdir" if cbase in fdir_containers
+                     else "pypkg")
+        for k in kids:
+            base = k.rsplit("/", 1)[-1]
+            key = normalize_anchor_key(base)
+            alnum = re.sub(r"[^a-z0-9]+", "", key)
+            if (key in stop or alnum in stop or len(alnum) < 3
+                    or key in echo_keys or version_re.match(alnum)
+                    or base.lower() in fdir_containers
+                    or base.lower() in svc_containers):
+                # structural / echo / container-word child → its OWN
+                # children are the domains (``server/features/<domain>``
+                # keeps the fdir class through the cbase rule above).
+                queue.append((k, True))
+                continue
+            if k not in has_code:
+                queue.append((k, True))  # codeless namespace dir → descend
+                continue
+            if k not in has_owned:
+                continue  # no dev owns anything here — dead anchor
+            out.append(SpineAnchor(
+                canonical_id=f"{child_cls}:{k}",
+                key=key,
+                source=child_cls,
+                display=_display_of(base),
+                prefixes=(k,),
+                sources=frozenset({child_cls}),
+            ))
+    return out
+
+
 # ── Hub families (operator amendment 2026-07-06: per-vendor PF grain) ────
 
 
@@ -962,7 +1108,7 @@ def _merge_anchors(anchors: list[SpineAnchor]) -> list[SpineAnchor]:
     (route/schema/fdir/svc; ws-pkg joins only when its basename is
     unique among workspace anchors — the basename-collision trap).
     hub-* and ws-app anchors never merge (identity anchors)."""
-    mergeable = {"route", "schema", "fdir", "svc"}
+    mergeable = {"route", "schema", "fdir", "svc", "pypkg"}
     ws_pkg_by_key: dict[str, list[SpineAnchor]] = defaultdict(list)
     for a in anchors:
         if a.source == "ws-pkg":
@@ -1046,6 +1192,7 @@ def build_spine_anchors(
     anchors.extend(_build_schema_anchors(
         _schema_keys(extractor_signals, all_owned, vocab), all_owned, vocab))
     anchors.extend(_build_dir_anchors(all_owned, vocab))
+    anchors.extend(_build_pypkg_anchors(ctx, all_owned, vocab))
     anchors.extend(_build_hub_anchors(
         [f for f in developer_features
          if getattr(f, "layer", "developer") == "developer"],

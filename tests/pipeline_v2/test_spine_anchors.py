@@ -288,6 +288,90 @@ def test_central_router_files_anchor_the_handler_file():
     assert not any(a.key == "router" for a in anchors.values())
 
 
+# ── W2b.1 fix (b) — python-package domain source ─────────────────────────
+
+
+def _onyx_shape_tracked() -> list[str]:
+    return [
+        "backend/onyx/__init__.py",
+        "backend/onyx/chat/__init__.py",
+        "backend/onyx/chat/service.py",
+        "backend/onyx/chat/models.py",
+        "backend/onyx/connectors/__init__.py",
+        "backend/onyx/connectors/registry.py",
+        "backend/onyx/indexing/__init__.py",
+        "backend/onyx/indexing/pipeline.py",
+        "backend/onyx/utils/__init__.py",
+        "backend/onyx/utils/text.py",
+        "backend/onyx/server/__init__.py",
+        "backend/onyx/server/documents/__init__.py",
+        "backend/onyx/server/documents/api.py",
+        "backend/onyx/server/manage/__init__.py",
+        "backend/onyx/server/manage/api.py",
+        "backend/onyx/server/settings/__init__.py",
+        "backend/onyx/server/settings/api.py",
+        "backend/ee/__init__.py",
+        "backend/ee/onyx/__init__.py",
+        "backend/ee/onyx/analytics/__init__.py",
+        "backend/ee/onyx/analytics/api.py",
+        "backend/ee/onyx/hooks/__init__.py",
+        "backend/ee/onyx/hooks/api.py",
+        "backend/ee/onyx/reporting/__init__.py",
+        "backend/ee/onyx/reporting/api.py",
+        "backend/tests/__init__.py",
+        "backend/tests/unit/__init__.py",
+        "backend/tests/unit/test_chat.py",
+    ]
+
+
+def test_pypkg_domain_source_python_monolith():
+    """The onyx class: backend/onyx/<domain> python packages are domain
+    anchors; stoplisted children (server/utils) DESCEND to their own
+    domains; namespace echoes (backend/ee/onyx mirroring backend/onyx)
+    descend; test trees never participate."""
+    tracked = _onyx_shape_tracked()
+    owned = [p for p in tracked if not p.startswith("backend/tests/")]
+    devs = [dev("d", owned)]
+    anchors = build_spine_anchors(
+        devs, [], ctx_of(tracked=tracked))
+    ids = by_id(anchors)
+    assert "pypkg:backend/onyx/chat" in ids
+    assert ids["pypkg:backend/onyx/chat"].source == "pypkg"
+    assert "pypkg:backend/onyx/connectors" in ids
+    # stoplisted `server` descends → its children are the domains
+    assert "pypkg:backend/onyx/server/documents" in ids
+    assert not any(c.endswith(":backend/onyx/server") for c in ids)
+    # stoplisted `utils` never a domain (and has no pkg children)
+    assert not any("onyx/utils" in c for c in ids if c.startswith("pypkg:"))
+    # namespace echo backend/ee/onyx descends to ITS domains
+    assert "pypkg:backend/ee/onyx/analytics" in ids
+    assert "pypkg:backend/ee/onyx" not in ids
+    # guard segments: no anchor under tests/
+    assert not any("tests" in c for c in ids if c.startswith("pypkg:"))
+
+
+def test_pypkg_services_container_children_stay_svc_class():
+    """Soc0 protection: a `services/` container discovered through the
+    package walk emits svc-class (LINEAGE-ONLY) children — widget_query
+    must not become mint-eligible through the pypkg source."""
+    tracked = [
+        "backend/services/__init__.py",
+        "backend/services/edr/__init__.py",
+        "backend/services/edr/cortex.py",
+        "backend/services/widget_query/__init__.py",
+        "backend/services/widget_query/base.py",
+        "backend/services/mitre_packs/__init__.py",
+        "backend/services/mitre_packs/adopt.py",
+    ]
+    devs = [dev("d", [p for p in tracked if p.endswith(".py")])]
+    anchors = build_spine_anchors(devs, [], ctx_of(tracked=tracked))
+    wq = [a for a in anchors if "widget_query" in a.canonical_id]
+    assert wq and all(a.source == "svc" for a in wq), [
+        (a.canonical_id, a.source) for a in wq]
+    assert not any(a.source == "pypkg" and "widget_query" in a.canonical_id
+                   for a in anchors)
+
+
 # ── Cross-source key merge ───────────────────────────────────────────────
 
 
