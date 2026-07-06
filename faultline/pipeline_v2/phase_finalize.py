@@ -19,6 +19,7 @@ per-stage telemetry) exactly as the inline code did.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,62 @@ from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
 )
+
+
+def _recover_uncovered_donors(
+    user_flows: list[Any],
+    features: list[Any],
+    product_features: list[Any],
+) -> dict[str, Any] | None:
+    """W1.1 donor re-cover — the post-finalize-conservation backstop run.
+
+    The finalize conservation pass resettles by span-LOC majority and can
+    leave a flowful PF with zero journeys (the in-6.7d backstop ran
+    BEFORE it); W1 §E predicted the class and the 2026-07-06 validation
+    wave shipped it (supabase ×4, midday 'Support' — validator I8).
+    Re-runs the 6.7d backstop over the STAMPED dev→PF state: its
+    reassign arm is conservation-compatible since W1.1 (same ruler as
+    the recheck the caller runs after this), its synthesize arm mints
+    ``synthesized``-tagged journeys the conservation ladder exempts —
+    so the follow-up recheck can only confirm, never undo (fixpoint in
+    one pass, deterministic). Returns telemetry, or ``None`` when the
+    backstop kill-switch is off.
+    """
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _backstop_uncovered_pfs,
+        _pf_uf_backstop_enabled,
+    )
+
+    if not _pf_uf_backstop_enabled():
+        return None
+    stamped_map = {
+        f.name: (f.product_feature_id,)
+        for f in features
+        if getattr(f, "layer", "developer") == "developer"
+        and getattr(f, "name", None)
+        and getattr(f, "product_feature_id", None)
+    }
+    bs_tele = _backstop_uncovered_pfs(
+        user_flows, product_features, stamped_map, features, set(),
+    )
+    # Provisional ids → continue the stable numbering (content-sorted
+    # among the new synths, appended after the existing UF-xxx block).
+    max_id = 0
+    for uf in user_flows:
+        m = re.match(r"^UF-(\d+)$", str(uf.id or ""))
+        if m:
+            max_id = max(max_id, int(m.group(1)))
+    fresh = [u for u in user_flows if u.id == "UF-000"]
+    fresh.sort(key=lambda u: ((u.name or "").lower(),
+                              str(u.resource or "")))
+    for i, uf in enumerate(fresh, start=1):
+        uf.id = f"UF-{max_id + i:03d}"
+    return {
+        "uncovered": bs_tele.get("pf_backstop_uncovered", 0),
+        "reassigned_ufs": bs_tele.get("pf_backstop_reassigned_ufs", 0),
+        "synthesized": bs_tele.get("pf_backstop_synthesized", 0),
+        "resolutions": bs_tele.get("pf_backstop_resolutions", []),
+    }
 
 
 def run_finalize_phase(
@@ -615,19 +672,50 @@ def run_finalize_phase(
                 _hub_tele = _hub_bind(features, product_features)
                 if _hub_tele.get("hubs"):
                     s67d_telemetry["hub_binding_post_67d"] = _hub_tele
+                # W1.1 — §4.5 at DEV grain (validator I9): Call-2 can
+                # scatter a small flowful surface dev into the shared
+                # bucket even when its flows' spans/entries sit inside ONE
+                # real PF (Soc0 dev 'api' → labels, 2026-07-06). Re-home
+                # on the conservation ACCEPT bar BEFORE the UF pass so the
+                # resettles below see the corrected ownership.
+                from faultline.pipeline_v2.conservation import (
+                    apply_uf_conservation as _apply_cons,
+                    rehome_shared_flowful_devs as _rehome,
+                )
+                _rehome_tele = _rehome(features, product_features)
+                if _rehome_tele.get("checked"):
+                    s67d_telemetry["dev_rehome_finalize"] = _rehome_tele
                 # Product-Spine §4.5 — final conservation pass: the hub
                 # binding above moves dev→PF, so UF↔PF closures moved with
                 # it; re-settle violators and null any residual
                 # Shared-Platform attachment that no real PF's code
                 # supports (a UF may never ship attached to shared).
-                from faultline.pipeline_v2.conservation import (
-                    apply_uf_conservation as _apply_cons,
-                )
                 _cons_tele = _apply_cons(
                     user_flows, features, product_features,
                     null_shared_without_signal=True,
                 )
                 s67d_telemetry["conservation_finalize"] = _cons_tele
+                # W1.1 — donor re-cover (W1 §E residual, predicted): the
+                # conservation pass above can leave a flowful PF with zero
+                # journeys (it resettles by span-LOC; the in-6.7d backstop
+                # ran BEFORE this pass) — the 2026-07-06 validation wave
+                # shipped 4 such donors on supabase + 1 on midday (I8).
+                # Re-run the backstop AFTER conservation + hub binding,
+                # then recheck: fixpoint in one pass (see
+                # _recover_uncovered_donors).
+                _donor_tele = _recover_uncovered_donors(
+                    user_flows, features, product_features,
+                )
+                if _donor_tele is not None:
+                    s67d_telemetry["donor_backstop_finalize"] = _donor_tele
+                    # Fixpoint recheck — expected no-op (synthesized
+                    # journeys are conservation-exempt; reassignments
+                    # passed the same ladder on the same ownership state).
+                    _recheck = _apply_cons(
+                        user_flows, features, product_features,
+                        null_shared_without_signal=True,
+                    )
+                    s67d_telemetry["conservation_recheck"] = _recheck
             write_stage_artifact(
                 ctx.repo_path,
                 stage_index=6,
@@ -1033,6 +1121,46 @@ def run_finalize_phase(
             stage_name="emission_integrity",
             payload=ei_result.as_dict(),
             run_dir=run_dir,
+        )
+        # W1.1 — path_index emission refresh. Lineage builds the index at
+        # the TOP of this phase, but 6.9 test-strip / 6.9b generated-strip
+        # / the 8.9.7 carve legitimately remove paths from features AFTER
+        # that, so the shipped index pointed files at features that no
+        # longer list them (Soc0 validation scan 2026-07-06: 551/2081
+        # entries stale, incl. the I18 offender — a stripped __tests__
+        # file still "owned" by the shared-resident workspace anchor).
+        # Rebuild from the FINAL features + flows: same builder, same
+        # first-claimant rule, so live ownership is untouched; entries
+        # whose only claimant vanished keep their flow join (flow_uuids)
+        # with feature_uuid="" or drop out entirely — path_index is part
+        # of the emitted output tree and must obey the same integrity
+        # contract as everything else in this block.
+        from faultline.pipeline_v2.indexes import build_path_index
+
+        _stale_index = lineage_result.path_index
+        lineage_result.path_index = build_path_index(
+            [{"uuid": f.uuid, "paths": list(f.paths)} for f in features],
+            [{"uuid": fl.uuid, "paths": list(fl.paths)}
+             for fl in bipartite.flows],
+        )
+        _refresh_stats = {
+            "entries_before": len(_stale_index),
+            "entries_after": len(lineage_result.path_index),
+            "owners_changed": sum(
+                1 for p, e in lineage_result.path_index.items()
+                if (_stale_index.get(p) or {}).get("feature_uuid")
+                != e.get("feature_uuid")
+            ),
+        }
+        scan_meta["emission_integrity"]["path_index_refresh"] = _refresh_stats
+        log_ei.info(
+            "path_index refresh: %d -> %d entries, %d owners changed"
+            % (
+                _refresh_stats["entries_before"],
+                _refresh_stats["entries_after"],
+                _refresh_stats["owners_changed"],
+            ),
+            feature=None,
         )
 
     # ── Stage 7 — output ───────────────────────────────────────────
