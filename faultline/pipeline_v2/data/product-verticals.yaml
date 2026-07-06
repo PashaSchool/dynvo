@@ -1,0 +1,333 @@
+# Stage 0.8 product thesis — vertical lexicon.
+#
+# Single source of truth for the deterministic product-thesis stage
+# (``faultline/pipeline_v2/stage_0_8_product_thesis.py``). Maps SIGNAL
+# COMBINATIONS (domain-noun families + dep-anchor categories) to a
+# product vertical. Authoring copy: ``eval/product-verticals.yaml``;
+# runtime copy: ``faultline/pipeline_v2/data/product-verticals.yaml``
+# (drift-guarded byte-identical, house pattern).
+#
+# UNIVERSALITY RULES (rule-no-magic-tuning; mirrors dependency-anchors):
+#
+#   1. Noun families are the INDUSTRY-STANDARD domain language of the
+#      vertical — the words the whole industry uses for that domain's
+#      objects (an invoice is an invoice in every finance product) —
+#      NEVER a specific repo's coinage and NEVER a repo/product name.
+#   2. Families that are universal SaaS chrome are deliberately absent:
+#      user, team, organization, workspace, member, session, settings,
+#      notification, dashboard, template, plan... Every SaaS has them,
+#      so they discriminate nothing (they are handled by the
+#      core-object stopword list below instead).
+#   3. A family may be multi-part (``event-type``): it matches only
+#      when its parts appear contiguously in the signal token's parts,
+#      so ``event`` alone (analytics events, webhook events) can never
+#      fire a scheduling rule.
+#   4. ``deps`` reference dep-anchor CATEGORY slugs (the
+#      ``stage1_anchors`` vocabulary in dependency-anchors.yaml).
+#      IS-vs-USES trap: importing posthog makes a repo an analytics
+#      *user*, not an analytics *product* — so dep evidence only ever
+#      CORROBORATES a vertical that already cleared the noun-family
+#      minimum in code; it can never establish one. Keep these lists
+#      short and only where the category genuinely co-occurs with the
+#      vertical's money path.
+#
+# Verticals are decided by ranked evidence count in code (see
+# ``derive_product_thesis``); exact ties and no-evidence repos fall
+# back to ``generic-saas``. Adding a vertical = add an entry here, no
+# Python change.
+
+verticals:
+  security-operations:
+    display: Security operations
+    audience: security & SOC teams
+    nouns:
+      - alert
+      - detection
+      - detector
+      - incident
+      - case
+      - threat
+      - vulnerability
+      - finding
+      - playbook
+      - ioc
+      - cve
+      - investigation
+      - remediation
+      - misconfiguration
+      - siem
+    deps: []
+
+  finance-invoicing:
+    display: Finance & invoicing
+    audience: finance teams & business owners
+    nouns:
+      - invoice
+      - transaction
+      - expense
+      - receipt
+      - payment
+      - payout
+      - ledger
+      - budget
+      - tax
+      - vat
+      - bank
+      - statement
+      - reconciliation
+      - accounting
+      - bookkeeping
+      - spend
+    deps:
+      - billing
+
+  document-workflow:
+    display: Document workflow
+    audience: document senders & signers
+    nouns:
+      - document
+      - signature
+      - signer
+      - signing
+      - esign
+      - envelope
+      - recipient
+      - contract
+      - clause
+      - redline
+      - dataroom
+      - watermark
+    deps: []
+
+  scheduling:
+    display: Scheduling
+    audience: hosts & invitees
+    nouns:
+      - booking
+      - availability
+      - calendar
+      - appointment
+      - meeting
+      - schedule
+      - slot
+      - attendee
+      - event-type
+      - rsvp
+      - reschedule
+    deps: []
+
+  forms-surveys:
+    display: Forms & surveys
+    audience: survey creators & respondents
+    nouns:
+      - form
+      - survey
+      - response
+      - question
+      - answer
+      - submission
+      - respondent
+      - questionnaire
+      - quiz
+      - poll
+    deps: []
+
+  e-commerce:
+    display: E-commerce
+    audience: merchants & shoppers
+    nouns:
+      - order
+      - cart
+      - checkout
+      - catalog
+      - inventory
+      - sku
+      - shipment
+      - fulfillment
+      - storefront
+      - discount
+      - coupon
+      - variant
+      - warehouse
+      - merchant
+    deps:
+      - billing
+
+  analytics:
+    display: Analytics
+    audience: product & growth teams
+    nouns:
+      - funnel
+      - cohort
+      - metric
+      - insight
+      - pageview
+      - heatmap
+      - retention
+      - segment
+      - kpi
+      - tracking
+      - conversion
+    deps: []
+
+  dev-tools:
+    display: Developer tools
+    audience: developers & platform teams
+    nouns:
+      - deployment
+      - repository
+      - api-key
+      - secret
+      - migration
+      - sdk
+      - cli
+      - branch
+      - commit
+      - build
+      - registry
+      - container
+      - database
+      - sql
+      - replication
+      - function
+      - runtime
+      - sandbox
+    deps: []
+
+  communication:
+    display: Communication
+    audience: senders & recipients
+    nouns:
+      - message
+      - email
+      - inbox
+      - thread
+      - conversation
+      - chat
+      - channel
+      - campaign
+      - broadcast
+      - sms
+      - mention
+      - contact
+    deps:
+      - email
+      - realtime
+
+# ── Fallback vertical (never matched — assigned when no rule wins) ────
+# Kept in the same file so display/audience live in ONE vocabulary.
+fallback:
+  id: generic-saas
+  display: General SaaS
+  audience: end users & teams
+
+# ── Core-object stopwords ──────────────────────────────────────────────
+# Tokens that never NAME the product's core object because every web
+# app has them: tenancy/auth/app chrome + URL plumbing. Structural web
+# conventions only — never a domain noun, never a repo-specific word.
+# (Domain-ish nouns like invoice/task/document are deliberately NOT
+# here — for the right repo they ARE the product.)
+core_object_stopwords:
+  # URL / transport plumbing
+  - api
+  - graphql
+  - trpc
+  - rpc
+  - rest
+  - internal
+  - public
+  - static
+  - assets
+  - health
+  - healthz
+  - ping
+  - status
+  - callback
+  - webhook
+  - webhooks
+  - cron
+  - embed
+  - preview
+  - proxy
+  - redirect
+  - og
+  - sitemap
+  - robots
+  # auth chrome (the auth CAPABILITY is not a core object)
+  - auth
+  - oauth
+  - sso
+  - login
+  - logout
+  - signin
+  - signup
+  - sign-in
+  - sign-up
+  - sign-out
+  - register
+  - password
+  - session
+  - token
+  - me
+  # tenancy / account chrome
+  - user
+  - account
+  - organization
+  - org
+  - team
+  - member
+  - workspace
+  - profile
+  - settings
+  - preferences
+  - admin
+  - onboarding
+  - invite
+  - invitation
+  # app shell / marketing chrome
+  - app
+  - web
+  - www
+  - home
+  - index
+  - dashboard
+  - overview
+  - docs
+  - blog
+  - legal
+  - terms
+  - privacy
+  - about
+  - pricing
+  - contact
+  - help
+  - support
+  - faq
+  - changelog
+  # CRUD verbs / view scaffolding that leak into route segments
+  - new
+  - create
+  - edit
+  - update
+  - delete
+  - list
+  - view
+  - detail
+  - details
+  - page
+  - layout
+  - component
+  - components
+  - util
+  - utils
+  - lib
+  - misc
+  - test
+  - demo
+  - example
+  - error
+  - not-found
+  - unauthorized
+  - id
+  - uuid
+  - slug
