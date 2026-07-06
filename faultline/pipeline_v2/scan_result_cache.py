@@ -95,6 +95,16 @@ ENV_OUTPUT_FLAGS = (
     "FAULTLINE_STAGE_6_7D_RESIDUAL_GUARD",
     "FAULTLINE_STAGE_6_7D_UF_RESHARE",
     "FAULTLINE_STAGE_6_7D_SHELL_ABSORB",
+    # Wave 3 — naming contract + keeper + personas (§4.7/§4.8): each
+    # shapes the emitted display layer / surface lanes, so cached scan
+    # results must key on them like every other output-shaping flag.
+    "FAULTLINE_NAMING_CONTRACT",
+    "FAULTLINE_KEEPER",
+    "FAULTLINE_PERSONA_LABELER",
+    "FAULTLINE_PERSONA_LABELER_MODEL",
+    "FAULTLINE_PERSONA_ADJUDICATOR",
+    "FAULTLINE_PERSONA_VERIFIER",
+    "FAULTLINE_PERSONA_ESCALATION_MODEL",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

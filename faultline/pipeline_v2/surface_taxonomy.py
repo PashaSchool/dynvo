@@ -514,9 +514,35 @@ class SurfaceScopeClassifier:
            lexicon hit. Everything else → ``product`` (conservative:
            never hide a product capability). No paths → ``product``.
         """
+        scope, _ambiguous, _weights = self.classify_feature_with_signals(
+            feature, route_by_file,
+        )
+        return scope
+
+    def classify_feature_with_signals(
+        self,
+        feature: Any,
+        route_by_file: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> tuple[str, bool, dict[str, int]]:
+        """:meth:`classify_feature` + the W3 §4.7 ambiguity channel.
+
+        Returns ``(scope, ambiguous, signal_weights)``. The verdict is
+        BYTE-IDENTICAL to :meth:`classify_feature` (same rules — this is
+        the same computation, annotated). ``ambiguous`` is the NARROW
+        "conflicting signals" notion the Surface Adjudicator consumes:
+
+        * a non-product signal AND a product signal are both present
+          (direct conflict), OR
+        * a non-product signal is present but the verdict fell to the
+          conservative ``product`` default only because abstaining
+          paths denied it the strict majority.
+
+        Shell-named containers and no-signal features are NOT ambiguous
+        (nothing to adjudicate — no conflicting evidence exists).
+        """
         if self.is_shell_name(_get(feature, "name"),
                               _get(feature, "display_name")):
-            return SCOPE_SHELL
+            return SCOPE_SHELL, False, {SCOPE_SHELL: 1}
         weights: dict[str, int] = {}
         total = 0
         rbf = route_by_file or {}
@@ -531,20 +557,23 @@ class SurfaceScopeClassifier:
             if sc:
                 weights[sc] = weights.get(sc, 0) + 1
         if not weights or not total:
-            return SCOPE_PRODUCT
+            return SCOPE_PRODUCT, False, weights
         product_w = weights.get(SCOPE_PRODUCT, 0)
         best_np = None
         for sc in _NON_PRODUCT_PRECEDENCE:
             w = weights.get(sc, 0)
             if w and (best_np is None or w > weights.get(best_np, 0)):
                 best_np = sc
+        ambiguous = best_np is not None and (
+            product_w > 0 or weights[best_np] * 2 <= total
+        )
         if (
             best_np is None
             or weights[best_np] * 2 <= total
             or product_w >= weights[best_np]
         ):
-            return SCOPE_PRODUCT
-        return best_np
+            return SCOPE_PRODUCT, ambiguous, weights
+        return best_np, ambiguous, weights
 
     # ── user-flow grain (parked Lane-C aggregation, extended) ───────
 
@@ -895,6 +924,7 @@ def apply_emission_taxonomy(
     routes_index: list[dict[str, Any]] | None,
     patterns: dict | None = None,
     repo_path: Any = None,
+    adjudicator: Any = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list["Feature"]]:
     """Emission-time taxonomy: tag UFs/PFs, split the non-product lane,
     dissolve info-page journeys, re-bind non-product shared devs, stamp
@@ -904,6 +934,15 @@ def apply_emission_taxonomy(
     ``(telemetry, non_product_surfaces, product_features)`` — the caller
     rebinds its ``product_features`` list (lane rows are REMOVED from it).
     ``repo_path`` enables the published-CLI product override.
+
+    ``adjudicator`` (W3 §4.7, keyed scans): callable resolving the
+    NARROW ambiguous-PF minority (conflicting deterministic signals —
+    see :meth:`SurfaceScopeClassifier.classify_feature_with_signals`).
+    Its verdict must be a scope the item's own signals support (the
+    personas module enforces that contract; re-checked here) — invalid
+    or absent verdicts keep the deterministic scope, so the adjudicator
+    can never invent a surface. ``None`` (keyless / kill-switch) is the
+    deterministic path, byte-identical to pre-W3.
     """
     tele: dict[str, Any] = {"enabled": taxonomy_enabled()}
     if not taxonomy_enabled():
@@ -935,11 +974,88 @@ def apply_emission_taxonomy(
     # list by definition (I10/I22 govern it) and carries the neutral
     # ``product`` tag so I20 activation covers every PF row.
     pf_counts: dict[str, int] = {}
+    ambiguous_pfs: list[tuple[Any, str, dict[str, int]]] = []
     for pf in product_features:
-        sc = SCOPE_PRODUCT if _is_shared_bucket(pf) else clf.classify_feature(pf, rbf)
+        if _is_shared_bucket(pf):
+            sc = SCOPE_PRODUCT
+        else:
+            sc, ambiguous, sig = clf.classify_feature_with_signals(pf, rbf)
+            if ambiguous:
+                ambiguous_pfs.append((pf, sc, sig))
         pf.surface_scope = sc
         pf_counts[sc] = pf_counts.get(sc, 0) + 1
     tele["pf_scopes"] = pf_counts
+
+    # 1d. Surface Adjudicator (W3 §4.7) — ONLY the conflicting-signal
+    # minority; the verdict set per item is bounded to the scopes its
+    # own deterministic signals support (∪ product). Runs BEFORE the
+    # lane split so a flipped marketing/docs PF leaves the product list
+    # like any deterministically-classified one. Deterministic verdicts
+    # stand on any failure/reject (never blocks).
+    #
+    # JOURNEY GUARD (W3 mini-A/B finding, openstatus `notifications`):
+    # a PF referenced by >=2 user journeys carries product-declared
+    # evidence the path lexicon can't see — the flowful-never-in-lane
+    # law (I9) at PF grain, and the same denominator doctrine as the
+    # marketing workspace-class override ("zero product-declared
+    # signals"). Such PFs are never sent for adjudication; the flip
+    # class is journey-thin info/tool surfaces only.
+    if adjudicator is not None and ambiguous_pfs:
+        uf_refs: dict[str, int] = {}
+        for uf in user_flows:
+            ref = str(_get(uf, "product_feature_id") or "")
+            if ref:
+                uf_refs[ref] = uf_refs.get(ref, 0) + 1
+        assignable = frozenset(NON_PRODUCT_PF_SCOPES) | {SCOPE_PRODUCT}
+        items = []
+        journey_guarded = 0
+        for pf, sc, sig in ambiguous_pfs:
+            allowed = sorted(
+                ({SCOPE_PRODUCT} | set(sig)) & assignable
+            )
+            if len(allowed) < 2:
+                continue  # nothing to adjudicate
+            if uf_refs.get(_pf_key(pf), 0) >= 2:
+                journey_guarded += 1
+                continue  # journey-rich ⇒ product-evidenced, never flip
+            paths = [str(p) for p in (_get(pf, "paths") or [])][:5]
+            items.append({
+                "id": _pf_key(pf),
+                "name": str(
+                    _get(pf, "display_name") or _get(pf, "name") or ""),
+                "allowed": allowed,
+                "signals": {k: v for k, v in sorted(sig.items())},
+                "paths": paths,
+            })
+        verdicts: dict[str, str] = {}
+        if items:
+            try:
+                verdicts = adjudicator(items) or {}
+            except Exception:  # noqa: BLE001 — persona must never break a scan
+                verdicts = {}
+        flips = 0
+        by_key = {_pf_key(pf): pf for pf, _sc, _sig in ambiguous_pfs}
+        allowed_by_id = {i["id"]: set(i["allowed"]) for i in items}
+        for iid, scope in verdicts.items():
+            pf_obj = by_key.get(str(iid))
+            if pf_obj is None or scope not in (
+                allowed_by_id.get(str(iid)) or set()
+            ):
+                continue
+            old = str(_get(pf_obj, "surface_scope") or "")
+            if scope != old:
+                pf_counts[old] = pf_counts.get(old, 1) - 1
+                pf_counts[scope] = pf_counts.get(scope, 0) + 1
+                pf_obj.surface_scope = scope
+                flips += 1
+        tele["adjudicator"] = {
+            "ambiguous": len(ambiguous_pfs),
+            "journey_guarded": journey_guarded,
+            "sent": len(items),
+            "verdicts": len(verdicts),
+            "flips": flips,
+        }
+        tele["pf_scopes"] = pf_counts
 
     lane: list[dict[str, Any]] = []
     if lane_enabled():

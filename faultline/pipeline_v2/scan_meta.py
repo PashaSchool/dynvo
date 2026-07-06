@@ -17,7 +17,10 @@ FeatureMap.
     ``extractor_coverage_pct`` (deterministic-feature share of total)
   - ``llm_fallback_pct`` (residual feature share)
   - ``warnings`` (free-form list, includes the >30% fallback nudge)
-  - ``elapsed_sec`` / ``cost_usd`` / ``calls`` (cost is Stage 3 + Stage 4)
+  - ``elapsed_sec`` / ``cost_usd`` / ``calls`` — assembled here from the
+    Stage 3 + Stage 4 snapshot, then REFRESHED by ``phase_finalize`` to
+    the shared CostTracker's full bill (finalize-phase LLM stages —
+    6.7b/6.7c/6.7d + personas — included; W3 rider, chain4 finding)
   - ``stage_artifact_dir`` (the per-RUN dir — not the parent slug dir)
 """
 

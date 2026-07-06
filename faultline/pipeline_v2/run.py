@@ -983,7 +983,10 @@ def run_pipeline_v2(
 
     logger.info(
         "pipeline_v2 done: run_id=%s %d features, cost $%.4f, elapsed %.1fs → %s",
-        ctx.run_id, total_features, cost_usd, elapsed, out,
+        # Full bill including the finalize-phase LLM stages (the W3 rider
+        # refreshed scan_meta inside phase_finalize; the local snapshot
+        # taken before finalize would under-report — chain4 finding).
+        ctx.run_id, total_features, tracker.total_cost_usd, elapsed, out,
     )
 
     _dl_end()  # close the Phase-0 decision-log scan bracket
