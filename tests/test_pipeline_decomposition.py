@@ -163,6 +163,13 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # I12 UF→PF ref reconcile, I14 flow-backpointer rewrite. Telemetry
     # artifact emitted on every run. See emission_integrity.py.
     (7, "emission_integrity"),
+    # Stage 6.87 (Wave 3, 2026-07-07, Product-Spine §4.8) — display-name
+    # contract: laws + keeper pin channel + deterministic candidates +
+    # PM-Labeler persona seam. Display channel only (identity untouched);
+    # $0/deterministic keyless, default ON (FAULTLINE_NAMING_CONTRACT=0
+    # off). Telemetry artifact emitted on every run. See
+    # naming_contract.py.
+    (7, "naming_contract"),
 ]
 
 
