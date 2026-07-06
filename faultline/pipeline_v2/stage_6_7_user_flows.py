@@ -1427,6 +1427,12 @@ def run_user_flow_rollup(
         "uf_filtered_infra_domain": result.get("uf_filtered_infra_domain", 0),
         "uf_plugin_collapsed": result.get("uf_plugin_collapsed", 0),
         "uf_plugin_roots": result.get("uf_plugin_roots", []),
+        # Product-Spine Wave 1 telemetry (§4.4 hub consumption + §4.5
+        # construction-time conservation).
+        "uf_hub_clustered": result.get("uf_hub_clustered", 0),
+        "uf_hub_dirs": result.get("uf_hub_dirs", []),
+        "uf_conservation_resettled": result.get(
+            "uf_conservation_resettled", 0),
     }
     return user_flows, telemetry
 
