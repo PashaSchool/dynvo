@@ -292,10 +292,10 @@ def _mint_bar(
     # evidence and fewer than two code files is structure, not a
     # capability (onyx `redis`/`httpx` wrapper-package class).
     if anchor.sources == frozenset({"pypkg"}):
-        evidence: set[str] = set(anchor.files)
+        pk_evidence: set[str] = set(anchor.files)
         for w in winners:
-            evidence.update(anchor.matched_set(owned_paths_of(w)))
-        code_files = [p for p in evidence if _is_code(p, code_exts)]
+            pk_evidence.update(anchor.matched_set(owned_paths_of(w)))
+        code_files = [p for p in pk_evidence if _is_code(p, code_exts)]
         if (len(code_files) < 2
                 and not _anchor_flow_evidence(anchor, winners, flow_entries)):
             return "pypkg_thin_surface"
