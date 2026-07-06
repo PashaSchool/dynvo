@@ -396,6 +396,27 @@ def test_entry_route_mint_on_demand_rescues_flowful_page_dev():
     assert search.shared_reason is None
 
 
+# ── W2b.1 — reserved legacy slugs never mint bare ────────────────────────
+
+
+def test_platform_named_anchor_mints_under_qualified_slug():
+    """supabase smoke finding: a REAL route anchor named `platform`
+    minted PF key `platform` — every legacy _SHARED_PF_KEYS consumer
+    (validator old-I9, taxonomy shared-bucket exemptions) then treats it
+    as the abolished shared bucket. The display keeps the author's word;
+    the slug is qualified out of the reserved namespace."""
+    routes = [{"pattern": "/platform", "method": "PAGE",
+               "file": "apps/docs/app/platform/page.tsx"}]
+    d = dev("platform", ["apps/docs/app/platform/page.tsx",
+                         "apps/docs/app/platform/nav.tsx"],
+            flows=[flow("browse-platform-flow",
+                        "apps/docs/app/platform/page.tsx")])
+    pfs, tele = mint([d], routes)
+    assert len(pfs) == 1
+    assert pfs[0].name not in ("platform", "shared-platform"), pfs[0].name
+    assert d.product_feature_id == pfs[0].name
+
+
 # ── W2b.1 fix (b) — pypkg domains mint (onyx class) ─────────────────────
 
 

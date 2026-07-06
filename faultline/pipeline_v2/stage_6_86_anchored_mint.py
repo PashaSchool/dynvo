@@ -818,7 +818,14 @@ def run_anchored_mint(
 
     product_features: list["Feature"] = []
     slug_by_anchor: dict[str, str] = {}
-    used_slugs: set[str] = set()
+    # RESERVED legacy keys (W2b.1): every _SHARED_PF_KEYS consumer
+    # (validator I9, surface-taxonomy shared-bucket exemptions, dashboard
+    # lanes) treats a PF keyed ``platform``/``shared-platform`` as the
+    # ABOLISHED shared bucket. A real anchor honestly named "platform"
+    # (supabase docs) must therefore mint under a QUALIFIED slug — the
+    # display keeps the author's word, the key stays out of the legacy
+    # namespace.
+    used_slugs: set[str] = {"platform", "shared-platform"}
     for cid in sorted(devs_by_anchor, key=lambda c: (anchor_by_id[c].display.lower(), c)):
         a = anchor_by_id[cid]
         contrib = devs_by_anchor[cid]
