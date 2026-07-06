@@ -73,6 +73,25 @@ def test_classify_path_signals() -> None:
     assert c.classify_path("src/features/blog-model/x.ts") is None
 
 
+def test_shell_group_never_paints_a_subtree() -> None:
+    """Regression (polar, 2026-07-06): ``(main)`` wraps the WHOLE product
+    app — a shell-NAMED route group must not vote shell on its subtree
+    (that falsely demoted polar's Analytics/Usage PFs to the lane). Shell
+    comes only from the root route pattern and the container name."""
+    c = SurfaceScopeClassifier()
+    assert c.classify_path(
+        "clients/apps/web/src/app/(main)/dashboard/[org]/(header)/analytics/page.tsx"
+    ) is None
+    assert c.classify_path(
+        "apps/web/app/(ee)/x/(dashboard)/programs/customers/(index)/page.tsx"
+    ) == "product"  # (dashboard) product vote survives; (index) abstains
+    pf = _feature("analytics", [
+        "clients/apps/web/src/app/(main)/dashboard/[org]/analytics/page.tsx",
+        "clients/apps/web/src/utils/organization.ts",
+    ], layer="product", display_name="Analytics")
+    assert c.classify_feature(pf) == "product"
+
+
 def test_classify_route_entry_trigger_and_shell() -> None:
     c = SurfaceScopeClassifier()
     assert c.classify_route_entry(

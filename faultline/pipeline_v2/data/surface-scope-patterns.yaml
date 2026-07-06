@@ -90,6 +90,14 @@
 # documented): system > dev_tooling > legal > docs > marketing > shell.
 # Product wins ties against non-product at feature grain (conservative).
 
+# NOTE — shell is deliberately ABSENT from route_groups: a shell-named
+# group wraps a whole SUBTREE, not a page — polar's `(main)` contains the
+# entire product app (dashboard/analytics/portal), and dub nests leaf
+# `(index)` groups inside product routes (measured on the pinned gate
+# clones, 2026-07-06: group-voted shell falsely demoted polar's Analytics
+# and Usage PFs to the lane). True shells are caught by the TWO
+# page-grain signals instead: the bare root route pattern (`/`) and the
+# container NAME identity (shell_slugs below).
 route_groups:
   product:
     - dashboard
@@ -115,11 +123,6 @@ route_groups:
     - documentation
   dev_tooling:
     - devtools
-  shell:
-    - home
-    - root
-    - index
-    - main
 
 url_segments:
   marketing:
