@@ -97,6 +97,39 @@ def test_specificity_route_beats_enclosing_workspace():
     assert d.anchor_id == "route:apps/web/app/billing"
 
 
+def test_cross_app_merged_route_beats_single_app_shell():
+    """W2b.1 fix (a), openstatus `login`: a dev whose login surface spans
+    TWO apps (6 files in apps/dashboard, 4 in apps/status-page) is won by
+    the MERGED route:login anchor (share 1.0), NOT by the ws:apps/dashboard
+    shell (share 0.6) — the shell's smaller matched set is not "more
+    specific" because its subtree does not nest inside the route subtree."""
+    ws = [SimpleNamespace(name="dashboard", path="apps/dashboard", stack="ts"),
+          SimpleNamespace(name="status-page", path="apps/status-page", stack="ts")]
+    dash = "apps/dashboard/src/app/login"
+    sp = "apps/status-page/src/app/(status-page)/[domain]/[locale]/(auth)/login"
+    routes = [
+        {"pattern": "/login", "method": "PAGE", "file": f"{dash}/page.tsx"},
+        {"pattern": "/:domain/:locale/login", "method": "PAGE",
+         "file": f"{sp}/page.tsx"},
+    ]
+    d = dev("login", [
+        f"{dash}/page.tsx", f"{dash}/layout.tsx", f"{dash}/search-params.ts",
+        f"{dash}/_components/actions.ts", f"{dash}/_components/login-button.tsx",
+        f"{dash}/_components/magic-link-form.tsx",
+        f"{sp}/page.tsx", f"{sp}/_components/section-magic-link.tsx",
+        f"{sp}/_components/section-sso.tsx", f"{sp}/actions.ts",
+    ], flows=[flow("sign-in-with-magic-link-flow",
+                   f"{dash}/_components/actions.ts")])
+    pfs, tele = mint([d], routes, ctx_of(ws))
+    assert d.product_feature_id == "login", (
+        d.product_feature_id, d.shared_reason)
+    assert d.anchor_id == "route:login" or (
+        d.anchor_id or "").startswith("route:")
+    assert d.shared_reason is None
+    rows = build_platform_infrastructure_lane([d])
+    assert rows == []
+
+
 def test_no_shared_platform_pf_ever_minted():
     """Operator amendment (final): the Shared Platform PF is abolished —
     residuals go to the platform_infrastructure lane."""
@@ -134,11 +167,15 @@ def test_api_only_anchor_folds_in_page_repo_but_mints_in_pure_api_repo():
                    flows=[flow("view-dash-flow",
                                "frontend/src/pages/dash.tsx")])
     # Repo WITH a page surface: the api-only router folds (operator case:
-    # the Soc0 api-* family must not exist as product PFs).
+    # the Soc0 api-* family must not exist as product PFs). W2b.1 law:
+    # the dev is FLOWFUL, so it never lanes — it binds to the plurality
+    # real capability with a provenance note.
     pfs, tele = mint([api_dev, page_dev], [api_route, page_route])
     assert not any(p.name == "context-items" for p in pfs)
-    assert api_dev.product_feature_id is None
-    assert api_dev.shared_reason == "sub_mint_bar_surface"
+    assert api_dev.product_feature_id == "dash"
+    assert (api_dev.anchor_id or "").startswith(("fold:span", "fold:walk"))
+    assert api_dev.shared_reason is None
+    assert build_platform_infrastructure_lane([api_dev, page_dev]) == []
     # Pure-API repo: the API surface IS the product → it mints.
     api_dev2 = dev("api-context-items", ["backend/routers/context_items.py"],
                    flows=[flow("browse-items-flow",
@@ -214,7 +251,11 @@ def test_supabase_studio_micro_route_mints_die():
     names = {p.name for p in pfs}
     assert "get-utc-time" not in names
     assert "parse-query" not in names
-    assert gut.product_feature_id is None and gut.shared_reason
+    # W2b.1 law: gut is FLOWFUL → binds to the real studio capability
+    # (never the lane); pq is flowless → honest lane resident.
+    assert gut.product_feature_id == auth.product_feature_id
+    assert (gut.anchor_id or "").startswith(("fold:", "mint:"))
+    assert gut.shared_reason is None
     assert pq.product_feature_id is None and pq.shared_reason
     # the real capability (route-deep under project/[ref]) survives
     assert auth.product_feature_id is not None
@@ -253,8 +294,175 @@ def test_widget_query_family_never_mints_service_pfs():
     for banned in ("widget-query", "iot-ot", "context-items",
                    "api-context-items", "trial", "api-trial-status"):
         assert banned not in names, banned
-    assert wq.product_feature_id is None and wq.shared_reason
+    # W2b.1 law: wq + ctx_items are FLOWFUL → bound to a real capability
+    # with a fold note (never the lane); flowless iot/trial stay honest
+    # lane residents.
+    assert wq.product_feature_id in names and wq.shared_reason is None
+    assert (wq.anchor_id or "").startswith(("fold:", "mint:"))
+    assert ctx_items.product_feature_id in names
+    assert iot.product_feature_id is None and iot.shared_reason
+    assert trial.product_feature_id is None and trial.shared_reason
     assert "detections" in names  # the real page capability minted
+
+
+# ── W2b.1 LAW: a flowful dev never lands in the lane ────────────────────
+
+
+def test_law_flowful_dev_never_in_lane():
+    """CONSTRUCTION INVARIANT (W2b.1 fix a, operator law): whenever ≥1
+    capability mints, every dev with ≥1 flow terminates in a PF — via
+    span-vote or ancestor-walk with a provenance note — and the
+    platform_infrastructure lane holds ONLY flowless devs."""
+    routes = [{"pattern": "/monitors", "method": "PAGE",
+               "file": "apps/dashboard/src/app/(dashboard)/monitors/page.tsx"}]
+    monitors = dev(
+        "monitors",
+        ["apps/dashboard/src/app/(dashboard)/monitors/page.tsx",
+         "apps/dashboard/src/app/(dashboard)/monitors/list.tsx"],
+        flows=[flow("browse-monitors-flow",
+                    "apps/dashboard/src/app/(dashboard)/monitors/page.tsx")])
+    # flowful dev with NO lineage, no route entries, no imports — the
+    # ancestor-walk terminal rung must still bind it.
+    trpc = dev("trpc", ["apps/dashboard/src/app/api/trpc/edge/route.ts"],
+               flows=[flow("call-trpc-flow",
+                           "apps/dashboard/src/app/api/trpc/edge/route.ts")])
+    # flowless plumbing — the honest lane resident.
+    plumbing = dev("importers", ["packages/importers/csv.ts"])
+    pfs, tele = mint([monitors, trpc, plumbing], routes)
+    assert {p.name for p in pfs} == {"monitors"}
+    assert trpc.product_feature_id == "monitors"
+    assert (trpc.anchor_id or "").startswith(("fold:span", "fold:walk"))
+    assert trpc.shared_reason is None
+    assert plumbing.product_feature_id is None
+    rows = build_platform_infrastructure_lane([monitors, trpc, plumbing])
+    assert [r["name"] for r in rows] == ["importers"]
+    assert all(r["flows"] == 0 for r in rows)
+    assert tele.get("law_flowful_in_lane", 0) == 0
+
+
+def test_law_degenerate_scan_keeps_honest_lane():
+    """Zero mintable anchors → there is no capability to bind to; the
+    lane stays honest even for flowful devs (documented degenerate
+    case — the law binds only when ≥1 PF exists)."""
+    d = dev("worker", ["scripts/worker.ts"],
+            flows=[flow("run-worker-flow", "scripts/worker.ts")])
+    pfs, tele = mint([d])
+    assert pfs == []
+    assert d.product_feature_id is None
+    assert tele.get("law_flowful_in_lane", 0) == 1
+
+
+def test_entry_route_mint_on_demand_rescues_flowful_page_dev():
+    """W2b.1 law rung L1: a flowful dev whose lineage was starved (owned
+    set diluted below θ across two apps) still mints its PAGE route
+    anchor on demand — the openstatus `llms/markdown` page-class rescue.
+    An API-ONLY entry surface never mints this way (page-surface rule)."""
+    ws = [SimpleNamespace(name="web", path="apps/web", stack="ts")]
+    routes = [
+        {"pattern": "/status", "method": "PAGE",
+         "file": "apps/web/src/app/(landing)/status/page.tsx"},
+        {"pattern": "/api/search", "method": "GET",
+         "file": "apps/web/src/app/api/search/route.ts"},
+        {"pattern": "/pricing", "method": "PAGE",
+         "file": "apps/web/src/app/(landing)/pricing/page.tsx"},
+    ]
+    # dilution: 2/5 files inside the status route dir (< θ), the rest
+    # spread over lib — the ws shell wins lineage but cannot mint.
+    status = dev("status", [
+        "apps/web/src/app/(landing)/status/page.tsx",
+        "apps/web/src/app/(landing)/status/status-widget.tsx",
+        "apps/web/src/lib/status/a.ts",
+        "apps/web/src/lib/status/b.ts",
+        "apps/web/src/lib/status/c.ts",
+    ], flows=[flow("view-status-flow",
+                   "apps/web/src/app/(landing)/status/page.tsx")])
+    pricing = dev("pricing",
+                  ["apps/web/src/app/(landing)/pricing/page.tsx"],
+                  flows=[flow("view-pricing-flow",
+                              "apps/web/src/app/(landing)/pricing/page.tsx")])
+    search = dev("search", ["apps/web/src/app/api/search/route.ts"],
+                 flows=[flow("search-flow",
+                             "apps/web/src/app/api/search/route.ts")])
+    pfs, tele = mint([status, pricing, search], routes, ctx_of(ws))
+    names = {p.name for p in pfs}
+    assert "status" in names, names          # minted ON DEMAND (rung L1)
+    assert status.product_feature_id == "status"
+    assert (status.anchor_id or "").startswith("mint:entry-route")
+    assert tele.get("mint_entry_route", 0) >= 1
+    # the api-only entry dev did NOT mint `search`; law bound it to a
+    # real capability instead.
+    assert "search" not in names
+    assert search.product_feature_id in names
+    assert search.shared_reason is None
+
+
+# ── W2b.1 — reserved legacy slugs never mint bare ────────────────────────
+
+
+def test_platform_named_anchor_mints_under_qualified_slug():
+    """supabase smoke finding: a REAL route anchor named `platform`
+    minted PF key `platform` — every legacy _SHARED_PF_KEYS consumer
+    (validator old-I9, taxonomy shared-bucket exemptions) then treats it
+    as the abolished shared bucket. The display keeps the author's word;
+    the slug is qualified out of the reserved namespace."""
+    routes = [{"pattern": "/platform", "method": "PAGE",
+               "file": "apps/docs/app/platform/page.tsx"}]
+    d = dev("platform", ["apps/docs/app/platform/page.tsx",
+                         "apps/docs/app/platform/nav.tsx"],
+            flows=[flow("browse-platform-flow",
+                        "apps/docs/app/platform/page.tsx")])
+    pfs, tele = mint([d], routes)
+    assert len(pfs) == 1
+    assert pfs[0].name not in ("platform", "shared-platform"), pfs[0].name
+    assert d.product_feature_id == pfs[0].name
+
+
+# ── W2b.1 fix (b) — pypkg domains mint (onyx class) ─────────────────────
+
+
+def test_pypkg_domains_mint_and_thin_packages_lane():
+    """onyx class: backend/onyx/<domain> packages give lineage to the
+    python-monolith devs (79% no_anchor_lineage before the fix); a
+    1-file flowless wrapper package (redis class) fails the thinness
+    bar and stays an honest lane resident."""
+    tracked = [
+        "backend/onyx/__init__.py",
+        "backend/onyx/chat/__init__.py",
+        "backend/onyx/chat/service.py",
+        "backend/onyx/chat/models.py",
+        "backend/onyx/connectors/__init__.py",
+        "backend/onyx/connectors/registry.py",
+        "backend/onyx/connectors/factory.py",
+        "backend/onyx/redis/__init__.py",
+        "backend/onyx/redis/redis_pool.py",
+        "backend/onyx/server/__init__.py",
+        "backend/onyx/server/documents/__init__.py",
+        "backend/onyx/server/documents/api.py",
+        "backend/onyx/server/documents/models.py",
+    ]
+    chat = dev("chat", ["backend/onyx/chat/service.py",
+                        "backend/onyx/chat/models.py"],
+               flows=[flow("send-chat-flow", "backend/onyx/chat/service.py")])
+    documents = dev("documents", ["backend/onyx/server/documents/api.py",
+                                  "backend/onyx/server/documents/models.py"],
+                    flows=[flow("manage-documents-flow",
+                                "backend/onyx/server/documents/api.py")])
+    connectors = dev("connectors", ["backend/onyx/connectors/registry.py",
+                                    "backend/onyx/connectors/factory.py"])
+    redis_wrap = dev("cache-management", ["backend/onyx/redis/redis_pool.py"])
+    pfs, tele = mint([chat, documents, connectors, redis_wrap], [],
+                     ctx_of(tracked=tracked))
+    names = {p.name for p in pfs}
+    assert "chat" in names and "documents" in names and "connectors" in names
+    assert chat.product_feature_id == "chat"
+    assert chat.anchor_id == "pypkg:backend/onyx/chat"
+    assert documents.product_feature_id == "documents"
+    # 1-file flowless wrapper package: thinness bar → honest lane.
+    assert redis_wrap.product_feature_id is None
+    assert redis_wrap.shared_reason == "sub_mint_bar_surface"
+    rows = build_platform_infrastructure_lane(
+        [chat, documents, connectors, redis_wrap])
+    assert [r["name"] for r in rows] == ["cache-management"]
 
 
 # ── Hub amendment unit cases ─────────────────────────────────────────────

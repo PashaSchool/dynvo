@@ -95,10 +95,11 @@ SOURCE_RANK: dict[str, int] = {
     "hub-core": 1,
     "route": 2,
     "fdir": 3,
-    "svc": 4,
-    "schema": 5,
-    "ws-pkg": 6,
-    "ws-app": 7,
+    "pypkg": 4,
+    "svc": 5,
+    "schema": 6,
+    "ws-pkg": 7,
+    "ws-app": 8,
 }
 
 _VOCAB_FILE = "spine-anchor-vocab.yaml"
@@ -226,11 +227,36 @@ class SpineAnchor:
     def matched_set(self, paths: Iterable[str]) -> frozenset[str]:
         return frozenset(p for p in paths if self.matches(p))
 
+    def subtree_inside(self, other: "SpineAnchor") -> bool:
+        """True when EVERY evidence unit of this anchor (dir prefixes +
+        exact files) sits inside *other*'s subtree — the structural
+        "nested subtree" test the specificity reduction requires.
+
+        Matched-set containment alone is NOT nesting (W2b.1 fix a,
+        openstatus ``login``): a MERGED cross-app route anchor
+        (``route:login`` over apps/dashboard + apps/status-page login
+        dirs) legitimately matches MORE of a dev's files than one
+        deployment shell — the shell's smaller matched set made it look
+        "more specific" and the route anchor was dropped. Only an anchor
+        whose own subtree nests inside the other's may claim to be the
+        finer grain of the same evidence.
+        """
+        units = list(self.prefixes) + sorted(self.files)
+        if not units:
+            return False
+        return all(other.matches(u) for u in units)
+
 
 # ── Route anchors ────────────────────────────────────────────────────────
 
 _GROUP_RE = re.compile(r"^\(.*\)$")
-_DYNAMIC_RE = re.compile(r"^\[+\.{0,3}[^\]]*\]+$|^[:{]")
+#: Dynamic route-param segment across EVERY router dialect (W2b.1 fix c2 —
+#: typebot `$slug` ×30 leaf mints): ``[id]``/``[[...id]]`` (Next/Svelte/
+#: Astro/Nuxt3), ``:id`` (Express/Rails/Vue), ``{id}`` (FastAPI/OpenAPI/
+#: Laravel), ``$id`` (TanStack/Remix), ``<int:id>`` (Django/Flask),
+#: ``*splat`` (catch-alls). A param segment is URL machinery, never a
+#: capability key.
+_DYNAMIC_RE = re.compile(r"^\[+\.{0,3}[^\]]*\]+$|^[:{$<*]")
 _PAGE_MARKERS = {"page", "layout", "index", "+page", "default", "route", "+server"}
 _MAX_DESCEND = 3
 
@@ -356,23 +382,52 @@ def _route_chain(
         chain.append((key_seg, prefix, depth))
     if not chain:
         # Pattern had no meaningful segment (``/`` root, pure-param) —
-        # fall back to the leaf file stem when it is a real name.
+        # fall back to the leaf file stem when it is a real name (and
+        # never a param-named leaf file: ``$slug.tsx`` / ``[id].tsx``).
         stem = _stem(segs[-1])
         if (stem and stem not in _PAGE_MARKERS and not stem.startswith("_")
-                and leaf_key):
+                and not _DYNAMIC_RE.match(stem) and leaf_key):
             chain.append((stem, None, 0))
     return chain
 
 
-def _bar_reason(key: str, version_re: re.Pattern[str]) -> str | None:
+def _bar_reason(
+    key: str, version_re: re.Pattern[str], raw_seg: str = "",
+) -> str | None:
     """Never-mint key classes (calibration traps): single-letter route
-    keys (midday i/p/r/s) and version-dir keys (linkwarden v1/v2)."""
+    keys (midday i/p/r/s), version-dir keys (linkwarden v1/v2) and
+    param-named segments of ANY router dialect (typebot ``$slug`` —
+    W2b.1 fix c2: the tokenizer strips ``$``/brackets, so the KEY looks
+    like a word; the RAW segment is the truth)."""
+    raw = (raw_seg or "").strip()
+    if raw and (_DYNAMIC_RE.match(raw) or _GROUP_RE.match(raw)
+                or raw.endswith(("]", "}", ">"))):
+        return "param_leaf"
     alnum = re.sub(r"[^a-z0-9]+", "", key.lower())
     if len(alnum) <= 1:
         return "single_letter"
     if version_re.match(alnum):
         return "version_dir"
     return None
+
+
+def _is_api_route(pattern: str, method: str, vocab: dict[str, Any]) -> bool:
+    """API-vs-page classification of one route entry — STRUCTURAL, never
+    trusting the stamped method alone (W2b.1 fix d1): the Next
+    Pages-Router extractor stamps ``method="PAGE"`` for everything under
+    ``pages/`` including ``pages/api/*`` (94 such routes on supabase
+    studio), which armed ``get-utc-time``-class api leaves with fake
+    page evidence. A route whose URL pattern rides an api-class
+    transparent segment (``/api/…``, ``/trpc/…``, ``/rest/…``,
+    ``/graphql``) IS an API surface in every dialect — pages/api is
+    Next's own API convention."""
+    if (method or "").upper() != "PAGE":
+        return True
+    transparent = set(vocab.get("route_transparent_segments") or [])
+    for seg in (pattern or "").split("/"):
+        if seg.lower() in transparent:
+            return True
+    return False
 
 
 def _build_route_anchors(
@@ -384,7 +439,7 @@ def _build_route_anchors(
     acc: dict[tuple[str, str | None], dict[str, Any]] = {}
 
     def _add(seg: str, prefix: str | None, depth: int, file: str,
-             method: str, groups: list[str]) -> None:
+             is_api: bool, groups: list[str]) -> None:
         key = normalize_anchor_key(seg)
         if not key:
             return
@@ -394,21 +449,22 @@ def _build_route_anchors(
         })
         slot["files"].add(file)
         slot["groups"].update(groups)
-        if (method or "").upper() == "PAGE":
-            slot["page"].add(file)
-        else:
+        if is_api:
             slot["api"].add(file)
+        else:
+            slot["page"].add(file)
 
     for entry in routes_index or []:
         file = str(entry.get("file") or "")
         if not file:
             continue
-        method = str(entry.get("method") or "GET")
+        pattern = str(entry.get("pattern") or "")
+        is_api = _is_api_route(pattern, str(entry.get("method") or "GET"),
+                               vocab)
         groups = [str(g) for g in (entry.get("route_groups") or [])]
-        chain = _route_chain(
-            file, str(entry.get("pattern") or ""), vocab, version_re)
+        chain = _route_chain(file, pattern, vocab, version_re)
         for seg, prefix, depth in chain:
-            _add(seg, prefix, depth, file, method, groups)
+            _add(seg, prefix, depth, file, is_api, groups)
 
     out: list[SpineAnchor] = []
     for (key, prefix) in sorted(acc, key=lambda kp: (kp[0], kp[1] or "")):
@@ -431,7 +487,7 @@ def _build_route_anchors(
             sources=frozenset({"route"}),
             page_route_files=frozenset(slot["page"]),
             api_route_files=frozenset(slot["api"]),
-            barred=_bar_reason(key, version_re),
+            barred=_bar_reason(key, version_re, raw_seg=str(slot["seg"])),
             route_groups=frozenset(slot["groups"]),
             depth=slot["depth"],
         ))
@@ -626,6 +682,151 @@ def _build_dir_anchors(
             prefixes=(prefix,),
             sources=frozenset({cls}),
         ))
+    return out
+
+
+# ── Python-package domains (W2b.1 fix b — the onyx monolith class) ───────
+
+
+def _build_pypkg_anchors(
+    ctx: Any,
+    all_owned: set[str],
+    vocab: dict[str, Any],
+) -> list[SpineAnchor]:
+    """Domain anchors from PYTHON PACKAGE structure — the universal
+    python-monolith convention (W2b.1 fix b): a top-level package
+    (``__init__.py``-marked dir whose parent is NOT a package) with
+    ≥ 3 child packages is a DOMAIN-DIR FAMILY (onyx
+    ``backend/onyx/<domain>/``, saleor ``saleor/<domain>/``); each
+    non-structural child package is a mint-eligible ``pypkg`` anchor.
+
+    Structural children DESCEND instead of naming a domain:
+      * stoplisted names (``server``, ``utils``, ``api`` …) — their own
+        child packages are the domains (onyx ``server/documents``);
+      * NAMESPACE ECHOES — a child named after a top-level package or
+        the repo itself (``backend/ee/onyx`` mirroring ``backend/onyx``,
+        the enterprise-mirror pattern);
+      * short / version-like names.
+
+    A child whose IMMEDIATE container is a service-dir word keeps the
+    ``svc`` class (LINEAGE-ONLY — the Soc0 ``widget-query`` operator
+    case must not re-arm through this source); a ``features``-class
+    container keeps ``fdir``. Never fires on guard segments
+    (tests / site-packages / vendored envs — ``pypkg_guard_segments``).
+    """
+    stop = set(vocab.get("structural_stoplist") or [])
+    guards = set(vocab.get("pypkg_guard_segments") or [])
+    fdir_containers = set(vocab.get("feature_dir_containers") or [])
+    svc_containers = set(vocab.get("service_dir_containers") or [])
+    code_exts = tuple(vocab.get("code_extensions") or [])
+    version_re = re.compile(vocab.get("version_segment_pattern") or r"^v\d+$")
+
+    tracked = sorted(
+        str(p).replace("\\", "/")
+        for p in (getattr(ctx, "tracked_files", None) or [])
+    ) or sorted(all_owned)
+
+    def _guarded(d: str) -> bool:
+        return any(
+            seg.lower() in guards or seg.startswith(".")
+            for seg in d.split("/")
+        )
+
+    init_dirs: set[str] = set()
+    for p in tracked:
+        if p.endswith("/__init__.py"):
+            d = p[: -len("/__init__.py")]
+            if d and not _guarded(d):
+                init_dirs.add(d)
+    if not init_dirs:
+        return []
+
+    def _parent(d: str) -> str:
+        return d.rsplit("/", 1)[0] if "/" in d else ""
+
+    top_pkgs = sorted(d for d in init_dirs if _parent(d) not in init_dirs)
+    echo_keys = {normalize_anchor_key(t.rsplit("/", 1)[-1]) for t in top_pkgs}
+    repo_name = str(getattr(getattr(ctx, "repo_path", None), "name", "") or "")
+    if repo_name:
+        echo_keys.add(normalize_anchor_key(repo_name))
+
+    children_of: dict[str, list[str]] = defaultdict(list)
+    for d in sorted(init_dirs):
+        children_of[_parent(d)].append(d)
+
+    # Subtree indexes over TRACKED files (one pass — scale-safe).
+    has_code: set[str] = set()
+    has_owned: set[str] = set()
+    owned_set = all_owned
+    for p in tracked:
+        is_code = p.lower().endswith(code_exts)
+        is_owned = p in owned_set
+        if not is_code and not is_owned:
+            continue
+        segs = p.split("/")
+        for i in range(1, len(segs)):
+            d = "/".join(segs[:i])
+            if is_code:
+                has_code.add(d)
+            if is_owned:
+                has_owned.add(d)
+    for p in owned_set - set(tracked):
+        segs = p.split("/")
+        for i in range(1, len(segs)):
+            has_owned.add("/".join(segs[:i]))
+
+    out: list[SpineAnchor] = []
+    #: (container dir, family already ESTABLISHED). A top-level package
+    #: must show fan-out (≥ 3 child packages) to establish the family;
+    #: a structural/echo child of an established family stays inside it
+    #: — its child packages are domains regardless of their count
+    #: (onyx ``server/`` may hold any number of API domains).
+    queue: list[tuple[str, bool]] = [(t, False) for t in top_pkgs]
+    seen: set[str] = set()
+    while queue:
+        container, established = queue.pop(0)
+        if container in seen:
+            continue
+        seen.add(container)
+        kids = sorted(children_of.get(container, []))
+        if not kids:
+            continue
+        if not established and len(kids) < 3:
+            # Not (yet) a fan-out family — descend as candidates
+            # (namespace wrappers like ``backend/ee`` holding one
+            # mirror package).
+            queue.extend((k, False) for k in kids)
+            continue
+        cbase = container.rsplit("/", 1)[-1].lower()
+        child_cls = ("svc" if cbase in svc_containers
+                     else "fdir" if cbase in fdir_containers
+                     else "pypkg")
+        for k in kids:
+            base = k.rsplit("/", 1)[-1]
+            key = normalize_anchor_key(base)
+            alnum = re.sub(r"[^a-z0-9]+", "", key)
+            if (key in stop or alnum in stop or len(alnum) < 3
+                    or key in echo_keys or version_re.match(alnum)
+                    or base.lower() in fdir_containers
+                    or base.lower() in svc_containers):
+                # structural / echo / container-word child → its OWN
+                # children are the domains (``server/features/<domain>``
+                # keeps the fdir class through the cbase rule above).
+                queue.append((k, True))
+                continue
+            if k not in has_code:
+                queue.append((k, True))  # codeless namespace dir → descend
+                continue
+            if k not in has_owned:
+                continue  # no dev owns anything here — dead anchor
+            out.append(SpineAnchor(
+                canonical_id=f"{child_cls}:{k}",
+                key=key,
+                source=child_cls,
+                display=_display_of(base),
+                prefixes=(k,),
+                sources=frozenset({child_cls}),
+            ))
     return out
 
 
@@ -907,7 +1108,7 @@ def _merge_anchors(anchors: list[SpineAnchor]) -> list[SpineAnchor]:
     (route/schema/fdir/svc; ws-pkg joins only when its basename is
     unique among workspace anchors — the basename-collision trap).
     hub-* and ws-app anchors never merge (identity anchors)."""
-    mergeable = {"route", "schema", "fdir", "svc"}
+    mergeable = {"route", "schema", "fdir", "svc", "pypkg"}
     ws_pkg_by_key: dict[str, list[SpineAnchor]] = defaultdict(list)
     for a in anchors:
         if a.source == "ws-pkg":
@@ -991,6 +1192,7 @@ def build_spine_anchors(
     anchors.extend(_build_schema_anchors(
         _schema_keys(extractor_signals, all_owned, vocab), all_owned, vocab))
     anchors.extend(_build_dir_anchors(all_owned, vocab))
+    anchors.extend(_build_pypkg_anchors(ctx, all_owned, vocab))
     anchors.extend(_build_hub_anchors(
         [f for f in developer_features
          if getattr(f, "layer", "developer") == "developer"],

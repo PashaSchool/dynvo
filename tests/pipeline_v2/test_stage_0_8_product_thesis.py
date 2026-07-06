@@ -365,7 +365,7 @@ def test_run_stage_0_8_never_raises_on_broken_input(tmp_path: Path) -> None:
 
 def test_lexicon_shape_and_universality_conventions() -> None:
     lex = load_thesis_lexicon()
-    assert len(lex.rules) == 9
+    assert len(lex.rules) == 10
     assert lex.fallback_id == GENERIC_VERTICAL
     assert lex.core_object_stopwords
     seen: set[str] = set()
@@ -391,6 +391,7 @@ def test_expected_verticals_present() -> None:
         "security-operations", "finance-invoicing", "document-workflow",
         "scheduling", "forms-surveys", "e-commerce", "analytics",
         "dev-tools", "communication",
+        "enterprise-search",
     }
 
 
@@ -437,6 +438,85 @@ def test_grep_guard_no_pipeline_module_reads_product_thesis() -> None:
     )
 
 
+# ── W2b.1 (e) — lexicon polish ──────────────────────────────────────────
+
+
+def test_vendor_tokens_never_core_objects() -> None:
+    """rallly 'stripes': Stripe webhook routes leaked the vendor token
+    into the core objects — a vendor/brand token names an integration
+    (the dep-anchor FAMILY carries it), never the product's own object.
+    Chrome additions (control-panel/handler/manage/domain) same class."""
+    signals = ThesisSignals(
+        route_segments=(
+            "polls", "polls", "poll", "calendar", "availability",
+            "stripe", "stripe", "stripe", "slack-app",
+            "control-panel", "control-panel", "handlers", "manage",
+            "domains",
+        ),
+        dep_categories=("billing",),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "scheduling"
+    assert "stripe" not in thesis.core_objects
+    assert "slack-app" not in thesis.core_objects
+    assert "control-panel" not in thesis.core_objects
+    assert "handler" not in thesis.core_objects
+    assert "manage" not in thesis.core_objects
+    assert "domain" not in thesis.core_objects
+    assert "poll" in thesis.core_objects
+
+
+def test_enterprise_search_vertical_onyx_shape() -> None:
+    """onyx: connector/embedding/indexing/chunk retrieval vocabulary +
+    the ai dep beats communication's chat/channel/message (the wrong
+    'Communication…senders & recipients' verdict on an enterprise-search
+    product)."""
+    signals = ThesisSignals(
+        route_segments=(
+            "chat", "chat", "channels", "message",
+            "connector", "connector-docs", "cancel-new-embedding",
+            "indexing", "chunk-info", "search",
+        ),
+        dep_categories=("ai", "email"),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "enterprise-search", thesis.evidence["ranked"]
+    assert thesis.audience == "knowledge workers & IT teams"
+
+
+def test_document_workflow_wins_papermark_shape() -> None:
+    """papermark: dataroom/document/agreement/viewer/visitor/link +
+    file-uploads outweigh the real-but-secondary chat/conversation/
+    message surface (dataroom Q&A)."""
+    signals = ThesisSignals(
+        schema_nouns=(
+            "Agreement", "Dataroom", "Document", "Link", "Viewer",
+            "VisitorGroup", "Chat", "Conversation", "Message",
+        ),
+        route_segments=("documents", "datarooms", "links", "viewer",
+                        "chat", "conversations", "emails"),
+        nav_labels=("Documents", "Datarooms"),
+        dep_categories=("file-uploads", "email", "billing"),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "document-workflow", thesis.evidence["ranked"]
+    assert "agreement" in thesis.evidence["ranked"][0]["noun_families"]
+
+
+def test_dev_tools_unaffected_openstatus_shape() -> None:
+    """Regression guard: the new vertical/families must not flip a
+    dev-tools repo (openstatus: api-key/cli/registry vs chat/email)."""
+    signals = ThesisSignals(
+        schema_nouns=("ApiKey", "Incident", "Monitor"),
+        route_segments=("api-keys", "cli", "registry", "chat", "emails",
+                        "monitors", "monitors"),
+        nav_labels=("Monitors", "API Keys", "CLI"),
+        dep_categories=("email", "ai"),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "dev-tools", thesis.evidence["ranked"]
+
+
 #: The stage may import ONLY these faultline modules — signal loading,
 #: string collectors, the 0.7 verdict vocabulary, and the artifact /
 #: logging / replay plumbing. Everything that decides membership,
@@ -449,6 +529,7 @@ _IMPORT_ALLOWLIST = {
     "faultline.pipeline_v2.extractors.base",      # TYPE_CHECKING only
     "faultline.pipeline_v2.stage_7_output",       # artifact writer
     "faultline.pipeline_v2.run_logger",           # StageLogger
+    "faultline.pipeline_v2.naming_validator",     # VENDOR_TOKENS vocabulary
     "faultline.replay.capture",                   # replay input capture
 }
 

@@ -536,6 +536,8 @@ def _core_objects(
     occurrence count (desc), then alphabetical. Chrome/plumbing tokens
     (YAML stopword list) never qualify.
     """
+    from faultline.pipeline_v2.naming_validator import VENDOR_TOKENS
+
     stats: dict[str, dict[str, Any]] = {}
 
     def _feed(channel: str, token: str) -> None:
@@ -547,6 +549,12 @@ def _core_objects(
             return
         if len(parts) == 1 and len(parts[0]) < 3:
             return  # 2-char fragments (``me``, ``ui``) are never a thesis noun
+        if any(p in VENDOR_TOKENS for p in parts):
+            # W2b.1 (e): a vendor/brand token names an INTEGRATION, never
+            # the product's own core object (rallly "stripes" = Stripe
+            # webhook routes; the dep-anchor channel already carries the
+            # billing/email/... FAMILY corroboration for the vertical).
+            return
         entry = stats.setdefault(
             canon, {"channels": set(), "count": 0},
         )

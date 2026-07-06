@@ -92,6 +92,98 @@ def test_shell_group_never_paints_a_subtree() -> None:
     assert c.classify_feature(pf) == "product"
 
 
+def _typebot_landing_routes() -> list[dict]:
+    lp = "apps/landing-page/src/routes"
+    return [
+        {"pattern": "/healthz", "method": "PAGE", "file": f"{lp}/healthz.ts"},
+        {"pattern": "/sitemap[.]xml", "method": "PAGE",
+         "file": f"{lp}/sitemap[.]xml.ts"},
+        {"pattern": "/_layout/about", "method": "PAGE",
+         "file": f"{lp}/_layout/about.tsx"},
+        {"pattern": "/_layout/oss-friends", "method": "PAGE",
+         "file": f"{lp}/_layout/oss-friends.tsx"},
+        {"pattern": "/_layout/pricing", "method": "PAGE",
+         "file": f"{lp}/_layout/pricing.tsx"},
+        {"pattern": "/_layout/blog/$slug", "method": "PAGE",
+         "file": f"{lp}/_layout/blog/$slug.tsx"},
+        {"pattern": "/_layout/blog", "method": "PAGE",
+         "file": f"{lp}/_layout/blog/index.tsx"},
+        {"pattern": "/_layout/faq/$slug", "method": "PAGE",
+         "file": f"{lp}/_layout/faq/$slug.tsx"},
+        {"pattern": "/_layout/faq", "method": "PAGE",
+         "file": f"{lp}/_layout/faq/index.tsx"},
+        {"pattern": "/_layout/templates/$slug", "method": "PAGE",
+         "file": f"{lp}/_layout/templates/$slug.tsx"},
+        {"pattern": "/_layout/templates", "method": "PAGE",
+         "file": f"{lp}/_layout/templates/index.tsx"},
+    ]
+
+
+def test_marketing_workspace_class_override_typebot_shape() -> None:
+    """W2b.1 fix (c1): a workspace whose routes are ALL public marketing/
+    info pages (typebot apps/landing-page — TanStack, no route groups) is
+    a MARKETING surface: every path under it classifies marketing, so the
+    pricing/blog/about PFs reach the non-product lane at emission."""
+    # typebot's actual name rides the workspace VOCAB (landing-page was
+    # added to the lexicon); the structural override covers any name.
+    c = SurfaceScopeClassifier(routes_index=_typebot_landing_routes())
+    assert c.classify_path(
+        "apps/landing-page/src/features/pricing/PlanComparisonsTables.tsx"
+    ) == "marketing"
+    # STRUCTURAL case — same route profile under a lexicon-free name.
+    promo = [dict(e, file=e["file"].replace("apps/landing-page/",
+                                            "apps/promo-site/"))
+             for e in _typebot_landing_routes()]
+    cs = SurfaceScopeClassifier(routes_index=promo)
+    assert cs._ws_scope_overrides == {"apps/promo-site": "marketing"}
+    assert cs.classify_path(
+        "apps/promo-site/src/features/pricing/PlanComparisonsTables.tsx"
+    ) == "marketing"
+    pricing = _feature("pricing", [
+        "apps/landing-page/src/routes/_layout/pricing.tsx",
+        "apps/landing-page/src/features/pricing/PlanComparisonsTables.tsx",
+        "apps/landing-page/src/features/pricing/PricingHeading.tsx",
+        "apps/landing-page/src/features/pricing/Faq.tsx",
+    ], layer="product", display_name="Pricing")
+    assert c.classify_feature(pricing) == "marketing"
+
+
+def test_marketing_workspace_override_never_fires_with_api_routes() -> None:
+    """openstatus apps/web keeps its product surface: ANY api-method
+    route (webhook/search/upload) disqualifies the workspace override,
+    and a product-declared route group does too."""
+    web = [
+        {"pattern": "/blog/why", "method": "PAGE",
+         "file": "apps/web/src/app/(landing)/blog/why/page.tsx"},
+        {"pattern": "/pricing", "method": "PAGE",
+         "file": "apps/web/src/app/(landing)/pricing/page.tsx"},
+        {"pattern": "/api/webhook/stripe", "method": "POST",
+         "file": "apps/web/src/app/api/webhook/stripe/route.ts"},
+    ]
+    c = SurfaceScopeClassifier(routes_index=web)
+    assert c._ws_scope_overrides == {}
+    # product-group case: all PAGE but one route declares (dashboard)
+    dash = [
+        {"pattern": "/pricing", "method": "PAGE",
+         "file": "apps/x/src/app/pricing/page.tsx"},
+        {"pattern": "/blog", "method": "PAGE",
+         "file": "apps/x/src/app/blog/page.tsx"},
+        {"pattern": "/home", "method": "PAGE",
+         "file": "apps/x/src/app/(dashboard)/home/page.tsx"},
+    ]
+    c2 = SurfaceScopeClassifier(routes_index=dash)
+    assert c2._ws_scope_overrides == {}
+    # vocab-classified workspaces are skipped (vocab stays authoritative)
+    www = [
+        {"pattern": "/blog", "method": "PAGE",
+         "file": "apps/www/pages/blog.tsx"},
+        {"pattern": "/pricing", "method": "PAGE",
+         "file": "apps/www/pages/pricing.tsx"},
+    ]
+    c3 = SurfaceScopeClassifier(routes_index=www)
+    assert "apps/www" not in c3._ws_scope_overrides
+
+
 def test_classify_route_entry_trigger_and_shell() -> None:
     c = SurfaceScopeClassifier()
     assert c.classify_route_entry(

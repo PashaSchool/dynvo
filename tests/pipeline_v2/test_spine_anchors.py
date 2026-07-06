@@ -204,6 +204,73 @@ def test_group_and_param_dirs_never_locate_the_key():
         "apps/dashboard/src/app/[locale]/(app)/apps",)
 
 
+def test_param_segments_transparent_in_all_router_dialects():
+    """W2b.1 fix (c2), typebot `$slug` x30: TanStack/Remix `$param`,
+    Django/Flask `<int:id>` and `*splat` segments are URL machinery —
+    never a chain key, never an anchor. The dir key is the collection
+    segment (`blog`), and a param-keyed leaf can never mint."""
+    routes = [
+        {"pattern": "/_layout/blog/$slug", "method": "PAGE",
+         "file": "apps/landing-page/src/routes/_layout/blog/$slug.tsx"},
+        {"pattern": "/_layout/blog", "method": "PAGE",
+         "file": "apps/landing-page/src/routes/_layout/blog/index.tsx"},
+        {"pattern": "/articles/<int:pk>", "method": "GET",
+         "file": "backend/articles/urls.py"},
+        {"pattern": "/files/*splat", "method": "PAGE",
+         "file": "app/routes/files.tsx"},
+    ]
+    devs = [dev("d", sorted({r["file"] for r in routes}))]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    keys = {a.key for a in anchors if a.source == "route"}
+    assert "slug" not in keys, keys          # $slug never a key
+    assert not any(k.startswith(("pk", "int")) for k in keys), keys
+    assert "splat" not in keys, keys
+    blog = [a for a in anchors if a.source == "route" and a.key == "blog"]
+    assert blog and blog[0].prefixes == (
+        "apps/landing-page/src/routes/_layout/blog",)
+
+
+def test_param_named_raw_segment_is_barred():
+    """Defense-in-depth: a dialect the transparency regex misses still
+    hits the param_leaf mint bar via the RAW segment."""
+    import re as _re
+
+    from faultline.pipeline_v2.spine_anchors import _bar_reason
+
+    vre = _re.compile(r"^v\d+$")
+    assert _bar_reason("slug", vre, raw_seg="$slug") == "param_leaf"
+    assert _bar_reason("id", vre, raw_seg="[id]") == "param_leaf"
+    assert _bar_reason("id", vre, raw_seg="{id}") == "param_leaf"
+    assert _bar_reason("id", vre, raw_seg=":id") == "param_leaf"
+    assert _bar_reason("pk", vre, raw_seg="<int:pk>") == "param_leaf"
+    assert _bar_reason("blog", vre, raw_seg="blog") is None
+
+
+def test_pages_api_routes_classify_api_despite_page_method():
+    """W2b.1 fix (d1), supabase get-utc-time class: the Pages-Router
+    extractor stamps method=PAGE on pages/api/* files; the URL pattern
+    (/api/...) is the structural truth — such routes are API surface and
+    carry NO page evidence."""
+    routes = [
+        {"pattern": "/api/get-utc-time", "method": "PAGE",
+         "file": "apps/studio/pages/api/get-utc-time.ts"},
+        {"pattern": "/api/trpc/edge/:trpc", "method": "PAGE",
+         "file": "apps/web/src/app/api/trpc/edge/[trpc]/route.ts"},
+        {"pattern": "/maintenance", "method": "PAGE",
+         "file": "apps/studio/pages/maintenance.tsx"},
+    ]
+    devs = [dev("d", sorted({r["file"] for r in routes}))]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    gut = [a for a in anchors if a.key == "get-utc-time"]
+    assert gut, [a.canonical_id for a in anchors]
+    assert not gut[0].page_route_files
+    assert gut[0].api_route_files == frozenset(
+        {"apps/studio/pages/api/get-utc-time.ts"})
+    # a REAL page keeps page evidence
+    mt = [a for a in anchors if a.key == "maintenance"]
+    assert mt and mt[0].page_route_files
+
+
 def test_central_router_files_anchor_the_handler_file():
     """FastAPI class: no routing-root run in the path → the handler FILE
     is the subtree (never a phantom ``routers``-dir anchor)."""
@@ -219,6 +286,90 @@ def test_central_router_files_anchor_the_handler_file():
     assert anchors["route:context-item"].files == frozenset(
         {"backend/routers/context_items.py"})
     assert not any(a.key == "router" for a in anchors.values())
+
+
+# ── W2b.1 fix (b) — python-package domain source ─────────────────────────
+
+
+def _onyx_shape_tracked() -> list[str]:
+    return [
+        "backend/onyx/__init__.py",
+        "backend/onyx/chat/__init__.py",
+        "backend/onyx/chat/service.py",
+        "backend/onyx/chat/models.py",
+        "backend/onyx/connectors/__init__.py",
+        "backend/onyx/connectors/registry.py",
+        "backend/onyx/indexing/__init__.py",
+        "backend/onyx/indexing/pipeline.py",
+        "backend/onyx/utils/__init__.py",
+        "backend/onyx/utils/text.py",
+        "backend/onyx/server/__init__.py",
+        "backend/onyx/server/documents/__init__.py",
+        "backend/onyx/server/documents/api.py",
+        "backend/onyx/server/manage/__init__.py",
+        "backend/onyx/server/manage/api.py",
+        "backend/onyx/server/settings/__init__.py",
+        "backend/onyx/server/settings/api.py",
+        "backend/ee/__init__.py",
+        "backend/ee/onyx/__init__.py",
+        "backend/ee/onyx/analytics/__init__.py",
+        "backend/ee/onyx/analytics/api.py",
+        "backend/ee/onyx/hooks/__init__.py",
+        "backend/ee/onyx/hooks/api.py",
+        "backend/ee/onyx/reporting/__init__.py",
+        "backend/ee/onyx/reporting/api.py",
+        "backend/tests/__init__.py",
+        "backend/tests/unit/__init__.py",
+        "backend/tests/unit/test_chat.py",
+    ]
+
+
+def test_pypkg_domain_source_python_monolith():
+    """The onyx class: backend/onyx/<domain> python packages are domain
+    anchors; stoplisted children (server/utils) DESCEND to their own
+    domains; namespace echoes (backend/ee/onyx mirroring backend/onyx)
+    descend; test trees never participate."""
+    tracked = _onyx_shape_tracked()
+    owned = [p for p in tracked if not p.startswith("backend/tests/")]
+    devs = [dev("d", owned)]
+    anchors = build_spine_anchors(
+        devs, [], ctx_of(tracked=tracked))
+    ids = by_id(anchors)
+    assert "pypkg:backend/onyx/chat" in ids
+    assert ids["pypkg:backend/onyx/chat"].source == "pypkg"
+    assert "pypkg:backend/onyx/connectors" in ids
+    # stoplisted `server` descends → its children are the domains
+    assert "pypkg:backend/onyx/server/documents" in ids
+    assert not any(c.endswith(":backend/onyx/server") for c in ids)
+    # stoplisted `utils` never a domain (and has no pkg children)
+    assert not any("onyx/utils" in c for c in ids if c.startswith("pypkg:"))
+    # namespace echo backend/ee/onyx descends to ITS domains
+    assert "pypkg:backend/ee/onyx/analytics" in ids
+    assert "pypkg:backend/ee/onyx" not in ids
+    # guard segments: no anchor under tests/
+    assert not any("tests" in c for c in ids if c.startswith("pypkg:"))
+
+
+def test_pypkg_services_container_children_stay_svc_class():
+    """Soc0 protection: a `services/` container discovered through the
+    package walk emits svc-class (LINEAGE-ONLY) children — widget_query
+    must not become mint-eligible through the pypkg source."""
+    tracked = [
+        "backend/services/__init__.py",
+        "backend/services/edr/__init__.py",
+        "backend/services/edr/cortex.py",
+        "backend/services/widget_query/__init__.py",
+        "backend/services/widget_query/base.py",
+        "backend/services/mitre_packs/__init__.py",
+        "backend/services/mitre_packs/adopt.py",
+    ]
+    devs = [dev("d", [p for p in tracked if p.endswith(".py")])]
+    anchors = build_spine_anchors(devs, [], ctx_of(tracked=tracked))
+    wq = [a for a in anchors if "widget_query" in a.canonical_id]
+    assert wq and all(a.source == "svc" for a in wq), [
+        (a.canonical_id, a.source) for a in wq]
+    assert not any(a.source == "pypkg" and "widget_query" in a.canonical_id
+                   for a in anchors)
 
 
 # ── Cross-source key merge ───────────────────────────────────────────────

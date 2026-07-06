@@ -131,6 +131,25 @@ workspace_excluded_segments:
   - example
   - examples
 
+# Python-package domain discovery guards (W2b.1 fix b — the onyx class:
+# a python monolith keeps its domains as `<top_pkg>/<domain>/` packages,
+# `__init__.py`-marked). A dir whose ANY segment matches below never
+# participates in package-domain discovery (universal noise classes:
+# vendored envs, test trees, generated caches).
+pypkg_guard_segments:
+  - test
+  - tests
+  - testing
+  - site-packages
+  - node_modules
+  - venv
+  - virtualenv
+  - vendor
+  - third_party
+  - dist
+  - build
+  - __pycache__
+
 # Manifest files that mark a top-level dir as a deployment unit in a
 # non-workspace repo (Soc0 backend/ + frontend/ class) — such units are
 # shells (never mint), used for shell-lineage accounting only.

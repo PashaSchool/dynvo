@@ -97,7 +97,18 @@ verticals:
       - redline
       - dataroom
       - watermark
-    deps: []
+      # W2b.1 (e): document-sharing industry language — DocuSign's
+      # "agreement"/NDA vocabulary and DocSend's viewer/visitor/link
+      # analytics grain (papermark class). `link`/`viewer`/`visitor`
+      # alone can never establish the vertical (MIN_NOUN_FAMILIES=2
+      # guards dub/linkwarden/analytics products).
+      - agreement
+      - nda
+      - viewer
+      - visitor
+      - link
+    deps:
+      - file-uploads
 
   scheduling:
     display: Scheduling
@@ -194,6 +205,36 @@ verticals:
       - sandbox
     deps: []
 
+  enterprise-search:
+    # W2b.1 (e): the onyx class — enterprise search / RAG / AI-assistant
+    # platforms. Nouns are the retrieval-industry standard vocabulary
+    # (connectors that INGEST sources, embeddings, chunking, reranking),
+    # deliberately excluding pervasive 2026 tokens (llm/agent/prompt/
+    # mcp) that fire on every dev-tools repo.
+    display: Enterprise search & AI
+    audience: knowledge workers & IT teams
+    nouns:
+      - connector
+      - embedding
+      - indexing
+      - reindex
+      - chunk
+      - retrieval
+      - rag
+      - rerank
+      - reranking
+      - semantic-search
+      - knowledge-base
+      - document-set
+      - ingestion
+      - crawl
+      - crawler
+      - assistant
+      - copilot
+      - vector-store
+    deps:
+      - ai
+
   communication:
     display: Communication
     audience: senders & recipients
@@ -245,6 +286,9 @@ core_object_stopwords:
   - callback
   - webhook
   - webhooks
+  - handler
+  - domain
+  - domains
   - cron
   - embed
   - preview
@@ -281,6 +325,7 @@ core_object_stopwords:
   - settings
   - preferences
   - admin
+  - control-panel
   - onboarding
   - invite
   - invitation
@@ -311,6 +356,7 @@ core_object_stopwords:
   - edit
   - update
   - delete
+  - manage
   - list
   - view
   - detail

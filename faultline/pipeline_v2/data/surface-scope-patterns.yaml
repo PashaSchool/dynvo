@@ -187,6 +187,8 @@ workspace_dirs:
     - marketing
     - landing
     - landings
+    - landing-page
+    - landing-pages
     - blog
     - brand
   docs:
