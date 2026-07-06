@@ -143,7 +143,7 @@ _NEUTRAL_STEMS = frozenset(
     {"page", "route", "index", "layout", "_index", "default"},
 )
 
-_DYNAMIC_SEG_RE = re.compile(r"^\[.*\]$|^:.+$|^<.+>$|^\{.+\}$|^\*")
+_DYNAMIC_SEG_RE = re.compile(r"^\[.*\]$|^:.+$|^<.+>$|^\{.+\}$|^\*|^\$")
 
 _TRIGGER_INTERACTIVE = "interactive"
 
@@ -216,7 +216,9 @@ class SurfaceScopeClassifier:
     stands unchanged."""
 
     def __init__(self, patterns: dict | None = None,
-                 repo_path: Any = None) -> None:
+                 repo_path: Any = None,
+                 routes_index: Iterable[Mapping[str, Any]] | None = None,
+                 ) -> None:
         cfg = patterns if patterns is not None else load_patterns()
         self._groups = _invert(cfg.get("route_groups"))
         self._url = _invert(cfg.get("url_segments"))
@@ -233,6 +235,80 @@ class SurfaceScopeClassifier:
             str(s).lower()
             for s in ((cfg.get("url_segments") or {}).get("legal") or [])
         )
+        # W2b.1 fix (c1) — the STRUCTURAL workspace-class signal: a
+        # workspace whose routes are ALL public marketing/info pages IS
+        # a marketing surface even when its dir name sits outside the
+        # lexicon (typebot apps/landing-page under TanStack: no route
+        # groups, so per-file lexicon signals drown in abstentions at
+        # feature grain). Built once from the routes_index; empty when
+        # the caller has no routes.
+        self._ws_scope_overrides: dict[str, str] = {}
+        if routes_index is not None:
+            self._ws_scope_overrides = self._workspace_route_overrides(
+                routes_index)
+
+    def _workspace_route_overrides(
+        self, routes_index: Iterable[Mapping[str, Any]],
+    ) -> dict[str, str]:
+        """``{workspace prefix: scope}`` for workspaces that are WHOLLY a
+        public marketing surface, decided structurally from their route
+        profile (W2b.1 fix c1):
+
+          * every route is a PAGE (any API-method route disqualifies —
+            openstatus apps/web keeps its api/webhook product surface);
+          * every route is interactive (no system triggers);
+          * ZERO product-declared signals (an authored ``(dashboard)``
+            route-group vote wins);
+          * ≥ 1 marketing/legal lexicon signal, and marketing + legal +
+            info-page signals form a STRICT MAJORITY of the workspace's
+            routes (abstains count in the denominator — the same
+            conservative ratio rule as feature-grain voting).
+
+        Workspaces the lexicon already classifies (apps/www, apps/docs)
+        are skipped — the vocabulary stays authoritative.
+        """
+        by_ws: dict[str, list[Mapping[str, Any]]] = {}
+        for entry in routes_index or []:
+            f = _norm(str(entry.get("file") or "")).lower()
+            segs = [s for s in f.split("/") if s]
+            if len(segs) >= 3 and segs[0] in _WORKSPACE_CONTAINERS:
+                by_ws.setdefault("/".join(segs[:2]), []).append(entry)
+        out: dict[str, str] = {}
+        for ws, entries in sorted(by_ws.items()):
+            ws_name = ws.split("/")[1]
+            if self._workspace.get(ws_name):
+                continue  # lexicon-classified workspace — vocab wins
+            if any(str(e.get("method") or "").upper() != "PAGE"
+                   for e in entries):
+                continue
+            if any(str(e.get("trigger") or _TRIGGER_INTERACTIVE)
+                   != _TRIGGER_INTERACTIVE for e in entries):
+                continue
+            n = len(entries)
+            mk_legal = 0
+            product = 0
+            for e in entries:
+                pattern = str(e.get("pattern") or "")
+                file = str(e.get("file") or "")
+                hits: set[str] = set()
+                sc_p = self.classify_route_pattern(pattern)
+                if sc_p:
+                    hits.add(sc_p)
+                sc_f = self.classify_path(file)
+                if sc_f:
+                    hits.add(sc_f)
+                if SCOPE_PRODUCT in hits:
+                    product += 1
+                    continue
+                info = self.is_info_page_path(file) or any(
+                    s in self._info_segments
+                    for s in pattern.lower().split("/")
+                )
+                if "marketing" in hits or "legal" in hits or info:
+                    mk_legal += 1
+            if product == 0 and mk_legal >= 1 and mk_legal * 2 > n:
+                out[ws] = "marketing"
+        return out
 
     # ── path / route / name signals ─────────────────────────────────
 
@@ -291,6 +367,10 @@ class SurfaceScopeClassifier:
                     hits.add(sc)
         if len(segs) > 1:
             sc = self._root_dirs.get(segs[0])
+            if sc:
+                hits.add(sc)
+        if len(segs) >= 2 and self._ws_scope_overrides:
+            sc = self._ws_scope_overrides.get("/".join(segs[:2]))
             if sc:
                 hits.add(sc)
         if SCOPE_PRODUCT in hits:
@@ -563,7 +643,8 @@ def tag_layer1(
     tele: dict[str, Any] = {"enabled": taxonomy_enabled()}
     if not taxonomy_enabled():
         return tele
-    clf = SurfaceScopeClassifier(patterns, repo_path=repo_path)
+    clf = SurfaceScopeClassifier(patterns, repo_path=repo_path,
+                                 routes_index=routes_index)
     route_counts: dict[str, int] = {}
     for entry in routes_index or []:
         sc = clf.classify_route_entry(entry)
@@ -828,7 +909,8 @@ def apply_emission_taxonomy(
     if not taxonomy_enabled():
         return tele, [], product_features
 
-    clf = SurfaceScopeClassifier(patterns, repo_path=repo_path)
+    clf = SurfaceScopeClassifier(patterns, repo_path=repo_path,
+                                 routes_index=routes_index)
     rbf = _route_by_file(routes_index)
     route_files = frozenset(rbf.keys())
     flow_by_id = _flow_lookup(flows)
