@@ -182,6 +182,9 @@ class EmissionIntegrityResult:
     uf_pf_refs_nulled: int = 0
     flow_backpointers_rewritten: int = 0
     flow_backpointers_nulled: int = 0
+    # Product-Spine §4.1 — bare-dir sweep (root-marker paths / member_files
+    # entries removed at emission). 0 on a clean spine.
+    bare_dir_paths_dropped: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -193,6 +196,7 @@ class EmissionIntegrityResult:
             "uf_pf_refs_nulled": self.uf_pf_refs_nulled,
             "flow_backpointers_rewritten": self.flow_backpointers_rewritten,
             "flow_backpointers_nulled": self.flow_backpointers_nulled,
+            "bare_dir_paths_dropped": self.bare_dir_paths_dropped,
         }
 
 
@@ -337,6 +341,16 @@ def enforce_emission_integrity(
     final UF membership.
     """
     result = EmissionIntegrityResult()
+    # Product-Spine §4.1 — final bare-dir sweep (root markers only at this
+    # layer; the tracked-file-aware directory guard lives at Stage 2). Runs
+    # FIRST so a feature whose only "content" was a whole-repo marker is
+    # then correctly classified as a phantom below. Kill-switch shared with
+    # the claim-time guard: FAULTLINE_SPINE_BAREDIR=0.
+    from faultline.pipeline_v2.spine_hygiene import strip_bare_dir_feature_paths
+
+    result.bare_dir_paths_dropped = strip_bare_dir_feature_paths(
+        list(features) + list(product_features),
+    )
     features, product_features = _drop_phantoms(features, product_features, result)
     _reconcile_uf_pf_refs(product_features, user_flows, result)
     _rewrite_flow_backpointers(user_flows, flows, result)

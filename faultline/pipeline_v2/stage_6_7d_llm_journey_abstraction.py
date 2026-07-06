@@ -1644,7 +1644,16 @@ def _build_product_features(
     # full set of real capabilities.
     deferred: list[tuple["Feature", str | None]] = []
     container_devs: list["Feature"] = []
+    # Product-Spine §4.1 — concern facets never join a capability: not
+    # assigned, not token-rescued, not residual (their product_feature_id
+    # stays None and their paths never enter any PF union).
+    from faultline.pipeline_v2.spine_hygiene import is_facet as _is_facet_dev
+
     for dev in developer_features:
+        if _is_facet_dev(dev):
+            pf_tele["devs_facet_excluded"] = (
+                pf_tele.get("devs_facet_excluded", 0) + 1)
+            continue
         nm = dev.display_name or dev.name
         cap = dev_map.get(nm)
         if container_guard and _is_container_page(dev):
@@ -2664,7 +2673,14 @@ def run_journey_abstraction(
     # for BOTH LLM calls, so the product abstraction never sees (or pays the
     # digest cap for) the DF layer's container decomposition. Their files
     # re-join the right capability via _propagate_dev_map at reconstruction.
-    dev_view, sub_to_parent = _rollup_split_view(developer_features)
+    # Product-Spine §4.1: concern FACETS are excluded from the digest and
+    # from Call-2 re-attribution — a cross-cutting view is never a
+    # capability owner, so the LLM must not see (or map) it.
+    from faultline.pipeline_v2.spine_hygiene import is_facet as _is_facet
+
+    non_facet_devs = [f for f in developer_features if not _is_facet(f)]
+    tele["facet_devs_excluded"] = len(developer_features) - len(non_facet_devs)
+    dev_view, sub_to_parent = _rollup_split_view(non_facet_devs)
     digest = _build_digest(dev_view, product_features, user_flows, routes_index)
     tele.update({
         "digest_rolled_subs": len(sub_to_parent),

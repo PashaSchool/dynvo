@@ -345,16 +345,26 @@ def apply_feature_loc(
         dev_dircount.append(dc)
     dev_flowcount = [len(getattr(f, "flows", None) or []) for f in dev_features]
     dev_slug = [str(getattr(f, "name", "") or "") for f in dev_features]
+    # Product-Spine §4.1 — a concern FACET never wins primary ownership of a
+    # shared file: the structural owner does (the facet's claim is a
+    # cross-cutting VIEW). Facet-exclusive files still count on the facet
+    # itself (visible), but a facet has no product_feature_id, so its owned
+    # lines never roll into any PF.
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
+    dev_is_facet = [1 if is_facet(f) else 0 for f in dev_features]
 
     def _primary(fp: str) -> int:
         owners = file_to_devs[fp]
         if len(owners) == 1:
             return owners[0]
         d = _parent_dir(fp)
-        # Max sibling-dir count, then max flow count, then smallest slug.
+        # Non-facet first, then max sibling-dir count, then max flow count,
+        # then smallest slug.
         return min(
             owners,
             key=lambda i: (
+                dev_is_facet[i],
                 -dev_dircount[i].get(d, 0),
                 -dev_flowcount[i],
                 dev_slug[i],

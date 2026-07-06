@@ -172,6 +172,11 @@ class DeveloperFeature:
     confidence: Confidence
     display_name: str | None = None
     rationale: str = ""
+    # Product-Spine §4.1 (2026-07-06) — ``"facet"`` when the feature is a
+    # cross-cutting concern view (see ``spine_hygiene.classify_concern_facets``);
+    # ``None`` for ordinary vertical features. Propagated onto the public
+    # ``Feature.role`` by Stage 5.
+    role: str | None = None
     # Per-source confidence_self values, kept for downstream tie-breaks.
     source_confidences: dict[str, float] = field(default_factory=dict)
     # Stage 2.6 (2026-06) — per-file membership provenance. Populated
@@ -900,6 +905,27 @@ def stage_2_reconcile(
             if isinstance(c, AnchorCandidate):
                 flat.append(c)
 
+    # Product-Spine §4.1 — bare-dir member ban (defensive claim-time guard).
+    # Root markers (``.``/``..``) and PROVABLE directories (a non-file path
+    # that prefixes tracked files) are rejected from every candidate, so no
+    # extractor can hand a whole-repo / whole-app claim to the merge below.
+    # The source fix lives in extractors/package.py; this guard makes the
+    # invariant hold for every current and future Stage-1 source.
+    # Kill-switch: FAULTLINE_SPINE_BAREDIR=0.
+    from faultline.pipeline_v2.spine_hygiene import (
+        classify_concern_facets,
+        strip_bare_dir_paths,
+    )
+
+    baredir_tele = strip_bare_dir_paths(flat, ctx.tracked_files)
+    notes_pre: list[str] = []
+    if baredir_tele["paths_dropped"]:
+        notes_pre.append(
+            f"spine-baredir: rejected {baredir_tele['paths_dropped']} bare-dir "
+            f"path claim(s) on {baredir_tele['candidates_touched']} candidate(s): "
+            f"{baredir_tele['sample'][:5]}",
+        )
+
     if not flat:
         return Stage2Result(
             features=[],
@@ -920,7 +946,7 @@ def stage_2_reconcile(
 
     # 2) Per group: choose canonical name + assemble DeveloperFeature.
     features: list[DeveloperFeature] = []
-    notes: list[str] = []
+    notes: list[str] = list(notes_pre)
     for group_indices in groups:
         group = [flat[i] for i in group_indices]
         canonical, llm_note = _pick_canonical_name(
@@ -1019,6 +1045,24 @@ def stage_2_reconcile(
         )
     zero_path_drops_count = len(zero_path)
     zero_path_drops_sample = [f.name for f in zero_path[:10]]
+
+    # 4.5) Product-Spine §4.1 — concern-facet classification. Runs on the
+    #      FINAL authored claim set (post attribution + zero-path drop, before
+    #      any derived closure/expansion): a feature named after a documented
+    #      universal cross-cutting concern whose claims span >1 route/workspace
+    #      subtree becomes role="facet" — kept as a cross-cutting view, but
+    #      excluded from PF membership / closure seeding / LOC rollups
+    #      downstream. Kill-switch: FAULTLINE_SPINE_FACETS=0.
+    ws_roots = tuple(
+        w.path for w in (ctx.workspaces or []) if getattr(w, "path", None)
+    )
+    facet_tele = classify_concern_facets(features, ws_roots)
+    if facet_tele["facets"]:
+        notes.append(
+            f"spine-facets: classified {facet_tele['facets']} cross-cutting "
+            f"concern facet(s): "
+            f"{[n['name'] for n in facet_tele['names'][:10]]}",
+        )
 
     # 5) Compute unattributed residual.
     attributed = {p for f in features for p in f.paths}

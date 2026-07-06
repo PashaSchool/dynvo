@@ -779,8 +779,14 @@ def run_membership_closure(
                 True,
             ))
 
+    # Product-Spine §4.1 — concern facets never seed the import closure:
+    # a cross-cutting view (auth/email/analytics… spanning subtrees) BFS-ing
+    # from its anchors would vacuum whole-app scope back into the concern.
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
     anchor_features = [
-        f for f in features if ANCHOR_SOURCES & set(f.sources)
+        f for f in features
+        if ANCHOR_SOURCES & set(f.sources) and not is_facet(f)
     ]
     telemetry.anchor_features = len(anchor_features)
 

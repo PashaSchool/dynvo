@@ -1,0 +1,95 @@
+# Product-Spine §4.1 — universal cross-cutting concern vocabulary.
+#
+# A developer feature whose NAME matches one of these concerns (exact
+# slug/alias identity — never substring) AND whose claimed files span
+# more than one route/workspace subtree is classified as a FACET
+# (role="facet"): a cross-cutting view over its files' structural
+# owners, excluded from product-feature membership and LOC rollups.
+# See faultline/pipeline_v2/spine_hygiene.py.
+#
+# WHY THESE ENTRIES ARE UNIVERSAL (rule-no-repo-paths / no repo tuning):
+#   * The first nine slugs are the engine's own Stage-1
+#     dependency-category anchors (stage1_anchors in
+#     dependency-anchors.yaml): billing / auth / email /
+#     background-jobs / file-uploads / analytics / realtime / ai /
+#     i18n. Those categories were CHOSEN because the capability is a
+#     horizontal add-on wired through the whole app (a `stripe` import
+#     anywhere implies billing plumbing everywhere) — which is exactly
+#     the cross-cutting property this rule keys on. Evidence report
+#     2026-07-06 §E-2: these very slugs carried bare-dir paths in
+#     10/10 board scans.
+#   * logging / telemetry / config are the remaining concerns the
+#     approved spec enumerates (§4.1) — the classic AOP cross-cutting
+#     catalogue, horizontal in any stack.
+#
+# DELIBERATELY ABSENT (reviewed 2026-07-06): nouns that are wholesale
+# PRODUCTS for entire repo classes — storage (supabase/minio), secrets
+# (infisical), notifications (novu/dittofeed), monitoring/status
+# (openstatus/sentry-like), search (typesense-like). Listing them would
+# facet-demote a core capability on those repo classes; the horizontal
+# variants of those concerns are already covered by the span test on
+# the entries below.
+#
+# A concern-named feature that lives in ONE subtree (e.g. all of auth
+# under app/(auth)/) is NOT a facet — single-subtree concerns are
+# legitimate vertical features and keep PF membership.
+#
+# Aliases are case-insensitive full-name identities (token-set equality
+# also matches, so "background-jobs" ≡ "jobs-background"). Adding a
+# concern = add an entry here; no Python change.
+
+concerns:
+  auth:
+    aliases:
+      - authentication
+      - authorization
+      - authn
+      - authz
+  billing:
+    aliases:
+      - payments
+      - subscriptions
+  email:
+    aliases:
+      - emails
+      - mail
+      - mailer
+  background-jobs:
+    aliases:
+      - jobs
+      - workers
+      - queue
+      - queues
+      - cron
+      - scheduler
+  file-uploads:
+    aliases:
+      - uploads
+  analytics:
+    aliases:
+      - tracking
+  realtime:
+    aliases:
+      - websockets
+      - websocket
+  ai:
+    aliases:
+      - llm
+  i18n:
+    aliases:
+      - internationalization
+      - localization
+      - l10n
+      - locales
+      - translations
+  logging:
+    aliases:
+      - logs
+      - logger
+  telemetry:
+    aliases:
+      - observability
+      - instrumentation
+  config:
+    aliases:
+      - configuration
