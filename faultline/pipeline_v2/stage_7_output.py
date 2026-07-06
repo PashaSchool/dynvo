@@ -146,6 +146,7 @@ def build_feature_map(
     scan_commit: str = "",
     engine_version: str = "",
     monorepo: dict[str, Any] | None = None,
+    non_product_surfaces: list[dict[str, Any]] | None = None,
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
 
@@ -200,6 +201,7 @@ def build_feature_map(
         engine_version=engine_version,
         monorepo=dict(monorepo or {}),
         repo_class=repo_class,
+        non_product_surfaces=list(non_product_surfaces or []),
     )
 
 
@@ -224,6 +226,7 @@ def stage_7_output(
     scan_commit: str = "",
     engine_version: str = "",
     monorepo: dict[str, Any] | None = None,
+    non_product_surfaces: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -251,6 +254,7 @@ def stage_7_output(
         scan_commit=scan_commit,
         engine_version=engine_version,
         monorepo=monorepo,
+        non_product_surfaces=non_product_surfaces,
     )
 
     # Snapshot Stage 7's input for replay before we hand off to the writer.

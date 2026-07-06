@@ -1,0 +1,901 @@
+"""Product-Spine Wave 2a — product-surface taxonomy (spec §4.2, Stage 6.85).
+
+Kills rootcause RC4 / evidence class C3: the engine had no product-surface
+taxonomy, so any route container could become a product feature — 39
+info-page PFs on the 10-scan board (26 in supabase alone: "Marketing Site
+Pages" 1090 files, "Docs Site & API Reference", Blog, Brand Assets…), each
+padded with exactly one journey. The one structural signal separating
+marketing from product surfaces (Next route-groups) was stripped at Stage 1
+(now carried — see ``extractors/route.route_groups_of``).
+
+Two wiring points in ``phase_finalize``:
+
+**Layer-1 tagging** (:func:`tag_layer1`) — right after Stage 6.8 lineage +
+Stage 6.8b system-route classification: stamps ``surface_scope`` on every
+``routes_index`` entry and every developer feature. Stage 6.7d consumes the
+dev tags (tier-3 route-surface promotion skips non-product devs; the
+container-page guard consumes the ``shell`` tag).
+
+**Emission lane** (:func:`apply_emission_taxonomy`) — after Stage 6.97 LOC +
+the flowless-shell resolution, before emission integrity:
+
+  1. re-stamps dev tags (paths moved through strips/carves) and tags every
+     user flow + product feature;
+  2. **non-product lane** (spec §4.2 consequence a): product features whose
+     evidence majority is marketing / docs / legal / dev_tooling / shell
+     leave ``product_features[]`` into the additive
+     ``non_product_surfaces[]`` output lane, taking their journeys with
+     them — non-product surfaces never mint PFs in the product list
+     (validator I20);
+  3. **info-page dissolution** (consequence b): a marketing/legal-scope
+     journey over single info PAGES (contact / about / imprint / faq /
+     terms class) attached to a PRODUCT feature dissolves — its member
+     flows become plain dev-flows of the hosting UF (same product feature,
+     max entry-path overlap) — info pages are never their own UF/PF;
+  4. **dev lane re-bind**: a shared-platform dev whose surface is
+     non-product re-binds to the lane surface claiming its paths — info
+     pages are never Shared Platform residents;
+  5. **shared-resident reasons** (validator I22): every dev feature still
+     bound to the shared bucket carries a machine-readable
+     ``shared_reason`` (no_anchor_lineage | genuinely_shared_infra |
+     facet_view | awaiting_wave2_mint | non_product_surface).
+
+``surface_scope`` vocabulary (spec §4.2):
+``product | marketing | docs | legal | system | dev_tooling | shell``.
+
+Signals: route-groups (author's own surface declaration), workspace class
+(apps/www, apps/docs), URL-segment lexicon, Stage 6.8b system triggers,
+container identity. Patterns live in ``surface-scope-patterns.yaml``
+(authoring copy ``eval/surface-scope-patterns.yaml``, drift-guarded) —
+structural web conventions only, never a repo-specific path. ``system``
+scope comes ONLY from Stage 6.8b verdicts (never lexicon-derived — /webhooks
+and /cron segments appear in product settings pages; measured on the
+recorded Lane-C claim table).
+
+Ambiguous / no-signal → ``product`` (conservative: never hide a product
+journey). Aggregation is strict-majority/argmax over path evidence —
+scale-invariant, no tuned constants (rule-no-magic-tuning). Adapted from the
+parked ``agent/scope-filter`` classifier (Lane C, 2026-07-05), extended to
+route/dev/PF grain + legal/shell scopes + the wired consequences.
+
+Deterministic, $0 LLM, no network. Kill-switches (default ON):
+``FAULTLINE_SURFACE_TAXONOMY=0`` disables tagging AND every consequence;
+``FAULTLINE_SURFACE_LANE=0`` keeps tags but disables the emission-lane
+moves (2-4); ``FAULTLINE_SHARED_REASONS=0`` disables the I22 stamping.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
+
+from faultline.pipeline_v2.data import load_yaml
+
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from faultline.models.types import Feature, Flow, UserFlow
+
+__all__ = [
+    "SURFACE_TAXONOMY_ENV",
+    "SURFACE_LANE_ENV",
+    "SHARED_REASONS_ENV",
+    "SURFACE_SCOPES",
+    "SCOPE_PRODUCT",
+    "NON_PRODUCT_PF_SCOPES",
+    "taxonomy_enabled",
+    "lane_enabled",
+    "shared_reasons_enabled",
+    "SurfaceScopeClassifier",
+    "load_patterns",
+    "is_non_product_dev",
+    "tag_layer1",
+    "apply_emission_taxonomy",
+]
+
+SURFACE_TAXONOMY_ENV = "FAULTLINE_SURFACE_TAXONOMY"
+SURFACE_LANE_ENV = "FAULTLINE_SURFACE_LANE"
+SHARED_REASONS_ENV = "FAULTLINE_SHARED_REASONS"
+
+_PATTERNS_FILE = "surface-scope-patterns.yaml"
+
+SCOPE_PRODUCT = "product"
+SCOPE_SYSTEM = "system"
+SCOPE_SHELL = "shell"
+
+#: Fixed precedence among competing NON-product scopes (most specific /
+#: least ambiguous first — documented in the pattern file header).
+_NON_PRODUCT_PRECEDENCE = (
+    "system", "dev_tooling", "legal", "docs", "marketing", "shell",
+)
+
+SURFACE_SCOPES = (SCOPE_PRODUCT,) + _NON_PRODUCT_PRECEDENCE
+
+#: PF scopes that leave the product list for the non-product lane —
+#: mirrors the validator's I20 bad-scope set. ``system`` deliberately
+#: STAYS in the product list (background-job capabilities are product
+#: infrastructure with legitimate journeys; I20 allows it).
+NON_PRODUCT_PF_SCOPES = frozenset(
+    ("marketing", "docs", "legal", "dev_tooling", "shell"),
+)
+
+#: Dev scopes that block the 6.7d tier mints / capability joins and that
+#: re-bind from the shared bucket to the lane (shell is handled by the
+#: container-page guard instead).
+_NON_PRODUCT_DEV_SCOPES = frozenset(("marketing", "docs", "legal", "dev_tooling"))
+
+_SHARED_PF_KEYS = frozenset(("shared-platform", "platform"))
+
+# Path segments that mark the start of URL context in a route file path —
+# framework routing roots (Next app/, Next+Astro+Nuxt pages/, Remix/SvelteKit
+# routes/). Only segments AFTER the last such marker are matched against the
+# url_segments lexicon, so arbitrary source dirs (src/features/blog-model/…)
+# never match. (Parked Lane-C rule, kept verbatim.)
+_URL_ROOT_MARKERS = frozenset({"app", "pages", "routes"})
+
+# Monorepo workspace container dirs — ``<container>/<name>`` where <name> is
+# checked against the workspace_dirs lexicon.
+_WORKSPACE_CONTAINERS = frozenset(
+    {"apps", "packages", "sites", "websites", "tools"},
+)
+
+# Route-file basenames that carry no lexical signal of their own.
+_NEUTRAL_STEMS = frozenset(
+    {"page", "route", "index", "layout", "_index", "default"},
+)
+
+_DYNAMIC_SEG_RE = re.compile(r"^\[.*\]$|^:.+$|^<.+>$|^\{.+\}$|^\*")
+
+_TRIGGER_INTERACTIVE = "interactive"
+
+
+def _flag(env: str) -> bool:
+    return os.environ.get(env, "1").strip().lower() not in {"0", "false"}
+
+
+def taxonomy_enabled() -> bool:
+    """Master switch — default ON, ``FAULTLINE_SURFACE_TAXONOMY=0`` off."""
+    return _flag(SURFACE_TAXONOMY_ENV)
+
+
+def lane_enabled() -> bool:
+    """Emission-lane consequences — default ON, ``FAULTLINE_SURFACE_LANE=0``
+    keeps the tags but moves nothing."""
+    return _flag(SURFACE_LANE_ENV)
+
+
+def shared_reasons_enabled() -> bool:
+    """I22 stamping — default ON, ``FAULTLINE_SHARED_REASONS=0`` off."""
+    return _flag(SHARED_REASONS_ENV)
+
+
+def load_patterns() -> dict[str, Any]:
+    """Load the runtime pattern file (``{}`` if absent → classifier no-ops)."""
+    try:
+        return load_yaml(_PATTERNS_FILE) or {}
+    except FileNotFoundError:  # pragma: no cover — packaging bug surface
+        return {}
+
+
+def _invert(block: Mapping[str, Any] | None) -> dict[str, str]:
+    """``{scope: [token, …]}`` → ``{token: scope}`` (first scope in
+    precedence order wins a duplicate token; ``product`` first)."""
+    out: dict[str, str] = {}
+    if not block:
+        return out
+    for scope in (SCOPE_PRODUCT,) + _NON_PRODUCT_PRECEDENCE:
+        for tok in block.get(scope) or []:
+            out.setdefault(str(tok).lower(), scope)
+    return out
+
+
+def _norm(path: str) -> str:
+    return str(path).replace("\\", "/").strip().strip("/")
+
+
+def _get(obj: Any, name: str, default: Any = None) -> Any:
+    """Field access that works for pydantic models AND plain dicts."""
+    if isinstance(obj, Mapping):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+class SurfaceScopeClassifier:
+    """Pure, deterministic scope classifier over path / route / name
+    evidence. Importable standalone (offline re-scoring reads recorded scan
+    artifacts directly); the engine wiring lives in :func:`tag_layer1` /
+    :func:`apply_emission_taxonomy`."""
+
+    def __init__(self, patterns: dict | None = None) -> None:
+        cfg = patterns if patterns is not None else load_patterns()
+        self._groups = _invert(cfg.get("route_groups"))
+        self._url = _invert(cfg.get("url_segments"))
+        self._workspace = _invert(cfg.get("workspace_dirs"))
+        self._root_dirs = _invert(cfg.get("root_dirs"))
+        self._shell_slugs = frozenset(
+            str(s).lower() for s in (cfg.get("shell_slugs") or [])
+        )
+        self._info_segments = frozenset(
+            str(s).lower() for s in (cfg.get("info_page_segments") or [])
+        ) | frozenset(
+            str(s).lower()
+            for s in ((cfg.get("url_segments") or {}).get("legal") or [])
+        )
+
+    # ── path / route / name signals ─────────────────────────────────
+
+    def classify_path(self, path: str) -> str | None:
+        """Scope signal of one file path (``None`` = no signal).
+
+        Signal sources, all collected then resolved by precedence
+        (product first — the author's ``(dashboard)`` declaration beats a
+        stray lexicon hit):
+
+        1. Next route-groups — valid anywhere in the path;
+        2. URL-context segments after the LAST routing-root marker;
+        3. workspace dirs (``apps/docs``, ``packages/cli`` …);
+        4. repo-ROOT surface dirs (``docs/…``, ``website/…`` — the
+           conservative ``root_dirs`` subset).
+        """
+        if not path:
+            return None
+        segs = [s for s in _norm(path).lower().split("/") if s]
+        hits: set[str] = set()
+        for seg in segs:
+            if seg.startswith("(") and seg.endswith(")") and len(seg) > 2:
+                inner = seg[1:-1]
+                if inner.startswith("."):
+                    continue  # intercepting-route marker, not a group
+                sc = self._groups.get(inner) or self._url.get(inner)
+                if sc:
+                    hits.add(sc)
+        root_idx = -1
+        for i, seg in enumerate(segs):
+            if seg in _URL_ROOT_MARKERS:
+                root_idx = i
+        if root_idx >= 0:
+            url_segs = [
+                s for s in segs[root_idx + 1:]
+                if not (s.startswith("(") and s.endswith(")"))
+            ]
+            if url_segs:
+                # filename → stem (``blog.tsx`` → ``blog``); neutral drop
+                stem = url_segs[-1].rsplit(".", 1)[0]
+                url_segs = url_segs[:-1] + (
+                    [] if stem in _NEUTRAL_STEMS else [stem]
+                )
+            for s in url_segs:
+                sc = self._url.get(s)
+                if sc:
+                    hits.add(sc)
+        for i, seg in enumerate(segs[:-1]):
+            if seg in _WORKSPACE_CONTAINERS:
+                sc = self._workspace.get(segs[i + 1])
+                if sc:
+                    hits.add(sc)
+        if len(segs) > 1:
+            sc = self._root_dirs.get(segs[0])
+            if sc:
+                hits.add(sc)
+        if SCOPE_PRODUCT in hits:
+            return SCOPE_PRODUCT
+        for sc in _NON_PRODUCT_PRECEDENCE:
+            if sc in hits:
+                return sc
+        return None
+
+    def classify_route_pattern(self, route_pattern: str) -> str | None:
+        """Scope signal of one URL route pattern (``None`` = no signal)."""
+        if not route_pattern:
+            return None
+        segs = [
+            s for s in route_pattern.lower().split("/")
+            if s and not _DYNAMIC_SEG_RE.match(s)
+        ]
+        hits = {self._url[s] for s in segs if s in self._url}
+        if SCOPE_PRODUCT in hits:
+            return SCOPE_PRODUCT
+        for sc in _NON_PRODUCT_PRECEDENCE:
+            if sc in hits:
+                return sc
+        return None
+
+    def is_shell_name(self, *names: str | None) -> bool:
+        """Container-page identity: the kebab slug is a shell slug,
+        optionally with a ``-page`` suffix (mirrors the 6.7d container
+        guard / validator I11 vocabulary — the guard consumes this tag)."""
+        for raw in names:
+            if not raw:
+                continue
+            slug = re.sub(r"[^a-z0-9]+", "-", str(raw).lower()).strip("-")
+            if slug in self._shell_slugs:
+                return True
+            if slug.endswith("-page") and slug[:-5] in self._shell_slugs:
+                return True
+        return False
+
+    def is_info_page_path(self, path: str | None) -> bool:
+        """True when the path's URL-context segments hit the info-page
+        class (contact / about / imprint / faq / legal pages)."""
+        if not path:
+            return False
+        segs = [s for s in _norm(path).lower().split("/") if s]
+        root_idx = -1
+        for i, seg in enumerate(segs):
+            if seg in _URL_ROOT_MARKERS:
+                root_idx = i
+        if root_idx < 0:
+            return False
+        url_segs = [
+            s for s in segs[root_idx + 1:]
+            if not (s.startswith("(") and s.endswith(")"))
+        ]
+        if url_segs:
+            stem = url_segs[-1].rsplit(".", 1)[0]
+            url_segs = url_segs[:-1] + ([] if stem in _NEUTRAL_STEMS else [stem])
+        return any(s in self._info_segments for s in url_segs)
+
+    # ── route-entry grain ────────────────────────────────────────────
+
+    def classify_route_entry(self, entry: Mapping[str, Any]) -> str:
+        """Scope of one ``routes_index`` entry.
+
+        Stage 6.8b's ``trigger`` verdict wins (system routes are system
+        surfaces); then lexicon signals from the pattern and the file
+        path; an unmatched real route is PRODUCT surface (conservative).
+        The bare root pattern (``/``) with no other signal is the app
+        shell.
+        """
+        trig = str(entry.get("trigger") or _TRIGGER_INTERACTIVE)
+        if trig != _TRIGGER_INTERACTIVE:
+            return SCOPE_SYSTEM
+        hits: set[str] = set()
+        sc_p = self.classify_route_pattern(str(entry.get("pattern") or ""))
+        if sc_p:
+            hits.add(sc_p)
+        sc_f = self.classify_path(str(entry.get("file") or ""))
+        if sc_f:
+            hits.add(sc_f)
+        if SCOPE_PRODUCT in hits:
+            return SCOPE_PRODUCT
+        for sc in _NON_PRODUCT_PRECEDENCE:
+            if sc in hits:
+                return sc
+        pattern = _norm(str(entry.get("pattern") or ""))
+        if pattern in ("", "/"):
+            return SCOPE_SHELL
+        return SCOPE_PRODUCT
+
+    # ── feature grain (developer features AND product features) ─────
+
+    def classify_feature(
+        self,
+        feature: Any,
+        route_by_file: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> str:
+        """Scope of one feature row from its own evidence.
+
+        1. Container identity (name is a shell slug) → ``shell``.
+        2. Weighted vote over owned paths: each path contributes its
+           :meth:`classify_path` signal; a path that IS a route file
+           contributes the route entry's scope instead (system trigger /
+           pattern lexicon / product default). No-signal paths abstain
+           but COUNT in the denominator.
+        3. Verdict: a non-product scope wins ONLY on a strict majority of
+           ALL owned paths (abstains included) that also beats the
+           product weight — a feature is a non-product surface when its
+           evidence dominates its whole footprint, never on a stray
+           lexicon hit. Everything else → ``product`` (conservative:
+           never hide a product capability). No paths → ``product``.
+        """
+        if self.is_shell_name(_get(feature, "name"),
+                              _get(feature, "display_name")):
+            return SCOPE_SHELL
+        weights: dict[str, int] = {}
+        total = 0
+        rbf = route_by_file or {}
+        for p in _get(feature, "paths") or []:
+            key = _norm(str(p))
+            total += 1
+            entry = rbf.get(key)
+            if entry is not None:
+                sc: str | None = self.classify_route_entry(entry)
+            else:
+                sc = self.classify_path(key)
+            if sc:
+                weights[sc] = weights.get(sc, 0) + 1
+        if not weights or not total:
+            return SCOPE_PRODUCT
+        product_w = weights.get(SCOPE_PRODUCT, 0)
+        best_np = None
+        for sc in _NON_PRODUCT_PRECEDENCE:
+            w = weights.get(sc, 0)
+            if w and (best_np is None or w > weights.get(best_np, 0)):
+                best_np = sc
+        if (
+            best_np is None
+            or weights[best_np] * 2 <= total
+            or product_w >= weights[best_np]
+        ):
+            return SCOPE_PRODUCT
+        return best_np
+
+    # ── user-flow grain (parked Lane-C aggregation, extended) ───────
+
+    def member_vote(
+        self,
+        entry_file: str | None,
+        paths: Iterable[str] = (),
+        entry_is_route: bool = False,
+    ) -> str | None:
+        """One member flow's scope vote (``None`` = abstain)."""
+        sc = self.classify_path(entry_file or "")
+        if sc:
+            return sc
+        if entry_is_route:
+            return SCOPE_PRODUCT  # real product route — blocks non-product
+        path_votes = {v for v in (self.classify_path(p) for p in paths) if v}
+        if len(path_votes) == 1:
+            return next(iter(path_votes))
+        return None
+
+    def classify_user_flow(
+        self,
+        member_votes: Iterable[str | None],
+        uf_routes: Iterable[str] = (),
+        uf_category: str | None = None,
+    ) -> str:
+        """Aggregate member votes + UF route patterns into one scope.
+
+        ``category == "system"`` (Stage 6.8b) is authoritative; any
+        product vote blocks a non-product verdict (parked Lane-C rule);
+        ``shell`` votes abstain at journey grain (a journey is never "the
+        app shell"); otherwise majority with fixed precedence.
+        """
+        if uf_category == SCOPE_SYSTEM:
+            return SCOPE_SYSTEM
+        votes = [
+            v for v in member_votes if v is not None and v != SCOPE_SHELL
+        ]
+        for r in uf_routes:
+            # An unmatched route pattern is product surface (conservative).
+            votes.append(self.classify_route_pattern(r) or SCOPE_PRODUCT)
+        if not votes or SCOPE_PRODUCT in votes:
+            return SCOPE_PRODUCT
+        counts: dict[str, int] = {}
+        for v in votes:
+            counts[v] = counts.get(v, 0) + 1
+        return max(
+            counts,
+            key=lambda s: (counts[s], -_NON_PRODUCT_PRECEDENCE.index(s)),
+        )
+
+
+def is_non_product_dev(dev: Any) -> bool:
+    """True when *dev* carries a non-product (non-shell) surface tag —
+    consumed by the 6.7d residual ladder (tier mints / capability joins
+    must not promote marketing/docs/legal/dev_tooling surfaces). Reads the
+    stamped field only; absent tag (taxonomy off / pre-W2a scans) → False,
+    so every consumer no-ops under the kill-switch."""
+    return str(_get(dev, "surface_scope") or "") in _NON_PRODUCT_DEV_SCOPES
+
+
+# ── wiring helpers ──────────────────────────────────────────────────────
+
+
+def _route_by_file(
+    routes_index: Iterable[Mapping[str, Any]] | None,
+) -> dict[str, Mapping[str, Any]]:
+    out: dict[str, Mapping[str, Any]] = {}
+    for entry in routes_index or []:
+        f = _norm(str(entry.get("file") or ""))
+        if f:
+            out.setdefault(f, entry)
+    return out
+
+
+def _stamp(obj: Any, field: str, value: Any) -> None:
+    if isinstance(obj, dict):
+        obj[field] = value
+    else:
+        setattr(obj, field, value)
+
+
+def tag_layer1(
+    developer_features: list["Feature"],
+    routes_index: list[dict[str, Any]] | None,
+    patterns: dict | None = None,
+) -> dict[str, Any]:
+    """Stage 6.85 Layer-1 tagging — stamp ``surface_scope`` on every
+    ``routes_index`` entry and every developer feature, in place.
+
+    Runs right after Stage 6.8b (so route ``trigger`` verdicts exist).
+    Returns telemetry ``{route_scopes: {...}, dev_scopes: {...}}``.
+    """
+    tele: dict[str, Any] = {"enabled": taxonomy_enabled()}
+    if not taxonomy_enabled():
+        return tele
+    clf = SurfaceScopeClassifier(patterns)
+    route_counts: dict[str, int] = {}
+    for entry in routes_index or []:
+        sc = clf.classify_route_entry(entry)
+        entry["surface_scope"] = sc
+        route_counts[sc] = route_counts.get(sc, 0) + 1
+    rbf = _route_by_file(routes_index)
+    dev_counts: dict[str, int] = {}
+    for dev in developer_features:
+        if getattr(dev, "layer", "developer") != "developer":
+            continue
+        sc = clf.classify_feature(dev, rbf)
+        dev.surface_scope = sc
+        dev_counts[sc] = dev_counts.get(sc, 0) + 1
+    tele["route_scopes"] = route_counts
+    tele["dev_scopes"] = dev_counts
+    return tele
+
+
+# ── emission lane ───────────────────────────────────────────────────────
+
+
+def _pf_key(pf: Any) -> str:
+    return str(_get(pf, "id", None) or _get(pf, "name", "") or "")
+
+
+def _is_shared_bucket(pf: Any) -> bool:
+    return _pf_key(pf).strip().lower() in _SHARED_PF_KEYS
+
+
+def _flow_lookup(flows: Iterable[Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for fl in flows:
+        for key in (_get(fl, "uuid"), _get(fl, "name")):
+            if key and str(key) not in out:
+                out[str(key)] = fl
+    return out
+
+
+def _entry_of(flow: Any) -> str | None:
+    entry = _get(flow, "entry_point_file")
+    if entry:
+        return str(entry)
+    ep = _get(flow, "entry_point")
+    if ep is not None:
+        path = ep.get("path") if isinstance(ep, dict) else getattr(ep, "path", None)
+        if path:
+            return str(path)
+    return None
+
+
+def _uf_entry_files(uf: Any, flow_by_id: Mapping[str, Any]) -> list[str]:
+    files: list[str] = []
+    for mid in _get(uf, "member_flow_ids") or []:
+        fl = flow_by_id.get(str(mid))
+        if fl is None:
+            continue
+        e = _entry_of(fl)
+        if e:
+            files.append(_norm(e))
+        else:
+            files.extend(_norm(str(p)) for p in (_get(fl, "paths") or []))
+    return files
+
+
+def _tag_user_flows(
+    user_flows: list["UserFlow"],
+    flow_by_id: Mapping[str, Any],
+    route_files: frozenset[str],
+    clf: SurfaceScopeClassifier,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for uf in user_flows:
+        votes: list[str | None] = []
+        for mid in _get(uf, "member_flow_ids") or []:
+            fl = flow_by_id.get(str(mid))
+            if fl is None:
+                continue
+            entry = _entry_of(fl) or ""
+            votes.append(clf.member_vote(
+                entry,
+                paths=_get(fl, "paths") or [],
+                entry_is_route=_norm(entry) in route_files,
+            ))
+        sc = clf.classify_user_flow(
+            votes,
+            uf_routes=_get(uf, "routes") or [],
+            uf_category=_get(uf, "category"),
+        )
+        _stamp(uf, "surface_scope", sc)
+        counts[sc] = counts.get(sc, 0) + 1
+    return counts
+
+
+def _lane_entry(
+    pf: Any,
+    scope: str,
+    member_devs: list[Any],
+    moved_ufs: list[Any],
+) -> dict[str, Any]:
+    """One ``non_product_surfaces[]`` row — a compact, self-contained view
+    of the surface (NOT a full Feature dump; the dev rows stay in
+    ``features[]`` with their ``product_feature_id`` pointing here)."""
+    entry: dict[str, Any] = {
+        "name": _get(pf, "name"),
+        "display_name": _get(pf, "display_name"),
+        "surface_scope": scope,
+        "description": _get(pf, "description"),
+        "uuid": _get(pf, "uuid") or "",
+        "paths": list(_get(pf, "paths") or []),
+        "loc": _get(pf, "loc"),
+        "loc_shared": _get(pf, "loc_shared"),
+        "member_devs": sorted(
+            str(_get(d, "name") or "") for d in member_devs
+        ),
+        "reason": "non_product_surface_scope",
+    }
+    entry["user_flows"] = [
+        uf.model_dump() if hasattr(uf, "model_dump") else dict(uf)
+        for uf in moved_ufs
+    ]
+    return entry
+
+
+def _dissolve_info_ufs(
+    user_flows: list["UserFlow"],
+    flow_by_id: Mapping[str, Any],
+    product_pf_keys: frozenset[str],
+    clf: SurfaceScopeClassifier,
+    tele: dict[str, Any],
+) -> None:
+    """Consequence (b): info-page journeys dissolve into the hosting UF.
+
+    A UF qualifies when its scope is marketing/legal, EVERY member flow's
+    entry (or paths, when no entry) lands on an info-page URL, and its
+    product feature is a real product-lane PF that hosts at least one
+    OTHER journey (the host). The member flows join the host as plain
+    dev-flows; the info UF row is removed (never a PF, never its own
+    journey). No host → left in place, tagged only (honest residual)."""
+    by_pf: dict[str, list[Any]] = {}
+    for uf in user_flows:
+        ref = _get(uf, "product_feature_id")
+        if ref:
+            by_pf.setdefault(str(ref), []).append(uf)
+
+    dissolved: list[Any] = []
+    for uf in list(user_flows):
+        if str(_get(uf, "surface_scope") or "") not in ("marketing", "legal"):
+            continue
+        pfid = str(_get(uf, "product_feature_id") or "")
+        if pfid not in product_pf_keys:
+            continue  # lane PFs took their journeys already; orphans skip
+        entries = _uf_entry_files(uf, flow_by_id)
+        if not entries or not all(clf.is_info_page_path(e) for e in entries):
+            continue
+        hosts = [
+            u for u in by_pf.get(pfid, [])
+            if u is not uf and u not in dissolved
+        ]
+        if not hosts:
+            continue  # "where one exists" — never orphan a PF's only UF
+        uf_files = set(entries)
+
+        def _overlap(host: Any) -> int:
+            hfiles = set(_uf_entry_files(host, flow_by_id))
+            shared_dirs = 0
+            for a in uf_files:
+                a_dir = a.rsplit("/", 1)[0]
+                for b in hfiles:
+                    b_dir = b.rsplit("/", 1)[0]
+                    common = 0
+                    for sa, sb in zip(a_dir.split("/"), b_dir.split("/")):
+                        if sa != sb:
+                            break
+                        common += 1
+                    shared_dirs = max(shared_dirs, common)
+            return shared_dirs
+
+        host = sorted(
+            hosts,
+            key=lambda h: (
+                -_overlap(h),
+                -len(_get(h, "member_flow_ids") or []),
+                str(_get(h, "id") or ""),
+            ),
+        )[0]
+        host_mids = list(_get(host, "member_flow_ids") or [])
+        for mid in _get(uf, "member_flow_ids") or []:
+            if mid not in host_mids:
+                host_mids.append(mid)
+        _stamp(host, "member_flow_ids", host_mids)
+        _stamp(host, "member_count", len(host_mids))
+        host_routes = list(_get(host, "routes") or [])
+        for r in _get(uf, "routes") or []:
+            if r not in host_routes:
+                host_routes.append(r)
+        _stamp(host, "routes", host_routes)
+        dissolved.append(uf)
+        if len(tele.setdefault("info_ufs_dissolved_sample", [])) < 10:
+            tele["info_ufs_dissolved_sample"].append({
+                "uf": _get(uf, "name"), "host": _get(host, "name"),
+                "pf": pfid,
+            })
+
+    if dissolved:
+        gone = {id(u) for u in dissolved}
+        user_flows[:] = [u for u in user_flows if id(u) not in gone]
+    tele["info_ufs_dissolved"] = len(dissolved)
+
+
+def _shared_reason_for(dev: Any, clf: SurfaceScopeClassifier) -> str:
+    """Deterministic reason ladder for one shared-bucket resident."""
+    from faultline.pipeline_v2.spine_hygiene import is_concern_name
+    from faultline.pipeline_v2.stage_8_7_anchor_desink import (
+        _is_workspace_anchor,
+    )
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _STRUCTURE_LEAK_SLUGS,
+    )
+
+    scope = str(_get(dev, "surface_scope") or "")
+    if scope in _NON_PRODUCT_DEV_SCOPES:
+        return "non_product_surface"
+    name = str(_get(dev, "name") or "")
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    if (
+        scope == SCOPE_SHELL
+        or slug in _STRUCTURE_LEAK_SLUGS
+        or _is_workspace_anchor(dev)
+    ):
+        return "genuinely_shared_infra"
+    if is_concern_name(name):
+        return "facet_view"
+    has_anchor_claim = any(
+        (m.get("role") if isinstance(m, dict) else getattr(m, "role", None))
+        == "anchor"
+        for m in (_get(dev, "member_files") or [])
+    )
+    if has_anchor_claim or (_get(dev, "flows") or []):
+        return "awaiting_wave2_mint"
+    return "no_anchor_lineage"
+
+
+def apply_emission_taxonomy(
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+    user_flows: list["UserFlow"],
+    flows: list["Flow"],
+    routes_index: list[dict[str, Any]] | None,
+    patterns: dict | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list["Feature"]]:
+    """Emission-time taxonomy: tag UFs/PFs, split the non-product lane,
+    dissolve info-page journeys, re-bind non-product shared devs, stamp
+    shared-resident reasons.
+
+    Mutates ``developer_features`` / ``user_flows`` in place; returns
+    ``(telemetry, non_product_surfaces, product_features)`` — the caller
+    rebinds its ``product_features`` list (lane rows are REMOVED from it).
+    """
+    tele: dict[str, Any] = {"enabled": taxonomy_enabled()}
+    if not taxonomy_enabled():
+        return tele, [], product_features
+
+    clf = SurfaceScopeClassifier(patterns)
+    rbf = _route_by_file(routes_index)
+    route_files = frozenset(rbf.keys())
+    flow_by_id = _flow_lookup(flows)
+
+    # 1a. Re-stamp dev tags — paths moved through 6.9/6.9b strips and the
+    # 8.9.x carves since the Layer-1 pass; classification is cheap and
+    # idempotent, so recompute from the FINAL ownership.
+    dev_counts: dict[str, int] = {}
+    for dev in developer_features:
+        if getattr(dev, "layer", "developer") != "developer":
+            continue
+        sc = clf.classify_feature(dev, rbf)
+        dev.surface_scope = sc
+        dev_counts[sc] = dev_counts.get(sc, 0) + 1
+    tele["dev_scopes"] = dev_counts
+
+    # 1b. Tag journeys.
+    tele["uf_scopes"] = _tag_user_flows(user_flows, flow_by_id, route_files, clf)
+
+    # 1c. Tag product features. The shared/platform bucket row is a
+    # cross-cutting aggregate, not a surface — it stays in the product
+    # list by definition (I10/I22 govern it) and carries the neutral
+    # ``product`` tag so I20 activation covers every PF row.
+    pf_counts: dict[str, int] = {}
+    for pf in product_features:
+        sc = SCOPE_PRODUCT if _is_shared_bucket(pf) else clf.classify_feature(pf, rbf)
+        pf.surface_scope = sc
+        pf_counts[sc] = pf_counts.get(sc, 0) + 1
+    tele["pf_scopes"] = pf_counts
+
+    lane: list[dict[str, Any]] = []
+    if lane_enabled():
+        # 2. Non-product lane split (consequence a / validator I20).
+        keep: list[Any] = []
+        moved: list[Any] = []
+        for pf in product_features:
+            if (
+                not _is_shared_bucket(pf)
+                and str(_get(pf, "surface_scope") or "") in NON_PRODUCT_PF_SCOPES
+            ):
+                moved.append(pf)
+            else:
+                keep.append(pf)
+        if moved:
+            moved_keys = {_pf_key(pf) for pf in moved}
+            ufs_by_pf: dict[str, list[Any]] = {}
+            kept_ufs: list[Any] = []
+            for uf in user_flows:
+                ref = str(_get(uf, "product_feature_id") or "")
+                if ref in moved_keys:
+                    ufs_by_pf.setdefault(ref, []).append(uf)
+                else:
+                    kept_ufs.append(uf)
+            devs_by_pf: dict[str, list[Any]] = {}
+            for dev in developer_features:
+                ref = str(_get(dev, "product_feature_id") or "")
+                if ref in moved_keys:
+                    devs_by_pf.setdefault(ref, []).append(dev)
+            for pf in moved:
+                key = _pf_key(pf)
+                lane.append(_lane_entry(
+                    pf,
+                    str(_get(pf, "surface_scope")),
+                    devs_by_pf.get(key, []),
+                    ufs_by_pf.get(key, []),
+                ))
+            user_flows[:] = kept_ufs
+            product_features = keep
+        tele["pfs_moved_to_lane"] = len(moved)
+        tele["ufs_moved_to_lane"] = sum(
+            len(e["user_flows"]) for e in lane
+        )
+        tele["lane_names"] = [e["name"] for e in lane][:20]
+
+        # 3. Info-page journey dissolution (consequence b).
+        product_pf_keys = frozenset(
+            _pf_key(pf) for pf in product_features if not _is_shared_bucket(pf)
+        )
+        _dissolve_info_ufs(user_flows, flow_by_id, product_pf_keys, clf, tele)
+
+        # 4. Non-product shared devs re-bind to the lane surface claiming
+        # their paths (info pages are never Shared Platform residents).
+        rebound = 0
+        if lane:
+            lane_paths = [
+                (e["name"], frozenset(_norm(str(p)) for p in e["paths"]))
+                for e in lane
+            ]
+            for dev in developer_features:
+                pfid = str(_get(dev, "product_feature_id") or "")
+                if pfid.strip().lower() not in _SHARED_PF_KEYS:
+                    continue
+                if str(_get(dev, "surface_scope") or "") not in _NON_PRODUCT_DEV_SCOPES:
+                    continue
+                own = frozenset(
+                    _norm(str(p)) for p in (_get(dev, "paths") or [])
+                )
+                best_name, best_hit = None, 0
+                for name, lpaths in lane_paths:
+                    hit = len(own & lpaths)
+                    if hit > best_hit:
+                        best_name, best_hit = name, hit
+                if best_name:
+                    dev.product_feature_id = best_name
+                    rebound += 1
+        tele["devs_rebound_to_lane"] = rebound
+
+    # 5. Shared-resident reasons (validator I22) — every dev still bound
+    # to the shared bucket carries a machine-readable reason.
+    if shared_reasons_enabled():
+        reason_counts: dict[str, int] = {}
+        for dev in developer_features:
+            pfid = str(_get(dev, "product_feature_id") or "")
+            if pfid.strip().lower() not in _SHARED_PF_KEYS:
+                continue
+            reason = _shared_reason_for(dev, clf)
+            dev.shared_reason = reason
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        tele["shared_reasons"] = reason_counts
+
+    return tele, lane, product_features

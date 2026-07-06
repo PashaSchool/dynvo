@@ -1342,7 +1342,17 @@ _CONTAINER_PAGE_SLUG_RE = re.compile(
 def _is_container_page(dev: "Feature") -> bool:
     """True when the dev's IDENTITY is a page container (name is one of the
     home/landing/index/main/root page classes) — structural, mirrors the
-    validator I11 container-page regex on the dev's kebab slug."""
+    validator I11 container-page regex on the dev's kebab slug.
+
+    Product-Spine §4.2 (Wave 2a, consequence c): the surface-taxonomy
+    ``shell`` tag is consumed FIRST — Stage 6.85 stamps it from the
+    YAML-documented shell vocabulary + (home)-group path evidence, so shell
+    containers never name anything. The slug regex stays as the fallback so
+    the guard keeps working when the taxonomy stage is disabled
+    (FAULTLINE_SURFACE_TAXONOMY=0 → tag absent → regex decides, exactly the
+    pre-W2a behavior)."""
+    if getattr(dev, "surface_scope", None) == "shell":
+        return True
     for raw in (dev.name, getattr(dev, "display_name", None)):
         if raw and _CONTAINER_PAGE_SLUG_RE.match(_kebab(raw)):
             return True
@@ -1491,6 +1501,19 @@ def _confirm_residual(
 
     nm = dev.display_name or dev.name or ""
     if _slug(nm) in _STRUCTURE_LEAK_SLUGS or _is_workspace_anchor(dev):
+        return _RESIDUAL_CAP
+    # Product-Spine §4.2 (Wave 2a, consequence a): a NON-PRODUCT surface dev
+    # (marketing / docs / legal / dev_tooling per the Stage 6.85 tag) never
+    # mints a capability (tier-2/tier-3) and never token-joins a PRODUCT
+    # capability — a marketing-site blog dev folding into a product "Blog
+    # Publishing" capability is exactly the C3 pollution. It stays in the
+    # residual; the emission lane then re-binds it to its non-product
+    # surface row. Tag absent (taxonomy off) → no-op.
+    from faultline.pipeline_v2.surface_taxonomy import is_non_product_dev
+    if is_non_product_dev(dev):
+        pf_tele["devs_residual_non_product"] = (
+            pf_tele.get("devs_residual_non_product", 0) + 1
+        )
         return _RESIDUAL_CAP
     strong = _strong_capability_match(dev, cap_tokens)
     if strong is not None:

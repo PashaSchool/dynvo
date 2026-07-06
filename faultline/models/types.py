@@ -908,6 +908,22 @@ class Feature(BaseModel):
     # from dumps when unset (old scans / dev features serialize unchanged).
     loc_flow: int | None = None
     loc_flow_shared: int | None = None
+    # Product-Spine §4.2 (Wave 2a, 2026-07-06) — product-surface taxonomy
+    # tag: ``product | marketing | docs | legal | system | dev_tooling |
+    # shell`` (see ``pipeline_v2.surface_taxonomy``). Stamped on every
+    # developer AND product feature by Stage 6.85; validator I20 activates
+    # on its presence (no PF in the product list may carry a non-product
+    # scope — those rows move to the ``non_product_surfaces[]`` lane).
+    # ``None`` (omitted from dumps) on scans that predate the field or run
+    # with FAULTLINE_SURFACE_TAXONOMY=0.
+    surface_scope: str | None = None
+    # Product-Spine §4.3 (Wave 2a) — shared-resident explainability
+    # (validator I22): every dev feature bound to the shared/platform
+    # bucket carries a machine-readable residency reason
+    # (``no_anchor_lineage | genuinely_shared_infra | facet_view |
+    # awaiting_wave2_mint | non_product_surface``). ``None`` (omitted)
+    # everywhere else.
+    shared_reason: str | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_spine_fields(self, handler: Any) -> Any:
@@ -920,7 +936,8 @@ class Feature(BaseModel):
         """
         data = handler(self)
         if isinstance(data, dict):
-            for key in ("role", "loc_flow", "loc_flow_shared"):
+            for key in ("role", "loc_flow", "loc_flow_shared",
+                        "surface_scope", "shared_reason"):
                 if data.get(key) is None:
                     data.pop(key, None)
         return data
@@ -1021,6 +1038,18 @@ class UserFlow(BaseModel):
     # so pre-existing scans and non-backstop UFs serialize byte-identically.
     synthesized: bool = False
     synthesis_reason: str | None = None
+    # Product-Spine §4.2 (Wave 2a, 2026-07-06) — product-surface taxonomy
+    # tag for this journey (``product | marketing | docs | legal | system |
+    # dev_tooling``; journeys are never ``shell``). Voted from member-flow
+    # entry paths + route patterns (see ``pipeline_v2.surface_taxonomy``).
+    # ``None`` (omitted from dumps) on pre-W2a scans / taxonomy off.
+    surface_scope: str | None = None
+    # Product-Spine Wave 2a — no-signal terminal home (validator I21): when
+    # a journey's PF binding came from the argmax fallback rather than a
+    # strict-majority conservation accept, it is tagged ``"low"`` so
+    # consumers can rank/inspect weak bindings. ``None`` (omitted) for
+    # bindings that passed the majority bar.
+    binding_confidence: str | None = None
 
     @model_serializer(mode="wrap")
     def _omit_none_identity(self, handler: Any) -> Any:
@@ -1030,7 +1059,8 @@ class UserFlow(BaseModel):
         serialize byte-identically to engines that predate the field
         (snapshot-gate digests + absent-input byte-identity contract).
         Same contract for the 6.7d backstop tags: a non-synthesized UF
-        must dump exactly as it did before the fields existed.
+        must dump exactly as it did before the fields existed. Same for
+        the Wave-2a ``surface_scope`` / ``binding_confidence`` tags.
         """
         data = handler(self)
         if isinstance(data, dict):
@@ -1040,6 +1070,10 @@ class UserFlow(BaseModel):
                 data.pop("synthesized", None)
             if data.get("synthesis_reason") is None:
                 data.pop("synthesis_reason", None)
+            if data.get("surface_scope") is None:
+                data.pop("surface_scope", None)
+            if data.get("binding_confidence") is None:
+                data.pop("binding_confidence", None)
         return data
 
 
@@ -1124,6 +1158,18 @@ class FeatureMap(BaseModel):
     # non-monorepo scan that doesn't populate it) rehydrates unchanged.
     # NEVER mutates ``features`` / ``developer_features`` — purely a view.
     monorepo: dict[str, Any] = {}
+    # Product-Spine §4.2 (Wave 2a, 2026-07-06) — the NON-PRODUCT surface
+    # lane: marketing / docs / legal / dev_tooling / shell surfaces that
+    # would previously have shipped as product features (evidence class C3:
+    # 39 info-page PFs on the 10-scan board). Each row is a compact dict
+    # {name, display_name, surface_scope, description, uuid, paths, loc,
+    # loc_shared, member_devs, user_flows[], reason} — the member dev rows
+    # stay in ``features[]`` with their ``product_feature_id`` pointing at
+    # the lane row's name. ADDITIVE: defaults to [] so every scan produced
+    # before this field existed rehydrates unchanged; the product
+    # ``product_features[]`` list keeps ONLY product/system-scope
+    # capabilities (validator I20).
+    non_product_surfaces: list[dict[str, Any]] = []
 
     @model_validator(mode="after")
     def _merge_layer_inputs(self) -> "FeatureMap":
