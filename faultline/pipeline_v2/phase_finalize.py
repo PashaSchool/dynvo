@@ -1460,6 +1460,21 @@ def run_finalize_phase(
                 f"platform-infrastructure lane failed ({exc}); lane empty"
             )
 
+    # ── W3 rider — full-bill LLM cost refresh (chain4 finding) ─────
+    # ``run.py`` snapshots ``cost_usd``/``calls`` into scan_meta BEFORE
+    # this phase runs, so every finalize-phase LLM call (6.7c splitter,
+    # 6.7b refiner, 6.7d journey abstraction — the ANCHORED Call-1
+    # included — and the W3 personas) was invisible to the output JSON,
+    # the CLI cost line, and the wave-runner ledger: chain4 measured the
+    # CLI reporting $0.0000 while 6.7d telemetry carried cost_usd=0.147.
+    # The shared CostTracker records every one of those calls (standing
+    # cost law) — re-snapshot it HERE, after the last LLM-bearing stage
+    # and before the output writer consumes scan_meta. ``calls`` becomes
+    # the tracker's full call count (per-stage detail keys are
+    # unchanged); keyless scans stay byte-identical (0 == 0).
+    scan_meta["cost_usd"] = round(tracker.total_cost_usd, 4)
+    scan_meta["calls"] = tracker.call_count
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {
