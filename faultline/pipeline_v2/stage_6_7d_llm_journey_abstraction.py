@@ -2112,6 +2112,171 @@ def _carve_shared_uf(
     return slug
 
 
+# ── DOCS/API-SURFACE family rung (RC2-4, 2026-07-06) ─────────────────────────
+# Ladder step (iii), between the entry-file carve and the final unresolved
+# fallback. A UF whose NAME reads like "Access documented REST API" is not,
+# by itself, evidence that its flows are grounded in a real docs surface — a
+# name is generated from cluster content and can describe a journey whose
+# flows are actually anchored somewhere unrelated (midday's own instance: 12
+# flows all in ``apps/api/evals/fixtures.ts``, an LLM tool-selection EVAL
+# FIXTURES file, zero docs/openapi involvement — see the sibling
+# ``_synthetic_fixture_uf`` rung below, which is what actually resolves that
+# case). This rung is guarded on the FLOW PATHS, not the UF name: it fires
+# only when a MAJORITY of member flows are genuinely route-grounded in a
+# documented-API surface (openapi spec route, Scalar/Swagger UI mount, a
+# ``/docs`` or ``api-reference`` page) — universal web-API vocabulary that
+# needs no per-stack YAML (it is a naming CONVENTION, like "test"/"spec", not
+# a stack-specific location rule). openstatus is the confirmed positive case
+# (a real "browse API reference" journey belongs here, not in shared-platform
+# or force-merged into an unrelated capability) — dev_tooling-natured, but a
+# REAL customer-facing capability, so it gets its own dedicated home rather
+# than being suppressed.
+_DOCS_SURFACE_PATH_TOKENS: tuple[str, ...] = (
+    "openapi", "swagger", "scalar", "api-reference", "/docs/",
+)
+_DOCS_SURFACE_PF_SLUG = "api-documentation"
+_DOCS_SURFACE_PF_DISPLAY = "API Documentation"
+
+
+def _is_docs_surface_path(path: str | None) -> bool:
+    """True when ``path`` structurally names an openapi/swagger/scalar/
+    api-reference/docs surface. Path-grounded (never the UF's free-text
+    name) — see the rung docstring above for why that distinction matters."""
+    p = (path or "").lower().replace("\\", "/")
+    if not p:
+        return False
+    return any(tok in p for tok in _DOCS_SURFACE_PATH_TOKENS) or p.endswith("/docs")
+
+
+def _docs_surface_uf(
+    uf: "UserFlow",
+    flow_by_id: dict[str, Any],
+    flow_owner_dev: dict[str, str],
+    dev_by_name: dict[str, "Feature"],
+    dev_to_product: dict[str, tuple[str, ...]],
+    new_pfs: list["Feature"],
+) -> str | None:
+    """Ladder step (iii) — mint/join the ``api-documentation`` capability for
+    an all-shared UF whose flows are MAJORITY route-grounded in a docs/
+    openapi surface. Returns the PF slug on a hit, else ``None`` (→ step iv).
+    Join-over-mint: a second docs-surface UF reuses the same capability."""
+    mids = uf.member_flow_ids or []
+    if not mids:
+        return None
+    matched = [
+        m for m in mids
+        if _is_docs_surface_path(getattr(flow_by_id.get(m), "entry_point_file", None))
+    ]
+    if not matched or len(matched) * 2 < len(mids):
+        return None  # not a MAJORITY — declines rather than force-fitting
+    counts: Counter[str] = Counter(
+        flow_owner_dev[m] for m in matched if flow_owner_dev.get(m)
+    )
+    if not counts:
+        return None
+    top = max(counts.values())
+    dev_name = min(n for n, c in counts.items() if c == top)
+    dev = dev_by_name.get(dev_name)
+    if dev is None:
+        return None
+    slug = _DOCS_SURFACE_PF_SLUG
+    existing = {p.name or "" for p in new_pfs}
+    if slug not in existing:
+        new_pfs.append(aggregate_product_feature(
+            name=slug, display_name=_DOCS_SURFACE_PF_DISPLAY,
+            description=_flows_surface_description(dev), contrib=[dev]))
+    dev_to_product[dev.name] = (slug,)
+    return slug
+
+
+# ── Synthetic-fixture UF drop (RC2-4, 2026-07-06) ────────────────────────────
+# Ladder step (iv), the last resort before the honest-unresolved fallback.
+# midday's "Access documented REST API" diagnosis: Stage 3/4 flow detection
+# produced 12 "flows" entirely from ``apps/api/evals/fixtures.ts`` — a
+# ``ToolSelectionFixture[]`` test-data module for an LLM tool-selection eval
+# harness, not application code. None of the 12 resolved to a real symbol
+# (every node is the whole-file ``"<file>"`` fallback — the pipeline's
+# existing "found no real symbol" marker, see ``flow_symbols.py``), and the
+# file was never identified as a route. A UF built entirely from this
+# material is not a deferred-home journey (rungs i-iii correctly decline it)
+# — it never was a journey. Dropping it (not re-homing it) is the honest
+# outcome; its dropped member flows stay in ``flows[]`` as ordinary
+# code-grain artifacts (I4 unaffected) and their ``user_flow_id``
+# backpointers are nulled by the existing I14 emission-integrity pass
+# (orphan, not dangling — the same mechanism every other drop path relies
+# on).
+#
+# Narrow by construction — ALL THREE conditions must hold for EVERY member
+# flow, which is why the corpus collateral sweep (langfuse's ``evals/`` IS
+# its product, openstatus's ``routes/mcp/evals/`` looks like a real routed
+# capability, onyx's ``server/evals/api.py`` looks like a real backend
+# route) never trips this rung: those files are either real detected routes
+# or carry richer, non-whole-file-fallback flows.
+_SYNTHETIC_DATA_FILE_MARKERS: tuple[str, ...] = (
+    "fixture", "mock", "dummy", "sample",
+)
+
+
+def _is_synthetic_data_path(path: str | None) -> bool:
+    """True when ``path``'s basename or directory names a test/eval
+    fixture-data convention (fixtures / mocks / dummy / sample data, or the
+    Vercel-AI-SDK / Mastra ``evals/`` + ``*.eval.ts`` AI-agent-eval
+    convention). Deliberately NOT the bare token ``eval`` alone — that word
+    is common in legitimate product code (an "evaluator" service, a formula
+    "eval" feature) and would false-positive (see the Soc0 ``*_eval.py``
+    collateral finding)."""
+    p = (path or "").lower().replace("\\", "/")
+    if not p:
+        return False
+    # Marker anywhere in the path — catches both filename conventions
+    # (fixtures.ts, user.mock.ts) and directory conventions (__mocks__/,
+    # test/fixtures/, evals/dummy-data/).
+    if any(tok in p for tok in _SYNTHETIC_DATA_FILE_MARKERS):
+        return True
+    base = p.rsplit("/", 1)[-1]
+    if base.endswith(".eval.ts") or base.endswith(".eval.tsx"):
+        return True
+    return f"/{p}".count("/evals/") > 0
+
+
+def _is_whole_file_fallback_flow(flow: Any) -> bool:
+    """True when a flow's ONLY node is the whole-file ``"<file>"`` fallback
+    symbol — Stage 3/4 found no real function/handler inside it."""
+    nodes = getattr(flow, "nodes", None) or []
+    if len(nodes) != 1:
+        return False
+    node = nodes[0]
+    sym = node.get("symbol") if isinstance(node, dict) else getattr(node, "symbol", None)
+    return sym == "<file>"
+
+
+def _synthetic_fixture_uf(
+    uf: "UserFlow",
+    flow_by_id: dict[str, Any],
+    route_files: frozenset[str],
+) -> bool:
+    """Ladder step (iv) — ``True`` when EVERY member flow of an all-shared UF
+    is (a) not a real detected route, (b) a whole-file fallback attribution,
+    and (c) anchored in a fixture/mock/eval-convention file. All three must
+    hold for ALL members — a single genuinely-grounded flow disqualifies the
+    drop (falls through to the honest-unresolved fallback instead)."""
+    mids = uf.member_flow_ids or []
+    if not mids:
+        return False
+    for m in mids:
+        flow = flow_by_id.get(m)
+        if flow is None:
+            return False
+        entry = getattr(flow, "entry_point_file", None)
+        if entry and entry in route_files:
+            return False
+        if not _is_whole_file_fallback_flow(flow):
+            return False
+        if not _is_synthetic_data_path(entry):
+            return False
+    return True
+
+
 # ── Draw-native flowless-shell resolution (RC2 fix-3, Part B) ────────────────
 # The PF-UF backstop guarantees a UF for every FLOWFUL capability, and the
 # residual guard's flowful-requirement stops a FLOWLESS residual dev from
@@ -2307,6 +2472,8 @@ def _reassign_shared_ufs(
         "uf_shared_unresolved": 0,
         "uf_shared_family_resolved": 0,
         "uf_shared_carved": 0,
+        "uf_shared_docs_resolved": 0,
+        "uf_shared_synthetic_dropped": 0,
         "uf_shared_reassignments": [],  # bounded [{uf, from, to, basis}]
     }
 
@@ -2331,6 +2498,7 @@ def _reassign_shared_ufs(
     override = flow_owner_override or {}
     flow_pf: dict[str, str] = {}
     flow_owner_dev: dict[str, str] = {}
+    flow_by_id: dict[str, Any] = {}
     for dev in developer_features:
         slugs = dev_to_product.get(dev.name) or ()
         slug = slugs[0] if slugs else ""
@@ -2341,8 +2509,10 @@ def _reassign_shared_ufs(
                 # flow's real owner over the page shell it was swept into.
                 flow_pf[mid] = override.get(mid, slug)
                 flow_owner_dev[mid] = dev.name
+                flow_by_id[mid] = fl
     # Total flows each PF owns — the specificity tie-break (smaller = narrower).
     pf_size: Counter[str] = Counter(flow_pf.values())
+    uf_drop_ids: set[int] = set()
 
     for uf in sorted(new_ufs, key=lambda u: ((u.name or "").lower(),
                                              str(u.resource or ""))):
@@ -2375,7 +2545,27 @@ def _reassign_shared_ufs(
                 _record(uf.name, donor0, carved, "entry_file_carve")
                 # keep cap_context fresh so a later UF can family-match the mint
                 continue
-            # (iii) legitimate rarity — leave on the residual; flag for I10.
+            # (iii) DOCS/API-SURFACE family — flows genuinely route-grounded
+            # in an openapi/scalar/docs surface get their own home rather
+            # than defaulting to shared-platform.
+            docs_slug = _docs_surface_uf(
+                uf, flow_by_id, flow_owner_dev, dev_by_name, dev_to_product,
+                pf_list)
+            if docs_slug:
+                uf.product_feature_id = docs_slug
+                tele["uf_shared_docs_resolved"] += 1
+                _record(uf.name, donor0, docs_slug, "docs_api_surface")
+                continue
+            # (iv) synthetic-fixture UF — every member is a whole-file
+            # fallback attribution anchored in eval/fixture/mock data, not a
+            # real journey. Drop it rather than force a home (see rung
+            # docstring above ``_synthetic_fixture_uf``).
+            if _synthetic_fixture_uf(uf, flow_by_id, route_files):
+                tele["uf_shared_synthetic_dropped"] += 1
+                _record(uf.name, donor0, None, "synthetic_fixture_drop")
+                uf_drop_ids.add(id(uf))
+                continue
+            # (v) legitimate rarity — leave on the residual; flag for I10.
             tele["uf_shared_unresolved"] += 1
             _record(uf.name, donor0, None, "all_members_shared_owned")
             continue
@@ -2388,6 +2578,10 @@ def _reassign_shared_ufs(
         tele["uf_shared_reassigned"] += 1
         _record(uf.name, donor, target,
                 f"plurality {owner_counts[target]}/{len(mids)}")
+    if uf_drop_ids:
+        # Prune in place — ``new_ufs`` is the caller's live list; the loop
+        # above iterated a sorted COPY, so drops must be applied here.
+        new_ufs[:] = [u for u in new_ufs if id(u) not in uf_drop_ids]
     return tele
 
 
