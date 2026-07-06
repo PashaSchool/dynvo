@@ -18,12 +18,20 @@ bugs — the data is right, the cross-references between arrays are not:
        with fresh ids and never re-stamps the backpointers, leaving them
        pointing at pre-abstraction UF ids.
 
-  I2   phantom feature — a developer or product feature whose only path
-       is a structural root marker (``.`` / ``""`` / ``..``), which
-       after the loc-truth fix honestly carries 0 owned loc, 0 shared
-       loc and 0 flows. A row with no real code and no journeys is a
-       phantom and must be dropped (workspace anchors / the
-       shared-platform bucket are EXEMPT — they are honestly shared).
+  I2   phantom feature — a developer or product feature that carries 0
+       owned loc, 0 shared loc and 0 flows, whether its paths are
+       structural root markers (``.`` / ``""`` / ``..``) OR real
+       (non-marker) files/paths that Stage 6.97's counting rules
+       resolved to zero countable lines (RC2-4 extension, 2026-07-06:
+       a comma-typo'd / genuinely-empty / fully-excluded file is
+       content-less exactly like a root marker — "onyx
+       connector-module-init" carried one real path,
+       ``freshdesk/__init__,py`` — a typo'd, 0-byte file in the onyx
+       repo itself — and owned zero flows). A row with no real code
+       and no journeys is a phantom and must be dropped (only the
+       shared-platform BUCKET ROW itself is exempt — it is honestly
+       shared; see the emission-integrity bucket-immunity narrowing
+       below, workspace-anchor markers do NOT save a content-less row).
 
 The fix is twofold:
 
@@ -139,17 +147,20 @@ def _is_platform_bucket(feat: "Feature") -> bool:
 
 
 def _is_phantom(feat: "Feature") -> bool:
-    """A phantom carries only structural-marker paths, zero loc/loc_shared,
-    zero flows. The workspace-anchor marker does NOT save a content-less
-    row (Soc0 'ai': description carries the anchor marker yet its only
-    path is the repo-root '.') — only the platform bucket itself is
-    immune; anchors with real content never reach this predicate anyway
-    (_has_real_path or loc/flows are non-zero)."""
-    return (
-        not _has_real_path(feat)
-        and _feature_zero_loc(feat)
-        and not _is_platform_bucket(feat)
-    )
+    """A phantom carries zero owned loc, zero shared loc and zero flows —
+    REGARDLESS of whether its paths are structural root markers (``.``)
+    or real (non-marker) paths that simply never resolved to any
+    countable code (RC2-4, 2026-07-06: a genuinely-empty / typo'd /
+    fully test-or-generated-excluded file leaves Stage 6.97's per-file
+    map empty for that feature, so ``loc``/``loc_shared`` land on 0 the
+    same as a marker-only row — "фіча без коду" either way). A feature
+    with ANY counted file is rescued at Stage 6.97 (the largest file's
+    loc floors ``owned`` — see ``stage_6_97_feature_loc.apply_feature_loc``)
+    so this predicate only ever fires for the genuinely content-less
+    case. The workspace-anchor marker does NOT save a content-less row
+    (Soc0 'ai': description carries the anchor marker yet its only path
+    is the repo-root '.') — only the platform bucket itself is immune."""
+    return _feature_zero_loc(feat) and not _is_platform_bucket(feat)
 
 
 def _pf_key(pf: "Feature") -> str:
