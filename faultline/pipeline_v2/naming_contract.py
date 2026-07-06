@@ -750,11 +750,82 @@ def run_naming_contract(
             ))
 
     # ── Pass 3: PM Labeler (keyed persona seam — Wave 3 §4.7) ────────
+    # The persona returns VALIDATED picks; this stage stays the single
+    # display writer and re-checks the laws before applying (defense in
+    # depth — a persona bug can never ship a law-violating display).
     if labeler is not None and pending:
         try:
-            tele["labeler"] = labeler(pending) or {}
+            lab_result = dict(labeler(pending) or {})
         except Exception as exc:  # noqa: BLE001 — persona must never break a scan
-            tele["labeler"] = {"error": str(exc)}
+            lab_result = {"error": str(exc)}
+        choices = lab_result.pop("choices", None) or {}
+        applied = 0
+        # PF picks first — UF twin checks below must see the LIVE
+        # (post-pick) capability displays, or a PF pick could re-create
+        # the very twin the UF pick was validated against.
+        for item in pending:
+            pick = choices.get(item.key)
+            if (item.kind != "pf" or not isinstance(pick, str)
+                    or not pick.strip()):
+                continue
+            pick = " ".join(pick.split())
+            if display_law_violations(pick, vocab):
+                continue
+            if pick != str(getattr(item.obj, "display_name", "") or ""):
+                item.obj.display_name = pick
+                applied += 1
+        for item in pending:
+            pick = choices.get(item.key)
+            if (item.kind != "uf" or not isinstance(pick, str)
+                    or not pick.strip()):
+                continue
+            pick = " ".join(pick.split())
+            uf_obj = item.obj  # UF display channel is ``name``
+            live_pf = pf_by_slug.get(
+                str(getattr(uf_obj, "product_feature_id", None) or ""))
+            live_pf_display = (
+                str(getattr(live_pf, "display_name", None)
+                    or getattr(live_pf, "name", "") or "")
+                if live_pf is not None else (item.pf_display or "")
+            )
+            if display_law_violations(
+                pick, vocab, pf_display=live_pf_display or None,
+            ):
+                continue
+            if pick != str(getattr(uf_obj, "name", "") or ""):
+                uf_obj.name = pick
+                applied += 1
+        lab_result["applied"] = applied
+        tele["labeler"] = lab_result
+
+        # Final twin sweep against the LIVE displays: a PF pick can twin
+        # an untouched UF name ("GoCardless" PF pick vs a "GoCardless"
+        # journey the labeler never saw). Law > pick: re-template.
+        for uf in user_flows:
+            live_pf = pf_by_slug.get(
+                str(getattr(uf, "product_feature_id", None) or ""))
+            if live_pf is None:
+                continue
+            live_disp = str(
+                getattr(live_pf, "display_name", None)
+                or getattr(live_pf, "name", "") or "")
+            if not live_disp or (
+                str(getattr(uf, "name", "") or "").strip().lower()
+                != live_disp.strip().lower()
+            ):
+                continue
+            member_names = [
+                flow_name_by_id.get(str(m), str(m))
+                for m in (getattr(uf, "member_flow_ids", None) or [])
+            ]
+            for cand in build_uf_candidates(uf, live_pf, vocab, member_names):
+                if not display_law_violations(
+                    cand, vocab, pf_display=live_disp,
+                ):
+                    uf.name = cand
+                    tele["uf_twins_resolved"] += 1
+                    _law_fix("pf_uf_twin")
+                    break
 
     # Post-labeler uniqueness re-check (a labeler pick could collide):
     # first-come (slug-sorted) keeps its display, later duplicates revert

@@ -119,6 +119,15 @@ class CacheKind(str, Enum):
     # run, and those hints sit inside the stage-8 analyst payload (= its
     # cache key), silently re-rolling all of Layer 2 (supabase, 2026-07-02).
     LLM_AUDITOR = "llm-auditor"
+    # Wave-3 personas (§4.7): PM Labeler / Surface Adjudicator / Draft
+    # Verifier batch calls. One entry per batch, keyed on {cache version,
+    # persona role, canonical model, system prompt, canonical items
+    # payload}. The cached value is the PARSED per-item decision mapping —
+    # replayed through the same validation/apply code as a live call, so
+    # an unchanged repo re-scans byte-identical at $0. Content-keyed (same
+    # input → same answer): a deterministic short-circuit, not per-repo
+    # memory (rule-cold-scan safe).
+    LLM_PERSONA = "llm-persona"
     # Top-level scan-result cache: one entry per (repo content identity +
     # engine version + scan config) — the full FeatureMap JSON of a
     # completed scan. Because temperature=0 on Anthropic is NOT bit-exact,

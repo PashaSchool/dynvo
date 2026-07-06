@@ -413,13 +413,19 @@ def test_product_verticals_yaml_matches_eval_authoring_copy() -> None:
 _PIPELINE_DIR = _REPO_ROOT / "faultline"
 
 #: Files allowed to mention ``product_thesis`` inside ``faultline/``:
-#: the stage itself and the runner that WRITES the scan_meta key. Any
-#: other hit means some pipeline module started READING the thesis —
-#: which is forbidden until an explicit, reviewed consumer seam ships
-#: (W3 personas).
+#: the stage itself, the runner that WRITES the scan_meta key, and the
+#: W3 persona seam (the explicit, reviewed consumer): phase_finalize
+#: THREADS ``scan_meta["product_thesis"]`` into the personas, which use
+#: it as NAMING/adjudication context only — the iron guard (thesis
+#: never influences membership) is preserved because the naming
+#: contract writes ONLY the display channel (see
+#: test_naming_contract grep-guard + identity-untouched fixtures). Any
+#: OTHER module reading the thesis remains forbidden.
 _ALLOWED_MENTIONS = {
     Path("pipeline_v2/stage_0_8_product_thesis.py"),
     Path("pipeline_v2/run.py"),
+    Path("pipeline_v2/phase_finalize.py"),
+    Path("pipeline_v2/personas.py"),
 }
 
 

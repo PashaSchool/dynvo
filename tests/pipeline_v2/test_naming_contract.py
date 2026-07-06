@@ -90,11 +90,12 @@ def test_grep_guard_naming_module_never_writes_identity() -> None:
         f"naming_contract.py assigns identity fields: {forbidden}"
     )
     # ``<feature>.name = …`` would rewrite a canonical PF slug — the only
-    # legal ``.name`` assignment target is a UserFlow (``uf.name``).
+    # legal ``.name`` assignment targets are UserFlow locals (named
+    # ``uf`` / ``uf_obj`` by convention, enforced here).
     name_writes = [
         m.group(0) for m in re.finditer(r"(\w+)\.name\s*=[^=]", src)
     ]
-    assert all(m.startswith("uf.") for m in name_writes), (
+    assert all(m.startswith(("uf.", "uf_obj.")) for m in name_writes), (
         f"non-UF .name assignment in naming_contract.py: {name_writes}"
     )
 

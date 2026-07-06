@@ -1476,19 +1476,33 @@ def run_finalize_phase(
         })
         with StageLogger(run_dir, 7, "naming_contract") as log_nc:
             try:
-                # PM Labeler (Wave-3 persona): keyed scans only — the
-                # deterministic top choice is the keyless display path.
+                # PM Labeler + Draft Verifier (Wave-3 personas): keyed
+                # scans only — the deterministic top choice is the
+                # keyless display path. The thesis feeds NAMES only
+                # (the reviewed §4.7 consumer seam of the write-only
+                # product_thesis scan_meta key — never membership).
                 _nc_labeler = None
                 try:
                     from faultline.pipeline_v2.personas import (
+                        build_draft_verifier,
                         build_pm_labeler,
+                    )
+                    _nc_cache = getattr(ctx, "cache_backend", None)
+                    _nc_verifier = build_draft_verifier(
+                        model_id=model_id,
+                        cost_tracker=tracker,
+                        cache=_nc_cache,
+                        llm_health=llm_health,
+                        log=log_nc,
                     )
                     _nc_labeler = build_pm_labeler(
                         model_id=model_id,
                         cost_tracker=tracker,
-                        cache=getattr(ctx, "cache_backend", None),
+                        cache=_nc_cache,
                         llm_health=llm_health,
                         log=log_nc,
+                        thesis=scan_meta.get("product_thesis"),
+                        verifier=_nc_verifier,
                     )
                 except Exception:  # noqa: BLE001 — persona is optional
                     _nc_labeler = None
