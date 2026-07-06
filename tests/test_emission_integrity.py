@@ -134,11 +134,37 @@ def test_phantom_marker_only_dev_feature_dropped() -> None:
     assert res.phantom_features_dropped == ["ai"]
 
 
-def test_feature_with_real_path_never_dropped() -> None:
-    # 0 loc but a real (non-marker) path is NOT a structural phantom.
-    keep = _feat("thin", ["src/thin.ts"], loc=0, loc_shared=0)
+def test_real_path_but_all_zero_loc_flowless_dropped() -> None:
+    # RC2-4 (2026-07-06): a REAL (non-marker) path that Stage 6.97 counted
+    # as zero (empty / typo'd / fully-excluded file) is content-less
+    # exactly like a marker-only row when the feature also owns no
+    # flows — "onyx connector-module-init" (single path
+    # ``freshdesk/__init__,py``, a comma-typo'd 0-byte file in the onyx
+    # repo, 0 flows). Stage 6.97's own-file rescue floor means a feature
+    # with ANY nonzero-loc file never reaches loc=0, so this predicate
+    # only fires for the genuinely content-less case.
+    dead = _feat("connector-module-init", ["backend/x/typo,py"], loc=0, loc_shared=0)
+    feats, _, res = enforce_emission_integrity([dead], [], [], [])
+    assert feats == []
+    assert res.phantom_features_dropped == ["connector-module-init"]
+
+
+def test_feature_with_real_path_and_real_loc_never_dropped() -> None:
+    # The content-FULL case never reaches the phantom predicate.
+    keep = _feat("thin", ["src/thin.ts"], loc=120, loc_shared=0)
     feats, _, res = enforce_emission_integrity([keep], [], [], [])
     assert [f.name for f in feats] == ["thin"]
+    assert res.phantom_features_dropped == []
+
+
+def test_feature_with_real_path_zero_loc_but_flows_never_dropped() -> None:
+    # A real path with 0 owned/shared loc but >=1 owned flow is NOT
+    # content-less — the flow IS the code surface (e.g. a config-driven
+    # route with no directly-attributed source lines).
+    keep = _feat("thin-flowful", ["src/thin.ts"], loc=0, loc_shared=0,
+                 flows=[_flow("f1", uuid="u1")])
+    feats, _, res = enforce_emission_integrity([keep], [], [], [])
+    assert [f.name for f in feats] == ["thin-flowful"]
     assert res.phantom_features_dropped == []
 
 
