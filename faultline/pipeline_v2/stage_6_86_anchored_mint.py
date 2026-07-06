@@ -626,21 +626,23 @@ def run_anchored_mint(
         display = a.display
         if slug in used_slugs:
             # Same display from two anchors (cross-FAMILY vendor clash —
-            # Soc0 claroty under both edr and iot_ot): qualify with the
-            # family key first (readable: `claroty-iot-ot`), the
-            # canonical-id tail as the deterministic last resort. The
-            # DISPLAY is qualified too — dev_map / the 6.7d rebuild key
-            # capabilities by display name, so two live PFs sharing one
-            # display would silently merge downstream (grain loss).
+            # Soc0 claroty under both edr and iot_ot): qualify the
+            # DISPLAY (dev_map / the 6.7d rebuild key capabilities by
+            # display, so two live PFs sharing one display would
+            # silently merge downstream) and derive the slug FROM the
+            # qualified display via the SAME canonical_slug the 6.7d
+            # rebuild uses (review F3: a hand-rolled `claroty-iot-ot`
+            # diverged from canonical_slug("Claroty (Iot Ot)") =
+            # `claroty-(iot-ot)`, voiding hub parity for exactly this
+            # class and forking keyless-vs-keyed slugs).
             fam = getattr(a, "family_key", "") or ""
-            cand_slug = _slug(f"{a.display}-{fam}") if fam else ""
-            if not cand_slug or cand_slug in used_slugs:
-                cand_slug = _slug(
-                    f"{a.display}-{re.sub(r'[^a-z0-9]+', '-', cid.lower())}")
-            slug = cand_slug
             qual = (fam.replace("-", " ").title() if fam
-                    else slug[len(_slug(a.display)) + 1:])
+                    else re.sub(r"[^A-Za-z0-9]+", " ", cid).strip().title())
             display = f"{a.display} ({qual})"
+            slug = _slug(display)
+            if slug in used_slugs:  # same qualified display twice — cid tail
+                display = f"{a.display} ({re.sub(r'[^A-Za-z0-9]+', ' ', cid).strip().title()})"
+                slug = _slug(display)
         used_slugs.add(slug)
         slug_by_anchor[cid] = slug
         desc = (
@@ -822,13 +824,19 @@ def build_platform_infrastructure_lane(
     in ``features[]`` (Layer-1 truth) with ``product_feature_id=None``;
     the lane is the explainability surface (I22 reads it post-W2b)."""
     rows: list[dict[str, Any]] = []
+    lane_reasons = {_SHARED_REASON_NONE, _SHARED_REASON_BAR,
+                    _SHARED_REASON_SHELL}
     for f in developer_features:
         if getattr(f, "layer", "developer") != "developer":
             continue
         if getattr(f, "product_feature_id", None) is not None:
             continue
         reason = getattr(f, "shared_reason", None)
-        if not reason:
+        # ONLY the three amendment reasons the MINT stamps (review F4):
+        # a pfid=None dev some other stage tagged with a different
+        # reason (non_product_surface / genuinely_shared_infra /
+        # facet_view) is that stage's concern, never a lane resident.
+        if reason not in lane_reasons:
             continue
         rows.append({
             "name": f.name,

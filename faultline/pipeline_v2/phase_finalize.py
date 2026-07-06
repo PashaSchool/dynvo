@@ -1242,7 +1242,18 @@ def run_finalize_phase(
         _shell_absorb_enabled,
         resolve_flowless_shells,
     )
+    # NEVER on the ANCHORED path (Wave 2b review F1/F5, 2026-07-06): this
+    # ladder is a cure for FREE-GEN draw shells and both of its moving
+    # rungs violate the spine — the JOIN re-homes a minted anchor's devs
+    # by name-family against their own lineage (F5), and the DEMOTE
+    # resurrects the ABOLISHED "Shared Platform" PF via _ensure_shared_pf
+    # (F1 — the 18:2x amendment kills that bucket on every code path; the
+    # keyed leak survived the keyless gates precisely because this stage
+    # is 6.7d-gated). An anchored flowless >=1k-LOC PF is a REAL
+    # capability whose flows weren't detected — it stays, and validator
+    # I8's LOC prong honestly reports the flow-detection gap.
     if (_shell_absorb_enabled()
+            and not anchored_mint_applied
             and (scan_meta.get("stage_6_7d_journey_abstraction") or {}).get("applied")):
         with StageLogger(run_dir, 6, "flowless_shells") as log_shell:
             try:

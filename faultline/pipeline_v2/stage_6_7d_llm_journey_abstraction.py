@@ -2633,6 +2633,7 @@ def _reassign_shared_ufs(
     *,
     new_pfs: list["Feature"] | None = None,
     routes_index: list[dict[str, Any]] | None = None,
+    anchored: bool = False,
 ) -> dict[str, Any]:
     """Reassign every UF left on the shared/platform capability to the
     non-shared PF owning the plurality of its member flows (see the block
@@ -2709,28 +2710,34 @@ def _reassign_shared_ufs(
                 tele["uf_shared_family_resolved"] += 1
                 _record(uf.name, donor0, fam_slug, "name_family_match")
                 continue
-            # (ii) entry-file carve — mint a domain-dedicated owning dev its own
-            # capability (flowful by construction).
-            carved = _carve_shared_uf(
-                uf, flow_owner_dev, dev_by_name, dev_to_product, pf_list,
-                route_files, route_uuids)
-            if carved:
-                uf.product_feature_id = carved
-                tele["uf_shared_carved"] += 1
-                _record(uf.name, donor0, carved, "entry_file_carve")
-                # keep cap_context fresh so a later UF can family-match the mint
-                continue
-            # (iii) DOCS/API-SURFACE family — flows genuinely route-grounded
-            # in an openapi/scalar/docs surface get their own home rather
-            # than defaulting to shared-platform.
-            docs_slug = _docs_surface_uf(
-                uf, flow_by_id, flow_owner_dev, dev_by_name, dev_to_product,
-                pf_list)
-            if docs_slug:
-                uf.product_feature_id = docs_slug
-                tele["uf_shared_docs_resolved"] += 1
-                _record(uf.name, donor0, docs_slug, "docs_api_surface")
-                continue
+            # (ii)+(iii) are PF-APPEND rungs — they mint capabilities that
+            # are NOT anchored nodes (no anchor_id). FORBIDDEN in anchored
+            # mode (review F2: "the PF universe is FIXED by the mint");
+            # the ladder falls through to the drop/unresolved rungs and
+            # conservation / terminal home place the journey by ownership.
+            if not anchored:
+                # (ii) entry-file carve — mint a domain-dedicated owning
+                # dev its own capability (flowful by construction).
+                carved = _carve_shared_uf(
+                    uf, flow_owner_dev, dev_by_name, dev_to_product, pf_list,
+                    route_files, route_uuids)
+                if carved:
+                    uf.product_feature_id = carved
+                    tele["uf_shared_carved"] += 1
+                    _record(uf.name, donor0, carved, "entry_file_carve")
+                    # keep cap_context fresh so a later UF can family-match
+                    continue
+                # (iii) DOCS/API-SURFACE family — flows genuinely
+                # route-grounded in an openapi/scalar/docs surface get
+                # their own home rather than defaulting to shared-platform.
+                docs_slug = _docs_surface_uf(
+                    uf, flow_by_id, flow_owner_dev, dev_by_name,
+                    dev_to_product, pf_list)
+                if docs_slug:
+                    uf.product_feature_id = docs_slug
+                    tele["uf_shared_docs_resolved"] += 1
+                    _record(uf.name, donor0, docs_slug, "docs_api_surface")
+                    continue
             # (iv) synthetic-fixture UF — every member is a whole-file
             # fallback attribution anchored in eval/fixture/mock data, not a
             # real journey. Drop it rather than force a home (see rung
@@ -2982,7 +2989,8 @@ def run_journey_abstraction(
         if _uf_reshare_enabled():
             rs_tele = _reassign_shared_ufs(
                 new_ufs, developer_features, dev_to_product,
-                flow_owner_override, new_pfs=new_pfs, routes_index=routes_index)
+                flow_owner_override, new_pfs=new_pfs, routes_index=routes_index,
+                anchored=anchored)
             tele.update(rs_tele)
         # Deterministic output ordering (Phase 1 stability): the LLM emits
         # features/flows in an order that drifts run-to-run. Sort by a stable key
@@ -3227,9 +3235,20 @@ def run_journey_abstraction(
                 })
         tele["anchored_pf_invented_dropped"] = dropped
         pf_specs = kept
-        # Re-slug UF citations onto the fixed list (a cited name that is
-        # not an anchored capability keeps its slug — the conservation
-        # law + emission integrity resettle/repair it downstream).
+        # Re-slug UF citations onto the fixed list (review F2 — this was
+        # a comment with no code): a journey citing a NON-anchored
+        # capability (incl. the "Shared Platform" string the retired
+        # Call-2 sink taught the models) gets its citation CLEARED — the
+        # conservation law / emission integrity / terminal home then
+        # place it by ownership evidence. Never let an invented name
+        # reach the reshare ladder as a shared-platform attachment.
+        scrubbed = 0
+        for u_spec in uf_specs:
+            cited = str(u_spec.get("product_feature") or "")
+            if cited and by_slug.get(_slug(cited)) is None:
+                u_spec["product_feature"] = ""
+                scrubbed += 1
+        tele["anchored_uf_citations_scrubbed"] = scrubbed
     parsed1 = {"user_flows": uf_specs, "product_features": pf_specs}
     if tele["cost_usd"] > COST_CAP_USD:
         return _degrade(f"cost_cap ${tele['cost_usd']:.4f}")
