@@ -502,6 +502,7 @@ def split_mega_user_flows(
             try:
                 tracker.record(
                     model=model, input_tokens=in_tok, output_tokens=out_tok,
+                    label="stage-6.7c-uf-splitter",
                 )
             except Exception:  # noqa: BLE001 — budget cap; the call already happened
                 pass

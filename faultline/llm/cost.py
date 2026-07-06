@@ -239,11 +239,20 @@ class CostTracker:
         output_tokens: int,
         label: str = "",
         batch: bool = False,
+        decision_meta: dict[str, Any] | None = None,
     ) -> CostRecord:
         """Record a single LLM call and return the resulting CostRecord.
 
         Anthropic is the only supported provider; cost is always derived
         from the Anthropic pricing table.
+
+        ``decision_meta`` (Wave 2a, Phase-0 decision logging): optional
+        ``{role, input_digest_hash, candidates, decision}`` forwarded to
+        the training-dataset tap. Every ``record()`` call — with or
+        without meta — emits one ``kind="llm_call"`` JSONL record while a
+        scan bracket is open (see :mod:`faultline.llm.decision_log`);
+        cost accounting is byte-unchanged either way, and the tap is
+        best-effort by contract (never raises into the pipeline).
         """
         cost = estimate_call_cost(model, input_tokens, output_tokens, batch=batch)
 
@@ -258,6 +267,18 @@ class CostTracker:
         )
         with self._lock:
             self.records.append(rec)
+        try:
+            from faultline.llm.decision_log import log_llm_call
+
+            log_llm_call(
+                model=model,
+                label=label,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                decision_meta=decision_meta,
+            )
+        except Exception:  # noqa: BLE001 — the tap must never break a scan
+            pass
         return rec
 
     @property
