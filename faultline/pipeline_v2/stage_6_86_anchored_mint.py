@@ -549,25 +549,56 @@ def run_anchored_mint(
             alias_map = build_path_alias_map(repo_path)
         except Exception:  # noqa: BLE001 — resolver is best-effort
             alias_map = None
-        # owned file → dev name (assigned devs only — fold targets must
-        # already have a minting home).
+        # Vote by MINTING-ANCHOR SUBTREE membership of the import targets
+        # (spine-true: anchors are the membership units; dev-ownership is
+        # derived). The midday acceptance run showed the dev-ownership
+        # vote misses workspace-package imports whose files nobody
+        # primary-owns (`@midday/invoice/templates` → packages/invoice
+        # inside the MERGED `invoices` anchor). Per target: the most
+        # specific matching minting anchor (exact file > longest prefix).
+        mintable_sorted = sorted(mintable)
+
+        def _anchor_of_target(t: str) -> str | None:
+            best_cid: str | None = None
+            best_spec: tuple[int, int] | None = None
+            for cid in mintable_sorted:
+                a = anchor_by_id[cid]
+                if not a.matches(t):
+                    continue
+                spec = (
+                    1 if t in a.files else 0,
+                    max((len(p) for p in a.prefixes
+                         if t.startswith(p + "/") or t == p), default=0),
+                )
+                if best_spec is None or spec > best_spec:
+                    best_cid, best_spec = cid, spec
+            return best_cid
+
+        # Ownership fallback channel: a target file primary-owned by an
+        # already-assigned dev votes that dev's capability even when no
+        # anchor subtree covers the file (shared components class).
         file_owner: dict[str, str] = {}
-        for name, (_cid, _prov) in sorted(assignment.items()):
+        for name in sorted(assignment):
             for p in owned_by_dev.get(name, ()):
                 file_owner.setdefault(p, name)
+
         for f, w, reason in fold_pending:
             targets = _import_fold_targets(
                 owned_by_dev[f.name], repo_path, tracked, src_cache, alias_map)
             votes: Counter[str] = Counter()
             for t in targets:
-                owner = file_owner.get(t)
-                if owner is not None:
-                    votes[assignment[owner][0]] += 1
+                target_cid = _anchor_of_target(t)
+                if target_cid is None:
+                    owner = file_owner.get(t)
+                    if owner is not None:
+                        target_cid = assignment[owner][0]
+                if target_cid is not None:
+                    votes[target_cid] += 1
             resolved = False
             if votes:
                 total = sum(votes.values())
                 (best_cid, best_n), = votes.most_common(1)
-                # strict majority of capability-owned targets, tie → alpha
+                # strict majority of anchor-covered targets, tie → alpha
                 tied = sorted(c for c, n in votes.items() if n == best_n)
                 best_cid = tied[0]
                 if votes[best_cid] * 2 > total:
