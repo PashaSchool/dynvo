@@ -42,6 +42,15 @@
 #                    `packages/<name>` where <name> declares a whole
 #                    non-product surface (apps/www, apps/docs, packages/cli).
 #                    First-two-segment match only.
+#                    PUBLISHED-CLI OVERRIDE (operator doctrine 2026-07-06,
+#                    midday review): a dev_tooling-named workspace whose
+#                    package.json declares a non-empty `bin` AND is not
+#                    `private: true` is a SHIPPED PRODUCT CLI (midday
+#                    packages/cli — published npm package customers
+#                    install; its 'Authenticate via CLI' journeys are real
+#                    product journeys) — the classifier overrides the
+#                    dev_tooling vote to product. cli dirs without
+#                    bin/published stay dev_tooling.
 #   root_dirs      — repo-ROOT directory names that declare a whole surface
 #                    without a workspace container (formbricks docs/,
 #                    classic website/ folders). Deliberately a CONSERVATIVE

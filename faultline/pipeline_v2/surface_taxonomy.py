@@ -200,17 +200,30 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
 
 
 class SurfaceScopeClassifier:
-    """Pure, deterministic scope classifier over path / route / name
-    evidence. Importable standalone (offline re-scoring reads recorded scan
+    """Deterministic scope classifier over path / route / name evidence.
+    Importable standalone (offline re-scoring reads recorded scan
     artifacts directly); the engine wiring lives in :func:`tag_layer1` /
-    :func:`apply_emission_taxonomy`."""
+    :func:`apply_emission_taxonomy`.
 
-    def __init__(self, patterns: dict | None = None) -> None:
+    ``repo_path`` (optional) enables the ONE filesystem signal: the
+    published-CLI override. A ``cli``/``mcp``-named workspace can be a
+    PRODUCT shipped CLI (midday's ``packages/cli`` is a published npm
+    package with a ``bin`` customers install — its 'Authenticate via CLI'
+    journeys are real product journeys), so a dev_tooling workspace-dir
+    vote is overridden to PRODUCT when the workspace's ``package.json``
+    declares a ``bin`` AND is not ``private: true`` (operator/coordinator
+    doctrine, 2026-07-06). No repo_path → no reads → the lexicon verdict
+    stands unchanged."""
+
+    def __init__(self, patterns: dict | None = None,
+                 repo_path: Any = None) -> None:
         cfg = patterns if patterns is not None else load_patterns()
         self._groups = _invert(cfg.get("route_groups"))
         self._url = _invert(cfg.get("url_segments"))
         self._workspace = _invert(cfg.get("workspace_dirs"))
         self._root_dirs = _invert(cfg.get("root_dirs"))
+        self._repo_path = repo_path
+        self._published_cache: dict[str, bool] = {}
         self._shell_slugs = frozenset(
             str(s).lower() for s in (cfg.get("shell_slugs") or [])
         )
@@ -270,6 +283,10 @@ class SurfaceScopeClassifier:
         for i, seg in enumerate(segs[:-1]):
             if seg in _WORKSPACE_CONTAINERS:
                 sc = self._workspace.get(segs[i + 1])
+                if sc == "dev_tooling" and self._is_published_cli(
+                    "/".join(segs[: i + 2]),
+                ):
+                    sc = SCOPE_PRODUCT  # shipped product CLI, not tooling
                 if sc:
                     hits.add(sc)
         if len(segs) > 1:
@@ -282,6 +299,36 @@ class SurfaceScopeClassifier:
             if sc in hits:
                 return sc
         return None
+
+    def _is_published_cli(self, workspace_dir: str) -> bool:
+        """Published-product override for a dev_tooling-named workspace.
+
+        Deterministic signal (coordinator doctrine, 2026-07-06, from the
+        midday review): the workspace's ``package.json`` declares a
+        non-empty ``bin`` AND is not ``private: true`` ⇒ customers
+        install and drive it ⇒ PRODUCT surface. Unreadable / absent
+        manifest, no ``bin``, or ``private: true`` ⇒ the lexicon's
+        dev_tooling verdict stands. No repo_path ⇒ never reads ⇒ False.
+        """
+        if self._repo_path is None:
+            return False
+        cached = self._published_cache.get(workspace_dir)
+        if cached is not None:
+            return cached
+        verdict = False
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+
+            pj = _Path(self._repo_path) / workspace_dir / "package.json"
+            if pj.is_file():
+                doc = _json.loads(pj.read_text(encoding="utf-8"))
+                if isinstance(doc, dict):
+                    verdict = bool(doc.get("bin")) and doc.get("private") is not True
+        except (OSError, ValueError):  # unreadable manifest → no override
+            verdict = False
+        self._published_cache[workspace_dir] = verdict
+        return verdict
 
     def classify_route_pattern(self, route_pattern: str) -> str | None:
         """Scope signal of one URL route pattern (``None`` = no signal)."""
@@ -504,17 +551,19 @@ def tag_layer1(
     developer_features: list["Feature"],
     routes_index: list[dict[str, Any]] | None,
     patterns: dict | None = None,
+    repo_path: Any = None,
 ) -> dict[str, Any]:
     """Stage 6.85 Layer-1 tagging — stamp ``surface_scope`` on every
     ``routes_index`` entry and every developer feature, in place.
 
     Runs right after Stage 6.8b (so route ``trigger`` verdicts exist).
+    ``repo_path`` enables the published-CLI product override.
     Returns telemetry ``{route_scopes: {...}, dev_scopes: {...}}``.
     """
     tele: dict[str, Any] = {"enabled": taxonomy_enabled()}
     if not taxonomy_enabled():
         return tele
-    clf = SurfaceScopeClassifier(patterns)
+    clf = SurfaceScopeClassifier(patterns, repo_path=repo_path)
     route_counts: dict[str, int] = {}
     for entry in routes_index or []:
         sc = clf.classify_route_entry(entry)
@@ -764,6 +813,7 @@ def apply_emission_taxonomy(
     flows: list["Flow"],
     routes_index: list[dict[str, Any]] | None,
     patterns: dict | None = None,
+    repo_path: Any = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list["Feature"]]:
     """Emission-time taxonomy: tag UFs/PFs, split the non-product lane,
     dissolve info-page journeys, re-bind non-product shared devs, stamp
@@ -772,12 +822,13 @@ def apply_emission_taxonomy(
     Mutates ``developer_features`` / ``user_flows`` in place; returns
     ``(telemetry, non_product_surfaces, product_features)`` — the caller
     rebinds its ``product_features`` list (lane rows are REMOVED from it).
+    ``repo_path`` enables the published-CLI product override.
     """
     tele: dict[str, Any] = {"enabled": taxonomy_enabled()}
     if not taxonomy_enabled():
         return tele, [], product_features
 
-    clf = SurfaceScopeClassifier(patterns)
+    clf = SurfaceScopeClassifier(patterns, repo_path=repo_path)
     rbf = _route_by_file(routes_index)
     route_files = frozenset(rbf.keys())
     flow_by_id = _flow_lookup(flows)

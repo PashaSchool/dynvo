@@ -139,6 +139,47 @@ def test_is_non_product_dev_reads_stamped_tag_only() -> None:
     assert is_non_product_dev(dev) is False
 
 
+def test_published_cli_workspace_is_product_not_dev_tooling(
+    tmp_path: Path,
+) -> None:
+    """Operator doctrine (midday review, 2026-07-06): a cli workspace
+    whose package.json ships a bin (and is not private) is a PRODUCT
+    surface — customers install and drive it; its journeys are real."""
+    import json as _json
+
+    shipped = tmp_path / "packages" / "cli"
+    shipped.mkdir(parents=True)
+    (shipped / "package.json").write_text(_json.dumps({
+        "name": "@midday/cli", "bin": {"midday": "./dist/index.js"},
+    }))
+    internal = tmp_path / "tools" / "cli"
+    internal.mkdir(parents=True)
+    (internal / "package.json").write_text(_json.dumps({
+        "name": "@internal/cli", "private": True,
+        "bin": {"x": "./x.js"},
+    }))
+    bare = tmp_path / "apps" / "cli"
+    bare.mkdir(parents=True)
+    (bare / "package.json").write_text(_json.dumps({"name": "cli-helpers"}))
+
+    c = SurfaceScopeClassifier(repo_path=tmp_path)
+    # Published bin + not private → product override.
+    assert c.classify_path("packages/cli/src/auth.ts") is None or \
+        c.classify_path("packages/cli/src/auth.ts") == "product"
+    assert c.classify_path("packages/cli/src/auth.ts") == "product"
+    # private:true → stays dev_tooling despite the bin.
+    assert c.classify_path("tools/cli/src/main.ts") == "dev_tooling"
+    # No bin at all → stays dev_tooling.
+    assert c.classify_path("apps/cli/src/main.ts") == "dev_tooling"
+    # Feature grain: the shipped CLI dev stays a product feature.
+    dev = _feature("cli", ["packages/cli/src/auth.ts",
+                           "packages/cli/src/deploy.ts"])
+    assert c.classify_feature(dev) == "product"
+    # Without repo_path (no reads) the lexicon verdict stands.
+    c2 = SurfaceScopeClassifier()
+    assert c2.classify_path("packages/cli/src/auth.ts") == "dev_tooling"
+
+
 # ── Layer-1 tagging ─────────────────────────────────────────────────────
 
 

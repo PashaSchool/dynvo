@@ -197,7 +197,7 @@ def run_finalize_phase(
     # byte-identical to pre-W2a engines).
     from faultline.pipeline_v2.surface_taxonomy import tag_layer1
     scan_meta["surface_taxonomy"] = tag_layer1(
-        features, lineage_result.routes_index,
+        features, lineage_result.routes_index, repo_path=repo_path,
     )
 
     # ── Incremental scan bookkeeping ───────────────────────────────
@@ -1115,6 +1115,7 @@ def run_finalize_phase(
                 apply_emission_taxonomy(
                     features, product_features, user_flows,
                     list(bipartite.flows), lineage_result.routes_index,
+                    repo_path=repo_path,
                 )
             )
             scan_meta["surface_taxonomy_emission"] = st_tele

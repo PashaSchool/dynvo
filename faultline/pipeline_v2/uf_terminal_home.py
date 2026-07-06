@@ -200,7 +200,7 @@ def assign_terminal_homes(
             if str(mid) in flow_by_id
         ]
         chosen: str | None = None
-        how = None
+        how = "homed_dir"  # overwritten by whichever rung decides
 
         # Rung 1 — direct ownership votes (the §4.5 ruler): argmax even
         # below majority (brief item 4b).
@@ -240,7 +240,7 @@ def assign_terminal_homes(
             # this only triggers for member-less journeys).
             root = owned_by_dir.get("", {})
             chosen = _argmax(root)
-            how = "homed_dir" if chosen else None
+            how = "homed_dir"
 
         if chosen is None:
             tele["unhomed"] += 1  # pragma: no cover — real_pf_keys guard
