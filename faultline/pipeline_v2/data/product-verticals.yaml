@@ -284,6 +284,7 @@ core_object_stopwords:
   - onboarding
   - invite
   - invitation
+  - notification
   # app shell / marketing chrome
   - app
   - web
