@@ -614,9 +614,10 @@ def run_anchored_mint(
         merged_mf: list[Any] = []
         for c in contrib:
             for mf in (getattr(c, "member_files", None) or []):
-                p = mf.get("path") if isinstance(mf, dict) else getattr(mf, "path", None)
-                if p and p not in seen_mf:
-                    seen_mf.add(p)
+                mfp = (mf.get("path") if isinstance(mf, dict)
+                       else getattr(mf, "path", None))
+                if mfp and mfp not in seen_mf:
+                    seen_mf.add(mfp)
                     merged_mf.append(mf)
         if merged_mf:
             pf.member_files = merged_mf
@@ -813,7 +814,7 @@ def enforce_hub_family_parity(
     tele = {"checked": len(family_stamps), "restamped": 0}
     if not family_stamps:
         return tele
-    pf_by_key = {}
+    pf_by_key: dict[str, "Feature"] = {}
     for pf in product_features:
         key = getattr(pf, "name", None) or ""
         if key:
@@ -835,11 +836,12 @@ def enforce_hub_family_parity(
         members_by_pf: dict[str, list["Feature"]] = defaultdict(list)
         for f in developer_features:
             pid = getattr(f, "product_feature_id", None)
-            if pid in affected and getattr(f, "layer", "developer") == "developer":
-                members_by_pf[pid].append(f)
+            if (pid and pid in affected
+                    and getattr(f, "layer", "developer") == "developer"):
+                members_by_pf[str(pid)].append(f)
         for key in sorted(affected):
-            pf = pf_by_key.get(key)
-            if pf is None:
+            target_pf = pf_by_key.get(key)
+            if target_pf is None:
                 continue
             merged: list[str] = []
             seen: set[str] = set()
@@ -848,5 +850,5 @@ def enforce_hub_family_parity(
                     if p not in seen:
                         seen.add(p)
                         merged.append(p)
-            pf.paths = merged
+            target_pf.paths = merged
     return tele
