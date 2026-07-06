@@ -35,8 +35,16 @@ Structural rails (rule-no-magic-tuning — ratios/structure only):
   * name collisions with existing features skip that vendor group
     (deterministic, conservative).
 
-Deterministic, $0 LLM. Default OFF (opt-in):
-``FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=1``.
+Deterministic, $0 LLM. Default ON since Product-Spine Wave 1 (spec §4.4,
+operator decision A, 2026-07-06 — the per-vendor grain is the
+construction rule for connector hubs); opt-out:
+``FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=0``.
+
+Product-Spine §4.4 extension: when the caller passes the detected hub
+relation (``hub_dirs``), files under a hub directory group by their
+IMMEDIATE CHILD segment (vendor DIRECTORY children like
+``app-store/zoom/**`` — not just vendor file stems), so dir-per-vendor
+hubs split the same way stem-per-vendor hubs always did.
 """
 
 from __future__ import annotations
@@ -52,8 +60,10 @@ if TYPE_CHECKING:
 
 
 def _is_enabled() -> bool:
-    """Default OFF (opt-in) — ``FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=1``."""
-    return os.environ.get("FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT", "0") != "0"
+    """Default ON since Product-Spine Wave 1 (§4.4, 2026-07-06) —
+    opt-out ``FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=0``. (Historically
+    default OFF / opt-in ``=1``.)"""
+    return os.environ.get("FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT", "1") != "0"
 
 
 @dataclass
@@ -101,12 +111,32 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
+def _hub_child_vendor(path: str, hub_dirs: tuple[str, ...]) -> str | None:
+    """Vendor named by the file's IMMEDIATE CHILD segment under a hub dir
+    (Product-Spine §4.4 dir-per-vendor layouts), else ``None``."""
+    from faultline.pipeline_v2.hub_relation import vendor_of_segment
+
+    norm = path.replace("\\", "/").strip("/")
+    for hub in hub_dirs:
+        prefix = hub + "/"
+        if norm.startswith(prefix):
+            child = norm[len(prefix):].split("/", 1)[0]
+            if child and not child.startswith((".", "_")):
+                return vendor_of_segment(child)
+    return None
+
+
 def split_vendor_connectors(
     features: list["Feature"],
+    hub_dirs: tuple[str, ...] = (),
 ) -> VendorSplitResult:
     """Split connector-hub dev features per vendor. Appends the minted
     connector features to *features* in place; returns telemetry. No-op when
-    disabled — safe to wire unconditionally."""
+    disabled — safe to wire unconditionally.
+
+    ``hub_dirs`` (Product-Spine §4.4) — detected hub directories; files
+    under one group by their immediate child segment (vendor dirs), with
+    the historical stem rule as fallback for everything else."""
     from faultline.pipeline_v2.stage_8_7_anchor_desink import (
         _FILE_KEYED_SURFACES,
         _is_workspace_anchor,
@@ -129,9 +159,12 @@ def split_vendor_connectors(
     taken_names = {f.name for f in features if getattr(f, "name", None)}
     minted_all: list["Feature"] = []
 
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
     for source in devs:
         paths = list(getattr(source, "paths", None) or [])
-        if len(paths) < 2 or _is_workspace_anchor(source):
+        # Facets (Product-Spine §4.1) are cross-cutting views — never hubs.
+        if len(paths) < 2 or _is_workspace_anchor(source) or is_facet(source):
             continue
         # Generic-container features (dialogs/modals/components/…) hold
         # per-vendor PRESENTATIONAL widgets, not connectors — never split.
@@ -140,7 +173,9 @@ def split_vendor_connectors(
         result.features_examined += 1
         groups: dict[str, list[str]] = {}
         for p in paths:
-            v = _file_vendor(p)
+            v = _hub_child_vendor(p, hub_dirs) if hub_dirs else None
+            if v is None:
+                v = _file_vendor(p)
             if v is not None:
                 groups.setdefault(v, []).append(p)
         vendor_files = sum(len(v) for v in groups.values())

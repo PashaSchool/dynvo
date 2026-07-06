@@ -103,6 +103,15 @@ VENDOR_TOKENS = frozenset({
     "fortinet", "zscaler", "splunk", "tanium", "sophos", "trellix",
     "cybereason", "carbonblack", "rapid7", "qualys", "tenable", "wazuh",
     "servicenow", "pagerduty", "opsgenie", "jira",
+    # Banking / accounting / comms / data-warehouse vendors (public
+    # products; added 2026-07-06 with the Product-Spine §4.4 hub/child
+    # relation — same universal-vocabulary class as every row above).
+    # Common-English collisions stay excluded per the rule above
+    # ("teller", "linear", "monday", "box", "segment").
+    "gocardless", "enablebanking", "fortnox", "xero", "quickbooks",
+    "gmail", "outlook", "chatwoot", "calendly", "clickhouse", "cognito",
+    "bigquery", "snowflake", "freshdesk", "confluence", "mailchimp",
+    "brevo", "klaviyo", "dropbox", "mixpanel", "amplitude", "zoom",
 })
 
 # Vendor-domination share: vendor token must appear in the evidence of

@@ -691,19 +691,29 @@ def run_layer2_phase(
             run_dir=run_dir,
         )
 
-    # ── Stage 8.9.7 — per-vendor connector split (opt-in, default OFF) ──
+    # ── Stage 8.9.7 — per-vendor connector split (default ON since
+    # Product-Spine Wave 1; opt-out FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=0) ──
     # Integration-hub dev features (majority of owned files stem-named after
-    # DISTINCT public vendors) split into <parent>-<vendor> sub-features —
-    # the per-connector grain users think in (dub golden: Connect Stripe /
+    # DISTINCT public vendors — or, §4.4, dir-per-vendor children under a
+    # detected hub dir) split into <parent>-<vendor> sub-features — the
+    # per-connector grain users think in (dub golden: Connect Stripe /
     # Connect Shopify). Subfeatures inherit product_feature_id → product
     # unions conserved, no reconcile needed. $0 LLM, deterministic.
-    # Default OFF; FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=1.
+    from faultline.pipeline_v2.hub_relation import (
+        apply_hub_pf_binding,
+        detect_hub_relations,
+    )
+
     write_stage_input(run_dir, 8, "vendor_connector_split", {
         "features": features,
         "product_features": product_features,
     })
     with StageLogger(run_dir, 8, "vendor_connector_split") as log8_9_7:
-        vendor_split_result = split_vendor_connectors(features)
+        hub_relations = detect_hub_relations(features)
+        vendor_split_result = split_vendor_connectors(
+            features,
+            hub_dirs=tuple(h.hub_dir for h in hub_relations),
+        )
         stage_8_9_7_telemetry = vendor_split_result.as_telemetry()
         log8_9_7.info(
             f"vendor_connector_split enabled={vendor_split_result.enabled} "
@@ -718,6 +728,35 @@ def run_layer2_phase(
             stage_index=8,
             stage_name="vendor_connector_split",
             payload=stage_8_9_7_telemetry,
+            run_dir=run_dir,
+        )
+
+    # ── Stage 8.9.8 — hub/child PF binding (Product-Spine §4.4) ────────
+    # Construction rule: every member of a connector hub (the hub dev +
+    # its per-vendor children, incl. the sub-features minted above) lands
+    # on ONE product feature — the majority non-shared PF among them, else
+    # a deterministically minted parent-capability PF. Pulls hubs out of
+    # Shared Platform; sibling parity holds by construction (children of
+    # one hub never split between shared and a PF). $0 LLM, deterministic.
+    # Kill-switch: FAULTLINE_SPINE_HUBS=0.
+    with StageLogger(run_dir, 8, "hub_pf_binding") as log8_9_8:
+        # Re-detect over the POST-split feature list so the minted
+        # <parent>-<vendor> children participate as members.
+        hub_binding_telemetry = apply_hub_pf_binding(
+            features, product_features, dev_to_product_map,
+        )
+        stage_8_9_7_telemetry["hub_binding"] = hub_binding_telemetry
+        log8_9_8.info(
+            f"hub_pf_binding enabled={hub_binding_telemetry['enabled']} "
+            f"hubs={hub_binding_telemetry['hubs']} "
+            f"devs_rebound={hub_binding_telemetry['devs_rebound']} "
+            f"pfs_minted={hub_binding_telemetry['pfs_minted']}",
+        )
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=8,
+            stage_name="hub_pf_binding",
+            payload=hub_binding_telemetry,
             run_dir=run_dir,
         )
 

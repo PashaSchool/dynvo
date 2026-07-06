@@ -604,6 +604,17 @@ def run_finalize_phase(
                     _slugs = s67d_dev_map.get(getattr(_dev, "name", None))
                     if _slugs:
                         _dev.product_feature_id = _slugs[0]
+            # Product-Spine §4.4 — re-enforce the hub/child relation on the
+            # REWRITTEN product layer (Call-2 re-attribution can scatter hub
+            # children back into Shared Platform / unrelated capabilities).
+            # Same construction rule as Stage 8.9.8; deterministic, $0.
+            if s67d_telemetry.get("applied"):
+                from faultline.pipeline_v2.hub_relation import (
+                    apply_hub_pf_binding as _hub_bind,
+                )
+                _hub_tele = _hub_bind(features, product_features)
+                if _hub_tele.get("hubs"):
+                    s67d_telemetry["hub_binding_post_67d"] = _hub_tele
             write_stage_artifact(
                 ctx.repo_path,
                 stage_index=6,

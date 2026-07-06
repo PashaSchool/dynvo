@@ -984,10 +984,39 @@ def _system_route_resource(file_path: str, pattern: str) -> str:
     return segs[-1]
 
 
+def _hub_of(
+    anchor: str,
+    hub_dirs: list[tuple[str, str]] | None,
+) -> tuple[str, str | None] | None:
+    """Product-Spine §4.4 — ``(hub_domain, vendor_child|None)`` when the
+    flow's primary anchor lives under a detected connector hub, else
+    ``None``. ``hub_dirs`` is ``[(hub_dir, hub_key), …]`` (longest dir
+    wins when nested)."""
+    if not hub_dirs or not anchor:
+        return None
+    norm = anchor.replace("\\", "/").strip("/")
+    best: tuple[str, str] | None = None
+    for hub_dir, hub_key in hub_dirs:
+        prefix = hub_dir + "/"
+        if norm.startswith(prefix) and (
+            best is None or len(hub_dir) > len(best[0])
+        ):
+            best = (hub_dir, hub_key)
+    if best is None:
+        return None
+    from faultline.pipeline_v2.hub_relation import vendor_of_segment
+
+    child = norm[len(best[0]) + 1:].split("/", 1)[0]
+    vendor = vendor_of_segment(child) if child else None
+    domain = _norm_domain(best[1].replace("-", "_"))
+    return domain, vendor
+
+
 def cluster_user_flows(
     scan: dict,
     routes_index: list[dict] | None = None,
     product_strings: Any | None = None,
+    hub_dirs: list[tuple[str, str]] | None = None,
 ) -> dict:
     """Core deterministic clusterer — dict in, dict out (mirrors prototype).
 
@@ -1047,20 +1076,55 @@ def cluster_user_flows(
     sys_cluster_resources: dict[tuple, Counter] = defaultdict(Counter)
     excluded = {"ui_primitive": 0, "infra_domain": 0}
     plugin_collapsed = 0
+    # Product-Spine §4.4 pre-pass — flows per (hub, vendor): a vendor child
+    # with RECURRING flows earns its own journey space (vendor-qualified
+    # domain below); single-flow vendors fold into the hub journey.
+    hub_vendor_flows: Counter = Counter()
+    if hub_dirs:
+        for f in uniq:
+            anchor0 = f.get("entry_point_file") or (
+                (f.get("paths") or [None])[0] or "")
+            hit0 = _hub_of(anchor0, hub_dirs)
+            if hit0 is not None and hit0[1] is not None:
+                hub_vendor_flows[hit0] += 1
+
+    hub_clustered = 0
     for idx, f in enumerate(uniq):
         domain = domain_of[idx]
+        anchor = f.get("entry_point_file") or (
+            (f.get("paths") or [None])[0] or "")
+        # Product-Spine §4.4 (precedence over Filter B) — a flow anchored
+        # under an EXPLICIT connector hub clusters against the hub relation:
+        # a vendor child with >= 2 flows gets a VENDOR-QUALIFIED domain
+        # (``edr_crowdstrike``) → its own per-vendor journey; single-flow
+        # vendors and shared hub plumbing keep the hub domain and fold into
+        # one hub journey via the singleton-noise merge below. The hub
+        # relation (not the statistical plugin-root collapse) is the source
+        # of truth where it fires.
+        hub_hit = _hub_of(anchor, hub_dirs)
+        if hub_hit is not None:
+            hub_domain, vendor = hub_hit
+            verb, resource = _split_name(f["name"])
+            intent = INTENT.get(verb, "other")
+            if vendor is not None and hub_vendor_flows[hub_hit] >= 2:
+                key: tuple[str | None, str, str] = (
+                    f"{hub_domain}_{vendor}", vendor, intent)
+            else:
+                key = (hub_domain, vendor or resource, intent)
+            clusters[key].append(f)
+            cluster_resources[key][vendor or resource] += 1
+            hub_clustered += 1
+            continue
         # Filter B (precedence) — collapse per-connector sibling domains into
         # one integration journey when the flow sits under a detected plugin
         # root. Shared plugin-root helper dirs (``app-store/_utils``) also fold.
-        anchor = f.get("entry_point_file") or (
-            (f.get("paths") or [None])[0] or "")
         in_plugin_root = any(
             seg in plugin_roots for seg in _path_segments(anchor)
         )
         if in_plugin_root:
             verb, resource = _split_name(f["name"])
             intent = INTENT.get(verb, "other")
-            key: tuple[str | None, str, str] = (_PLUGIN_DOMAIN, resource, intent)
+            key = (_PLUGIN_DOMAIN, resource, intent)
             clusters[key].append(f)
             cluster_resources[key][resource] += 1
             plugin_collapsed += 1
@@ -1266,6 +1330,8 @@ def cluster_user_flows(
         "uf_filtered_infra_domain": excluded["infra_domain"],
         "uf_plugin_collapsed": plugin_collapsed,
         "uf_plugin_roots": sorted(plugin_roots),
+        "uf_hub_clustered": hub_clustered,
+        "uf_hub_dirs": sorted(d for d, _ in (hub_dirs or [])),
     }
 
 
@@ -1285,17 +1351,26 @@ def run_user_flow_rollup(
     ``routes_index`` is the Stage 6.8 route registry (optional).
     """
     from faultline.models.types import UserFlow
+    from faultline.pipeline_v2.hub_relation import detect_hub_relations
 
     scan = {
         "flows": [_flow_view(f) for f in flows],
         "developer_features": [
             {"name": f.name, "product_feature_id": f.product_feature_id,
-             "paths": list(f.paths)}  # paths → Stage 6.7d job-file synthesis
+             "paths": list(f.paths),  # paths → Stage 6.7d job-file synthesis
+             "role": getattr(f, "role", None)}  # facet marker (spine §4.1)
             for f in features
         ],
     }
+    # Product-Spine §4.4 — the SAME hub relation the PF layer binds with
+    # drives per-vendor journey clustering (replaces the statistical
+    # plugin-root collapse wherever an explicit hub fires).
+    hub_dirs = [
+        (h.hub_dir, h.hub_key) for h in detect_hub_relations(features)
+    ]
     result = cluster_user_flows(
         scan, routes_index=routes_index, product_strings=product_strings,
+        hub_dirs=hub_dirs,
     )
     flow_to_uf = result["flow_to_uf"]
     name_to_uf = result["name_to_uf"]
