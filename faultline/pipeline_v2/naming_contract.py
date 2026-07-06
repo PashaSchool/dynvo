@@ -558,6 +558,7 @@ def run_naming_contract(
     routes_index: Iterable[Mapping[str, Any]] | None = None,
     thesis_tokens: Iterable[str] = (),
     labeler: Callable[[list[_PendingItem]], dict[str, Any]] | None = None,
+    verifier: Callable[[list[dict[str, Any]]], dict[str, bool]] | None = None,
 ) -> dict[str, Any]:
     """Apply the display-name contract in place; return telemetry.
 
@@ -826,6 +827,66 @@ def run_naming_contract(
                     tele["uf_twins_resolved"] += 1
                     _law_fix("pf_uf_twin")
                     break
+
+    # ── Pass 4: Draft Verifier over backstop-synthesized UFs (§4.7) ──
+    # The chain4 'schema.json'-class guard: a synthesized journey whose
+    # draft (post-laws, post-labeler) still fails the persona's honesty
+    # review reverts to the deterministic journey TEMPLATE (fold is
+    # structurally impossible for a backstop synth — it exists only
+    # because no sibling journey covers its PF; dropping would re-arm
+    # I8). Rejects never block; keyless (verifier=None) skips.
+    if verifier is not None:
+        synth_ufs = [u for u in user_flows if getattr(u, "synthesized", False)]
+        if synth_ufs:
+            drafts = []
+            for uf in synth_ufs:
+                pf = pf_by_slug.get(
+                    str(getattr(uf, "product_feature_id", None) or ""))
+                drafts.append({
+                    "id": str(getattr(uf, "id", "") or ""),
+                    "kind": "synth_uf",
+                    "draft": str(getattr(uf, "name", "") or ""),
+                    "pf_display": (
+                        str(getattr(pf, "display_name", None)
+                            or getattr(pf, "name", "") or "")
+                        if pf is not None else ""
+                    ),
+                    "member_flows": [
+                        flow_name_by_id.get(str(m), str(m))
+                        for m in (getattr(uf, "member_flow_ids", None) or [])
+                    ][:8],
+                    "synthesis_reason": str(
+                        getattr(uf, "synthesis_reason", None) or ""),
+                })
+            try:
+                verdicts = verifier(drafts) or {}
+            except Exception as exc:  # noqa: BLE001 — persona never breaks a scan
+                verdicts = {}
+                tele["verifier_error"] = str(exc)
+            rejected = 0
+            for uf in synth_ufs:
+                if verdicts.get(str(getattr(uf, "id", "") or "")) is not False:
+                    continue  # accept (explicit or default) — keep draft
+                rejected += 1
+                pf = pf_by_slug.get(
+                    str(getattr(uf, "product_feature_id", None) or ""))
+                pf_display = (
+                    str(getattr(pf, "display_name", None)
+                        or getattr(pf, "name", "") or "")
+                    if pf is not None else ""
+                )
+                member_names = [
+                    flow_name_by_id.get(str(m), str(m))
+                    for m in (getattr(uf, "member_flow_ids", None) or [])
+                ]
+                for cand in build_uf_candidates(uf, pf, vocab, member_names):
+                    if not display_law_violations(
+                        cand, vocab, pf_display=pf_display or None,
+                    ):
+                        uf.name = cand
+                        break
+            tele["verifier_synth_reviewed"] = len(drafts)
+            tele["verifier_synth_rejected"] = rejected
 
     # Post-labeler uniqueness re-check (a labeler pick could collide):
     # first-come (slug-sorted) keeps its display, later duplicates revert

@@ -470,3 +470,86 @@ def test_emission_taxonomy_none_adjudicator_deterministic() -> None:
     assert [p.surface_scope for p in pfs_a] == [
         p.surface_scope for p in pfs_b]
     assert "adjudicator" not in tele_a and "adjudicator" not in tele_b
+
+
+# ── Synth-UF verification through the naming stage (W3 commit N5) ───────
+
+
+def _synth_fixture():
+    from datetime import datetime, timezone
+
+    from faultline.models.types import Feature, UserFlow
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    pf = Feature(
+        name="settings", display_name="Settings",
+        anchor_id="route:apps/dashboard/settings", layer="product",
+        paths=[], authors=["a"], total_commits=1, bug_fixes=0,
+        bug_fix_ratio=0.0, last_modified=now, health_score=100.0,
+    )
+    uf = UserFlow(
+        id="UF-001", name="Settings", resource="settings", domain=None,
+        product_feature_id="settings", intent="manage",
+        member_flow_ids=["edit-settings-flow"], member_count=1,
+        synthesized=True, synthesis_reason="uncovered_product_feature_backstop",
+    )
+    return pf, uf
+
+
+def test_naming_stage_verifier_reviews_synth_ufs() -> None:
+    from faultline.pipeline_v2.naming_contract import run_naming_contract
+
+    pf, uf = _synth_fixture()
+    seen: list[dict] = []
+
+    def _verifier(drafts):
+        seen.extend(drafts)
+        return {d["id"]: True for d in drafts}  # accept all
+
+    tele = run_naming_contract([pf], [uf], [], verifier=_verifier)
+    assert len(seen) == 1
+    d = seen[0]
+    assert d["kind"] == "synth_uf"
+    assert d["draft"] == "Manage settings"  # post-law template draft
+    assert d["pf_display"] == "Settings"
+    assert d["synthesis_reason"] == "uncovered_product_feature_backstop"
+    assert tele["verifier_synth_reviewed"] == 1
+    assert tele["verifier_synth_rejected"] == 0
+    assert uf.name == "Manage settings"
+
+
+def test_naming_stage_verifier_reject_falls_back_to_template() -> None:
+    """A rejected synth draft reverts to the deterministic journey
+    template (never dropped — dropping would re-arm I8)."""
+    from faultline.pipeline_v2.naming_contract import run_naming_contract
+
+    pf, uf = _synth_fixture()
+
+    def _labeler(pending):
+        # The labeler composes something the verifier will then reject.
+        return {"choices": {
+            it.key: "View settings" for it in pending if it.kind == "uf"
+        }}
+
+    def _verifier(drafts):
+        return {d["id"]: False for d in drafts}  # reject everything
+
+    tele = run_naming_contract(
+        [pf], [uf], [], labeler=_labeler, verifier=_verifier)
+    assert tele["verifier_synth_rejected"] == 1
+    # Deterministic template restored; UF survived (I8 safe).
+    assert uf.name == "Manage settings"
+    assert uf.synthesized is True
+
+
+def test_naming_stage_verifier_exception_never_blocks() -> None:
+    from faultline.pipeline_v2.naming_contract import run_naming_contract
+
+    pf, uf = _synth_fixture()
+
+    def _verifier(drafts):
+        raise RuntimeError("persona exploded")
+
+    tele = run_naming_contract([pf], [uf], [], verifier=_verifier)
+    assert uf.name == "Manage settings"  # law fix still applied
+    assert "verifier_error" in tele

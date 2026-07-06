@@ -1501,6 +1501,7 @@ def run_finalize_phase(
                 # (the reviewed §4.7 consumer seam of the write-only
                 # product_thesis scan_meta key — never membership).
                 _nc_labeler = None
+                _nc_verifier = None
                 try:
                     from faultline.pipeline_v2.personas import (
                         build_draft_verifier,
@@ -1525,6 +1526,7 @@ def run_finalize_phase(
                     )
                 except Exception:  # noqa: BLE001 — persona is optional
                     _nc_labeler = None
+                    _nc_verifier = None
                 nc_tele = run_naming_contract(
                     product_features,
                     user_flows,
@@ -1534,6 +1536,7 @@ def run_finalize_phase(
                     product_strings=product_strings,
                     routes_index=lineage_result.routes_index,
                     labeler=_nc_labeler,
+                    verifier=_nc_verifier,
                 )
                 scan_meta["naming_contract"] = nc_tele
                 log_nc.info(
