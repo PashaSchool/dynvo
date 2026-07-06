@@ -168,16 +168,20 @@ def _last_meaningful_segment(hub_dir: str) -> str:
     """The capability-naming segment of a hub dir: the LAST segment that
     is neither a connector-container word nor a generic src marker —
     ``packages/banking/src/providers`` → ``banking``;
-    ``backend/services/edr`` → ``edr``. Falls back to the hub dir's own
-    last segment."""
+    ``backend/services/edr`` → ``edr``. Returns ``""`` when every segment
+    is generic plumbing (``apps/api/src/rest/routers`` — W1.1: the old
+    ``segs[-1]`` fallback produced ``routers-apps``-style hub keys; an
+    empty parent lets :func:`_hub_key` fall back to the container segment
+    alone, which IS the capability for those layouts)."""
     generic = {"src", "lib", "app", "code", "internal", "rest", "api",
                "server", "packages", "package", "services", "service",
-               "modules", "module", "core", "static-data", "data"}
+               "modules", "module", "core", "static-data", "data",
+               "routers", "router", "routes", "route"}
     segs = _norm(hub_dir).split("/")
     for seg in reversed(segs):
         if seg.lower() not in HUB_PARENT_SEGMENTS and seg.lower() not in generic:
             return seg
-    return segs[-1]
+    return ""
 
 
 def _hub_key(hub_dir: str, arm: str) -> str:
@@ -202,12 +206,25 @@ def _hub_key(hub_dir: str, arm: str) -> str:
     return canonical_slug(last)
 
 
-def detect_hub_relations(features: Iterable[Any]) -> list[HubRelation]:
+def detect_hub_relations(
+    features: Iterable[Any],
+    *,
+    include_memberless: bool = False,
+) -> list[HubRelation]:
     """Detect connector hubs from the dev features' owned files.
 
     Deterministic: dirs and children iterate sorted; nested hubs collapse
     to the SHALLOWEST qualifying dir (one hub per subtree — children of a
     hub are the relation's unit, not hubs themselves).
+
+    ``include_memberless`` (W1.1, midday ``rest/routers/apps``): by
+    default a hub with no member devs binds nothing and is dropped — the
+    historical contract every binding/UF consumer relies on. The 8.9.7
+    carve pass alone asks for member-less hubs too: a vendor hub whose
+    files all sit inside ONE covering aggregate (a workspace anchor, a
+    per-workspace route merge) has no per-child grain yet — the carve
+    CREATES it, after which re-detection sees members and the binding
+    holds sibling parity through every later re-attribution.
     """
     if not hubs_enabled():
         return []
@@ -280,6 +297,8 @@ def detect_hub_relations(features: Iterable[Any]) -> list[HubRelation]:
             if inside * 2 > len(paths):
                 h.member_dev_names.append(f.name)
         h.member_dev_names.sort()
+    if include_memberless:
+        return kept
     # A hub with no member devs binds nothing — drop it.
     return [h for h in kept if h.member_dev_names]
 

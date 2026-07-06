@@ -380,3 +380,165 @@ def test_on_flow_accounting_kill_switch(
     tele = apply_feature_loc([dev], [pf], tmp_path, user_flows=[], flows=[])
     assert pf.loc_flow is None and pf.loc_flow_shared is None
     assert "sum_pf_flow_on" not in tele["loc_accounting"]
+
+
+# ── W1.1 — dev-grain re-home (validator I9) ────────────────────────────────
+
+from faultline.pipeline_v2.conservation import (  # noqa: E402
+    rehome_shared_flowful_devs,
+)
+
+
+def _soc0_api_dev() -> Feature:
+    """The REAL Soc0 shape (validation scan 2026-07-06): dev 'api' = three
+    fastapi routers with 7 flows, scattered to shared-platform by Call-2,
+    while dev 'labels' (a real PF member) also lists labels.py — so the
+    flows' spans/entries vote 'labels-&-classification-system'."""
+    flows = [
+        _typed_flow("manage-labels-flow", "backend/routers/labels.py",
+                    (34, 49)),
+        _typed_flow("preview-label-routers-flow",
+                    "backend/routers/labels.py", (137, 148)),
+        _typed_flow("explore-label-entities-flow",
+                    "backend/routers/labels.py", (152, 168)),
+        _typed_flow("query-mock-network-flow",
+                    "backend/routers/network_mock.py", (36, 44)),
+    ]
+    return _typed_feature(
+        "api",
+        ["backend/routers/labels.py", "backend/routers/network_mock.py",
+         "backend/routers/shared.py"],
+        "shared-platform", flows=flows,
+    )
+
+
+def _soc0_world(api_dev: Feature) -> tuple[list[Feature], list[Feature]]:
+    labels_dev = _typed_feature(
+        "labels", ["backend/routers/labels.py", "backend/labels_service.py"],
+        "labels-&-classification-system",
+    )
+    network_dev = _typed_feature(
+        "network-mock", ["backend/routers/network_mock.py"],
+        "shared-platform",
+    )
+    pfs = [
+        _typed_feature("labels-&-classification-system", [], None,
+                       layer="product"),
+        _typed_feature("shared-platform", [], None, layer="product"),
+    ]
+    return [api_dev, labels_dev, network_dev], pfs
+
+
+def test_rehome_moves_shared_router_dev_to_span_majority_pf() -> None:
+    api = _soc0_api_dev()
+    devs, pfs = _soc0_world(api)
+    tele = rehome_shared_flowful_devs(devs, pfs)
+    assert tele["checked"] == 1
+    assert tele["rehomed"] == 1
+    assert api.product_feature_id == "labels-&-classification-system"
+    assert tele["sample"] == [
+        {"dev": "api", "pf": "labels-&-classification-system"},
+    ]
+
+
+def test_rehome_no_signal_stays_shared() -> None:
+    """midday 'apps' class: every flow file is owned by the dev itself /
+    shared plumbing — no real-PF vote, the dev stays put (honest
+    residual, never a guess)."""
+    fl = _typed_flow("view-apps-dashboard-flow",
+                     "apps/dashboard/src/app/apps/page.tsx", (19, 60))
+    dev = _typed_feature(
+        "apps",
+        ["apps/dashboard/src/app/apps/page.tsx",
+         "apps/dashboard/src/components/apps.tsx"],
+        "shared-platform", flows=[fl],
+    )
+    pfs = [_typed_feature("invoicing", [], None, layer="product")]
+    tele = rehome_shared_flowful_devs([dev], pfs)
+    assert tele["checked"] == 1
+    assert tele["rehomed"] == 0
+    assert dev.product_feature_id == "shared-platform"
+
+
+def test_rehome_requires_strict_span_majority() -> None:
+    """A 50/50 span split between two real PFs is not a majority — no move."""
+    api = _typed_feature(
+        "api", ["backend/routers/a.py", "backend/routers/b.py"],
+        "shared-platform",
+        flows=[
+            _typed_flow("a-flow", "backend/routers/a.py", (1, 50)),
+            _typed_flow("b-flow", "backend/routers/b.py", (1, 50)),
+        ],
+    )
+    devs = [
+        api,
+        _typed_feature("alpha", ["backend/routers/a.py"], "pf-alpha"),
+        _typed_feature("beta", ["backend/routers/b.py"], "pf-beta"),
+    ]
+    pfs = [
+        _typed_feature("pf-alpha", [], None, layer="product"),
+        _typed_feature("pf-beta", [], None, layer="product"),
+    ]
+    tele = rehome_shared_flowful_devs(devs, pfs)
+    assert tele["rehomed"] == 0
+    assert api.product_feature_id == "shared-platform"
+
+
+def test_rehome_never_moves_workspace_anchor() -> None:
+    api = _soc0_api_dev()
+    api.description = (
+        "[package] workspace anchor 'backend' from monorepo package 'backend'"
+    )
+    devs, pfs = _soc0_world(api)
+    tele = rehome_shared_flowful_devs(devs, pfs)
+    assert tele["checked"] == 0
+    assert api.product_feature_id == "shared-platform"
+
+
+def test_rehome_never_moves_facet() -> None:
+    api = _soc0_api_dev()
+    api.role = "facet"
+    devs, pfs = _soc0_world(api)
+    tele = rehome_shared_flowful_devs(devs, pfs)
+    assert tele["checked"] == 0
+    assert api.product_feature_id == "shared-platform"
+
+
+def test_rehome_requires_entry_inside_own_paths() -> None:
+    """A dev whose flows all ENTER elsewhere is a passive library — not a
+    product surface; it never re-homes."""
+    api = _soc0_api_dev()
+    for fl in api.flows:
+        fl.entry_point_file = "backend/main.py"  # outside own paths
+    devs, pfs = _soc0_world(api)
+    tele = rehome_shared_flowful_devs(devs, pfs)
+    assert tele["checked"] == 0
+    assert api.product_feature_id == "shared-platform"
+
+
+def test_rehome_ignores_non_shared_devs() -> None:
+    api = _soc0_api_dev()
+    api.product_feature_id = "some-real-pf"
+    devs, pfs = _soc0_world(api)
+    tele = rehome_shared_flowful_devs(devs, pfs)
+    assert tele["checked"] == 0
+    assert api.product_feature_id == "some-real-pf"
+
+
+def test_rehome_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAULTLINE_SPINE_DEV_REHOME", "0")
+    api = _soc0_api_dev()
+    devs, pfs = _soc0_world(api)
+    tele = rehome_shared_flowful_devs(devs, pfs)
+    assert tele["enabled"] is False
+    assert api.product_feature_id == "shared-platform"
+
+
+def test_rehome_deterministic() -> None:
+    def run() -> list[tuple[str, str | None]]:
+        api = _soc0_api_dev()
+        devs, pfs = _soc0_world(api)
+        rehome_shared_flowful_devs(devs, pfs)
+        return [(d.name, d.product_feature_id) for d in devs]
+
+    assert run() == run()

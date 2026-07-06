@@ -291,3 +291,118 @@ def test_uf_clustering_per_vendor_under_hub() -> None:
     assert crowd["resource"] == "crowdstrike"
     assert crowd["member_count"] == 2
     assert len(ufs) == 2
+
+
+# ── W1.1 — member-less detection + hub-key naming ──────────────────────────
+
+# The REAL midday layout (validation scan 2026-07-06, path_index): six
+# vendor DIRECTORY children + one direct plumbing file, all inside the
+# apps/api workspace-anchor aggregate.
+_MIDDAY_HUB_FILES = [
+    "apps/api/src/rest/routers/apps/fortnox/index.ts",
+    "apps/api/src/rest/routers/apps/fortnox/install-url.ts",
+    "apps/api/src/rest/routers/apps/fortnox/oauth-callback.ts",
+    "apps/api/src/rest/routers/apps/gmail/index.ts",
+    "apps/api/src/rest/routers/apps/gmail/install-url.ts",
+    "apps/api/src/rest/routers/apps/gmail/oauth-callback.ts",
+    "apps/api/src/rest/routers/apps/index.ts",
+    "apps/api/src/rest/routers/apps/outlook/index.ts",
+    "apps/api/src/rest/routers/apps/outlook/install-url.ts",
+    "apps/api/src/rest/routers/apps/outlook/oauth-callback.ts",
+    "apps/api/src/rest/routers/apps/quickbooks/index.ts",
+    "apps/api/src/rest/routers/apps/quickbooks/install-url.ts",
+    "apps/api/src/rest/routers/apps/quickbooks/oauth-callback.ts",
+    "apps/api/src/rest/routers/apps/slack/index.ts",
+    "apps/api/src/rest/routers/apps/slack/install-url.ts",
+    "apps/api/src/rest/routers/apps/slack/interactions.ts",
+    "apps/api/src/rest/routers/apps/slack/messages.ts",
+    "apps/api/src/rest/routers/apps/slack/oauth-callback.ts",
+    "apps/api/src/rest/routers/apps/slack/webhook.ts",
+    "apps/api/src/rest/routers/apps/xero/index.ts",
+    "apps/api/src/rest/routers/apps/xero/install-url.ts",
+    "apps/api/src/rest/routers/apps/xero/oauth-callback.ts",
+]
+
+_MIDDAY_AGGREGATE_EXTRA = [
+    # A slice of the aggregate's non-hub footprint (rest/trpc plumbing) —
+    # enough that the hub files are a small minority of the dev.
+    *[f"apps/api/src/trpc/routers/r{i}.ts" for i in range(30)],
+    *[f"apps/api/src/rest/routers/d{i}.ts" for i in range(20)],
+    "apps/api/Dockerfile",
+    "apps/api/package.json",
+]
+
+
+def _midday_aggregate() -> Feature:
+    f = _feat("api", _MIDDAY_HUB_FILES + _MIDDAY_AGGREGATE_EXTRA,
+              pfid="api")
+    # The real dev is the apps/api workspace anchor — the marker lives on
+    # the description (stage_8_7_anchor_desink._is_workspace_anchor).
+    f.description = (
+        "[package] workspace anchor 'api' from monorepo package 'apps/api'"
+    )
+    return f
+
+
+def test_detect_memberless_hub_dropped_by_default() -> None:
+    """midday shape: the covering aggregate is NOT majority-inside, so the
+    default contract drops the hub (binds nothing)."""
+    hubs = detect_hub_relations([_midday_aggregate()])
+    assert hubs == []
+
+
+def test_detect_include_memberless_returns_the_hub() -> None:
+    hubs = detect_hub_relations(
+        [_midday_aggregate()], include_memberless=True,
+    )
+    assert [h.hub_dir for h in hubs] == ["apps/api/src/rest/routers/apps"]
+    h = hubs[0]
+    assert h.arm == "lexicon"
+    assert h.member_dev_names == []
+    assert set(h.vendor_children) == {
+        "fortnox", "gmail", "outlook", "quickbooks", "slack", "xero",
+    }
+
+
+def test_detect_include_memberless_keeps_memberful_hubs_too() -> None:
+    """The flag widens the result set; member-ful hubs are unchanged."""
+    edr = _feat("edr", _EDR_FILES)
+    hubs = detect_hub_relations(
+        [edr, _midday_aggregate()], include_memberless=True,
+    )
+    by_dir = {h.hub_dir: h for h in hubs}
+    assert set(by_dir) == {
+        "backend/services/edr", "apps/api/src/rest/routers/apps",
+    }
+    assert by_dir["backend/services/edr"].member_dev_names == ["edr"]
+
+
+def test_hub_key_router_plumbing_falls_back_to_container() -> None:
+    """apps/api/src/rest/routers/apps → 'apps' (never 'routers-apps'):
+    router/rest/api segments are HTTP plumbing, not capability names."""
+    hubs = detect_hub_relations(
+        [_midday_aggregate()], include_memberless=True,
+    )
+    assert hubs[0].hub_key == "apps"
+
+
+def test_hub_key_meaningful_parent_still_wins() -> None:
+    """packages/banking/src/providers → 'banking-providers' (unchanged)."""
+    dev = _feat("banking", [
+        "packages/banking/src/providers/gocardless/api.ts",
+        "packages/banking/src/providers/plaid/api.ts",
+        "packages/banking/src/providers/enablebanking/api.ts",
+    ])
+    hubs = detect_hub_relations([dev])
+    assert hubs[0].hub_key == "banking-providers"
+
+
+def test_hub_key_generic_only_parent_uses_container() -> None:
+    """src/providers → 'providers' (was 'src-providers' pre-W1.1)."""
+    dev = _feat("providers", [
+        "src/providers/stripe.ts",
+        "src/providers/paypal.ts",
+        "src/providers/shopify.ts",
+    ])
+    hubs = detect_hub_relations([dev])
+    assert hubs[0].hub_key == "providers"

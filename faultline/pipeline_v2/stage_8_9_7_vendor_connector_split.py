@@ -45,6 +45,25 @@ relation (``hub_dirs``), files under a hub directory group by their
 IMMEDIATE CHILD segment (vendor DIRECTORY children like
 ``app-store/zoom/**`` — not just vendor file stems), so dir-per-vendor
 hubs split the same way stem-per-vendor hubs always did.
+
+W1.1 aggregate-carve arm (``carve_hub_dirs``): a MEMBER-LESS hub — one
+whose files all ride inside covering aggregates (midday
+``apps/api/src/rest/routers/apps/{fortnox,gmail,…}`` inside the
+``apps/api`` workspace anchor) — never reaches the binding: no dev is
+majority-inside, so detection alone yields no members, and the two
+historical rails (workspace anchors never split; vendor files must be
+the majority of the source's footprint) both block the split precisely
+BECAUSE the covering dev is a big aggregate. For those hubs the caller
+passes ``carve_hub_dirs`` and the carve arm moves the hub's vendor
+DIRECTORY children (files at depth >= 2 — direct files under the hub
+stay put as plumbing) out of ANY non-facet covering dev, workspace
+anchors included, with no footprint-majority rail: the ≥ 3-distinct-
+vendor evidence lives on the DIRECTORY (checked at detection), not on
+the accidental covering feature. Mirrors the 8.9.6b service-carve
+precedent (structure evidence carves aggregates). The minted children
+are majority-inside by construction, so re-detection at Stage 8.9.8
+binds the hub and sibling parity then survives every later
+re-attribution (the post-6.7d re-enforcement re-binds members).
 """
 
 from __future__ import annotations
@@ -77,9 +96,14 @@ class VendorSplitResult:
     files_moved: int = 0
     collisions_skipped: int = 0
     sample: list[dict[str, Any]] = field(default_factory=list)
+    # W1.1 aggregate-carve arm (member-less hubs; see module docstring).
+    aggregate_carves: int = 0
+    carve_connectors_created: int = 0
+    carve_files_moved: int = 0
+    carve_sample: list[dict[str, Any]] = field(default_factory=list)
 
     def as_telemetry(self) -> dict[str, Any]:
-        return {
+        tele = {
             "enabled": self.enabled,
             "features_examined": self.features_examined,
             "hubs_split": self.hubs_split,
@@ -88,6 +112,14 @@ class VendorSplitResult:
             "collisions_skipped": self.collisions_skipped,
             "sample": list(self.sample[:20]),
         }
+        # Stamped only when the arm acted — keeps pre-W1.1 telemetry
+        # byte-identical on scans with no member-less hubs.
+        if self.aggregate_carves:
+            tele["aggregate_carves"] = self.aggregate_carves
+            tele["carve_connectors_created"] = self.carve_connectors_created
+            tele["carve_files_moved"] = self.carve_files_moved
+            tele["carve_sample"] = list(self.carve_sample[:20])
+        return tele
 
 
 def _file_vendor(path: str) -> str | None:
@@ -126,9 +158,30 @@ def _hub_child_vendor(path: str, hub_dirs: tuple[str, ...]) -> str | None:
     return None
 
 
+def _hub_child_dir_vendor(path: str, hub_dirs: tuple[str, ...]) -> str | None:
+    """Vendor named by the file's immediate child DIRECTORY under a hub
+    dir, else ``None`` (W1.1 carve arm). Unlike :func:`_hub_child_vendor`
+    a file sitting DIRECTLY under the hub never matches — the carve's
+    evidence is the dir-per-vendor layout, and direct files
+    (``index.ts``, a shared router) are hub plumbing that stays with the
+    covering feature."""
+    from faultline.pipeline_v2.hub_relation import vendor_of_segment
+
+    norm = path.replace("\\", "/").strip("/")
+    for hub in hub_dirs:
+        prefix = hub + "/"
+        if norm.startswith(prefix):
+            child, sep, _rest = norm[len(prefix):].partition("/")
+            if sep and child and not child.startswith((".", "_")):
+                return vendor_of_segment(child)
+            return None
+    return None
+
+
 def split_vendor_connectors(
     features: list["Feature"],
     hub_dirs: tuple[str, ...] = (),
+    carve_hub_dirs: tuple[str, ...] = (),
 ) -> VendorSplitResult:
     """Split connector-hub dev features per vendor. Appends the minted
     connector features to *features* in place; returns telemetry. No-op when
@@ -136,7 +189,12 @@ def split_vendor_connectors(
 
     ``hub_dirs`` (Product-Spine §4.4) — detected hub directories; files
     under one group by their immediate child segment (vendor dirs), with
-    the historical stem rule as fallback for everything else."""
+    the historical stem rule as fallback for everything else.
+
+    ``carve_hub_dirs`` (W1.1) — MEMBER-LESS hub directories: their vendor
+    DIRECTORY children are carved out of any non-facet covering dev
+    (workspace anchors included, no footprint-majority rail — see module
+    docstring)."""
     from faultline.pipeline_v2.stage_8_7_anchor_desink import (
         _FILE_KEYED_SURFACES,
         _is_workspace_anchor,
@@ -163,40 +221,72 @@ def split_vendor_connectors(
 
     for source in devs:
         paths = list(getattr(source, "paths", None) or [])
-        # Facets (Product-Spine §4.1) are cross-cutting views — never hubs.
-        if len(paths) < 2 or _is_workspace_anchor(source) or is_facet(source):
+        # Facets (Product-Spine §4.1) are cross-cutting views — never hubs
+        # and never carve donors.
+        if len(paths) < 2 or is_facet(source):
             continue
-        # Generic-container features (dialogs/modals/components/…) hold
-        # per-vendor PRESENTATIONAL widgets, not connectors — never split.
-        if _slug(source.name or "") in _GENERIC_DOMAIN_SKIP:
-            continue
-        result.features_examined += 1
+        is_anchor = _is_workspace_anchor(source)
+        is_generic = _slug(source.name or "") in _GENERIC_DOMAIN_SKIP
+
+        # ── W1.1 carve arm: vendor DIRECTORY children of member-less hubs
+        # leave the covering aggregate — workspace anchors included, no
+        # footprint rail, and NO generic-name guard: the evidence is the
+        # ≥3-vendor DIRECTORY (checked at detection), not the covering
+        # feature, and workspace aggregates carry exactly the generic
+        # names the stem-arm guard exists for (midday's cover is the
+        # apps/api anchor literally named 'api').
+        carve_groups: dict[str, list[str]] = {}
+        if carve_hub_dirs:
+            for p in paths:
+                v = _hub_child_dir_vendor(p, carve_hub_dirs)
+                if v is not None:
+                    carve_groups.setdefault(v, []).append(p)
+        carved_files = {p for fs in carve_groups.values() for p in fs}
+
+        # ── Historical stem / member-ful-hub arm (rails unchanged: never
+        # splits workspace anchors; generic-container features hold
+        # per-vendor PRESENTATIONAL widgets, not connectors — never split).
         groups: dict[str, list[str]] = {}
-        for p in paths:
-            v = _hub_child_vendor(p, hub_dirs) if hub_dirs else None
-            if v is None:
-                v = _file_vendor(p)
-            if v is not None:
-                groups.setdefault(v, []).append(p)
-        vendor_files = sum(len(v) for v in groups.values())
-        # Rails: ≥2 distinct vendors AND vendor files are the majority of the
-        # footprint — the feature IS a connector hub, not a mere SDK user.
-        if len(groups) < 2 or vendor_files * 2 < len(paths):
+        if not is_anchor and not is_generic:
+            result.features_examined += 1
+            for p in paths:
+                if p in carved_files:
+                    continue  # a file leaves the aggregate exactly once
+                v = _hub_child_vendor(p, hub_dirs) if hub_dirs else None
+                if v is None:
+                    v = _file_vendor(p)
+                if v is not None:
+                    groups.setdefault(v, []).append(p)
+            vendor_files = sum(len(v) for v in groups.values())
+            # Rails: ≥2 distinct vendors AND vendor files are the majority of
+            # the footprint — the feature IS a connector hub, not a mere SDK
+            # user.
+            if len(groups) < 2 or vendor_files * 2 < len(paths):
+                groups = {}
+        if not groups and not carve_groups:
             continue
+
         minted: list["Feature"] = []
+        carve_minted: list["Feature"] = []
         moved: set[str] = set()
-        for vendor in sorted(groups):  # deterministic order
-            name = f"{_slug(source.name)}-{vendor}"
-            if name in taken_names:
-                result.collisions_skipped += 1
-                continue
-            files = sorted(groups[vendor])
-            sub = _make_subfeature(source, vendor, files, name)
-            taken_names.add(name)
-            minted.append(sub)
-            moved.update(files)
-        if not minted:
+        carve_moved: set[str] = set()
+        for arm_groups, minted_sink, moved_sink in (
+            (carve_groups, carve_minted, carve_moved),
+            (groups, minted, moved),
+        ):
+            for vendor in sorted(arm_groups):  # deterministic order
+                name = f"{_slug(source.name)}-{vendor}"
+                if name in taken_names:
+                    result.collisions_skipped += 1
+                    continue
+                files = sorted(arm_groups[vendor])
+                sub = _make_subfeature(source, vendor, files, name)
+                taken_names.add(name)
+                minted_sink.append(sub)
+                moved_sink.update(files)
+        if not minted and not carve_minted:
             continue
+        moved |= carve_moved
         # Parent keeps the shared plumbing as OWNED (unlike the 8.9.5 de-own
         # contract — here the residual base/factory/normaliser files remain
         # genuinely the hub's own code).
@@ -217,16 +307,28 @@ def split_vendor_connectors(
                 it for it in items
                 if getattr(it, file_field, None) not in moved
             ])
+        minted_all.extend(carve_minted)
         minted_all.extend(minted)
-        result.hubs_split += 1
-        result.connectors_created += len(minted)
-        result.files_moved += len(moved)
-        if len(result.sample) < 20:
-            result.sample.append({
-                "source": source.name,
-                "connectors": [m.name for m in minted],
-                "files_moved": len(moved),
-            })
+        if minted:
+            result.hubs_split += 1
+            result.connectors_created += len(minted)
+            result.files_moved += len(moved) - len(carve_moved)
+            if len(result.sample) < 20:
+                result.sample.append({
+                    "source": source.name,
+                    "connectors": [m.name for m in minted],
+                    "files_moved": len(moved) - len(carve_moved),
+                })
+        if carve_minted:
+            result.aggregate_carves += 1
+            result.carve_connectors_created += len(carve_minted)
+            result.carve_files_moved += len(carve_moved)
+            if len(result.carve_sample) < 20:
+                result.carve_sample.append({
+                    "source": source.name,
+                    "connectors": [m.name for m in carve_minted],
+                    "files_moved": len(carve_moved),
+                })
 
     features.extend(minted_all)
     return result

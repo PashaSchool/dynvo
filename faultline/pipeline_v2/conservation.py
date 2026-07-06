@@ -64,14 +64,19 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 
 __all__ = [
     "SPINE_CONSERVATION_ENV",
+    "SPINE_DEV_REHOME_ENV",
     "conservation_enabled",
+    "dev_rehome_enabled",
     "build_file_pf_owner",
+    "dev_views_for",
     "member_votes",
     "conserved_pfid",
     "apply_uf_conservation",
+    "rehome_shared_flowful_devs",
 ]
 
 SPINE_CONSERVATION_ENV = "FAULTLINE_SPINE_CONSERVATION"
+SPINE_DEV_REHOME_ENV = "FAULTLINE_SPINE_DEV_REHOME"
 
 _SHARED_PF_KEYS = frozenset(("shared-platform", "platform"))
 
@@ -79,6 +84,15 @@ _SHARED_PF_KEYS = frozenset(("shared-platform", "platform"))
 def conservation_enabled() -> bool:
     """Conservation law — default ON, ``FAULTLINE_SPINE_CONSERVATION=0`` off."""
     return os.environ.get(SPINE_CONSERVATION_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def dev_rehome_enabled() -> bool:
+    """Dev-grain re-home (W1.1) — default ON, ``FAULTLINE_SPINE_DEV_REHOME=0``
+    off. Separate switch so the UF-grain law can be isolated from the
+    dev-grain application when bisecting a regression."""
+    return os.environ.get(SPINE_DEV_REHOME_ENV, "1").strip().lower() not in {
         "0", "false",
     }
 
@@ -118,6 +132,34 @@ def build_file_pf_owner(
         for p in get("paths") or []:
             out.setdefault(_norm(str(p)), key)
     return out
+
+
+def dev_views_for(
+    developer_features: Iterable[Any],
+    dev_to_product: dict[str, tuple[str, ...]] | None = None,
+) -> list[dict[str, Any]]:
+    """Uniform dev views for :func:`build_file_pf_owner`.
+
+    ``dev_to_product`` overrides the devs' (possibly not-yet-restamped)
+    ``product_feature_id`` — the 6.7d ``_finish`` path passes its fresh
+    map; finalize-time callers read the stamped fields.
+    """
+    views: list[dict[str, Any]] = []
+    for d in developer_features:
+        if getattr(d, "layer", "developer") != "developer":
+            continue
+        if dev_to_product is not None:
+            slugs = dev_to_product.get(getattr(d, "name", "") or "")
+            pfid = slugs[0] if slugs else None
+        else:
+            pfid = getattr(d, "product_feature_id", None)
+        views.append({
+            "name": getattr(d, "name", None),
+            "paths": list(getattr(d, "paths", None) or []),
+            "product_feature_id": pfid,
+            "role": getattr(d, "role", None),
+        })
+    return views
 
 
 def _flow_get(flow: Any, key: str) -> Any:
@@ -269,22 +311,10 @@ def apply_uf_conservation(
         for pf in product_features
     ) - {""}
 
-    dev_views: list[dict[str, Any]] = []
-    for d in developer_features:
-        if getattr(d, "layer", "developer") != "developer":
-            continue
-        if dev_to_product is not None:
-            slugs = dev_to_product.get(getattr(d, "name", "") or "")
-            pfid = slugs[0] if slugs else None
-        else:
-            pfid = getattr(d, "product_feature_id", None)
-        dev_views.append({
-            "name": getattr(d, "name", None),
-            "paths": list(getattr(d, "paths", None) or []),
-            "product_feature_id": pfid,
-            "role": getattr(d, "role", None),
-        })
-    file_pf_owner = build_file_pf_owner(dev_views, real_pf_keys=pf_keys)
+    file_pf_owner = build_file_pf_owner(
+        dev_views_for(developer_features, dev_to_product),
+        real_pf_keys=pf_keys,
+    )
 
     # Member-flow lookup: uuid first, name fallback (mirrors _flow_key).
     flow_by_id: dict[str, Any] = {}
@@ -329,4 +359,103 @@ def apply_uf_conservation(
     tele["donors_left_uncovered"] = len(
         (before_cover - after_cover) - {None},
     )
+    return tele
+
+
+# ── Dev-grain application (W1.1, validator I9) ──────────────────────────
+
+
+def _entry_file_of(flow: Any) -> str | None:
+    entry = _flow_get(flow, "entry_point_file")
+    if entry:
+        return str(entry)
+    ep = _flow_get(flow, "entry_point")
+    if ep is not None:
+        path = ep.get("path") if isinstance(ep, dict) else getattr(ep, "path", None)
+        if path:
+            return str(path)
+    return None
+
+
+def rehome_shared_flowful_devs(
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+) -> dict[str, Any]:
+    """Re-home shared-resident flowful surface devs to the PF their own
+    flows' code lives in (validator I9: no flowful route-owning dev may
+    ride the shared bucket).
+
+    The observed mechanism (Soc0 dev ``api``, 2026-07-06 validation wave;
+    pre-existing and draw-variant across pre-W1 scans): the 6.7d Call-2
+    re-attribution scatters a small router dev into ``shared-platform``
+    even though its flows' spans and entries sit squarely inside ONE real
+    PF's ownership. That is the §4.5 law at DEV grain — the binding
+    contradicts the code — so the same ladder applies: the dev re-homes
+    only on the conservation ACCEPT bar (strict span-LOC majority AND at
+    least half the counted entries, over :func:`member_votes` of the
+    dev's OWN flows). No signal → the dev stays put (an honest shared
+    resident never moves on a guess).
+
+    Guards: developer layer only; facets never move (§4.1); workspace
+    anchors never move (their flow sample spans the whole workspace, not
+    one capability); only devs with >= 1 flow ENTERING inside their own
+    paths qualify (a dev whose flows all enter elsewhere is a passive
+    library, not a product surface). Deterministic; mutates
+    ``product_feature_id`` in place; returns telemetry.
+    Kill-switch: ``FAULTLINE_SPINE_DEV_REHOME=0``.
+    """
+    from faultline.pipeline_v2.stage_8_7_anchor_desink import (
+        _is_workspace_anchor,
+    )
+
+    tele: dict[str, Any] = {
+        "enabled": dev_rehome_enabled(), "checked": 0, "rehomed": 0,
+        "sample": [],
+    }
+    if not dev_rehome_enabled():
+        return tele
+
+    pf_keys = frozenset(
+        str(getattr(pf, "id", None) or getattr(pf, "name", "") or "")
+        for pf in product_features
+    ) - {""}
+    file_pf_owner = build_file_pf_owner(
+        dev_views_for(developer_features), real_pf_keys=pf_keys,
+    )
+
+    for dev in developer_features:
+        if getattr(dev, "layer", "developer") != "developer":
+            continue
+        if getattr(dev, "role", None) == "facet":
+            continue
+        pfid = getattr(dev, "product_feature_id", None)
+        if not pfid or str(pfid).strip().lower() not in _SHARED_PF_KEYS:
+            continue
+        flows = list(getattr(dev, "flows", None) or [])
+        if not flows or _is_workspace_anchor(dev):
+            continue
+        own_paths = {_norm(str(p)) for p in (getattr(dev, "paths", None) or [])}
+        if not any(
+            (e := _entry_file_of(fl)) and _norm(e) in own_paths
+            for fl in flows
+        ):
+            continue  # passive library — not a product surface
+        tele["checked"] += 1
+        span_votes, entry_votes = member_votes(flows, file_pf_owner)
+        if not span_votes:
+            continue  # no owned-code signal — honest shared resident
+        total_span = sum(span_votes.values())
+        total_entry = sum(entry_votes.values())
+        best = sorted(
+            span_votes,
+            key=lambda k: (-span_votes[k], -entry_votes.get(k, 0), k),
+        )[0]
+        if span_votes[best] * 2 <= total_span:
+            continue  # no strict majority — leave for richer ladders
+        if total_entry and entry_votes.get(best, 0) * 2 < total_entry:
+            continue
+        dev.product_feature_id = best
+        tele["rehomed"] += 1
+        if len(tele["sample"]) < 20:
+            tele["sample"].append({"dev": dev.name, "pf": best})
     return tele

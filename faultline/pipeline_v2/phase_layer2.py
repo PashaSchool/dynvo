@@ -709,10 +709,19 @@ def run_layer2_phase(
         "product_features": product_features,
     })
     with StageLogger(run_dir, 8, "vendor_connector_split") as log8_9_7:
-        hub_relations = detect_hub_relations(features)
+        # W1.1: detect member-less hubs too — a vendor hub whose files ride
+        # inside one covering aggregate (midday rest/routers/apps inside the
+        # apps/api workspace anchor) has no per-child grain yet; the carve
+        # arm creates it so the 8.9.8 binding below finds members.
+        hub_relations = detect_hub_relations(features, include_memberless=True)
         vendor_split_result = split_vendor_connectors(
             features,
-            hub_dirs=tuple(h.hub_dir for h in hub_relations),
+            hub_dirs=tuple(
+                h.hub_dir for h in hub_relations if h.member_dev_names
+            ),
+            carve_hub_dirs=tuple(
+                h.hub_dir for h in hub_relations if not h.member_dev_names
+            ),
         )
         stage_8_9_7_telemetry = vendor_split_result.as_telemetry()
         log8_9_7.info(
@@ -721,7 +730,9 @@ def run_layer2_phase(
             f"hubs_split={vendor_split_result.hubs_split} "
             f"connectors={vendor_split_result.connectors_created} "
             f"files_moved={vendor_split_result.files_moved} "
-            f"collisions_skipped={vendor_split_result.collisions_skipped}",
+            f"collisions_skipped={vendor_split_result.collisions_skipped} "
+            f"aggregate_carves={vendor_split_result.aggregate_carves} "
+            f"carve_connectors={vendor_split_result.carve_connectors_created}",
         )
         write_stage_artifact(
             ctx.repo_path,
