@@ -43,13 +43,20 @@ _EDR_PATHS = [
 ]
 
 
-def test_off_by_default_noop(monkeypatch):
+def test_on_by_default_and_kill_switch(monkeypatch):
+    """Default flipped ON by Product-Spine Wave 1 (§4.4, 2026-07-06);
+    FAULTLINE_STAGE_8_9_7_VENDOR_SPLIT=0 restores the historical no-op."""
     monkeypatch.delenv(_ENV, raising=False)
+    res_on = split_vendor_connectors([_feat("edr", _EDR_PATHS)])
+    assert res_on.enabled is True
+    assert res_on.hubs_split == 1
+
+    monkeypatch.setenv(_ENV, "0")
     hub = _feat("edr", _EDR_PATHS)
     feats = [hub]
-    res = split_vendor_connectors(feats)
-    assert res.enabled is False
-    assert res.hubs_split == 0
+    res_off = split_vendor_connectors(feats)
+    assert res_off.enabled is False
+    assert res_off.hubs_split == 0
     assert feats == [hub]
 
 

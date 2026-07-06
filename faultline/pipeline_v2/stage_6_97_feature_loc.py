@@ -308,11 +308,21 @@ def apply_feature_loc(
     features: list["Feature"],
     product_features: list["Feature"] | None,
     repo_root: Path | str,
+    user_flows: list[Any] | None = None,
+    flows: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Stamp OWNED ``loc`` + ``loc_shared`` on every developer + product
     feature IN PLACE, populate ``member_files[].loc``, and return the
     telemetry dict (including ``loc_accounting``) for
     ``scan_meta['feature_loc']``.
+
+    Product-Spine §4.5 (when ``user_flows`` + ``flows`` are provided and
+    ``FAULTLINE_SPINE_CONSERVATION`` is on): additionally stamps the
+    conservation flow accounting on every product feature —
+    ``loc_flow`` (union of member-journey flow spans INSIDE the PF's
+    owned files, per-file clipped at the file's LOC ⇒ ``loc_flow <= loc``
+    / on-flow ≤ 100% BY CONSTRUCTION) and ``loc_flow_shared`` (span
+    lines landing OUTSIDE the closure — the shared channel).
     """
     root = Path(repo_root)
     cache: dict[str, int] = {}  # rel_file -> loc (scan-wide, per FILE)
@@ -345,16 +355,26 @@ def apply_feature_loc(
         dev_dircount.append(dc)
     dev_flowcount = [len(getattr(f, "flows", None) or []) for f in dev_features]
     dev_slug = [str(getattr(f, "name", "") or "") for f in dev_features]
+    # Product-Spine §4.1 — a concern FACET never wins primary ownership of a
+    # shared file: the structural owner does (the facet's claim is a
+    # cross-cutting VIEW). Facet-exclusive files still count on the facet
+    # itself (visible), but a facet has no product_feature_id, so its owned
+    # lines never roll into any PF.
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
+    dev_is_facet = [1 if is_facet(f) else 0 for f in dev_features]
 
     def _primary(fp: str) -> int:
         owners = file_to_devs[fp]
         if len(owners) == 1:
             return owners[0]
         d = _parent_dir(fp)
-        # Max sibling-dir count, then max flow count, then smallest slug.
+        # Non-facet first, then max sibling-dir count, then max flow count,
+        # then smallest slug.
         return min(
             owners,
             key=lambda i: (
+                dev_is_facet[i],
                 -dev_dircount[i].get(d, 0),
                 -dev_flowcount[i],
                 dev_slug[i],
@@ -390,6 +410,7 @@ def apply_feature_loc(
             dev_idx_by_pfid.setdefault(pfid, []).append(i)
 
     pf_loc_by_name: dict[str, tuple[int, int]] = {}
+    pf_owned_sets: list[dict[str, int]] = []
     sum_pf_owned = 0
     sum_pf_shared = 0
     pfs = product_features or []
@@ -414,17 +435,31 @@ def apply_feature_loc(
         )
         _stamp_member_file_loc(root, pf, cache)
         pf_loc_by_name[pf.name] = (pf.loc, pf.loc_shared)
+        pf_owned_sets.append(owned_files)
         sum_pf_owned += pf.loc
         sum_pf_shared += pf.loc_shared
 
+    # ── Product-Spine §4.5 — conservation flow accounting (on-flow ≤ 1) ─
+    flow_accounting = _apply_flow_accounting(
+        pfs, pf_owned_sets, user_flows, flows, cache,
+    )
+
     # Mirror the product rollup onto product-layer duplicates that live in
     # ``features[]`` (so the dashboard + validator I2 see them consistently).
+    pf_flow_by_name = {
+        pf.name: (pf.loc_flow, pf.loc_flow_shared)
+        for pf in pfs
+        if getattr(pf, "loc_flow", None) is not None
+    }
     for feat in features:
         if getattr(feat, "layer", "developer") == "product":
             loc_pair = pf_loc_by_name.get(feat.name)
             if loc_pair is not None:
                 feat.loc, feat.loc_shared = loc_pair
                 _stamp_member_file_loc(root, feat, cache)
+            flow_pair = pf_flow_by_name.get(feat.name)
+            if flow_pair is not None:
+                feat.loc_flow, feat.loc_flow_shared = flow_pair
 
     # ── Global sanity ──────────────────────────────────────────────────
     repo_loc = sum(v for v in cache.values() if v > 0)
@@ -434,6 +469,8 @@ def apply_feature_loc(
         "sum_pf_owned": sum_pf_owned,
         "sum_pf_shared_refs": sum_pf_shared,
     }
+    if flow_accounting is not None:
+        loc_accounting.update(flow_accounting)
     return {
         "enabled": True,
         "features_total": len(features),
@@ -443,6 +480,118 @@ def apply_feature_loc(
         "paths_indexed": len(cache),
         "files_counted": counted_files,
         "loc_accounting": loc_accounting,
+    }
+
+
+def _merged_span_len(intervals: list[tuple[int, int]]) -> int:
+    """Total line count of the UNION of (start, end) intervals."""
+    total = 0
+    cur_s = cur_e = None
+    for s, e in sorted(intervals):
+        if cur_s is None:
+            cur_s, cur_e = s, e
+        elif s <= cur_e + 1:
+            cur_e = max(cur_e, e)
+        else:
+            total += cur_e - cur_s + 1
+            cur_s, cur_e = s, e
+    if cur_s is not None:
+        total += cur_e - cur_s + 1
+    return total
+
+
+def _apply_flow_accounting(
+    pfs: list["Feature"],
+    pf_owned_sets: list[dict[str, int]],
+    user_flows: list[Any] | None,
+    flows: list[Any] | None,
+    cache: dict[str, int],
+) -> dict[str, Any] | None:
+    """Product-Spine §4.5 — stamp ``loc_flow`` / ``loc_flow_shared`` on
+    every product feature; return the ``loc_accounting`` extension.
+
+    Per PF: union the member journeys' flow LINE RANGES per file, then
+      * files the PF's devs PRIMARILY OWN → ``loc_flow``, per-file
+        clipped at the file's own counted LOC (⇒ ``loc_flow <= loc``,
+        on-flow ≤ 100% by construction);
+      * every other spanned file → ``loc_flow_shared`` (visible, never
+        summed into ``loc_flow``).
+    Flows without resolved line ranges contribute nothing (honest span
+    accounting — no whole-file inflation). ``None`` when the inputs are
+    absent or the conservation kill-switch is off.
+    """
+    if user_flows is None or flows is None:
+        return None
+    from faultline.pipeline_v2.conservation import conservation_enabled
+
+    if not conservation_enabled():
+        return None
+
+    flow_by_id: dict[str, Any] = {}
+    for fl in flows:
+        for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
+            if key and key not in flow_by_id:
+                flow_by_id[key] = fl
+
+    ufs_by_pf: dict[str, list[Any]] = {}
+    for uf in user_flows:
+        pfid = getattr(uf, "product_feature_id", None)
+        if pfid:
+            ufs_by_pf.setdefault(str(pfid), []).append(uf)
+
+    sum_on = 0
+    sum_shared = 0
+    max_ratio = 0.0
+    for idx, pf in enumerate(pfs):
+        keys = {str(getattr(pf, "id", None) or ""), str(pf.name or "")} - {""}
+        member_ufs: list[Any] = []
+        for k in keys:
+            member_ufs.extend(ufs_by_pf.get(k, []))
+        if not member_ufs:
+            pf.loc_flow = 0
+            pf.loc_flow_shared = 0
+            continue
+        spans_by_file: dict[str, list[tuple[int, int]]] = {}
+        for uf in member_ufs:
+            for mid in (getattr(uf, "member_flow_ids", None) or []):
+                fl = flow_by_id.get(mid)
+                if fl is None:
+                    continue
+                for lr in (getattr(fl, "line_ranges", None) or []):
+                    path = str(getattr(lr, "path", "") or "").replace(
+                        os.sep, "/").strip("/")
+                    if not path:
+                        continue
+                    try:
+                        s = int(getattr(lr, "start_line", 0) or 0)
+                        e = int(getattr(lr, "end_line", 0) or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    spans_by_file.setdefault(path, []).append(
+                        (min(s, e), max(s, e)),
+                    )
+        owned = pf_owned_sets[idx] if idx < len(pf_owned_sets) else {}
+        on = 0
+        shared = 0
+        for path, intervals in spans_by_file.items():
+            span = _merged_span_len(intervals)
+            if path in owned:
+                on += min(span, owned[path])
+            else:
+                # Shared channel — clip at the file's counted LOC when the
+                # scan-wide cache knows it (excluded files count 0 there).
+                known = cache.get(path)
+                shared += min(span, known) if known is not None else span
+        pf.loc_flow = on
+        pf.loc_flow_shared = shared
+        sum_on += on
+        sum_shared += shared
+        if pf.loc:
+            max_ratio = max(max_ratio, on / pf.loc)
+    return {
+        "sum_pf_flow_on": sum_on,
+        "sum_pf_flow_shared": sum_shared,
+        "on_flow_max_ratio": round(max_ratio, 4),
     }
 
 

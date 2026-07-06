@@ -106,9 +106,11 @@ def test_conflicting_slugs_pick_by_priority(tmp_path: Path) -> None:
 
 
 def test_disjoint_slugs_stay_separate(tmp_path: Path) -> None:
+    # Package anchors carry the MANIFEST FILE since the Product-Spine §4.1
+    # bare-dir ban (a bare "." claim is now rejected at claim time).
     cands = {
         "route":   [_cand("billing", "route", ("app/billing/page.tsx",))],
-        "package": [_cand("auth",   "package", (".",))],
+        "package": [_cand("auth",   "package", ("package.json",))],
     }
     ctx = _ctx(tmp_path, files=["app/billing/page.tsx", "package.json"])
     result = stage_2_reconcile(cands, ctx)
@@ -360,9 +362,11 @@ def test_s4b_zero_path_features_dropped_with_telemetry(tmp_path: Path) -> None:
 
 def test_s4b_no_zero_path_drops_in_normal_case(tmp_path: Path) -> None:
     """Sanity: a healthy reconciliation reports zero-path-drops = 0."""
+    # Manifest-file package anchor (post spine-§4.1; a bare "." would be
+    # rejected by the bare-dir ban and dropped as zero-path).
     cands = {
         "route":   [_cand("billing", "route", ("app/billing/page.tsx",))],
-        "package": [_cand("payments", "package", (".",))],
+        "package": [_cand("payments", "package", ("package.json",))],
     }
     ctx = _ctx(
         tmp_path,

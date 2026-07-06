@@ -889,6 +889,41 @@ class Feature(BaseModel):
     # primary owner's ``loc``). Visibility metric only — never summed into
     # ``loc``. ``None`` on scans produced before the split existed.
     loc_shared: int | None = None
+    # Product-Spine §4.1 (2026-07-06) — cross-cutting role marker.
+    # ``"facet"`` when this developer feature is a concern facet (a
+    # horizontal view — auth/i18n/email/… spanning multiple route/workspace
+    # subtrees): it keeps existence for dashboards, but is excluded from
+    # product-feature membership and never carries LOC into a PF (see
+    # ``pipeline_v2.spine_hygiene``). ``None`` for ordinary features and for
+    # every scan produced before the field existed; omitted from dumps when
+    # unset so pre-spine scans serialize byte-identically.
+    role: str | None = None
+    # Product-Spine §4.5 (2026-07-06) — conservation flow-LOC accounting
+    # (product features only; stamped by Stage 6.97 when user flows are
+    # available). ``loc_flow`` counts the UNION of member-journey flow spans
+    # that lie INSIDE this PF's dev closure, per-file clipped at the file's
+    # own LOC — so ``loc_flow <= loc`` (on-flow ≤ 100%) BY CONSTRUCTION.
+    # ``loc_flow_shared`` counts span lines landing OUTSIDE the closure (the
+    # shared channel — visible, never summed into ``loc_flow``). Both omitted
+    # from dumps when unset (old scans / dev features serialize unchanged).
+    loc_flow: int | None = None
+    loc_flow_shared: int | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_spine_fields(self, handler: Any) -> Any:
+        """Drop spine-era optional fields from dumps when unset.
+
+        Scans that predate the Product-Spine fields (and every entity the
+        spine passes leave untouched — e.g. non-facet features, dev-layer
+        rows without flow accounting) must serialize byte-identically to
+        engines that predate the fields (snapshot-gate digest contract).
+        """
+        data = handler(self)
+        if isinstance(data, dict):
+            for key in ("role", "loc_flow", "loc_flow_shared"):
+                if data.get(key) is None:
+                    data.pop(key, None)
+        return data
 
 
 class FeatureFlowEdge(BaseModel):

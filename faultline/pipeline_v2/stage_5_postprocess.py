@@ -253,6 +253,10 @@ def _dev_feature_to_feature(
         flows=[_flow_spec_to_flow(f) for f in (flows or [])],
         layer="developer",
         product_feature_id=None,
+        # Product-Spine §4.1 — concern-facet marker (``"facet"`` | None),
+        # classified at Stage 2 claim time; downstream PF membership /
+        # closure / LOC stages read it via ``spine_hygiene.is_facet``.
+        role=getattr(dev, "role", None),
         # Stage 2.6 — file-membership provenance (anchor / closure /
         # co-commit / shared). Empty for features that predate the
         # closure pass (e.g. Stage 4 residual features).

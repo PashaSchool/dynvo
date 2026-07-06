@@ -604,6 +604,30 @@ def run_finalize_phase(
                     _slugs = s67d_dev_map.get(getattr(_dev, "name", None))
                     if _slugs:
                         _dev.product_feature_id = _slugs[0]
+            # Product-Spine §4.4 — re-enforce the hub/child relation on the
+            # REWRITTEN product layer (Call-2 re-attribution can scatter hub
+            # children back into Shared Platform / unrelated capabilities).
+            # Same construction rule as Stage 8.9.8; deterministic, $0.
+            if s67d_telemetry.get("applied"):
+                from faultline.pipeline_v2.hub_relation import (
+                    apply_hub_pf_binding as _hub_bind,
+                )
+                _hub_tele = _hub_bind(features, product_features)
+                if _hub_tele.get("hubs"):
+                    s67d_telemetry["hub_binding_post_67d"] = _hub_tele
+                # Product-Spine §4.5 — final conservation pass: the hub
+                # binding above moves dev→PF, so UF↔PF closures moved with
+                # it; re-settle violators and null any residual
+                # Shared-Platform attachment that no real PF's code
+                # supports (a UF may never ship attached to shared).
+                from faultline.pipeline_v2.conservation import (
+                    apply_uf_conservation as _apply_cons,
+                )
+                _cons_tele = _apply_cons(
+                    user_flows, features, product_features,
+                    null_shared_without_signal=True,
+                )
+                s67d_telemetry["conservation_finalize"] = _cons_tele
             write_stage_artifact(
                 ctx.repo_path,
                 stage_index=6,
@@ -904,6 +928,10 @@ def run_finalize_phase(
             try:
                 loc_telemetry = apply_feature_loc(
                     features, product_features, ctx.repo_path,
+                    # §4.5 conservation flow accounting (on-flow ≤ 1 by
+                    # construction) — needs the final journey attachments.
+                    user_flows=user_flows,
+                    flows=list(bipartite.flows),
                 )
                 scan_meta["feature_loc"] = loc_telemetry
                 if loc_telemetry.get("loc_accounting"):

@@ -197,10 +197,17 @@ def run_stage_8_5_backfill(
     # Drop product features with no paths — they can never overlap.
     pf_paths_by_name = {k: v for k, v in pf_paths_by_name.items() if v}
 
+    # Product-Spine §4.1 — concern facets stay unmapped BY DESIGN (they are
+    # cross-cutting views, never PF members); the backfill must not attach
+    # them just because their files overlap a product feature's union.
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
     assignments: dict[str, str] = {}
     for f in features:
         if f.product_feature_id:
             continue  # never re-map what the analyst already mapped
+        if is_facet(f):
+            continue  # facet: excluded from PF membership (spine §4.1)
         best = _best_product_feature(f.paths or [], pf_paths_by_name, thr)
         if best is None:
             continue  # below threshold → legitimately stays unmapped

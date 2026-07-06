@@ -51,11 +51,15 @@ Two emission modes (both deterministic, no LLM):
 For monorepos we read the per-workspace ``package.json`` (already in
 ``ctx.workspaces[*].package_json``) plus the root manifest.
 
-The ``paths`` list for each anchor is the workspace directory the
-dependency lives in (not the file list — that would require
-content-grep). Stage 2 reconciliation uses these paths as a hint when
-attributing files to features, but other extractors (route, mvc,
-schema) typically claim files more concretely.
+The ``paths`` list for each dependency-category anchor is the MANIFEST
+FILE that declares the dependency (``apps/web/package.json``,
+``pyproject.toml``) — the explicit file the evidence actually supports.
+Historically it was the manifest's DIRECTORY (``apps/web``, ``.``),
+which made concern-named dev features carry bare-dir / repo-root
+members into every downstream union (Product-Spine §4.1 bare-dir ban,
+evidence 2026-07-06: 10/10 board scans, up to 136,771 LOC vacuumed by
+one dev). ``FAULTLINE_SPINE_BAREDIR=0`` restores the legacy directory
+emission.
 
 No LLM. No network. Pure manifest parsing.
 """
@@ -73,6 +77,7 @@ from faultline.pipeline_v2.extractors._util import (
     slugify,
 )
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
+from faultline.pipeline_v2.spine_hygiene import baredir_ban_enabled
 
 if TYPE_CHECKING:
     from faultline.pipeline_v2.stage_0_intake import ScanContext, Workspace
@@ -262,12 +267,23 @@ class PackageAnchorExtractor:
         )
 
         # ── JS / TS manifests ──
+        # Anchor path = the manifest FILE declaring the dependency (the
+        # explicit evidence), never its directory — Product-Spine §4.1
+        # bare-dir ban. Legacy dir emission behind the kill-switch.
+        ban = baredir_ban_enabled()
+
+        def _manifest_path(scope_path: str) -> str:
+            scope = posix(scope_path).strip("/")
+            if not ban:
+                return scope or "."
+            return f"{scope}/package.json" if scope and scope != "." else "package.json"
+
         def _process_js(pkg: dict | None, scope_path: str) -> None:
             deps = _collect_js_deps(pkg)
             if not deps:
                 return
             for slug, contributing in _match_anchors(deps, _JS_DEP_ANCHORS).items():
-                anchors[slug]["paths"].add(posix(scope_path) or ".")
+                anchors[slug]["paths"].add(_manifest_path(scope_path))
                 anchors[slug]["deps"].update(contributing)
 
         if ctx.monorepo and ctx.workspaces:
@@ -287,7 +303,7 @@ class PackageAnchorExtractor:
         if pyproject_text:
             py_deps = _collect_py_deps(pyproject_text)
             for slug, contributing in _match_anchors(py_deps, _PY_DEP_ANCHORS).items():
-                anchors[slug]["paths"].add(".")
+                anchors[slug]["paths"].add("pyproject.toml" if ban else ".")
                 anchors[slug]["deps"].update(contributing)
 
         out: list[AnchorCandidate] = []
@@ -330,7 +346,15 @@ class PackageAnchorExtractor:
                     # (extractor_hits["package"] == real anchor count).
                     continue
                 seen_workspace_slugs.add(ws_slug)
-                ws_paths = tuple(ws.files) if ws.files else (ws.path,)
+                # Fallback for a file-less workspace record: the workspace
+                # MANIFEST when one exists (explicit file evidence), never
+                # the bare directory (§4.1 ban; legacy dir under the flag).
+                if ws.files:
+                    ws_paths = tuple(ws.files)
+                elif ban and isinstance(ws.package_json, dict):
+                    ws_paths = (_manifest_path(ws.path),)
+                else:
+                    ws_paths = (ws.path,)
                 rationale = (
                     f"workspace anchor {ws_slug!r} from monorepo "
                     f"package {ws.path!r}"

@@ -265,9 +265,16 @@ def _compact_dev_features(
     ``product_strings`` — the human-facing strings (nav labels, page
     titles, default-locale i18n copy) collected from ITS OWN member
     files, anchor files first. Empty list when the repo carries none.
+
+    Product-Spine §4.1: concern FACETS are excluded — they are
+    cross-cutting views, never PF members, so the analyst must not see
+    (and cannot cite) them as ``member_dev_features``.
     """
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
     sorted_df = sorted(
-        developer_features, key=lambda f: -len(f.paths or []),
+        (f for f in developer_features if not is_facet(f)),
+        key=lambda f: -len(f.paths or []),
     )[:_MAX_DEV_FEATURES_IN_PAYLOAD]
     out: list[dict[str, Any]] = []
     for f in sorted_df:

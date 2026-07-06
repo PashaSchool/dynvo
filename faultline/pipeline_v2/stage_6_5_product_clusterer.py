@@ -921,6 +921,13 @@ def run_product_clusterer(
     # Lazy import — keeps the module test-friendly (the Feature class
     # carries a Pydantic validator chain we don't want at import time).
     from faultline.models.types import Feature
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
+    # Product-Spine §4.1 — concern FACETS (role="facet") are cross-cutting
+    # views, never product-feature members: they receive no votes, appear
+    # in no mapping, and therefore keep ``product_feature_id=None`` (their
+    # LOC never rolls into a PF). Vertical features are unaffected.
+    developer_features = [f for f in developer_features if not is_facet(f)]
 
     state = _ClustererState()
 
