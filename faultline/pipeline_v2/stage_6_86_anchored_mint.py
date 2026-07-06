@@ -177,7 +177,14 @@ def _classify_dev(
         for b, _sb, mb in majority:
             if a is b:
                 continue
-            if mb < m:  # strict subset: b is more specific → a drops
+            # Strict matched-subset AND structural nesting (W2b.1 fix a):
+            # b is "more specific" only when its own subtree nests inside
+            # a's. Bare set-containment inverted on cross-app MERGED
+            # anchors — openstatus `login`: ws:apps/dashboard matched 6 of
+            # the 10 login files (a strict subset of route:login's 10) and
+            # the shell dropped the route anchor; the shell's subtree is
+            # NOT inside the route subtree, so it may not dominate it.
+            if mb < m and b.subtree_inside(a):
                 dominated = True
                 break
             if mb == m and _ident_key(b, mb) < _ident_key(a, m):

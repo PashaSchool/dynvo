@@ -97,6 +97,39 @@ def test_specificity_route_beats_enclosing_workspace():
     assert d.anchor_id == "route:apps/web/app/billing"
 
 
+def test_cross_app_merged_route_beats_single_app_shell():
+    """W2b.1 fix (a), openstatus `login`: a dev whose login surface spans
+    TWO apps (6 files in apps/dashboard, 4 in apps/status-page) is won by
+    the MERGED route:login anchor (share 1.0), NOT by the ws:apps/dashboard
+    shell (share 0.6) — the shell's smaller matched set is not "more
+    specific" because its subtree does not nest inside the route subtree."""
+    ws = [SimpleNamespace(name="dashboard", path="apps/dashboard", stack="ts"),
+          SimpleNamespace(name="status-page", path="apps/status-page", stack="ts")]
+    dash = "apps/dashboard/src/app/login"
+    sp = "apps/status-page/src/app/(status-page)/[domain]/[locale]/(auth)/login"
+    routes = [
+        {"pattern": "/login", "method": "PAGE", "file": f"{dash}/page.tsx"},
+        {"pattern": "/:domain/:locale/login", "method": "PAGE",
+         "file": f"{sp}/page.tsx"},
+    ]
+    d = dev("login", [
+        f"{dash}/page.tsx", f"{dash}/layout.tsx", f"{dash}/search-params.ts",
+        f"{dash}/_components/actions.ts", f"{dash}/_components/login-button.tsx",
+        f"{dash}/_components/magic-link-form.tsx",
+        f"{sp}/page.tsx", f"{sp}/_components/section-magic-link.tsx",
+        f"{sp}/_components/section-sso.tsx", f"{sp}/actions.ts",
+    ], flows=[flow("sign-in-with-magic-link-flow",
+                   f"{dash}/_components/actions.ts")])
+    pfs, tele = mint([d], routes, ctx_of(ws))
+    assert d.product_feature_id == "login", (
+        d.product_feature_id, d.shared_reason)
+    assert d.anchor_id == "route:login" or (
+        d.anchor_id or "").startswith("route:")
+    assert d.shared_reason is None
+    rows = build_platform_infrastructure_lane([d])
+    assert rows == []
+
+
 def test_no_shared_platform_pf_ever_minted():
     """Operator amendment (final): the Shared Platform PF is abolished —
     residuals go to the platform_infrastructure lane."""

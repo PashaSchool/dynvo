@@ -226,6 +226,25 @@ class SpineAnchor:
     def matched_set(self, paths: Iterable[str]) -> frozenset[str]:
         return frozenset(p for p in paths if self.matches(p))
 
+    def subtree_inside(self, other: "SpineAnchor") -> bool:
+        """True when EVERY evidence unit of this anchor (dir prefixes +
+        exact files) sits inside *other*'s subtree — the structural
+        "nested subtree" test the specificity reduction requires.
+
+        Matched-set containment alone is NOT nesting (W2b.1 fix a,
+        openstatus ``login``): a MERGED cross-app route anchor
+        (``route:login`` over apps/dashboard + apps/status-page login
+        dirs) legitimately matches MORE of a dev's files than one
+        deployment shell — the shell's smaller matched set made it look
+        "more specific" and the route anchor was dropped. Only an anchor
+        whose own subtree nests inside the other's may claim to be the
+        finer grain of the same evidence.
+        """
+        units = list(self.prefixes) + sorted(self.files)
+        if not units:
+            return False
+        return all(other.matches(u) for u in units)
+
 
 # ── Route anchors ────────────────────────────────────────────────────────
 
