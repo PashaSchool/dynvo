@@ -189,6 +189,13 @@ class SpineAnchor:
     # anchor) and the child needs FLOW evidence to mint — a vendor-named
     # model/router file alone is not an integration PF.
     hub_parent_generic: bool = False
+    # Family classing key (the hub parent's meaningful segment) — the
+    # cross-family merge identity: the SAME vendor under two
+    # ``integrations`` families is ONE product integration (formbricks
+    # Notion: settings UI + api webhook dirs), while the same vendor
+    # under DIFFERENT capability families stays separate (Soc0 claroty
+    # under both edr and iot_ot).
+    family_key: str = ""
 
     @property
     def rank(self) -> int:
@@ -810,6 +817,7 @@ def _build_hub_anchors(
                     hub_dir=d,
                     vendor=vendor_of_segment(child) or child.lower(),
                     hub_parent_generic=parent_generic,
+                    family_key=hub_key,
                 ))
                 claimed_paths.update(child_paths)
         else:
@@ -835,6 +843,7 @@ def _build_hub_anchors(
                     hub_dir=d,
                     vendor=v,
                     hub_parent_generic=parent_generic,
+                    family_key=hub_key,
                 ))
                 claimed_paths.update(vfiles)
         if not child_anchors:
@@ -851,7 +860,43 @@ def _build_hub_anchors(
                 sources=frozenset({"hub-core"}),
                 hub_dir=d,
             ))
-    return out
+
+    # Cross-family vendor merge: the SAME vendor under two families with
+    # the SAME classing key is ONE product integration (formbricks
+    # `Notion`: settings-workspace UI dir + api/v1/integrations webhook
+    # dir — two "integrations" families) — without the merge the second
+    # mint collides and ships a duplicate display name. Same vendor
+    # under DIFFERENT capability families (Soc0 claroty in edr AND
+    # iot_ot) stays separate.
+    grouped: dict[tuple[str, str], list[SpineAnchor]] = defaultdict(list)
+    rest: list[SpineAnchor] = []
+    for a in out:
+        if a.source == "hub-vendor":
+            grouped[((a.vendor or a.key), a.family_key)].append(a)
+        else:
+            rest.append(a)
+    merged_children: list[SpineAnchor] = []
+    for (_v, _fk) in sorted(grouped):
+        members = sorted(grouped[(_v, _fk)], key=lambda a: a.canonical_id)
+        if len(members) == 1:
+            merged_children.append(members[0])
+            continue
+        head = members[0]
+        merged_children.append(SpineAnchor(
+            canonical_id=head.canonical_id,
+            key=head.key,
+            source="hub-vendor",
+            display=head.display,
+            prefixes=tuple(dict.fromkeys(
+                p for m in members for p in m.prefixes)),
+            files=frozenset(f for m in members for f in m.files),
+            sources=frozenset({"hub-vendor"}),
+            hub_dir=head.hub_dir,
+            vendor=head.vendor,
+            hub_parent_generic=all(m.hub_parent_generic for m in members),
+            family_key=head.family_key,
+        ))
+    return merged_children + rest
 
 
 # ── Cross-source key-merge + nav confirmation ────────────────────────────

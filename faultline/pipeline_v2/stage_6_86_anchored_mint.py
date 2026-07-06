@@ -593,9 +593,16 @@ def run_anchored_mint(
         contrib = devs_by_anchor[cid]
         slug = _slug(a.display)
         if slug in used_slugs:
-            # Same display from two anchors (rare cross-family clash) —
-            # qualify with the canonical id's tail for a stable unique key.
-            slug = _slug(f"{a.display}-{re.sub(r'[^a-z0-9]+', '-', cid.lower())}")
+            # Same display from two anchors (cross-FAMILY vendor clash —
+            # Soc0 claroty under both edr and iot_ot): qualify with the
+            # family key first (readable: `claroty-iot-ot`), the
+            # canonical-id tail as the deterministic last resort.
+            fam = getattr(a, "family_key", "") or ""
+            cand_slug = _slug(f"{a.display}-{fam}") if fam else ""
+            if not cand_slug or cand_slug in used_slugs:
+                cand_slug = _slug(
+                    f"{a.display}-{re.sub(r'[^a-z0-9]+', '-', cid.lower())}")
+            slug = cand_slug
         used_slugs.add(slug)
         slug_by_anchor[cid] = slug
         desc = (
