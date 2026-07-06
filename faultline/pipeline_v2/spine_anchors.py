@@ -749,7 +749,16 @@ def _build_hub_anchors(
     for d in kept_dirs:
         vendors = fam_vendors[d]
         kids = children_by_dir.get(d, {})
+        # Parent CLASSING looks through bare passthrough segments: the
+        # family dir of typebot's per-vendor blocks is
+        # ``packages/blocks/integrations/src`` — ``src`` carries no
+        # meaning; ``integrations`` (the lexicon word) classes the
+        # family. Children still enumerate under ``d`` itself.
         base = d.rsplit("/", 1)[-1]
+        for seg in reversed(d.split("/")):
+            if seg.lower() not in {"src", "lib"}:
+                base = seg
+                break
         hub_key = normalize_anchor_key(base)
         # Parent classes (Soc0 smoke, 2026-07-06):
         #   * STOPLISTED parent (backend/routers, backend/models — the

@@ -147,24 +147,29 @@ def _classify_dev(
 
     # SPECIFICITY REDUCTION — drop anchors whose matched set strictly
     # contains another majority anchor's matched set; identical matched
-    # sets merge. Identical-set preference (fastapi-template smoke,
-    # 2026-07-06: one central-router FILE carries several URL keys —
-    # login.py = /login + /password-recovery + /reset-password — and
-    # every key anchors the same file): source rank, then the SHALLOWEST
-    # key (depth-0 tops beat collection-descend children — a child only
-    # wins by strict subset), then the key that names the FILE itself
-    # (login.py → route:login), then the stable id.
+    # sets merge. Identical-set preference (fastapi-template + supabase
+    # smokes, 2026-07-06): source rank, then the MOST SPECIFIC subtree
+    # (longest matching dir prefix — the mega-segment carve:
+    # ``project/[ref]/integrations`` beats ``project``), then the key
+    # that names the matched FILE itself (a central-router file carries
+    # several URL keys — login.py = /login + /password-recovery — and
+    # the stem names the surface), then the stable id.
     def _ident_key(a: SpineAnchor, m: frozenset[str]) -> tuple:
+        from faultline.pipeline_v2.spine_anchors import (
+            normalize_anchor_key as _nk,
+        )
+        longest_prefix = 0
+        for p in m:
+            for pre in a.prefixes:
+                if p.startswith(pre + "/") or p == pre:
+                    longest_prefix = max(longest_prefix, len(pre))
         stem_match = 0
         if len(m) == 1:
-            from faultline.pipeline_v2.spine_anchors import (
-                normalize_anchor_key as _nk,
-            )
             f = next(iter(m))
             stem = f.rsplit("/", 1)[-1]
             stem = stem[: stem.rfind(".")] if "." in stem else stem
             stem_match = 0 if _nk(stem) == a.key else 1
-        return (a.rank, a.depth, stem_match, a.canonical_id)
+        return (a.rank, -longest_prefix, stem_match, a.canonical_id)
 
     reduced: list[tuple[SpineAnchor, float, frozenset[str]]] = []
     for a, s, m in majority:
@@ -457,6 +462,42 @@ def run_anchored_mint(
                             best = cand
         return best[1] if best else None
 
+    def _entry_fold(f: "Feature") -> str | None:
+        """The minting anchor holding the MAJORITY of the dev's flow
+        entry files — the strongest behavioral fold signal (validator
+        I16's own ruler): a dev whose journeys enter through one
+        capability's surface belongs to it (supabase FDW wrappers class:
+        the dev's flow enters via the integrations page)."""
+        entries = [str(ep) for fl in (getattr(f, "flows", None) or [])
+                   if (ep := getattr(fl, "entry_point_file", None))]
+        if not entries:
+            return None
+        votes: Counter[str] = Counter()
+        for ep in entries:
+            best_cid: str | None = None
+            best_spec: tuple[int, int, str] | None = None
+            for cid in sorted(mintable):
+                a = anchor_by_id[cid]
+                if not a.matches(ep):
+                    continue
+                # Most specific match wins: exact file > longest prefix.
+                spec = (
+                    1 if ep in a.files else 0,
+                    max((len(p) for p in a.prefixes
+                         if ep.startswith(p + "/") or ep == p), default=0),
+                    cid,
+                )
+                if best_spec is None or spec > best_spec:
+                    best_cid, best_spec = cid, spec
+            if best_cid is not None:
+                votes[best_cid] += 1
+        if not votes:
+            return None
+        (best, n), = votes.most_common(1)
+        tied = sorted(c for c, v in votes.items() if v == n)
+        best = tied[0]
+        return best if votes[best] * 2 > len(entries) else None
+
     fold_pending: list[tuple["Feature", SpineAnchor | None, str]] = []
     for f in sorted(in_scope, key=lambda x: x.name):
         w = winner_by_dev[f.name]
@@ -474,13 +515,24 @@ def run_anchored_mint(
                     accepted = True
                     break
             if not accepted:
-                fold_pending.append((f, None, _SHARED_REASON_NONE))
+                ef = _entry_fold(f)
+                if ef is not None:
+                    assignment[f.name] = (ef, "fold:entry->none")
+                    tele["fold_entry"] = tele.get("fold_entry", 0) + 1
+                else:
+                    fold_pending.append((f, None, _SHARED_REASON_NONE))
             continue
-        # Winner exists but cannot mint → parent fold, then import fold.
+        # Winner exists but cannot mint → parent fold, entry fold, then
+        # import fold.
         parent = _parent_fold(w)
         if parent is not None and w.barred in {"version_dir", "single_letter"}:
             assignment[f.name] = (parent, f"fold:parent->{w.canonical_id}")
             tele["fold_parent"] += 1
+            continue
+        ef = _entry_fold(f)
+        if ef is not None:
+            assignment[f.name] = (ef, f"fold:entry->{w.canonical_id}")
+            tele["fold_entry"] = tele.get("fold_entry", 0) + 1
             continue
         reason = (_SHARED_REASON_SHELL if w.shell else _SHARED_REASON_BAR)
         fold_pending.append((f, w, reason))
