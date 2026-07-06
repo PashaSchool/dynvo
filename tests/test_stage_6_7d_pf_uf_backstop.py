@@ -176,13 +176,18 @@ def test_member_cap_and_loc_order():
 def test_all_flows_claimed_still_synthesizes():
     """Board completeness: when every owned flow is already claimed by
     other journeys (minority shares), the thin journey still references
-    the top flows — it is tagged, so eval excludes it."""
+    the top flows — it is tagged, so eval excludes it.
+
+    (W1.1 fixture update: the uncovered PF used to be the literal
+    shared-platform bucket, which the backstop now correctly EXEMPTS —
+    I10: shared owns code, never journeys. The subject of this test is
+    the all-claimed fallback, so it now runs on a real capability.)"""
     devs = [
-        _dev("shared-platform", [_flow("f1"), _flow("f2")]),
+        _dev("alerts", [_flow("f1"), _flow("f2")]),
         _dev("cases", [_flow("f3"), _flow("f4"), _flow("f5")]),
     ]
-    d2p = {"shared-platform": ("shared-platform",), "cases": ("cases",)}
-    pfs = [_pf("shared-platform", "Shared Platform"), _pf("cases", "Cases")]
+    d2p = {"alerts": ("alerts",), "cases": ("cases",)}
+    pfs = [_pf("alerts", "Alerts"), _pf("cases", "Cases")]
     ufs = [
         _uf("Journey A", "cases", ["f1", "f3", "f4"]),  # claims f1 (minority)
         _uf("Journey B", "cases", ["f2", "f5"]),        # claims f2 (tie, not majority)
@@ -282,3 +287,132 @@ def test_deterministic_across_runs():
         tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, {"Anomalies"})
         results.append(([u.model_dump() for u in ufs], tele))
     assert results[0] == results[1]
+
+
+# ── W1.1 — conservation-compatible reassignment + shared-bucket exemption ──
+
+
+def _flow_spanning(uuid: str, span_path: str, loc: int = 40) -> Flow:
+    """A flow CONTAINED in one dev whose SPAN lives in *span_path* — the
+    supabase 2026-07-06 shape (docs-heavy journeys)."""
+    return Flow(
+        name=f"{uuid}-flow", uuid=uuid, paths=[span_path],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_TS, health_score=90.0,
+        line_ranges=[FlowLineRange(path=span_path, start_line=1,
+                                   end_line=loc)],
+    )
+
+
+def test_reassign_refused_when_conservation_would_undo_it():
+    """The supabase I8 ping-pong (validation wave 2026-07-06): the UF's
+    member flows are containment-owned by the uncovered PF's dev, but
+    their spans live inside ANOTHER PF's files — the finalize
+    conservation pass would resettle the reassignment right back.
+    W1.1: the backstop must synthesize instead."""
+    devs = [
+        # graphql dev CONTAINS the flows, but they span the docs PF's files
+        _dev("graphql", [
+            _flow_spanning("g1", "apps/docs/content/graphql/quickstart.mdx"),
+            _flow_spanning("g2", "apps/docs/content/graphql/api.mdx"),
+        ]),
+        _dev("docs", [_flow("d1")]),
+    ]
+    # the docs dev owns the span files
+    devs[1].paths = [
+        "apps/docs/content/graphql/quickstart.mdx",
+        "apps/docs/content/graphql/api.mdx",
+    ]
+    d2p = {"graphql": ("auto-generated-graphql-api",),
+           "docs": ("documentation-site",)}
+    pfs = [_pf("auto-generated-graphql-api", "Auto-Generated GraphQL API"),
+           _pf("documentation-site", "Documentation Site")]
+    ufs = [
+        _uf("Browse and run GraphQL queries", "documentation-site",
+            ["g1", "g2"]),
+        _uf("Read documentation", "documentation-site", ["d1"]),
+    ]
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    # NOT reassigned (conservation would undo) — synthesized instead.
+    assert tele["pf_backstop_reassigned_ufs"] == 0
+    assert tele["pf_backstop_synthesized"] == 1
+    assert ufs[0].product_feature_id == "documentation-site"
+    synth = [u for u in ufs if u.synthesized]
+    assert len(synth) == 1
+    assert synth[0].product_feature_id == "auto-generated-graphql-api"
+
+
+def test_reassign_kept_when_conservation_agrees():
+    """Spans inside the uncovered PF's own files — the reassignment IS
+    conservation-stable and proceeds (historical behavior preserved)."""
+    devs = [
+        _dev("anomalies", [
+            _flow_spanning("a1", "src/anomalies/detector.py"),
+            _flow_spanning("a2", "src/anomalies/queue.py"),
+        ]),
+        _dev("cases", [_flow("c1")]),
+    ]
+    devs[0].paths = ["src/anomalies/detector.py", "src/anomalies/queue.py"]
+    d2p = {"anomalies": ("anomalies",), "cases": ("cases",)}
+    pfs = [_pf("anomalies", "Anomalies"), _pf("cases", "Cases")]
+    ufs = [
+        _uf("Investigate anomalies", "cases", ["a1", "a2"]),
+        _uf("Manage cases", "cases", ["c1"]),
+    ]
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    assert tele["pf_backstop_reassigned_ufs"] == 1
+    assert tele["pf_backstop_synthesized"] == 0
+    assert ufs[0].product_feature_id == "anomalies"
+
+
+def test_reassign_conservation_check_off_with_kill_switch(monkeypatch):
+    """FAULTLINE_SPINE_CONSERVATION=0 → the ladder is off scan-wide, so the
+    compatibility check must not block (historical member-count rule)."""
+    monkeypatch.setenv("FAULTLINE_SPINE_CONSERVATION", "0")
+    devs = [
+        _dev("graphql", [
+            _flow_spanning("g1", "apps/docs/content/graphql/quickstart.mdx"),
+            _flow_spanning("g2", "apps/docs/content/graphql/api.mdx"),
+        ]),
+        _dev("docs", [_flow("d1")]),
+    ]
+    devs[1].paths = [
+        "apps/docs/content/graphql/quickstart.mdx",
+        "apps/docs/content/graphql/api.mdx",
+    ]
+    d2p = {"graphql": ("auto-generated-graphql-api",),
+           "docs": ("documentation-site",)}
+    pfs = [_pf("auto-generated-graphql-api", "Auto-Generated GraphQL API"),
+           _pf("documentation-site", "Documentation Site")]
+    ufs = [
+        _uf("Browse and run GraphQL queries", "documentation-site",
+            ["g1", "g2"]),
+        _uf("Read documentation", "documentation-site", ["d1"]),
+    ]
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    assert tele["pf_backstop_reassigned_ufs"] == 1
+    assert tele["pf_backstop_synthesized"] == 0
+
+
+def test_shared_platform_never_backstopped():
+    """Shared Platform owns code, never journeys (I10): even when flowful
+    and uncovered it must not pull journeys via the backstop — pre-W1.1
+    it did, and the finalize conservation pass nulled the no-signal ones
+    into I21 orphans (midday 'Determine geolocation', 2026-07-06)."""
+    devs = [
+        _dev("middleware", [_flow("m1"), _flow("m2")]),
+        _dev("cases", [_flow("c1")]),
+    ]
+    d2p = {"middleware": ("shared-platform",), "cases": ("cases",)}
+    pfs = [_pf("shared-platform", "Shared Platform"), _pf("cases", "Cases")]
+    ufs = [
+        _uf("Determine geolocation for requests", "cases", ["m1", "m2"]),
+        _uf("Manage cases", "cases", ["c1"]),
+    ]
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    # Neither reassigned to shared nor synthesized for it.
+    assert ufs[0].product_feature_id == "cases"
+    assert all(u.product_feature_id != "shared-platform" for u in ufs)
+    assert tele["pf_backstop_reassigned_ufs"] == 0
+    assert tele["pf_backstop_synthesized"] == 0
+    assert tele["pf_backstop_uncovered"] == 0  # shared is not a donor

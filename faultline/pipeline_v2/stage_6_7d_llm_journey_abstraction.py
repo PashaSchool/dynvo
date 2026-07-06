@@ -1847,6 +1847,7 @@ def _backstop_uncovered_pfs(
     override = flow_owner_override or {}
     flow_pf: dict[str, str] = {}
     flow_loc: dict[str, int] = {}
+    flow_obj: dict[str, Any] = {}
     pf_flows: dict[str, list[str]] = defaultdict(list)
     for dev in developer_features:
         slugs = dev_to_product.get(dev.name) or ()
@@ -1860,8 +1861,49 @@ def _backstop_uncovered_pfs(
             slug_for = override.get(mid, slug)
             flow_pf[mid] = slug_for
             flow_loc[mid] = _flow_loc_of(fl)
+            flow_obj[mid] = fl
             if slug_for:
                 pf_flows[slug_for].append(mid)
+
+    # W1.1 — conservation-compatible reassignment (defect: the 2026-07-06
+    # validation wave proved the reassign arm PING-PONGS with §4.5: it
+    # judges by flow-containment member COUNT, conservation judges by
+    # span-LOC file ownership, and the finalize conservation pass undid
+    # exactly the backstop's reassigns (supabase: all 4 I8 PFs; midday:
+    # 'support'), leaving the donors uncovered again. A reassignment is
+    # coverage only if the conservation ladder would KEEP it — same
+    # ruler, no ping-pong. Synthesized journeys were always exempt from
+    # conservation, so the synthesize arm needs no check.
+    from faultline.pipeline_v2.conservation import (
+        _SHARED_PF_KEYS as _cons_shared_keys,
+        build_file_pf_owner,
+        conservation_enabled,
+        conserved_pfid,
+        dev_views_for,
+    )
+
+    _cons_on = conservation_enabled()
+    if _cons_on:
+        _pf_keys = frozenset(
+            str(getattr(p, "id", None) or getattr(p, "name", "") or "")
+            for p in new_pfs
+        ) - {""}
+        _file_pf_owner = build_file_pf_owner(
+            dev_views_for(developer_features, dev_to_product),
+            real_pf_keys=_pf_keys,
+        )
+
+    def _conservation_keeps(uf: "UserFlow", slug: str) -> bool:
+        """Would the §4.5 ladder keep *uf* on *slug*? (True when the law
+        is off — historical behavior.)"""
+        if not _cons_on:
+            return True
+        members = [flow_obj[m] for m in (uf.member_flow_ids or [])
+                   if m in flow_obj]
+        if not members:
+            return True
+        chosen, _moved = conserved_pfid(members, _file_pf_owner, slug)
+        return chosen == slug
 
     covered: Counter[str] = Counter(
         u.product_feature_id for u in new_ufs if u.product_feature_id)
@@ -1872,6 +1914,14 @@ def _backstop_uncovered_pfs(
         slug = pf.name or ""
         if not slug or not pf_flows.get(slug) or covered.get(slug, 0) > 0:
             continue  # covered already (no duplicate backstop) or flow-less
+        if slug.strip().lower() in _cons_shared_keys:
+            # Shared Platform owns code, never journeys (operator doctrine,
+            # validator I10) — it is exempt from I8 and must never pull
+            # journeys via the backstop. Pre-W1.1 this arm reassigned UFs
+            # TO the shared bucket; the finalize conservation pass then
+            # nulled the no-signal ones into I21 orphans (midday
+            # 'Determine geolocation for requests', 2026-07-06).
+            continue
         tele["pf_backstop_uncovered"] += 1
         display = pf.display_name or slug
         reason = (_REASON_PROMOTED if display in promoted_caps
@@ -1887,6 +1937,8 @@ def _backstop_uncovered_pfs(
             owned = sum(1 for m in mids if flow_pf.get(m) == slug)
             if owned * 2 <= len(mids):
                 continue  # not majority-owned by this PF's devs
+            if not _conservation_keeps(uf, slug):
+                continue  # §4.5 would resettle it away — synthesize instead
             donor = uf.product_feature_id
             if donor and donor in flowful and covered.get(donor, 0) <= 1:
                 continue  # would uncover the donor — no violation trades
