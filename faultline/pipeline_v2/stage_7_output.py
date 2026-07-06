@@ -147,6 +147,7 @@ def build_feature_map(
     engine_version: str = "",
     monorepo: dict[str, Any] | None = None,
     non_product_surfaces: list[dict[str, Any]] | None = None,
+    platform_infrastructure: list[dict[str, Any]] | None = None,
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
 
@@ -202,6 +203,13 @@ def build_feature_map(
         monorepo=dict(monorepo or {}),
         repo_class=repo_class,
         non_product_surfaces=list(non_product_surfaces or []),
+        # None (field omitted from the JSON) unless the anchored mint
+        # ran — the FAULTLINE_SPINE_ANCHORED_MINT=0 A/B path serializes
+        # byte-identically to pre-W2b engines.
+        platform_infrastructure=(
+            list(platform_infrastructure)
+            if platform_infrastructure is not None else None
+        ),
     )
 
 
@@ -227,6 +235,7 @@ def stage_7_output(
     engine_version: str = "",
     monorepo: dict[str, Any] | None = None,
     non_product_surfaces: list[dict[str, Any]] | None = None,
+    platform_infrastructure: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -255,6 +264,7 @@ def stage_7_output(
         engine_version=engine_version,
         monorepo=monorepo,
         non_product_surfaces=non_product_surfaces,
+        platform_infrastructure=platform_infrastructure,
     )
 
     # Snapshot Stage 7's input for replay before we hand off to the writer.

@@ -132,6 +132,12 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (3, "flow_expansion"),
     (6, "test_strip"),
     (6, "generated_strip"),
+    # Stage 6.86 (Wave 2b, 2026-07-06, Product-Spine §4.3) — anchored PF
+    # minting: dev→PF from anchor lineage, PF candidates from ranked
+    # anchor sources, platform_infrastructure[] residual lane. $0,
+    # deterministic, default ON (FAULTLINE_SPINE_ANCHORED_MINT=0 off).
+    # See stage_6_86_anchored_mint.py.
+    (6, "anchored_mint"),
     (6, "user_flows"),
     (6, "uf_splitter"),
     (6, "uf_refiner"),

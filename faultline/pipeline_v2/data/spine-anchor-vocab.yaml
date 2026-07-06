@@ -1,0 +1,190 @@
+# Product-Spine §4.3 (Wave 2b) — anchor-builder vocabulary.
+#
+# SINGLE SOURCE OF TRUTH for the spine anchor-candidate builder
+# (faultline/pipeline_v2/spine_anchors.py). Authoring copy:
+# eval/spine-anchor-vocab.yaml (drift-guarded by
+# tests/pipeline_v2/test_spine_anchors.py). Anything hardcoded in
+# Python instead of here is a bug (house rule, stack-pattern-library).
+#
+# Every token is a UNIVERSAL web/repo convention — never a repo name.
+
+# Structural-vocabulary stoplist (calibration trap #1, 2026-07-06):
+# schema/i18n NAME-MATCHING may never match framework-structural
+# vocabulary. Measured failure: drizzle table `apps` name-matched the
+# `apps/` workspace root + Next `app/` dirs and claimed whole repos at
+# share 1.0 (midday i/p/r/s swallowed by a phantom mega-anchor);
+# supabase table `page` = same class against `pages/` routers.
+structural_stoplist:
+  - app
+  - apps
+  - page
+  - pages
+  - src
+  - lib
+  - libs
+  - api
+  - apis
+  - component
+  - components
+  - service
+  - services
+  - model
+  - models
+  - store
+  - stores
+  - module
+  - modules
+  - util
+  - utils
+  - helper
+  - helpers
+  - hook
+  - hooks
+  - type
+  - types
+  - config
+  - configs
+  - core
+  - shared
+  - common
+  - internal
+  - public
+  - static
+  - asset
+  - assets
+  - style
+  - styles
+  - test
+  - tests
+  - doc
+  - docs
+  - script
+  - scripts
+  - route
+  - routes
+  - router
+  - routers
+  - view
+  - views
+  - schema
+  - schemas
+  - migration
+  - migrations
+  - server
+  - client
+  - web
+  - frontend
+  - backend
+  - packages
+  - package
+  - data
+  - main
+  - index
+  - base
+  - user            # near-universal table name; matches auth/user dirs everywhere
+  - session         # same class (auth/session infra dirs)
+  - account         # same class (auth scaffolding) — route anchors still carry it
+
+# URL segments that are TRANSPARENT when deriving a route anchor's key
+# (they organise the URL, they are not the capability): matched exactly.
+route_transparent_segments:
+  - api
+  - trpc
+  - rest
+  - graphql
+
+# Version-dir pattern (calibration trap: `v1` @0.50 borderline —
+# linkwarden V1/V2 class). A version segment NEVER names an anchor; it
+# is transparent when deeper segments exist, and a version-KEYED anchor
+# folds into its parent API surface instead of minting.
+version_segment_pattern: "^v\\d+$"
+
+# Authored feature-dir containers (rider R1, source 5): a
+# `<container>/<domain>/` dir is the author's own capability
+# declaration (papermark ee/features/*, Soc0 frontend/src/features/*).
+feature_dir_containers:
+  - features
+  - feature
+  - modules
+  - module
+
+# Domain-service-dir containers (rider R1, source 6): backend service
+# organisation (`backend/services/<domain>/`). LINEAGE-ONLY class —
+# a service dir never standalone-mints a product feature (operator
+# acceptance case: Soc0 widget-query); it widens a same-key capability
+# or its devs take the fold ladder.
+service_dir_containers:
+  - services
+  - service
+
+# Workspace-shell first segments: a workspace whose path starts here is
+# a DEPLOYMENT SHELL (ws-app class, rider R1 — shells never mint).
+workspace_shell_roots:
+  - apps
+  - app
+
+# Workspace paths containing one of these segments are excluded from
+# anchor building entirely (calibration: skip type=example ONLY —
+# `type=tool` workspaces hold real product surfaces, e.g. midday
+# packages/cli, the published-CLI doctrine).
+workspace_excluded_segments:
+  - example
+  - examples
+
+# Manifest files that mark a top-level dir as a deployment unit in a
+# non-workspace repo (Soc0 backend/ + frontend/ class) — such units are
+# shells (never mint), used for shell-lineage accounting only.
+unit_manifest_files:
+  - package.json
+  - pyproject.toml
+  - setup.py
+  - requirements.txt
+  - go.mod
+  - Cargo.toml
+  - composer.json
+  - Gemfile
+
+# Hub-family child dirs with these names are PLUMBING (core), never a
+# vendor child, even inside a dir-per-vendor hub.
+hub_plumbing_segments:
+  - base
+  - common
+  - shared
+  - core
+  - utils
+  - util
+  - helpers
+  - types
+  - schema
+  - schemas
+  - mock
+  - mocks
+  - testing
+  - fixtures
+  - factory
+  - interfaces
+  - interface
+
+# File extensions that count as SOURCE CODE for the hub child-mint bar
+# (operator amendment 2026-07-06: a vendor child mints on >=1 flow OR
+# own code; a SINGLE STATIC file — json/yaml/sql config class, the
+# supabase FDW-wrapper case — never mints).
+code_extensions:
+  - .py
+  - .ts
+  - .tsx
+  - .js
+  - .jsx
+  - .mjs
+  - .cjs
+  - .go
+  - .rs
+  - .rb
+  - .java
+  - .kt
+  - .php
+  - .ex
+  - .exs
+  - .cs
+  - .vue
+  - .svelte

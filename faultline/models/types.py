@@ -921,9 +921,19 @@ class Feature(BaseModel):
     # (validator I22): every dev feature bound to the shared/platform
     # bucket carries a machine-readable residency reason
     # (``no_anchor_lineage | genuinely_shared_infra | facet_view |
-    # awaiting_wave2_mint | non_product_surface``). ``None`` (omitted)
-    # everywhere else.
+    # awaiting_wave2_mint | non_product_surface | sub_mint_bar_surface |
+    # shell_lineage_only``). ``None`` (omitted) everywhere else.
     shared_reason: str | None = None
+    # Product-Spine §4.3/§4.8 (Wave 2b, 2026-07-06) — anchor lineage.
+    # On a DEVELOPER feature: the canonical id of the anchor its
+    # membership derives from (``route:/settings``, ``ws:apps/web``,
+    # ``schema:invoice``, ``hub:backend/services/edr/cortex``,
+    # ``fdir:frontend/src/features/anomalies``, …) or a fold provenance
+    # (``fold:import->route:/invoices``). On a PRODUCT feature: the
+    # anchor that minted it. ``None`` (omitted from dumps) on scans that
+    # predate the field, on FAULTLINE_SPINE_ANCHORED_MINT=0 scans, and
+    # on shared-bucket residents (their explanation is ``shared_reason``).
+    anchor_id: str | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_spine_fields(self, handler: Any) -> Any:
@@ -937,7 +947,7 @@ class Feature(BaseModel):
         data = handler(self)
         if isinstance(data, dict):
             for key in ("role", "loc_flow", "loc_flow_shared",
-                        "surface_scope", "shared_reason"):
+                        "surface_scope", "shared_reason", "anchor_id"):
                 if data.get(key) is None:
                     data.pop(key, None)
         return data
@@ -1170,6 +1180,24 @@ class FeatureMap(BaseModel):
     # ``product_features[]`` list keeps ONLY product/system-scope
     # capabilities (validator I20).
     non_product_surfaces: list[dict[str, Any]] = []
+    # Product-Spine §4.3 (Wave 2b, operator amendment 2026-07-06): the
+    # platform-infrastructure lane — the anchored path's residual. One
+    # row PER resident dev {name, display_name, shared_reason, uuid,
+    # paths, loc, loc_shared, flows}; the dev rows stay in ``features[]``
+    # (Layer-1 truth, zero-loss) with ``product_feature_id=None``. The
+    # "Shared Platform" product feature NO LONGER EXISTS on this path —
+    # genuinely shared files surface as role="shared" members on their
+    # consumers instead. ``None`` (omitted from dumps) on scans that
+    # predate the lane and on FAULTLINE_SPINE_ANCHORED_MINT=0 scans, so
+    # the A/B=0 output stays byte-identical to pre-W2b engines.
+    platform_infrastructure: list[dict[str, Any]] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_lane_fields(self, handler: Any) -> Any:
+        data = handler(self)
+        if isinstance(data, dict) and data.get("platform_infrastructure") is None:
+            data.pop("platform_infrastructure", None)
+        return data
 
     @model_validator(mode="after")
     def _merge_layer_inputs(self) -> "FeatureMap":
