@@ -198,3 +198,24 @@ def test_uf_no_routes_index_all_interactive() -> None:
     }
     res = cluster_user_flows(scan, routes_index=None)
     assert all(u["category"] == "interactive" for u in res["user_flows"])
+
+
+def test_d9_runtime_markers_in_packaged_patterns(tmp_path) -> None:
+    """W3.1 D9 (fb3 dossier): temporal / trigger.dev / celery-beat /
+    apscheduler handlers classify as system flows with the PACKAGED
+    pattern pack — 168/168 UFs rode trigger=None on comp/tracecat/
+    pretalx because the pack only knew qstash/bullmq/vercel-cron."""
+    files = {
+        "wf.py": "from temporalio import workflow\n@workflow.defn\nclass W:\n    pass\n",
+        "job.ts": 'import { task } from "@trigger.dev/sdk/v3";\n',
+        "beat.py": "from celery.schedules import crontab\nCELERY_BEAT = {}\n",
+        "sched.py": "from apscheduler.schedulers.background import BackgroundScheduler\n",
+    }
+    for rel, body in files.items():
+        (tmp_path / rel).write_text(body)
+    c = SystemFlowClassifier(repo_path=tmp_path)  # packaged YAML
+    assert c.classify("wf.py") == "queue"          # Temporal
+    assert c.classify("job.ts") == "queue"         # Trigger.dev
+    assert c.classify("beat.py") == "scheduled"    # Celery beat
+    assert c.classify("sched.py") == "scheduled"   # APScheduler
+    assert c.classify("plain.py") == "interactive"

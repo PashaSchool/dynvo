@@ -916,6 +916,33 @@ def run_finalize_phase(
             k: v for k, v in s67d_telemetry.items() if k != "first_draw_spec"
         }
 
+    # ── W3.1 D6 — route-group journey recall seeds (BOTH paths) ─────────
+    # A >= 2-route product group no UF touches (tracecat tables/chat, the
+    # comp Auditor class, supabase studio holes — validator I24) gets ONE
+    # thin tagged seed journey built from the flows entering its own
+    # files. Output-only (user_flows[] append), synthesized + low-
+    # confidence tagged, real-PF-home required; groups with no flow
+    # evidence or no PF home stay honest holes. Runs on the keyed AND
+    # keyless paths — the hole class is path-independent.
+    from faultline.pipeline_v2.route_group_recall import (
+        route_group_seeds_enabled,
+        seed_route_group_journeys,
+    )
+    if route_group_seeds_enabled():
+        with StageLogger(run_dir, 6, "route_group_recall") as log_rgr:
+            rgr_tele = seed_route_group_journeys(
+                user_flows, features, product_features,
+                list(bipartite.flows), lineage_result.routes_index,
+            )
+            if rgr_tele.get("holes") or rgr_tele.get("seeded"):
+                scan_meta["route_group_recall"] = rgr_tele
+            log_rgr.info(
+                f"route-group recall: groups>=2 {rgr_tele.get('groups_ge2')}"
+                f" holes {rgr_tele.get('holes')} seeded {rgr_tele.get('seeded')}"
+                f" (no-flows {rgr_tele.get('skipped_no_flows')},"
+                f" no-pf {rgr_tele.get('skipped_no_pf')})",
+            )
+
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to
     # the final product features / user flows. Anchors are EVIDENCE here (a match

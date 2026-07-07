@@ -109,6 +109,16 @@ _SHARED_REASON_NONE = "no_anchor_lineage"
 _SHARED_REASON_BAR = "sub_mint_bar_surface"
 _SHARED_REASON_SHELL = "shell_lineage_only"
 
+#: W3.1 D4 — vendor-husk floor: a hub child with NO flow evidence must
+#: own at least this many LOC of code to mint (else it folds under the
+#: hub core / enclosing package as a dev-child). 150 is the valsem4 H9
+#: calibration bound (2026-07-07): 13-scan sweep showed zero false
+#: positives at 150 — midday's 27 app-store husks (logo.tsx + config.ts,
+#: 27-34 LOC) and the comp `-(integration)` 0-LOC twins die, while
+#: real-code 0-flow connectors (tracecat google 286 / microsoft 557,
+#: Soc0 sentinelone 1,258) stay minted.
+_HUB_HUSK_LOC_FLOOR = 150
+
 
 def anchored_mint_enabled() -> bool:
     """Default ON; ``FAULTLINE_SPINE_ANCHORED_MINT=0`` restores the old
@@ -246,12 +256,33 @@ def _is_code(path: str, code_exts: tuple[str, ...]) -> bool:
     return path.lower().endswith(code_exts)
 
 
+def _files_loc(
+    repo_root: Path,
+    rel_paths: list[str],
+    cache: dict[str, int],
+) -> int:
+    """Summed LOC of *rel_paths* per the engine's Stage-6.97 counting
+    convention (tests / generated / binary / missing count 0). Cached
+    per path; called only for flowless hub children (a handful of small
+    files per repo), so the IO is bounded."""
+    from faultline.pipeline_v2.stage_6_97_feature_loc import count_file_loc
+
+    total = 0
+    for rel in rel_paths:
+        if rel not in cache:
+            cache[rel] = count_file_loc(repo_root / rel, rel)
+        total += cache[rel]
+    return total
+
+
 def _mint_bar(
     anchor: SpineAnchor,
     winners: list["Feature"],
     flow_entries: dict[str, list[str]],
     repo_has_pages: bool,
     code_exts: tuple[str, ...],
+    repo_root: Path,
+    loc_cache: dict[str, int],
 ) -> str | None:
     """``None`` when the anchor may mint, else the bar reason."""
     if not winners:
@@ -272,9 +303,20 @@ def _mint_bar(
         child_files: set[str] = set(anchor.files)
         for w in winners:
             child_files.update(anchor.matched_set(owned_paths_of(w)))
-        if any(_is_code(p, code_exts) for p in child_files):
-            return None
-        return "hub_stub_child"  # single static file class (FDW wrappers)
+        code_files = [p for p in sorted(child_files)
+                      if _is_code(p, code_exts)]
+        if not code_files:
+            return "hub_stub_child"  # single static file class (FDW wrappers)
+        # W3.1 D4 (fb3 dossier, valsem4 H9): a flowless child needs a
+        # BODY, not just a code file — the old any-code prong let
+        # logo.tsx + config.ts marketplace husks mint (midday app-store
+        # ×27; comp `aws` + `aws-(integration)` 0-LOC dup twins). Under
+        # the floor the husk folds under its hub core / enclosing
+        # package as a dev-child; the same-vendor dup-pair class dies
+        # with it (the husk twin never mints, so no pair exists).
+        if _files_loc(repo_root, code_files, loc_cache) < _HUB_HUSK_LOC_FLOOR:
+            return "hub_husk_child"
+        return None
     if anchor.source == "hub-core":
         return None  # gated on sibling mints by the caller
     # PAGE-SURFACE RULE (only in repos that have a page surface at all).
@@ -437,11 +479,14 @@ def run_anchored_mint(
         if w is not None:
             winners_by_anchor[w.canonical_id].append(f)
     anchor_by_id = {a.canonical_id: a for a in anchors}
+    mint_repo_root = Path(getattr(ctx, "repo_path", "."))
+    loc_cache: dict[str, int] = {}
     bar_by_anchor: dict[str, str | None] = {}
     for cid in sorted(winners_by_anchor):
         a = anchor_by_id[cid]
         bar_by_anchor[cid] = _mint_bar(
-            a, winners_by_anchor[cid], flow_entries, repo_has_pages, code_exts)
+            a, winners_by_anchor[cid], flow_entries, repo_has_pages,
+            code_exts, mint_repo_root, loc_cache)
     # Hub cores mint only when ≥ 1 sibling vendor minted (amendment §2:
     # a core exists relative to its children).
     minted_vendor_hubs = {
@@ -490,7 +535,18 @@ def run_anchored_mint(
         entry files — the strongest behavioral fold signal (validator
         I16's own ruler): a dev whose journeys enter through one
         capability's surface belongs to it (supabase FDW wrappers class:
-        the dev's flow enters via the integrations page)."""
+        the dev's flow enters via the integrations page).
+
+        W3.1 D1/D6 DEFER RULE: when the entries ALSO majority-sit inside
+        a MORE SPECIFIC unminted route anchor carrying >= 2 page routes
+        (a real capability surface, the I24 grain), the fold DEFERS to
+        the pending ladder — rung L1 mints that anchor on demand.
+        Without it a workspace-scoped app router (tracecat: everything
+        under /workspaces/[id]/...) entry-folds tables/integrations/
+        settings into the coarse minted `Workspaces` PF (46K LOC — the
+        fb3 D1 sink shape at the entry rung). A single-page sub-surface
+        (supabase FDW wrappers, 1 page) still folds under its hosting
+        capability — the operator amendment case 5d grain."""
         entries = [str(ep) for fl in (getattr(f, "flows", None) or [])
                    if (ep := getattr(fl, "entry_point_file", None))]
         if not entries:
@@ -519,7 +575,41 @@ def run_anchored_mint(
         (best, n), = votes.most_common(1)
         tied = sorted(c for c, v in votes.items() if v == n)
         best = tied[0]
-        return best if votes[best] * 2 > len(entries) else None
+        if votes[best] * 2 <= len(entries):
+            return None
+        # Defer to L1 when a finer >=2-page route anchor holds the
+        # entry majority (deterministic: sorted candidates, first hit).
+        route_votes: Counter[str] = Counter()
+        for ep in entries:
+            fine_cid: str | None = None
+            fine_spec: tuple[int, int, str] | None = None
+            for a in anchors:
+                if (a.source != "route" or a.canonical_id in mintable
+                        or a.shell or a.barred or not a.matches(ep)):
+                    continue
+                spec = (
+                    1 if ep in a.files else 0,
+                    max((len(p) for p in a.prefixes
+                         if ep.startswith(p + "/") or ep == p), default=0),
+                    a.canonical_id,
+                )
+                if fine_spec is None or spec > fine_spec:
+                    fine_cid, fine_spec = a.canonical_id, spec
+            if fine_cid is not None:
+                route_votes[fine_cid] += 1
+        if route_votes:
+            (fine, fn), = route_votes.most_common(1)
+            fine_tied = sorted(c for c, v in route_votes.items() if v == fn)
+            fine = fine_tied[0]
+            fa = anchor_by_id.get(fine)
+            if (fa is not None
+                    and route_votes[fine] * 2 > len(entries)
+                    and len(fa.page_route_files) >= 2
+                    and fa.subtree_inside(anchor_by_id[best])):
+                tele["entry_fold_deferred_to_l1"] = (
+                    tele.get("entry_fold_deferred_to_l1", 0) + 1)
+                return None
+        return best
 
     def _anchor_of_target(t: str) -> str | None:
         """The most specific MINTING anchor covering one file (exact
@@ -591,7 +681,8 @@ def run_anchored_mint(
         a = anchor_by_id[best]
         if a.shell:
             return None
-        bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts)
+        bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts,
+                        mint_repo_root, loc_cache)
         if bar is not None:
             return None
         mintable.add(best)
@@ -602,15 +693,27 @@ def run_anchored_mint(
         """W2b.1 law rung L2 — the dev's flows' file SPANS vote for the
         minting anchor (or assigned owner) holding them; PLURALITY wins
         (terminal-rung semantics — a flowful dev must land in a real
-        capability, the binding is recorded in the provenance note)."""
+        capability, the binding is recorded in the provenance note).
+
+        W3.1 D1 COHERENCE GUARD: the winning target must account for at
+        least ``_UNION_FLOOR`` of the dev's DISTINCT span files — the
+        same random-tail bound every other plurality rung uses, with the
+        honest denominator (unresolvable span mass counts AGAINST the
+        bind). Without it a giant dev whose span resolves only through a
+        tiny sliver was force-bound to that sliver's PF (comp
+        `mcp-server` 34.5K LOC → the 3-file `security` route PF — the
+        fb3 D1 sink class)."""
         file_owner = _file_owner_map()
         votes: Counter[str] = Counter()
+        span_files: set[str] = set()
+        matched_files: dict[str, set[str]] = defaultdict(set)
         for fl in (getattr(f, "flows", None) or []):
             span = [str(p) for p in (getattr(fl, "paths", None) or [])]
             ep = getattr(fl, "entry_point_file", None)
             if not span and ep:
                 span = [str(ep)]
             for p in span:
+                span_files.add(p)
                 cid = _anchor_of_target(p)
                 if cid is None:
                     owner = file_owner.get(p)
@@ -618,11 +721,16 @@ def run_anchored_mint(
                         cid = assignment[owner][0]
                 if cid is not None:
                     votes[cid] += 1
+                    matched_files[cid].add(p)
         if not votes:
             return None
         (_best, n), = votes.most_common(1)
         tied = sorted(c for c, v in votes.items() if v == n)
-        return tied[0]
+        best = tied[0]
+        if span_files and (
+                len(matched_files[best]) / len(span_files) < _UNION_FLOOR):
+            return None
+        return best
 
     def _ancestor_walk(f: "Feature") -> str | None:
         """W2b.1 law rung L3 — nearest-ancestor plurality: walk UP from
@@ -710,6 +818,15 @@ def run_anchored_mint(
             assignment[f.name] = (parent, f"fold:api-parent->{w.canonical_id}")
             tele["fold_api_parent"] = tele.get("fold_api_parent", 0) + 1
             continue
+        # HUSK FOLD (W3.1 D4): a vendor-husk child folds under its hub
+        # core / enclosing package as a dev-child — the fb3 amendment
+        # rule ("flowful OR >= 150 owned LOC, else fold into the parent
+        # integrations PF").
+        if (bar_by_anchor.get(w.canonical_id) == "hub_husk_child"
+                and parent is not None):
+            assignment[f.name] = (parent, f"fold:hub-parent->{w.canonical_id}")
+            tele["fold_hub_parent"] = tele.get("fold_hub_parent", 0) + 1
+            continue
         reason = (_SHARED_REASON_SHELL if w.shell else _SHARED_REASON_BAR)
         fold_pending.append((f, w, reason))
 
@@ -721,6 +838,13 @@ def run_anchored_mint(
     for f, w, reason in fold_pending:
         if getattr(f, "flows", None):
             target = _entry_route_mint(f)
+            if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+                tele.setdefault("fold_debug", []).append({
+                    "dev": f.name, "rung": "L1-entry-route",
+                    "target": target,
+                    "entries": [str(ep) for fl in (getattr(f, "flows", None) or [])
+                                if (ep := getattr(fl, "entry_point_file", None))][:8],
+                })
             if target is not None:
                 src = w.canonical_id if w is not None else "none"
                 assignment[f.name] = (target, f"mint:entry-route->{src}")
@@ -751,8 +875,9 @@ def run_anchored_mint(
         file_owner = _file_owner_map()
         still_pending = []
         for f, w, reason in fold_pending:
+            owned = owned_by_dev[f.name]
             targets = _import_fold_targets(
-                owned_by_dev[f.name], repo_path, tracked, src_cache, alias_map)
+                owned, repo_path, tracked, src_cache, alias_map)
             votes: Counter[str] = Counter()
             for t in targets:
                 target_cid = _anchor_of_target(t)
@@ -763,17 +888,47 @@ def run_anchored_mint(
                 if target_cid is not None:
                     votes[target_cid] += 1
             resolved = False
+            if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+                tele.setdefault("fold_debug", []).append({
+                    "dev": f.name, "rung": "import",
+                    "targets_total": len(targets),
+                    "votes": dict(votes.most_common(8)),
+                })
             if votes:
                 total = sum(votes.values())
                 (best_cid, best_n), = votes.most_common(1)
                 # strict majority of anchor-covered targets, tie → alpha
                 tied = sorted(c for c, n in votes.items() if n == best_n)
                 best_cid = tied[0]
+                # W3.1 D1 SELF-EVIDENCE GUARD: imports point at what the
+                # dev DEPENDS ON, not what it IS — on every app-shaped
+                # repo the import majority lands on the shared component
+                # library (documenso: 11 route devs → ws:packages/ui at
+                # 60-90% majorities; tracecat: 21 frontend clusters →
+                # the `status` PF; supabase: `studio` 99.5K → the 2.7K
+                # `claim-project` page). A fold may follow imports only
+                # when the target also holds >= _UNION_FLOOR of the
+                # dev's OWN files (near-lineage confirmation), or the
+                # dev is a <= 3-file stub whose only content IS the
+                # import surface (the midday `i` page class W2b built
+                # this rung for).
                 if votes[best_cid] * 2 > total:
-                    src = w.canonical_id if w is not None else "none"
-                    assignment[f.name] = (best_cid, f"fold:import->{src}")
-                    tele["fold_import"] += 1
-                    resolved = True
+                    target_anchor = anchor_by_id[best_cid]
+                    own_inside = sum(
+                        1 for p in owned if target_anchor.matches(p))
+                    self_evident = (
+                        len(owned) <= 3
+                        or (len(owned) > 0
+                            and own_inside / len(owned) >= _UNION_FLOOR)
+                    )
+                    if self_evident:
+                        src = w.canonical_id if w is not None else "none"
+                        assignment[f.name] = (best_cid, f"fold:import->{src}")
+                        tele["fold_import"] += 1
+                        resolved = True
+                    else:
+                        tele["fold_import_guard_blocked"] = (
+                            tele.get("fold_import_guard_blocked", 0) + 1)
             if not resolved:
                 still_pending.append((f, w, reason))
         fold_pending = still_pending
@@ -786,11 +941,34 @@ def run_anchored_mint(
     # construction and carries a provenance note (``fold:span->…`` /
     # ``fold:walk->…``). Degenerate scans (zero mintable anchors) keep
     # the honest lane — there is no capability to bind to.
+    #
+    # W3.1 D1 CARVE-OUT — the law's own ruler (validator I9) EXEMPTS
+    # workspace-anchor devs from the flowful-in-lane class, and
+    # conservation.py's dev-rehome states why: "anchors never move —
+    # their flow sample spans the whole workspace, not one capability".
+    # Force-binding them was the single biggest sink source (supabase
+    # `studio` 99.5K LOC / 478 flows → the `claim-project` page PF).
+    # They lane honestly (flows stay visible on the lane row; their
+    # files ride role="shared" members on every importing feature).
+    from faultline.pipeline_v2.stage_8_7_anchor_desink import (
+        _is_workspace_anchor,
+    )
+
     for f, w, reason in fold_pending:
         flowful = bool(getattr(f, "flows", None))
+        if flowful and _is_workspace_anchor(f):
+            tele["law_ws_anchor_laned"] = (
+                tele.get("law_ws_anchor_laned", 0) + 1)
+            infra[f.name] = (_SHARED_REASON_SHELL if w is not None and w.shell
+                             else reason)
+            continue
         if flowful and mintable:
             src = w.canonical_id if w is not None else "none"
             target = _span_vote(f)
+            if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+                tele.setdefault("fold_debug", []).append({
+                    "dev": f.name, "rung": "span", "target": target,
+                })
             if target is not None:
                 assignment[f.name] = (target, f"fold:span->{src}")
                 tele["fold_span_vote"] = tele.get("fold_span_vote", 0) + 1

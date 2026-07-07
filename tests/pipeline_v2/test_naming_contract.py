@@ -145,6 +145,9 @@ def test_english_words_never_acronym_cased() -> None:
         ("schema.json", "file_stem"),
         ("Config settings.yml", "file_stem"),
         ("robots.txt", "file_stem"),
+        ("2025", "digit_only"),
+        ("404", "digit_only"),
+        ("2024-2025", "digit_only"),
     ],
 )
 def test_display_laws_fire(text: str, law: str) -> None:

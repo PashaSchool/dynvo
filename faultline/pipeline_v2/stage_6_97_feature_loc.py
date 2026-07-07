@@ -389,13 +389,20 @@ def apply_feature_loc(
         files = dev_files[i]
         owned = sum(l for fp, l in files.items() if primary_of[fp] == i)
         shared = sum(l for fp, l in files.items() if primary_of[fp] != i)
-        if owned == 0 and files:
-            # I2-safety: a pure-sharer (primary of nothing) still owns
-            # SOME real code — attribute its single largest counted file
-            # so «фіча без коду» never fires. This dev-level floor does
-            # NOT feed the PF rollup (which uses the disjoint owned SET),
-            # so the sum_pf_owned <= repo_loc invariant is preserved.
-            owned = max(files.values())
+        # W3.1 D11 (pretalx I13 trip, 88,903 > repo 88,784): the old
+        # I2-safety floor (`owned = max(files.values())` for a
+        # pure-sharer) DOUBLE-COUNTED — the floored lines stay
+        # primary-owned by another dev, and the W2b
+        # platform_infrastructure lane sums per-dev loc, so every
+        # floored lane resident re-counted its largest shared file
+        # (pretalx: urls.py 39 LOC × 7 error-page devs + 77 LOC of
+        # frontend/i18n overlap). The floor is DEAD insurance since the
+        # validator's owned/shared split (2026-07-05): a pure-sharer has
+        # loc_shared > 0 by construction (its counted files are primary
+        # elsewhere), which I2 accepts as "has code"; owned == 0 AND
+        # shared == 0 implies every counted file is empty, where the
+        # floor was max(0) anyway. Dropping it restores the disjoint
+        # per-file accounting the lane-aware I13 sums require.
         feat.loc = owned
         feat.loc_shared = shared
         if feat.paths and owned == 0:

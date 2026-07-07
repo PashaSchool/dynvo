@@ -56,6 +56,43 @@ verticals:
       - remediation
       - misconfiguration
       - siem
+      # W3.1 D3 (fb3 tracecat) — SOAR industry vocabulary: the
+      # detection-side nouns above miss automation-first SOC products
+      # (workflows+cases grain). Nouns stay industry-standard.
+      - soar
+      - secops
+      - triage
+      - enrichment
+      - runbook
+    # W3.1 D3 — the SOAR "integrations security context": a product whose
+    # integration catalog clusters in security vendors speaks the
+    # domain's language at catalog scale (tracecat: crowdstrike, splunk,
+    # panther, wazuh, virustotal, ... 20+ under templates/tools +
+    # integrations/). See integration_vendor_categories below.
+    vendor_category: security
+    deps: []
+
+  compliance-grc:
+    # W3.1 D3 (fb3 comp) — security compliance / GRC platforms
+    # (Vanta/Drata/comp class). Nouns are the ISO-27001/SOC-2 industry
+    # standard objects; `isms`/`soa` are unambiguous GRC acronyms.
+    display: Compliance & GRC
+    audience: compliance & security teams
+    nouns:
+      - framework
+      - control
+      - policy
+      - evidence
+      - risk
+      - vendor
+      - auditor
+      - questionnaire
+      - isms
+      - soa
+      - mitigation
+      - attestation
+      - penetration-test
+      - trust-center
     deps: []
 
   finance-invoicing:
@@ -368,6 +405,13 @@ core_object_stopwords:
   - util
   - utils
   - lib
+  - src
+  - hook
+  - hooks
+  - locale
+  - locales
+  - i18n
+  - l10n
   - misc
   - test
   - demo
@@ -378,3 +422,123 @@ core_object_stopwords:
   - id
   - uuid
   - slug
+  # W3.1 D3 (fb3 pretalx: core_objects[0] = 'reset') — auth/account
+  # plumbing verbs+nouns that leak from password/verification routes:
+  - reset
+  - forgot
+  - forgot-password
+  - reset-password
+  - verify
+  - verify-email
+  - confirm
+  - recover
+  - recovery
+  - two-factor
+  - 2fa
+  - mfa
+  - otp
+  - magic-link
+  - unsubscribe
+  - authorize
+  - userinfo
+  - acs
+  - well-known
+  - jwks
+
+# ── Plumbing noun families (W3.1 D3, fb3 tracecat) ─────────────────────
+# Families that every SaaS exposes as SUPPORTING surfaces (api keys,
+# secrets vaults, webhooks, sessions): they may neither ESTABLISH a
+# vertical nor add score UNLESS matched in the SCHEMA channel — a
+# product whose own data model declares Secret/ApiKey entities (an
+# infisical-class secrets manager, openstatus ApiKey) IS about them;
+# a /api-keys route is not evidence of anything.
+plumbing_families:
+  - api-key
+  - secret
+  - token
+  - webhook
+  - callback
+  - session
+  - oauth
+  - sso
+  - login
+  - password
+
+# ── Integration-vendor categories (W3.1 D3, fb3 tracecat) ──────────────
+# The "integrations security context": vendor/service tokens matched in
+# path dir-segments + file stems UNDER an integration-context dir. Every
+# 3 DISTINCT vendors of one category count as ONE noun-family equivalent
+# (the same >=3 constant as the spine hub-family dev-arm) — an
+# integration catalog clustered in one industry's vendors is domain
+# language at catalog scale. A vendor cluster can never establish a
+# vertical ALONE: >=1 real noun family is still required (an
+# everything-catalog automation hub is not a security product by
+# catalog contents alone). Tokens are unambiguous industry brands and
+# service names only — never common-English collision words (wiz,
+# sentinel, cortex, sublime are deliberately absent).
+integration_vendor_categories:
+  security:
+    - abuseipdb
+    - anyrun
+    - caldera
+    - censys
+    - claroty
+    - crowdsec
+    - crowdstrike
+    - cybereason
+    - darktrace
+    - defender
+    - elastic-security
+    - fleetdm
+    - gophish
+    - greynoise
+    - hackerone
+    - hibp
+    - hybrid-analysis
+    - intezer
+    - leakcheck
+    - malwarebazaar
+    - microsoft-sentinel
+    - misp
+    - okta
+    - opencti
+    - paloalto
+    - panther
+    - phishlabs
+    - qualys
+    - rapid7
+    - recorded-future
+    - secops
+    - sentinel-one
+    - sentinelone
+    - shodan
+    - snyk
+    - soar
+    - splunk
+    - tenable
+    - threatstream
+    - urlhaus
+    - urlscan
+    - virustotal
+    - wazuh
+    - zscaler
+
+# Dir segments that mark an integration-context path (the vendor scan
+# runs ONLY under these — mirrors the spine hub lexicon grain).
+integration_context_segments:
+  - integrations
+  - integration
+  - providers
+  - provider
+  - connectors
+  - connector
+  - adapters
+  - adapter
+  - plugins
+  - plugin
+  - tools
+  - sources
+  - destinations
+  - apps
+  - app-store
+  - services

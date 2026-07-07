@@ -2932,7 +2932,21 @@ def run_journey_abstraction(
         pf_specs_ = abstraction.get("product_features") or []
         # Cache stores the PARENT-level map; propagation is deterministic
         # from (map, current features), so live and cache-hit replays agree.
-        dev_map = _propagate_dev_map(dev_map, sub_to_parent)
+        #
+        # W3.1 D1 (fb3 dossier): NEVER propagate in ANCHORED mode. The
+        # anchored map is TOTAL over the mint's lineage stamps — every
+        # split subfeature was classified independently by Stage 6.86,
+        # and a sub ABSENT from the map is a deliberate platform-lane
+        # verdict. Propagation resurrected laned subs into whatever PF
+        # their PARENT (mis)folded to, then the phase_finalize re-stamp
+        # emptied the lane behind the mint's back: supabase `studio`'s
+        # 32 sub-domain splits (110K LOC, shared_reason=
+        # shell_lineage_only) rode `fold:import` into the 2.7K
+        # `claim-project` PF — the biggest fresh-blood trust failure.
+        # Call-2-era scans (anchored=False) keep the shim: their map is
+        # parent-grain by construction and subs legitimately inherit.
+        if not anchored:
+            dev_map = _propagate_dev_map(dev_map, sub_to_parent)
         (new_pfs, dev_to_product, files_after, pf_tele,
          flow_owner_override) = _build_product_features(
             pf_specs_, dev_map, developer_features, routes_index,

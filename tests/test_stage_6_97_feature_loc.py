@@ -138,7 +138,8 @@ def test_pf_rollup_dedups_shared_files(tmp_path):
     pf = _feature("billing", [], layer="product")
     apply_feature_loc([d1, d2], [pf], root)
     assert d1.loc == 3
-    assert d2.loc == 1
+    assert d2.loc == 0  # W3.1 D11: pure-sharer owns nothing (no floor)
+    assert d2.loc_shared == 1
     assert pf.loc == 3  # shared.ts counted ONCE, not d1.loc + d2.loc == 4
 
 
@@ -168,8 +169,38 @@ def test_shared_file_counted_once_at_primary_owner(tmp_path):
     assert d1.loc_shared == 0
     # d2 owns nothing exclusively; the shared file's lines land in loc_shared
     assert d2.loc_shared == 1
-    # I2-safety floor: a pure-sharer still reports its largest file as owned
-    assert d2.loc == 1
+    # W3.1 D11: NO owned floor for pure-sharers — the old
+    # `owned = max(files)` floor double-counted the file into the W2b
+    # platform-lane sums (pretalx I13 trip, 88,903 > repo 88,784).
+    # loc_shared > 0 is what keeps I2 honest ("has code" via the
+    # shared channel).
+    assert d2.loc == 0
+
+
+def test_pure_sharer_lane_conservation_no_double_count(tmp_path):
+    """W3.1 D11 regression (pretalx I13): one urls.py primary-claimed by
+    EIGHT devs must count ONCE across the owned ledger — the seven
+    pure-sharer error-page devs report 0 owned LOC (shared only), so PF
+    sums + platform-lane per-dev sums stay inside repo_loc."""
+    root = tmp_path / "repo"
+    _write(root, "src/app/urls.py", "u = 1\n" * 39)
+    _write(root, "src/app/views.py", "v = 1\n" * 10)
+    orga = _feature("orga", ["src/app/urls.py", "src/app/views.py"])
+    orga.product_feature_id = "orga"
+    claimants = []
+    for name in ("400", "403", "404", "500", "redirect", "debug", "root"):
+        d = _feature(name, ["src/app/urls.py"])
+        d.product_feature_id = None
+        claimants.append(d)
+    pf = _feature("orga", [])
+    apply_feature_loc([orga, *claimants], [pf], root)
+    assert orga.loc == 49          # urls(39, primary by dir-count) + views(10)
+    for d in claimants:
+        assert d.loc == 0, d.name  # pure sharers own NOTHING
+        assert d.loc_shared == 39  # the shared channel keeps them code-ful
+    # the lane-aware conservation sum: PF owned + per-dev lane loc
+    lane_sum = sum(d.loc or 0 for d in claimants)
+    assert (pf.loc or 0) + lane_sum == 49  # counted once, not 8x
 
 
 def test_primary_owner_tiebreak_by_flow_count_then_slug(tmp_path):
