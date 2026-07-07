@@ -19,6 +19,7 @@ deterministic 6.8b trigger verdicts onto rebuilt journeys
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from faultline.models.types import Feature, Flow, UserFlow
 from faultline.pipeline_v2.stage_6_7_user_flows import (
@@ -173,5 +174,70 @@ def test_kill_switch_disables_remint(monkeypatch) -> None:
     inngest = dev("jobs", ["backend/tasks/crons.py"])
     tele = resynthesize_system_ufs(journeys, [], [inngest], [])
     assert tele == {"enabled": False, "minted": 0, "skipped_existing": 0,
+                    "skipped_instrument": 0, "skipped_non_product_home": 0,
                     "seeds": []}
     assert journeys == []
+
+
+# ── W4.2 Fix 2 — seed surface-guard (D9) ─────────────────────────────────
+
+
+def test_run_prisma_shaped_group_never_seeds() -> None:
+    """The operator's 'Run prisma' exhibit: job-shaped files inside a
+    technology-instrument dir (or owned by instrument-laned devs) never
+    become a system journey — zero seed, honest hole."""
+    d = dev("toolkit", ["packages/toolkit/tasks/migrate.py",
+                        "packages/toolkit/tasks/codegen.py"])
+    d.shared_reason = "technology_instrument"
+    ufs: list[UserFlow] = []
+    tele = resynthesize_system_ufs(
+        ufs, [], [d], [],
+        instrument_dirs=["packages/toolkit"],
+    )
+    assert tele["minted"] == 0
+    assert tele["skipped_instrument"] >= 1
+    assert ufs == []
+
+
+def test_instrument_owner_reason_alone_blocks_the_seed() -> None:
+    """Even without the dirs channel (detector telemetry lost), the
+    laned dev's machine-readable reason blocks the seed."""
+    d = dev("toolkit", ["some/pkg/tasks/migrate.py"])
+    d.shared_reason = "technology_instrument"
+    ufs: list[UserFlow] = []
+    tele = resynthesize_system_ufs(ufs, [], [d], [])
+    assert tele["minted"] == 0 and tele["skipped_instrument"] >= 1
+
+
+def test_lane_owned_jobs_still_seed_as_honest_orphans() -> None:
+    """The Soc0 shape survives Fix 2: backend job files owned by a
+    NON-instrument lane dev (no_anchor_lineage) still mint the orphan
+    system journey — D9's w3.2 contract is untouched."""
+    d = dev("backend-jobs", ["backend/inngest_functions/sync_articles.py"])
+    d.shared_reason = "no_anchor_lineage"
+    ufs: list[UserFlow] = []
+    tele = resynthesize_system_ufs(
+        ufs, [], [d], [], instrument_dirs=["packages/toolkit"],
+    )
+    assert tele["minted"] == 1
+    assert ufs and ufs[0].product_feature_id is None
+    assert ufs[0].synthesis_reason == "system_flow_recall"
+
+
+def test_non_product_home_never_receives_a_seed() -> None:
+    """A system group whose unanimous home PF classifies non-product
+    (marketing cron class) stays an honest hole."""
+    from faultline.pipeline_v2.surface_taxonomy import SurfaceScopeClassifier
+
+    d = dev("www", ["www/site/tasks/rebuild_sitemap.py"], pfid="www-site")
+    pf = SimpleNamespace(name="www-site",
+                         paths=["www/site/tasks/rebuild_sitemap.py"])
+    clf = SurfaceScopeClassifier(
+        patterns={"root_dirs": {"marketing": ["www"]}})
+    ufs: list[UserFlow] = []
+    tele = resynthesize_system_ufs(
+        ufs, [], [d], [],
+        scope_classifier=clf, route_by_file={}, product_features=[pf],
+    )
+    assert tele["minted"] == 0
+    assert tele["skipped_non_product_home"] == 1

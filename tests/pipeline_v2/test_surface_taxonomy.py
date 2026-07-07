@@ -530,3 +530,40 @@ def test_surface_scope_yaml_matches_eval_authoring_copy() -> None:
         "differs from eval/surface-scope-patterns.yaml. Re-sync the "
         "in-package copy."
     )
+
+
+# ── W4.2 Fix 1 — instrument dirs at the emission classifier ──────────────
+
+
+def test_instrument_dirs_classify_devs_but_never_flip_anchored_pfs() -> None:
+    """The midday `banking` shape: a PRODUCT capability whose paths
+    straddle instrument dirs (post-fold shared members) stays product at
+    PF grain; a dev living inside an instrument dir still tags
+    dev_tooling; a PF ANCHORED inside an instrument dir still leaves for
+    the lane."""
+    kit_dev = _feature("uikit", ["packages/uikit/src/button.tsx",
+                                 "packages/uikit/src/dialog.tsx"],
+                       pfid=None)
+    bank_dev = _feature("banking-core", ["packages/banking/src/index.ts"],
+                        pfid="banking")
+    banking = _feature(
+        "banking",
+        # 1 own file + 2 instrument-dir files (fold/shared riders) —
+        # an instrument-path MAJORITY without the exemption.
+        ["packages/banking/src/index.ts", "packages/uikit/src/button.tsx",
+         "packages/uikit/src/dialog.tsx"],
+        layer="product")
+    banking.anchor_id = "ws:packages/banking"
+    kit_pf = _feature("uikit", ["packages/uikit/src/button.tsx"],
+                      layer="product")
+    kit_pf.anchor_id = "ws:packages/uikit"
+    tele, lane, product = apply_emission_taxonomy(
+        [kit_dev, bank_dev], [banking, kit_pf], [], [], [],
+        instrument_dirs=["packages/uikit"],
+    )
+    assert [p.name for p in product] == ["banking"], (
+        "anchored product PF flipped by instrument paths")
+    assert banking.surface_scope == "product"
+    assert [e["name"] for e in lane] == ["uikit"]
+    assert lane[0]["surface_scope"] == "dev_tooling"
+    assert kit_dev.surface_scope == "dev_tooling"

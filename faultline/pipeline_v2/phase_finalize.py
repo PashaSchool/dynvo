@@ -480,6 +480,7 @@ def run_finalize_phase(
 
     anchored_mint_applied = False
     anchored_hub_stamps: dict[str, str] = {}
+    instrument_dirs: frozenset[str] = frozenset()  # W4.2 Fix 1
     if anchored_mint_enabled():
         write_stage_input(run_dir, 6, "anchored_mint", {
             "features": features,
@@ -531,6 +532,12 @@ def run_finalize_phase(
                     anchored_mint_applied = True
                     anchored_hub_stamps = dict(
                         mint_tele.get("hub_family_stamps") or {})
+                    # W4.2 Fix 1 — instrument dirs feed the emission
+                    # classifier (dev_tooling scope) + the seed guards.
+                    instrument_dirs = frozenset(
+                        (mint_tele.get("technology_instruments") or {})
+                        .get("dirs") or []
+                    )
                 scan_meta["stage_6_86_anchored_mint"] = {
                     k: v for k, v in mint_tele.items()
                     if k != "hub_family_stamps"
@@ -1051,11 +1058,32 @@ def run_finalize_phase(
         route_group_seeds_enabled,
         seed_route_group_journeys,
     )
+    # W4.2 Fix 2 — seed surface-guard: one classifier instance serves the
+    # D6 + D9 seed channels (home-PF scope + instrument dirs). ``None``
+    # under the taxonomy kill-switch → both guards no-op (pre-W4.2 path).
+    from faultline.pipeline_v2.surface_taxonomy import (
+        SurfaceScopeClassifier as _SeedClf,
+        _route_by_file as _seed_rbf_of,
+        taxonomy_enabled as _seed_taxonomy_enabled,
+    )
+    seed_clf = None
+    seed_rbf: dict[str, Any] = {}
+    if _seed_taxonomy_enabled():
+        try:
+            seed_clf = _SeedClf(
+                repo_path=repo_path,
+                routes_index=lineage_result.routes_index,
+                instrument_dirs=instrument_dirs,
+            )
+            seed_rbf = dict(_seed_rbf_of(lineage_result.routes_index))
+        except Exception:  # noqa: BLE001 — guard is best-effort
+            seed_clf = None
     if route_group_seeds_enabled():
         with StageLogger(run_dir, 6, "route_group_recall") as log_rgr:
             rgr_tele = seed_route_group_journeys(
                 user_flows, features, product_features,
                 list(bipartite.flows), lineage_result.routes_index,
+                scope_classifier=seed_clf, route_by_file=seed_rbf,
             )
             if rgr_tele.get("holes") or rgr_tele.get("seeded"):
                 scan_meta["route_group_recall"] = rgr_tele
@@ -1063,7 +1091,8 @@ def run_finalize_phase(
                 f"route-group recall: groups>=2 {rgr_tele.get('groups_ge2')}"
                 f" holes {rgr_tele.get('holes')} seeded {rgr_tele.get('seeded')}"
                 f" (no-flows {rgr_tele.get('skipped_no_flows')},"
-                f" no-pf {rgr_tele.get('skipped_no_pf')})",
+                f" no-pf {rgr_tele.get('skipped_no_pf')},"
+                f" non-product {rgr_tele.get('skipped_non_product_home')})",
             )
 
     # ── W3.2 — UF-evidence lane re-homing (anchored paths, BOTH) ───────
@@ -1132,6 +1161,10 @@ def run_finalize_phase(
                 sys_mint_tele = resynthesize_system_ufs(
                     user_flows, list(bipartite.flows), features,
                     lineage_result.routes_index,
+                    instrument_dirs=instrument_dirs,
+                    scope_classifier=seed_clf,
+                    route_by_file=seed_rbf,
+                    product_features=product_features,
                 )
                 if (sys_mint_tele.get("minted")
                         or sys_mint_tele.get("skipped_existing")
@@ -1140,10 +1173,13 @@ def run_finalize_phase(
                         **sys_mint_tele, **sys_stamp_tele,
                     }
                 log_sys.info(
-                    "system_uf_recall: minted %d (skipped_existing %d), "
+                    "system_uf_recall: minted %d (skipped_existing %d, "
+                    "instrument %d, non-product %d), "
                     "triggers re-stamped %d" % (
                         sys_mint_tele.get("minted", 0),
                         sys_mint_tele.get("skipped_existing", 0),
+                        sys_mint_tele.get("skipped_instrument", 0),
+                        sys_mint_tele.get("skipped_non_product_home", 0),
                         sys_stamp_tele.get("stamped", 0),
                     ),
                 )
@@ -1152,6 +1188,40 @@ def run_finalize_phase(
                     f"system_uf_recall: FAILED ({exc}) — continuing",
                     feature=None,
                 )
+
+    # ── W4.2 — post-UF vendor-husk fold (operator exhibit: midday Enable
+    # Banking I8). After 6.7d + EVERY seed channel the journey layer is
+    # settled — a flowless hub-vendor child no journey cites folds under
+    # its hub core / nearest enclosing minted capability (the same place
+    # D4 sends sub-floor husks at mint time). Runs BEFORE Stage 6.97 so
+    # the dual-LOC accounting re-truths itself. Deterministic, $0.
+    # Kill-switch: FAULTLINE_HUSK_POST_UF_FOLD=0.
+    if anchored_mint_applied and not uf_suppressed:
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+            fold_unreferenced_vendor_husks,
+            husk_post_uf_fold_enabled,
+        )
+        if husk_post_uf_fold_enabled():
+            with StageLogger(run_dir, 6, "husk_post_uf_fold") as log_hf:
+                try:
+                    hf_tele = fold_unreferenced_vendor_husks(
+                        features, product_features, user_flows,
+                    )
+                    if hf_tele.get("folded") or hf_tele.get("no_target"):
+                        scan_meta["husk_post_uf_fold"] = hf_tele
+                    log_hf.info(
+                        "husk_post_uf_fold: %d folded / %d checked "
+                        "(no_target %d)" % (
+                            len(hf_tele.get("folded", [])),
+                            hf_tele.get("checked", 0),
+                            hf_tele.get("no_target", 0),
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_hf.info(
+                        f"husk_post_uf_fold: FAILED ({exc}) — continuing",
+                        feature=None,
+                    )
 
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to
@@ -1557,6 +1627,7 @@ def run_finalize_phase(
                     list(bipartite.flows), lineage_result.routes_index,
                     repo_path=repo_path,
                     adjudicator=_st_adjudicator,
+                    instrument_dirs=instrument_dirs,
                 )
             )
             scan_meta["surface_taxonomy_emission"] = st_tele

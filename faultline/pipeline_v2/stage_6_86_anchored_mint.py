@@ -91,6 +91,8 @@ __all__ = [
     "run_anchored_mint",
     "build_platform_infrastructure_lane",
     "enforce_hub_family_parity",
+    "fold_unreferenced_vendor_husks",
+    "husk_post_uf_fold_enabled",
 ]
 
 ANCHORED_MINT_ENV = "FAULTLINE_SPINE_ANCHORED_MINT"
@@ -108,6 +110,10 @@ _UNION_FLOOR = 0.34
 _SHARED_REASON_NONE = "no_anchor_lineage"
 _SHARED_REASON_BAR = "sub_mint_bar_surface"
 _SHARED_REASON_SHELL = "shell_lineage_only"
+#: W4.2 Fix 1 — devs of a technology-instrument anchor (packages/ui,
+#: packages/prisma …) lane directly under this reason; the fold ladder
+#: never routes instrument code into a product capability.
+_SHARED_REASON_INSTRUMENT = "technology_instrument"
 
 #: W3.1 D4 — vendor-husk floor: a hub child with NO flow evidence must
 #: own at least this many LOC of code to mint (else it folds under the
@@ -309,6 +315,27 @@ def _files_loc(
     return total
 
 
+def _anchor_in_instrument_dirs(
+    anchor: SpineAnchor,
+    instrument_dirs: frozenset[str],
+) -> bool:
+    """Every membership unit of *anchor* (prefixes; files when it has no
+    prefixes) sits inside a technology-instrument dir. Page evidence or a
+    nav mention keeps the anchor product (S3 belt at anchor grain)."""
+    if not instrument_dirs:
+        return False
+    if anchor.page_route_files or anchor.nav_confirmed:
+        return False
+
+    def _inside(p: str) -> bool:
+        return any(p == d or p.startswith(d + "/") for d in instrument_dirs)
+
+    units: list[str] = list(anchor.prefixes or ())
+    if not units:
+        units = sorted(anchor.files)
+    return bool(units) and all(_inside(u) for u in units)
+
+
 def _mint_bar(
     anchor: SpineAnchor,
     winners: list["Feature"],
@@ -317,6 +344,7 @@ def _mint_bar(
     code_exts: tuple[str, ...],
     repo_root: Path,
     loc_cache: dict[str, int],
+    instrument_dirs: frozenset[str] = frozenset(),
 ) -> str | None:
     """``None`` when the anchor may mint, else the bar reason."""
     if not winners:
@@ -325,6 +353,11 @@ def _mint_bar(
         return "shell"
     if anchor.barred:
         return anchor.barred  # single_letter | version_dir
+    # W4.2 Fix 1 — technology instruments (dev tooling by mechanism, not
+    # dictionary: manifest grounding / import asymmetry / no product
+    # surfaces, >=2 signals in technology_instruments.py) never mint.
+    if _anchor_in_instrument_dirs(anchor, instrument_dirs):
+        return "technology_instrument"
     if anchor.sources == frozenset({"svc"}):
         return "service_dir_only"
     if anchor.source == "hub-vendor":
@@ -482,6 +515,36 @@ def run_anchored_mint(
     tele["repo_has_pages"] = repo_has_pages
     flow_entries, _flowful = _flow_evidence_index(in_scope)
 
+    # W4.2 Fix 1 — technology-instrument detection (operator principle:
+    # mechanisms, not dictionaries). Runs ONCE per scan, here — the mint
+    # is the earliest consumer, and suppression must happen AT the mint
+    # (the 6.7d PF-backstop would otherwise seed journeys onto the fake
+    # capability — the typebot "Run prisma" exhibit).
+    from faultline.pipeline_v2.technology_instruments import (
+        detect_technology_instruments,
+        tech_instruments_enabled,
+    )
+
+    instrument_dirs: frozenset[str] = frozenset()
+    if tech_instruments_enabled():
+        fdir_units = sorted({
+            p for a in anchors if "fdir" in a.sources for p in a.prefixes
+        })
+        hub_dirs = sorted({a.hub_dir for a in anchors if a.hub_dir})
+        try:
+            ti_tele = detect_technology_instruments(
+                Path(getattr(ctx, "repo_path", ".")),
+                [str(p) for p in (getattr(ctx, "tracked_files", None) or [])],
+                routes_index,
+                fdir_units=fdir_units,
+                hub_dirs=hub_dirs,
+            )
+            instrument_dirs = frozenset(ti_tele.get("dirs") or [])
+            tele["technology_instruments"] = ti_tele
+        except Exception as exc:  # noqa: BLE001 — detector never breaks a scan
+            tele["technology_instruments"] = {"enabled": True,
+                                              "error": str(exc)}
+
     # Pass 1 — classify every in-scope dev.
     owned_by_dev: dict[str, list[str]] = {}
     winner_by_dev: dict[str, SpineAnchor | None] = {}
@@ -520,7 +583,8 @@ def run_anchored_mint(
         a = anchor_by_id[cid]
         bar_by_anchor[cid] = _mint_bar(
             a, winners_by_anchor[cid], flow_entries, repo_has_pages,
-            code_exts, mint_repo_root, loc_cache)
+            code_exts, mint_repo_root, loc_cache,
+            instrument_dirs=instrument_dirs)
     # Hub cores mint only when ≥ 1 sibling vendor minted (amendment §2:
     # a core exists relative to its children).
     minted_vendor_hubs = {
@@ -716,7 +780,8 @@ def run_anchored_mint(
         if a.shell:
             return None
         bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts,
-                        mint_repo_root, loc_cache)
+                        mint_repo_root, loc_cache,
+                        instrument_dirs=instrument_dirs)
         if bar is not None:
             return None
         mintable.add(best)
@@ -829,6 +894,16 @@ def run_anchored_mint(
                 else:
                     fold_pending.append((f, None, _SHARED_REASON_NONE))
             continue
+        # W4.2 Fix 1 — an instrument anchor's devs NEVER fold into a
+        # product capability (attributing the UI kit / ORM package to a
+        # random importing feature is exactly the mis-attribution the
+        # lane exists for). Flowless devs lane under
+        # ``technology_instrument``; a flowful dev still rides the LAW
+        # rescue (span-vote → walk) below — the lane law holds.
+        if bar_by_anchor.get(w.canonical_id) == "technology_instrument":
+            tele["instrument_devs"] = tele.get("instrument_devs", 0) + 1
+            fold_pending.append((f, w, _SHARED_REASON_INSTRUMENT))
+            continue
         # Winner exists but cannot mint → parent fold, entry fold,
         # api-leaf fold, then import fold.
         parent = _parent_fold(w)
@@ -909,6 +984,11 @@ def run_anchored_mint(
         file_owner = _file_owner_map()
         still_pending = []
         for f, w, reason in fold_pending:
+            if reason == _SHARED_REASON_INSTRUMENT:
+                # Fix 1: instrument code is DEPENDED ON by everything —
+                # the import vote is exactly backwards for it.
+                still_pending.append((f, w, reason))
+                continue
             owned = owned_by_dev[f.name]
             targets = _import_fold_targets(
                 owned, repo_path, tracked, src_cache, alias_map)
@@ -1258,19 +1338,27 @@ def build_platform_infrastructure_lane(
     resident dev (name, files, loc, reason). Zero-loss: residents stay
     in ``features[]`` (Layer-1 truth) with ``product_feature_id=None``;
     the lane is the explainability surface (I22 reads it post-W2b)."""
+    from faultline.pipeline_v2.emission_integrity import ANCHORED_HUSK_REASON
+
     rows: list[dict[str, Any]] = []
+    # The three amendment reasons the MINT stamps + the W4.2 additions:
+    # the anchored-husk shell reason (emission_integrity unbinds a
+    # dropped husk's 0-owned / 0-flow devs into this lane — zero-loss,
+    # I22-visible) and the technology-instrument reason (Fix 1: dev
+    # tooling lanes, never mints).
     lane_reasons = {_SHARED_REASON_NONE, _SHARED_REASON_BAR,
-                    _SHARED_REASON_SHELL}
+                    _SHARED_REASON_SHELL, ANCHORED_HUSK_REASON,
+                    _SHARED_REASON_INSTRUMENT}
     for f in developer_features:
         if getattr(f, "layer", "developer") != "developer":
             continue
         if getattr(f, "product_feature_id", None) is not None:
             continue
         reason = getattr(f, "shared_reason", None)
-        # ONLY the three amendment reasons the MINT stamps (review F4):
-        # a pfid=None dev some other stage tagged with a different
-        # reason (non_product_surface / genuinely_shared_infra /
-        # facet_view) is that stage's concern, never a lane resident.
+        # ONLY the reasons in the accepted set above (review F4): a
+        # pfid=None dev some other stage tagged with a different reason
+        # (non_product_surface / genuinely_shared_infra / facet_view) is
+        # that stage's concern, never a lane resident.
         if reason not in lane_reasons:
             continue
         rows.append({
@@ -1285,6 +1373,177 @@ def build_platform_infrastructure_lane(
         })
     rows.sort(key=lambda r: r["name"])
     return rows
+
+
+# ── W4.2 — post-UF vendor-husk fold (D4's missing journey ruler) ─────────
+
+_HUSK_POST_UF_ENV = "FAULTLINE_HUSK_POST_UF_FOLD"
+
+
+def husk_post_uf_fold_enabled() -> bool:
+    """Default ON; ``FAULTLINE_HUSK_POST_UF_FOLD=0`` disables."""
+    return os.environ.get(_HUSK_POST_UF_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def fold_unreferenced_vendor_husks(
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+    user_flows: list[Any],
+) -> dict[str, Any]:
+    """W4.2 (operator exhibit: midday ``Enable Banking`` I8) — the D4
+    vendor-husk rule gains the ruler it could not see at mint time: the
+    JOURNEY layer.
+
+    At Stage 6.86 the flowless hub-vendor floor is LOC-only (``≥ 150``
+    mints — the valsem4 H9 bound; enablebanking's 1,162 real LOC passed
+    it legitimately, no floor slip). But a flowless vendor child that the
+    settled journey layer ALSO never cites is the operator's "фіча без
+    юзер-фловів" anomaly (validator I8's journeys-worthy prong): real
+    code, no behavioral evidence, no journey — a standalone PF row tells
+    a PM nothing its hub cannot. Post-UF (after 6.7d + every seed
+    channel), such a child folds under its hub core sibling — or, when
+    the family minted no core (midday's providers hub), the nearest
+    enclosing minted capability (``Banking``) — exactly where D4 sends
+    sub-floor husks at mint time. Runs BEFORE Stage 6.97, so dual-LOC
+    accounting re-truths itself.
+
+    Journey-cited children (midday ``gocardless``) and flow-evidenced
+    children are untouched. Deterministic, $0. Kill-switch:
+    ``FAULTLINE_HUSK_POST_UF_FOLD=0``.
+    """
+    from faultline.pipeline_v2.hub_relation import HUB_PARENT_SEGMENTS
+
+    tele: dict[str, Any] = {"enabled": True, "checked": 0, "folded": [],
+                            "no_target": 0}
+    if not husk_post_uf_fold_enabled():
+        tele["enabled"] = False
+        return tele
+
+    uf_refs: Counter[str] = Counter()
+    for uf in user_flows:
+        ref = getattr(uf, "product_feature_id", None)
+        if ref:
+            uf_refs[str(ref)] += 1
+
+    devs_by_pf: dict[str, list["Feature"]] = defaultdict(list)
+    for f in developer_features:
+        if getattr(f, "layer", "developer") != "developer":
+            continue
+        pfid = getattr(f, "product_feature_id", None)
+        if pfid:
+            devs_by_pf[str(pfid)].append(f)
+
+    def _anchor_path(pf: "Feature") -> str | None:
+        aid = str(getattr(pf, "anchor_id", None) or "")
+        if ":" not in aid:
+            return None
+        return aid.split(":", 1)[1] or None
+
+    def _seg_stem(seg: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", seg.lower())
+
+    # Vendor-child candidates: hub: anchors whose PARENT dir basename is a
+    # hub container segment (providers / integrations / connectors …) —
+    # hub COREs (anchored at the container itself) never qualify.
+    candidates: list["Feature"] = []
+    for pf in sorted(product_features,
+                     key=lambda p: str(getattr(p, "name", "") or "")):
+        aid = str(getattr(pf, "anchor_id", None) or "")
+        if not aid.startswith("hub:"):
+            continue
+        path = aid[4:]
+        if "/" not in path:
+            continue
+        parent = path.rsplit("/", 1)[0]
+        if _seg_stem(parent.rsplit("/", 1)[-1]) not in {
+            _seg_stem(s) for s in HUB_PARENT_SEGMENTS
+        }:
+            continue
+        tele["checked"] += 1
+        key = str(getattr(pf, "name", "") or "")
+        if uf_refs.get(key):
+            continue  # journey-cited — a real board row
+        members = devs_by_pf.get(key, [])
+        if (getattr(pf, "flows", None) or []) or any(
+            getattr(m, "flows", None) for m in members
+        ):
+            continue  # flow-evidenced — D4's mint-time verdict stands
+        candidates.append(pf)
+    if not candidates:
+        return tele
+
+    husk_keys = {str(getattr(pf, "name", "") or "") for pf in candidates}
+    pf_by_key = {
+        str(getattr(pf, "name", "") or ""): pf for pf in product_features
+    }
+
+    def _fold_target(pf: "Feature") -> "Feature | None":
+        path = _anchor_path(pf) or ""
+        parent = path.rsplit("/", 1)[0]
+        # 1. the hub core sibling (anchored at the container itself);
+        # 2. the LONGEST enclosing path-anchored capability (ws-pkg /
+        #    fdir / pypkg subtree strictly containing the child).
+        best: tuple[int, str] | None = None
+        for other in product_features:
+            okey = str(getattr(other, "name", "") or "")
+            if okey in husk_keys or okey.strip().lower() in (
+                "platform", "shared-platform",
+            ):
+                continue
+            opath = _anchor_path(other)
+            if not opath:
+                continue
+            if opath == parent or path.startswith(opath + "/"):
+                cand = (len(opath), okey)
+                if best is None or cand > best:
+                    best = cand
+        return pf_by_key.get(best[1]) if best else None
+
+    folded_keys: set[str] = set()
+    for pf in candidates:
+        key = str(getattr(pf, "name", "") or "")
+        target = _fold_target(pf)
+        if target is None:
+            tele["no_target"] += 1
+            continue
+        tkey = str(getattr(target, "name", "") or "")
+        aid = str(getattr(pf, "anchor_id", None) or "")
+        for m in devs_by_pf.get(key, []):
+            m.product_feature_id = tkey
+            m.anchor_id = f"fold:husk-post-uf->{aid}"
+            if getattr(m, "shared_reason", None):
+                m.shared_reason = None
+        # paths + member_files union onto the target (dedup, stable order).
+        seen_p = set(getattr(target, "paths", None) or [])
+        merged_p = list(getattr(target, "paths", None) or [])
+        for p in (getattr(pf, "paths", None) or []):
+            if p not in seen_p:
+                seen_p.add(p)
+                merged_p.append(p)
+        target.paths = merged_p
+        seen_mf = {
+            (mf.get("path") if isinstance(mf, dict)
+             else getattr(mf, "path", None))
+            for mf in (getattr(target, "member_files", None) or [])
+        }
+        for mf in (getattr(pf, "member_files", None) or []):
+            mfp = (mf.get("path") if isinstance(mf, dict)
+                   else getattr(mf, "path", None))
+            if mfp and mfp not in seen_mf:
+                seen_mf.add(mfp)
+                target.member_files.append(mf)
+        folded_keys.add(key)
+        if len(tele["folded"]) < 25:
+            tele["folded"].append({"pf": key, "into": tkey, "anchor": aid})
+
+    if folded_keys:
+        product_features[:] = [
+            pf for pf in product_features
+            if str(getattr(pf, "name", "") or "") not in folded_keys
+        ]
+    return tele
 
 
 # ── Hub sibling parity (post-6.7d re-assert; replaces W1 inherit rule) ───

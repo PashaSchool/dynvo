@@ -108,17 +108,45 @@ def seed_route_group_journeys(
     product_features: list[Any],
     flows: list[Any],
     routes_index: list[dict[str, Any]] | None,
+    scope_classifier: Any = None,
+    route_by_file: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Append one thin tagged seed UF per uncovered >=2-route product
     group (mutates ``user_flows`` in place; ids continue the stable
-    UF-xxx numbering). Returns telemetry."""
+    UF-xxx numbering). Returns telemetry.
+
+    W4.2 Fix 2 (seed surface-guard): when *scope_classifier* is given
+    (a ``SurfaceScopeClassifier``), product features whose own evidence
+    classifies non-product (marketing / docs / legal / dev_tooling /
+    shell) are EXCLUDED from the home vote — a seed journey never homes
+    onto a non-product surface. A group whose only homes are
+    non-product is an honest hole (``skipped_non_product_home``).
+    """
     tele: dict[str, Any] = {
         "groups": 0, "groups_ge2": 0, "holes": 0,
         "seeded": 0, "skipped_no_flows": 0, "skipped_no_pf": 0,
+        "skipped_non_product_home": 0,
         "seeds": [],
     }
     if not routes_index or not isinstance(routes_index, list):
         return tele
+
+    nonprod_pf_keys: set[str] = set()
+    if scope_classifier is not None:
+        from faultline.pipeline_v2.surface_taxonomy import (
+            NON_PRODUCT_PF_SCOPES,
+        )
+        for pf in product_features:
+            key = str(getattr(pf, "name", "") or "")
+            if not key:
+                continue
+            try:
+                scope = scope_classifier.classify_feature(
+                    pf, route_by_file or {})
+            except Exception:  # noqa: BLE001 — guard is best-effort
+                continue
+            if scope in NON_PRODUCT_PF_SCOPES:
+                nonprod_pf_keys.add(key)
 
     # 1. product route groups (I24 grouping).
     groups: dict[str, dict[str, Any]] = {}
@@ -156,12 +184,20 @@ def seed_route_group_journeys(
     # the fallback) — the seed must cite a REAL PF key (validator I12).
     pf_keys = {str(getattr(pf, "name", "") or "") for pf in product_features}
     pf_keys.discard("")
+    pf_keys -= nonprod_pf_keys  # Fix 2: non-product homes never receive seeds
     file_dev_pf: dict[str, list[str]] = defaultdict(list)
+    nonprod_touch: dict[str, int] = defaultdict(int)
     for feat in features:
         if getattr(feat, "layer", "developer") != "developer":
             continue
         pfid = getattr(feat, "product_feature_id", None)
-        if not pfid or str(pfid) not in pf_keys:
+        if not pfid:
+            continue
+        if str(pfid) in nonprod_pf_keys:
+            for p in (getattr(feat, "paths", None) or []):
+                nonprod_touch[str(p)] += 1
+            continue
+        if str(pfid) not in pf_keys:
             continue
         for p in (getattr(feat, "paths", None) or []):
             file_dev_pf[str(p)].append(str(pfid))
@@ -169,6 +205,10 @@ def seed_route_group_journeys(
     for pf in product_features:
         key = str(getattr(pf, "name", "") or "")
         if not key:
+            continue
+        if key in nonprod_pf_keys:
+            for p in (getattr(pf, "paths", None) or []):
+                nonprod_touch[str(p)] += 1
             continue
         for p in (getattr(pf, "paths", None) or []):
             file_pf_paths[str(p)].append(key)
@@ -223,8 +263,13 @@ def seed_route_group_journeys(
                 for pfid in file_pf_paths.get(f, ()):
                     votes[pfid] += 1
         if not votes:
-            tele["skipped_no_pf"] += 1
-            continue  # honest hole — no real PF home to cite
+            # Fix 2: distinguish "no home at all" from "only non-product
+            # homes" — both are honest holes, the reason is telemetry.
+            if any(nonprod_touch.get(f) for f in files):
+                tele["skipped_non_product_home"] += 1
+            else:
+                tele["skipped_no_pf"] += 1
+            continue  # honest hole — no PRODUCT home to cite
         (_top, n), = votes.most_common(1)
         pf_home = sorted(k for k, v in votes.items() if v == n)[0]
         noun = _humanize(_group_noun(g, e["patterns"]))

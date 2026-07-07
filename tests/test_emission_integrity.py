@@ -345,3 +345,140 @@ def test_contentless_bucket_resident_drops() -> None:
     resident = _feat("ai", ["."], product_feature_id="shared-platform",
                      description="[package] per-workspace merged")
     assert _is_phantom(resident)
+
+
+# ── W4.2 anchored-husk emission rule ─────────────────────────────────────
+# Shapes distilled from the 2026-07-07 wave4-out artifacts: typebot
+# ``Popup`` (flowless fdir shell), the Soc0 route husks (flowful
+# same-named dev whose journey carries zero owned lines), documenso
+# ``sign.$token+``. Neutral names per rule-no-repo-specific-paths.
+
+from faultline.models.types import MemberFile  # noqa: E402
+from faultline.pipeline_v2.emission_integrity import (  # noqa: E402
+    ANCHORED_HUSK_REASON,
+    EmissionIntegrityResult,
+    _drop_anchored_husks,
+)
+
+
+def _husk_pf(name: str, anchor: str, member_paths: list[str]) -> Feature:
+    pf = _feat(name, [member_paths[0]], layer="product", loc=0)
+    pf.anchor_id = anchor
+    pf.member_files = [
+        MemberFile(path=member_paths[0], role="anchor", primary=True,
+                   confidence=1.0),
+        *[MemberFile(path=p, role="shared", primary=False, confidence=0.5)
+          for p in member_paths[1:]],
+    ]
+    return pf
+
+
+def _flow_with_uuid(name: str, uuid: str) -> Flow:
+    return _flow(name, uuid=uuid)
+
+
+def test_popup_shaped_husk_drops_and_dev_lanes() -> None:
+    """Flowless fdir shell: PF dropped, shell dev unbinds to the lane."""
+    owner = _feat("widget-sdk", ["pkg/sdk/src/popup/a.ts",
+                                 "pkg/sdk/src/popup/b.ts"],
+                  product_feature_id="widget-sdk", loc=900)
+    shell = _feat("popup", ["pkg/sdk/src/popup/a.ts",
+                            "pkg/sdk/src/popup/b.ts"],
+                  product_feature_id="popup", loc=0)
+    sdk_pf = _feat("widget-sdk", ["pkg/sdk/src/popup/a.ts"],
+                   layer="product", loc=900)
+    sdk_pf.anchor_id = "ws:pkg/sdk"
+    husk = _husk_pf("popup", "fdir:pkg/sdk/src/popup",
+                    ["pkg/sdk/src/popup/a.ts", "pkg/sdk/src/popup/b.ts"])
+    res = EmissionIntegrityResult()
+    kept = _drop_anchored_husks(
+        [owner, shell], [sdk_pf, husk], [], [], res)
+    assert [p.name for p in kept] == ["widget-sdk"]
+    assert res.anchored_husk_pfs_dropped == ["popup"]
+    assert shell.product_feature_id is None
+    assert shell.shared_reason == ANCHORED_HUSK_REASON
+    assert res.anchored_husk_devs_unbound == 1
+    assert res.anchored_husk_devs_rebound == 0
+
+
+def test_route_husk_with_real_journey_rehomes_by_file_owners() -> None:
+    """Soc0 shape: the husk's dev holds ONE real flow contributing zero
+    owned lines; the journey re-homes to the member files' primary
+    owner, and the flowful dev REBINDS there (lane law)."""
+    fl = _flow_with_uuid("browse-store-flow", uuid="f-1")
+    page_dev = _feat("store-page", ["fe/pages/StorePage.tsx",
+                                    "fe/features/catalog/api.ts"],
+                     product_feature_id="store-page", loc=0, flows=[fl])
+    catalog_dev = _feat("catalog", ["fe/features/catalog/api.ts",
+                                    "fe/features/catalog/types.ts"],
+                        product_feature_id="catalog", loc=1200)
+    catalog_pf = _feat("catalog", ["fe/features/catalog/api.ts"],
+                       layer="product", loc=1200)
+    catalog_pf.anchor_id = "fdir:fe/features/catalog"
+    husk = _husk_pf("store-page", "route:store-page",
+                    ["fe/pages/StorePage.tsx", "fe/features/catalog/api.ts",
+                     "fe/features/catalog/types.ts"])
+    uf = _uf("UF-001", "Browse store", product_feature_id="store-page",
+             member_flow_ids=["f-1"])
+    res = EmissionIntegrityResult()
+    kept = _drop_anchored_husks(
+        [page_dev, catalog_dev], [catalog_pf, husk], [uf], [fl], res)
+    assert [p.name for p in kept] == ["catalog"]
+    assert uf.product_feature_id == "catalog"
+    assert page_dev.product_feature_id == "catalog"  # flowful → rebind
+    assert str(page_dev.anchor_id).startswith("fold:anchored-husk->")
+    assert res.anchored_husk_devs_rebound == 1
+    assert res.anchored_husk_ufs_rehomed == 1
+
+
+def test_real_journey_without_home_keeps_the_husk() -> None:
+    """Never orphan a real journey: no derivable target ⇒ husk stays."""
+    fl = _flow_with_uuid("orphan-flow", uuid="f-9")
+    dev = _feat("lone-page", ["fe/pages/Lone.tsx"],
+                product_feature_id="lone-page", loc=0, flows=[fl])
+    husk = _husk_pf("lone-page", "route:lone-page", ["fe/pages/Lone.tsx"])
+    uf = _uf("UF-002", "Lone journey", product_feature_id="lone-page",
+             member_flow_ids=["f-9"])
+    res = EmissionIntegrityResult()
+    kept = _drop_anchored_husks([dev], [husk], [uf], [fl], res)
+    assert [p.name for p in kept] == ["lone-page"]
+    assert res.anchored_husks_kept_journey == ["lone-page"]
+    assert uf.product_feature_id == "lone-page"
+
+
+def test_synthesized_seed_without_home_drops_with_the_husk() -> None:
+    dev = _feat("ghost", ["fe/ghost/a.ts"], product_feature_id="ghost",
+                loc=0)
+    husk = _husk_pf("ghost", "route:ghost", ["fe/ghost/a.ts"])
+    uf = _uf("UF-003", "Ghost seed", product_feature_id="ghost",
+             member_flow_ids=[])
+    uf.synthesized = True
+    ufs = [uf]
+    res = EmissionIntegrityResult()
+    kept = _drop_anchored_husks([dev], [husk], ufs, [], res)
+    assert kept == []
+    assert ufs == []
+    assert res.anchored_husk_seed_ufs_dropped == 1
+
+
+def test_pf_with_owned_loc_or_flows_is_never_a_husk() -> None:
+    real = _feat("billing", ["src/billing/a.ts"], layer="product", loc=800)
+    real.anchor_id = "ws:src/billing"
+    flowful_pf = _feat("checkout", ["src/checkout/a.ts"], layer="product",
+                       loc=0, flows=[_flow("checkout-flow")])
+    flowful_pf.anchor_id = "route:checkout"
+    dev = _feat("checkout", ["src/checkout/a.ts"],
+                product_feature_id="checkout", loc=0)
+    res = EmissionIntegrityResult()
+    kept = _drop_anchored_husks([dev], [real, flowful_pf], [], [], res)
+    assert {p.name for p in kept} == {"billing", "checkout"}
+    assert not res.anchored_husk_pfs_dropped
+
+
+def test_husk_kill_switch(monkeypatch) -> None:
+    monkeypatch.setenv("FAULTLINE_ANCHORED_HUSK_DROP", "0")
+    dev = _feat("popup", ["p/a.ts"], product_feature_id="popup", loc=0)
+    husk = _husk_pf("popup", "fdir:p", ["p/a.ts"])
+    res = EmissionIntegrityResult()
+    kept = _drop_anchored_husks([dev], [husk], [], [], res)
+    assert [p.name for p in kept] == ["popup"]

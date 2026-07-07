@@ -706,3 +706,79 @@ def test_67d_anchored_entry_owner_override_telemetry():
     cortex_ufs = [u for u in ufs2 if u.product_feature_id == "cortex"]
     assert cortex_ufs, [
         (u.name, u.product_feature_id) for u in ufs2]
+
+
+# ── W4.2 Fix 1 — technology instruments never mint ───────────────────────
+
+
+def _instrument_repo(tmp_path: Path):
+    """typebot-Prisma-shaped mini monorepo ON DISK (the detector reads
+    real manifests) + the matching dev/workspace fixtures."""
+    import json as _json
+
+    def w(rel: str, text: str = "") -> str:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+        return rel
+
+    tracked = [
+        w("package.json", _json.dumps({"name": "root", "private": True})),
+        w("packages/ormkit/package.json", _json.dumps({
+            "name": "@acme/ormkit",
+            "dependencies": {"@prisma/client": "5.0.0"},
+            "devDependencies": {"prisma": "5.0.0"},
+        })),
+        w("packages/ormkit/schema.prisma", "model User {}"),
+        w("packages/ormkit/migrations/0001/migration.sql", "CREATE ..."),
+        w("packages/ormkit/index.ts",
+          'export { PrismaClient } from "@prisma/client";\n'),
+        w("apps/web/package.json", _json.dumps({
+            "name": "@acme/web", "private": True,
+            "dependencies": {"react": "18.0.0"},
+        })),
+        w("apps/web/src/app/checkout/page.tsx",
+          'import { db } from "@acme/ormkit";\n'),
+    ]
+    ws = [
+        SimpleNamespace(path="packages/ormkit",
+                        package_json={"name": "@acme/ormkit"}, files=None),
+        SimpleNamespace(path="apps/web",
+                        package_json={"name": "@acme/web"}, files=None),
+    ]
+    orm_dev = dev("ormkit", ["packages/ormkit/schema.prisma",
+                             "packages/ormkit/index.ts",
+                             "packages/ormkit/migrations/0001/migration.sql"])
+    page = "apps/web/src/app/checkout/page.tsx"
+    web_dev = dev("checkout", [page], flows=[flow("checkout-flow", page)])
+    routes = [{"file": page, "pattern": "/checkout", "method": "PAGE"}]
+    ctx = ctx_of(workspaces=ws, tracked=tracked, repo_path=tmp_path)
+    return [orm_dev, web_dev], routes, ctx
+
+
+def test_instrument_anchor_never_mints_devs_lane(tmp_path: Path) -> None:
+    devs, routes, ctx = _instrument_repo(tmp_path)
+    pfs, tele = mint(devs, routes=routes, ctx=ctx)
+    names = {p.name for p in pfs}
+    assert "ormkit" not in names, "instrument ws-pkg minted a PF"
+    ti = tele.get("technology_instruments") or {}
+    assert "packages/ormkit" in (ti.get("instruments") or {})
+    orm_dev = devs[0]
+    assert orm_dev.product_feature_id is None
+    assert orm_dev.shared_reason == "technology_instrument"
+    lane = build_platform_infrastructure_lane(devs)
+    assert any(r["name"] == "ormkit"
+               and r["shared_reason"] == "technology_instrument"
+               for r in lane)
+    # the product surface still mints
+    assert "checkout" in names
+
+
+def test_instrument_kill_switch_restores_the_mint(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("FAULTLINE_TECH_INSTRUMENTS", "0")
+    devs, routes, ctx = _instrument_repo(tmp_path)
+    pfs, tele = mint(devs, routes=routes, ctx=ctx)
+    assert "ormkit" in {p.name for p in pfs}
+    assert "technology_instruments" not in tele

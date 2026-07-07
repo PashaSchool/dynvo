@@ -218,6 +218,7 @@ class SurfaceScopeClassifier:
     def __init__(self, patterns: dict | None = None,
                  repo_path: Any = None,
                  routes_index: Iterable[Mapping[str, Any]] | None = None,
+                 instrument_dirs: Iterable[str] | None = None,
                  ) -> None:
         cfg = patterns if patterns is not None else load_patterns()
         self._groups = _invert(cfg.get("route_groups"))
@@ -226,6 +227,12 @@ class SurfaceScopeClassifier:
         self._root_dirs = _invert(cfg.get("root_dirs"))
         self._repo_path = repo_path
         self._published_cache: dict[str, bool] = {}
+        # W4.2 Fix 1 — mechanism-detected technology-instrument dirs
+        # (Stage 6.86 telemetry). A path inside one is a dev_tooling
+        # surface signal; product-declared signals still win precedence.
+        self._instrument_dirs: tuple[str, ...] = tuple(sorted(
+            _norm(str(d)).lower() for d in (instrument_dirs or []) if d
+        ))
         self._shell_slugs = frozenset(
             str(s).lower() for s in (cfg.get("shell_slugs") or [])
         )
@@ -373,6 +380,11 @@ class SurfaceScopeClassifier:
             sc = self._ws_scope_overrides.get("/".join(segs[:2]))
             if sc:
                 hits.add(sc)
+        if self._instrument_dirs:
+            joined = "/".join(segs)
+            if any(joined == d or joined.startswith(d + "/")
+                   for d in self._instrument_dirs):
+                hits.add("dev_tooling")
         if SCOPE_PRODUCT in hits:
             return SCOPE_PRODUCT
         for sc in _NON_PRODUCT_PRECEDENCE:
@@ -925,6 +937,7 @@ def apply_emission_taxonomy(
     patterns: dict | None = None,
     repo_path: Any = None,
     adjudicator: Any = None,
+    instrument_dirs: Iterable[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list["Feature"]]:
     """Emission-time taxonomy: tag UFs/PFs, split the non-product lane,
     dissolve info-page journeys, re-bind non-product shared devs, stamp
@@ -949,7 +962,34 @@ def apply_emission_taxonomy(
         return tele, [], product_features
 
     clf = SurfaceScopeClassifier(patterns, repo_path=repo_path,
-                                 routes_index=routes_index)
+                                 routes_index=routes_index,
+                                 instrument_dirs=instrument_dirs)
+    # W4.2 Fix 1 rider — PF-grain classification must not second-guess
+    # the mint with the instrument prong: a PRODUCT capability whose
+    # paths straddle instrument dirs (midday `banking` after the Fix-3
+    # provider fold + shared members) would tip dev_tooling and leave
+    # the board. The instrument prong applies at PF grain ONLY to PFs
+    # whose OWN anchor sits inside an instrument dir; every other PF
+    # classifies with the plain (pre-W4.2) signal set. Dev/UF grain
+    # keeps the instrument-aware classifier.
+    _instr = tuple(sorted(_norm(str(d)).lower()
+                          for d in (instrument_dirs or []) if d))
+    clf_plain = (SurfaceScopeClassifier(patterns, repo_path=repo_path,
+                                        routes_index=routes_index)
+                 if _instr else clf)
+
+    def _anchor_in_instruments(pf: Any) -> bool:
+        aid = str(_get(pf, "anchor_id", None) or "")
+        if ":" not in aid:
+            return False
+        path = _norm(aid.split(":", 1)[1]).lower()
+        return bool(path) and any(
+            path == d or path.startswith(d + "/") for d in _instr
+        )
+
+    def _pf_clf(pf: Any) -> SurfaceScopeClassifier:
+        return clf if _anchor_in_instruments(pf) else clf_plain
+
     rbf = _route_by_file(routes_index)
     route_files = frozenset(rbf.keys())
     flow_by_id = _flow_lookup(flows)
@@ -979,7 +1019,8 @@ def apply_emission_taxonomy(
         if _is_shared_bucket(pf):
             sc = SCOPE_PRODUCT
         else:
-            sc, ambiguous, sig = clf.classify_feature_with_signals(pf, rbf)
+            sc, ambiguous, sig = _pf_clf(pf).classify_feature_with_signals(
+                pf, rbf)
             if ambiguous:
                 ambiguous_pfs.append((pf, sc, sig))
         pf.surface_scope = sc
