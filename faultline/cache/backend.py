@@ -136,6 +136,14 @@ class CacheKind(str, Enum):
     # same tree), so this is a deterministic short-circuit, not per-repo
     # memory — rule-cold-scan safe.
     INTERIOR = "interior-parse"
+    # W6 ts_ast layer (pipeline_v2/ts_ast): one entry per (walker
+    # namespace, file content hash, dialect) — the serialised DERIVED
+    # walker payload (definition spans / import edges), never the tree
+    # itself. The key embeds grammar + walker versions (ts_ast/parse.py)
+    # so grammar upgrades and walker changes re-derive automatically.
+    # Pure deterministic parse output, $0 LLM, content-keyed →
+    # rule-cold-scan safe.
+    AST = "ast-parse"
     # Top-level scan-result cache: one entry per (repo content identity +
     # engine version + scan config) — the full FeatureMap JSON of a
     # completed scan. Because temperature=0 on Anthropic is NOT bit-exact,
