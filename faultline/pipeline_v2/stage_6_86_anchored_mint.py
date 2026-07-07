@@ -602,15 +602,27 @@ def run_anchored_mint(
         """W2b.1 law rung L2 — the dev's flows' file SPANS vote for the
         minting anchor (or assigned owner) holding them; PLURALITY wins
         (terminal-rung semantics — a flowful dev must land in a real
-        capability, the binding is recorded in the provenance note)."""
+        capability, the binding is recorded in the provenance note).
+
+        W3.1 D1 COHERENCE GUARD: the winning target must account for at
+        least ``_UNION_FLOOR`` of the dev's DISTINCT span files — the
+        same random-tail bound every other plurality rung uses, with the
+        honest denominator (unresolvable span mass counts AGAINST the
+        bind). Without it a giant dev whose span resolves only through a
+        tiny sliver was force-bound to that sliver's PF (comp
+        `mcp-server` 34.5K LOC → the 3-file `security` route PF — the
+        fb3 D1 sink class)."""
         file_owner = _file_owner_map()
         votes: Counter[str] = Counter()
+        span_files: set[str] = set()
+        matched_files: dict[str, set[str]] = defaultdict(set)
         for fl in (getattr(f, "flows", None) or []):
             span = [str(p) for p in (getattr(fl, "paths", None) or [])]
             ep = getattr(fl, "entry_point_file", None)
             if not span and ep:
                 span = [str(ep)]
             for p in span:
+                span_files.add(p)
                 cid = _anchor_of_target(p)
                 if cid is None:
                     owner = file_owner.get(p)
@@ -618,11 +630,16 @@ def run_anchored_mint(
                         cid = assignment[owner][0]
                 if cid is not None:
                     votes[cid] += 1
+                    matched_files[cid].add(p)
         if not votes:
             return None
         (_best, n), = votes.most_common(1)
         tied = sorted(c for c, v in votes.items() if v == n)
-        return tied[0]
+        best = tied[0]
+        if span_files and (
+                len(matched_files[best]) / len(span_files) < _UNION_FLOOR):
+            return None
+        return best
 
     def _ancestor_walk(f: "Feature") -> str | None:
         """W2b.1 law rung L3 — nearest-ancestor plurality: walk UP from
@@ -721,6 +738,13 @@ def run_anchored_mint(
     for f, w, reason in fold_pending:
         if getattr(f, "flows", None):
             target = _entry_route_mint(f)
+            if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+                tele.setdefault("fold_debug", []).append({
+                    "dev": f.name, "rung": "L1-entry-route",
+                    "target": target,
+                    "entries": [str(ep) for fl in (getattr(f, "flows", None) or [])
+                                if (ep := getattr(fl, "entry_point_file", None))][:8],
+                })
             if target is not None:
                 src = w.canonical_id if w is not None else "none"
                 assignment[f.name] = (target, f"mint:entry-route->{src}")
@@ -751,8 +775,9 @@ def run_anchored_mint(
         file_owner = _file_owner_map()
         still_pending = []
         for f, w, reason in fold_pending:
+            owned = owned_by_dev[f.name]
             targets = _import_fold_targets(
-                owned_by_dev[f.name], repo_path, tracked, src_cache, alias_map)
+                owned, repo_path, tracked, src_cache, alias_map)
             votes: Counter[str] = Counter()
             for t in targets:
                 target_cid = _anchor_of_target(t)
@@ -763,17 +788,47 @@ def run_anchored_mint(
                 if target_cid is not None:
                     votes[target_cid] += 1
             resolved = False
+            if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+                tele.setdefault("fold_debug", []).append({
+                    "dev": f.name, "rung": "import",
+                    "targets_total": len(targets),
+                    "votes": dict(votes.most_common(8)),
+                })
             if votes:
                 total = sum(votes.values())
                 (best_cid, best_n), = votes.most_common(1)
                 # strict majority of anchor-covered targets, tie → alpha
                 tied = sorted(c for c, n in votes.items() if n == best_n)
                 best_cid = tied[0]
+                # W3.1 D1 SELF-EVIDENCE GUARD: imports point at what the
+                # dev DEPENDS ON, not what it IS — on every app-shaped
+                # repo the import majority lands on the shared component
+                # library (documenso: 11 route devs → ws:packages/ui at
+                # 60-90% majorities; tracecat: 21 frontend clusters →
+                # the `status` PF; supabase: `studio` 99.5K → the 2.7K
+                # `claim-project` page). A fold may follow imports only
+                # when the target also holds >= _UNION_FLOOR of the
+                # dev's OWN files (near-lineage confirmation), or the
+                # dev is a <= 3-file stub whose only content IS the
+                # import surface (the midday `i` page class W2b built
+                # this rung for).
                 if votes[best_cid] * 2 > total:
-                    src = w.canonical_id if w is not None else "none"
-                    assignment[f.name] = (best_cid, f"fold:import->{src}")
-                    tele["fold_import"] += 1
-                    resolved = True
+                    target_anchor = anchor_by_id[best_cid]
+                    own_inside = sum(
+                        1 for p in owned if target_anchor.matches(p))
+                    self_evident = (
+                        len(owned) <= 3
+                        or (len(owned) > 0
+                            and own_inside / len(owned) >= _UNION_FLOOR)
+                    )
+                    if self_evident:
+                        src = w.canonical_id if w is not None else "none"
+                        assignment[f.name] = (best_cid, f"fold:import->{src}")
+                        tele["fold_import"] += 1
+                        resolved = True
+                    else:
+                        tele["fold_import_guard_blocked"] = (
+                            tele.get("fold_import_guard_blocked", 0) + 1)
             if not resolved:
                 still_pending.append((f, w, reason))
         fold_pending = still_pending
@@ -786,11 +841,34 @@ def run_anchored_mint(
     # construction and carries a provenance note (``fold:span->…`` /
     # ``fold:walk->…``). Degenerate scans (zero mintable anchors) keep
     # the honest lane — there is no capability to bind to.
+    #
+    # W3.1 D1 CARVE-OUT — the law's own ruler (validator I9) EXEMPTS
+    # workspace-anchor devs from the flowful-in-lane class, and
+    # conservation.py's dev-rehome states why: "anchors never move —
+    # their flow sample spans the whole workspace, not one capability".
+    # Force-binding them was the single biggest sink source (supabase
+    # `studio` 99.5K LOC / 478 flows → the `claim-project` page PF).
+    # They lane honestly (flows stay visible on the lane row; their
+    # files ride role="shared" members on every importing feature).
+    from faultline.pipeline_v2.stage_8_7_anchor_desink import (
+        _is_workspace_anchor,
+    )
+
     for f, w, reason in fold_pending:
         flowful = bool(getattr(f, "flows", None))
+        if flowful and _is_workspace_anchor(f):
+            tele["law_ws_anchor_laned"] = (
+                tele.get("law_ws_anchor_laned", 0) + 1)
+            infra[f.name] = (_SHARED_REASON_SHELL if w is not None and w.shell
+                             else reason)
+            continue
         if flowful and mintable:
             src = w.canonical_id if w is not None else "none"
             target = _span_vote(f)
+            if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+                tele.setdefault("fold_debug", []).append({
+                    "dev": f.name, "rung": "span", "target": target,
+                })
             if target is not None:
                 assignment[f.name] = (target, f"fold:span->{src}")
                 tele["fold_span_vote"] = tele.get("fold_span_vote", 0) + 1
