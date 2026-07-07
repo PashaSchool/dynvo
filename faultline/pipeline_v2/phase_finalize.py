@@ -880,6 +880,21 @@ def run_finalize_phase(
                     _s67d_anchors = build_alignment_pool(extract_raw_anchors(repo_path))
             except Exception:  # noqa: BLE001 — anchors are optional; degrade to free-gen
                 _s67d_anchors = None
+            # W4 §4.6 — page-interior sections extend the constrained
+            # Call-1's citation vocabulary (anchored mode only). None
+            # when Stage 6.55 was inactive → digest/prompt/cache stay
+            # byte-identical to pre-W4.
+            _s67d_interior = None
+            if anchored_mint_applied and interior_result.active:
+                try:
+                    from faultline.pipeline_v2.stage_6_55_page_interior import (
+                        build_interior_evidence,
+                    )
+                    _s67d_interior = build_interior_evidence(
+                        interior_result, features, product_features,
+                    )
+                except Exception:  # noqa: BLE001 — evidence is optional
+                    _s67d_interior = None
             (
                 user_flows,
                 product_features,
@@ -901,6 +916,7 @@ def run_finalize_phase(
                 # to cite it) and dev→PF comes from the lineage stamps —
                 # Call-2, the per-item membership oracle (RC1), retires.
                 anchored=anchored_mint_applied,
+                interior_evidence=_s67d_interior,
             )
             # Re-stamp dev features' product_feature_id so the bipartite /
             # output linkage stays coherent with the rewritten product layer.

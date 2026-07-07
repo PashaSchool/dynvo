@@ -432,6 +432,23 @@ Return STRICT JSON only, no prose:
  "user_flows":[{"name":"...","resource":"...","product_feature":"...",
   "from_flows":["UF-001", ...],"from_dev_features":["<dev feature name>", ...]}]}"""
 
+# W4 (§4.6) — appended to _ANCHORED_SYSTEM ONLY when the digest carries
+# page-interior sections (Stage 6.55 active). Extends the citation
+# vocabulary to sub-anchors; the engine verifies every cited section
+# against the SAME capability's section list — cross-PF citations are
+# dropped, so grounded journeys stay within ONE PF's subtree.
+_INTERIOR_ADDENDUM = """
+
+INTERIOR SECTIONS: some entries in `current_product_features` carry a
+`sections` list — author-visible page sections/components a deterministic
+parser found INSIDE that capability's own pages. When a journey happens on
+such a section, ALSO cite it: add `"from_sections": ["<section label>", ...]`
+to that user_flow, copying labels VERBATIM. Cited sections MUST belong to the
+SAME capability you name in `product_feature` — a citation of another
+capability's section is invalid and will be ignored. Prefer the section's own
+wording for the journey name where it fits (it is the maintainer's
+vocabulary)."""
+
 
 # ── Evidence digest (README-FORBIDDEN) ──────────────────────────────────────
 
@@ -941,6 +958,7 @@ def _build_user_flows(
     old_ufs: list["UserFlow"],
     developer_features: list["Feature"],
     routes_index: list[dict[str, Any]],
+    interior_evidence: dict[str, Any] | None = None,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Reconstruct the abstracted user_flows — GROUNDED-ONLY.
 
@@ -1010,7 +1028,33 @@ def _build_user_flows(
         "uf_rescue_dropped_collisions": 0,
         "uf_route_member_backfill": 0, "uf_dropped_memberless": 0,
         "uf_dropped_names": [],
+        "uf_sections_cited": 0, "uf_sections_invalid": 0,
+        "uf_section_grounded": 0,
     }
+
+    # W4 §4.6 — interior-section citation index: (pf lower, section lower)
+    # → hosting page files, plus page → flow-member ids (entry lookup).
+    # Citations are VERIFIED against the SAME capability the journey
+    # names — a cross-PF citation is invalid and ignored.
+    section_pages: dict[tuple[str, str], list[str]] = {}
+    page_flow_ids: dict[str, list[str]] = {}
+    if interior_evidence:
+        for page in sorted((interior_evidence.get("pages") or {})):
+            info = (interior_evidence.get("pages") or {})[page] or {}
+            pf_low = str(info.get("pf") or "").strip().lower()
+            if not pf_low:
+                continue
+            for s in info.get("sections") or []:
+                key_s = (pf_low, str(s).strip().lower())
+                pages_list = section_pages.setdefault(key_s, [])
+                if page not in pages_list:
+                    pages_list.append(page)
+        for d in developer_features:
+            for fl in getattr(d, "flows", None) or []:
+                ep = getattr(fl, "entry_point_file", None)
+                mid = _flow_member_id(fl)
+                if ep and mid:
+                    page_flow_ids.setdefault(ep, []).append(mid)
 
     # Route-ownership lookup for the memberless-UF backfill (validator I7):
     # pattern → owning dev (routes_index feature_uuid first, route file in the
@@ -1112,7 +1156,29 @@ def _build_user_flows(
                         attached.append(mid)
             if attached:
                 tele["uf_dev_grounded"] += 1
-            else:
+            elif section_pages and (spec.get("from_sections") or []):
+                # 2a-bis (W4 §4.6). VERIFIED interior-section citations:
+                # attach the unclaimed flows whose ENTRY file is a page
+                # hosting a cited section of the SAME capability the
+                # journey names — entry+interior evidence within ONE
+                # PF's subtree, deterministically checkable.
+                pf_low = str(spec.get("product_feature") or "").strip().lower()
+                for sref in spec.get("from_sections") or []:
+                    if not isinstance(sref, str):
+                        continue
+                    hosted = section_pages.get((pf_low, sref.strip().lower()))
+                    if hosted is None:
+                        tele["uf_sections_invalid"] += 1
+                        continue
+                    tele["uf_sections_cited"] += 1
+                    for page in hosted:
+                        for mid in page_flow_ids.get(page, []):
+                            if mid not in claimed and mid not in seen_a:
+                                seen_a.add(mid)
+                                attached.append(mid)
+                if attached:
+                    tele["uf_section_grounded"] += 1
+            if not attached:
                 # 2b. rescue: resource/token match over ALL unclaimed flows.
                 res = uf.resource
                 if len(res) > 3 and res.endswith("s"):
@@ -2783,6 +2849,7 @@ def run_journey_abstraction(
     log: "StageLogger | None" = None,
     llm_health: LlmHealth | None = None,
     anchored: bool = False,
+    interior_evidence: dict[str, Any] | None = None,
     _client_factory: Callable[[], Any | None] = _default_client_factory,
 ) -> tuple[list["UserFlow"], list["Feature"], dict[str, tuple[str, ...]] | None, dict[str, Any]]:
     """Rewrite user_flows[] + product_features[] at journey/capability grain.
@@ -2894,6 +2961,25 @@ def run_journey_abstraction(
         tele["anchored_lane_devs"] = (
             len(non_facet_devs) - len(anchored_dev_map)
         )
+    # ── W4 §4.6 — page-interior sections extend the citation vocabulary ──
+    # ANCHORED mode only: each fixed capability's digest entry gains the
+    # section labels the Stage-6.55 parser found inside ITS OWN pages.
+    # When no evidence exists (tree-sitter absent / stage off) the digest,
+    # the prompt and the cache namespace stay byte-identical to pre-W4.
+    interior_attached = False
+    if anchored and interior_evidence:
+        by_pf = interior_evidence.get("by_pf") or {}
+        if by_pf:
+            for line in digest["current_product_features"]:
+                secs = by_pf.get(str(line.get("name") or ""))
+                if secs:
+                    line["sections"] = [str(s) for s in secs][:8]
+                    interior_attached = True
+    if interior_attached:
+        tele["interior_sections_pfs"] = sum(
+            1 for line in digest["current_product_features"]
+            if line.get("sections")
+        )
     tele.update({
         "digest_rolled_subs": len(sub_to_parent),
         "input_dev_features": len(developer_features),
@@ -2915,7 +3001,12 @@ def run_journey_abstraction(
         # Distinct cache namespace: the anchored prompt/reconstruction
         # semantics differ from free-gen, and the =0 path's keys must
         # stay byte-identical to pre-W2b (no new payload field there).
-        anchor_sig = "spine-anchored-mint-v1"
+        # W4: interior-evidence runs append the _INTERIOR_ADDENDUM to
+        # the system prompt (not part of the key), so they get their
+        # OWN namespace; evidence-less anchored runs keep v1 and replay
+        # their existing cache untouched (rule-cache-invalidation).
+        anchor_sig = ("spine-anchored-mint-v2-interior"
+                      if interior_attached else "spine-anchored-mint-v1")
     else:
         anchor_sig = json.dumps([t.lower() for t in anchor_texts], sort_keys=True) if aligned else ""
     key = _cache_key(digest, abstraction_model, reattrib_model, anchor_sig)
@@ -2952,7 +3043,8 @@ def run_journey_abstraction(
             pf_specs_, dev_map, developer_features, routes_index,
             anchored=anchored, anchored_pf_by_name=anchored_pf_by_name)
         new_ufs, uf_tele = _build_user_flows(
-            uf_specs_, user_flows, developer_features, routes_index)
+            uf_specs_, user_flows, developer_features, routes_index,
+            interior_evidence=interior_evidence if anchored else None)
         if not new_pfs or not new_ufs:
             return None
         if anchored:
@@ -3077,7 +3169,8 @@ def run_journey_abstraction(
     # ── Call 1 — abstraction / grain-lift (Sonnet). Prompt selection:
     # ANCHORED (Wave 2b, PF list fixed) > ALIGN (opt-in) > free-gen.
     if anchored:
-        sys1 = _ANCHORED_SYSTEM
+        sys1 = _ANCHORED_SYSTEM + (
+            _INTERIOR_ADDENDUM if interior_attached else "")
         anchor_block = ""
     elif aligned:
         sys1 = _ALIGN_SYSTEM

@@ -77,6 +77,7 @@ __all__ = [
     "run_stage_6_55",
     "refine_flow_spans",
     "inject_interior_nodes",
+    "build_interior_evidence",
     "degenerate_span_stats",
 ]
 
@@ -1030,6 +1031,67 @@ def inject_interior_nodes(
                              exc_info=True)
             tele["flows_touched"] += 1
     return tele
+
+
+# ── 6.7d evidence feed (W4 §4.6 — journey citation vocabulary) ───────────
+
+_MAX_SECTIONS_PER_PAGE = 8
+_MAX_SECTIONS_PER_PF = 8
+
+
+def build_interior_evidence(
+    interior: InteriorResult,
+    features: list["Feature"],
+    product_features: list["Feature"],
+) -> dict[str, Any] | None:
+    """Per-PF interior sections for the constrained 6.7d Call-1.
+
+    ``{"by_pf": {pf_display: [section labels]}, "pages": {page: {"pf":
+    pf_display, "sections": [labels]}}}`` — a page contributes ONLY to
+    the PF that owns it (primary dev ownership → PF stamp), so cited
+    sections are verifiable against ONE PF's subtree. ``None`` when the
+    stage was inactive or nothing resolved (the digest/prompt/cache
+    stay byte-identical to pre-W4 then).
+    """
+    if not interior.active or not interior.pages:
+        return None
+    from faultline.pipeline_v2.flow_span_split import _owner_map
+
+    owner = _owner_map(features)
+    pf_display: dict[str, str] = {}
+    for pf in product_features or []:
+        k = getattr(pf, "id", None) or getattr(pf, "name", None)
+        if k:
+            pf_display[k] = (getattr(pf, "display_name", None)
+                             or getattr(pf, "name", "") or str(k))
+    pages: dict[str, dict[str, Any]] = {}
+    by_pf: dict[str, list[str]] = {}
+    for page in sorted(interior.pages):
+        disp = pf_display.get(owner.get(page) or "")
+        if not disp:
+            continue
+        secs: list[str] = []
+        seen: set[str] = set()
+        for n in interior.pages[page].nodes:
+            if n.provenance != "product":
+                continue
+            text = (n.label or n.name or "").strip()
+            if not text or text.lower() in seen:
+                continue
+            seen.add(text.lower())
+            secs.append(text)
+            if len(secs) >= _MAX_SECTIONS_PER_PAGE:
+                break
+        if not secs:
+            continue
+        pages[page] = {"pf": disp, "sections": secs}
+        slot = by_pf.setdefault(disp, [])
+        for text in secs:
+            if text not in slot and len(slot) < _MAX_SECTIONS_PER_PF:
+                slot.append(text)
+    if not pages:
+        return None
+    return {"by_pf": by_pf, "pages": pages}
 
 
 # ── Degenerate-span ruler (before/after telemetry) ───────────────────────
