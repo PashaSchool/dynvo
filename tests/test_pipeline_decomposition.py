@@ -149,6 +149,13 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (6, "user_flows"),
     (6, "uf_splitter"),
     (6, "uf_refiner"),
+    # Stage 6.88 (Wave 5, 2026-07-07, Product-Spine journey lattice) —
+    # deterministic catch-all journey partition + exact subset-dup
+    # merge on evidence clusters (route family / interior section /
+    # entry dir). $0/deterministic keyless, default ON
+    # (FAULTLINE_JOURNEY_LATTICE=0 off). Telemetry artifact emitted on
+    # every enabled run. See journey_lattice.py.
+    (6, "journey_lattice"),
     (6, "history"),
     (6, "impact"),
     # Stage 6.6 (2026-06) — Monorepo Assembly View. Deterministic, $0,
