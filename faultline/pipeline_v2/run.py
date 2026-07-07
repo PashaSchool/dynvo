@@ -358,6 +358,16 @@ def run_pipeline_v2(
 
     cache_backend = get_cache_backend(org_id=org_id)
 
+    # ── Replay capture — background writer (perf wave R1) ───────────
+    # Stage-input serialization (dumps+gzip+write) moves off the hot
+    # path onto one bounded-queue writer thread; drained right after
+    # the finalize phase below so every capture artifact is on disk
+    # before the scan returns. ``to_jsonable`` stays synchronous inside
+    # write_stage_input (state snapshot semantics unchanged). Idempotent;
+    # an atexit drain covers aborted scans.
+    from faultline.replay.capture import drain_async_writer, install_async_writer
+    install_async_writer()
+
     # ── Intake phase — Stage 0 intake / 0.5 auditor / 0.6 shape ────
     # Straight-line body lives in :mod:`faultline.pipeline_v2.phase_intake`
     # (same stage order, StageLogger indexes/names, artifact filenames).
@@ -948,6 +958,13 @@ def run_pipeline_v2(
         repo_class_result=repo_class_result,
         prev_scan_json=prev_scan_json,
     )
+
+    # ── Flush queued replay-capture writes (perf wave R1) ───────────
+    # The finalize phase queued the last stage-input documents; block
+    # until they are on disk so the run dir is complete and replayable
+    # the moment this function returns. Failures were already logged by
+    # the writer thread (capture never breaks a scan).
+    drain_async_writer()
 
     # ── Flush any buffered cache writes (no-op for fs backend) ──────
     try:
