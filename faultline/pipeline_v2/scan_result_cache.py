@@ -105,6 +105,9 @@ ENV_OUTPUT_FLAGS = (
     "FAULTLINE_PERSONA_ADJUDICATOR",
     "FAULTLINE_PERSONA_VERIFIER",
     "FAULTLINE_PERSONA_ESCALATION_MODEL",
+    # Wave 5 — journey lattice (catch-all partition + subset-dup merge):
+    # reshapes the emitted user_flows[] layer.
+    "FAULTLINE_JOURNEY_LATTICE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

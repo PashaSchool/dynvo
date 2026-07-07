@@ -144,6 +144,7 @@ brand_casing:
   sendgrid: SendGrid
   sentinelone: SentinelOne
   servicenow: ServiceNow
+  slack: Slack
   sqlite: SQLite
   supabase: Supabase
   tiktok: TikTok

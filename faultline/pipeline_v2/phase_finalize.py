@@ -1273,6 +1273,136 @@ def run_finalize_phase(
                         feature=None,
                     )
 
+    # ── Stage 6.88 — journey lattice (Product-Spine W5) ────────────────
+    # Post-abstraction DETERMINISTIC partition of catch-all journeys +
+    # exact subset-duplicate merge (the 6.7d prior is "one journey per
+    # capability" — its jpf corrective says so verbatim — so 47-member
+    # catch-alls ship unrecognizable; A3 panel SEV-1 class). Runs AFTER
+    # 6.7d + every seed channel + the husk fold (the journey layer is
+    # settled) and BEFORE dual-evidence / keeper / taxonomy / naming so
+    # the new journeys ride every downstream polish (scoping, display
+    # laws, the I14 backpointer rewrite). Membership only ever
+    # PARTITIONS existing journeys — flows keep their spans/LOC (W1
+    # law); the keyed personas only NAME (PM Labeler) and REVIEW a
+    # split plan (Draft Verifier; reject → the catch-all survives
+    # untouched). Deterministic + $0 keyless. Kill-switch:
+    # FAULTLINE_JOURNEY_LATTICE=0 (pre-W5 output byte-identical).
+    from faultline.pipeline_v2.journey_lattice import (
+        dedup_lattice_journeys,
+        journey_lattice_enabled,
+        run_journey_lattice,
+    )
+    if not uf_suppressed and journey_lattice_enabled():
+        write_stage_input(run_dir, 6, "journey_lattice", {
+            "user_flows": user_flows,
+            "product_features": product_features,
+            "scan_meta": scan_meta,
+        })
+        with StageLogger(run_dir, 6, "journey_lattice") as log_jl:
+            try:
+                _jl_interior = None
+                if interior_result.active:
+                    from faultline.pipeline_v2.stage_6_55_page_interior import (
+                        build_interior_evidence as _jl_evidence,
+                    )
+                    try:
+                        _jl_interior = _jl_evidence(
+                            interior_result, features, product_features,
+                        )
+                    except Exception:  # noqa: BLE001 — evidence is optional
+                        _jl_interior = None
+                # Wave-3 personas (keyed scans only; keyless builders
+                # return None → deterministic templates, unreviewed
+                # splits — the engine is deterministic by construction).
+                _jl_labeler = None
+                _jl_verifier = None
+                try:
+                    from faultline.pipeline_v2.personas import (
+                        build_draft_verifier as _jl_bdv,
+                        build_pm_labeler as _jl_bpl,
+                    )
+                    _jl_cache = getattr(ctx, "cache_backend", None)
+                    _jl_verifier = _jl_bdv(
+                        model_id=model_id,
+                        cost_tracker=tracker,
+                        cache=_jl_cache,
+                        llm_health=llm_health,
+                        log=log_jl,
+                    )
+                    _jl_labeler = _jl_bpl(
+                        model_id=model_id,
+                        cost_tracker=tracker,
+                        cache=_jl_cache,
+                        llm_health=llm_health,
+                        log=log_jl,
+                        thesis=scan_meta.get("product_thesis"),
+                        verifier=_jl_verifier,
+                    )
+                except Exception:  # noqa: BLE001 — personas are optional
+                    _jl_labeler = None
+                    _jl_verifier = None
+                jl_tele = run_journey_lattice(
+                    user_flows, features, product_features,
+                    lineage_result.routes_index,
+                    interior_evidence=_jl_interior,
+                    labeler=_jl_labeler,
+                    verifier=_jl_verifier,
+                )
+                if jl_tele.get("applied"):
+                    # §4.5 — children resettle to the capability their
+                    # member spans live in (the same ruler as the 6.7d
+                    # finalize pass), then the post-resettle same-key
+                    # dedup, then the donor backstop (a dissolved
+                    # catch-all must never leave a flowful PF with zero
+                    # journeys — I8 stays green by construction).
+                    from faultline.pipeline_v2.conservation import (
+                        apply_uf_conservation as _jl_cons,
+                    )
+                    jl_tele["conservation_after"] = _jl_cons(
+                        user_flows, features, product_features,
+                        null_shared_without_signal=True,
+                    )
+                    jl_tele["dedup_after"] = dedup_lattice_journeys(
+                        user_flows)
+                    _jl_donor = _recover_uncovered_donors(
+                        user_flows, features, product_features,
+                    )
+                    if _jl_donor is not None:
+                        jl_tele["donor_backstop_after"] = _jl_donor
+                scan_meta["journey_lattice"] = jl_tele
+                log_jl.info(
+                    "journey_lattice: pfs %d, subset_merged %d, "
+                    "catchalls %d detected / %d split, +%d journeys "
+                    "(%d members), dissolved %d, residual-kept %d, "
+                    "verifier_rejects %d" % (
+                        jl_tele.get("pfs_scanned", 0),
+                        jl_tele.get("subset_merged", 0),
+                        jl_tele.get("catchalls_detected", 0),
+                        jl_tele.get("catchalls_split", 0),
+                        jl_tele.get("journeys_created", 0),
+                        jl_tele.get("members_moved", 0),
+                        jl_tele.get("parents_dissolved", 0),
+                        jl_tele.get("parents_kept_residual", 0),
+                        jl_tele.get("verifier_rejects", 0),
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=6,
+                    stage_name="journey_lattice",
+                    payload=dict(jl_tele),
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — lattice never breaks a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"journey-lattice failed ({exc}); journeys unpartitioned"
+                )
+                log_jl.info(
+                    f"journey_lattice: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to
     # the final product features / user flows. Anchors are EVIDENCE here (a match
