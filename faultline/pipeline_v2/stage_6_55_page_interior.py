@@ -121,8 +121,8 @@ try:  # pragma: no cover — import-time branch
     TREE_SITTER_AVAILABLE = True
 except Exception:  # noqa: BLE001 — any failure → degrade gracefully
     TREE_SITTER_AVAILABLE = False
-    Language = None  # type: ignore[assignment]
-    Parser = None  # type: ignore[assignment]
+    Language = None  # type: ignore[assignment, misc]
+    Parser = None  # type: ignore[assignment, misc]
 
 
 _LANG_CACHE: dict[str, Any] = {}
@@ -137,15 +137,15 @@ def _language(name: str) -> Any | None:
     lang = None
     try:
         if name in ("tsx", "typescript"):
-            import tree_sitter_typescript as mod
+            import tree_sitter_typescript as ts_mod
 
-            capsule = (mod.language_tsx() if name == "tsx"
-                       else mod.language_typescript())
+            capsule = (ts_mod.language_tsx() if name == "tsx"
+                       else ts_mod.language_typescript())
             lang = Language(capsule)
         elif name == "javascript":
-            import tree_sitter_javascript as mod
+            import tree_sitter_javascript as js_mod
 
-            lang = Language(mod.language())
+            lang = Language(js_mod.language())
     except Exception:  # noqa: BLE001 — partial extras install
         lang = None
     _LANG_CACHE[name] = lang
