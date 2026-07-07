@@ -64,6 +64,7 @@ Deterministic, $0 LLM, scale-invariant; vocabulary lives in
 
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -100,6 +101,13 @@ SOURCE_RANK: dict[str, int] = {
     "schema": 6,
     "ws-pkg": 7,
     "ws-app": 8,
+    # W4 §4.6 — page-interior component families (Stage 6.55). LAST on
+    # purpose: interior evidence REFINES/widens existing capabilities
+    # via the same-key merge and only near-tie-loses to every authored
+    # source — a repeated interior family mints on its own solely when
+    # no other source claims the grain (the "≥2-page repeated family
+    # via the existing mint bar" allowance).
+    "interior": 9,
 }
 
 _VOCAB_FILE = "spine-anchor-vocab.yaml"
@@ -1134,15 +1142,78 @@ def _build_hub_anchors(
     return merged_children + rest
 
 
+# ── Page-interior sub-anchors (W4, Product-Spine §4.6) ───────────────────
+
+_INTERIOR_ANCHORS_ENV = "FAULTLINE_INTERIOR_ANCHORS"
+
+
+def _interior_anchors_enabled() -> bool:
+    raw = os.environ.get(_INTERIOR_ANCHORS_ENV, "1") or "1"
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _build_interior_anchors(
+    ctx: Any,
+    routes_index: list[dict[str, Any]] | None,
+    vocab: dict[str, Any],
+) -> list[SpineAnchor]:
+    """≥2-page repeated PRODUCT component families → ``interior``
+    sub-anchors (Stage 6.55 output; §4.6).
+
+    These never mint new top PFs by default: they join the same-key
+    cross-source merge (widening an existing capability's subtree with
+    its interior component dir — the supabase-studio finisher) and rank
+    LAST in near-ties. An unmerged family faces the EXISTING Stage-6.86
+    mint bar with its rendering pages as page evidence — it can mint
+    only when a dev's ownership is majority-inside it, exactly like any
+    other anchor. Inactive (empty) when tree-sitter is absent — scans
+    without the extra stay byte-identical.
+    """
+    if not _interior_anchors_enabled():
+        return []
+    from faultline.pipeline_v2.stage_6_55_page_interior import (
+        get_page_interiors,
+    )
+
+    result = get_page_interiors(ctx, routes_index or [])
+    if not result.active or not result.families:
+        return []
+    stop = set(vocab.get("structural_stoplist") or [])
+    version_re = re.compile(vocab.get("version_segment_pattern") or r"^v\d+$")
+    out: list[SpineAnchor] = []
+    for fam in result.families:
+        base = fam.family_dir.rsplit("/", 1)[-1]
+        # Passthrough segments never class a family (mirror hub classing).
+        for seg in reversed(fam.family_dir.split("/")):
+            if seg.lower() not in {"src", "lib", "index"}:
+                base = seg
+                break
+        key = normalize_anchor_key(base)
+        alnum = re.sub(r"[^a-z0-9]+", "", key)
+        if (len(alnum) < 3 or key in stop or alnum in stop
+                or version_re.match(alnum)):
+            continue
+        out.append(SpineAnchor(
+            canonical_id=f"interior:{fam.family_dir}",
+            key=key,
+            source="interior",
+            display=fam.label or _display_of(base),
+            prefixes=(fam.family_dir,),
+            sources=frozenset({"interior"}),
+            page_route_files=frozenset(fam.page_files),
+        ))
+    return out
+
+
 # ── Cross-source key-merge + nav confirmation ────────────────────────────
 
 
 def _merge_anchors(anchors: list[SpineAnchor]) -> list[SpineAnchor]:
     """Merge same-key anchors across the domain-keyed classes
-    (route/schema/fdir/svc; ws-pkg joins only when its basename is
-    unique among workspace anchors — the basename-collision trap).
+    (route/schema/fdir/svc/interior; ws-pkg joins only when its basename
+    is unique among workspace anchors — the basename-collision trap).
     hub-* and ws-app anchors never merge (identity anchors)."""
-    mergeable = {"route", "schema", "fdir", "svc", "pypkg"}
+    mergeable = {"route", "schema", "fdir", "svc", "pypkg", "interior"}
     ws_pkg_by_key: dict[str, list[SpineAnchor]] = defaultdict(list)
     for a in anchors:
         if a.source == "ws-pkg":
@@ -1231,6 +1302,7 @@ def build_spine_anchors(
         [f for f in developer_features
          if getattr(f, "layer", "developer") == "developer"],
         all_owned, vocab))
+    anchors.extend(_build_interior_anchors(ctx, routes_index, vocab))
 
     merged = _merge_anchors(anchors)
     if nav_keys:
