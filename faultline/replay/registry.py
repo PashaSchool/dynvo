@@ -1538,10 +1538,17 @@ def _run_feature_loc(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     scan_meta = state["scan_meta"]
     features = state["features"]
     product_features = state["product_features"]
+    # §4.5 flow-accounting inputs — present in captures from perf wave 2
+    # onward; ``None`` on OLD captures reproduces the pre-conservation
+    # behaviour those captures recorded (drift fix, see phase_finalize).
+    user_flows = state.get("user_flows")
+    bipartite_flows = state.get("bipartite_flows")
     with StageLogger(env.run_dir, 6, "feature_loc") as log697:
         try:
             loc_telemetry = apply_feature_loc(
                 features, product_features, ctx.repo_path,
+                user_flows=user_flows,
+                flows=bipartite_flows,
             )
             scan_meta["feature_loc"] = loc_telemetry
             if loc_telemetry.get("loc_accounting"):

@@ -1546,11 +1546,20 @@ def run_finalize_phase(
         stage_6_97_enabled,
     )
     if stage_6_97_enabled():
+        # ``user_flows``/``bipartite_flows`` joined this capture in perf
+        # wave 2: the live call threads them into the §4.5 flow
+        # accounting, but the capture (and the registry runner) predated
+        # that — single-stage replay silently dropped the
+        # ``loc_accounting`` flow keys (found by this wave's replay
+        # proof; reproduced from a b7351b6-era capture, i.e. pre-existing
+        # drift, not introduced here).
         write_stage_input(run_dir, 6, "feature_loc", {
             "ctx": ctx,
             "features": features,
             "product_features": product_features,
             "scan_meta": scan_meta,
+            "user_flows": user_flows,
+            "bipartite_flows": list(bipartite.flows),
         })
         with StageLogger(run_dir, 6, "feature_loc") as log697:
             try:
