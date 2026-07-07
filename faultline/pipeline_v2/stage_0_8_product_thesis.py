@@ -205,6 +205,15 @@ def _contains_contiguous(
     )
 
 
+#: Irregular / uncountable plurals the naive rule mangles (fb3 comp:
+#: "peoples" in the board's first sentence).
+_IRREGULAR_PLURALS = {
+    "person": "people", "people": "people", "child": "children",
+    "children": "children", "staff": "staff", "feedback": "feedback",
+    "media": "media", "data": "data",
+}
+
+
 def _pluralize(word: str) -> str:
     """Naive English plural for the thesis SENTENCE only (the
     ``core_objects`` list stays canonical-singular). Deterministic:
@@ -213,6 +222,9 @@ def _pluralize(word: str) -> str:
     last = word.rsplit("-", 1)[-1]
     if not last:
         return word
+    if last.lower() in _IRREGULAR_PLURALS:
+        plural = _IRREGULAR_PLURALS[last.lower()]
+        return word[: len(word) - len(last)] + plural
     if last.endswith("s"):
         plural = last
     elif last.endswith(("x", "z", "ch", "sh")):
@@ -423,7 +435,13 @@ class ThesisSignals:
             and getattr(c, "name", "") in dep_slugs
         }))
 
-        vendor_hits = _collect_vendor_hits(all_paths)
+        # W3.1 D3 live fix: stage-1 anchor paths do NOT cover integration
+        # catalogs (tracecat's registry package carried none of its 26
+        # vendor files) — the vendor channel scans the repo's TRACKED
+        # files (intake truth, deterministic), falling back to anchor
+        # paths for callers without a full context.
+        tracked = [str(p) for p in (getattr(ctx, "tracked_files", None) or [])]
+        vendor_hits = _collect_vendor_hits(tracked or all_paths)
 
         return cls(
             schema_nouns=schema_nouns,

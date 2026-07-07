@@ -294,3 +294,48 @@ def test_anchored_67d_skips_split_propagation() -> None:
         "D1 REGRESSION: 6.7d propagated the parent's capability onto a "
         "LANED split sub — the phase_finalize re-stamp would empty the "
         "platform lane into the parent's PF")
+
+
+def test_entry_fold_defers_to_l1_for_multi_page_fine_anchor() -> None:
+    """tracecat Workspaces class: a workspace-scoped router
+    (/workspaces/[id]/...) mints the coarse `workspaces` anchor; devs
+    whose entries sit in a FINER >=2-page route surface (tables) must
+    NOT entry-fold into the coarse PF — the defer hands them to rung L1
+    which mints their own anchor on demand. A single-page sub-surface
+    (the supabase FDW wrappers amendment case) still folds under its
+    hosting capability — covered by the existing amendment test."""
+    ws_root = "frontend/src/app/workspaces"
+    routes = [
+        {"pattern": "/workspaces", "method": "PAGE",
+         "file": f"{ws_root}/page.tsx"},
+        {"pattern": "/workspaces/:id/tables", "method": "PAGE",
+         "file": f"{ws_root}/[workspaceId]/tables/page.tsx"},
+        {"pattern": "/workspaces/:id/tables/:tableId", "method": "PAGE",
+         "file": f"{ws_root}/[workspaceId]/tables/[tableId]/page.tsx"},
+    ]
+    workspaces = dev("workspaces", [f"{ws_root}/page.tsx"],
+                     flows=[flow("browse-workspaces-flow",
+                                 f"{ws_root}/page.tsx")])
+    # tables: lineage-starved (files split between app tree and
+    # components) so its winner is NONE/shell — entries all inside the
+    # fine tables anchor, which sits inside the minted workspaces one.
+    tables = dev("tables", [
+        f"{ws_root}/[workspaceId]/tables/page.tsx",
+        f"{ws_root}/[workspaceId]/tables/[tableId]/page.tsx",
+        "frontend/src/components/tables/grid.tsx",
+        "frontend/src/components/tables/cell.tsx",
+        "frontend/src/lib/tables/query.ts",
+    ], flows=[
+        flow("browse-tables-flow",
+             f"{ws_root}/[workspaceId]/tables/page.tsx"),
+        flow("edit-table-flow",
+             f"{ws_root}/[workspaceId]/tables/[tableId]/page.tsx"),
+    ])
+    pfs, tele = run_anchored_mint([workspaces, tables], routes, ctx_of())
+    assert tables.product_feature_id != "workspaces", (
+        "D1 REGRESSION: entry-fold bound a multi-page capability into "
+        "the coarse workspace-scoped PF (tracecat Workspaces 46K class)")
+    assert tables.product_feature_id is not None
+    assert (tables.anchor_id or "").startswith("mint:entry-route"), (
+        tables.anchor_id)
+    assert tele.get("entry_fold_deferred_to_l1", 0) >= 1

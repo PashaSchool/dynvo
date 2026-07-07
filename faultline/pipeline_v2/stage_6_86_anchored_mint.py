@@ -535,7 +535,18 @@ def run_anchored_mint(
         entry files — the strongest behavioral fold signal (validator
         I16's own ruler): a dev whose journeys enter through one
         capability's surface belongs to it (supabase FDW wrappers class:
-        the dev's flow enters via the integrations page)."""
+        the dev's flow enters via the integrations page).
+
+        W3.1 D1/D6 DEFER RULE: when the entries ALSO majority-sit inside
+        a MORE SPECIFIC unminted route anchor carrying >= 2 page routes
+        (a real capability surface, the I24 grain), the fold DEFERS to
+        the pending ladder — rung L1 mints that anchor on demand.
+        Without it a workspace-scoped app router (tracecat: everything
+        under /workspaces/[id]/...) entry-folds tables/integrations/
+        settings into the coarse minted `Workspaces` PF (46K LOC — the
+        fb3 D1 sink shape at the entry rung). A single-page sub-surface
+        (supabase FDW wrappers, 1 page) still folds under its hosting
+        capability — the operator amendment case 5d grain."""
         entries = [str(ep) for fl in (getattr(f, "flows", None) or [])
                    if (ep := getattr(fl, "entry_point_file", None))]
         if not entries:
@@ -564,7 +575,41 @@ def run_anchored_mint(
         (best, n), = votes.most_common(1)
         tied = sorted(c for c, v in votes.items() if v == n)
         best = tied[0]
-        return best if votes[best] * 2 > len(entries) else None
+        if votes[best] * 2 <= len(entries):
+            return None
+        # Defer to L1 when a finer >=2-page route anchor holds the
+        # entry majority (deterministic: sorted candidates, first hit).
+        route_votes: Counter[str] = Counter()
+        for ep in entries:
+            fine_cid: str | None = None
+            fine_spec: tuple[int, int, str] | None = None
+            for a in anchors:
+                if (a.source != "route" or a.canonical_id in mintable
+                        or a.shell or a.barred or not a.matches(ep)):
+                    continue
+                spec = (
+                    1 if ep in a.files else 0,
+                    max((len(p) for p in a.prefixes
+                         if ep.startswith(p + "/") or ep == p), default=0),
+                    a.canonical_id,
+                )
+                if fine_spec is None or spec > fine_spec:
+                    fine_cid, fine_spec = a.canonical_id, spec
+            if fine_cid is not None:
+                route_votes[fine_cid] += 1
+        if route_votes:
+            (fine, fn), = route_votes.most_common(1)
+            fine_tied = sorted(c for c, v in route_votes.items() if v == fn)
+            fine = fine_tied[0]
+            fa = anchor_by_id.get(fine)
+            if (fa is not None
+                    and route_votes[fine] * 2 > len(entries)
+                    and len(fa.page_route_files) >= 2
+                    and fa.subtree_inside(anchor_by_id[best])):
+                tele["entry_fold_deferred_to_l1"] = (
+                    tele.get("entry_fold_deferred_to_l1", 0) + 1)
+                return None
+        return best
 
     def _anchor_of_target(t: str) -> str | None:
         """The most specific MINTING anchor covering one file (exact

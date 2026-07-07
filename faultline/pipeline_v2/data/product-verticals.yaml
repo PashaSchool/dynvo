@@ -408,6 +408,10 @@ core_object_stopwords:
   - src
   - hook
   - hooks
+  - locale
+  - locales
+  - i18n
+  - l10n
   - misc
   - test
   - demo
