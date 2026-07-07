@@ -91,6 +91,18 @@ LANE_EXCAVATION_ENV = "FAULTLINE_LANE_EXCAVATION"
 
 _SHELL_REASON = "shell_lineage_only"
 
+#: Sources that carry AUTHOR intent (route patterns, feature dirs,
+#: packages, schema domains, service dirs, hub families). ``interior``
+#: and ``excav`` are DERIVED evidence — a 0-flow chunk may mint only
+#: when at least one authored source confirms the capability (the
+#: openstatus `data-table` finding: interior file-family + excav dir
+#: agreed on a UI component and minted it — two derived witnesses are
+#: still zero authors).
+_AUTHORED_SOURCES = frozenset({
+    "route", "fdir", "pypkg", "ws-pkg", "svc", "schema",
+    "hub-vendor", "hub-core",
+})
+
 #: provenance marker (idempotence + I22 explainability).
 _EXCAV_MARKER = "lane-excavation"
 
@@ -235,6 +247,12 @@ def _excav_anchors(
         key, prefix = hit
         alnum = re.sub(r"[^a-z0-9]+", "", key)
         if len(alnum) < 3 or key in stoplist or alnum in stoplist:
+            continue
+        # Token-level UI-shape guard (openstatus `data-table` finding):
+        # a composite key whose LAST token is a UI shape names a widget,
+        # not a capability (`data-table`, `nav-menu`) — while a key
+        # whose shape token leads (`table-editor`) stays a candidate.
+        if key.split("-")[-1] in _UI_SHAPE_SEGMENTS:
             continue
         slot = acc.setdefault((key, prefix), {"files": []})
         slot["files"].append(p)
@@ -453,10 +471,11 @@ def run_lane_excavation(
         if _files_loc(repo_root, code_files, loc_cache) < _CODE_LOC_FLOOR:
             _block("code_loc_floor")
             return False
-        if not has_flows and len(anchor.sources) < 2:
-            # a 0-flow chunk mints only with multi-source confirmation
-            # (diagnosis R6 — the I8 journeys-worthy class).
-            _block("zero_flow_single_source")
+        if not has_flows and not (anchor.sources & _AUTHORED_SOURCES):
+            # a 0-flow chunk mints only with AUTHORED confirmation
+            # (diagnosis R6 / the data-table finding — derived witnesses
+            # alone never justify a journeys-worthy 0-flow PF).
+            _block("zero_flow_unauthored")
             return False
         return True
 
@@ -543,10 +562,10 @@ def run_lane_excavation(
                 base_name = _slug(a.display) or a.key
                 name = base_name
                 if name in used_dev_names:
-                    name = _slug(f"{base_name} {a.key}")
+                    name = f"{base_name}-excav"
                     n = 2
                     while name in used_dev_names:
-                        name = f"{base_name}-{n}"
+                        name = f"{base_name}-excav{n}"
                         n += 1
                 used_dev_names.add(name)
                 prefix = a.prefixes[0] if a.prefixes else a.canonical_id

@@ -327,3 +327,54 @@ def test_kill_switch(monkeypatch):
     assert lane_excavation_enabled() is False
     monkeypatch.setenv("FAULTLINE_LANE_EXCAVATION", "1")
     assert lane_excavation_enabled() is True
+
+
+def test_ui_shape_token_key_never_candidates(tmp_path):
+    """openstatus finding: a FLOWFUL `data-table` component dir must not
+    excavate — the key's last token is a UI shape (widget, not
+    capability)."""
+    repo = tmp_path / "repo"
+    page = [_write(repo, "apps/dash/pages/home/index.tsx", 30)]
+    dt = [
+        _write(repo, "apps/dash/src/components/data-table/core.tsx", 120),
+        _write(repo, "apps/dash/src/components/data-table/rows.tsx", 100),
+    ]
+    shell = lane_dev("dash", dt, flows=[flow("sort-flow", dt[0])])
+    pages_dev = assigned_dev("home-pages", page, pf="home")
+    pfs = [product_feature("home", "route:apps/dash/pages/home", page)]
+    ri = [{"pattern": "/home", "method": "PAGE", "file": page[0]}]
+    tracked = [str(p.relative_to(repo))
+               for p in repo.rglob("*") if p.is_file()]
+    ctx = SimpleNamespace(workspaces=None, tracked_files=tracked,
+                          repo_path=repo, monorepo=False)
+    features = [shell, pages_dev]
+    _run(features, pfs, ri, ctx, [])
+    assert all(p in shell.paths for p in dt)  # nothing carved
+    assert not any(
+        "data-table" in (getattr(p, "anchor_id", "") or "") for p in pfs)
+
+
+def test_zero_flow_needs_authored_source(tmp_path):
+    """A 0-flow domain dir with only DERIVED evidence (excav alone, or
+    excav+interior) never mints; the same dir with a same-key ROUTE
+    partner may (the donor-dev path in the studio fixture covers the
+    positive case)."""
+    repo = tmp_path / "repo"
+    page = [_write(repo, "apps/app/pages/home/index.tsx", 30)]
+    repl = [
+        _write(repo, "apps/app/src/data/replication/a.ts", 150),
+        _write(repo, "apps/app/src/data/replication/b.ts", 120),
+    ]
+    shell = lane_dev("app", repl,
+                     flows=[flow("boot-flow", page[0])])  # flow OUTSIDE
+    pages_dev = assigned_dev("home-pages", page, pf="home")
+    pfs = [product_feature("home", "route:apps/app/pages/home", page)]
+    ri = [{"pattern": "/home", "method": "PAGE", "file": page[0]}]
+    tracked = [str(p.relative_to(repo))
+               for p in repo.rglob("*") if p.is_file()]
+    ctx = SimpleNamespace(workspaces=None, tracked_files=tracked,
+                          repo_path=repo, monorepo=False)
+    features = [shell, pages_dev]
+    tele = _run(features, pfs, ri, ctx, [])
+    assert all(p in shell.paths for p in repl)
+    assert tele["guard_blocks"].get("zero_flow_unauthored", 0) >= 1
