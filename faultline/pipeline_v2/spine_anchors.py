@@ -108,6 +108,11 @@ SOURCE_RANK: dict[str, int] = {
     # no other source claims the grain (the "≥2-page repeated family
     # via the existing mint bar" allowance).
     "interior": 9,
+    # W4.3 — lane-excavation domain-dir candidates (lane_excavation.py).
+    # Rank LAST of all: an excavated dir only NAMES a capability when no
+    # authored source claims the grain; its usual job is to WIDEN the
+    # same-key route/interior anchor via the cross-source merge.
+    "excav": 10,
 }
 
 _VOCAB_FILE = "spine-anchor-vocab.yaml"
@@ -1238,7 +1243,8 @@ def _merge_anchors(anchors: list[SpineAnchor]) -> list[SpineAnchor]:
     (route/schema/fdir/svc/interior; ws-pkg joins only when its basename
     is unique among workspace anchors — the basename-collision trap).
     hub-* and ws-app anchors never merge (identity anchors)."""
-    mergeable = {"route", "schema", "fdir", "svc", "pypkg", "interior"}
+    mergeable = {"route", "schema", "fdir", "svc", "pypkg", "interior",
+                 "excav"}
     ws_pkg_by_key: dict[str, list[SpineAnchor]] = defaultdict(list)
     for a in anchors:
         if a.source == "ws-pkg":

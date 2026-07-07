@@ -581,6 +581,56 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── W4.3 — lane excavation (Product-Spine, w43-diagnosis) ──────────
+    # With the lane stamped, lift PRODUCT back out of it: app-shell lane
+    # groups grow domain-dir candidate anchors from their OWN content,
+    # merged with the existing anchor set; every candidate faces the
+    # SAME Stage-6.86 mint bar (incl. the W4.2 instrument dirs). Runs
+    # BEFORE the flow-span split / UF family so every downstream stage
+    # sees the excavated PFs. Kill-switch FAULTLINE_LANE_EXCAVATION=0.
+    if anchored_mint_applied:
+        from faultline.pipeline_v2.lane_excavation import (
+            lane_excavation_enabled,
+            run_lane_excavation,
+        )
+        if lane_excavation_enabled():
+            with StageLogger(run_dir, 6, "lane_excavation") as log_exc:
+                try:
+                    exc_tele = run_lane_excavation(
+                        features, product_features,
+                        lineage_result.routes_index, ctx,
+                        extractor_signals=stage1_out,
+                        instrument_dirs=instrument_dirs,
+                        feature_flow_edges=list(bipartite.edges),
+                    )
+                    if exc_tele.get("groups"):
+                        scan_meta["lane_excavation"] = exc_tele
+                    log_exc.info(
+                        "lane_excavation: groups=%d candidates=%d "
+                        "minted=%d widened=%d moved=%d carved=%d "
+                        "chunks=%d flows=%d loc=%d"
+                        % (
+                            exc_tele.get("groups", 0),
+                            exc_tele.get("candidates", 0),
+                            exc_tele.get("pfs_minted", 0),
+                            exc_tele.get("pfs_widened", 0),
+                            exc_tele.get("devs_moved", 0),
+                            exc_tele.get("devs_carved", 0),
+                            exc_tele.get("chunks", 0),
+                            exc_tele.get("flows_excavated", 0),
+                            exc_tele.get("loc_excavated", 0),
+                        ),
+                        feature=None,
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    scan_meta.setdefault("warnings", []).append(
+                        f"lane-excavation failed ({exc}); lane left as-is"
+                    )
+                    log_exc.info(
+                        f"lane_excavation: FAILED ({exc}) — lane left as-is",
+                        feature=None,
+                    )
+
     # ── W4 — cross-PF flow-attribution split (Product-Spine §4.6) ──────
     # With the anchored mint's total dev→PF stamps in place, split every
     # flow whose file surface spans multiple PFs' anchors: primary =
