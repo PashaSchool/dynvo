@@ -365,7 +365,7 @@ def run_pipeline_v2(
     # before the scan returns. ``to_jsonable`` stays synchronous inside
     # write_stage_input (state snapshot semantics unchanged). Idempotent;
     # an atexit drain covers aborted scans.
-    from faultline.replay.capture import drain_async_writer, install_async_writer
+    from faultline.replay.capture import install_async_writer, uninstall_async_writer
     install_async_writer()
 
     # ── Intake phase — Stage 0 intake / 0.5 auditor / 0.6 shape ────
@@ -963,8 +963,11 @@ def run_pipeline_v2(
     # The finalize phase queued the last stage-input documents; block
     # until they are on disk so the run dir is complete and replayable
     # the moment this function returns. Failures were already logged by
-    # the writer thread (capture never breaks a scan).
-    drain_async_writer()
+    # the writer thread (capture never breaks a scan). Uninstall (not
+    # just drain): a writer left installed leaks async semantics into
+    # everything that captures in this process after the scan — the
+    # sync default is the documented contract outside a running scan.
+    uninstall_async_writer()
 
     # ── Flush any buffered cache writes (no-op for fs backend) ──────
     try:

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from faultline.replay import capture
 from faultline.replay.capture import (
     drain_async_writer,
@@ -21,6 +23,16 @@ from faultline.replay.capture import (
     uninstall_async_writer,
     write_stage_input,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_writer_state():
+    """Order-independence: a scan run earlier in the same pytest process
+    must not leak an installed writer into the sync-path assertions here
+    (and these tests must not leak one out)."""
+    capture.uninstall_async_writer()
+    yield
+    capture.uninstall_async_writer()
 
 
 def test_sync_path_roundtrip_compact(tmp_path) -> None:
