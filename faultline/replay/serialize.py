@@ -69,7 +69,10 @@ _ALLOWED_MODULE_PREFIXES: tuple[str, ...] = (
 #: them explicitly. Keyed by ``<module>:<qualname>``.
 _FIELD_EXCLUSIONS: dict[str, frozenset[str]] = {
     "faultline.pipeline_v2.stage_0_intake:ScanContext": frozenset(
-        {"cache_backend"},
+        # ``shared_source`` (perf wave 2, R4) is a live per-run cache —
+        # dropped like ``cache_backend`` so replayed stages get ``None``
+        # and exercise their local-construction fallback.
+        {"cache_backend", "shared_source"},
     ),
 }
 

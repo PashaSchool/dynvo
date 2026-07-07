@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
     from faultline.pipeline_v2.git_snapshot import GitSnapshot
+    from faultline.pipeline_v2.shared_source import SharedSourceState
     from faultline.pipeline_v2.stage_0_6_shape import ClassificationResult
 
 from faultline.analyzer.git import (
@@ -156,6 +157,14 @@ class ScanContext:
     # and the caller must prepend ``subpath/`` to reconstruct a
     # repo-root-relative path. Emitted into ``scan_meta.subpath``.
     subpath: str | None = None
+    # Perf wave 2 (R4) — lazily-populated shared repo-snapshot caches
+    # (one ``_SourceCache`` + one ``ReachContext`` per scan run; see
+    # ``pipeline_v2/shared_source.py``). Service object like
+    # ``cache_backend``: EXCLUDED from replay capture
+    # (``replay.serialize._FIELD_EXCLUSIONS``) and deepcopy-transparent
+    # across the ``_isolate`` stage boundary. ``None`` → every consumer
+    # constructs its cache locally (tests / replay / scoped contexts).
+    shared_source: "SharedSourceState | None" = None
 
     def with_shape(self, result: "ClassificationResult") -> "ScanContext":
         """Return a NEW ScanContext with the shape-classification fields populated.

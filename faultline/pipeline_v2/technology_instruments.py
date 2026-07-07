@@ -197,12 +197,18 @@ def detect_technology_instruments(
     routes_index: Iterable[Mapping[str, Any]] | None,
     fdir_units: Iterable[str] = (),
     hub_dirs: Iterable[str] = (),
+    source_cache: Any | None = None,
 ) -> dict[str, Any]:
     """Classify workspace units; returns telemetry + the instrument dirs.
 
     Output keys: ``instruments`` (unit → signal), ``satellites``
     (fdir → signal), ``vetoed`` (unit → veto), ``dirs`` (sorted union —
     the set every consumer keys on), ``rounds``, ``enabled``.
+
+    ``source_cache`` (perf wave 2, R4): an optional pre-populated
+    ``_SourceCache`` for ``repo_path`` — the caller passes the
+    ctx-shared one; ``None`` constructs a local cache (unchanged
+    behaviour, same content either way).
     """
     tele: dict[str, Any] = {
         "enabled": tech_instruments_enabled(),
@@ -317,7 +323,7 @@ def detect_technology_instruments(
     }
 
     # ── one import walk ───────────────────────────────────────────────
-    cache = _SourceCache(repo_path)
+    cache = source_cache or _SourceCache(repo_path)
     try:
         alias_map = build_path_alias_map(repo_path)
     except Exception:  # noqa: BLE001 — resolver is best-effort

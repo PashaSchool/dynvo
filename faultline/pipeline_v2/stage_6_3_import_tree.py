@@ -1590,7 +1590,10 @@ def enrich_with_import_tree(
     t0 = time.monotonic()
     repo_path = Path(ctx.repo_path)
     tracked_files = frozenset(ctx.tracked_files)
-    cache = _SourceCache(repo_path)
+    # R4 — adopt the ctx-shared source cache (identical content by
+    # construction; ``None``/mismatch → local fallback, e.g. replay).
+    from faultline.pipeline_v2.shared_source import shared_source_cache
+    cache = shared_source_cache(ctx, repo_path) or _SourceCache(repo_path)
     alias_map = build_path_alias_map(repo_path)
     if log:
         log.info(

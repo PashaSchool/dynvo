@@ -730,7 +730,10 @@ def expand_flows(
             objects (so consumers reading the bipartite store see the
             same graph as the containment view).
     """
-    rctx = build_reach_context(ctx)
+    # R4 — reuse the ctx-shared ReachContext (one extract_signatures
+    # walk per scan instead of one per consumer); guarded fallback.
+    from faultline.pipeline_v2.shared_source import shared_reach_context
+    rctx = shared_reach_context(ctx) or build_reach_context(ctx)
     routes = routes_index or []
 
     flows_expanded = 0
