@@ -143,20 +143,40 @@ def test_subset_duplicate_merges(monkeypatch):
     assert flows[0].user_flow_id == "UF-011"  # re-pointed, not dropped
 
 
-def test_verifier_reject_keeps_catchall(monkeypatch):
+def test_verifier_reject_all_keeps_catchall(monkeypatch):
     monkeypatch.delenv(_ENV, raising=False)
     ufs, flows = _investigations_fixture()
     before = sorted(ufs[0].member_flow_ids)
 
-    def deny(items):
-        assert items[0]["kind"] == "journey_lattice_split"
-        return {items[0]["id"]: False}
+    def deny_all(items):
+        # per-child NAME drafts — the persona's native contract
+        assert all(i["kind"] == "user_flow" for i in items)
+        assert all(i["parent_journey"] for i in items)
+        return {i["id"]: False for i in items}
 
-    tele = apply_journey_lattice(ufs, flows, [], verifier=deny)
-    assert tele["verifier_rejects"] == 1
+    tele = apply_journey_lattice(ufs, flows, [], verifier=deny_all)
+    assert tele["verifier_rejects"] == 3
     assert tele["catchalls_split"] == 0
     assert len(ufs) == 1
     assert sorted(ufs[0].member_flow_ids) == before  # untouched
+
+
+def test_verifier_partial_reject_folds_child_into_core(monkeypatch):
+    monkeypatch.delenv(_ENV, raising=False)
+    ufs, flows = _investigations_fixture()
+
+    def deny_notes(items):
+        return {i["id"]: ("note" not in i["draft"].lower())
+                for i in items}
+
+    tele = apply_journey_lattice(ufs, flows, [], verifier=deny_notes)
+    assert tele["verifier_rejects"] == 1
+    assert tele["catchalls_split"] == 1
+    assert tele["journeys_created"] == 2  # notes folded back into core
+    core = next(u for u in ufs if u.id == "UF-001")
+    assert {"f7", "f8"} <= set(core.member_flow_ids)  # conservation
+    all_members = [m for u in ufs for m in u.member_flow_ids]
+    assert len(all_members) == 10 and len(set(all_members)) == 10
 
 
 def test_labeler_choice_overrides_template_name(monkeypatch):

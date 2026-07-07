@@ -498,30 +498,43 @@ def apply_journey_lattice(
         if not children:
             continue
 
-        # Draft Verifier reviews the SPLIT (keyed); reject → keep the
-        # original catch-all untouched (conservative fallback — brief §4).
-        if verifier is not None:
-            draft_id = str(getattr(uf, "id", "") or "")
-            draft = {
-                "id": draft_id,
-                "kind": "journey_lattice_split",
-                "draft": (
-                    f"'{uf.name}' ({len(members)} flows) → "
-                    + "; ".join(
-                        f"'{c.name}' ({c.member_count})" for c in children)
-                    + f"; core keeps {len(qualified[core_key])}"
-                ),
-                "pf": pf_key,
-                "member_flows": [
-                    str(getattr(f, "name", "") or "") for f in members][:12],
-            }
+        # Draft Verifier reviews the split THROUGH ITS OWN CONTRACT —
+        # per-child journey-name drafts (the persona judges names, not
+        # free-form split prose; the first live run rejected every
+        # split-blob draft as out-of-contract noise). A rejected child
+        # folds back into the core (per-child conservative fallback);
+        # zero surviving children → the original catch-all stays
+        # untouched (brief §4).
+        if verifier is not None and children:
+            items = []
+            for c in children:
+                c_members = [
+                    str(getattr(flow_by_key.get(m), "name", "") or m)
+                    for m in c.member_flow_ids][:8]
+                items.append({
+                    "id": c.id,
+                    "kind": "user_flow",
+                    "draft": c.name,
+                    "pf": pf_key,
+                    "parent_journey": str(getattr(uf, "name", "") or ""),
+                    "member_flows": c_members,
+                })
             try:
-                verdicts = verifier([draft]) or {}
+                verdicts = verifier(items) or {}
             except Exception:  # noqa: BLE001 — persona never breaks a scan
                 verdicts = {}
-            if verdicts.get(draft_id) is False:
-                tele["verifier_rejects"] += 1
-                continue
+            kept: list[Any] = []
+            for c in children:
+                if verdicts.get(c.id) is False:
+                    tele["verifier_rejects"] += 1
+                    qualified[core_key].extend(
+                        flow_by_key[m] for m in c.member_flow_ids
+                        if m in flow_by_key)
+                else:
+                    kept.append(c)
+            children = kept
+            if not children:
+                continue  # original catch-all untouched
 
         # commit: original UF becomes the core cluster's journey
         core_fls = qualified[core_key]
