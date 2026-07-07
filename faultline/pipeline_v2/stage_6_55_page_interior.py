@@ -631,6 +631,115 @@ def _def_spans_of(repo_path: Path, rel: str) -> dict[str, tuple[int, int]]:
     return spans
 
 
+# ── 1-hop barrel following (debt-pack, w4-report residual 4) ─────────────
+# typebot-class: builder pages import blocks via deep workspace-package
+# paths that resolve to package roots (index barrels re-exporting) — the
+# def-span probe then misses (the barrel holds no definition) and the
+# node degrades to a whole-file span. ONE hop through the barrel's own
+# re-export statements recovers the real definition file. Regex over the
+# barrel source (house regex-AST convention, no new parser); resolution
+# probes the TRACKED set only (deterministic, no fs walks); bounded
+# per-file and cached per scan process.
+
+_BARREL_EXPORT_CACHE: dict[str, list[tuple[str, dict[str, str] | None]]] = {}
+_BARREL_MAX_BYTES = 262_144  # a barrel is small by nature; cap the read
+_BARREL_MAX_TARGETS = 24     # bound the star-export fan-out per symbol
+
+_RE_EXPORT_NAMED = re.compile(
+    r"export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]")
+_RE_EXPORT_STAR = re.compile(
+    r"export\s+\*\s+from\s*['\"]([^'\"]+)['\"]")
+
+
+def _barrel_exports(repo_path: Path, rel: str) -> list[
+        tuple[str, dict[str, str] | None]]:
+    """Parsed re-export statements of *rel*, in source order.
+
+    Each entry is ``(spec, names)`` where ``names`` maps the EXPORTED
+    name → the name inside the target (``export { A as B }`` → {"B":
+    "A"}), and ``None`` means ``export * from`` (every name passes
+    through unchanged).
+    """
+    if rel in _BARREL_EXPORT_CACHE:
+        return _BARREL_EXPORT_CACHE[rel]
+    out: list[tuple[str, dict[str, str] | None]] = []
+    try:
+        data = (repo_path / rel).read_bytes()
+        if len(data) <= _BARREL_MAX_BYTES:
+            text = data.decode("utf-8", errors="replace")
+            events: list[tuple[int, str, dict[str, str] | None]] = []
+            for m in _RE_EXPORT_NAMED.finditer(text):
+                names: dict[str, str] = {}
+                for item in m.group(1).split(","):
+                    item = item.strip()
+                    if not item or item.startswith("type "):
+                        item = item.removeprefix("type ").strip()
+                        if not item:
+                            continue
+                    if " as " in item:
+                        orig, _, exported = item.partition(" as ")
+                        names[exported.strip()] = orig.strip()
+                    else:
+                        names[item] = item
+                if names:
+                    events.append((m.start(), m.group(2), names))
+            for m in _RE_EXPORT_STAR.finditer(text):
+                events.append((m.start(), m.group(1), None))
+            events.sort(key=lambda e: e[0])
+            out = [(spec, names) for _, spec, names in events]
+    except OSError:
+        pass
+    _BARREL_EXPORT_CACHE[rel] = out
+    return out
+
+
+def _def_span_via_barrel(
+    repo_path: Path,
+    barrel_rel: str,
+    symbol: str,
+    tracked: frozenset[str],
+) -> tuple[str, tuple[int, int]] | None:
+    """Resolve *symbol* through ONE hop of *barrel_rel*'s re-exports.
+
+    Returns ``(real_source_file, def_span)`` when a target file defines
+    the symbol, else ``None``. Named re-exports (exact match, alias
+    honored) are tried before ``export *`` fan-out; targets resolve
+    against the barrel's directory with the same suffix probing as
+    imports (tracked set only).
+    """
+    base_dir = barrel_rel.rsplit("/", 1)[0] if "/" in barrel_rel else ""
+
+    def _probe(spec: str) -> str | None:
+        if not spec.startswith("."):
+            return None  # one hop stays inside the barrel's package
+        base = _norm_join(base_dir, spec)
+        for suf in _CAND_SUFFIXES:
+            cand = base + suf
+            if cand in tracked and cand != barrel_rel:
+                return cand
+        return None
+
+    candidates: list[tuple[str, str]] = []  # (target_rel, target_symbol)
+    for spec, names in _barrel_exports(repo_path, barrel_rel):
+        if names is not None:
+            if symbol not in names:
+                continue
+            target = _probe(spec)
+            if target:
+                candidates.append((target, names[symbol]))
+        else:
+            target = _probe(spec)
+            if target:
+                candidates.append((target, symbol))
+        if len(candidates) >= _BARREL_MAX_TARGETS:
+            break
+    for target, target_symbol in candidates:
+        span = _def_spans_of(repo_path, target).get(target_symbol)
+        if span:
+            return target, span
+    return None
+
+
 # ── Content-hash parse cache ─────────────────────────────────────────────
 
 
@@ -846,8 +955,18 @@ def get_page_interiors(
             def_span: tuple[int, int] | None = None
             if (d["kind"] == "component" and source_file
                     and d["provenance"] == "product"):
+                head = d["name"].split(".", 1)[0]
                 spans = _def_spans_of(repo_path, source_file)
-                def_span = spans.get(d["name"].split(".", 1)[0])
+                def_span = spans.get(head)
+                if def_span is None:
+                    # 1-hop barrel follow (debt-pack): index re-exports
+                    # hold no definition — chase the real source file so
+                    # the node carries a definition span instead of
+                    # degrading to a whole-file claim on the barrel.
+                    hop = _def_span_via_barrel(
+                        repo_path, source_file, head, tracked)
+                    if hop is not None:
+                        source_file, def_span = hop
             nodes.append(InteriorNode(
                 kind=d["kind"], name=d["name"], label=d.get("label"),
                 usage_line_start=int(d["usage"][0]),
