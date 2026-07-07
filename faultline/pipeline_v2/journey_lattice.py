@@ -28,17 +28,24 @@ MECHANICS (post-6.7d, post-seed lattice pass):
      does NOT split on its own — browse+CRUD of one object is ONE
      actor+intent+outcome grain (the guard from the brief); verbs pick
      the display template instead.
-  2. A cluster qualifies as a journey candidate with >= 2 flows OR
-     >= 150 LOC (the valsem4 H9 "has a body" bound — reused, not a new
-     magic number). Non-qualifying clusters fold into the CORE cluster
-     (the one carrying the UF's own resource, else the largest).
+  2. A cluster qualifies as a journey candidate with
+     max(2, ceil(6% of members)) flows — a scale-invariant floor (the
+     brief's single-flow LOC prong was dropped: flow spans routinely
+     beat any absolute bound and it minted 1-member page-shrapnel, the
+     exact class the A3 panels flagged). Non-qualifying clusters fold
+     into the CORE cluster (the one carrying the UF's own resource,
+     else the largest).
   3. Catch-all detection: a UF whose members span >= 3 qualifying
      clusters SPLITS into per-cluster journeys. Conservation: every
      member lands in exactly one cluster — nothing is lost, loc_flow
      channels re-truth automatically at Stage 6.97 (which derives them
      from final ``member_flow_ids``).
   4. Subset-duplicate merge: UF-A ⊂ UF-B (member sets, same PF) →
-     A merges into B (the Soc0 hunts case).
+     A merges into B (the Soc0 hunts case). GARBAGE-BUCKET DISSOLVE:
+     a UF with zero qualifying clusters, >= 3 distinct member objects
+     and a resource matching none of them (Soc0 "View network
+     security") re-homes each member into the sibling UF whose
+     resource IS its object; members with no honest home stay.
   5. Names: candidates composed from cluster signals (dominant verb
      family template × object phrase). Keyed: PM Labeler picks per
      batch (selection); keyless: the deterministic template ships as
@@ -72,10 +79,15 @@ if TYPE_CHECKING:
 
 _ENV = "FAULTLINE_JOURNEY_LATTICE"
 
-#: A single-flow cluster still qualifies when its span body reaches the
-#: valsem4 H9 calibration bound (the house "has a body" floor).
-_CLUSTER_LOC_FLOOR = 150
+#: Scale-invariant cluster floor: a cluster qualifies with
+#: max(2, ceil(6% of the UF's members)) flows. The brief's single-flow
+#: LOC prong was DROPPED after the wave4 dry-run: flow spans routinely
+#: exceed any absolute bound, so it minted 1-member page-shrapnel
+#: journeys — exactly the class the A3 panels flagged as noise
+#: (rule-no-magic-tuning: a member-share ratio is scale-invariant,
+#: an absolute LOC bar on spans is not).
 _MIN_CLUSTER_FLOWS = 2
+_CLUSTER_MEMBER_SHARE = 0.06
 #: A UF is a catch-all when its members span at least this many
 #: qualifying clusters (brief §2).
 _CATCHALL_MIN_CLUSTERS = 3
@@ -95,12 +107,28 @@ _GENERIC_SEGS = frozenset({
 
 #: Tokens that never name a sub-object (noise, HTTP verbs, quantity/
 #: scope MODIFIERS — "bulk-lifecycle" is about lifecycle, not "bulk").
+#: The ACTION tail is a corroboration vocabulary (mechanisms-over-
+#: vocabularies doctrine): an action token names an intent, not an
+#: outcome surface — "detectors approve/reject" is the approval step
+#: of ONE journey, not two journeys (wave4 dry-run anti-cases; the
+#: anti-case tests pin 'settings'/'notes'/'downloads' as REAL subs).
 _NOISE_TOKENS = frozenset({
     "flow", "id", "int", "obj", "api", "v1", "v2", "v3", "get", "post",
     "put", "patch", "delete", "head", "options", "all", "new", "index",
     "list", "detail", "details", "page", "bulk", "batch", "multi",
     "single", "own", "self",
+    # action tokens (intent, not outcome surface)
+    "approve", "reject", "verify", "validate", "refresh", "suggest",
+    "generate", "calculate", "duplicate", "create", "update", "edit",
+    "manage", "view", "browse", "check", "toggle", "enable", "disable",
 })
+
+
+def _noise_token(t: str) -> bool:
+    if t in _NOISE_TOKENS:
+        return True
+    # composed identifier tails: teamid / workflowid / domainslug
+    return (t.endswith("id") and len(t) > 3) or t.endswith("slug")
 
 _INTENT_BY_VERB = {
     "view": "browse", "connect": "manage", "ingest": "execute",
@@ -118,7 +146,15 @@ def _tokens(s: str) -> list[str]:
 
 
 def _singular(t: str) -> str:
+    if t.endswith("ies") and len(t) > 4:
+        return t[:-3] + "y"
     return t[:-1] if t.endswith("s") and len(t) > 3 else t
+
+
+def _strip_page(t: str) -> str:
+    """``chatpage``/``dashboardpage`` name the OBJECT, not the page —
+    frontend page-file stems carry the suffix by convention."""
+    return t[:-4] if t.endswith("page") and len(t) > 6 else t
 
 
 def _flow_key(fl: Any) -> str:
@@ -185,11 +221,11 @@ def _entry_object(fl: Any) -> str | None:
         if _PARAM_SEG.match(seg):
             continue
         low = seg.lower()
-        if low in _GENERIC_SEGS:
+        if low in _GENERIC_SEGS or len(low) < 3:
             continue
         return _singular(low)
-    low = stem.lower()
-    if low not in _GENERIC_SEGS and low not in _NOISE_TOKENS:
+    low = _strip_page(stem.lower())
+    if low not in _GENERIC_SEGS and not _noise_token(low) and len(low) >= 3:
         return _singular(low)
     return None
 
@@ -227,9 +263,9 @@ def _sub_object(fl: Any, obj: str | None) -> str | None:
         return None
     for t in toks[idx + 1:]:
         st = _singular(t)
-        if st == obj or t in _NOISE_TOKENS or _PARAM_SEG.match(t):
+        if st == obj or _noise_token(t) or _PARAM_SEG.match(t):
             continue
-        if len(t) < 3:
+        if len(t) < 3 or st in _GENERIC_SEGS or t in _GENERIC_SEGS:
             continue
         return st
     return None
@@ -266,7 +302,7 @@ def _display_sub(fls: list[Any], obj: str, sub: str) -> str:
     counts: Counter[str] = Counter()
     for fl in fls:
         for t in _tokens(str(getattr(fl, "name", "") or getattr(fl, "id", ""))):
-            if _singular(t) == sub and t not in _NOISE_TOKENS:
+            if _singular(t) == sub and not _noise_token(t):
                 counts[t] += 1
     if not counts:
         return sub
@@ -410,11 +446,14 @@ def apply_journey_lattice(
 
         # qualification + fold of thin clusters into the core
         uf_resource = _singular(str(getattr(uf, "resource", "") or "").lower())
+        import math
+
+        floor = max(_MIN_CLUSTER_FLOWS,
+                    math.ceil(len(members) * _CLUSTER_MEMBER_SHARE))
         qualified: dict[tuple[str, str], list[Any]] = {}
         thin: list[Any] = []
         for key, fls in clusters.items():
-            if len(fls) >= _MIN_CLUSTER_FLOWS or \
-                    sum(_flow_loc(f) for f in fls) >= _CLUSTER_LOC_FLOOR:
+            if len(fls) >= floor:
                 qualified[key] = fls
             else:
                 thin.extend(fls)
@@ -508,6 +547,81 @@ def apply_journey_lattice(
             log.info(
                 f"lattice: split '{uf.name}' → {len(children)} journeys "
                 f"(+core {len(core_fls)})")
+
+    # ── garbage-bucket dissolve (A3 panel: Soc0 "View network security")
+    # A UF whose members are pairwise-unrelated singletons (ZERO
+    # qualifying clusters, >= 3 distinct objects) and whose own resource
+    # matches NONE of them is not a journey — it is a dump. Members
+    # re-home DETERMINISTICALLY into the sibling UF whose resource IS
+    # their object (largest member_count, then id, wins ties); members
+    # with no honest home STAY (conservative — never invent a target).
+    tele["garbage_dissolved"] = 0
+    tele["members_rehomed"] = 0
+    uf_by_resource: dict[str, list[Any]] = {}
+    for u in user_flows:
+        if str(getattr(u, "category", "") or "interactive") == "system":
+            continue
+        r = _singular(str(getattr(u, "resource", "") or "").lower())
+        if r:
+            uf_by_resource.setdefault(r, []).append(u)
+    for uf in list(user_flows):
+        if str(getattr(uf, "category", "") or "interactive") == "system":
+            continue
+        # member-less seed channels (system/route-group) stay out; a
+        # BACKSTOP-synthesized UF with live members is the dump class
+        # itself (Soc0 "View network security" ships as
+        # uncovered_product_feature_backstop) — it IS a dissolve target.
+        reason = str(getattr(uf, "synthesis_reason", "") or "")
+        if getattr(uf, "synthesized", False) and \
+                reason != "uncovered_product_feature_backstop":
+            continue
+        if uf in new_ufs:
+            continue
+        members = _members(uf)
+        if len(members) < 4:
+            continue
+        keyed = [(fl, _cluster_key(fl, vocab)) for fl in members]
+        objs = Counter(k[0] for _, k in keyed)
+        floor2 = max(_MIN_CLUSTER_FLOWS,
+                     -int(-len(members) * _CLUSTER_MEMBER_SHARE // 1))
+        cluster_sizes = Counter(k for _, k in keyed)
+        qualifying = sum(1 for n in cluster_sizes.values() if n >= floor2)
+        # the split pass owns structured UFs; a dump has almost none —
+        # and no dominant same-object core to keep it honest
+        if qualifying >= _CATCHALL_MIN_CLUSTERS or len(objs) < 3:
+            continue
+        if max(objs.values()) > floor2:
+            continue  # a dominant object core — misnamed maybe, dump no
+        own = _singular(str(getattr(uf, "resource", "") or "").lower())
+        if own in objs:
+            continue  # honestly named after some of its members
+        moved: set[str] = set()
+        for fl, (obj, _sub) in keyed:
+            homes = [u for u in uf_by_resource.get(obj, []) if u is not uf]
+            if not homes:
+                continue
+            home = min(homes, key=lambda u: (
+                -int(getattr(u, "member_count", 0) or 0),
+                str(getattr(u, "id", "") or "")))
+            key = _flow_key(fl)
+            home.member_flow_ids = sorted(
+                set(home.member_flow_ids or []) | {key})
+            home.member_count = len(home.member_flow_ids)
+            fl.user_flow_id = str(getattr(home, "id", "") or "")
+            moved.add(key)
+        if not moved:
+            continue
+        uf.member_flow_ids = sorted(
+            m for m in (uf.member_flow_ids or []) if str(m) not in moved)
+        uf.member_count = len(uf.member_flow_ids)
+        tele["garbage_dissolved"] += 1
+        tele["members_rehomed"] += len(moved)
+        if log is not None:
+            log.info(
+                f"lattice: dissolved '{uf.name}' — {len(moved)} members "
+                f"re-homed by object; {uf.member_count} stay (no honest home)")
+        if not uf.member_flow_ids:
+            user_flows.remove(uf)
 
     # PM Labeler names the new journeys (keyed; selection-not-generation).
     if new_ufs and labeler is not None:
