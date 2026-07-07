@@ -473,6 +473,78 @@ def test_class_expression_const_walks_methods():
     assert _by_name(spans, "register", parent="Registry").kind == "method"
 
 
+def test_method_decorators_extend_span_start():
+    # Method decorators are SIBLING nodes in class_body (M5 fixture 13
+    # truth): the span starts at the FIRST decorator line.
+    src = (
+        "export class ItemsController {\n"   # 1
+        "  @Get(':id')\n"                    # 2
+        "  @Cached()\n"                      # 3
+        "  findOne(id: string) {\n"          # 4
+        "    return { id };\n"               # 5
+        "  }\n"                              # 6
+        "  plain() {\n"                      # 7
+        "    return [];\n"                   # 8
+        "  }\n"                              # 9
+        "}\n"                                # 10
+    )
+    spans = _defs("src/items.controller.ts", src)
+    find = _by_name(spans, "findOne", parent="ItemsController")
+    assert (find.start_line, find.end_line) == (2, 6)
+    plain = _by_name(spans, "plain", parent="ItemsController")
+    assert (plain.start_line, plain.end_line) == (7, 9)
+
+
+def test_require_bindings_are_imports_not_defs():
+    # M5 pin 3: require bindings (identifier AND destructured) carry no
+    # definition span — the edge belongs to M2.
+    src = (
+        "const { readData } = require('./io.js');\n"
+        "const util = require('./util');\n"
+        "const fs = require('fs');\n"
+        "const wrapped = notRequire('./x');\n"
+        "function run() {\n"
+        "  return readData(util.tag) || fs;\n"
+        "}\n"
+    )
+    spans = _defs("src/consume.js", src)
+    names = {d.name for d in spans}
+    assert "util" not in names and "fs" not in names
+    assert "readData" not in names  # destructuring — no single def
+    assert "wrapped" in names  # non-require call keeps its const span
+    assert "run" in names
+
+
+def test_cjs_module_exports_marks_defs_exported():
+    src = (
+        "const tag = 'x';\n"
+        "function readData(p) {\n"
+        "  return p;\n"
+        "}\n"
+        "function writeData(p, d) {\n"
+        "  return { p, d };\n"
+        "}\n"
+        "function hidden() { return 0; }\n"
+        "module.exports = { readData, io: writeData };\n"
+        "exports.tagName = tag;\n"
+    )
+    spans = _defs("src/io.js", src)
+    assert _by_name(spans, "readData").exported is True
+    assert _by_name(spans, "writeData").exported is True  # pair value
+    assert _by_name(spans, "tag").exported is True        # exports.x = ident
+    assert _by_name(spans, "hidden").exported is False
+
+
+def test_cjs_module_exports_identifier_form():
+    src = (
+        "function main() {\n"
+        "  return 1;\n"
+        "}\n"
+        "module.exports = main;\n"
+    )
+    assert _by_name(_defs("a.js", src), "main").exported is True
+
+
 # ── defs.py: exports bookkeeping + type-space ────────────────────────────
 
 

@@ -24,13 +24,16 @@ Covered (spec §3.M1):
   * ``enum`` → ``kind="enum"`` (AMENDMENT-1: a runtime value, kept
     distinct so the M4 legacy mapping keeps enums non-flow-eligible);
   * ``export { a, b as c }`` / ``export default ident`` mark existing
-    defs exported (no new span).
+    defs exported (no new span); CJS ``module.exports = { a, b: c }`` /
+    ``exports.x = ident`` mark the referenced local defs the same way;
+  * ``const x = require('…')`` is an IMPORT binding (M5 pin 3) — the
+    edge belongs to M2, no definition span.
 
 NOT emitted (documented, deliberate): ``interface`` / ``type`` aliases
-(type-space only — DefSpan kinds are frozen to runtime kinds; the M4
-adapter decides how legacy type-symbol consumers degrade), ambient
-``declare`` statements, ``namespace`` interiors, CJS assignment defs
-(``exports.x = fn`` — regex parity: the legacy path missed them too).
+(type-space only — the M4 adapter decides how legacy type-symbol
+consumers degrade), ambient ``declare`` statements, ``namespace``
+interiors, CJS assignment-form DEFS (``exports.x = function () {…}`` —
+regex parity: the legacy path missed them too).
 
 Determinism: single walk, sorted output, no set-iteration into results.
 """
@@ -169,6 +172,18 @@ def _unwrap_value(node: Any) -> Any:
 
 def _is_capitalized(name: str) -> bool:
     return bool(name[:1].isupper())
+
+
+def _is_require_call(node: Any, src: bytes) -> bool:
+    """``require(…)`` with a bare ``require`` callee (CJS import form)."""
+    if node is None or node.type != "call_expression":
+        return False
+    fn = node.child_by_field_name("function")
+    return (
+        fn is not None
+        and fn.type == "identifier"
+        and _text(fn, src) == "require"
+    )
 
 
 # ── Wrapper (React) classification ───────────────────────────────────────
@@ -333,8 +348,18 @@ def _walk_class_body(
     body = class_node.child_by_field_name("body")
     if body is None or body.type != "class_body":
         return
+    # Method decorators are SIBLING ``decorator`` nodes inside the class
+    # body (verified on the 0.23 grammar): a run of decorators extends
+    # the FOLLOWING member's span start (M5 pin 6 — decorators belong
+    # to the def's span).
+    pending_deco_start: int | None = None
     for member in body.named_children:
         t = member.type
+        if t == "decorator":
+            if pending_deco_start is None:
+                pending_deco_start = member.start_point[0] + 1
+            continue
+        deco_start, pending_deco_start = pending_deco_start, None
         if t in _CLASS_MEMBER_SKIP:
             continue
         if t == "method_definition":
@@ -345,6 +370,8 @@ def _walk_class_body(
             if not name:
                 continue
             start, end = _lines(member)
+            if deco_start is not None:
+                start = min(start, deco_start)
             col.add(name, "method", start, end, False, "none", class_name)
         elif t in ("public_field_definition", "field_definition"):
             # TS names the field "name"; JS names it "property".
@@ -361,6 +388,8 @@ def _walk_class_body(
                 continue  # data fields are not callable members
             name = _text(name_node, col.src)
             start, end = _lines(member)
+            if deco_start is not None:
+                start = min(start, deco_start)
             col.add(name, "method", start, end, False, "none", class_name)
 
 
@@ -400,6 +429,10 @@ def _handle_declaration(
             value = d.child_by_field_name("value")
             if value is None:
                 continue  # bare `let x;` — no body, no span
+            if _is_require_call(_unwrap_value(value), src):
+                # M5 pin 3: `const x = require('…')` is an IMPORT binding
+                # (M2 owns the edge), never a definition span.
+                continue
             name = _text(name_node, src)
             kind, wrapper = _classify_value(name, value, src)
             # Single-declarator: span the whole statement (covers the
@@ -506,6 +539,64 @@ def _handle_export_statement(col: _Collector, node: Any) -> None:
                 col.exported_names.add(_text(name_node, src))
 
 
+def _handle_cjs_exports(col: _Collector, stmt: Any) -> None:
+    """CJS export bookkeeping (M5 fixture 03 truth) — marks EXISTING
+    defs exported, mirroring the ESM export-clause post-pass:
+
+      * ``module.exports = { a, b: localB }`` → a, localB exported;
+      * ``module.exports = ident``            → ident exported;
+      * ``exports.x = ident`` / ``module.exports.x = ident`` → ident.
+
+    Inline function values (``exports.x = function () {…}``) stay a
+    documented residual — assignment-form DEFS are not emitted (regex
+    parity), so there is no local def to mark.
+    """
+    src = col.src
+    expr = None
+    for ch in stmt.named_children:
+        expr = ch
+        break
+    if expr is None or expr.type != "assignment_expression":
+        return
+    left = expr.child_by_field_name("left")
+    right = expr.child_by_field_name("right")
+    if left is None or right is None or left.type != "member_expression":
+        return
+    obj = left.child_by_field_name("object")
+    prop = left.child_by_field_name("property")
+    if obj is None or prop is None:
+        return
+    obj_type = obj.type
+    obj_text = _text(obj, src)
+    prop_text = _text(prop, src)
+    is_module_exports = (
+        obj_type == "identifier" and obj_text == "module"
+        and prop_text == "exports"
+    )
+    is_exports_member = obj_type == "identifier" and obj_text == "exports"
+    is_module_exports_member = (
+        obj_type == "member_expression" and obj_text == "module.exports"
+    )
+    r = _unwrap_value(right)
+    if r is None:
+        return
+    if is_module_exports:
+        if r.type == "identifier":
+            col.exported_names.add(_text(r, src))
+        elif r.type == "object":
+            for p in r.named_children:
+                if p.type == "shorthand_property_identifier":
+                    col.exported_names.add(_text(p, src))
+                elif p.type == "pair":
+                    v = p.child_by_field_name("value")
+                    if v is not None and v.type == "identifier":
+                        col.exported_names.add(_text(v, src))
+    elif (is_exports_member or is_module_exports_member) and (
+        r.type == "identifier"
+    ):
+        col.exported_names.add(_text(r, src))
+
+
 def extract_defs(fp: FileParse, source: bytes) -> list[DefSpan]:
     """All top-level runtime definitions of one parsed file, sorted."""
     col = _Collector(fp.path, source)
@@ -514,6 +605,8 @@ def extract_defs(fp: FileParse, source: bytes) -> list[DefSpan]:
         t = node.type
         if t == "export_statement":
             _handle_export_statement(col, node)
+        elif t == "expression_statement":
+            _handle_cjs_exports(col, node)
         else:
             _handle_declaration(col, node, False, node)
     return col.finish()
