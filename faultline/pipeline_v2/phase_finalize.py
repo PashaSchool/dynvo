@@ -1189,6 +1189,64 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── W5 — journey lattice (catch-all partition). After 6.7d + EVERY
+    # seed channel: deterministic evidence clusters split catch-all
+    # journeys (jpf≈1.0 prior), subset-dupes merge; the LLM only NAMES
+    # (PM Labeler, selection) and REVIEWS splits (Draft Verifier;
+    # reject → original stays). Runs BEFORE Stage 6.97 so the
+    # loc_flow channels re-truth from the final member_flow_ids
+    # (conservation — nothing recomputed by hand). Zones: journey layer
+    # only; no mint/lane contact. Kill-switch FAULTLINE_JOURNEY_LATTICE=0.
+    from faultline.pipeline_v2.journey_lattice import (
+        apply_journey_lattice,
+        lattice_enabled,
+    )
+
+    if lattice_enabled() and not uf_suppressed:
+        with StageLogger(run_dir, 6, "journey_lattice") as log_lat:
+            try:
+                from faultline.pipeline_v2.personas import (
+                    build_draft_verifier,
+                    build_pm_labeler,
+                )
+
+                _lat_cache = getattr(ctx, "cache_backend", None)
+                _lat_verifier = build_draft_verifier(
+                    model_id=model_id, cost_tracker=tracker,
+                    cache=_lat_cache, llm_health=llm_health, log=log_lat,
+                )
+                _lat_labeler = build_pm_labeler(
+                    model_id=model_id, cost_tracker=tracker,
+                    cache=_lat_cache, llm_health=llm_health, log=log_lat,
+                    thesis=scan_meta.get("product_thesis"),
+                    verifier=_lat_verifier,
+                )
+                lattice_tele = apply_journey_lattice(
+                    user_flows,
+                    list(bipartite.flows),
+                    product_features,
+                    labeler=_lat_labeler,
+                    verifier=_lat_verifier,
+                    log=log_lat,
+                )
+                scan_meta["journey_lattice"] = lattice_tele
+                log_lat.info(
+                    "journey_lattice: pfs=%d catchalls_split=%d "
+                    "journeys_created=%d subset_merged=%d rejects=%d"
+                    % (
+                        lattice_tele.get("pfs_scanned", 0),
+                        lattice_tele.get("catchalls_split", 0),
+                        lattice_tele.get("journeys_created", 0),
+                        lattice_tele.get("subset_merged", 0),
+                        lattice_tele.get("verifier_rejects", 0),
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_lat.info(
+                    f"journey_lattice: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── W4.2 — post-UF vendor-husk fold (operator exhibit: midday Enable
     # Banking I8). After 6.7d + EVERY seed channel the journey layer is
     # settled — a flowless hub-vendor child no journey cites folds under
