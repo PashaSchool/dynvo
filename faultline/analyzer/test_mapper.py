@@ -182,6 +182,10 @@ def build_test_map(
     test_files = [f for f in all_files if is_test_file(f)]
     source_files = [f for f in all_files if not is_test_file(f)]
     source_set = set(source_files)
+    # Perf wave R2: the step-4 basename fallback in _filename_match used
+    # to scan the whole source_set (constructing a pathlib.Path per file)
+    # once per unmatched test. Precompute the basename index ONCE.
+    name_index = build_name_index(source_set)
 
     tm = TestMap()
     pass1_hit_tests: set[str] = set()
@@ -217,7 +221,7 @@ def build_test_map(
     for tf in test_files:
         if tf in pass1_hit_tests:
             continue
-        target = _filename_match(tf, source_set)
+        target = _filename_match(tf, source_set, name_index=name_index)
         if target is None:
             tm.unmapped_tests.append(tf)
             continue
@@ -253,13 +257,43 @@ def _add_file(tm: TestMap, file: str, test: str) -> None:
         bucket.append(test)
 
 
-def _filename_match(test_path: str, source_set: set[str]) -> str | None:
+def build_name_index(source_set: "set[str] | frozenset[str]") -> dict[str, list[str]]:
+    """Basename → source files index for ``_filename_match`` step 4.
+
+    Perf wave R2 (2026-07-07): the step-4 last-resort used to be a full
+    ``source_set`` scan building a ``pathlib.Path`` per source file, per
+    unmatched test — O(tests × sources) Path constructions (8.9M objects
+    / 82s profiled on lobe-chat via ``build_flow_test_index``). Build
+    this index once per source set and pass it to ``_filename_match``.
+
+    The key replicates ``Path(src).name`` for the repo-relative POSIX
+    paths used throughout the engine: the substring after the last
+    ``/``. Bucket order is irrelevant — the consumer takes ``min()``,
+    matching the legacy deterministic tiebreak exactly.
+    """
+    index: dict[str, list[str]] = {}
+    for src in source_set:
+        index.setdefault(src.rsplit("/", 1)[-1], []).append(src)
+    return index
+
+
+def _filename_match(
+    test_path: str,
+    source_set: set[str],
+    *,
+    name_index: dict[str, list[str]] | None = None,
+) -> str | None:
     """Find the production file a test file most likely covers.
 
     Tries (in order):
       1. ``<dir>/<base>.<ext>`` — sibling source file
       2. Walk up: try parent dirs replacing ``tests/`` segment with ``src/``
       3. Glob for ``<base>.<ext>`` anywhere in the repo (last resort)
+
+    ``name_index`` (optional, from :func:`build_name_index` over the SAME
+    ``source_set``) accelerates step 4 from O(sources) string+Path work
+    to one dict lookup; results are IDENTICAL with or without it (parity
+    covered by tests/test_filename_match_parity.py).
     """
     p = PurePosixPath(test_path)
     name = p.name
@@ -304,9 +338,14 @@ def _filename_match(test_path: str, source_set: set[str]) -> str | None:
     # min() = lexicographically-smallest match, structural + scale-invariant.
     for ext in exts:
         target_name = f"{base}{ext}"
-        matches = [src for src in source_set if Path(src).name == target_name]
-        if matches:
-            return min(matches)
+        if name_index is not None:
+            bucket = name_index.get(target_name)
+            if bucket:
+                return min(bucket)
+        else:
+            matches = [src for src in source_set if Path(src).name == target_name]
+            if matches:
+                return min(matches)
 
     return None
 
