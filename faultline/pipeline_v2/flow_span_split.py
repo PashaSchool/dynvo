@@ -86,6 +86,7 @@ def _owner_map(features: list["Feature"]) -> dict[str, str | None]:
 def split_cross_pf_flow_attribution(
     features: list["Feature"],
     product_features: list["Feature"],
+    home_override: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Split every flow's file surface into primary vs cross-PF shared.
 
@@ -121,6 +122,14 @@ def split_cross_pf_flow_attribution(
                 continue
             entry = getattr(flow, "entry_point_file", None)
             home = (owner.get(entry) if entry else None) or dev_pf
+            if not home and home_override:
+                # Post-UF second pass (W4): a LANE-homed flow (no owner
+                # evidence) adopts its FINAL journey's capability — the
+                # conservation-settled attachment is its best-evidence
+                # home; other PFs' files become labeled sharing exactly
+                # like the first pass. No information destroyed.
+                mid = getattr(flow, "uuid", "") or getattr(flow, "name", "")
+                home = home_override.get(mid)
             if not home:
                 continue  # lane-resident dev — no split basis
             foreign: dict[str, str] = {}

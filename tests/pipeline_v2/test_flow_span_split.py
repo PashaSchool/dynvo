@@ -236,3 +236,30 @@ def test_legacy_line_ranges_still_vote_without_nodes() -> None:
         FlowLineRange(path="a.ts", start_line=1, end_line=10),
     ])
     assert _flow_span_weights(flow) == {"a.ts": 10}
+
+
+def test_home_override_splits_lane_homed_flows() -> None:
+    """Post-UF second pass: a lane-homed flow adopts its journey's
+    capability and its cross-PF files become labeled sharing."""
+    flow = _flow("apps/web/app/incidents/page.tsx",
+                 ["apps/web/app/incidents/page.tsx",
+                  "incidents/api.ts", "status-pages/list.ts"],
+                 uuid="uuid-lane-flow")
+    lane_dev = _dev("web-shell", None,
+                    ["apps/web/app/incidents/page.tsx"], [flow])
+    inc_dev = _dev("incidents", "incidents", ["incidents/api.ts"])
+    sp_dev = _dev("status-pages", "status-pages", ["status-pages/list.ts"])
+    pfs = [_pf("incidents"), _pf("status-pages")]
+    # First pass (no override): lane-homed → untouched.
+    tele1 = split_cross_pf_flow_attribution(
+        [lane_dev, inc_dev, sp_dev], pfs)
+    assert tele1["flows_split"] == 0
+    # Post-UF pass: the journey settled on 'incidents'.
+    tele2 = split_cross_pf_flow_attribution(
+        [lane_dev, inc_dev, sp_dev], pfs,
+        home_override={"uuid-lane-flow": "incidents"})
+    assert tele2["flows_split"] == 1
+    assert "status-pages/list.ts" not in flow.paths
+    assert [s.path for s in flow.shared_paths] == ["status-pages/list.ts"]
+    assert "incidents/api.ts" in flow.paths          # home stays
+    assert "apps/web/app/incidents/page.tsx" in flow.paths  # entry stays

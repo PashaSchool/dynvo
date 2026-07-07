@@ -992,6 +992,31 @@ def run_finalize_phase(
                         null_shared_without_signal=True,
                     )
                     s67d_telemetry["conservation_recheck"] = _recheck
+                # W4 §4.6 — post-UF span-split second pass: LANE-homed
+                # member flows (no ownership evidence at the first pass)
+                # adopt their conservation-settled journey's capability
+                # as home; other PFs' files leave paths for the labeled
+                # shared ledger. Runs AFTER the final conservation /
+                # donor recheck so the adopted homes are settled.
+                if anchored_mint_applied and flow_span_split_enabled():
+                    try:
+                        _lane_home: dict[str, str] = {}
+                        for _uf in user_flows:
+                            _pfid = getattr(_uf, "product_feature_id", None)
+                            if not _pfid:
+                                continue
+                            for _mid in _uf.member_flow_ids or []:
+                                _lane_home.setdefault(_mid, _pfid)
+                        scan_meta["flow_span_split_post_uf"] = (
+                            split_cross_pf_flow_attribution(
+                                features, product_features,
+                                home_override=_lane_home,
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        scan_meta.setdefault("warnings", []).append(
+                            f"post-UF flow-span split failed ({exc})"
+                        )
             write_stage_artifact(
                 ctx.repo_path,
                 stage_index=6,
