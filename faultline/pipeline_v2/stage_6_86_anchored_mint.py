@@ -532,12 +532,19 @@ def run_anchored_mint(
         })
         hub_dirs = sorted({a.hub_dir for a in anchors if a.hub_dir})
         try:
+            # R4 — hand the detector the ctx-shared source cache (it has
+            # no ctx of its own; ``None`` → it constructs locally).
+            from faultline.pipeline_v2.shared_source import (
+                shared_source_cache as _shared_src,
+            )
             ti_tele = detect_technology_instruments(
                 Path(getattr(ctx, "repo_path", ".")),
                 [str(p) for p in (getattr(ctx, "tracked_files", None) or [])],
                 routes_index,
                 fdir_units=fdir_units,
                 hub_dirs=hub_dirs,
+                source_cache=_shared_src(
+                    ctx, Path(getattr(ctx, "repo_path", "."))),
             )
             instrument_dirs = frozenset(ti_tele.get("dirs") or [])
             tele["technology_instruments"] = ti_tele
@@ -969,7 +976,10 @@ def run_anchored_mint(
 
         repo_path = Path(getattr(ctx, "repo_path", "."))
         tracked = frozenset(str(p) for p in (getattr(ctx, "tracked_files", None) or []))
-        src_cache = _SourceCache(repo_path)
+        # R4 — adopt the ctx-shared source cache (fallback: local).
+        from faultline.pipeline_v2.shared_source import shared_source_cache
+        src_cache = (shared_source_cache(ctx, repo_path)
+                     or _SourceCache(repo_path))
         try:
             alias_map = build_path_alias_map(repo_path)
         except Exception:  # noqa: BLE001 — resolver is best-effort
@@ -1280,7 +1290,9 @@ def _attach_shared_consumers(
 
     repo_path = Path(getattr(ctx, "repo_path", "."))
     tracked = frozenset(str(p) for p in (getattr(ctx, "tracked_files", None) or []))
-    cache = _SourceCache(repo_path)
+    # R4 — adopt the ctx-shared source cache (fallback: local).
+    from faultline.pipeline_v2.shared_source import shared_source_cache
+    cache = shared_source_cache(ctx, repo_path) or _SourceCache(repo_path)
     try:
         alias_map = build_path_alias_map(repo_path)
     except Exception:  # noqa: BLE001

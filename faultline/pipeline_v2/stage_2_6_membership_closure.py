@@ -801,7 +801,10 @@ def run_membership_closure(
         telemetry.elapsed_sec = round(time.monotonic() - t0, 3)
         return ClosureResult(features, list(unattributed), telemetry)
 
-    cache = _SourceCache(repo_path)
+    # R4 — adopt the ctx-shared source cache (identical content by
+    # construction; ``None``/mismatch → local fallback, e.g. replay).
+    from faultline.pipeline_v2.shared_source import shared_source_cache
+    cache = shared_source_cache(ctx, repo_path) or _SourceCache(repo_path)
     alias_map = build_path_alias_map(repo_path)
 
     # ── Phase 1 — per-feature closure BFS ────────────────────────────

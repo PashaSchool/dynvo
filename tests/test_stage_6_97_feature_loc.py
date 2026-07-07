@@ -335,3 +335,61 @@ def test_loc_field_defaults_none_for_old_scans():
     assert feat.loc is None  # pre-stage scans rehydrate unchanged
     dumped = feat.model_dump()
     assert dumped["loc"] is None
+
+
+# ── R5b — prefetch / prewarmed-cache parity (perf wave 2) ───────────────
+
+
+def test_prefetch_prewarmed_parity_with_inline(tmp_path):
+    """apply_feature_loc with a prefetched value cache must produce the
+    exact telemetry + stamps the inline computation produces."""
+    from faultline.pipeline_v2.stage_6_97_feature_loc import (
+        prefetch_loc_cache,
+    )
+
+    root = _repo(tmp_path)
+
+    def _mk():
+        auth = _feature("auth", ["app/auth"], member_files=[
+            MemberFile(path="app/auth/login.ts", role="anchor",
+                       confidence=1.0),
+        ])
+        billing = _feature("billing", ["app/billing/invoice.ts",
+                                       "app/billing/shared.ts"])
+        pf = _feature("payments", ["app/billing/invoice.ts"], layer="product")
+        billing.product_feature_id = "payments"
+        return [auth, billing, pf], [pf]
+
+    feats_a, pfs_a = _mk()
+    tele_a = apply_feature_loc(feats_a, pfs_a, root)
+
+    feats_b, pfs_b = _mk()
+    pre = prefetch_loc_cache(feats_b, pfs_b, root)
+    assert pre  # prefetch actually counted something
+    tele_b = apply_feature_loc(feats_b, pfs_b, root, prewarmed_loc=pre)
+
+    assert tele_a == tele_b
+    for fa, fb in zip(feats_a, feats_b):
+        assert (fa.name, fa.loc, fa.loc_shared) == (fb.name, fb.loc, fb.loc_shared)
+        assert [(m.path, m.loc) for m in (fa.member_files or [])] == \
+               [(m.path, m.loc) for m in (fb.member_files or [])]
+
+
+def test_prewarmed_superset_keys_never_leak_into_accounting(tmp_path):
+    """Extra prewarmed keys (files the apply pass never touches) must not
+    change behaviour — key presence in the APPLY cache is semantic for
+    the flow-accounting clip, so the prewarm map is a value source only."""
+    root = _repo(tmp_path)
+
+    def _mk():
+        return [_feature("auth", ["app/auth"])], []
+
+    feats_a, pfs_a = _mk()
+    tele_a = apply_feature_loc(feats_a, pfs_a, root)
+
+    feats_b, pfs_b = _mk()
+    poisoned = {"app/billing/invoice.ts": 999999, "not/a/file.ts": 5}
+    tele_b = apply_feature_loc(feats_b, pfs_b, root, prewarmed_loc=poisoned)
+
+    assert tele_a == tele_b
+    assert feats_a[0].loc == feats_b[0].loc

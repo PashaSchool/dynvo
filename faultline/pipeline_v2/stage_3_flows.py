@@ -1605,7 +1605,10 @@ def _enrich_flow_reach(
         }, None)
 
     try:
-        rctx = build_reach_context(ctx)
+        # R4 — reuse the ctx-shared ReachContext (one extract_signatures
+        # walk per scan instead of one per consumer); guarded fallback.
+        from faultline.pipeline_v2.shared_source import shared_reach_context
+        rctx = shared_reach_context(ctx) or build_reach_context(ctx)
     except Exception as exc:  # noqa: BLE001 — defensive, never break Stage 3
         logger.warning("flow_reach: build_reach_context failed: %s", exc)
         return ({

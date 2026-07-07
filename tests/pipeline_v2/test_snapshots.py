@@ -251,6 +251,107 @@ def test_runner_no_shas_is_noop(git_repo: tuple[Path, list[str]]) -> None:
     assert telem["planned_snapshots"] == 0
 
 
+# ── Worktree REUSE content parity (perf wave 2, R5a) ────────────────────
+# The runner now materialises ONE worktree and re-points it per sha; the
+# tree seen by ``compute`` at each sha must be byte-identical to what a
+# fresh per-snapshot ``git worktree add`` produced (the old behaviour).
+
+
+def _tree_contents(root: Path) -> dict[str, str]:
+    """{rel_path: content} for every regular file (``.git`` skipped)."""
+    out: dict[str, str] = {}
+    for p in sorted(root.rglob("*")):
+        rel = p.relative_to(root).as_posix()
+        if rel == ".git" or rel.startswith(".git/"):
+            continue
+        if p.is_file() and not p.is_symlink():
+            out[rel] = p.read_text()
+    return out
+
+
+@pytest.fixture()
+def churny_repo(tmp_path: Path) -> tuple[Path, list[str]]:
+    """3 commits with adds, edits AND a deletion between snapshots — the
+    transitions a reused worktree must replay exactly."""
+    repo = tmp_path / "churny"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    _git(repo, "config", "user.email", "t@t.t")
+    _git(repo, "config", "user.name", "t")
+    shas: list[str] = []
+    # c0: two files + a subdir file.
+    (repo / "keep.ts").write_text("v0\n")
+    (repo / "doomed.ts").write_text("delete me later\n")
+    (repo / "sub").mkdir()
+    (repo / "sub" / "only-at-c0.ts").write_text("dir emptied at c1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "c0", "--date", "2024-01-01T12:00:00Z")
+    shas.append(_git(repo, "rev-parse", "HEAD").strip())
+    # c1: edit + DELETE a file + empty the subdir + add a new file.
+    (repo / "keep.ts").write_text("v1\n")
+    (repo / "doomed.ts").unlink()
+    (repo / "sub" / "only-at-c0.ts").unlink()
+    (repo / "fresh.ts").write_text("born at c1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "c1", "--date", "2024-01-02T12:00:00Z")
+    shas.append(_git(repo, "rev-parse", "HEAD").strip())
+    # c2: another edit.
+    (repo / "keep.ts").write_text("v2\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "c2", "--date", "2024-01-03T12:00:00Z")
+    shas.append(_git(repo, "rev-parse", "HEAD").strip())
+    return repo, shas
+
+
+def test_runner_reused_worktree_matches_fresh_per_snapshot_content(
+    churny_repo: tuple[Path, list[str]], tmp_path: Path,
+) -> None:
+    repo, shas = churny_repo
+
+    # Reference = the OLD behaviour: a fresh worktree per snapshot.
+    expected: dict[str, dict[str, str]] = {}
+    for i, sha in enumerate(shas):
+        ref = tmp_path / f"ref-{i}"
+        _git(repo, "worktree", "add", "--detach", "--force", str(ref), sha)
+        try:
+            expected[sha] = _tree_contents(ref)
+        finally:
+            _git(repo, "worktree", "remove", "--force", str(ref))
+    _git(repo, "worktree", "prune")
+
+    results, telem = run_snapshots(
+        repo, shas, lambda root, s: _tree_contents(root),
+    )
+    assert telem["impact_snapshots"] == len(shas)
+    assert telem["impact_skipped_snapshots"] == 0
+    assert results == expected
+    # The deletion transitions actually exercised what we claim: the
+    # doomed file exists only at c0, the fresh file never at c0.
+    assert "doomed.ts" in expected[shas[0]]
+    assert "doomed.ts" not in expected[shas[1]]
+    assert "fresh.ts" not in expected[shas[0]]
+    assert "fresh.ts" in expected[shas[2]]
+    assert _no_leftover_worktrees(repo)
+
+
+def test_runner_reuse_recovers_after_mid_series_failure(
+    churny_repo: tuple[Path, list[str]],
+) -> None:
+    """A bad sha in the MIDDLE tears the reused worktree down; the shas
+    after it still compute on a fresh one, and cleanup stays complete."""
+    repo, shas = churny_repo
+    bad = "f" * 40
+    series = [shas[0], bad, shas[2]]
+    results, telem = run_snapshots(
+        repo, series, lambda root, s: _tree_contents(root),
+    )
+    assert set(results) == {shas[0], shas[2]}
+    assert telem["impact_snapshots"] == 2
+    assert telem["impact_skipped_snapshots"] == 1
+    assert results[shas[2]]["keep.ts"] == "v2\n"
+    assert _no_leftover_worktrees(repo)
+
+
 # ── File listing ────────────────────────────────────────────────────────
 
 

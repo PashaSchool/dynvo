@@ -388,6 +388,16 @@ def run_pipeline_v2(
     repo_class_result = intake.repo_class_result
     run_dir = intake.run_dir
 
+    # ── Perf wave 2 (R4) — shared repo-snapshot caches (ctx-plumbing) ──
+    # One lazily-populated read-only holder per scan run: dedupes the
+    # per-stage ``_SourceCache`` instances (2.6 / 6.3 / 6.86 / 8.8 /
+    # technology-instruments) and the two full ``build_reach_context``
+    # walks (Stage 3 flow-reach + Stage 3.5 expander). Pure derivations
+    # of the same tree → content identical by construction. Excluded
+    # from replay captures; deepcopy-transparent across ``_isolate``.
+    from faultline.pipeline_v2.shared_source import SharedSourceState
+    ctx.shared_source = SharedSourceState(ctx)
+
     # ── Phase-0 LLM decision logging (Wave 2a) — open the scan bracket ──
     # Every LLM call from here on appends one JSONL record to
     # ``<training dir>/decisions-<run_id>.jsonl`` via the CostTracker

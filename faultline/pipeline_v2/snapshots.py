@@ -250,16 +250,29 @@ def run_snapshots(
     (failed + budget-skipped), ``impact_budget_exceeded`` and
     ``budget_sec``.
 
+    Worktree REUSE (perf wave 2, R5a): ONE detached worktree is created
+    lazily at the first snapshot and re-pointed at each subsequent sha
+    with ``git checkout --detach --force`` inside it — N checkouts
+    instead of N ``worktree add`` + N ``worktree remove`` subprocess
+    pairs. Content per sha is identical to a fresh worktree: a detached
+    checkout materialises exactly the tracked tree at that sha,
+    ``compute`` never writes into the tree, and consecutive checkouts
+    remove files tracked at the previous sha but absent at the next
+    (verified by the content-parity unit test). Any add/checkout/compute
+    failure tears the worktree down and the next sha re-creates it
+    fresh, so one bad snapshot can never poison the rest of the series.
+
     Robustness contract (never fails the scan):
       - ``git worktree prune`` first — clears stale registrations from
         a previously interrupted run before we add new worktrees.
-      - per-snapshot try/finally → ``git worktree remove --force`` +
-        ``rmtree`` fallback; a failing snapshot is skipped with a
-        warning.
+      - any per-snapshot failure → worktree teardown (``git worktree
+        remove --force`` + ``rmtree`` fallback) + skip with a warning;
+        the next snapshot starts from a fresh worktree.
       - the wall budget is checked BEFORE each checkout; once exceeded,
         every remaining snapshot is skipped and telemetry notes it.
-      - a closing ``git worktree prune`` drops any registration the
-        per-snapshot cleanup could not remove.
+      - a ``finally``-guaranteed closing teardown + ``git worktree
+        prune`` drop the reused worktree and any registration the
+        teardown could not remove.
     """
     if budget_sec is None:
         budget_sec = resolve_snapshot_budget_sec(len(shas))
@@ -291,6 +304,19 @@ def run_snapshots(
         _warn(f"impact: initial `git worktree prune` failed: {exc}")
 
     t0 = time.monotonic()
+    wt_dir: str | None = None  # the ONE reused worktree (lazy, see docstring)
+
+    def _teardown_worktree() -> None:
+        nonlocal wt_dir
+        if wt_dir is None:
+            return
+        try:
+            _git(repo_path, "worktree", "remove", "--force", wt_dir)
+        except (subprocess.SubprocessError, OSError):
+            pass
+        shutil.rmtree(wt_dir, ignore_errors=True)
+        wt_dir = None
+
     try:
         for sha in shas:
             elapsed = time.monotonic() - t0
@@ -306,13 +332,16 @@ def run_snapshots(
                     f"snapshot(s)",
                 )
                 break
-            tmpdir = tempfile.mkdtemp(prefix="faultline-impact-")
             try:
-                _git(
-                    repo_path, "worktree", "add",
-                    "--detach", "--force", tmpdir, sha,
-                )
-                results[sha] = compute(Path(tmpdir), sha)
+                if wt_dir is None:
+                    wt_dir = tempfile.mkdtemp(prefix="faultline-impact-")
+                    _git(
+                        repo_path, "worktree", "add",
+                        "--detach", "--force", wt_dir, sha,
+                    )
+                else:
+                    _git(Path(wt_dir), "checkout", "--detach", "--force", sha)
+                results[sha] = compute(Path(wt_dir), sha)
                 telemetry["impact_snapshots"] += 1
             except Exception as exc:  # noqa: BLE001 — never fail the scan
                 telemetry["impact_skipped_snapshots"] += 1
@@ -320,13 +349,11 @@ def run_snapshots(
                 if isinstance(exc, subprocess.CalledProcessError):
                     detail = (exc.stderr or "").strip() or exc
                 _warn(f"impact: snapshot {sha[:12]} skipped: {detail}")
-            finally:
-                try:
-                    _git(repo_path, "worktree", "remove", "--force", tmpdir)
-                except (subprocess.SubprocessError, OSError):
-                    pass
-                shutil.rmtree(tmpdir, ignore_errors=True)
+                # A failed add/checkout/compute leaves the worktree state
+                # unknown — drop it; the next sha re-creates it fresh.
+                _teardown_worktree()
     finally:
+        _teardown_worktree()
         try:
             _git(repo_path, "worktree", "prune")
         except (subprocess.SubprocessError, OSError) as exc:
