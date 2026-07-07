@@ -128,6 +128,14 @@ class CacheKind(str, Enum):
     # input → same answer): a deterministic short-circuit, not per-repo
     # memory (rule-cold-scan safe).
     LLM_PERSONA = "llm-persona"
+    # Stage 6.55 page-interior parse (W4, Product-Spine §4.6): one entry
+    # per PAGE FILE, keyed on sha256(parser version + tree-sitter grammar
+    # versions + file bytes). The cached value is the serialised interior
+    # node list (components / headings / provenance / spans) — pure
+    # deterministic parse output, $0 LLM. Content-keyed (same bytes →
+    # same tree), so this is a deterministic short-circuit, not per-repo
+    # memory — rule-cold-scan safe.
+    INTERIOR = "interior-parse"
     # Top-level scan-result cache: one entry per (repo content identity +
     # engine version + scan config) — the full FeatureMap JSON of a
     # completed scan. Because temperature=0 on Anthropic is NOT bit-exact,

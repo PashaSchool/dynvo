@@ -64,6 +64,7 @@ Deterministic, $0 LLM, scale-invariant; vocabulary lives in
 
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -100,6 +101,13 @@ SOURCE_RANK: dict[str, int] = {
     "schema": 6,
     "ws-pkg": 7,
     "ws-app": 8,
+    # W4 §4.6 — page-interior component families (Stage 6.55). LAST on
+    # purpose: interior evidence REFINES/widens existing capabilities
+    # via the same-key merge and only near-tie-loses to every authored
+    # source — a repeated interior family mints on its own solely when
+    # no other source claims the grain (the "≥2-page repeated family
+    # via the existing mint bar" allowance).
+    "interior": 9,
 }
 
 _VOCAB_FILE = "spine-anchor-vocab.yaml"
@@ -300,9 +308,38 @@ def _pattern_key_chain(
     """Meaningful URL segments of a route pattern: the top segment plus
     collection-descend children (≤3 dynamic hops between). Route groups
     are already URL-invisible; params / ``api``/``trpc`` / version segs
-    (when deeper segments exist) are transparent."""
+    (when deeper segments exist) are transparent.
+
+    TENANCY-TRANSPARENCY (W4, the tracecat Workspaces class): a pure
+    scope word (``tenant_scope_segments`` — workspace/org/team/tenant)
+    immediately followed by a dynamic param is tenant ADDRESSING when a
+    deeper meaningful segment exists — ``/workspaces/{ws}/tables`` keys
+    ``tables``, so per-domain anchors mint instead of one Workspaces
+    blob absorbing every workspace-scoped router (I23 gate cell,
+    keyless 0.948/33.7K, keyed 0.882/34.5K). A literal ``/workspaces``
+    index or a ``/workspaces/{id}`` detail route still keys the
+    Workspaces surface — the scope word is stripped only when it is
+    pure addressing. Dialect-blind by construction: ``_DYNAMIC_RE``
+    already matches every router's param shape."""
     transparent = set(vocab.get("route_transparent_segments") or [])
+    tenant_scope = {
+        str(s).lower() for s in (vocab.get("tenant_scope_segments") or [])
+    }
     segs = [s for s in (pattern or "").split("/") if s]
+
+    def _deeper_meaningful(start: int) -> bool:
+        """A key-capable segment exists at ``segs[start:]``."""
+        for j in range(start, len(segs)):
+            s = segs[j]
+            low_j = s.lower()
+            if (_DYNAMIC_RE.match(s) or s.startswith("_")
+                    or low_j in transparent or low_j in tenant_scope):
+                continue
+            if _is_version_seg(low_j, version_re) and j < len(segs) - 1:
+                continue
+            return True
+        return False
+
     chain: list[str] = []
     hops = 0
     for i, seg in enumerate(segs):
@@ -318,6 +355,11 @@ def _pattern_key_chain(
             # ``_layout``, Remix ``_index``) organise files, not URLs.
             continue
         if low in transparent:
+            continue
+        if (low in tenant_scope and i + 1 < len(segs)
+                and _DYNAMIC_RE.match(segs[i + 1])
+                and _deeper_meaningful(i + 2)):
+            # Pure tenant addressing — transparent (never a key).
             continue
         if _is_version_seg(low, version_re) and i < len(segs) - 1:
             continue
@@ -1100,15 +1142,103 @@ def _build_hub_anchors(
     return merged_children + rest
 
 
+# ── Page-interior sub-anchors (W4, Product-Spine §4.6) ───────────────────
+
+_INTERIOR_ANCHORS_ENV = "FAULTLINE_INTERIOR_ANCHORS"
+
+
+def _interior_anchors_enabled() -> bool:
+    raw = os.environ.get(_INTERIOR_ANCHORS_ENV, "1") or "1"
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _build_interior_anchors(
+    ctx: Any,
+    routes_index: list[dict[str, Any]] | None,
+    vocab: dict[str, Any],
+) -> list[SpineAnchor]:
+    """≥2-page repeated PRODUCT component families → ``interior``
+    sub-anchors (Stage 6.55 output; §4.6).
+
+    These never mint new top PFs by default: they join the same-key
+    cross-source merge (widening an existing capability's subtree with
+    its interior component dir — the supabase-studio finisher) and rank
+    LAST in near-ties. An unmerged family faces the EXISTING Stage-6.86
+    mint bar with its rendering pages as page evidence — it can mint
+    only when a dev's ownership is majority-inside it, exactly like any
+    other anchor. Inactive (empty) when tree-sitter is absent — scans
+    without the extra stay byte-identical.
+    """
+    if not _interior_anchors_enabled():
+        return []
+    from faultline.pipeline_v2.stage_6_55_page_interior import (
+        get_page_interiors,
+    )
+
+    result = get_page_interiors(ctx, routes_index or [])
+    if not result.active or not result.families:
+        return []
+    stop = set(vocab.get("structural_stoplist") or [])
+    version_re = re.compile(vocab.get("version_segment_pattern") or r"^v\d+$")
+    out: list[SpineAnchor] = []
+    for fam in result.families:
+        base = fam.family_dir.rsplit("/", 1)[-1]
+        # Passthrough segments never class a family (mirror hub classing).
+        for seg in reversed(fam.family_dir.split("/")):
+            if seg.lower() not in {"src", "lib", "index"}:
+                base = seg
+                break
+        key = normalize_anchor_key(base)
+        alnum = re.sub(r"[^a-z0-9]+", "", key)
+        if (len(alnum) < 3 or key in stop or alnum in stop
+                or version_re.match(alnum)):
+            continue
+        # Claim grain (container-sink guard, supabase smoke 2026-07-07):
+        # only an index-owned component DIR may claim its subtree; a
+        # component file living inside a bigger container claims ONLY
+        # its own file(s) — a prefix claim at the container is the D1
+        # sink class (interior:components/interfaces minted 253K LOC).
+        if fam.dir_owned:
+            cid = f"interior:{fam.family_dir}"
+            prefixes: tuple[str, ...] = (fam.family_dir,)
+            files: frozenset[str] = frozenset()
+        else:
+            src_files = frozenset(fam.source_files)
+            if not src_files:
+                continue
+            cid = f"interior:{sorted(src_files)[0]}"
+            prefixes = ()
+            files = src_files
+            # A FILE family keys by its component name, not the
+            # container dir (the dir is not its identity).
+            comp = fam.component_names[0] if fam.component_names else base
+            key = normalize_anchor_key(comp)
+            alnum = re.sub(r"[^a-z0-9]+", "", key)
+            if (len(alnum) < 3 or key in stop or alnum in stop
+                    or version_re.match(alnum)):
+                continue
+        out.append(SpineAnchor(
+            canonical_id=cid,
+            key=key,
+            source="interior",
+            display=fam.label or _display_of(base),
+            prefixes=prefixes,
+            files=files,
+            sources=frozenset({"interior"}),
+            page_route_files=frozenset(fam.page_files),
+        ))
+    return out
+
+
 # ── Cross-source key-merge + nav confirmation ────────────────────────────
 
 
 def _merge_anchors(anchors: list[SpineAnchor]) -> list[SpineAnchor]:
     """Merge same-key anchors across the domain-keyed classes
-    (route/schema/fdir/svc; ws-pkg joins only when its basename is
-    unique among workspace anchors — the basename-collision trap).
+    (route/schema/fdir/svc/interior; ws-pkg joins only when its basename
+    is unique among workspace anchors — the basename-collision trap).
     hub-* and ws-app anchors never merge (identity anchors)."""
-    mergeable = {"route", "schema", "fdir", "svc", "pypkg"}
+    mergeable = {"route", "schema", "fdir", "svc", "pypkg", "interior"}
     ws_pkg_by_key: dict[str, list[SpineAnchor]] = defaultdict(list)
     for a in anchors:
         if a.source == "ws-pkg":
@@ -1197,6 +1327,7 @@ def build_spine_anchors(
         [f for f in developer_features
          if getattr(f, "layer", "developer") == "developer"],
         all_owned, vocab))
+    anchors.extend(_build_interior_anchors(ctx, routes_index, vocab))
 
     merged = _merge_anchors(anchors)
     if nav_keys:

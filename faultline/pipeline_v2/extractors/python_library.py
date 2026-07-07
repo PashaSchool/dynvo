@@ -100,13 +100,18 @@ def _is_python_library(ctx: "ScanContext") -> bool:
             text = read_text(ctx.repo_path / candidate)
             if text and _APP_CALL_PATTERN.search(text):
                 return False
-            # Also try the first match in tracked files when nested.
-            for t in tracked:
+            # Probe EVERY nested candidate, in sorted order. The old
+            # code probed whichever match a SET iteration yielded first
+            # and then broke — hash-seed-dependent output (tracecat:
+            # 40 vs 0 candidates across identical runs, W4 smoke
+            # 2026-07-07; the documented set-iteration trap class). An
+            # app marker ANYWHERE disqualifies — correctness and
+            # determinism point the same way.
+            for t in sorted(tracked):
                 if t.endswith("/" + candidate):
                     txt = read_text(ctx.repo_path / t)
                     if txt and _APP_CALL_PATTERN.search(txt):
                         return False
-                    break
 
     # When stack is exactly ``fastapi`` / ``django`` / ``flask`` and
     # there's no app marker, treat as library — this handles the

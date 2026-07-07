@@ -198,6 +198,14 @@ class Flow(BaseModel):
     # ran, or flows the rollup could not assign. Additive — never read
     # in place of any existing field.
     user_flow_id: str | None = None
+    # W4 (Product-Spine §4.6) — cross-PF span ledger. Files this flow
+    # traverses that are OWNED by a DIFFERENT product feature than the
+    # flow's home PF are split out of ``paths`` (the primary
+    # projection) into this labeled sharing surface — per
+    # flow-feature-concept, sharing is legal and labeled; conservation:
+    # no file is lost, it is re-labeled. Empty for scans produced
+    # before W4 and when the anchored mint didn't run.
+    shared_paths: list["FlowSharedPath"] = []
 
 
 class SymbolRange(BaseModel):
@@ -259,6 +267,22 @@ class SharedParticipant(BaseModel):
     role: str = "consumer"  # "consumer" | "co-owner"
     line_weight: float = 1.0
     origin_feature: str | None = None
+
+
+class FlowSharedPath(BaseModel):
+    """W4 (Product-Spine §4.6) — one cross-PF shared file of a flow.
+
+    Emitted by the flow-span split (``flow_span_split.py``): the file
+    stays part of the flow's STORY but its ownership lives in another
+    product feature, so it is surfaced as labeled sharing instead of
+    polluting the primary ``Flow.paths`` projection (validator I15's
+    attach-overlap ruler divides by those).
+    """
+
+    path: str
+    owner_product_feature: str | None = None  # PF key (id or name)
+    owner_display: str | None = None
+    reason: str = "cross_pf_span"
 
 
 class SymbolAttribution(BaseModel):
@@ -324,7 +348,7 @@ class FlowNode(BaseModel):
     lines: tuple[int, int] | None = None
     role: Literal[
         "entry", "called", "support", "shared",
-        "cross_stack_client", "cross_stack_server",
+        "cross_stack_client", "cross_stack_server", "interior",
     ]
     confidence: Literal["high", "medium", "low"] = "medium"
     count: int | None = None               # only set for deep_call_subtree
@@ -555,6 +579,14 @@ class FlowSymbolAttribution(BaseModel):
                                distinct-caller count. Per
                                ``flow-feature-concept``: sharing is
                                normal — surface it, don't delete it.
+      - ``interior``         — (W4, Product-Spine §4.6) a PRODUCT
+                               component the flow's entry PAGE renders,
+                               attributed at the component's DEFINITION
+                               span in its own source file (1-hop
+                               imported product-module span). Emitted by
+                               Stage 6.55 ``refine_flow_spans``;
+                               design-system primitives never get one
+                               (import-provenance filter).
     """
 
     file: str                  # repo-relative path
@@ -564,7 +596,7 @@ class FlowSymbolAttribution(BaseModel):
     role: Literal[
         "entry", "called", "support", "shared",
         "anchor-consumer", "schema-consumer", "structural",
-        "framework-link", "branch",
+        "framework-link", "branch", "interior",
     ]
 
 

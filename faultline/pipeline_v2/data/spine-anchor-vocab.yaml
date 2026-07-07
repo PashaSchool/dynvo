@@ -93,6 +93,26 @@ route_transparent_segments:
   - rest
   - graphql
 
+# URL TENANCY-SCOPE segments (W4, the tracecat Workspaces class —
+# hybrid tenancy): a pure scope word whose NEXT URL segment is a
+# dynamic param is tenant ADDRESSING, not a capability —
+# `/workspaces/{ws_id}/tables` is the TABLES surface. The segment is
+# transparent ONLY in that shape and ONLY when a deeper meaningful
+# segment exists; a literal `/workspaces` index or `/workspaces/{id}`
+# detail page still keys the Workspaces surface. Tiny universal
+# vocabulary on purpose (rule-no-magic-tuning): scope words only.
+tenant_scope_segments:
+  - workspace
+  - workspaces
+  - org
+  - orgs
+  - organization
+  - organizations
+  - team
+  - teams
+  - tenant
+  - tenants
+
 # Version-dir pattern (calibration trap: `v1` @0.50 borderline —
 # linkwarden V1/V2 class). A version segment NEVER names an anchor; it
 # is transparent when deeper segments exist, and a version-KEYED anchor
