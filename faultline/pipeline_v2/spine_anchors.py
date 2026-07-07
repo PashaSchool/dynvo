@@ -300,9 +300,38 @@ def _pattern_key_chain(
     """Meaningful URL segments of a route pattern: the top segment plus
     collection-descend children (≤3 dynamic hops between). Route groups
     are already URL-invisible; params / ``api``/``trpc`` / version segs
-    (when deeper segments exist) are transparent."""
+    (when deeper segments exist) are transparent.
+
+    TENANCY-TRANSPARENCY (W4, the tracecat Workspaces class): a pure
+    scope word (``tenant_scope_segments`` — workspace/org/team/tenant)
+    immediately followed by a dynamic param is tenant ADDRESSING when a
+    deeper meaningful segment exists — ``/workspaces/{ws}/tables`` keys
+    ``tables``, so per-domain anchors mint instead of one Workspaces
+    blob absorbing every workspace-scoped router (I23 gate cell,
+    keyless 0.948/33.7K, keyed 0.882/34.5K). A literal ``/workspaces``
+    index or a ``/workspaces/{id}`` detail route still keys the
+    Workspaces surface — the scope word is stripped only when it is
+    pure addressing. Dialect-blind by construction: ``_DYNAMIC_RE``
+    already matches every router's param shape."""
     transparent = set(vocab.get("route_transparent_segments") or [])
+    tenant_scope = {
+        str(s).lower() for s in (vocab.get("tenant_scope_segments") or [])
+    }
     segs = [s for s in (pattern or "").split("/") if s]
+
+    def _deeper_meaningful(start: int) -> bool:
+        """A key-capable segment exists at ``segs[start:]``."""
+        for j in range(start, len(segs)):
+            s = segs[j]
+            low_j = s.lower()
+            if (_DYNAMIC_RE.match(s) or s.startswith("_")
+                    or low_j in transparent or low_j in tenant_scope):
+                continue
+            if _is_version_seg(low_j, version_re) and j < len(segs) - 1:
+                continue
+            return True
+        return False
+
     chain: list[str] = []
     hops = 0
     for i, seg in enumerate(segs):
@@ -318,6 +347,11 @@ def _pattern_key_chain(
             # ``_layout``, Remix ``_index``) organise files, not URLs.
             continue
         if low in transparent:
+            continue
+        if (low in tenant_scope and i + 1 < len(segs)
+                and _DYNAMIC_RE.match(segs[i + 1])
+                and _deeper_meaningful(i + 2)):
+            # Pure tenant addressing — transparent (never a key).
             continue
         if _is_version_seg(low, version_re) and i < len(segs) - 1:
             continue

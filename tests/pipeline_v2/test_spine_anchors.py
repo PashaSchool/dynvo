@@ -139,7 +139,14 @@ def test_trap_basename_collision_no_merge():
 
 def test_trap_collection_descend_carves_mega_segment():
     """papermark /api/teams/[teamId]/* = 168 routes — without descend the
-    route anchor goes coarse. The chain must carve ``documents``."""
+    route anchor goes coarse. The chain must carve ``documents``.
+
+    W4 CONTRACT UPDATE (tenancy-transparency): ``teams`` followed by a
+    param is tenant ADDRESSING — the mega-segment no longer contributes
+    a coarse ``route:pages/api/teams`` anchor at all; the carved domains
+    ARE the top grain. Team-MANAGEMENT routes (literal ``/api/teams`` /
+    detail ``/api/teams/:id``) still key a Teams anchor — asserted
+    separately below."""
     routes = [
         {"pattern": "/api/teams/:teamId/documents/:docId", "method": "GET",
          "file": "pages/api/teams/[teamId]/documents/[docId]/index.ts"},
@@ -149,9 +156,27 @@ def test_trap_collection_descend_carves_mega_segment():
     devs = [dev("d", [r["file"] for r in routes])]
     anchors = build_spine_anchors(devs, routes, ctx_of())
     ids = {a.canonical_id for a in anchors}
-    assert "route:pages/api/teams" in ids
-    assert "route:pages/api/teams/[teamId]/documents" in ids  # descend d1
+    # The tenancy blob is GONE — no coarse teams anchor from scoped routes.
+    assert "route:pages/api/teams" not in ids
+    assert "route:pages/api/teams/[teamId]/documents" in ids
     assert "route:pages/api/teams/[teamId]/billing" in ids
+    # Domain keys are now TOP grain (depth 0) — no phantom descend depth.
+    by_id_map = {a.canonical_id: a for a in anchors}
+    assert by_id_map["route:pages/api/teams/[teamId]/documents"].depth == 0
+
+
+def test_team_management_routes_still_key_teams():
+    """The scope word survives where it IS the surface (team CRUD)."""
+    routes = [
+        {"pattern": "/api/teams", "method": "POST",
+         "file": "pages/api/teams/index.ts"},
+        {"pattern": "/api/teams/:teamId", "method": "GET",
+         "file": "pages/api/teams/[teamId]/index.ts"},
+    ]
+    devs = [dev("d", [r["file"] for r in routes])]
+    anchors = build_spine_anchors(devs, routes, ctx_of())
+    ids = {a.canonical_id for a in anchors}
+    assert "route:pages/api/teams" in ids
 
 
 # ── Version-dir + single-letter key classes ──────────────────────────────
