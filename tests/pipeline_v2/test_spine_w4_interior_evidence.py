@@ -205,3 +205,82 @@ def test_without_evidence_prompt_and_digest_unchanged() -> None:
         user_text.split("```json\n", 1)[1].split("\n```", 1)[0])
     (pf_line,) = digest["current_product_features"]
     assert "sections" not in pf_line
+
+
+# ── W4 home-pure membership (anchored) ──────────────────────────────────
+
+
+def _mixed_world():
+    """Two PFs; one deterministic UF holding BOTH PFs' flows (the
+    openstatus status-pages/status-reports swap class)."""
+    fp1 = _eflow("pages/status-pages/edit.tsx")
+    fp2 = _eflow("pages/status-pages/list.tsx")
+    fr1 = _eflow("pages/status-reports/new.tsx")
+    d_pages = _dev("status-pages", "status-pages",
+                   ["pages/status-pages/edit.tsx",
+                    "pages/status-pages/list.tsx"], [fp1, fp2])
+    d_reports = _dev("status-reports", "status-reports",
+                     ["pages/status-reports/new.tsx"], [fr1])
+    mixed_uf = _uf("UF-001", "Manage status things", "status-pages",
+                   [fp1.uuid, fp2.uuid, fr1.uuid])
+    return d_pages, d_reports, mixed_uf, (fp1, fp2, fr1)
+
+
+def _eflow(entry: str) -> "Flow":
+    from faultline.models.types import Flow
+    return Flow(
+        name=entry.replace("/", "-"), uuid=f"uuid-{entry}", paths=[entry],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_TS, health_score=90.0, entry_point_file=entry,
+    )
+
+
+def test_home_pure_inheritance_filters_foreign_bloc() -> None:
+    d_pages, d_reports, mixed_uf, (fp1, fp2, fr1) = _mixed_world()
+    specs = [{
+        "name": "Manage status pages", "resource": "status page",
+        "product_feature": "Status Pages",
+        "from_flows": ["UF-001"], "from_dev_features": [],
+    }]
+    ufs, tele = _build_user_flows(
+        specs, [mixed_uf], [d_pages, d_reports], [], home_pure=True)
+    (uf,) = ufs
+    # Only the status-pages HOME flows inherited; the reports flow
+    # stays unclaimed for its own capability's journey.
+    assert set(uf.member_flow_ids) == {fp1.uuid, fp2.uuid}
+    assert tele["uf_home_filtered"] == 1
+
+
+def test_home_pure_off_keeps_legacy_inheritance() -> None:
+    d_pages, d_reports, mixed_uf, (fp1, fp2, fr1) = _mixed_world()
+    specs = [{
+        "name": "Manage status pages", "resource": "status page",
+        "product_feature": "Status Pages",
+        "from_flows": ["UF-001"], "from_dev_features": [],
+    }]
+    ufs, tele = _build_user_flows(
+        specs, [mixed_uf], [d_pages, d_reports], [], home_pure=False)
+    (uf,) = ufs
+    assert set(uf.member_flow_ids) == {fp1.uuid, fp2.uuid, fr1.uuid}
+    assert tele["uf_home_filtered"] == 0
+
+
+def test_home_pure_lane_flows_stay_inheritable() -> None:
+    from faultline.models.types import Flow
+    lane_flow = Flow(
+        name="lane-flow", uuid="uuid-lane", paths=["lib/x.ts"],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_TS, health_score=90.0, entry_point_file="lib/x.ts",
+    )
+    lane_dev = _dev("lib", None, ["lib/x.ts"], [lane_flow])
+    old = _uf("UF-001", "Old", "status-pages", ["uuid-lane"])
+    specs = [{
+        "name": "Do things", "resource": "thing",
+        "product_feature": "Status Pages",
+        "from_flows": ["UF-001"], "from_dev_features": [],
+    }]
+    ufs, tele = _build_user_flows(specs, [old], [lane_dev], [],
+                                  home_pure=True)
+    (uf,) = ufs
+    assert uf.member_flow_ids == ["uuid-lane"]  # None-home = inheritable
+    assert tele["uf_home_filtered"] == 0

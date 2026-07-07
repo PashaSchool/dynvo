@@ -953,12 +953,43 @@ def _flow_member_id(flow: Any) -> str:
     return getattr(flow, "uuid", "") or getattr(flow, "name", "") or ""
 
 
+_HOME_PURE_ENV = "FAULTLINE_UF_HOME_PURE_INHERIT"
+
+
+def _home_pure_enabled() -> bool:
+    return (os.environ.get(_HOME_PURE_ENV, "1") or "1").strip().lower() \
+        not in {"0", "false", "no", "off"}
+
+
+def _flow_home_map(
+    developer_features: list["Feature"],
+) -> dict[str, str | None]:
+    """member-flow id → HOME product feature (entry-owner first, owning
+    dev's stamp fallback — the same rule the span split uses). ``None``
+    = lane/unowned home (no evidence of foreignness — inheritable by
+    any journey)."""
+    from faultline.pipeline_v2.flow_span_split import _owner_map
+
+    owner = _owner_map(developer_features)
+    home: dict[str, str | None] = {}
+    for d in developer_features:
+        dev_pf = getattr(d, "product_feature_id", None)
+        for fl in getattr(d, "flows", None) or []:
+            mid = _flow_member_id(fl)
+            if not mid:
+                continue
+            entry = getattr(fl, "entry_point_file", None)
+            home[mid] = (owner.get(entry) if entry else None) or dev_pf
+    return home
+
+
 def _build_user_flows(
     uf_specs: list[dict[str, Any]],
     old_ufs: list["UserFlow"],
     developer_features: list["Feature"],
     routes_index: list[dict[str, Any]],
     interior_evidence: dict[str, Any] | None = None,
+    home_pure: bool = False,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Reconstruct the abstracted user_flows — GROUNDED-ONLY.
 
@@ -1030,7 +1061,31 @@ def _build_user_flows(
         "uf_dropped_names": [],
         "uf_sections_cited": 0, "uf_sections_invalid": 0,
         "uf_section_grounded": 0,
+        "uf_home_filtered": 0,
     }
+
+    # W4 §4.6 — HOME-PURE membership (anchored mode): a journey's cited
+    # evidence must live within ONE PF's subtree, so a spec citing
+    # capability X may only claim flows whose HOME is X (entry-owner
+    # first, owning dev fallback) or lane/unowned (no foreignness
+    # evidence). Call-1 lumping sibling capabilities' CRUD journeys
+    # (openstatus keyed A/B: "Manage status pages" bound to
+    # status-reports carrying 182-span status-pages blocs — the swap
+    # class) is filtered AT CONSTRUCTION; the foreign flows stay
+    # unclaimed for their own capability's journeys / backstop.
+    home_by_mid: dict[str, str | None] = (
+        _flow_home_map(developer_features)
+        if home_pure and _home_pure_enabled() else {}
+    )
+
+    def _home_ok(mid: str, pf_key: str | None) -> bool:
+        if not home_by_mid or not pf_key:
+            return True
+        h = home_by_mid.get(mid)
+        if h is None or h == pf_key:
+            return True
+        tele["uf_home_filtered"] += 1
+        return False
 
     # W4 §4.6 — interior-section citation index: (pf lower, section lower)
     # → hosting page files, plus page → flow-member ids (entry lookup).
@@ -1077,9 +1132,13 @@ def _build_user_flows(
         if owner is not None:
             route_owner[pat] = owner
 
-    def _backfill_members(route_patterns: list[str], claimed: set[str]) -> list[str]:
+    def _backfill_members(
+        route_patterns: list[str], claimed: set[str],
+        pf_key: str | None = None,
+    ) -> list[str]:
         """UNCLAIMED flows of the devs owning *route_patterns* — the
-        deterministic member backfill for a route-grounded, flow-less UF."""
+        deterministic member backfill for a route-grounded, flow-less UF.
+        Home-pure under anchored W4 (same rule as inheritance)."""
         out: list[str] = []
         seen: set[str] = set()
         for pat in route_patterns:
@@ -1087,17 +1146,19 @@ def _build_user_flows(
             if owner is None:
                 continue
             for mid in dev_flow_ids.get(owner.name, []):
-                if mid not in claimed and mid not in seen:
+                if (mid not in claimed and mid not in seen
+                        and _home_ok(mid, pf_key)):
                     seen.add(mid)
                     out.append(mid)
         return out
 
-    # ── Pass 1 — from_flows inheritance (unchanged, validated channel) ──
+    # ── Pass 1 — from_flows inheritance (home-pure under anchored W4) ──
     built: list[tuple[dict[str, Any], "UserFlow"]] = []
     for spec in uf_specs:
         name = spec.get("name")
         if not isinstance(name, str) or not name.strip():
             continue
+        spec_pf_key = _slug(spec.get("product_feature") or "") or None
         members: list[str] = []
         routes: list[str] = []
         seen_m: set[str] = set()
@@ -1106,7 +1167,7 @@ def _build_user_flows(
             if not src:
                 continue
             for mid in src.member_flow_ids:
-                if mid not in seen_m:
+                if mid not in seen_m and _home_ok(mid, spec_pf_key):
                     seen_m.add(mid)
                     members.append(mid)
             routes.extend(src.routes or [])
@@ -1140,6 +1201,7 @@ def _build_user_flows(
     # ungrounded drop.
     rescued_route_sets: set[frozenset[str]] = set()
     for spec, uf in built:
+        spec_pf_key = uf.product_feature_id
         if not uf.member_flow_ids:
             utok = _content_tokens(uf.name, uf.resource)
             attached: list[str] = []
@@ -1151,7 +1213,8 @@ def _build_user_flows(
                     continue
                 for mid in dev_flow_ids.get(dev.name, []):
                     if (mid not in claimed and mid not in seen_a
-                            and (flow_tokens.get(mid) or set()) & utok):
+                            and (flow_tokens.get(mid) or set()) & utok
+                            and _home_ok(mid, spec_pf_key)):
                         seen_a.add(mid)
                         attached.append(mid)
             if attached:
@@ -1184,7 +1247,7 @@ def _build_user_flows(
                 if len(res) > 3 and res.endswith("s"):
                     res = res[:-1]
                 for mid, ftok in flow_tokens.items():
-                    if mid in claimed:
+                    if mid in claimed or not _home_ok(mid, spec_pf_key):
                         continue
                     if (res and res in ftok) or len(utok & ftok) >= 2:
                         attached.append(mid)
@@ -1216,7 +1279,8 @@ def _build_user_flows(
             # from the route-owning devs' unclaimed flows, else DROP (Soc0
             # "Look up users by email": the owner's flows were all claimed by
             # another journey — emitting a memberless twin is dup inflation).
-            fill = _backfill_members(uf.routes, claimed)
+            fill = _backfill_members(uf.routes, claimed,
+                                      pf_key=spec_pf_key)
             if fill:
                 uf.member_flow_ids = fill
                 uf.member_count = len(fill)
@@ -3044,7 +3108,8 @@ def run_journey_abstraction(
             anchored=anchored, anchored_pf_by_name=anchored_pf_by_name)
         new_ufs, uf_tele = _build_user_flows(
             uf_specs_, user_flows, developer_features, routes_index,
-            interior_evidence=interior_evidence if anchored else None)
+            interior_evidence=interior_evidence if anchored else None,
+            home_pure=anchored)
         if not new_pfs or not new_ufs:
             return None
         if anchored:
