@@ -1266,7 +1266,11 @@ def run_finalize_phase(
     if e2e_truth_enabled():
         with StageLogger(run_dir, 6, "e2e_truth") as log_e2e:
             try:
-                e2e_payload = run_e2e_truth(repo_path, user_flows)
+                e2e_payload = run_e2e_truth(
+                    repo_path, user_flows,
+                    routes_index=lineage_result.routes_index,
+                    flows=list(bipartite.flows),
+                )
                 scan_meta["e2e_truth"] = scan_meta_view(e2e_payload)
                 write_stage_artifact(
                     repo_path, 6, "e2e_truth", e2e_payload,

@@ -188,6 +188,49 @@ def test_route_family_match_tenancy_transparent():
     assert "UF-001" in out["uf_e2e_evidence"]
 
 
+def test_routes_index_lane_matches_when_uf_routes_empty():
+    """The real-corpus class: UserFlow.routes is EMPTY on cold scans
+    (papermark 0/52, typebot 0/100) — matching must ride
+    routes_index → handler file → flow → UF instead."""
+    j, _ = _journeys_of(
+        "test('can create a new webhook', async ({ page }) => {"
+        " await page.goto('/project/abc/integrations/webhooks/new'); });")
+    ufs = [uf("UF-009", "Manage webhooks", [], "webhook", pf="integrations")]
+    routes_index = [{
+        "pattern": "/project/[ref]/integrations/webhooks",
+        "file": "apps/studio/pages/project/[ref]/integrations/webhooks.tsx",
+        "method": "PAGE",
+    }]
+    flows = [SimpleNamespace(
+        uuid="fl-1", name="create-webhook-flow",
+        entry_point_file="apps/studio/pages/project/[ref]/integrations/webhooks.tsx",
+        paths=["apps/studio/pages/project/[ref]/integrations/webhooks.tsx"],
+        user_flow_id="UF-009",
+    )]
+    out = stitch_journeys(j, ufs, routes_index, flows)
+    assert out["matched"] and out["matched"][0]["uf_id"] == "UF-009"
+    assert out["matched"][0]["via"] == "route"
+
+
+def test_routes_index_lane_via_member_flow_ids():
+    """Flow lacks user_flow_id; UF claims it via member_flow_ids —
+    reverse direction of the flow↔UF map."""
+    j, _ = _journeys_of(
+        "test('sees billing page', async ({ page }) => {"
+        " await page.goto('/settings/billing'); });")
+    ufs = [uf("UF-002", "Manage billing", [], "billing")]
+    ufs[0].member_flow_ids = ["billing-flow"]
+    routes_index = [{"pattern": "/settings/billing",
+                     "file": "app/settings/billing/page.tsx",
+                     "method": "PAGE"}]
+    flows = [SimpleNamespace(
+        uuid=None, name="billing-flow",
+        entry_point_file="app/settings/billing/page.tsx",
+        paths=["app/settings/billing/page.tsx"], user_flow_id=None)]
+    out = stitch_journeys(j, ufs, routes_index, flows)
+    assert out["matched"] and out["matched"][0]["uf_id"] == "UF-002"
+
+
 def test_orphan_journey_reported():
     j, _ = _journeys_of(
         "test('exports audit log', async ({ page }) => {"

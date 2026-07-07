@@ -498,20 +498,94 @@ def _uf_get(uf: Any, name: str, default: Any = None) -> Any:
     return getattr(uf, name, default)
 
 
+def _flow_uf_map(
+    user_flows: list[Any], flows: list[Any],
+) -> dict[str, str]:
+    """flow uuid/name → uf_id, from BOTH directions (``Flow.user_flow_id``
+    and ``UserFlow.member_flow_ids`` — members may be uuid or name)."""
+    uf_ids = {str(_uf_get(u, "id") or "") for u in user_flows}
+    out: dict[str, str] = {}
+    for uf in user_flows:
+        uid = str(_uf_get(uf, "id") or "")
+        for m in _uf_get(uf, "member_flow_ids") or []:
+            out.setdefault(str(m), uid)
+    for fl in flows or []:
+        target = str(_uf_get(fl, "user_flow_id") or "")
+        if target and target in uf_ids:
+            for key in (_uf_get(fl, "uuid"), _uf_get(fl, "name")):
+                if key:
+                    out.setdefault(str(key), target)
+    return out
+
+
+def _route_file_lane(
+    routes_index: list[dict[str, Any]] | None,
+    flows: list[Any],
+    flow_to_uf: dict[str, str],
+    vocab: dict[str, Any],
+    version_re: re.Pattern[str],
+) -> list[tuple[tuple[str, ...], str]]:
+    """(route fam, uf_id) pairs via routes_index → handler file → flow →
+    UF. This is the lane that BITES on real scans: ``UserFlow.routes``
+    is empty on the current corpus (papermark 0/52, typebot 0/100,
+    supabase 0/54 cold scans) while ``routes_index`` is populated."""
+    if not routes_index:
+        return []
+    by_entry: dict[str, list[Any]] = {}
+    by_path: dict[str, list[Any]] = {}
+    for fl in flows or []:
+        e = str(_uf_get(fl, "entry_point_file") or "")
+        if e:
+            by_entry.setdefault(e, []).append(fl)
+        for p in _uf_get(fl, "paths") or []:
+            by_path.setdefault(str(p), []).append(fl)
+
+    def _uf_for_file(fpath: str) -> str | None:
+        cands = by_entry.get(fpath)
+        if not cands:
+            # most-specific containing flow: fewest paths, then lex uuid
+            cands = sorted(
+                by_path.get(fpath, []),
+                key=lambda f: (len(_uf_get(f, "paths") or []),
+                               str(_uf_get(f, "uuid") or _uf_get(f, "name"))),
+            )[:1]
+        for fl in cands:
+            for key in (_uf_get(fl, "uuid"), _uf_get(fl, "name")):
+                uid = flow_to_uf.get(str(key or ""))
+                if uid:
+                    return uid
+        return None
+
+    pairs: list[tuple[tuple[str, ...], str]] = []
+    for entry in routes_index:
+        fam = _fam(str(entry.get("pattern") or ""), vocab, version_re)
+        if not fam:
+            continue
+        uid = _uf_for_file(str(entry.get("file") or ""))
+        if uid:
+            pairs.append((fam, uid))
+    return pairs
+
+
 def stitch_journeys(
     journeys: list[E2EJourney],
     user_flows: list[Any],
+    routes_index: list[dict[str, Any]] | None = None,
+    flows: list[Any] | None = None,
 ) -> dict[str, Any]:
-    """Match journeys → UFs. Route-family overlap first; content-token
-    fallback ONLY for journeys with zero route evidence (``via="name"``).
-    """
+    """Match journeys → UFs. Route-family overlap first (two lanes:
+    direct ``UserFlow.routes`` + routes_index→handler-file→flow→UF);
+    content-token fallback ONLY when a journey has zero route evidence
+    (``via="name"``)."""
     vocab = load_spine_vocab()
     version_re = re.compile(
         vocab.get("version_segment_pattern") or r"^v\d+$")
 
+    uf_by_id: dict[str, Any] = {}
     uf_fams: list[tuple[Any, set[tuple[str, ...]]]] = []
     uf_toks: list[tuple[Any, set[str]]] = []
     for uf in user_flows:
+        uf_by_id[str(_uf_get(uf, "id") or "")] = uf
         fams = {
             f for f in (
                 _fam(r, vocab, version_re)
@@ -523,6 +597,16 @@ def stitch_journeys(
             str(_uf_get(uf, "name") or ""),
             str(_uf_get(uf, "resource") or ""),
         )))
+    flow_to_uf = _flow_uf_map(user_flows, flows or [])
+    for fam, uid in _route_file_lane(
+            routes_index, flows or [], flow_to_uf, vocab, version_re):
+        uf = uf_by_id.get(uid)
+        if uf is None:
+            continue
+        for cand, fams in uf_fams:
+            if cand is uf:
+                fams.add(fam)
+                break
 
     matched: list[dict[str, Any]] = []
     orphans: list[E2EJourney] = []
@@ -631,6 +715,8 @@ def _naming_candidates(matched: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def run_e2e_truth(
     repo_root: Path,
     user_flows: list[Any],
+    routes_index: list[dict[str, Any]] | None = None,
+    flows: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Full stage: extract → stitch → payload (artifact-shaped).
 
@@ -652,7 +738,7 @@ def run_e2e_truth(
             "naming_candidates": [],
             "counts": {"matched": 0, "orphans": 0, "match_rate": None},
         }
-    stitched = stitch_journeys(journeys, user_flows)
+    stitched = stitch_journeys(journeys, user_flows, routes_index, flows)
     matched = stitched["matched"]
     orphans = sorted(
         (j.as_dict() for j in stitched["orphans"]),
