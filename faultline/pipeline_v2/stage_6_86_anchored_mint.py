@@ -119,6 +119,40 @@ _SHARED_REASON_SHELL = "shell_lineage_only"
 #: Soc0 sentinelone 1,258) stay minted.
 _HUB_HUSK_LOC_FLOOR = 150
 
+#: W3.2 I9 fix — the lane carve-out fires ONLY for the app-shell /
+#: shared-package class the law's own ruler (validator I9) exempts.
+#: Universal monorepo conventions, mirrored from the ruler verbatim
+#: (rule-no-repo-specific-paths: these are ecosystem tiers, not repos):
+#: a structural shell NAME, or a path-majority under shared-package
+#: roots / the dev's own ``apps/<name>`` shell. The W3.1 blanket
+#: ws-anchor carve-out over-fired on typebot `user` (a small, coherent,
+#: flowful account dev whose ws package held only 7/20 of its files) —
+#: the one core I9 regression of wave31. A flowful ws-anchor dev that
+#: FAILS this test is product code and must ride the rescue ladder
+#: (span-vote → walk) like every other flowful dev.
+_LANE_SHELL_NAME_HINTS = (
+    "backend", "frontend", "main", "mock", "scripts", "infra", "platform",
+)
+_LANE_SHARED_PKG_ROOTS = (
+    "packages/", "libs/", "internal/", "tooling/", "config/",
+)
+
+
+def _lane_shell_exempt(f: "Feature") -> bool:
+    """``True`` when laning flowful *f* is exempt under I9's own rules."""
+    name = (getattr(f, "name", "") or "").lower()
+    if any(h in name for h in _LANE_SHELL_NAME_HINTS):
+        return True
+    paths = [str(p) for p in (getattr(f, "paths", None) or [])]
+    if not paths:
+        return False
+    hits = sum(
+        1 for p in paths
+        if any(p.startswith(r) for r in _LANE_SHARED_PKG_ROOTS)
+        or p.startswith(f"apps/{name}/")
+    )
+    return hits >= max(1, len(paths) // 2)
+
 
 def anchored_mint_enabled() -> bool:
     """Default ON; ``FAULTLINE_SPINE_ANCHORED_MINT=0`` restores the old
@@ -950,6 +984,16 @@ def run_anchored_mint(
     # `studio` 99.5K LOC / 478 flows → the `claim-project` page PF).
     # They lane honestly (flows stay visible on the lane row; their
     # files ride role="shared" members on every importing feature).
+    #
+    # W3.2 NARROWING — the ws-anchor MARKER alone over-fires: it also
+    # tags small coherent capability devs (typebot `user`: 8 account
+    # flows, 20 files split packages/user + builder features/user) whose
+    # laning the ruler does NOT exempt → wave31's one core I9 breach.
+    # The carve-out now additionally requires the SHELL SHAPE the ruler
+    # itself exempts (``_lane_shell_exempt``); ws-marker devs that fail
+    # it ride the same guarded rescue ladder (span-vote → walk) as every
+    # other flowful dev — the law holds for every flowful dev regardless
+    # of anchor family, lane only if truly flowless.
     from faultline.pipeline_v2.stage_8_7_anchor_desink import (
         _is_workspace_anchor,
     )
@@ -957,11 +1001,17 @@ def run_anchored_mint(
     for f, w, reason in fold_pending:
         flowful = bool(getattr(f, "flows", None))
         if flowful and _is_workspace_anchor(f):
-            tele["law_ws_anchor_laned"] = (
-                tele.get("law_ws_anchor_laned", 0) + 1)
-            infra[f.name] = (_SHARED_REASON_SHELL if w is not None and w.shell
-                             else reason)
-            continue
+            if _lane_shell_exempt(f):
+                tele["law_ws_anchor_laned"] = (
+                    tele.get("law_ws_anchor_laned", 0) + 1)
+                infra[f.name] = (
+                    _SHARED_REASON_SHELL if w is not None and w.shell
+                    else reason)
+                continue
+            # marker present but shape says product code — released to
+            # the ladder (tracked for the smoke gates).
+            tele["law_ws_anchor_released"] = (
+                tele.get("law_ws_anchor_released", 0) + 1)
         if flowful and mintable:
             src = w.canonical_id if w is not None else "none"
             target = _span_vote(f)
