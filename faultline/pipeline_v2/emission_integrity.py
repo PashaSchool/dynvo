@@ -58,13 +58,31 @@ the membership of phantom rows.
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature, Flow, UserFlow
+
+#: W4.2 anchored-husk emission rule (operator exhibit: typebot ``Popup``).
+#: Default ON; ``FAULTLINE_ANCHORED_HUSK_DROP=0`` disables.
+ANCHORED_HUSK_ENV = "FAULTLINE_ANCHORED_HUSK_DROP"
+
+#: The shared_reason stamped on a husk's unbound shell devs — consumed by
+#: ``build_platform_infrastructure_lane`` (added to its accepted set) and
+#: validator I22 (any non-empty machine-readable reason).
+ANCHORED_HUSK_REASON = "anchored_husk_shell"
+
+
+def anchored_husk_drop_enabled() -> bool:
+    """Default ON; ``FAULTLINE_ANCHORED_HUSK_DROP=0`` off."""
+    return os.environ.get(ANCHORED_HUSK_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
 
 
 # ── The single normalizer ────────────────────────────────────────────────
@@ -185,6 +203,15 @@ class EmissionIntegrityResult:
     # Product-Spine §4.1 — bare-dir sweep (root-marker paths / member_files
     # entries removed at emission). 0 on a clean spine.
     bare_dir_paths_dropped: int = 0
+    # W4.2 anchored-husk rule (operator exhibit: typebot Popup) — anchored
+    # PF rows whose ownership evidence is entirely secondary. 0 on a clean
+    # spine.
+    anchored_husk_pfs_dropped: list[str] = field(default_factory=list)
+    anchored_husk_devs_unbound: int = 0
+    anchored_husk_devs_rebound: int = 0
+    anchored_husk_ufs_rehomed: int = 0
+    anchored_husk_seed_ufs_dropped: int = 0
+    anchored_husks_kept_journey: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -197,10 +224,236 @@ class EmissionIntegrityResult:
             "flow_backpointers_rewritten": self.flow_backpointers_rewritten,
             "flow_backpointers_nulled": self.flow_backpointers_nulled,
             "bare_dir_paths_dropped": self.bare_dir_paths_dropped,
+            "anchored_husk_pfs_dropped": list(self.anchored_husk_pfs_dropped),
+            "anchored_husk_devs_unbound": self.anchored_husk_devs_unbound,
+            "anchored_husk_devs_rebound": self.anchored_husk_devs_rebound,
+            "anchored_husk_ufs_rehomed": self.anchored_husk_ufs_rehomed,
+            "anchored_husk_seed_ufs_dropped": (
+                self.anchored_husk_seed_ufs_dropped
+            ),
+            "anchored_husks_kept_journey": list(
+                self.anchored_husks_kept_journey
+            ),
         }
 
 
 # ── The three passes ──────────────────────────────────────────────────────
+
+
+def _flow_home_index(
+    features: list["Feature"],
+    flows: list["Flow"],
+) -> dict[str, str]:
+    """flow key → home PF key. Two channels, dev-flow ownership first
+    (the same "owning dev's capability" notion the 6.7d backstop's
+    ``flow_pf`` uses), then the flow's ``primary_feature`` dev name."""
+    dev_pf: dict[str, str] = {}
+    home: dict[str, str] = {}
+    for f in features:
+        if getattr(f, "layer", "developer") != "developer":
+            continue
+        pfid = getattr(f, "product_feature_id", None)
+        name = str(getattr(f, "name", "") or "")
+        if not pfid:
+            continue
+        if name:
+            dev_pf.setdefault(name, str(pfid))
+        for fl in getattr(f, "flows", None) or []:
+            k = _flow_key(fl)
+            if k:
+                home.setdefault(k, str(pfid))
+    for fl in flows:
+        k = _flow_key(fl)
+        if not k or k in home:
+            continue
+        primary = str(getattr(fl, "primary_feature", "") or "")
+        if primary and primary in dev_pf:
+            home[k] = dev_pf[primary]
+    return home
+
+
+def _drop_anchored_husks(
+    features: list["Feature"],
+    product_features: list["Feature"],
+    user_flows: list["UserFlow"],
+    flows: list["Flow"],
+    result: EmissionIntegrityResult,
+) -> list["Feature"]:
+    """Pass 1a — W4.2 anchored-husk rule (operator exhibits: typebot
+    ``Popup`` fdir 13 files / 0 flows / 0 owned LOC; Soc0
+    ``module-store-page`` / ``private-connectors-page`` /
+    ``start-investigation-page`` route husks; documenso
+    ``sign.$token+``).
+
+    An ANCHORED product feature whose ownership evidence is entirely
+    secondary — zero owned LOC and zero on-flow LOC on the row AND on
+    every bound dev, zero flows on the row — is an emission shell: every
+    line its files carry is owned (and surfaced) by OTHER features, so
+    the row duplicates their story under a name no code backs. Such rows
+    survive the phantom pass only through their ``loc_shared`` view (the
+    Popup class: 1,185 shared LOC, nothing owned). A bound dev may still
+    CARRY a flow (each Soc0 route husk holds one real page journey) —
+    what makes the row a husk is that the flow contributes no owned
+    lines; the journey is real, the ROW is not. The rule:
+
+      * the PF row is dropped (its anchor remains a legal sub-anchor /
+        naming candidate on later scans — nothing is blacklisted);
+      * journeys that referenced the husk re-home: first by the
+        plurality HOME capability of their member flows (the flow's
+        owning dev's PF — the I16 ruler), else by the plurality PRIMARY
+        OWNER of the husk's member files (files follow their true
+        owners: the Soc0 husks' 16/17 files are integration-feature
+        code, so the journey follows the code). A SYNTHESIZED journey
+        with no derivable home is dropped with the husk (a seed pointing
+        at a husk is a fake row); a REAL journey with no derivable home
+        KEEPS the husk alive (``anchored_husks_kept_journey`` — never
+        orphan a real journey);
+      * FLOWLESS shell devs unbind to the platform-infrastructure lane
+        with ``shared_reason="anchored_husk_shell"`` — zero-loss,
+        I22-visible; a FLOWFUL shell dev instead REBINDS to the husk's
+        landing target (the lane law: a dev with ≥1 flow never lanes) —
+        no target derivable ⇒ the husk stays.
+
+    Platform bucket exempt as everywhere. Kill-switch
+    ``FAULTLINE_ANCHORED_HUSK_DROP=0``.
+    """
+    if not anchored_husk_drop_enabled():
+        return product_features
+
+    devs_by_pf: dict[str, list["Feature"]] = {}
+    for f in features:
+        if getattr(f, "layer", "developer") != "developer":
+            continue
+        pfid = getattr(f, "product_feature_id", None)
+        if pfid:
+            devs_by_pf.setdefault(str(pfid), []).append(f)
+
+    def _zero_owned(feat: "Feature") -> bool:
+        """No owned lines anywhere: ``loc`` and ``loc_flow`` both falsy.
+        Flows are NOT checked at dev grain — a husk's dev may hold a
+        real journey whose every line lives on foreign-owned files."""
+        return not (getattr(feat, "loc", None)
+                    or getattr(feat, "loc_flow", None))
+
+    candidates: list["Feature"] = []
+    for pf in product_features:
+        if _is_platform_bucket(pf) or not getattr(pf, "anchor_id", None):
+            continue
+        if not _zero_owned(pf) or (getattr(pf, "flows", None) or []):
+            continue
+        if any(not _zero_owned(d) for d in devs_by_pf.get(_pf_key(pf), [])):
+            continue
+        candidates.append(pf)
+    if not candidates:
+        return product_features
+
+    home_of = _flow_home_index(features, flows)
+    husk_keys = {_pf_key(pf) for pf in candidates}
+
+    # file → primary-owner PF (first dev in features[] order primary-
+    # owning the path — the path_index convention), husks excluded.
+    file_owner_pf: dict[str, str] = {}
+    for f in features:
+        if getattr(f, "layer", "developer") != "developer":
+            continue
+        pfid = getattr(f, "product_feature_id", None)
+        if not pfid or str(pfid) in husk_keys:
+            continue
+        for p in (getattr(f, "paths", None) or []):
+            file_owner_pf.setdefault(str(p), str(pfid))
+
+    def _member_paths(pf: "Feature") -> list[str]:
+        out: list[str] = []
+        for mf in (getattr(pf, "member_files", None) or []):
+            p = (mf.get("path") if isinstance(mf, dict)
+                 else getattr(mf, "path", None))
+            if p:
+                out.append(str(p))
+        return out or [str(p) for p in (getattr(pf, "paths", None) or [])]
+
+    def _top(votes: Counter[str]) -> str | None:
+        if not votes:
+            return None
+        (_key, n), = votes.most_common(1)
+        return sorted(k for k, v in votes.items() if v == n)[0]
+
+    ufs_by_pf: dict[str, list["UserFlow"]] = {}
+    for uf in user_flows:
+        ref = str(getattr(uf, "product_feature_id", None) or "")
+        if ref in husk_keys:
+            ufs_by_pf.setdefault(ref, []).append(uf)
+
+    dropped_keys: set[str] = set()
+    uf_moves: list[tuple["UserFlow", str]] = []
+    uf_drops: list["UserFlow"] = []
+    for pf in sorted(candidates, key=lambda p: _pf_key(p)):
+        key = _pf_key(pf)
+        owner_votes: Counter[str] = Counter()
+        for p in _member_paths(pf):
+            owner = file_owner_pf.get(p)
+            if owner:
+                owner_votes[owner] += 1
+        fallback = _top(owner_votes)
+        moves: list[tuple["UserFlow", str]] = []
+        drops: list["UserFlow"] = []
+        blocked = False
+        for uf in ufs_by_pf.get(key, []):
+            votes: Counter[str] = Counter()
+            for mid in getattr(uf, "member_flow_ids", None) or []:
+                target = home_of.get(str(mid))
+                if target and target not in husk_keys:
+                    votes[target] += 1
+            target = _top(votes) or fallback
+            if target:
+                moves.append((uf, target))
+            elif getattr(uf, "synthesized", None):
+                drops.append(uf)
+            else:
+                blocked = True  # a real journey with no derivable home
+                break
+        # A flowful shell dev must land somewhere real (the lane law).
+        flowful = [d for d in devs_by_pf.get(key, [])
+                   if getattr(d, "flows", None)]
+        if not blocked and flowful and not fallback:
+            blocked = True
+        if blocked:
+            result.anchored_husks_kept_journey.append(
+                str(getattr(pf, "display_name", None)
+                    or getattr(pf, "name", "?")))
+            continue
+        dropped_keys.add(key)
+        uf_moves.extend(moves)
+        uf_drops.extend(drops)
+        result.anchored_husk_pfs_dropped.append(
+            str(getattr(pf, "display_name", None)
+                or getattr(pf, "name", "?")))
+        aid = str(getattr(pf, "anchor_id", None) or "")
+        for dev in devs_by_pf.get(key, []):
+            if getattr(dev, "flows", None) and fallback:
+                dev.product_feature_id = fallback
+                dev.anchor_id = f"fold:anchored-husk->{aid}"
+                if getattr(dev, "shared_reason", None):
+                    dev.shared_reason = None
+                result.anchored_husk_devs_rebound += 1
+            else:
+                dev.product_feature_id = None
+                dev.anchor_id = None
+                dev.shared_reason = ANCHORED_HUSK_REASON
+                result.anchored_husk_devs_unbound += 1
+
+    if not dropped_keys:
+        return product_features
+
+    for uf, target in uf_moves:
+        uf.product_feature_id = target
+        result.anchored_husk_ufs_rehomed += 1
+    if uf_drops:
+        gone = {id(u) for u in uf_drops}
+        user_flows[:] = [u for u in user_flows if id(u) not in gone]
+        result.anchored_husk_seed_ufs_dropped = len(uf_drops)
+    return [
+        pf for pf in product_features if _pf_key(pf) not in dropped_keys
+    ]
 
 
 def _drop_phantoms(
@@ -351,6 +604,12 @@ def enforce_emission_integrity(
     result.bare_dir_paths_dropped = strip_bare_dir_feature_paths(
         list(features) + list(product_features),
     )
+    # W4.2 anchored-husk rule BEFORE the phantom pass: the husk drop
+    # re-homes / removes the dependent journeys itself, so I12 below
+    # reconciles against an already-consistent reference set.
+    product_features = _drop_anchored_husks(
+        features, product_features, user_flows, flows, result,
+    )
     features, product_features = _drop_phantoms(features, product_features, result)
     _reconcile_uf_pf_refs(product_features, user_flows, result)
     _rewrite_flow_backpointers(user_flows, flows, result)
@@ -358,6 +617,9 @@ def enforce_emission_integrity(
 
 
 __all__ = [
+    "ANCHORED_HUSK_ENV",
+    "ANCHORED_HUSK_REASON",
+    "anchored_husk_drop_enabled",
     "canonical_slug",
     "enforce_emission_integrity",
     "EmissionIntegrityResult",
