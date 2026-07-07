@@ -21,13 +21,15 @@ from faultline.pipeline_v2.stage_6_55_page_interior import (
 
 
 def _fam(family_dir: str, pages: tuple[str, ...],
-         label: str = "Database Backups") -> InteriorFamily:
+         label: str = "Database Backups",
+         dir_owned: bool = True) -> InteriorFamily:
     return InteriorFamily(
         family_dir=family_dir,
         component_names=("DatabaseBackups",),
         page_files=pages,
         source_files=(family_dir + "/index.tsx",),
         label=label,
+        dir_owned=dir_owned,
     )
 
 
@@ -144,3 +146,61 @@ def test_mint_bar_accepts_page_evidence(tmp_path: Path) -> None:
     )
     assert _mint_bar(bare, [dev], {}, True, (".tsx",), tmp_path, {}) \
         == "api_only_surface"
+
+
+def test_file_family_claims_only_its_file(interior) -> None:  # noqa: ANN001
+    """Container-sink guard (supabase interfaces smoke): a component
+    living DIRECTLY in a container dir claims its own file, never the
+    container subtree."""
+    pages = ("a/pages/x.tsx", "a/pages/y.tsx")
+    fam = InteriorFamily(
+        family_dir="apps/studio/components/interfaces",
+        component_names=("HomeOverview",),
+        page_files=pages,
+        source_files=("apps/studio/components/interfaces/HomeOverview.tsx",),
+        label="Home Overview",
+        dir_owned=False,
+    )
+    interior((fam,))
+    anchors = sa.build_spine_anchors([], [], _ctx())
+    ia = [a for a in anchors if a.source == "interior"]
+    assert len(ia) == 1
+    a = ia[0]
+    assert a.prefixes == ()  # NEVER a container prefix claim
+    assert a.files == frozenset(
+        {"apps/studio/components/interfaces/HomeOverview.tsx"})
+    assert a.key == "home-overview"  # keyed by the COMPONENT, not the dir
+
+
+def test_families_collapse_to_finest_grain() -> None:
+    """A barrel index at a container level must not swallow child
+    families — nested dir families collapse to the finest grain."""
+    from faultline.pipeline_v2.stage_6_55_page_interior import (
+        InteriorNode,
+        PageInterior,
+        _build_families,
+    )
+
+    def node(name, src):  # noqa: ANN001
+        return InteriorNode(
+            kind="component", name=name, label=None,
+            usage_line_start=1, usage_line_end=1, source_kind="local",
+            provenance="product", source_file=src,
+            def_line_start=1, def_line_end=10,
+        )
+
+    container_idx = "apps/web/components/interfaces/index.tsx"
+    leaf_idx = "apps/web/components/interfaces/Database/index.tsx"
+    pages = {
+        f"apps/web/pages/{i}.tsx": PageInterior(
+            file=f"apps/web/pages/{i}.tsx", page_kind="page",
+            nodes=(node("Everything", container_idx),
+                   node("Database", leaf_idx)),
+        )
+        for i in ("a", "b")
+    }
+    fams = _build_families(pages)
+    dirs = {(f.family_dir, f.dir_owned) for f in fams}
+    assert ("apps/web/components/interfaces/Database", True) in dirs
+    # The container barrel family is DROPPED (contains the leaf claim).
+    assert ("apps/web/components/interfaces", True) not in dirs

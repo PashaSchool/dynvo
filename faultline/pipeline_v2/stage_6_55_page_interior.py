@@ -235,13 +235,23 @@ class PageInterior:
 
 @dataclass(frozen=True)
 class InteriorFamily:
-    """A product component family rendered by ≥2 distinct pages."""
+    """A product component family rendered by ≥2 distinct pages.
 
-    family_dir: str                  # deepest common source dir
+    ``dir_owned=True`` — the component OWNS its directory (its source is
+    an ``index.*`` file), so the family may claim the dir subtree.
+    ``dir_owned=False`` — a component file living directly inside a
+    bigger container dir: the family claims ONLY its own file(s). This
+    is the container-sink guard (supabase ``components/interfaces``
+    smoke, 2026-07-07: a prefix claim at the container minted a
+    253K-LOC PF — exactly the D1 sink class this arc kills).
+    """
+
+    family_dir: str                  # grouping/labeling dir
     component_names: tuple[str, ...]
     page_files: tuple[str, ...]
     source_files: tuple[str, ...]
     label: str                       # display candidate (best heading/name)
+    dir_owned: bool = False
 
 
 @dataclass
@@ -609,13 +619,14 @@ def _def_spans_of(repo_path: Path, rel: str) -> dict[str, tuple[int, int]]:
     try:
         from faultline.analyzer.ast_extractor import extract_signatures
 
-        sig = extract_signatures(repo_path / rel)
-        for sr in getattr(sig, "symbol_ranges", None) or []:
+        sig = extract_signatures([rel], str(repo_path)).get(rel)
+        for sr in (getattr(sig, "symbol_ranges", None) or []):
             name = getattr(sr, "name", "")
             if name and name not in spans:
                 spans[name] = (int(sr.start_line), int(sr.end_line))
     except Exception:  # noqa: BLE001 — resolution is best-effort
-        pass
+        logger.debug("stage_6_55: def-span resolution failed for %s",
+                     rel, exc_info=True)
     _DEF_SPAN_CACHE[rel] = spans
     return spans
 
@@ -708,38 +719,67 @@ def _family_label(comp_names: list[str], labels: list[str]) -> str:
 
 
 def _build_families(pages: dict[str, PageInterior]) -> tuple[InteriorFamily, ...]:
-    """Product components grouped by SOURCE DIR; families span ≥2 pages."""
-    by_dir: dict[str, dict[str, Any]] = {}
+    """Product components grouped into family UNITS; families span ≥2 pages.
+
+    Unit grain (container-sink guard):
+      * ``index.*`` source — the component owns its dir → DIR unit
+        (subtree claim legal);
+      * any other source — FILE unit (the file lives inside a bigger
+        container; claiming the container is the D1 sink class).
+    A DIR unit that contains ANOTHER family's claim is dropped (barrel
+    ``index.ts`` at a container level must not swallow its children —
+    nested families collapse to the FINEST grain, the opposite of the
+    hub rule's shallowest-dir on purpose: hubs are author-declared
+    containers, interior families are evidence units).
+    """
+    units: dict[tuple[str, str], dict[str, Any]] = {}
     for page_file in sorted(pages):
         for n in pages[page_file].nodes:
             if (n.kind != "component" or n.provenance != "product"
                     or not n.source_file):
                 continue
-            d = (n.source_file.rsplit("/", 1)[0]
-                 if "/" in n.source_file else "")
+            src = n.source_file
+            d = src.rsplit("/", 1)[0] if "/" in src else ""
             if not d or len(d.split("/")) < 2:
                 continue  # repo-top dirs are never families
-            slot = by_dir.setdefault(d, {
+            base = src.rsplit("/", 1)[-1]
+            dir_owned = base.rsplit(".", 1)[0].lower() == "index"
+            key = ("dir", d) if dir_owned else ("file", src)
+            slot = units.setdefault(key, {
                 "components": set(), "pages": set(),
                 "sources": set(), "labels": [],
             })
             slot["components"].add(n.name.split(".", 1)[0])
             slot["pages"].add(page_file)
-            slot["sources"].add(n.source_file)
+            slot["sources"].add(src)
             if n.label:
                 slot["labels"].append(n.label)
+
+    qualified = {
+        key: slot for key, slot in units.items()
+        if len(slot["pages"]) >= MIN_FAMILY_PAGES
+    }
+    # Finest-grain collapse: a dir unit containing another qualified
+    # unit's claim is a container — drop it.
+    claim_paths = [
+        (key[1] if key[0] == "dir" else key[1]) for key in qualified
+    ]
     out: list[InteriorFamily] = []
-    for d in sorted(by_dir):
-        slot = by_dir[d]
-        if len(slot["pages"]) < MIN_FAMILY_PAGES:
+    for kind, path in sorted(qualified):
+        if kind == "dir" and any(
+            c != path and c.startswith(path + "/") for c in claim_paths
+        ):
             continue
+        slot = qualified[(kind, path)]
         comps = sorted(slot["components"])
         out.append(InteriorFamily(
-            family_dir=d,
+            family_dir=(path if kind == "dir"
+                        else path.rsplit("/", 1)[0]),
             component_names=tuple(comps),
             page_files=tuple(sorted(slot["pages"])),
             source_files=tuple(sorted(slot["sources"])),
             label=_family_label(comps, sorted(slot["labels"])),
+            dir_owned=(kind == "dir"),
         ))
     return tuple(out)
 

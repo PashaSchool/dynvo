@@ -1193,12 +1193,37 @@ def _build_interior_anchors(
         if (len(alnum) < 3 or key in stop or alnum in stop
                 or version_re.match(alnum)):
             continue
+        # Claim grain (container-sink guard, supabase smoke 2026-07-07):
+        # only an index-owned component DIR may claim its subtree; a
+        # component file living inside a bigger container claims ONLY
+        # its own file(s) — a prefix claim at the container is the D1
+        # sink class (interior:components/interfaces minted 253K LOC).
+        if fam.dir_owned:
+            cid = f"interior:{fam.family_dir}"
+            prefixes: tuple[str, ...] = (fam.family_dir,)
+            files: frozenset[str] = frozenset()
+        else:
+            src_files = frozenset(fam.source_files)
+            if not src_files:
+                continue
+            cid = f"interior:{sorted(src_files)[0]}"
+            prefixes = ()
+            files = src_files
+            # A FILE family keys by its component name, not the
+            # container dir (the dir is not its identity).
+            comp = fam.component_names[0] if fam.component_names else base
+            key = normalize_anchor_key(comp)
+            alnum = re.sub(r"[^a-z0-9]+", "", key)
+            if (len(alnum) < 3 or key in stop or alnum in stop
+                    or version_re.match(alnum)):
+                continue
         out.append(SpineAnchor(
-            canonical_id=f"interior:{fam.family_dir}",
+            canonical_id=cid,
             key=key,
             source="interior",
             display=fam.label or _display_of(base),
-            prefixes=(fam.family_dir,),
+            prefixes=prefixes,
+            files=files,
             sources=frozenset({"interior"}),
             page_route_files=frozenset(fam.page_files),
         ))

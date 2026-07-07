@@ -131,7 +131,7 @@ def split_cross_pf_flow_attribution(
             if not foreign:
                 continue
 
-            before = len(paths)
+            before_set = set(paths)
             flow.paths = [p for p in paths if p not in foreign]
             existing_shared = {
                 s.path for s in (getattr(flow, "shared_paths", None) or [])
@@ -148,9 +148,14 @@ def split_cross_pf_flow_attribution(
                     reason="cross_pf_span",
                 )]
                 tele["shared_rows"] += 1
-            moved = before - len(flow.paths)
+            # Conservation over UNIQUE files (``paths`` may legally carry
+            # duplicate entries from reach/seed merging — set semantics is
+            # the honest ruler): every original file is either kept in
+            # ``paths`` or present in the shared ledger.
+            moved = len(before_set - set(flow.paths))
             tele["files_moved"] += moved
-            if moved != len(foreign):
+            shared_set = {s.path for s in (flow.shared_paths or [])}
+            if not before_set <= (set(flow.paths) | shared_set):
                 tele["conservation_ok"] = False
                 logger.warning(
                     "flow_span_split: conservation mismatch on flow %s "
