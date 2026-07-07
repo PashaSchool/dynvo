@@ -124,3 +124,72 @@ def test_kill_switch(monkeypatch):
     assert not route_group_seeds_enabled()
     monkeypatch.delenv("FAULTLINE_ROUTE_GROUP_SEED_UFS", raising=False)
     assert route_group_seeds_enabled()
+
+
+# ── W4.2 Fix 2 — seed surface-guard (D6) ─────────────────────────────────
+
+
+def _guard_clf(instrument_dirs=()):
+    from faultline.pipeline_v2.surface_taxonomy import SurfaceScopeClassifier
+    return SurfaceScopeClassifier(
+        patterns={}, instrument_dirs=instrument_dirs)
+
+
+def test_seed_never_homes_onto_an_instrument_pf():
+    """The 'Run prisma' doctrine at D6 grain: a group whose only home is
+    a dev_tooling (instrument) PF stays an honest hole."""
+    flows = [
+        _flow("f-tab-1", "app/tables/page.tsx"),
+        _flow("f-tab-2", "app/tables/[id]/page.tsx"),
+    ]
+    devs = [_dev("toolkit", ["app/tables/page.tsx",
+                             "app/tables/[id]/page.tsx",
+                             "packages/toolkit/index.ts"])]
+    pfs = [_pf("toolkit", ["packages/toolkit/index.ts"])]
+    ufs: list = []
+    tele = seed_route_group_journeys(
+        ufs, devs, pfs, flows, list(_ROUTES),
+        scope_classifier=_guard_clf(("packages/toolkit",)),
+        route_by_file={},
+    )
+    assert tele["skipped_non_product_home"] == 1
+    assert tele["seeded"] == 0 and not ufs
+
+
+def test_seed_homes_onto_the_product_plurality_instead():
+    """A product home exists alongside the non-product one — the seed
+    homes onto the product PF (the guard only removes bad votes)."""
+    flows = [
+        _flow("f-tab-1", "app/tables/page.tsx"),
+        _flow("f-tab-2", "app/tables/[id]/page.tsx"),
+    ]
+    devs = [
+        _dev("toolkit", ["app/tables/page.tsx",
+                         "packages/toolkit/index.ts"]),
+        _dev("tables", ["app/tables/page.tsx",
+                        "app/tables/[id]/page.tsx"]),
+    ]
+    pfs = [_pf("toolkit", ["packages/toolkit/index.ts"]),
+           _pf("tables", ["app/tables/page.tsx"])]
+    ufs: list = []
+    tele = seed_route_group_journeys(
+        ufs, devs, pfs, flows, list(_ROUTES),
+        scope_classifier=_guard_clf(("packages/toolkit",)),
+        route_by_file={},
+    )
+    assert tele["seeded"] == 1
+    assert ufs and ufs[0].product_feature_id == "tables"
+
+
+def test_guardless_call_is_byte_identical_to_pre_w42():
+    """No classifier (kill-switch path) → the original behavior."""
+    flows = [
+        _flow("f-tab-1", "app/tables/page.tsx"),
+        _flow("f-tab-2", "app/tables/[id]/page.tsx"),
+    ]
+    devs = [_dev("toolkit", ["app/tables/page.tsx",
+                             "packages/toolkit/index.ts"])]
+    pfs = [_pf("toolkit", ["packages/toolkit/index.ts"])]
+    ufs: list = []
+    tele = seed_route_group_journeys(ufs, devs, pfs, flows, list(_ROUTES))
+    assert tele["seeded"] == 1 and ufs[0].product_feature_id == "toolkit"

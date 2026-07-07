@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter, defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature, Flow, UserFlow
@@ -1521,6 +1521,10 @@ def resynthesize_system_ufs(
     flows: list["Flow"],
     features: list["Feature"],
     routes_index: list[dict] | None,
+    instrument_dirs: "Iterable[str]" = (),
+    scope_classifier: Any = None,
+    route_by_file: dict[str, Any] | None = None,
+    product_features: "Iterable[Feature]" = (),
 ) -> dict[str, Any]:
     """Append flow-less system UFs missing from *user_flows* (in place).
 
@@ -1532,8 +1536,18 @@ def resynthesize_system_ufs(
     otherwise the journey stays an honest orphan (pfid None — lane-owned
     job files have no product home until Wave-4 tells their story).
     Kill-switch: shared with the rollup (``FAULTLINE_SEED_SYSTEM_UFS``).
+
+    W4.2 Fix 2 (seed surface-guard): a group whose matched files sit
+    majority-inside technology-instrument dirs, or majority-owned by
+    ``technology_instrument``-laned devs, never seeds (the "Run prisma"
+    class — migrations/codegen are not product journeys); a group whose
+    would-be home PF classifies non-product (marketing / docs / legal /
+    dev_tooling / shell) never seeds either. Honest orphans (no home at
+    all — Soc0's lane-owned inngest jobs) still seed, unchanged.
     """
     tele: dict[str, Any] = {"enabled": True, "minted": 0, "skipped_existing": 0,
+                            "skipped_instrument": 0,
+                            "skipped_non_product_home": 0,
                             "seeds": []}
     if os.environ.get("FAULTLINE_SEED_SYSTEM_UFS", "1") == "0":
         tele["enabled"] = False
@@ -1569,14 +1583,43 @@ def resynthesize_system_ufs(
             max_id = max(max_id, int(m.group(1)))
     # file → owning dev's pfid (primary ownership channel; first dev wins
     # deterministically by features[] order, same as the validator's
-    # path_index convention).
+    # path_index convention). Fix 2 rides the same walk: file → owning
+    # dev's shared_reason (instrument laning evidence).
     file_pfid: dict[str, str | None] = {}
+    file_reason: dict[str, str] = {}
     for f in (features or []):
         if getattr(f, "layer", "developer") != "developer":
             continue
         pfid = getattr(f, "product_feature_id", None)
+        reason = str(getattr(f, "shared_reason", None) or "")
         for p in (getattr(f, "paths", None) or []):
             file_pfid.setdefault(str(p), pfid)
+            if reason:
+                file_reason.setdefault(str(p), reason)
+
+    instr_dirs = tuple(sorted(str(d).strip("/") for d in instrument_dirs if d))
+
+    def _instrument_file(fp: str) -> bool:
+        if file_reason.get(fp) == "technology_instrument":
+            return True
+        return any(fp == d or fp.startswith(d + "/") for d in instr_dirs)
+
+    nonprod_home_keys: set[str] = set()
+    if scope_classifier is not None:
+        from faultline.pipeline_v2.surface_taxonomy import (
+            NON_PRODUCT_PF_SCOPES,
+        )
+        for pf in (product_features or []):
+            key = str(getattr(pf, "name", "") or "")
+            if not key:
+                continue
+            try:
+                scope = scope_classifier.classify_feature(
+                    pf, route_by_file or {})
+            except Exception:  # noqa: BLE001 — guard is best-effort
+                continue
+            if scope in NON_PRODUCT_PF_SCOPES:
+                nonprod_home_keys.add(key)
 
     from faultline.models.types import UserFlow
 
@@ -1588,8 +1631,18 @@ def resynthesize_system_ufs(
         if name.strip().lower() in existing_names:
             tele["skipped_existing"] += 1
             continue
+        # Fix 2 — instrument groups never seed ("Run prisma" class).
+        gfiles = sorted(str(fp) for fp in g["files"])
+        if gfiles and sum(
+                1 for fp in gfiles if _instrument_file(fp)) * 2 >= len(gfiles):
+            tele["skipped_instrument"] += 1
+            continue
         owners = {file_pfid.get(fp) for fp in g["files"]}
         pf_home = owners.pop() if (len(owners) == 1 and None not in owners) else None
+        # Fix 2 — a non-product home never receives a seed.
+        if pf_home is not None and str(pf_home) in nonprod_home_keys:
+            tele["skipped_non_product_home"] += 1
+            continue
         max_id += 1
         user_flows.append(UserFlow(
             id=f"UF-{max_id:03d}",
