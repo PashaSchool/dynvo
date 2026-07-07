@@ -149,6 +149,12 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (6, "user_flows"),
     (6, "uf_splitter"),
     (6, "uf_refiner"),
+    # Stage 6.98 (2026-07-07) — E2E-journey truth. Deterministic, $0,
+    # additive; playwright/cypress journeys matched against final UFs
+    # (post 6.7d/seeds/husk-fold, same vantage as dual_evidence).
+    # Emits even without specs (e2e_absent). FAULTLINE_E2E_TRUTH=0 off.
+    # See e2e_truth.py.
+    (6, "e2e_truth"),
     (6, "history"),
     (6, "impact"),
     # Stage 6.6 (2026-06) — Monorepo Assembly View. Deterministic, $0,
