@@ -842,12 +842,24 @@ def run_journey_lattice(
                 ),
                 "pf_display": plan["pf_display"],
                 "context": {
+                    "parents": [
+                        {
+                            "name": str(getattr(u, "name", "")),
+                            "members": len(u.member_flow_ids or []),
+                        }
+                        for u in plan["split_ufs"]
+                    ],
                     "children": [
                         {
                             "name": ch["name"],
                             "axis": ch["axis"],
                             "evidence_key": ch["key"],
                             "members": len(ch["mids"]),
+                            "member_flows_sample": [
+                                str(getattr(flow_by_mid.get(m), "name", m)
+                                    or m)
+                                for m in ch["mids"][:5]
+                            ],
                         }
                         for ch in plan["children"]
                     ],
