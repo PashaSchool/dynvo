@@ -631,6 +631,115 @@ def _def_spans_of(repo_path: Path, rel: str) -> dict[str, tuple[int, int]]:
     return spans
 
 
+# ── 1-hop barrel following (debt-pack, w4-report residual 4) ─────────────
+# typebot-class: builder pages import blocks via deep workspace-package
+# paths that resolve to package roots (index barrels re-exporting) — the
+# def-span probe then misses (the barrel holds no definition) and the
+# node degrades to a whole-file span. ONE hop through the barrel's own
+# re-export statements recovers the real definition file. Regex over the
+# barrel source (house regex-AST convention, no new parser); resolution
+# probes the TRACKED set only (deterministic, no fs walks); bounded
+# per-file and cached per scan process.
+
+_BARREL_EXPORT_CACHE: dict[str, list[tuple[str, dict[str, str] | None]]] = {}
+_BARREL_MAX_BYTES = 262_144  # a barrel is small by nature; cap the read
+_BARREL_MAX_TARGETS = 24     # bound the star-export fan-out per symbol
+
+_RE_EXPORT_NAMED = re.compile(
+    r"export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]")
+_RE_EXPORT_STAR = re.compile(
+    r"export\s+\*\s+from\s*['\"]([^'\"]+)['\"]")
+
+
+def _barrel_exports(repo_path: Path, rel: str) -> list[
+        tuple[str, dict[str, str] | None]]:
+    """Parsed re-export statements of *rel*, in source order.
+
+    Each entry is ``(spec, names)`` where ``names`` maps the EXPORTED
+    name → the name inside the target (``export { A as B }`` → {"B":
+    "A"}), and ``None`` means ``export * from`` (every name passes
+    through unchanged).
+    """
+    if rel in _BARREL_EXPORT_CACHE:
+        return _BARREL_EXPORT_CACHE[rel]
+    out: list[tuple[str, dict[str, str] | None]] = []
+    try:
+        data = (repo_path / rel).read_bytes()
+        if len(data) <= _BARREL_MAX_BYTES:
+            text = data.decode("utf-8", errors="replace")
+            events: list[tuple[int, str, dict[str, str] | None]] = []
+            for m in _RE_EXPORT_NAMED.finditer(text):
+                names: dict[str, str] = {}
+                for item in m.group(1).split(","):
+                    item = item.strip()
+                    if not item or item.startswith("type "):
+                        item = item.removeprefix("type ").strip()
+                        if not item:
+                            continue
+                    if " as " in item:
+                        orig, _, exported = item.partition(" as ")
+                        names[exported.strip()] = orig.strip()
+                    else:
+                        names[item] = item
+                if names:
+                    events.append((m.start(), m.group(2), names))
+            for m in _RE_EXPORT_STAR.finditer(text):
+                events.append((m.start(), m.group(1), None))
+            events.sort(key=lambda e: e[0])
+            out = [(spec, names) for _, spec, names in events]
+    except OSError:
+        pass
+    _BARREL_EXPORT_CACHE[rel] = out
+    return out
+
+
+def _def_span_via_barrel(
+    repo_path: Path,
+    barrel_rel: str,
+    symbol: str,
+    tracked: frozenset[str],
+) -> tuple[str, tuple[int, int]] | None:
+    """Resolve *symbol* through ONE hop of *barrel_rel*'s re-exports.
+
+    Returns ``(real_source_file, def_span)`` when a target file defines
+    the symbol, else ``None``. Named re-exports (exact match, alias
+    honored) are tried before ``export *`` fan-out; targets resolve
+    against the barrel's directory with the same suffix probing as
+    imports (tracked set only).
+    """
+    base_dir = barrel_rel.rsplit("/", 1)[0] if "/" in barrel_rel else ""
+
+    def _probe(spec: str) -> str | None:
+        if not spec.startswith("."):
+            return None  # one hop stays inside the barrel's package
+        base = _norm_join(base_dir, spec)
+        for suf in _CAND_SUFFIXES:
+            cand = base + suf
+            if cand in tracked and cand != barrel_rel:
+                return cand
+        return None
+
+    candidates: list[tuple[str, str]] = []  # (target_rel, target_symbol)
+    for spec, names in _barrel_exports(repo_path, barrel_rel):
+        if names is not None:
+            if symbol not in names:
+                continue
+            target = _probe(spec)
+            if target:
+                candidates.append((target, names[symbol]))
+        else:
+            target = _probe(spec)
+            if target:
+                candidates.append((target, symbol))
+        if len(candidates) >= _BARREL_MAX_TARGETS:
+            break
+    for target, target_symbol in candidates:
+        span = _def_spans_of(repo_path, target).get(target_symbol)
+        if span:
+            return target, span
+    return None
+
+
 # ── Content-hash parse cache ─────────────────────────────────────────────
 
 
@@ -675,6 +784,179 @@ def _parse_cached(
 
 
 # ── Page enumeration ─────────────────────────────────────────────────────
+
+
+# ── Python-template interiors (debt-pack, w4 deferred surface) ───────────
+# Django/Jinja repos got ZERO interior evidence (W4 shipped TS/TSX/JSX
+# first-class; tracecat/pretalx-class python UIs documented as the next
+# surface). Minimal pass: template files under a templates/ dir become
+# "template" pages whose {% block %} / {% include %} / {% extends %}
+# structure yields interior nodes.
+#
+# PARSER CHOICE (documented honestly): REGEX over the {% … %} template
+# tags, NOT tree-sitter-html. The capability signal lives in the Django/
+# Jinja TAGS — which an HTML grammar treats as opaque text nodes anyway —
+# and the [ast] extras do not ship an html grammar, so a tree-sitter pass
+# would add a dependency to parse the one thing it cannot see. Regex over
+# the tag syntax is the house regex-AST convention (ast_extractor
+# precedent) and is exact for the three tags we read.
+#
+# Node mapping: {% include "x.html" %} → component node (provenance
+# "product", source_file resolved against the tracked template set) —
+# include-partials are the python twin of JSX child components and feed
+# _build_families unchanged; {% extends "base.html" %} → component node
+# with provenance "design_system" (layout chrome — families ignore it,
+# same as JSX design-system imports); {% block name %} → heading node
+# (author-named section, label candidate). Dynamic refs ({% include
+# template_var %}) are skipped — no honest static target.
+# Kill-switch: FAULTLINE_STAGE_6_55_TEMPLATES=0 (default ON).
+
+_TEMPLATE_EXTS = (".html", ".htm", ".jinja", ".jinja2", ".j2")
+_MAX_TEMPLATE_PAGES = 500
+
+_TMPL_TAG_RE = re.compile(
+    r"\{%-?\s*(extends|include|block)\s+([^%]*?)\s*-?%\}")
+_TMPL_REF_RE = re.compile(r"['\"]([^'\"]+)['\"]")
+
+
+def _templates_enabled() -> bool:
+    return os.environ.get("FAULTLINE_STAGE_6_55_TEMPLATES", "1") != "0"
+
+
+def _enumerate_template_pages(
+    routes_index: list[dict[str, Any]],
+    tracked: frozenset[str],
+) -> list[tuple[str, str]]:
+    """[(template file, "template")] — ONLY on python-routed repos.
+
+    The gate is structural: at least one routes_index row whose file is
+    a ``.py`` (Django/FastAPI/Flask class). TS-routed repos are
+    byte-untouched — their email/export .html assets never enter the
+    page list. Deterministic cap keeps huge template trees bounded
+    (weblate-class); the cap drops the lexicographic tail, loudly
+    counted in telemetry as ``templates_capped``.
+    """
+    if not _templates_enabled():
+        return []
+    if not any(
+        str(e.get("file") or "").endswith(".py")
+        for e in routes_index or [] if isinstance(e, dict)
+    ):
+        return []
+    tmpls = sorted(
+        f for f in tracked
+        if f.lower().endswith(_TEMPLATE_EXTS)
+        and "/templates/" in f"/{f}"
+    )
+    return [(f, "template") for f in tmpls[:_MAX_TEMPLATE_PAGES]]
+
+
+def _resolve_template_ref(
+    ref: str, page_file: str, tracked_templates: dict[str, list[str]],
+) -> str | None:
+    """Django-loader approximation: *ref* ("partials/nav.html") matches a
+    tracked template whose path ENDS with it. Same-top-segment (the
+    including file's app) wins, then the shortest path, then
+    lexicographic — deterministic without parsing loader settings."""
+    cands = tracked_templates.get(ref.rsplit("/", 1)[-1])
+    if not cands:
+        return None
+    hits = [c for c in cands if c == ref or c.endswith("/" + ref)]
+    if not hits:
+        return None
+    top = page_file.split("/", 1)[0]
+    hits.sort(key=lambda c: (0 if c.split("/", 1)[0] == top else 1,
+                             c.count("/"), c))
+    return hits[0]
+
+
+def _parse_template_source(
+    rel_path: str,
+    source: bytes,
+    tracked: frozenset[str],
+) -> list[dict[str, Any]]:
+    """Template twin of :func:`_parse_page_source` — same node-dict shape."""
+    text = source.decode("utf-8", errors="replace")
+    by_base: dict[str, list[str]] = {}
+    for f in tracked:
+        if f.lower().endswith(_TEMPLATE_EXTS):
+            by_base.setdefault(f.rsplit("/", 1)[-1], []).append(f)
+    for v in by_base.values():
+        v.sort()
+
+    raw: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    for m in _TMPL_TAG_RE.finditer(text):
+        tag, args = m.group(1), m.group(2)
+        line = text.count("\n", 0, m.start()) + 1
+        if tag == "block":
+            name = args.split()[0] if args.split() else ""
+            if name:
+                raw.append({
+                    "kind": "heading", "name": name, "label": name,
+                    "usage": [line, line], "source_kind": "local",
+                    "provenance": "product", "source_file": None,
+                    "def": None,
+                })
+            continue
+        ref_m = _TMPL_REF_RE.search(args)
+        if not ref_m:
+            continue  # dynamic ref — no honest static target
+        ref = ref_m.group(1)
+        if ref in seen_refs:
+            continue  # first usage wins (deterministic)
+        seen_refs.add(ref)
+        target = _resolve_template_ref(ref, rel_path, by_base)
+        stem = ref.rsplit("/", 1)[-1]
+        stem = stem[:stem.find(".")] if "." in stem else stem
+        raw.append({
+            "kind": "component", "name": stem, "label": None,
+            "usage": [line, line],
+            "source_kind": "local" if target else "unresolved",
+            # extends = layout chrome (families ignore design_system);
+            # include-partials are the python twin of child components.
+            "provenance": ("design_system" if tag == "extends"
+                           else "product"),
+            "source_file": target, "def": None,
+        })
+        if len(raw) >= MAX_NODES_PER_PAGE:
+            break
+    raw.sort(key=lambda d: (d["usage"][0], d["name"]))
+    return raw
+
+
+def _parse_template_cached(
+    ctx: "ScanContext",
+    rel_path: str,
+    source: bytes,
+    tracked: frozenset[str],
+    stats: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Content-hash cache wrapper for template parses ("tmpl" key
+    namespace — a template and a TSX page can never share an entry)."""
+    backend = getattr(ctx, "cache_backend", None)
+    h = hashlib.sha256()
+    h.update(b"tmpl\x00")
+    h.update(PARSER_VERSION.encode())
+    h.update(b"\x00")
+    h.update(source)
+    key = h.hexdigest()
+    if backend is not None:
+        try:
+            hit = backend.get(CacheKind.INTERIOR, key)
+            if isinstance(hit, dict) and isinstance(hit.get("nodes"), list):
+                stats["cache_hits"] += 1
+                return hit["nodes"]
+        except Exception:  # noqa: BLE001 — cache faults never break a scan
+            pass
+    nodes = _parse_template_source(rel_path, source, tracked)
+    stats["parsed"] += 1
+    if backend is not None:
+        try:
+            backend.set(CacheKind.INTERIOR, key, {"nodes": nodes})
+        except Exception:  # noqa: BLE001
+            pass
+    return nodes
 
 
 def _enumerate_pages(
@@ -807,6 +1089,10 @@ def get_page_interiors(
         for p in (getattr(ctx, "tracked_files", None) or [])
     )
     pages_list = _enumerate_pages(routes_index or [], tracked)
+    # Python-template interiors (debt-pack): Django/Jinja templates join
+    # the page list on python-routed repos only — TS repos byte-untouched.
+    template_pages = _enumerate_template_pages(routes_index or [], tracked)
+    pages_list = pages_list + template_pages
 
     memo_key = hashlib.sha256(json.dumps(
         [str(getattr(ctx, "repo_path", "")), pages_list, PARSER_VERSION],
@@ -838,16 +1124,30 @@ def get_page_interiors(
         if len(data) > MAX_PAGE_BYTES:
             stats["skipped_big"] += 1
             continue
-        node_dicts = _parse_cached(
-            ctx, rel, data, tracked, ws_by_name, ws_by_path, stats)
+        if page_kind == "template":
+            node_dicts = _parse_template_cached(ctx, rel, data, tracked, stats)
+        else:
+            node_dicts = _parse_cached(
+                ctx, rel, data, tracked, ws_by_name, ws_by_path, stats)
         nodes: list[InteriorNode] = []
         for d in node_dicts:
             source_file = d.get("source_file")
             def_span: tuple[int, int] | None = None
             if (d["kind"] == "component" and source_file
-                    and d["provenance"] == "product"):
+                    and d["provenance"] == "product"
+                    and not source_file.lower().endswith(_TEMPLATE_EXTS)):
+                head = d["name"].split(".", 1)[0]
                 spans = _def_spans_of(repo_path, source_file)
-                def_span = spans.get(d["name"].split(".", 1)[0])
+                def_span = spans.get(head)
+                if def_span is None:
+                    # 1-hop barrel follow (debt-pack): index re-exports
+                    # hold no definition — chase the real source file so
+                    # the node carries a definition span instead of
+                    # degrading to a whole-file claim on the barrel.
+                    hop = _def_span_via_barrel(
+                        repo_path, source_file, head, tracked)
+                    if hop is not None:
+                        source_file, def_span = hop
             nodes.append(InteriorNode(
                 kind=d["kind"], name=d["name"], label=d.get("label"),
                 usage_line_start=int(d["usage"][0]),
@@ -868,20 +1168,31 @@ def get_page_interiors(
     n_design = sum(
         1 for p in pages.values() for n in p.nodes
         if n.kind == "component" and n.provenance == "design_system")
+    telemetry = {
+        "pages_seen": len(pages_list),
+        "pages_parsed": len(pages),
+        "interior_nodes": n_nodes,
+        "product_components": n_product,
+        "design_system_components": n_design,
+        "families": len(families),
+        "family_sample": [f.family_dir for f in families[:8]],
+        **stats,
+    }
+    # Stamped only when the template pass acted (python-routed repos) —
+    # TS-repo telemetry stays byte-identical.
+    if template_pages:
+        n_tmpl_seen = sum(
+            1 for f in tracked
+            if f.lower().endswith(_TEMPLATE_EXTS) and "/templates/" in f"/{f}"
+        )
+        telemetry["template_pages"] = len(template_pages)
+        telemetry["templates_capped"] = max(
+            0, n_tmpl_seen - len(template_pages))
     result = InteriorResult(
         active=True,
         pages=pages,
         families=families,
-        telemetry={
-            "pages_seen": len(pages_list),
-            "pages_parsed": len(pages),
-            "interior_nodes": n_nodes,
-            "product_components": n_product,
-            "design_system_components": n_design,
-            "families": len(families),
-            "family_sample": [f.family_dir for f in families[:8]],
-            **stats,
-        },
+        telemetry=telemetry,
     )
     _MEMO[memo_key] = result
     _MEMO_ORDER.append(memo_key)

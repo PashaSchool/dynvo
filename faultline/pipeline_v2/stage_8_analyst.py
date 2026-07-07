@@ -1150,6 +1150,67 @@ def _validate_pf_names(
 # ── Public entry point ──────────────────────────────────────────────────
 
 
+#: Corpus-average analyst call cost (module docstring: $0.43 / 3 repos)
+#: — stamped as the SAVED estimate when the anchored-path skip fires.
+_ANALYST_AVG_COST_USD = 0.14
+
+
+def anchored_analyst_skip_active(
+    developer_features: list["Feature"],
+) -> bool:
+    """W2b follow-up (debt-pack): the Sonnet top-80 analyst call is
+    WASTED on the anchored path — Stage 6.86 (phase_finalize) REPLACES
+    the whole PF layer from anchor lineage, and the anchored naming
+    contract already writes constrained-citation narratives. The mint
+    applies whenever it is enabled and >= 1 non-facet dev exists (its
+    only early exit), so that exact predicate decides the skip here.
+
+    Default ON; ``FAULTLINE_STAGE_8_ANALYST_SKIP_ANCHORED=0`` restores
+    the historical always-call behavior (A/B lever).
+    """
+    if os.environ.get(
+            "FAULTLINE_STAGE_8_ANALYST_SKIP_ANCHORED", "1",
+    ).strip().lower() in {"0", "false"}:
+        return False
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        anchored_mint_enabled,
+    )
+    if not anchored_mint_enabled():
+        return False
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+
+    return any(
+        getattr(f, "layer", "developer") == "developer"
+        and getattr(f, "name", None) and not is_facet(f)
+        for f in developer_features
+    )
+
+
+def anchored_skip_result(
+    product_features_pre: list["Feature"],
+    dev_to_product_map_pre: dict[str, tuple[str, ...]] | None,
+) -> Stage8Result:
+    """Pass-through Stage8Result for the anchored-path skip: the
+    deterministic Stage 6.5 product layer rides through unchanged (the
+    6.86 mint replaces it in phase_finalize anyway); zero LLM calls."""
+    return Stage8Result(
+        product_features=list(product_features_pre),
+        dev_to_product_map=dict(dev_to_product_map_pre or {}),
+        telemetry={
+            "mode": "analyst",
+            "source": "anchored-skip",
+            "analyst_called": False,
+            "fallback_used": False,
+            "analyst_skipped_anchored": True,
+            "analyst_saved_usd_corpus_avg": _ANALYST_AVG_COST_USD,
+            "product_features_emitted": len(product_features_pre),
+            "analyst_cost_usd": 0.0,
+            "prompt_input_tokens": 0,
+            "prompt_output_tokens": 0,
+        },
+    )
+
+
 def run_stage_8_analyst(
     ctx: "ScanContext",
     developer_features: list["Feature"],

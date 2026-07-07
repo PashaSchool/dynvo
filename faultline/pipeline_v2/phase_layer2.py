@@ -53,6 +53,8 @@ from faultline.pipeline_v2.stage_8_9_5_llm_component_split import (
 )
 from faultline.pipeline_v2.stage_8_analyst import (
     DEFAULT_ANALYST_MODEL as _STAGE_8_ANALYST_MODEL,
+    anchored_analyst_skip_active,
+    anchored_skip_result,
     run_stage_8_analyst,
 )
 from faultline.pipeline_v2.stage_8_marketing_clusterer import (
@@ -162,6 +164,18 @@ def run_layer2_phase(
             # incremental_layer2_noop implies a loaded base scan.
             assert incremental_base_scan is not None
             stage_8_result = reuse_base_layer2(incremental_base_scan, log8)
+        elif s8_mode == "analyst" and anchored_analyst_skip_active(features):
+            # Debt-pack (W2b follow-up): the anchored mint in
+            # phase_finalize REPLACES the PF layer and writes
+            # constrained-citation narratives — the Sonnet top-80 call
+            # here was pure spend. Deterministic pass-through instead;
+            # FAULTLINE_STAGE_8_ANALYST_SKIP_ANCHORED=0 restores it.
+            log8.info(
+                "mode=analyst SKIPPED (anchored-mint path owns the PF "
+                "layer) — deterministic pass-through",
+            )
+            stage_8_result = anchored_skip_result(
+                product_features, dev_to_product_map)
         elif s8_mode == "analyst":
             log8.info(f"mode=analyst model={_STAGE_8_ANALYST_MODEL}")
             stage_8_result = run_stage_8_analyst(
@@ -722,6 +736,9 @@ def run_layer2_phase(
             carve_hub_dirs=tuple(
                 h.hub_dir for h in hub_relations if not h.member_dev_names
             ),
+            # D4 keyed husk floor (debt-pack): flowless sub-floor vendor
+            # groups fold into the parent instead of minting shell twins.
+            repo_root=ctx.repo_path,
         )
         stage_8_9_7_telemetry = vendor_split_result.as_telemetry()
         log8_9_7.info(

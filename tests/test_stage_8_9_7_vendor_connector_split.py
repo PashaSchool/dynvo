@@ -402,3 +402,112 @@ def test_carve_telemetry_omitted_when_inactive(monkeypatch):
     tele = res.as_telemetry()
     assert "aggregate_carves" not in tele
     assert "carve_sample" not in tele
+
+
+# ── D4 keyed husk floor (debt-pack) ──────────────────────────────────
+# w31x honest-anomaly 3: comp's `aws-/azure-/gcp-(integration)` twins
+# (logo.tsx + config.ts, 0 owned LOC, 0 UFs) minted through the keyed
+# 8.9.x channel straight past the 6.86 anchored-mint floor. With
+# repo_root passed, a flowless vendor group under
+# _HUB_HUSK_LOC_FLOOR (150) folds into the parent instead of minting.
+
+from datetime import datetime as _dt, timezone as _tz
+
+from faultline.models.types import Flow as _Flow
+
+_HUB = "packages/integrations/src"
+
+
+def _write(root, rel, lines):
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("".join(f"const x{i} = {i};\n" for i in range(lines)))
+
+
+def _comp_hub(tmp_path, vendors=("aws", "azure", "gcp"), lines=15):
+    """comp-shaped integrations hub: per-vendor logo.tsx + config.ts."""
+    root = tmp_path / "repo"
+    paths = []
+    for v in vendors:
+        for fn in ("logo.tsx", "config.ts"):
+            rel = f"{_HUB}/{v}/{fn}"
+            _write(root, rel, lines)
+            paths.append(rel)
+    return root, paths
+
+
+def test_husk_floor_folds_comp_shaped_twins(monkeypatch, tmp_path):
+    monkeypatch.setenv(_ENV, "1")
+    root, paths = _comp_hub(tmp_path)  # 30 LOC per vendor — under 150
+    hub = _feat("integrations", paths, uuid="hub-uuid")
+    feats = [hub]
+    res = split_vendor_connectors(
+        feats, hub_dirs=(_HUB,), repo_root=root)
+    assert res.connectors_created == 0
+    assert res.husk_folds == 3
+    assert [s["vendor"] for s in res.husk_fold_sample] == ["aws", "azure", "gcp"]
+    assert feats == [hub]                      # nothing minted
+    assert sorted(hub.paths) == sorted(paths)  # files merged back (kept)
+    tele = res.as_telemetry()
+    assert tele["husk_folds"] == 3
+
+
+def test_husk_floor_spares_real_code_connectors(monkeypatch, tmp_path):
+    monkeypatch.setenv(_ENV, "1")
+    root, paths = _comp_hub(tmp_path, vendors=("aws", "azure"))
+    big = f"{_HUB}/slack/client.ts"
+    _write(root, big, 200)  # 200 LOC — above the floor
+    slack_logo = f"{_HUB}/slack/logo.tsx"
+    _write(root, slack_logo, 5)
+    hub = _feat("integrations", paths + [big, slack_logo], uuid="hub-uuid")
+    feats = [hub]
+    res = split_vendor_connectors(feats, hub_dirs=(_HUB,), repo_root=root)
+    assert res.husk_folds == 2                # aws + azure folded
+    assert res.connectors_created == 1        # slack minted
+    minted = [f for f in feats if f is not hub]
+    assert [f.name for f in minted] == ["integrations-slack"]
+    assert sorted(minted[0].paths) == sorted([big, slack_logo])
+
+
+def test_husk_floor_flow_evidence_rescues_thin_group(monkeypatch, tmp_path):
+    monkeypatch.setenv(_ENV, "1")
+    root, paths = _comp_hub(tmp_path)
+    hub = _feat("integrations", paths, uuid="hub-uuid")
+    hub.flows = [_Flow(
+        name="connect-aws", entry_point_file=f"{_HUB}/aws/config.ts",
+        paths=[f"{_HUB}/aws/config.ts"], authors=["a"], total_commits=1,
+        bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_dt(2026, 1, 1, tzinfo=_tz.utc), health_score=100.0,
+    )]
+    feats = [hub]
+    res = split_vendor_connectors(feats, hub_dirs=(_HUB,), repo_root=root)
+    # aws carries flow evidence → mints despite 30 LOC; azure/gcp fold
+    assert res.connectors_created == 1
+    assert res.husk_folds == 2
+    assert any(f.name == "integrations-aws" for f in feats)
+
+
+def test_husk_floor_off_without_repo_root(monkeypatch, tmp_path):
+    """repo_root=None (replay / old callers) keeps historical minting."""
+    monkeypatch.setenv(_ENV, "1")
+    _root, paths = _comp_hub(tmp_path)
+    hub = _feat("integrations", paths, uuid="hub-uuid")
+    feats = [hub]
+    res = split_vendor_connectors(feats, hub_dirs=(_HUB,))
+    assert res.connectors_created == 3
+    assert res.husk_folds == 0
+    assert "husk_folds" not in res.as_telemetry()
+
+
+def test_husk_floor_applies_to_carve_arm(monkeypatch, tmp_path):
+    monkeypatch.setenv(_ENV, "1")
+    root, paths = _comp_hub(tmp_path)
+    plumbing = f"{_HUB}/index.ts"
+    _write(root, plumbing, 5)
+    cover = _feat("api", paths + [plumbing], uuid="cover-uuid")
+    feats = [cover]
+    res = split_vendor_connectors(
+        feats, carve_hub_dirs=(_HUB,), repo_root=root)
+    assert res.carve_connectors_created == 0
+    assert res.husk_folds == 3
+    assert feats == [cover]

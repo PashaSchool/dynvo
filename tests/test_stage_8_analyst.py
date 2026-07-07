@@ -691,3 +691,64 @@ def test_validate_pf_names_anchor_guard_kill_switch(
     # Guard did not fire (the env switch is off). Any rename now would come
     # only from the orthogonal token-validation fallback, not this guard.
     assert telem["pf_names_anchor_guarded"] == 0
+
+
+# ── Anchored-path analyst skip (debt-pack, W2b follow-up) ────────────────
+# Stage 6.86 (phase_finalize) replaces the whole PF layer on the anchored
+# path — the Sonnet top-80 analyst call was pure spend there. The skip
+# predicate mirrors the mint's ONLY early exit (>= 1 non-facet dev) and
+# both kill-switches restore history.
+
+from faultline.pipeline_v2.stage_8_analyst import (  # noqa: E402
+    _ANALYST_AVG_COST_USD,
+    anchored_analyst_skip_active,
+    anchored_skip_result,
+)
+
+_SKIP_ENV = "FAULTLINE_STAGE_8_ANALYST_SKIP_ANCHORED"
+_MINT_ENV = "FAULTLINE_SPINE_ANCHORED_MINT"
+
+
+def test_anchored_skip_active_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(_SKIP_ENV, raising=False)
+    monkeypatch.delenv(_MINT_ENV, raising=False)
+    devs = [_feat("billing", ["src/billing/api.ts"])]
+    assert anchored_analyst_skip_active(devs) is True
+
+
+def test_anchored_skip_kill_switches(monkeypatch: pytest.MonkeyPatch) -> None:
+    devs = [_feat("billing", ["src/billing/api.ts"])]
+    # own switch
+    monkeypatch.setenv(_SKIP_ENV, "0")
+    monkeypatch.delenv(_MINT_ENV, raising=False)
+    assert anchored_analyst_skip_active(devs) is False
+    # mint off → analyst path owns the PF layer again → no skip
+    monkeypatch.delenv(_SKIP_ENV, raising=False)
+    monkeypatch.setenv(_MINT_ENV, "0")
+    assert anchored_analyst_skip_active(devs) is False
+
+
+def test_anchored_skip_requires_non_facet_dev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mirrors the mint's only early exit: no in-scope dev → mint no-ops
+    → the analyst must still run."""
+    monkeypatch.delenv(_SKIP_ENV, raising=False)
+    monkeypatch.delenv(_MINT_ENV, raising=False)
+    assert anchored_analyst_skip_active([]) is False
+    pf_only = _product("marketing", ["www/index.ts"])
+    pf_only.layer = "product"
+    assert anchored_analyst_skip_active([pf_only]) is False
+
+
+def test_anchored_skip_result_pass_through_and_telemetry() -> None:
+    pfs = [_product("billing", ["src/billing/api.ts"])]
+    dev_map = {"billing": ("billing",)}
+    res = anchored_skip_result(pfs, dev_map)
+    assert res.product_features == pfs
+    assert res.dev_to_product_map == dev_map
+    assert res.member_flows_map == {}
+    t = res.telemetry
+    assert t["source"] == "anchored-skip"
+    assert t["analyst_called"] is False
+    assert t["analyst_skipped_anchored"] is True
+    assert t["analyst_cost_usd"] == 0.0
+    assert t["analyst_saved_usd_corpus_avg"] == _ANALYST_AVG_COST_USD

@@ -358,3 +358,241 @@ def test_product_sections_by_source_prefix() -> None:
         ("apps/studio/src/pages/database",))
     assert labels == ["Scheduled backups"]
     assert result.product_sections_by_source_prefix(("apps/other",)) == []
+
+
+# ── 1-hop barrel following (debt-pack, w4-report residual 4) ─────────────
+# typebot-class: workspace-package imports resolve to index barrels that
+# hold no definitions — the def-span probe missed and nodes degraded to
+# whole-file claims. One hop through the barrel's re-exports recovers
+# the real source file + span.
+
+from faultline.pipeline_v2.stage_6_55_page_interior import (  # noqa: E402
+    _barrel_exports,
+    _def_span_via_barrel,
+)
+
+
+def _clear_span_caches() -> None:
+    s655._DEF_SPAN_CACHE.clear()
+    s655._BARREL_EXPORT_CACHE.clear()
+
+
+def _mk(root: Path, rel: str, text: str) -> None:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+def test_barrel_exports_parses_named_alias_type_and_star(tmp_path: Path) -> None:
+    _clear_span_caches()
+    _mk(tmp_path, "pkg/index.ts", (
+        'export { Block, type BlockDef } from "./block";\n'
+        'export { InnerCard as Card } from "./card";\n'
+        'export * from "./widgets";\n'
+    ))
+    ex = _barrel_exports(tmp_path, "pkg/index.ts")
+    assert ex == [
+        ("./block", {"Block": "Block", "BlockDef": "BlockDef"}),
+        ("./card", {"Card": "InnerCard"}),
+        ("./widgets", None),
+    ]
+
+
+def test_def_span_via_barrel_named_reexport(tmp_path: Path) -> None:
+    _clear_span_caches()
+    _mk(tmp_path, "pkg/index.ts", 'export { Block } from "./block";\n')
+    _mk(tmp_path, "pkg/block.tsx",
+        "export function Block() {\n  return null;\n}\n")
+    tracked = frozenset({"pkg/index.ts", "pkg/block.tsx"})
+    hop = _def_span_via_barrel(tmp_path, "pkg/index.ts", "Block", tracked)
+    assert hop is not None
+    target, span = hop
+    assert target == "pkg/block.tsx"
+    assert span[0] == 1 and span[1] >= 2
+
+
+def test_def_span_via_barrel_star_and_alias(tmp_path: Path) -> None:
+    _clear_span_caches()
+    _mk(tmp_path, "pkg/index.ts", (
+        'export { InnerCard as Card } from "./card";\n'
+        'export * from "./widgets";\n'
+    ))
+    _mk(tmp_path, "pkg/card.tsx",
+        "export const InnerCard = () => null;\n")
+    _mk(tmp_path, "pkg/widgets.tsx",
+        "export function Widget() {\n  return null;\n}\n")
+    tracked = frozenset({"pkg/index.ts", "pkg/card.tsx", "pkg/widgets.tsx"})
+    # alias: exported name Card → InnerCard span inside card.tsx
+    hop = _def_span_via_barrel(tmp_path, "pkg/index.ts", "Card", tracked)
+    assert hop is not None and hop[0] == "pkg/card.tsx"
+    # star fan-out finds Widget
+    hop = _def_span_via_barrel(tmp_path, "pkg/index.ts", "Widget", tracked)
+    assert hop is not None and hop[0] == "pkg/widgets.tsx"
+
+
+def test_def_span_via_barrel_is_one_hop_only(tmp_path: Path) -> None:
+    _clear_span_caches()
+    _mk(tmp_path, "pkg/index.ts", 'export * from "./inner";\n')
+    _mk(tmp_path, "pkg/inner.ts", 'export * from "./deep";\n')
+    _mk(tmp_path, "pkg/deep.tsx", "export function Deep() {\n  return null;\n}\n")
+    tracked = frozenset({"pkg/index.ts", "pkg/inner.ts", "pkg/deep.tsx"})
+    assert _def_span_via_barrel(
+        tmp_path, "pkg/index.ts", "Deep", tracked) is None
+
+
+def test_def_span_via_barrel_ignores_bare_package_specs(tmp_path: Path) -> None:
+    _clear_span_caches()
+    _mk(tmp_path, "pkg/index.ts", 'export { Block } from "@external/blocks";\n')
+    tracked = frozenset({"pkg/index.ts"})
+    assert _def_span_via_barrel(
+        tmp_path, "pkg/index.ts", "Block", tracked) is None
+
+
+@requires_ts
+def test_barrel_hop_end_to_end_rehomes_source_file(tmp_path: Path) -> None:
+    """typebot-shaped: page imports Block from a ws package whose index
+    barrel re-exports it — the interior node must carry the REAL source
+    file + definition span, not a span-less barrel claim."""
+    _clear_span_caches()
+    s655._MEMO.clear()
+    s655._MEMO_ORDER.clear()
+    page = "apps/builder/src/pages/editor.tsx"
+    _mk(tmp_path, page, (
+        'import { Block } from "@typebot.io/blocks-core";\n'
+        "export default function EditorPage() {\n"
+        "  return <Block />;\n"
+        "}\n"
+    ))
+    _mk(tmp_path, "packages/blocks/core/src/index.ts",
+        'export * from "./block";\n')
+    _mk(tmp_path, "packages/blocks/core/src/block.tsx",
+        "export function Block() {\n  return <div />;\n}\n")
+    ctx = SimpleNamespace(
+        repo_path=tmp_path,
+        cache_backend=None,
+        tracked_files=[
+            page,
+            "packages/blocks/core/src/index.ts",
+            "packages/blocks/core/src/block.tsx",
+        ],
+        workspaces=[SimpleNamespace(
+            name="@typebot.io/blocks-core", path="packages/blocks/core")],
+    )
+    res = get_page_interiors(ctx, [{"method": "PAGE", "file": page}])
+    assert res.active
+    node = next(n for n in res.pages[page].nodes if n.name == "Block")
+    assert node.source_file == "packages/blocks/core/src/block.tsx"
+    assert node.def_line_start == 1 and node.def_line_end >= 2
+
+
+# ── Python-template interiors (debt-pack, w4 deferred surface) ───────────
+# pretalx-class Django repos got ZERO interior evidence. Templates under
+# templates/ dirs now parse ({% block %}/{% include %}/{% extends %} via
+# regex over the template TAGS — documented choice in the module) on
+# python-routed repos only.
+
+from faultline.pipeline_v2.stage_6_55_page_interior import (  # noqa: E402
+    _enumerate_template_pages,
+    _parse_template_source,
+)
+
+_PRETALX_TMPL = b"""{% extends "orga/base.html" %}
+{% block content %}
+  <h1>Review submissions</h1>
+  {% include "orga/submission/review_card.html" %}
+  {% include "common/pagination.html" %}
+  {% include dynamic_template_var %}
+{% endblock %}
+{% block scripts %}{% endblock %}
+"""
+
+_PRETALX_TRACKED = frozenset({
+    "src/pretalx/orga/templates/orga/reviews.html",
+    "src/pretalx/orga/templates/orga/base.html",
+    "src/pretalx/orga/templates/orga/submission/review_card.html",
+    "src/pretalx/common/templates/common/pagination.html",
+    "src/pretalx/orga/urls.py",
+})
+
+
+def test_template_parse_blocks_includes_extends() -> None:
+    nodes = _parse_template_source(
+        "src/pretalx/orga/templates/orga/reviews.html",
+        _PRETALX_TMPL, _PRETALX_TRACKED)
+    by_name = {n["name"]: n for n in nodes}
+    # extends → design_system (layout chrome, families ignore it)
+    assert by_name["base"]["provenance"] == "design_system"
+    assert by_name["base"]["source_file"].endswith("orga/base.html")
+    # includes → product components with resolved template sources
+    assert by_name["review_card"]["provenance"] == "product"
+    assert by_name["review_card"]["source_file"] == \
+        "src/pretalx/orga/templates/orga/submission/review_card.html"
+    assert by_name["pagination"]["source_file"] == \
+        "src/pretalx/common/templates/common/pagination.html"
+    # blocks → headings; dynamic include skipped
+    headings = [n["name"] for n in nodes if n["kind"] == "heading"]
+    assert headings == ["content", "scripts"]
+    assert "dynamic_template_var" not in by_name
+
+
+def test_template_pages_gate_python_routes_only(monkeypatch) -> None:
+    monkeypatch.delenv("FAULTLINE_STAGE_6_55_TEMPLATES", raising=False)
+    py_routes = [{"method": "GET", "file": "src/pretalx/orga/urls.py"}]
+    ts_routes = [{"method": "PAGE", "file": "apps/web/app/page.tsx"}]
+    tmpls = _enumerate_template_pages(py_routes, _PRETALX_TRACKED)
+    assert [k for _, k in tmpls] == ["template"] * 4
+    # TS-routed repo: .html assets never enter the page list
+    assert _enumerate_template_pages(ts_routes, _PRETALX_TRACKED) == []
+    # kill-switch
+    monkeypatch.setenv("FAULTLINE_STAGE_6_55_TEMPLATES", "0")
+    assert _enumerate_template_pages(py_routes, _PRETALX_TRACKED) == []
+
+
+def test_template_ref_resolution_prefers_same_app() -> None:
+    tracked = frozenset({
+        "src/app_a/templates/shared/card.html",
+        "src/app_b/templates/shared/card.html",
+        "src/app_a/templates/pages/home.html",
+    })
+    nodes = _parse_template_source(
+        "src/app_a/templates/pages/home.html",
+        b'{% include "shared/card.html" %}', tracked)
+    assert nodes[0]["source_file"] == "src/app_a/templates/shared/card.html"
+
+
+@requires_ts
+def test_template_interiors_end_to_end_families(tmp_path: Path) -> None:
+    """pretalx-shaped e2e: two orga pages including the same partial →
+    the partial becomes an interior FAMILY; telemetry stamps
+    template_pages; a TS-only ctx stays byte-untouched."""
+    s655._MEMO.clear()
+    s655._MEMO_ORDER.clear()
+    files = {
+        "src/orga/templates/orga/reviews.html":
+            b'{% extends "orga/base.html" %}\n'
+            b'{% block content %}{% include "orga/submission/card.html" %}'
+            b"{% endblock %}\n",
+        "src/orga/templates/orga/submissions.html":
+            b'{% extends "orga/base.html" %}\n'
+            b'{% block content %}{% include "orga/submission/card.html" %}'
+            b"{% endblock %}\n",
+        "src/orga/templates/orga/base.html": b"<html></html>\n",
+        "src/orga/templates/orga/submission/card.html": b"<div></div>\n",
+    }
+    for rel, data in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    ctx = SimpleNamespace(
+        repo_path=tmp_path, cache_backend=None,
+        tracked_files=sorted(files) + ["src/orga/urls.py"],
+        workspaces=[],
+    )
+    res = get_page_interiors(
+        ctx, [{"method": "GET", "file": "src/orga/urls.py"}])
+    assert res.active
+    assert res.telemetry["template_pages"] == 4
+    assert res.telemetry["templates_capped"] == 0
+    fam_files = {f.family_dir for f in res.families}
+    assert "src/orga/templates/orga/submission" in fam_files or any(
+        "submission" in d for d in fam_files)
