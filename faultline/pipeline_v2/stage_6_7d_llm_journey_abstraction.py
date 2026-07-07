@@ -2031,9 +2031,36 @@ _BACKSTOP_MEMBER_CAP = 8
 _REASON_PROMOTED = "promoted_capability_backstop"
 _REASON_UNCOVERED = "uncovered_product_feature_backstop"
 
+#: W5.1 LOC-worthy arm — a FLOWLESS product feature with >= this much owned
+#: LOC is "journey-worthy" and must be referenced by a UF (validator I8's
+#: ``pf_loc >= 1000`` bar, mirrored EXACTLY — a contract constant, not a
+#: tuned knob). Excavation mints such 0-flow surfaces (supabase Settings
+#: 27.5K, Query Performance…); the flow-ful backstop arm below cannot seed
+#: them (no member flows). They get a member-LESS system-seed instead — the
+#: sole I7-exempt shape for a flowless surface (validator D9-carve).
+_LOC_WORTHY_MIN = 1000
+
 
 def _pf_uf_backstop_enabled() -> bool:
     return os.environ.get("FAULTLINE_STAGE_6_7D_PF_UF_BACKSTOP", "1") != "0"
+
+
+def _loc_worthy_backstop_enabled() -> bool:
+    """W5.1 LOC-worthy member-less arm (default ON; ``=0`` restores the
+    flow-only backstop). Only fires once ``pf.loc`` is populated (Stage
+    6.97), so pre-6.97 backstop calls stay byte-identical."""
+    return os.environ.get("FAULTLINE_LOC_WORTHY_BACKSTOP", "1") != "0"
+
+
+def _feature_loc_attr(f: Any) -> int:
+    """Owned LOC of an in-memory Feature — mirrors the validator's
+    ``feature_loc`` file-based arm (``loc``/``total_loc``/``loc_files``).
+    0 until Stage 6.97 stamps ``loc``."""
+    for k in ("loc", "total_loc", "loc_files"):
+        v = getattr(f, k, None)
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+    return 0
 
 
 def _flow_loc_of(flow: Any) -> int:
@@ -2062,6 +2089,8 @@ def _backstop_uncovered_pfs(
     developer_features: list["Feature"],
     promoted_caps: set[str],
     flow_owner_override: dict[str, str] | None = None,
+    *,
+    loc_only: bool = False,
 ) -> dict[str, Any]:
     """Guarantee every flowful product feature is referenced by >= 1 UF.
 
@@ -2070,13 +2099,22 @@ def _backstop_uncovered_pfs(
     runs AFTER this, so synthesized journeys get content-stable ids).
     Returns bounded telemetry. Fully deterministic: sorted iteration
     orders, no wall-clock, no randomness.
+
+    ``loc_only`` (W5.1 final-close call site): run ONLY the FLOWLESS
+    LOC-worthy arm (member-less system-seeds, I15/I16/I19-exempt) — the
+    flow-ful reassign/synthesize arm has already run at the in-6.7d and
+    lattice call sites, and re-running it here can mint a foreign-entry
+    journey (I16). Trades zero violations: pure I8 close for the excavated
+    0-flow-mint class the earlier arms structurally cannot cover.
     """
     from faultline.models.types import UserFlow
+    from faultline.pipeline_v2.stage_6_7_user_flows import SYSTEM_RECALL_REASON
 
     tele: dict[str, Any] = {
         "pf_backstop_uncovered": 0,
         "pf_backstop_reassigned_ufs": 0,
         "pf_backstop_synthesized": 0,
+        "pf_backstop_locworthy": 0,  # W5.1 member-less seeds for flowless PFs
         "pf_backstop_resolutions": [],  # bounded [{pf, action, ufs|members}]
     }
 
@@ -2154,18 +2192,60 @@ def _backstop_uncovered_pfs(
     claimed: set[str] = {m for u in new_ufs for m in (u.member_flow_ids or [])}
     flowful = frozenset(pf_flows)
 
+    # W5.1 — PF -> owning devs (for the flowless LOC-worthy loc rollup, the
+    # validator's ``sum(feature_loc(m) for m in members)`` fallback).
+    pf_members: dict[str, list[Any]] = defaultdict(list)
+    for dev in developer_features:
+        slugs = dev_to_product.get(dev.name) or ()
+        if slugs:
+            pf_members[slugs[0]].append(dev)
+    _loc_arm = _loc_worthy_backstop_enabled()
+
     for pf in sorted(new_pfs, key=lambda p: p.name or ""):
         slug = pf.name or ""
-        if not slug or not pf_flows.get(slug) or covered.get(slug, 0) > 0:
-            continue  # covered already (no duplicate backstop) or flow-less
+        if not slug or covered.get(slug, 0) > 0:
+            continue  # covered already (no duplicate backstop)
         if slug.strip().lower() in _cons_shared_keys:
             # Shared Platform owns code, never journeys (operator doctrine,
-            # validator I10) — it is exempt from I8 and must never pull
-            # journeys via the backstop. Pre-W1.1 this arm reassigned UFs
-            # TO the shared bucket; the finalize conservation pass then
-            # nulled the no-signal ones into I21 orphans (midday
-            # 'Determine geolocation for requests', 2026-07-06).
+            # validator I10) — exempt from I8, must never pull a journey via
+            # EITHER backstop arm (flow-ful reassign OR W5.1 flowless seed).
             continue
+        if not pf_flows.get(slug):
+            # ── W5.1 flowless arm: a journey-worthy-by-LOC surface with no
+            # attachable flow (excavated 0-flow mints; validator I8 LOC bar).
+            # A member-LESS system-seed is the only I7-exempt cover — the
+            # flow-ful arm below cannot run (empty member pool). No-op until
+            # Stage 6.97 stamps ``loc`` (pre-6.97 pf_loc == 0).
+            if not _loc_arm:
+                continue
+            pf_loc = _feature_loc_attr(pf) or sum(
+                _feature_loc_attr(m) for m in pf_members.get(slug, ()))
+            if pf_loc < _LOC_WORTHY_MIN and not getattr(pf, "flows", None):
+                continue  # not journey-worthy
+            display = pf.display_name or slug
+            new_ufs.append(UserFlow(
+                id="UF-000",  # provisional — caller renumbers after sort
+                name=display,
+                resource=slug,
+                domain=None,
+                product_feature_id=slug,
+                intent=_intent_for(display),
+                member_flow_ids=[],
+                member_count=0,
+                routes=[],
+                refined=True,
+                name_confidence="low",
+                ui_tier="no-ui",
+                category="system",
+                synthesized=True,
+                synthesis_reason=SYSTEM_RECALL_REASON,
+            ))
+            covered[slug] += 1
+            tele["pf_backstop_locworthy"] += 1
+            _resolve(slug, "locworthy_seed", {"loc": pf_loc})
+            continue
+        if loc_only:
+            continue  # flow-ful PF — earlier call sites own the member-ful arm
         tele["pf_backstop_uncovered"] += 1
         display = pf.display_name or slug
         reason = (_REASON_PROMOTED if display in promoted_caps

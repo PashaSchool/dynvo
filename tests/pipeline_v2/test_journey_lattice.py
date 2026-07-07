@@ -14,6 +14,7 @@ from faultline.models.types import Feature, Flow, FlowNode, UserFlow
 from faultline.pipeline_v2.journey_lattice import (
     _child_id,
     dedup_lattice_journeys,
+    fold_thin_lattice_children,
     journey_lattice_enabled,
     run_journey_lattice,
 )
@@ -751,3 +752,90 @@ def test_action_keys_never_shred_a_journey() -> None:
     assert tele["catchalls_split"] == 0
     assert tele.get("clusters_action_folded", 0) >= 3
     assert len(ufs) == 1 and ufs[0].member_count == 5
+
+
+# ── W5.1 — post-thinning fold-back (fold_thin_lattice_children) ────────
+
+
+def test_thin_child_folds_into_sibling():
+    """A UF-L child stripped to a single sub-150-LOC member folds its lone
+    member back into the surviving (non-lattice) parent — never lost."""
+    flows = [_flow("f1", "a.py", loc=40),
+             _flow("p1", "p.py", loc=100), _flow("p2", "q.py", loc=100)]
+    parent = _uf("UF-003", "Manage cases", "pf", ["p1", "p2"])
+    child = _uf("UF-L-abc0000000", "Thin shred", "pf", ["f1"])
+    ufs = [parent, child]
+    tele = fold_thin_lattice_children(ufs, flows)
+    assert tele["folded"] == 1
+    assert len(ufs) == 1 and ufs[0].id == "UF-003"
+    assert set(ufs[0].member_flow_ids) == {"p1", "p2", "f1"}
+    assert ufs[0].member_count == 3
+
+
+def test_loc_qualified_single_kept():
+    """A 1-member child whose lone flow spans >= 150 LOC is the intended
+    garbage-bucket rescue (w5lattice §E7) — never folded."""
+    flows = [_flow("big", "b.py", loc=220),
+             _flow("p1", "p.py", loc=100), _flow("p2", "q.py", loc=100)]
+    parent = _uf("UF-003", "Manage cases", "pf", ["p1", "p2"])
+    child = _uf("UF-L-def0000000", "View audit", "pf", ["big"])
+    ufs = [parent, child]
+    tele = fold_thin_lattice_children(ufs, flows)
+    assert tele["folded"] == 0
+    assert len(ufs) == 2
+
+
+def test_thin_child_no_host_kept():
+    """A thin child that is the ONLY journey on its PF stays put — folding it
+    would leave the PF journey-less (validator I8)."""
+    flows = [_flow("f1", "a.py", loc=40)]
+    child = _uf("UF-L-abc0000000", "Thin only", "pf", ["f1"])
+    ufs = [child]
+    tele = fold_thin_lattice_children(ufs, flows)
+    assert tele["folded"] == 0
+    assert tele["no_host"] == 1
+    assert len(ufs) == 1  # PF still covered
+
+
+def test_two_member_child_not_folded():
+    """Only the 1-member shred folds — a >= 2-member child clears the
+    creation bar regardless of per-flow LOC."""
+    flows = [_flow("f1", "a.py", loc=10), _flow("f2", "b.py", loc=10),
+             _flow("p1", "p.py", loc=100), _flow("p2", "q.py", loc=100)]
+    parent = _uf("UF-003", "Manage cases", "pf", ["p1", "p2"])
+    child = _uf("UF-L-abc0000000", "Two thin", "pf", ["f1", "f2"])
+    ufs = [parent, child]
+    tele = fold_thin_lattice_children(ufs, flows)
+    assert tele["folded"] == 0
+    assert len(ufs) == 2
+
+
+def test_thin_child_prefers_nonlattice_parent():
+    """With both a non-lattice parent and a fuller lattice sibling present,
+    the shred folds into the non-lattice parent (the split origin)."""
+    flows = [_flow("f1", "a.py", loc=40),
+             _flow("s1", "s.py", loc=50), _flow("s2", "t.py", loc=50),
+             _flow("p1", "p.py", loc=50), _flow("p2", "q.py", loc=50),
+             _flow("p3", "r.py", loc=50)]
+    parent = _uf("UF-003", "Manage cases", "pf", ["p1", "p2", "p3"])
+    sibling = _uf("UF-L-aaa0000000", "Configure", "pf", ["s1", "s2"])
+    child = _uf("UF-L-zzz0000000", "Thin", "pf", ["f1"])
+    ufs = [parent, sibling, child]
+    tele = fold_thin_lattice_children(ufs, flows)
+    assert tele["folded"] == 1
+    assert "f1" in parent.member_flow_ids       # folded into the parent
+    assert "f1" not in sibling.member_flow_ids
+    assert {u.id for u in ufs} == {"UF-003", "UF-L-aaa0000000"}
+
+
+def test_thin_fold_killswitch(monkeypatch):
+    """FAULTLINE_LATTICE_THIN_FOLD=0 disables the fold (child kept)."""
+    monkeypatch.setenv("FAULTLINE_LATTICE_THIN_FOLD", "0")
+    flows = [_flow("f1", "a.py", loc=40),
+             _flow("p1", "p.py", loc=100), _flow("p2", "q.py", loc=100)]
+    parent = _uf("UF-003", "Manage cases", "pf", ["p1", "p2"])
+    child = _uf("UF-L-abc0000000", "Thin", "pf", ["f1"])
+    ufs = [parent, child]
+    tele = fold_thin_lattice_children(ufs, flows)
+    assert tele["folded"] == 0
+    assert len(ufs) == 2

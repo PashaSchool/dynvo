@@ -108,11 +108,16 @@ ENV_OUTPUT_FLAGS = (
     # Wave 5 — journey lattice (catch-all partition + subset-dup merge):
     # reshapes the emitted user_flows[] layer.
     "FAULTLINE_JOURNEY_LATTICE",
+    # Wave 5.1 — lattice thin-child fold-back + LOC-worthy PF backstop:
+    # both reshape the emitted user_flows[] layer.
+    "FAULTLINE_LATTICE_THIN_FOLD",
+    "FAULTLINE_LOC_WORTHY_BACKSTOP",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
 #: against a new key layout (they simply won't match — silent invalidation).
-KEY_SCHEMA_VERSION = 2
+#: v3 (W5.1): added FAULTLINE_LATTICE_THIN_FOLD + FAULTLINE_LOC_WORTHY_BACKSTOP.
+KEY_SCHEMA_VERSION = 3
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
