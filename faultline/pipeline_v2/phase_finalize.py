@@ -574,6 +574,29 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── W4 — cross-PF flow-attribution split (Product-Spine §4.6) ──────
+    # With the anchored mint's total dev→PF stamps in place, split every
+    # flow whose file surface spans multiple PFs' anchors: primary =
+    # home-PF files (entry-owner, dev fallback); other PFs' files move
+    # to the labeled ``Flow.shared_paths[]`` ledger; foreign whole-file
+    # span guesses leave the node surface. Runs BEFORE the UF family so
+    # journey attach (I15/I16) and on-flow accounting (I19) consume the
+    # split projection. Deterministic, $0 LLM; conservation-counted.
+    # Kill-switch FAULTLINE_FLOW_SPAN_SPLIT=0; anchored-mint-only.
+    from faultline.pipeline_v2.flow_span_split import (
+        flow_span_split_enabled,
+        split_cross_pf_flow_attribution,
+    )
+    if anchored_mint_applied and flow_span_split_enabled():
+        try:
+            scan_meta["flow_span_split"] = split_cross_pf_flow_attribution(
+                features, product_features,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"flow-span split failed ({exc}); unsplit flow surface kept"
+            )
+
     # ── Stage 0.7 exit gate — UF-synthesis suppression (Phase C) ────
     # A CONFIDENT non-product repo_class verdict (library / cli-tool /
     # infra-daemon / framework) means this scan unit has no user
