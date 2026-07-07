@@ -22,6 +22,7 @@ entry-points under the ``faultlines.framework_linkers`` group.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable, Protocol, runtime_checkable
@@ -103,6 +104,35 @@ def canonical_sample(items: Iterable[object], cap: int) -> list:
     )[:cap]
 
 
+def merge_linker_telemetry(dst: object, delta: object) -> None:
+    """Fold a per-file telemetry DELTA into the linker's shared telemetry.
+
+    Perf wave R3 (2026-07-07): linkers scan each caller file once per
+    FEATURE that references it, although the per-file result is
+    feature-independent (papermark: 1,821 scans over ≤1,297 files;
+    documenso: 3,694 over ≤1,928 — per linker). The fix computes each
+    file's outcome once against a FRESH telemetry instance (the delta)
+    and replays it per (feature × file) occurrence, so every counter in
+    ``scan_meta`` keeps its historical per-occurrence semantics —
+    output bytes unchanged.
+
+    Generic on purpose: int fields add, list fields extend (samples),
+    everything else is left alone. The delta object only ever carries
+    the fields the per-file scan itself touches; all other fields are
+    zero/empty so the fold is a no-op for them.
+    """
+    for f in dataclasses.fields(delta):  # type: ignore[arg-type]
+        value = getattr(delta, f.name)
+        if isinstance(value, bool):  # defensive: bools are ints in Python
+            continue
+        if isinstance(value, int):
+            if value:
+                setattr(dst, f.name, getattr(dst, f.name) + value)
+        elif isinstance(value, list):
+            if value:
+                getattr(dst, f.name).extend(value)
+
+
 @runtime_checkable
 class FrameworkLinker(Protocol):
     """Stage 6.4 contract.
@@ -150,4 +180,9 @@ class FrameworkLinker(Protocol):
         ...
 
 
-__all__ = ["FrameworkLink", "FrameworkLinker", "canonical_sample"]
+__all__ = [
+    "FrameworkLink",
+    "FrameworkLinker",
+    "canonical_sample",
+    "merge_linker_telemetry",
+]

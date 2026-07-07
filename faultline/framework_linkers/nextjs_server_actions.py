@@ -62,7 +62,11 @@ from faultline.analyzer.tsconfig_paths import (
     build_path_alias_map,
     resolve_ts_import,
 )
-from faultline.framework_linkers.base import FrameworkLink, canonical_sample
+from faultline.framework_linkers.base import (
+    FrameworkLink,
+    canonical_sample,
+    merge_linker_telemetry,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -267,6 +271,16 @@ class NextjsServerActionsLinker:
         self._alias_map: list[AliasEntry] | None = None
         self._repo_root: Path | None = None
         self.telemetry: _LinkerTelemetry = _LinkerTelemetry()
+        # Perf wave R3: per-file outcomes are feature-independent —
+        # computed once per file, replayed per (feature × file).
+        self._file_outcomes: dict[
+            str,
+            tuple[
+                list[FrameworkLink],
+                _LinkerTelemetry,
+                list[tuple[str, dict]],
+            ],
+        ] = {}
 
     # ── Activation ──────────────────────────────────────────────────────
 
@@ -426,6 +440,33 @@ class NextjsServerActionsLinker:
         *,
         feature_name: str,
     ) -> list[FrameworkLink]:
+        """Per-feature entry: cached per-file compute + per-occurrence replay
+        (perf wave R3 — see nextjs_http_route for the pattern rationale)."""
+        outcome = self._file_outcomes.get(rel)
+        if outcome is None:
+            outcome = self._compute_file_outcome(
+                rel, text, action_modules, tracked, alias_map,
+            )
+            self._file_outcomes[rel] = outcome
+        links, tel_delta, events = outcome
+        merge_linker_telemetry(self.telemetry, tel_delta)
+        for msg, kwargs in events:
+            log.emit(feature_name, msg, **kwargs)
+        return list(links)
+
+    def _compute_file_outcome(
+        self,
+        rel: str,
+        text: str,
+        action_modules: dict[str, list[_ActionExport]],
+        tracked: frozenset[str],
+        alias_map: list[AliasEntry],
+    ) -> tuple[
+        list[FrameworkLink], "_LinkerTelemetry", list[tuple[str, dict]],
+    ]:
+        """Feature-independent scan of ONE file (pure given its inputs)."""
+        tel = _LinkerTelemetry()
+        events: list[tuple[str, dict]] = []
         results: list[FrameworkLink] = []
         assert self._repo_root is not None
 
@@ -486,7 +527,7 @@ class NextjsServerActionsLinker:
             for cm in call_re.finditer(text):
                 local = cm.group(1)
                 exp = imported[local]
-                self.telemetry.action_call_sites_found += 1
+                tel.action_call_sites_found += 1
                 line_no = text.count("\n", 0, cm.start()) + 1
                 source_symbol = _enclosing_symbol(text.splitlines(), line_no)
                 link = FrameworkLink(
@@ -506,7 +547,7 @@ class NextjsServerActionsLinker:
                     ),
                 )
                 results.append(link)
-                self.telemetry.sample_links.append({
+                tel.sample_links.append({
                     "source": f"{rel}:{line_no}",
                     "target": f"{exp.module_file}:{exp.symbol}",
                     "kind": "imported-action",
@@ -532,8 +573,8 @@ class NextjsServerActionsLinker:
             stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
             if stripped.strip() not in ("", ";"):
                 continue
-            self.telemetry.inline_action_sites += 1
-            self.telemetry.action_call_sites_found += 1
+            tel.inline_action_sites += 1
+            tel.action_call_sites_found += 1
             line_no = text.count("\n", 0, am.start()) + 1
             source_symbol = _enclosing_symbol(text.splitlines(), line_no)
             link = FrameworkLink(
@@ -552,18 +593,17 @@ class NextjsServerActionsLinker:
                 reason="inline `use server` action in JSX action prop",
             )
             results.append(link)
-            self.telemetry.sample_links.append({
+            tel.sample_links.append({
                 "source": f"{rel}:{line_no}",
                 "target": f"{rel}:<inline-action>",
                 "kind": "inline-jsx",
             })
-            log.emit(
-                feature_name,
+            events.append((
                 f"inline server-action at {rel}:{line_no}",
-                linker=self.name, kind="inline-jsx",
-            )
+                {"linker": self.name, "kind": "inline-jsx"},
+            ))
 
-        return results
+        return results, tel, events
 
 
 # ── Enclosing-symbol heuristic (copied from C4 — same idiom) ────────────────

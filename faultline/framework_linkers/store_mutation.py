@@ -49,7 +49,11 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from faultline.framework_linkers.base import FrameworkLink, canonical_sample
+from faultline.framework_linkers.base import (
+    FrameworkLink,
+    canonical_sample,
+    merge_linker_telemetry,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -644,6 +648,11 @@ class StoreMutationLinker:
         # All store files (any library) — used to skip them during call-site scan.
         self._store_files: set[str] | None = None
         self.telemetry: _LinkerTelemetry = _LinkerTelemetry()
+        # Perf wave R3: per-file outcomes are feature-independent —
+        # computed once per file, replayed per (feature × file).
+        self._file_outcomes: dict[
+            str, tuple[list[FrameworkLink], _LinkerTelemetry],
+        ] = {}
 
     # ── Activation ──────────────────────────────────────────────────────
 
@@ -787,12 +796,27 @@ class StoreMutationLinker:
         return out
 
     def _scan_file(self, rel: str, text: str) -> list[FrameworkLink]:
-        """Detect read + mutation call sites in a single caller file."""
+        """Per-feature entry: cached per-file compute + per-occurrence replay
+        (perf wave R3 — see nextjs_http_route for the pattern rationale)."""
+        outcome = self._file_outcomes.get(rel)
+        if outcome is None:
+            outcome = self._compute_file_outcome(rel, text)
+            self._file_outcomes[rel] = outcome
+        links, tel_delta = outcome
+        merge_linker_telemetry(self.telemetry, tel_delta)
+        return list(links)
+
+    def _compute_file_outcome(
+        self, rel: str, text: str,
+    ) -> tuple[list[FrameworkLink], "_LinkerTelemetry"]:
+        """Detect read + mutation call sites in a single caller file
+        (feature-independent; pure given text + the per-scan registry)."""
         assert self._mutators_by_store is not None
         assert self._fields_by_store is not None
         assert self._rtk_action_names is not None
         assert self._store_files is not None
 
+        tel = _LinkerTelemetry()
         results: list[FrameworkLink] = []
 
         # 1. Identify which store identifiers are even in scope here.
@@ -827,7 +851,7 @@ class StoreMutationLinker:
             for field_entry in self._fields_by_store.get(real_name, ()):
                 if field_entry.library != "zustand":
                     continue
-                self.telemetry.read_sites_found += 1
+                tel.read_sites_found += 1
                 link = FrameworkLink(
                     source_file=rel,
                     source_symbol=_enclosing_symbol(text.splitlines(), line_no),
@@ -842,7 +866,7 @@ class StoreMutationLinker:
                     reason=f"zustand selector read on {field_entry.store_name}",
                 )
                 results.append(link)
-                self._record_sample(link)
+                self._record_sample(tel, link)
                 break  # one read link per call site is enough
 
         # 3. Zustand mutator call sites: `setRole("admin")` where `setRole`
@@ -863,7 +887,7 @@ class StoreMutationLinker:
                 # Avoid linking calls inside the store's own definition file.
                 if rel == entry.module_file:
                     continue
-                self.telemetry.mutation_sites_found += 1
+                tel.mutation_sites_found += 1
                 link = FrameworkLink(
                     source_file=rel,
                     source_symbol=_enclosing_symbol(text.splitlines(), line_no),
@@ -881,17 +905,17 @@ class StoreMutationLinker:
                     ),
                 )
                 results.append(link)
-                self._record_sample(link)
+                self._record_sample(tel, link)
 
         # 4. Redux: `dispatch(setRole(...))`.
         for m in _REDUX_DISPATCH_CALL.finditer(text):
             action_name = m.group(1)
             entry = self._rtk_action_names.get(action_name)
             if entry is None:
-                self.telemetry.unmatched += 1
+                tel.unmatched += 1
                 continue
             line_no = _line_no(text, m.start())
-            self.telemetry.mutation_sites_found += 1
+            tel.mutation_sites_found += 1
             link = FrameworkLink(
                 source_file=rel,
                 source_symbol=_enclosing_symbol(text.splitlines(), line_no),
@@ -906,7 +930,7 @@ class StoreMutationLinker:
                 reason=f"redux dispatch({action_name}(...))",
             )
             results.append(link)
-            self._record_sample(link)
+            self._record_sample(tel, link)
 
         # Redux: useSelector(state => state.X.Y) — best-effort link to
         # ANY redux slice in registry. We attach as "store-read" but the
@@ -920,7 +944,7 @@ class StoreMutationLinker:
                 break
             if slice_entry is None:
                 continue
-            self.telemetry.read_sites_found += 1
+            tel.read_sites_found += 1
             link = FrameworkLink(
                 source_file=rel,
                 source_symbol=_enclosing_symbol(text.splitlines(), line_no),
@@ -935,7 +959,7 @@ class StoreMutationLinker:
                 reason="useSelector read against redux slice",
             )
             results.append(link)
-            self._record_sample(link)
+            self._record_sample(tel, link)
 
         # 5. Jotai consumers.
         for pat, kind, conf in (
@@ -962,13 +986,13 @@ class StoreMutationLinker:
                             target = entry
                             break
                 if target is None:
-                    self.telemetry.unmatched += 1
+                    tel.unmatched += 1
                     continue
                 if kind == "store-mutation":
-                    self.telemetry.mutation_sites_found += 1
+                    tel.mutation_sites_found += 1
                     target_symbol = target.mutator  # type: ignore[union-attr]
                 else:
-                    self.telemetry.read_sites_found += 1
+                    tel.read_sites_found += 1
                     target_symbol = target.store_name
                 link = FrameworkLink(
                     source_file=rel,
@@ -984,7 +1008,7 @@ class StoreMutationLinker:
                     reason=f"jotai {kind} on {resolved}",
                 )
                 results.append(link)
-                self._record_sample(link)
+                self._record_sample(tel, link)
 
         # 6. Nanostores: `useStore(myAtom)` / `$myAtom(...)`.
         for m in _NANO_USE_STORE.finditer(text):
@@ -999,7 +1023,7 @@ class StoreMutationLinker:
             if target is None:
                 continue
             line_no = _line_no(text, m.start())
-            self.telemetry.read_sites_found += 1
+            tel.read_sites_found += 1
             link = FrameworkLink(
                 source_file=rel,
                 source_symbol=_enclosing_symbol(text.splitlines(), line_no),
@@ -1014,14 +1038,16 @@ class StoreMutationLinker:
                 reason=f"nanostores useStore({resolved})",
             )
             results.append(link)
-            self._record_sample(link)
+            self._record_sample(tel, link)
 
-        return results
+        return results, tel
 
-    def _record_sample(self, link: FrameworkLink) -> None:
-        # Uncapped append from worker threads; the cap + canonical order
-        # are applied at ``as_dict`` emission (base.canonical_sample).
-        self.telemetry.sample_links.append({
+    @staticmethod
+    def _record_sample(tel: "_LinkerTelemetry", link: FrameworkLink) -> None:
+        # Uncapped append into the per-file telemetry DELTA (replayed per
+        # feature × file); the cap + canonical order are applied at
+        # ``as_dict`` emission (base.canonical_sample).
+        tel.sample_links.append({
             "source": f"{link.source_file}:{link.source_line}",
             "target": f"{link.target_file}:{link.target_symbol}:L{link.target_line_start}",
             "kind": link.link_kind,

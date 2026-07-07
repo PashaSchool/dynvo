@@ -86,7 +86,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from faultline.framework_linkers.base import FrameworkLink, canonical_sample
+from faultline.framework_linkers.base import (
+    FrameworkLink,
+    canonical_sample,
+    merge_linker_telemetry,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -413,6 +417,18 @@ class NextjsHttpRouteLinker:
         self._route_map: list[_CompiledRoute] | None = None
         self._repo_root: Path | None = None
         self.telemetry: _LinkerTelemetry = _LinkerTelemetry()
+        # Perf wave R3: per-file scan outcomes are feature-independent —
+        # compute once per file, replay per (feature × file) occurrence.
+        # rel -> (links, telemetry delta, log events). Plain dict is
+        # enough: a worker-thread race recomputes the same pure value.
+        self._file_outcomes: dict[
+            str,
+            tuple[
+                list[FrameworkLink],
+                _LinkerTelemetry,
+                list[tuple[str, dict]],
+            ],
+        ] = {}
 
     # ── Activation ──────────────────────────────────────────────────────
 
@@ -570,6 +586,35 @@ class NextjsHttpRouteLinker:
         *,
         feature_name: str,
     ) -> list[FrameworkLink]:
+        """Per-feature entry: cached per-file compute + per-occurrence replay.
+
+        The expensive regex scan runs once per FILE (R3); its telemetry
+        delta and log events replay for every (feature × file)
+        occurrence, keeping scan_meta counter semantics byte-identical
+        to the historical per-feature scan.
+        """
+        outcome = self._file_outcomes.get(rel)
+        if outcome is None:
+            outcome = self._compute_file_outcome(rel, text, routes, ctx)
+            self._file_outcomes[rel] = outcome
+        links, tel_delta, events = outcome
+        merge_linker_telemetry(self.telemetry, tel_delta)
+        for msg, kwargs in events:
+            log.emit(feature_name, msg, **kwargs)
+        return list(links)
+
+    def _compute_file_outcome(
+        self,
+        rel: str,
+        text: str,
+        routes: list[_CompiledRoute],
+        ctx: "ScanContext",
+    ) -> tuple[
+        list[FrameworkLink], "_LinkerTelemetry", list[tuple[str, dict]],
+    ]:
+        """Feature-independent scan of ONE file (pure given text+routes)."""
+        tel = _LinkerTelemetry()
+        events: list[tuple[str, dict]] = []
         results: list[FrameworkLink] = []
         # Pre-split for line resolution; cheap on text < ~1MB.
         lines = text.splitlines()
@@ -577,13 +622,13 @@ class NextjsHttpRouteLinker:
         # Each (url, line, after_url_excerpt) triple from any pattern.
         captures = self._extract_url_captures(text, lines)
         if not captures:
-            return results
+            return results, tel, events
 
         for raw_url, line_no, after_excerpt in captures:
-            self.telemetry.fetch_urls_found += 1
+            tel.fetch_urls_found += 1
             normalised, had_slot, external = _normalise_url(raw_url)
             if external:
-                self.telemetry.urls_external_skipped += 1
+                tel.urls_external_skipped += 1
                 continue
             if normalised is None:
                 # Not an /api/ URL — silently skip; we only link API calls.
@@ -603,13 +648,13 @@ class NextjsHttpRouteLinker:
                     matched_route = r
                     break
             if matched_route is None:
-                self.telemetry.urls_unmatched += 1
-                self.telemetry.unmatched_sample.append(
+                tel.urls_unmatched += 1
+                tel.unmatched_sample.append(
                     {"url": raw_url, "file": rel},
                 )
                 continue
 
-            self.telemetry.urls_matched += 1
+            tel.urls_matched += 1
 
             # Resolve target symbol inside the route file.
             target_abs = str(ctx.repo_path / matched_route.file)
@@ -640,18 +685,19 @@ class NextjsHttpRouteLinker:
                 ),
             )
             results.append(link)
-            log.emit(
-                feature_name,
+            events.append((
                 f"link emitted: {rel}:{line_no} → "
                 f"{matched_route.file}:{target_symbol}",
-                linker=self.name,
-                url=raw_url,
-                normalised_url=normalised,
-                method_hint=method_hint,
-                confidence=confidence,
-            )
+                {
+                    "linker": self.name,
+                    "url": raw_url,
+                    "normalised_url": normalised,
+                    "method_hint": method_hint,
+                    "confidence": confidence,
+                },
+            ))
 
-        return results
+        return results, tel, events
 
     @staticmethod
     def _extract_url_captures(
