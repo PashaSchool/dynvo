@@ -255,6 +255,32 @@ def test_uf_candidates_clean_existing_name_stays_first() -> None:
     assert cands[0] == "Create and manage monitors"
 
 
+def test_uf_candidates_system_seed_names_by_own_resource() -> None:
+    """W3.2 D9: a synthesized SYSTEM journey templates on its OWN job
+    resource — never the PF display. Soc0 keyless smoke: 11 inngest job
+    seeds terminal-homed onto `integrations` all rendered "Manage
+    integrations" ×11; the job identity (articles/cases/…) must
+    survive the naming pass."""
+    v = load_naming_vocab()
+    pf = _pf("integrations", "Integrations", "hub:backend/integrations")
+
+    def _seed(uid: str, name: str, resource: str) -> UserFlow:
+        return UserFlow(
+            id=uid, name=name, resource=resource, domain=resource,
+            product_feature_id="integrations", intent="execute",
+            member_flow_ids=[], member_count=0, category="system",
+            trigger="queue", synthesized=True,
+            synthesis_reason="system_flow_recall",
+        )
+
+    cands = build_uf_candidates(_seed("UF-121", "Run articles", "articles"), pf, v)
+    assert cands[0] == "Run articles", cands
+    # underscore resources read as words
+    cands2 = build_uf_candidates(
+        _seed("UF-125", "Run detector runs", "detector_runs"), pf, v)
+    assert cands2[0] == "Run detector runs", cands2
+
+
 # ── Stage runner — the exhibit fixtures end-to-end ──────────────────────
 
 

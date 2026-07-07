@@ -984,6 +984,65 @@ def _system_route_resource(file_path: str, pattern: str) -> str:
     return segs[-1]
 
 
+def _flowless_system_groups(
+    anchored: set[str],
+    dev_paths: list[tuple[str, list]],
+    routes_index: list[dict] | None,
+) -> dict[str, dict[str, Any]]:
+    """Group flow-LESS system surfaces by journey resource.
+
+    Two channels (the Stage 6.7d in-rollup synthesis AND the W3.2
+    post-6.7d re-mint share THIS collector, so both paths agree
+    byte-for-byte):
+
+      * routes_index entries whose Stage 6.8b ``trigger`` is a system
+        class and whose file no real flow covers;
+      * BACKGROUND-JOB files (inngest / celery / tasks / workers) from
+        developer-feature paths — these are NOT routes, so the route
+        loop misses them entirely (Soc0's ``backend/inngest_functions/
+        *.py`` jobs: 11 files, 0 flows, 0 UFs — the D9 canonical
+        target).
+
+    Returns ``resource → {"trig": Counter, "routes": set, "files":
+    set}`` (``files`` carries the matched repo files so the post-6.7d
+    re-mint can attribute a PF home from file ownership).
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for r in (routes_index or []):
+        trig = r.get("trigger")
+        fp = str(r.get("file") or "")
+        if not fp or not trig or trig == "interactive" or fp in anchored:
+            continue  # interactive, or a real flow already covers this route
+        resource = _system_route_resource(fp, str(r.get("pattern") or ""))
+        g = groups.setdefault(
+            resource, {"trig": Counter(), "routes": set(), "files": set()})
+        g["trig"][trig] += 1
+        g["routes"].add(str(r.get("pattern") or fp))
+        g["files"].add(fp)
+    for _name, paths in dev_paths:
+        for p in paths:
+            if not isinstance(p, str) or p in anchored or "test" in p.lower():
+                continue
+            m = _JOBS_DIR_RE.search(p)
+            if not m:
+                continue
+            resource = m.group(1)
+            if resource in ("__init__", "init", "base", "utils", "helpers",
+                            "main"):
+                continue
+            g = groups.setdefault(
+                resource, {"trig": Counter(), "routes": set(), "files": set()})
+            g["trig"]["queue"] += 1
+            g["routes"].add(p)
+            g["files"].add(p)
+    return groups
+
+
+#: Tag on synthesized flow-less system journeys (verifier-reviewable;
+#: eval scorers exclude synthesized UFs by tag — see the UserFlow model).
+SYSTEM_RECALL_REASON = "system_flow_recall"
+
+
 def _hub_of(
     anchor: str,
     hub_dirs: list[tuple[str, str]] | None,
@@ -1299,34 +1358,12 @@ def cluster_user_flows(
             for p in [fl.get("entry_point_file"), *(fl.get("paths") or [])]
             if p
         }
-        groups: dict[str, dict[str, Any]] = {}
-        for r in (routes_index or []):
-            trig = r.get("trigger")
-            fp = str(r.get("file") or "")
-            if not fp or not trig or trig == "interactive" or fp in anchored:
-                continue  # interactive, or a real flow already covers this route
-            resource = _system_route_resource(fp, str(r.get("pattern") or ""))
-            g = groups.setdefault(resource, {"trig": Counter(), "routes": set()})
-            g["trig"][trig] += 1
-            g["routes"].add(str(r.get("pattern") or fp))
-        # ALSO surface BACKGROUND-JOB files (inngest / celery / tasks / workers)
-        # that Stage 3 left flow-less. These are NOT routes (no routes_index
-        # entry), so the route loop above misses them entirely — e.g. Soc0's 11
-        # `backend/inngest_functions/*.py` jobs (chat, cases, crons …), 0 of
-        # which currently become a flow or a UF. _JOBS_DIR_RE gives the job name.
-        for df in (scan.get("developer_features") or []):
-            for p in (df.get("paths") or []):
-                if not isinstance(p, str) or p in anchored or "test" in p.lower():
-                    continue
-                m = _JOBS_DIR_RE.search(p)
-                if not m:
-                    continue
-                resource = m.group(1)
-                if resource in ("__init__", "init", "base", "utils", "helpers", "main"):
-                    continue
-                g = groups.setdefault(resource, {"trig": Counter(), "routes": set()})
-                g["trig"]["queue"] += 1
-                g["routes"].add(p)
+        groups = _flowless_system_groups(
+            anchored,
+            [(str(df.get("name") or ""), list(df.get("paths") or []))
+             for df in (scan.get("developer_features") or [])],
+            routes_index,
+        )
         for resource, g in sorted(groups.items()):
             uf_seq += 1
             user_flows.append({
@@ -1343,6 +1380,10 @@ def cluster_user_flows(
                 "ui_tier": "no-ui",
                 "category": "system",
                 "trigger": g["trig"].most_common(1)[0][0],
+                # W3.2 D9 — verifier-reviewable tags (same contract as the
+                # route-group seeds; eval excludes synthesized UFs by tag).
+                "synthesized": True,
+                "synthesis_reason": SYSTEM_RECALL_REASON,
             })
     return {
         "user_flows": user_flows,
@@ -1458,9 +1499,185 @@ def _flow_view(flow: "Flow") -> dict:
     }
 
 
+# ── W3.2 D9 — the flow-less system mint SURVIVES the keyed path ─────────
+#
+# wave31 (keyed, 2026-07-07): route classification stamped
+# scan_meta.system_flow_routes on 6/10 repos, yet system-category UFs in
+# output = 0 CORPUS-WIDE. Root cause: the in-rollup synthesis above DOES
+# fire, but Stage 6.7d's ``_finish`` rebuilds user_flows[] from the LLM's
+# journey specs — thin member-less system UFs are not journeys the LLM
+# re-emits, so the rewrite eats every one of them (route-group seeds
+# survive for exactly one reason: they are appended in phase_finalize
+# AFTER 6.7d). The two functions below give the D9 contract the same
+# post-6.7d slot: re-mint what the rewrite dropped (dedup-aware, so the
+# keyless path — where the rollup UFs survive verbatim — is a no-op),
+# and re-stamp the deterministic trigger verdicts onto rebuilt journeys
+# whose member flows ride system routes (w31x: tracecat's 10 schedule-*
+# flows landed in UFs carrying trigger=None).
+
+
+def resynthesize_system_ufs(
+    user_flows: list["UserFlow"],
+    flows: list["Flow"],
+    features: list["Feature"],
+    routes_index: list[dict] | None,
+) -> dict[str, Any]:
+    """Append flow-less system UFs missing from *user_flows* (in place).
+
+    Same collector, gates and naming as the in-rollup synthesis; a
+    resource already present as a system UF is skipped, so running this
+    after a pipeline that KEPT the rollup output changes nothing.
+    PF home: when every matched file of a group is primary-owned by
+    devs of ONE product feature, the seed cites it (binding low);
+    otherwise the journey stays an honest orphan (pfid None — lane-owned
+    job files have no product home until Wave-4 tells their story).
+    Kill-switch: shared with the rollup (``FAULTLINE_SEED_SYSTEM_UFS``).
+    """
+    tele: dict[str, Any] = {"enabled": True, "minted": 0, "skipped_existing": 0,
+                            "seeds": []}
+    if os.environ.get("FAULTLINE_SEED_SYSTEM_UFS", "1") == "0":
+        tele["enabled"] = False
+        return tele
+    anchored = {
+        str(p)
+        for fl in (flows or [])
+        for p in [getattr(fl, "entry_point_file", None),
+                  *(getattr(fl, "paths", None) or [])]
+        if p
+    }
+    dev_paths = [
+        (str(getattr(f, "name", "") or ""),
+         [str(p) for p in (getattr(f, "paths", None) or [])])
+        for f in (features or [])
+        if getattr(f, "layer", "developer") == "developer"
+    ]
+    groups = _flowless_system_groups(anchored, dev_paths, routes_index)
+    if not groups:
+        return tele
+    existing = {
+        str(getattr(uf, "resource", "") or "")
+        for uf in user_flows
+        if getattr(uf, "category", None) == "system"
+    }
+    existing_names = {
+        (getattr(uf, "name", "") or "").strip().lower() for uf in user_flows
+    }
+    max_id = 0
+    for uf in user_flows:
+        m = re.match(r"^UF-(\d+)$", str(getattr(uf, "id", "") or ""))
+        if m:
+            max_id = max(max_id, int(m.group(1)))
+    # file → owning dev's pfid (primary ownership channel; first dev wins
+    # deterministically by features[] order, same as the validator's
+    # path_index convention).
+    file_pfid: dict[str, str | None] = {}
+    for f in (features or []):
+        if getattr(f, "layer", "developer") != "developer":
+            continue
+        pfid = getattr(f, "product_feature_id", None)
+        for p in (getattr(f, "paths", None) or []):
+            file_pfid.setdefault(str(p), pfid)
+
+    from faultline.models.types import UserFlow
+
+    for resource, g in sorted(groups.items()):
+        if resource in existing:
+            tele["skipped_existing"] += 1
+            continue
+        name = NAME_TMPL["execute"].format(r=resource.replace("-", " "))
+        if name.strip().lower() in existing_names:
+            tele["skipped_existing"] += 1
+            continue
+        owners = {file_pfid.get(fp) for fp in g["files"]}
+        pf_home = owners.pop() if (len(owners) == 1 and None not in owners) else None
+        max_id += 1
+        user_flows.append(UserFlow(
+            id=f"UF-{max_id:03d}",
+            name=name,
+            name_confidence="low",
+            domain=resource,
+            product_feature_id=pf_home,
+            intent="execute",
+            resource=resource,
+            member_flow_ids=[],
+            member_count=0,
+            routes=sorted(g["routes"]),
+            ui_tier="no-ui",
+            category="system",
+            trigger=g["trig"].most_common(1)[0][0],
+            synthesized=True,
+            synthesis_reason=SYSTEM_RECALL_REASON,
+            binding_confidence="low" if pf_home else None,
+        ))
+        existing_names.add(name.strip().lower())
+        tele["minted"] += 1
+        if len(tele["seeds"]) < 25:
+            tele["seeds"].append({"resource": resource, "pf": pf_home,
+                                  "trigger": g["trig"].most_common(1)[0][0],
+                                  "routes": len(g["routes"])})
+    return tele
+
+
+def restamp_system_triggers(
+    user_flows: list["UserFlow"],
+    flows: list["Flow"],
+    routes_index: list[dict] | None,
+) -> dict[str, Any]:
+    """Stamp ``trigger``/``category`` on journeys whose member flows ride
+    system routes (in place) — the 6.8b → UF wiring the keyed rewrite
+    loses.
+
+    Conservative by design: a journey is re-stamped ONLY when every
+    member flow with a resolvable route verdict is system-triggered
+    (mixed page+webhook journeys stay interactive). Deterministic, $0.
+    """
+    tele: dict[str, Any] = {"stamped": 0}
+    file_trigger = {
+        str(r.get("file")): str(r.get("trigger") or "")
+        for r in (routes_index or [])
+        if r.get("file") and r.get("trigger") and r.get("trigger") != "interactive"
+    }
+    if not file_trigger:
+        return tele
+    flow_by_key: dict[str, "Flow"] = {}
+    for fl in flows or []:
+        for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
+            if key:
+                flow_by_key.setdefault(str(key), fl)
+
+    def _trigger_of(fl: "Flow") -> str | None:
+        ep = getattr(fl, "entry_point_file", None)
+        if ep and str(ep) in file_trigger:
+            return file_trigger[str(ep)]
+        for p in (getattr(fl, "paths", None) or []):
+            if str(p) in file_trigger:
+                return file_trigger[str(p)]
+        return None
+
+    for uf in user_flows:
+        if getattr(uf, "trigger", None) or not (
+                getattr(uf, "member_flow_ids", None) or []):
+            continue
+        verdicts: list[str | None] = []
+        for mid in uf.member_flow_ids:
+            mfl = flow_by_key.get(str(mid))
+            if mfl is not None:
+                verdicts.append(_trigger_of(mfl))
+        counted = [v for v in verdicts if v]
+        if not counted or len(counted) != len(verdicts):
+            continue  # mixed or unresolvable — stays interactive
+        uf.trigger = Counter(counted).most_common(1)[0][0]
+        uf.category = "system"
+        tele["stamped"] += 1
+    return tele
+
+
 __all__ = [
     "INTENT",
     "NAME_TMPL",
+    "SYSTEM_RECALL_REASON",
     "cluster_user_flows",
+    "restamp_system_triggers",
+    "resynthesize_system_ufs",
     "run_user_flow_rollup",
 ]

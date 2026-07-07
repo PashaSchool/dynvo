@@ -66,6 +66,7 @@ No LLM. No network. Pure manifest parsing.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -232,13 +233,49 @@ def _slug_from_workspace_path(path: str) -> str | None:
     return slug or None
 
 
-def _workspace_slug(ws: "Workspace") -> str | None:
+def _root_project_slugs(repo_path: "Path") -> frozenset[str]:
+    """Slugs of the repo's ROOT project names (package.json + pyproject).
+
+    In-repo, deterministic evidence of the PRODUCT's own name. Used by
+    ``_workspace_slug`` to detect the product-alias collision class
+    (W3.2): tracecat's ``frontend/package.json`` is named ``tracecat``
+    — the same as the root ``pyproject.toml`` project — so the
+    workspace anchor (and the dev feature it names) surfaced as
+    ``tracecat``, a product alias that hides WHAT the workspace is
+    (the frontend shell) and reads as product code to every ruler.
+    """
+    slugs: set[str] = set()
+    root_pkg = _read_json(repo_path / "package.json")
+    if isinstance(root_pkg, dict):
+        s = _slug_from_package_name(root_pkg.get("name"))
+        if s:
+            slugs.add(s)
+    py_text = read_text(repo_path / "pyproject.toml")
+    if py_text:
+        m = re.search(r'(?m)^\s*name\s*=\s*["\']([^"\']+)["\']', py_text)
+        if m:
+            s = _slug_from_package_name(m.group(1))
+            if s:
+                slugs.add(s)
+    return frozenset(slugs)
+
+
+def _workspace_slug(
+    ws: "Workspace", root_slugs: frozenset[str] = frozenset(),
+) -> str | None:
     """Pick the best slug for a workspace anchor.
 
     Priority:
       1. ``package.json#name`` last segment — the maintainer's
          explicit name for the package (most stable signal).
       2. Workspace directory name — present on every workspace.
+
+    W3.2 product-alias rule: when the manifest name slug equals a ROOT
+    project name (``root_slugs``), it carries zero capability
+    information — it is the product's own alias — so the workspace
+    DIRECTORY basename wins instead (tracecat ``frontend/`` package
+    named ``tracecat`` → slug ``frontend``). The root workspace itself
+    (path ``.``/empty → no dir slug) keeps the manifest name.
 
     Returns ``None`` only when both produce empty strings, which
     in practice means the workspace has no manifest AND its path
@@ -248,6 +285,10 @@ def _workspace_slug(ws: "Workspace") -> str | None:
     if isinstance(pkg, dict):
         from_name = _slug_from_package_name(pkg.get("name"))
         if from_name:
+            if from_name in root_slugs:
+                from_dir = _slug_from_workspace_path(ws.path)
+                if from_dir and from_dir != from_name:
+                    return from_dir
             return from_name
     return _slug_from_workspace_path(ws.path)
 
@@ -334,9 +375,13 @@ class PackageAnchorExtractor:
         # ownership). The net effect is: every workspace becomes a
         # feature AND every per-route slug stays detectable.
         if ctx.monorepo and ctx.workspaces:
+            # W3.2 product-alias rule: root project names (in-repo
+            # evidence) demote colliding workspace manifest names to
+            # the directory basename — see ``_workspace_slug``.
+            root_slugs = _root_project_slugs(ctx.repo_path)
             seen_workspace_slugs: set[str] = set()
             for ws in ctx.workspaces:
-                ws_slug = _workspace_slug(ws)
+                ws_slug = _workspace_slug(ws, root_slugs)
                 if not ws_slug:
                     continue
                 if ws_slug in seen_workspace_slugs:

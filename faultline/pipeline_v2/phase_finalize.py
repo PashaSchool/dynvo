@@ -943,6 +943,93 @@ def run_finalize_phase(
                 f" no-pf {rgr_tele.get('skipped_no_pf')})",
             )
 
+    # ── W3.2 — UF-evidence lane re-homing (anchored paths, BOTH) ───────
+    # The W3.1 sink-kill parked the freed mass in the lane (corpus 85K →
+    # 1.94M LOC); the journey-evidenced slice of it (final UFs citing a
+    # lane dev's files, one-PF majority, self-evident, capacity-capped)
+    # re-homes to the capability its journeys ride, provenance
+    # ``fold:uf-evidence``. Runs AFTER 6.7d + route-group seeds (the
+    # citations must reflect the FINAL journey layer) and BEFORE 6.97 so
+    # loc accounting stamps the moved membership (loc-truth I13).
+    # Deterministic, $0. Kill-switch: FAULTLINE_SPINE_LANE_REHOME=0.
+    if anchored_mint_applied and not uf_suppressed:
+        from faultline.pipeline_v2.lane_rehome import (
+            lane_rehome_enabled,
+            rehome_uf_cited_lane_devs,
+        )
+        if lane_rehome_enabled():
+            with StageLogger(run_dir, 6, "lane_rehome") as log_lr:
+                try:
+                    lr_tele = rehome_uf_cited_lane_devs(
+                        features, product_features, user_flows,
+                        list(bipartite.flows), repo_path=repo_path,
+                    )
+                    scan_meta["lane_rehome"] = lr_tele
+                    log_lr.info(
+                        "lane_rehome: checked %d rehomed %d (%d LOC) "
+                        "blocked conc=%d self=%d target=%d cap=%d" % (
+                            lr_tele.get("checked", 0),
+                            lr_tele.get("rehomed", 0),
+                            lr_tele.get("rehomed_loc", 0),
+                            lr_tele.get("blocked_concentration", 0),
+                            lr_tele.get("blocked_self_evidence", 0),
+                            lr_tele.get("blocked_target", 0),
+                            lr_tele.get("blocked_cap", 0),
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_lr.info(
+                        f"lane_rehome: FAILED ({exc}) — lane left as-is",
+                        feature=None,
+                    )
+
+    # ── W3.2 D9 — system journeys survive the keyed rewrite (BOTH paths) ──
+    # wave31: 6.8b stamped system routes on 6/10 repos yet output carried
+    # ZERO system-category UFs — the 6.7d rewrite rebuilds user_flows[]
+    # from LLM journey specs and eats the thin member-less system seeds
+    # the rollup minted (Soc0's 11 flow-less inngest jobs: matched, minted,
+    # dropped). Same post-6.7d slot that keeps the route-group seeds
+    # alive: re-mint what the rewrite dropped (dedup-aware — a keyless
+    # pipeline that kept the rollup output no-ops) and re-stamp the
+    # deterministic trigger verdicts onto rebuilt journeys whose member
+    # flows ride system routes (unanimous-evidence bar). Deterministic,
+    # $0 LLM. Kill-switch: FAULTLINE_SEED_SYSTEM_UFS=0 (shared with the
+    # rollup synthesis).
+    if not uf_suppressed:
+        from faultline.pipeline_v2.stage_6_7_user_flows import (
+            restamp_system_triggers,
+            resynthesize_system_ufs,
+        )
+        with StageLogger(run_dir, 6, "system_uf_recall") as log_sys:
+            try:
+                sys_stamp_tele = restamp_system_triggers(
+                    user_flows, list(bipartite.flows),
+                    lineage_result.routes_index,
+                )
+                sys_mint_tele = resynthesize_system_ufs(
+                    user_flows, list(bipartite.flows), features,
+                    lineage_result.routes_index,
+                )
+                if (sys_mint_tele.get("minted")
+                        or sys_mint_tele.get("skipped_existing")
+                        or sys_stamp_tele.get("stamped")):
+                    scan_meta["system_uf_recall"] = {
+                        **sys_mint_tele, **sys_stamp_tele,
+                    }
+                log_sys.info(
+                    "system_uf_recall: minted %d (skipped_existing %d), "
+                    "triggers re-stamped %d" % (
+                        sys_mint_tele.get("minted", 0),
+                        sys_mint_tele.get("skipped_existing", 0),
+                        sys_stamp_tele.get("stamped", 0),
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_sys.info(
+                    f"system_uf_recall: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to
     # the final product features / user flows. Anchors are EVIDENCE here (a match
