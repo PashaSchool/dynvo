@@ -40,6 +40,7 @@ from faultline.pipeline_v2.stage_0_8_product_thesis import (
     THESIS_ENV,
     ProductThesis,
     ThesisSignals,
+    _collect_vendor_hits,
     _dep_category_slugs,
     derive_product_thesis,
     load_thesis_lexicon,
@@ -365,7 +366,7 @@ def test_run_stage_0_8_never_raises_on_broken_input(tmp_path: Path) -> None:
 
 def test_lexicon_shape_and_universality_conventions() -> None:
     lex = load_thesis_lexicon()
-    assert len(lex.rules) == 10
+    assert len(lex.rules) == 11  # W3.1 D3: + compliance-grc
     assert lex.fallback_id == GENERIC_VERTICAL
     assert lex.core_object_stopwords
     seen: set[str] = set()
@@ -392,6 +393,7 @@ def test_expected_verticals_present() -> None:
         "scheduling", "forms-surveys", "e-commerce", "analytics",
         "dev-tools", "communication",
         "enterprise-search",
+        "compliance-grc",  # W3.1 D3 (fb3 comp — Vanta/Drata class)
     }
 
 
@@ -565,3 +567,124 @@ def test_import_guard_stage_cannot_touch_membership_machinery() -> None:
         if module == "faultline.pipeline_v2.stage_0_7_repo_class":
             continue
         assert not any(tok in module for tok in _FORBIDDEN_IMPORT_TOKENS), module
+
+
+# ── W3.1 D3 — fb3 thesis fix-family (plumbing / GRC / vendor cluster) ────
+
+
+def test_plumbing_families_never_establish_without_schema() -> None:
+    """fb3 tracecat: dev-tools scored 7 via api-key/secret ROUTE hits —
+    plumbing chrome every SaaS has. Without schema confirmation they
+    neither establish nor score."""
+    signals = ThesisSignals(
+        route_segments=("api-keys", "api-key", "secrets", "tokens"),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "generic-saas", thesis.evidence["ranked"]
+    ranked = thesis.evidence["ranked"]
+    if ranked:  # dev-tools may appear, but with zero counted families
+        assert ranked[0]["noun_families"] == []
+        assert "api-key" in ranked[0].get("plumbing_suppressed", [])
+
+
+def test_plumbing_families_count_when_schema_declared() -> None:
+    """The infisical/openstatus class keeps its signal: a product whose
+    OWN schema declares ApiKey/Secret entities is about them."""
+    signals = ThesisSignals(
+        schema_nouns=("ApiKey", "Secret"),
+        route_segments=("api-keys", "secrets", "cli", "sdk"),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "dev-tools", thesis.evidence["ranked"]
+
+
+def test_compliance_grc_wins_comp_shape() -> None:
+    """fb3 comp: a GRC platform must classify compliance-grc, not
+    enterprise-search (its AI-copilot nouns are a supporting feature)."""
+    signals = ThesisSignals(
+        route_segments=(
+            "frameworks", "controls", "policies", "policy", "evidence-forms",
+            "risks", "risk", "vendors", "auditor", "questionnaire",
+            "new_questionnaire", "isms", "soa", "statement-of-applicability",
+            "penetration-tests", "tasks", "people", "knowledge-base", "chat",
+        ),
+        nav_labels=("Frameworks", "Controls", "Policies", "Risks", "Vendors"),
+        dep_categories=("ai", "billing", "email"),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "compliance-grc", thesis.evidence["ranked"]
+    assert "Compliance & GRC" in thesis.sentence
+
+
+def test_security_vendor_cluster_lifts_soar_shape() -> None:
+    """fb3 tracecat: a SOAR's security identity lives in its integration
+    CATALOG (crowdstrike/splunk/panther/wazuh/virustotal/... under
+    templates/tools + integrations/). Every 3 distinct security vendors
+    = one family-equivalent; with the `case` noun the vertical clears
+    dev-tools' honest residue."""
+    vendor_paths = tuple(
+        f"registry/integrations/{v}.py" for v in (
+            "crowdstrike_falconpy", "splunk", "panther", "wazuh",
+            "virustotal", "urlscan", "sentinel_one", "okta_sdk",
+            "google_secops_soar",
+        )
+    ) + tuple(
+        f"registry/templates/tools/{v}/action.yml" for v in (
+            "abuseipdb", "hibp", "elastic_security", "tenable_sc",
+            "threatstream", "gophish", "microsoft_sentinel", "misp",
+            "opencti", "shodan", "snyk", "rapid7", "qualys", "greynoise",
+            "hybrid_analysis", "leakcheck",
+        )
+    )
+    signals = ThesisSignals(
+        route_segments=("cases", "case-fields", "case-tags", "workflows",
+                        "executions", "registry", "repositories", "commits",
+                        "branches", "functions", "chat", "inbox", "messages",
+                        "threads", "channels", "emails"),
+        vendor_hits=_collect_vendor_hits(list(vendor_paths)),
+        dep_categories=("ai",),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical == "security-operations", thesis.evidence["ranked"]
+    top = thesis.evidence["ranked"][0]
+    assert top["vendor_cluster"]["distinct_vendors"] >= 9
+    assert top["vendor_cluster"]["category"] == "security"
+
+
+def test_vendor_cluster_never_establishes_alone() -> None:
+    """The n8n-class guard: an everything-catalog automation hub with
+    ZERO security nouns is not a security product by catalog contents."""
+    vendor_paths = [
+        f"packages/integrations/{v}/index.ts" for v in (
+            "crowdstrike", "splunk", "panther", "wazuh", "virustotal",
+            "okta", "tenable",
+        )
+    ]
+    signals = ThesisSignals(
+        route_segments=("workflows", "executions", "credentials"),
+        vendor_hits=_collect_vendor_hits(vendor_paths),
+    )
+    thesis = derive_product_thesis(signals)
+    assert thesis.vertical != "security-operations", thesis.evidence["ranked"]
+
+
+def test_vendor_hits_require_integration_context() -> None:
+    """Brand tokens OUTSIDE integration-context dirs never count (a
+    docs/comparisons/splunk.md page is not an integration)."""
+    hits = _collect_vendor_hits([
+        "docs/comparisons/splunk.md",
+        "src/lib/crowdstrike-blog-post.ts",
+    ])
+    assert hits == ()
+
+
+def test_auth_plumbing_never_core_objects() -> None:
+    """fb3 pretalx: core_objects[0] was 'reset' (password-reset routes) —
+    the board's first sentence led with auth plumbing."""
+    signals = ThesisSignals(
+        route_segments=("reset", "reset", "reset", "talks", "talk",
+                        "events", "speakers", "cfp"),
+    )
+    thesis = derive_product_thesis(signals)
+    assert "reset" not in thesis.core_objects, thesis.core_objects
+    assert thesis.core_objects[0] in ("talk", "event", "speaker", "cfp")

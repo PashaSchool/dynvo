@@ -238,6 +238,9 @@ class VerticalRule:
     #: ``("event", "type")``).
     noun_families: tuple[tuple[str, ...], ...]
     dep_categories: tuple[str, ...]
+    #: W3.1 D3 — optional integration-vendor category this vertical may
+    #: draw catalog evidence from (``security`` for security-operations).
+    vendor_category: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +252,14 @@ class ThesisLexicon:
     fallback_display: str
     fallback_audience: str
     core_object_stopwords: frozenset[str]
+    #: W3.1 D3 — plumbing noun families (canonical form): may neither
+    #: establish a vertical nor score unless SCHEMA-matched.
+    plumbing_families: frozenset[str] = frozenset()
+    #: W3.1 D3 — category → vendor-token part tuples.
+    vendor_categories: dict[str, tuple[tuple[str, ...], ...]] = field(
+        default_factory=dict)
+    #: Dir segments marking an integration-context path.
+    integration_context_segments: frozenset[str] = frozenset()
 
 
 @lru_cache(maxsize=1)
@@ -277,6 +288,7 @@ def load_thesis_lexicon() -> ThesisLexicon:
                 audience=str(spec.get("audience") or "end users & teams"),
                 noun_families=families,
                 dep_categories=deps,
+                vendor_category=str(spec.get("vendor_category") or ""),
             ))
     fallback = data.get("fallback") or {}
     stop_raw = data.get("core_object_stopwords") or []
@@ -285,12 +297,33 @@ def load_thesis_lexicon() -> ThesisLexicon:
         for s in stop_raw
         if isinstance(s, str) and _token_parts(s)
     )
+    plumbing = frozenset(
+        _canonical(parts)
+        for s in (data.get("plumbing_families") or [])
+        if isinstance(s, str) and (parts := _token_parts(s))
+    )
+    vendor_cats: dict[str, tuple[tuple[str, ...], ...]] = {}
+    for cat, tokens in (data.get("integration_vendor_categories") or {}).items():
+        fams = tuple(
+            parts for t in (tokens or [])
+            if isinstance(t, str) and (parts := _token_parts(t))
+        )
+        if fams:
+            vendor_cats[str(cat)] = fams
+    ctx_segs = frozenset(
+        str(s).lower()
+        for s in (data.get("integration_context_segments") or [])
+        if isinstance(s, str) and s
+    )
     return ThesisLexicon(
         rules=tuple(rules),
         fallback_id=str(fallback.get("id") or GENERIC_VERTICAL),
         fallback_display=str(fallback.get("display") or "General SaaS"),
         fallback_audience=str(fallback.get("audience") or "end users & teams"),
         core_object_stopwords=stopwords,
+        plumbing_families=plumbing,
+        vendor_categories=vendor_cats,
+        integration_context_segments=ctx_segs,
     )
 
 
@@ -327,6 +360,9 @@ class ThesisSignals:
     route_segments: tuple[str, ...] = ()
     nav_labels: tuple[str, ...] = ()
     dep_categories: tuple[str, ...] = ()
+    #: W3.1 D3 — sorted (category, vendor-canonical) pairs found in
+    #: integration-context paths (dir segments + file stems).
+    vendor_hits: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def collect(
@@ -387,11 +423,14 @@ class ThesisSignals:
             and getattr(c, "name", "") in dep_slugs
         }))
 
+        vendor_hits = _collect_vendor_hits(all_paths)
+
         return cls(
             schema_nouns=schema_nouns,
             route_segments=route_segments,
             nav_labels=nav_labels,
             dep_categories=dep_categories,
+            vendor_hits=vendor_hits,
         )
 
 
@@ -414,6 +453,39 @@ def _url_segments(pattern: str) -> list[str]:
     return out
 
 
+def _collect_vendor_hits(
+    all_paths: list[str] | tuple[str, ...],
+) -> tuple[tuple[str, str], ...]:
+    """W3.1 D3 — distinct (category, vendor) pairs in INTEGRATION-context
+    paths. A path qualifies when any dir segment is an
+    ``integration_context_segments`` word; vendor families then match
+    contiguously against each remaining dir segment's / the file stem's
+    token parts (same matcher as noun families)."""
+    lex = load_thesis_lexicon()
+    if not lex.vendor_categories or not lex.integration_context_segments:
+        return ()
+    hits: set[tuple[str, str]] = set()
+    for p in all_paths:
+        segs = str(p).split("/")
+        dirs = segs[:-1]
+        if not any(s.lower() in lex.integration_context_segments
+                   for s in dirs):
+            continue
+        stem = segs[-1]
+        stem = stem[: stem.rfind(".")] if "." in stem else stem
+        units = [*dirs, stem]
+        parts_list = [parts for u in units if (parts := _token_parts(u))]
+        for cat, families in lex.vendor_categories.items():
+            for family in families:
+                canon = _canonical(family)
+                if (cat, canon) in hits:
+                    continue
+                if any(_contains_contiguous(parts, family)
+                       for parts in parts_list):
+                    hits.add((cat, canon))
+    return tuple(sorted(hits))
+
+
 # ── Derivation ───────────────────────────────────────────────────────────
 
 
@@ -428,6 +500,11 @@ class VerticalEvidence:
     #: family canonical -> sorted channels it matched in
     channels: dict[str, tuple[str, ...]] = field(default_factory=dict)
     eligible: bool = False
+    #: W3.1 D3 — plumbing families matched but SUPPRESSED (no schema
+    #: confirmation) + the vendor-cluster contribution, for evidence
+    #: transparency.
+    plumbing_suppressed: tuple[str, ...] = ()
+    vendor_cluster: dict[str, Any] = field(default_factory=dict)
 
     @property
     def rank_key(self) -> tuple[int, int, int]:
@@ -435,13 +512,18 @@ class VerticalEvidence:
         return (self.score, len(self.noun_families), confirmations)
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "vertical": self.vertical_id,
             "score": self.score,
             "noun_families": list(self.noun_families),
             "dep_categories": list(self.dep_categories),
             "channels": {k: list(v) for k, v in sorted(self.channels.items())},
         }
+        if self.plumbing_suppressed:
+            out["plumbing_suppressed"] = list(self.plumbing_suppressed)
+        if self.vendor_cluster:
+            out["vendor_cluster"] = dict(self.vendor_cluster)
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,6 +573,9 @@ def _score_verticals(
     """
     channel_tokens = _channel_token_parts(signals)
     dep_present = set(signals.dep_categories)
+    vendors_by_cat: dict[str, set[str]] = {}
+    for cat, vendor in signals.vendor_hits:
+        vendors_by_cat.setdefault(cat, set()).add(vendor)
     out: list[VerticalEvidence] = []
     for rule in lexicon.rules:
         family_channels: dict[str, set[str]] = {}
@@ -501,24 +586,59 @@ def _score_verticals(
                         family_channels.setdefault(
                             _canonical(family), set(),
                         ).add(channel)
-        if not family_channels:
+        # W3.1 D3 — plumbing families (api-key/secret/token/...) count
+        # ONLY when SCHEMA-matched: a product whose own data model
+        # declares the entity IS about it (infisical Secret models,
+        # openstatus ApiKey); a /api-keys route is chrome every SaaS
+        # has (the tracecat dev-tools=7 mislabel).
+        suppressed = tuple(sorted(
+            fam for fam, chs in family_channels.items()
+            if fam in lexicon.plumbing_families and "schema" not in chs
+        ))
+        counted_channels = {
+            fam: chs for fam, chs in family_channels.items()
+            if fam not in suppressed
+        }
+        # W3.1 D3 — vendor-cluster family equivalents: every 3 DISTINCT
+        # same-category vendors in integration-context paths = 1 noun
+        # family of evidence (the spine hub-family >=3 constant). Never
+        # establishes alone: >=1 real counted noun family required.
+        cat = rule.vendor_category
+        vendors = sorted(vendors_by_cat.get(cat, ())) if cat else []
+        vendor_fe = len(vendors) // 3 if counted_channels else 0
+        if not counted_channels and not family_channels:
             continue
-        families = tuple(sorted(family_channels))
-        eligible = len(families) >= MIN_NOUN_FAMILIES
+        families = tuple(sorted(counted_channels))
+        eligible = (
+            len(families) >= 1
+            and len(families) + vendor_fe >= MIN_NOUN_FAMILIES
+        )
         dep_hits = (
             tuple(sorted(set(rule.dep_categories) & dep_present))
             if eligible else ()
         )
+        if not families and not suppressed:
+            continue
+        vendor_cluster: dict[str, Any] = {}
+        if vendor_fe:
+            vendor_cluster = {
+                "category": cat,
+                "distinct_vendors": len(vendors),
+                "family_equivalents": vendor_fe,
+                "vendors": vendors[:12],
+            }
         out.append(VerticalEvidence(
             vertical_id=rule.vertical_id,
-            score=len(families) + len(dep_hits),
+            score=len(families) + vendor_fe + len(dep_hits),
             noun_families=families,
             dep_categories=dep_hits,
             channels={
                 fam: tuple(sorted(chs))
-                for fam, chs in family_channels.items()
+                for fam, chs in counted_channels.items()
             },
             eligible=eligible,
+            plumbing_suppressed=suppressed,
+            vendor_cluster=vendor_cluster,
         ))
     out.sort(key=lambda ev: (
         -ev.rank_key[0], -ev.rank_key[1], -ev.rank_key[2], ev.vertical_id,
