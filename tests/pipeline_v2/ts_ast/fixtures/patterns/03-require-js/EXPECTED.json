@@ -1,0 +1,103 @@
+{
+  "case": "03-require-js",
+  "defs": [
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/consume.js",
+      "kind": "function",
+      "name": "run",
+      "parent": null,
+      "start_line": 5,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "src/io.js",
+      "kind": "function",
+      "name": "readData",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/io.js",
+      "kind": "function",
+      "name": "writeData",
+      "parent": null,
+      "start_line": 5,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 1,
+      "exported": true,
+      "file": "src/util.js",
+      "kind": "const",
+      "name": "tag",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "require",
+      "line": 1,
+      "names": [
+        "readData"
+      ],
+      "raw_target": "./io.js",
+      "src_file": "src/consume.js"
+    },
+    {
+      "kind": "require",
+      "line": 2,
+      "names": [],
+      "raw_target": "./util",
+      "src_file": "src/consume.js"
+    },
+    {
+      "kind": "require",
+      "line": 3,
+      "names": [],
+      "raw_target": "fs",
+      "src_file": "src/consume.js"
+    }
+  ],
+  "exports_index": null,
+  "notes": "CJS: module.exports={a,b} shorthand marks names exported; require bindings (bare or destructured) are ImportEdges, never DefSpans; destructured require carries names, bare require carries (); extension-full './io.js' resolves.",
+  "resolved": [
+    {
+      "kind": "require",
+      "names": [
+        "readData"
+      ],
+      "raw_target": "./io.js",
+      "resolution": "relative",
+      "src_file": "src/consume.js",
+      "target_file": "src/io.js",
+      "via_barrels": []
+    },
+    {
+      "kind": "require",
+      "names": [],
+      "raw_target": "./util",
+      "resolution": "relative",
+      "src_file": "src/consume.js",
+      "target_file": "src/util.js",
+      "via_barrels": []
+    },
+    {
+      "kind": "require",
+      "names": [],
+      "raw_target": "fs",
+      "resolution": "package_external",
+      "src_file": "src/consume.js",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

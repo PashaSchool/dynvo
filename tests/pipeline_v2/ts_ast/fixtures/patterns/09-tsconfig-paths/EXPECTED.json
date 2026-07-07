@@ -1,0 +1,81 @@
+{
+  "case": "09-tsconfig-paths",
+  "defs": [
+    {
+      "end_line": 6,
+      "exported": true,
+      "file": "src/app/main.ts",
+      "kind": "function",
+      "name": "main",
+      "parent": null,
+      "start_line": 4,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "src/deep/helper.ts",
+      "kind": "function",
+      "name": "deepHelper",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "src/lib/format.ts",
+      "kind": "function",
+      "name": "formatLabel",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "formatLabel"
+      ],
+      "raw_target": "@lib/format",
+      "src_file": "src/app/main.ts"
+    },
+    {
+      "kind": "named",
+      "line": 2,
+      "names": [
+        "deepHelper"
+      ],
+      "raw_target": "src/deep/helper",
+      "src_file": "src/app/main.ts"
+    }
+  ],
+  "exports_index": null,
+  "notes": "paths alias @lib/* AND bare-specifier-through-baseUrl both resolve with resolution='tsconfig_alias'.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "formatLabel"
+      ],
+      "raw_target": "@lib/format",
+      "resolution": "tsconfig_alias",
+      "src_file": "src/app/main.ts",
+      "target_file": "src/lib/format.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "named",
+      "names": [
+        "deepHelper"
+      ],
+      "raw_target": "src/deep/helper",
+      "resolution": "tsconfig_alias",
+      "src_file": "src/app/main.ts",
+      "target_file": "src/deep/helper.ts",
+      "via_barrels": []
+    }
+  ]
+}

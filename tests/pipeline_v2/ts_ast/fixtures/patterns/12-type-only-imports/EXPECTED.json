@@ -1,0 +1,97 @@
+{
+  "case": "12-type-only-imports",
+  "defs": [
+    {
+      "end_line": 5,
+      "exported": true,
+      "file": "src/theme.ts",
+      "kind": "function",
+      "name": "applyTheme",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/widget.ts",
+      "kind": "function",
+      "name": "makeWidget",
+      "parent": null,
+      "start_line": 4,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "type:WidgetConfig"
+      ],
+      "raw_target": "./config",
+      "src_file": "src/widget.ts"
+    },
+    {
+      "kind": "named",
+      "line": 2,
+      "names": [
+        "applyTheme",
+        "type:Theme"
+      ],
+      "raw_target": "./theme",
+      "src_file": "src/widget.ts"
+    }
+  ],
+  "exports_index": {
+    "src/config.ts": [
+      {
+        "kind": "named",
+        "name": "WidgetConfig",
+        "origin_file": null
+      }
+    ],
+    "src/theme.ts": [
+      {
+        "kind": "named",
+        "name": "Theme",
+        "origin_file": null
+      },
+      {
+        "kind": "named",
+        "name": "applyTheme",
+        "origin_file": null
+      }
+    ],
+    "src/widget.ts": [
+      {
+        "kind": "named",
+        "name": "makeWidget",
+        "origin_file": null
+      }
+    ]
+  },
+  "notes": "type-only names carry 'type:' prefix on ImportEdge and are DROPPED from ResolvedEdge.names (provenance skip); pure-type edge still resolves at module level with names=(); interfaces/type aliases yield NO DefSpan but DO appear in exports_index.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [],
+      "raw_target": "./config",
+      "resolution": "relative",
+      "src_file": "src/widget.ts",
+      "target_file": "src/config.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "named",
+      "names": [
+        "applyTheme"
+      ],
+      "raw_target": "./theme",
+      "resolution": "relative",
+      "src_file": "src/widget.ts",
+      "target_file": "src/theme.ts",
+      "via_barrels": []
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "case": "07-wrapper-styled",
+  "defs": [
+    {
+      "end_line": 9,
+      "exported": true,
+      "file": "src/buttons.ts",
+      "kind": "component",
+      "name": "GhostButton",
+      "parent": null,
+      "start_line": 7,
+      "wrapper": "styled"
+    },
+    {
+      "end_line": 5,
+      "exported": true,
+      "file": "src/buttons.ts",
+      "kind": "component",
+      "name": "PrimaryButton",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "styled"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "default",
+      "line": 1,
+      "names": [
+        "styled"
+      ],
+      "raw_target": "styled-components",
+      "src_file": "src/buttons.ts"
+    }
+  ],
+  "exports_index": null,
+  "notes": "styled tagged templates: member form styled.button`` and call form styled(Comp)`` both wrapper='styled' with the full template span; default import binds local name.",
+  "resolved": [
+    {
+      "kind": "default",
+      "names": [
+        "styled"
+      ],
+      "raw_target": "styled-components",
+      "resolution": "package_external",
+      "src_file": "src/buttons.ts",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

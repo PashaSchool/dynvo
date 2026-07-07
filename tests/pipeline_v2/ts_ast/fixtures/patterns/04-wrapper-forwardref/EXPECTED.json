@@ -1,0 +1,41 @@
+{
+  "case": "04-wrapper-forwardref",
+  "defs": [
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/fancy-input.tsx",
+      "kind": "component",
+      "name": "FancyInput",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "forwardRef"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "forwardRef"
+      ],
+      "raw_target": "react",
+      "src_file": "src/fancy-input.tsx"
+    }
+  ],
+  "exports_index": null,
+  "notes": "forwardRef component: full 3..7 span (NOT the 1-line regex degenerate span); inner named fn expression gets no DefSpan.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "forwardRef"
+      ],
+      "raw_target": "react",
+      "resolution": "package_external",
+      "src_file": "src/fancy-input.tsx",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

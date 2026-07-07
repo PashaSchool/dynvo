@@ -324,6 +324,9 @@ def detect_technology_instruments(
 
     # ── one import walk ───────────────────────────────────────────────
     cache = source_cache or _SourceCache(repo_path)
+    # W6-AST Hook B (M4): graph-backed provenance (S2); None → legacy.
+    from faultline.pipeline_v2.ts_ast.adapter import repo_provenance
+    prov = repo_provenance(str(repo_path), tracked)
     try:
         alias_map = build_path_alias_map(repo_path)
     except Exception:  # noqa: BLE001 — resolver is best-effort
@@ -343,14 +346,19 @@ def detect_technology_instruments(
         su = unit_of_file.get(rel)
         if su and _is_src(rel):
             src_by_unit[su].append(rel)
-        try:
-            specs = list(cache.imports(rel).values())
-        except Exception:  # noqa: BLE001 — unreadable file → no imports
-            continue
+        if prov is not None and rel in prov.files:
+            specs = prov.spec_occurrences(rel)  # W6-AST Hook B (M4)
+        else:
+            try:
+                specs = list(cache.imports(rel).values())
+            except Exception:  # noqa: BLE001 — unreadable file → no imports
+                continue
         for spec in specs:
             tu: str | None = _ws_unit_of_spec(spec)
             if tu is None:
-                tgt = _resolve_one(rel, spec, alias_map, tracked_set)
+                tgt = (prov.resolve(rel, spec)
+                       if prov is not None and rel in prov.files
+                       else _resolve_one(rel, spec, alias_map, tracked_set))
                 if tgt is not None:
                     tu = unit_of_file.get(tgt)
                     if su is not None and tu == su:

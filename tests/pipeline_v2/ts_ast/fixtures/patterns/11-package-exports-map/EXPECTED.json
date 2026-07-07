@@ -1,0 +1,103 @@
+{
+  "case": "11-package-exports-map",
+  "defs": [
+    {
+      "end_line": 6,
+      "exported": true,
+      "file": "packages/consumer/src/use.ts",
+      "kind": "function",
+      "name": "useKit",
+      "parent": null,
+      "start_line": 4,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 1,
+      "exported": true,
+      "file": "packages/kit/src/index.ts",
+      "kind": "const",
+      "name": "kitRoot",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 1,
+      "exported": true,
+      "file": "packages/kit/src/sub.ts",
+      "kind": "const",
+      "name": "kitSub",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "kitRoot"
+      ],
+      "raw_target": "@acme/kit",
+      "src_file": "packages/consumer/src/use.ts"
+    },
+    {
+      "kind": "named",
+      "line": 2,
+      "names": [
+        "kitSub"
+      ],
+      "raw_target": "@acme/kit/sub",
+      "src_file": "packages/consumer/src/use.ts"
+    }
+  ],
+  "exports_index": {
+    "packages/consumer/src/use.ts": [
+      {
+        "kind": "named",
+        "name": "useKit",
+        "origin_file": null
+      }
+    ],
+    "packages/kit/src/index.ts": [
+      {
+        "kind": "named",
+        "name": "kitRoot",
+        "origin_file": null
+      }
+    ],
+    "packages/kit/src/sub.ts": [
+      {
+        "kind": "named",
+        "name": "kitSub",
+        "origin_file": null
+      }
+    ]
+  },
+  "notes": "exports map: '.' as plain string, './sub' as conditional object (default condition wins); both resolution='workspace'.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "kitRoot"
+      ],
+      "raw_target": "@acme/kit",
+      "resolution": "workspace",
+      "src_file": "packages/consumer/src/use.ts",
+      "target_file": "packages/kit/src/index.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "named",
+      "names": [
+        "kitSub"
+      ],
+      "raw_target": "@acme/kit/sub",
+      "resolution": "workspace",
+      "src_file": "packages/consumer/src/use.ts",
+      "target_file": "packages/kit/src/sub.ts",
+      "via_barrels": []
+    }
+  ]
+}
