@@ -75,15 +75,6 @@
   "resolved": [
     {
       "kind": "named",
-      "names": [],
-      "raw_target": "./config",
-      "resolution": "relative",
-      "src_file": "src/widget.ts",
-      "target_file": "src/config.ts",
-      "via_barrels": []
-    },
-    {
-      "kind": "named",
       "names": [
         "applyTheme"
       ],

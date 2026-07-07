@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any
 
 from faultline.pipeline_v2.ts_ast.parse import (
@@ -53,6 +52,7 @@ from faultline.pipeline_v2.ts_ast.parse import (
     lang_for_path,
     parse_file,
 )
+from faultline.pipeline_v2.ts_ast.shapes import DefSpan
 
 logger = logging.getLogger(__name__)
 
@@ -113,19 +113,9 @@ _CLASS_MEMBER_SKIP = frozenset({
 })
 
 
-@dataclass(frozen=True)
-class DefSpan:
-    """Frozen spec shape (w6ast-spec §1) — do not extend without the
-    coordinator amending the spec."""
-
-    file: str
-    name: str
-    kind: str        # 'function' | 'class' | 'component' | 'method' | 'const' | 'enum'
-    start_line: int  # 1-indexed, inclusive
-    end_line: int    # 1-indexed, inclusive
-    exported: bool
-    wrapper: str     # 'none' | 'forwardRef' | 'memo' | 'hoc' | 'styled'
-    parent: str | None
+# DefSpan is imported from shapes.py — M4's canonical single source for the
+# frozen §1 shapes (coordinator ast-chain canonicalisation; semantics frozen,
+# fields/order identical to the former local copy).
 
 
 # ── Node helpers ─────────────────────────────────────────────────────────

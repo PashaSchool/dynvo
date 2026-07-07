@@ -38,7 +38,7 @@
       "line": 2,
       "names": [
         "alphaThing",
-        "betaThing as beta",
+        "betaThing",
         "type:GammaKind"
       ],
       "raw_target": "./things",
@@ -61,7 +61,7 @@
       "kind": "named",
       "names": [
         "alphaThing",
-        "betaThing as beta"
+        "betaThing"
       ],
       "raw_target": "./things",
       "resolution": "relative",

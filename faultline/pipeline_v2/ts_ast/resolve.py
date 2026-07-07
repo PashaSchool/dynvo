@@ -63,7 +63,6 @@ import posixpath
 from collections.abc import Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from faultline.analyzer.import_graph import detect_workspace_package_map
 from faultline.analyzer.tsconfig_paths import (
@@ -71,54 +70,18 @@ from faultline.analyzer.tsconfig_paths import (
     build_path_alias_map,
     resolve_alias_import,
 )
+from faultline.pipeline_v2.ts_ast.shapes import (
+    ExportEntry,
+    ImportEdge,
+    Resolution,
+    ResolvedEdge,
+)
 
-# ── Spec §1 shapes (frozen contract — local copies, identical fields) ────
-
-ImportKind = Literal[
-    "named", "default", "namespace", "dynamic", "require",
-    "reexport_star", "reexport_named", "side_effect",
-]
-
-ExportKind = Literal["named", "default", "star_from"]
-
-Resolution = Literal[
-    "relative", "tsconfig_alias", "workspace", "package_external",
-    "unresolved",
-]
-
-
-@dataclass(frozen=True, slots=True)
-class ImportEdge:
-    """One raw import/export edge as emitted by M2 (spec §1)."""
-
-    src_file: str
-    kind: ImportKind
-    names: tuple[str, ...]
-    raw_target: str
-    line: int
-
-
-@dataclass(frozen=True, slots=True)
-class ExportEntry:
-    """One export surface of a file as emitted by M2 (spec §1)."""
-
-    file: str
-    name: str
-    kind: ExportKind
-    origin_file: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedEdge:
-    """A raw edge pinned to a repo file (spec §1)."""
-
-    src_file: str
-    raw_target: str
-    target_file: str | None
-    resolution: Resolution
-    via_barrels: tuple[str, ...]
-    names: tuple[str, ...]
-    kind: str
+# ── Spec §1 shapes ────────────────────────────────────────────────────────
+# ImportEdge / ExportEntry / ResolvedEdge / Resolution are imported from
+# shapes.py — M4's canonical single source for the frozen §1 shapes
+# (coordinator ast-chain canonicalisation; semantics frozen, fields/order
+# identical to the former local copies).
 
 
 # ── Tunables (mirroring the engine's canonical resolver conventions) ─────

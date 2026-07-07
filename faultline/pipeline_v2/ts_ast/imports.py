@@ -57,8 +57,9 @@ this module stays dependency-free at runtime.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterator, Literal
+from typing import TYPE_CHECKING, Iterator
+
+from faultline.pipeline_v2.ts_ast.shapes import ExportEntry, ImportEdge
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, no runtime dependency
     from tree_sitter import Node, Tree
@@ -71,42 +72,12 @@ _LANGS = ("ts", "tsx", "js", "jsx")
 # `import x = require('...')` is an import *statement* and is always kept.
 _REQUIRE_LANGS = ("js", "jsx")
 
-ImportKind = Literal[
-    "named",
-    "default",
-    "namespace",
-    "dynamic",
-    "require",
-    "reexport_star",
-    "reexport_named",
-    "side_effect",
-]
-
-ExportKind = Literal["named", "default", "star_from"]
-
 # Prefix carried by type-only names; M3 skips these for provenance.
 TYPE_NAME_PREFIX = "type:"
 
-
-@dataclass(frozen=True)
-class ImportEdge:
-    """One raw (unresolved) module-graph edge out of ``src_file`` (spec §1)."""
-
-    src_file: str
-    kind: ImportKind
-    names: tuple[str, ...]
-    raw_target: str
-    line: int
-
-
-@dataclass(frozen=True)
-class ExportEntry:
-    """One exposed name of ``file``; re-exports carry the raw origin (spec §1)."""
-
-    file: str
-    name: str
-    kind: ExportKind
-    origin_file: str | None
+# ImportEdge / ExportEntry are imported from shapes.py — M4's canonical single
+# source for the frozen §1 shapes (coordinator ast-chain canonicalisation;
+# semantics frozen, fields/order identical to the former local copies).
 
 
 def extract_imports(

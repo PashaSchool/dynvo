@@ -60,7 +60,6 @@ from __future__ import annotations
 
 import dataclasses
 import difflib
-import importlib
 import json
 from pathlib import Path
 from typing import Any
@@ -68,6 +67,15 @@ from typing import Any
 import pytest
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "patterns"
+
+
+@pytest.fixture(autouse=True)
+def _force_ts_ast_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M1 ``parse_file`` gates on ``is_active()`` (kill-switch law) — the
+    corpus must exercise the real parser, so pin the master flag ON and drop
+    any entry-migration flag for every case regardless of ambient env."""
+    monkeypatch.setenv("FAULTLINE_TS_AST", "1")
+    monkeypatch.delenv("FAULTLINE_TS_AST_ENTRY", raising=False)
 
 # The full pattern-class roster (guards against accidental case loss).
 EXPECTED_CASES = [
@@ -117,14 +125,7 @@ RESOLUTIONS = frozenset(
 EXPORT_FIELDS = frozenset({"file", "name", "kind", "origin_file"})
 EXPORT_KINDS = frozenset({"named", "default", "star_from"})
 
-_DEFS_MOD = "faultline.pipeline_v2.ts_ast.defs"
-_IMPORTS_MOD = "faultline.pipeline_v2.ts_ast.imports"
-_RESOLVE_MOD = "faultline.pipeline_v2.ts_ast.resolve"
-
-_DEFS_ENTRYPOINTS = ("extract_defs", "collect_defs", "defs_for_root")
-_IMPORTS_ENTRYPOINTS = ("extract_imports", "collect_imports")
-_RESOLVE_ENTRYPOINTS = ("resolve_imports", "resolve_edges", "resolve")
-_INDEX_ENTRYPOINTS = ("build_exports_index", "exports_index")
+_TYPE_PREFIX = "type:"  # M2 marks type-only names; dropped in provenance
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -138,44 +139,90 @@ def _load_expected(case: str) -> dict[str, Any]:
         encoding="utf-8"))
 
 
-def _module_or_skip(name: str, stage: str):
+def _real_modules_or_skip():
+    """Import the shipped M1/M2/M3 modules (skip only if genuinely absent)."""
     try:
-        return importlib.import_module(name)
-    except ImportError as exc:
-        pytest.skip(f"{name} not importable yet ({stage} pending): {exc}")
+        from faultline.pipeline_v2.ts_ast import (  # noqa: PLC0415
+            defs, imports, parse, resolve,
+        )
+    except ImportError as exc:  # pragma: no cover — modules ship together
+        pytest.skip(f"ts_ast modules not importable yet: {exc}")
+    return parse, defs, imports, resolve
 
 
-def _entrypoint_or_skip(mod, candidates: tuple[str, ...]):
-    for fn_name in candidates:
-        fn = getattr(mod, fn_name, None)
-        if callable(fn):
-            return fn
-    pytest.skip(
-        f"{mod.__name__} has none of the expected entrypoints {candidates} "
-        f"— align via coordinator (M5 runner contract)")
+def _build_sections(root: Path):
+    """One raw pass: aggregate the shipped per-file M1/M2/M3 output.
+
+    The corpus asserts the MODULE contracts directly (frozen §1 shapes +
+    AMENDMENT-1/-2), not the adapter's transformed SymbolGraph — so we call
+    the entry points exactly as the pipeline's real wrappers do
+    (adapter._load_real_fns): ``parse_file(rel, bytes)`` →
+    ``extract_defs(fp, bytes)`` (M1, per file); ``extract_imports(path,
+    lang, tree, bytes)`` (M2); ``resolve_edges(edges, exports_index, root,
+    file_set)`` (M3, AMENDMENT-2 tuple return).
+    """
+    parse, defs, imports, resolve = _real_modules_or_skip()
+    resolve.clear_resolver_caches()
+    files = sorted(
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*")
+        if p.is_file() and p.name != "EXPECTED.json"
+    )
+    all_defs: list[Any] = []
+    all_edges: list[Any] = []
+    exports_by_file: dict[str, list[Any]] = {}
+    for rel in files:
+        raw = (root / rel).read_bytes()
+        fp = parse.parse_file(rel, raw)
+        if fp is None:  # .d.ts / non-TS / parse-fail → regex territory
+            continue
+        all_defs.extend(defs.extract_defs(fp, raw))
+        edges, exports = imports.extract_imports(fp.path, fp.lang, fp.tree, raw)
+        all_edges.extend(edges)
+        for entry in exports:
+            exports_by_file.setdefault(entry.file, []).append(entry)
+    resolved, _tele = resolve.resolve_edges(
+        all_edges, exports_by_file, str(root), frozenset(files))
+    index = _post_resolution_index(resolved, exports_by_file)
+    return all_defs, all_edges, resolved, index
 
 
-def _call_flexibly(fn, root: Path, *, edges: Any = None):
-    """Try the small matrix of natural call shapes; skip informatively when
-    none binds (signature mismatch is an alignment issue, not a failure)."""
-    attempts = []
-    if edges is not None:
-        attempts.extend([
-            ((root, edges), {}),
-            ((root,), {"edges": edges}),
-            ((str(root), edges), {}),
-        ])
-    attempts.extend([((root,), {}), ((str(root),), {})])
-    last_type_error = None
-    for args, kwargs in attempts:
-        try:
-            return fn(*args, **kwargs)
-        except TypeError as exc:  # signature mismatch — try the next shape
-            last_type_error = exc
-    pytest.skip(
-        f"{getattr(fn, '__name__', fn)} signature did not accept the runner "
-        f"call shapes (last TypeError: {last_type_error}) — align via "
-        f"coordinator")
+def _post_resolution_index(resolved: Any, exports_by_file: dict[str, Any]
+                           ) -> dict[str, list[dict[str, Any]]]:
+    """Post-resolution exports_index (M5-pin-9): each raw export's
+    ``origin_file`` mapped to its DIRECT target and its exposed name stripped
+    of the ``type:`` marker.  No shipped module builds this view (the M5
+    runner-contract gap M4 flagged) so it is derived here from the resolved
+    re-export edges: the direct target of ``(src_file, raw_target)`` is the
+    first barrel hop when the resolver walked barrels, else the final
+    ``target_file`` (which for a one-hop re-export IS the direct file)."""
+    direct: dict[tuple[str, str], Any] = {}
+    for r in resolved:
+        key = (r.src_file, r.raw_target)
+        if key not in direct:
+            direct[key] = r.via_barrels[0] if r.via_barrels else r.target_file
+    index: dict[str, list[dict[str, Any]]] = {}
+    for file, entries in exports_by_file.items():
+        rows = []
+        for e in entries:
+            name = (e.name[len(_TYPE_PREFIX):]
+                    if e.name.startswith(_TYPE_PREFIX) else e.name)
+            origin = (None if e.origin_file is None
+                      else direct.get((file, e.origin_file)))
+            rows.append({"file": file, "name": name, "kind": e.kind,
+                         "origin_file": origin})
+        index[file] = rows
+    return index
+
+
+def _sections_twice_identical(root: Path):
+    """Determinism law (spec §2): two consecutive raw passes are identical."""
+    first = _build_sections(root)
+    second = _build_sections(root)
+    assert _canon_key(_plain(first)) == _canon_key(_plain(second)), (
+        "two consecutive raw passes differ — determinism law violated "
+        "(sorted collections / no set iteration)")
+    return first
 
 
 def _plain(obj: Any) -> Any:
@@ -312,17 +359,6 @@ def _section_or_skip(expected: dict[str, Any], key: str) -> Any:
     return section
 
 
-def _run_twice_identical(fn, root: Path, what: str, *, edges: Any = None):
-    """Determinism law (spec §2): a second run over identical input must
-    produce an identical collection."""
-    first = _call_flexibly(fn, root, edges=edges)
-    second = _call_flexibly(fn, root, edges=edges)
-    assert _canon_key(_plain(first)) == _canon_key(_plain(second)), (
-        f"{what}: two consecutive runs differ — determinism law violated "
-        f"(sorted collections / no set iteration)")
-    return first
-
-
 # ── corpus integrity (green from day zero, no ts_ast modules needed) ─────
 
 def test_corpus_present() -> None:
@@ -411,11 +447,9 @@ def test_corpus_integrity(case: str) -> None:
 @pytest.mark.parametrize("case", CASES)
 def test_defs(case: str) -> None:
     expected = _section_or_skip(_load_expected(case), "defs")
-    mod = _module_or_skip(_DEFS_MOD, "M1")
-    fn = _entrypoint_or_skip(mod, _DEFS_ENTRYPOINTS)
     root = _case_dir(case)
-    raw = _run_twice_identical(fn, root, f"{case}: defs")
-    actual = _canonical_records(raw, root, DEF_FIELDS, "DefSpan")
+    raw_defs, _edges, _resolved, _index = _sections_twice_identical(root)
+    actual = _canonical_records(raw_defs, root, DEF_FIELDS, "DefSpan")
     exp = _expected_records(expected, DEF_FIELDS)
     assert actual == exp, _diff(exp, actual, f"{case}.defs")
 
@@ -425,44 +459,22 @@ def test_defs(case: str) -> None:
 @pytest.mark.parametrize("case", CASES)
 def test_import_edges(case: str) -> None:
     expected = _section_or_skip(_load_expected(case), "edges")
-    mod = _module_or_skip(_IMPORTS_MOD, "M2")
-    fn = _entrypoint_or_skip(mod, _IMPORTS_ENTRYPOINTS)
     root = _case_dir(case)
-    raw = _run_twice_identical(fn, root, f"{case}: edges")
-    actual = _canonical_records(raw, root, EDGE_FIELDS, "ImportEdge")
+    _defs, raw_edges, _resolved, _index = _sections_twice_identical(root)
+    actual = _canonical_records(raw_edges, root, EDGE_FIELDS, "ImportEdge")
     exp = _expected_records(expected, EDGE_FIELDS)
     assert actual == exp, _diff(exp, actual, f"{case}.edges")
 
 
-# ── M3: ResolvedEdges (consumes M2 output when the signature wants it) ──
-
-def _m2_edges_or_none(root: Path):
-    try:
-        mod = importlib.import_module(_IMPORTS_MOD)
-    except ImportError:
-        return None
-    for fn_name in _IMPORTS_ENTRYPOINTS:
-        fn = getattr(mod, fn_name, None)
-        if callable(fn):
-            try:
-                return fn(root)
-            except TypeError:
-                try:
-                    return fn(str(root))
-                except TypeError:
-                    return None
-    return None
-
+# ── M3: ResolvedEdges (built from the aggregated M2 edge list) ────────────
 
 @pytest.mark.parametrize("case", CASES)
 def test_resolved_edges(case: str) -> None:
     expected = _section_or_skip(_load_expected(case), "resolved")
-    mod = _module_or_skip(_RESOLVE_MOD, "M3")
-    fn = _entrypoint_or_skip(mod, _RESOLVE_ENTRYPOINTS)
     root = _case_dir(case)
-    edges = _m2_edges_or_none(root)
-    raw = _run_twice_identical(fn, root, f"{case}: resolved", edges=edges)
-    actual = _canonical_records(raw, root, RESOLVED_FIELDS, "ResolvedEdge")
+    _defs, _edges, raw_resolved, _index = _sections_twice_identical(root)
+    actual = _canonical_records(raw_resolved, root, RESOLVED_FIELDS,
+                                "ResolvedEdge")
     exp = _expected_records(expected, RESOLVED_FIELDS)
     assert actual == exp, _diff(exp, actual, f"{case}.resolved")
 
@@ -470,13 +482,9 @@ def test_resolved_edges(case: str) -> None:
 @pytest.mark.parametrize("case", CASES)
 def test_exports_index(case: str) -> None:
     expected = _section_or_skip(_load_expected(case), "exports_index")
-    mod = _module_or_skip(_RESOLVE_MOD, "M3 (post-resolution exports_index)")
-    fn = _entrypoint_or_skip(mod, _INDEX_ENTRYPOINTS)
     root = _case_dir(case)
-    edges = _m2_edges_or_none(root)
-    raw = _call_flexibly(fn, root, edges=edges)
-    actual = _canonical_index(raw, root)
+    _defs, _edges, _resolved, raw_index = _sections_twice_identical(root)
+    actual = _canonical_index(raw_index, root)
     exp = _expected_index(expected)
-    # Only the files the case asserts (a richer index may carry more files
-    # only if the case listed every exporting file — compare strictly).
+    # Strict: the derived index carries every exporting file the case lists.
     assert actual == exp, _diff(exp, actual, f"{case}.exports_index")

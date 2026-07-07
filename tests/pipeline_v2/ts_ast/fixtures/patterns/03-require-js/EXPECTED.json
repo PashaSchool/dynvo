@@ -55,14 +55,18 @@
     {
       "kind": "require",
       "line": 2,
-      "names": [],
+      "names": [
+        "util"
+      ],
       "raw_target": "./util",
       "src_file": "src/consume.js"
     },
     {
       "kind": "require",
       "line": 3,
-      "names": [],
+      "names": [
+        "fs"
+      ],
       "raw_target": "fs",
       "src_file": "src/consume.js"
     }
@@ -70,6 +74,17 @@
   "exports_index": null,
   "notes": "CJS: module.exports={a,b} shorthand marks names exported; require bindings (bare or destructured) are ImportEdges, never DefSpans; destructured require carries names, bare require carries (); extension-full './io.js' resolves.",
   "resolved": [
+    {
+      "kind": "require",
+      "names": [
+        "fs"
+      ],
+      "raw_target": "fs",
+      "resolution": "package_external",
+      "src_file": "src/consume.js",
+      "target_file": null,
+      "via_barrels": []
+    },
     {
       "kind": "require",
       "names": [
@@ -83,20 +98,13 @@
     },
     {
       "kind": "require",
-      "names": [],
+      "names": [
+        "util"
+      ],
       "raw_target": "./util",
       "resolution": "relative",
       "src_file": "src/consume.js",
       "target_file": "src/util.js",
-      "via_barrels": []
-    },
-    {
-      "kind": "require",
-      "names": [],
-      "raw_target": "fs",
-      "resolution": "package_external",
-      "src_file": "src/consume.js",
-      "target_file": null,
       "via_barrels": []
     }
   ]

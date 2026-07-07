@@ -248,19 +248,28 @@ def run_ast_engine(repo: Path, files: list[str],
     os.environ["FAULTLINE_TS_AST"] = "1"
     t0 = time.monotonic()
     try:
-        defs_fn = _first_entrypoint(_AST_DEFS_MOD, _DEFS_ENTRYPOINTS)
-        imports_fn = _first_entrypoint(_AST_IMPORTS_MOD, _IMPORTS_ENTRYPOINTS)
-        resolve_fn = _first_entrypoint(_AST_RESOLVE_MOD, _RESOLVE_ENTRYPOINTS)
+        from faultline.pipeline_v2.ts_ast import adapter
+        adapter.reset_ts_ast_state()
+        fns = adapter._load_real_fns()
+        if fns is None:
+            return {"available": False, "engine": "ast",
+                    "reason": "ts_ast real pipeline unavailable (M1-M3 not wired)"}
+        # Repo-level facade: the shipped M1/M2/M3 entrypoints are PER-FILE;
+        # adapter.build_symbol_graph is the repo-level bridge M4 built
+        # (parse→defs→imports per file, then resolve over the full file set),
+        # emitting the canonical §1 shapes the metrics below read.
+        graph = adapter.build_symbol_graph(
+            str(repo), files,
+            parse_fn=fns.parse_fn, defs_fn=fns.defs_fn,
+            imports_fn=fns.imports_fn, resolve_fn=fns.resolve_fn,
+        )
     except (ImportError, AttributeError) as exc:
         return {"available": False, "engine": "ast",
                 "reason": f"ts_ast modules not usable yet: {exc}"}
 
-    defs = _call_root(defs_fn, repo)
-    edges = _call_root(imports_fn, repo)
-    try:
-        resolved_edges = _call_root(resolve_fn, repo, edges)
-    except TypeError:
-        resolved_edges = _call_root(resolve_fn, repo)
+    defs = graph.defs
+    edges = graph.edges
+    resolved_edges = graph.resolved
 
     def _get(rec: Any, key: str, default: Any = None) -> Any:
         if isinstance(rec, dict):
@@ -288,7 +297,7 @@ def run_ast_engine(repo: Path, files: list[str],
         resolved_by_edge[key] = resolved_by_edge.get(key, False) or hit
 
     imports_total = non_external = resolved = 0
-    parse_failures = None
+    parse_failures = int(graph.telemetry.get("parse_failures", 0))
     for rec in edges:
         imports_total += 1
         spec = str(_get(rec, "raw_target", ""))
@@ -297,16 +306,6 @@ def run_ast_engine(repo: Path, files: list[str],
         non_external += 1
         if resolved_by_edge.get((str(_get(rec, "src_file")), spec), False):
             resolved += 1
-
-    # Optional parse telemetry, if M1 exposes it (adaptive, never required).
-    try:
-        parse_mod = importlib.import_module("faultline.pipeline_v2.ts_ast.parse")
-        stats_fn = getattr(parse_mod, "parse_stats", None)
-        if callable(stats_fn):
-            stats = _call_root(stats_fn, repo)
-            parse_failures = int(_get(stats, "parse_failures", 0))
-    except ImportError:
-        pass
 
     payload = _metrics_payload(
         available=True,

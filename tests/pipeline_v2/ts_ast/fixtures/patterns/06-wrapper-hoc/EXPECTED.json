@@ -65,15 +65,6 @@
       "src_file": "src/profile-card.tsx",
       "target_file": "src/with-auth.tsx",
       "via_barrels": []
-    },
-    {
-      "kind": "named",
-      "names": [],
-      "raw_target": "react",
-      "resolution": "package_external",
-      "src_file": "src/with-auth.tsx",
-      "target_file": null,
-      "via_barrels": []
     }
   ]
 }
