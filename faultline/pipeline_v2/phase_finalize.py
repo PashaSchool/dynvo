@@ -1252,6 +1252,51 @@ def run_finalize_phase(
             except Exception as _de_exc:  # noqa: BLE001 — evidence is best-effort, never fatal
                 log_de.info(f"dual_evidence skipped: {_de_exc}", feature=None)
 
+    # ── Perf wave 2 (R5b) — 6.97 LOC prefetch overlaps the 6.95→6.96 chain ──
+    # DAG verified at this base: Stage 6.97 feature-LOC reads only
+    # {feature/PF paths + member_files + the checked-out tree,
+    # uf.product_feature_id, uf.member_flow_ids, flow line_ranges} —
+    # none of which 6.95 history / 6.96 impact (entity ``history`` only),
+    # the llm-health stamp (scan_meta), 6.6 monorepo assembly (never
+    # mutates features) or the uf-identity keeper (uf.id / flow
+    # backpointers only) write. A FULL stage relocation is still unsafe:
+    # the write_stage_input captures inside this window serialize
+    # features / product_features / scan_meta while a sibling thread
+    # would be inserting ``history``/``loc`` attributes (dict-changed-
+    # during-iteration + nondeterministic capture bytes), and scan_meta
+    # key INSERTION ORDER feeds the output JSON. So the concurrency is
+    # scoped to 6.97's dominant cost — the pure per-file LOC counting —
+    # prefetched here in one worker thread (pure reads: feature paths +
+    # disk; no shared-state mutation, no StageLogger events, no scan_meta
+    # keys) and consumed at the stage's UNCHANGED canonical position
+    # below. Values are pure functions of the tree, so output bytes are
+    # identical by construction; on any prefetch failure the stage
+    # computes inline exactly as before.
+    import threading as _threading
+
+    from faultline.pipeline_v2.stage_6_97_feature_loc import (
+        prefetch_loc_cache as _prefetch_loc_cache,
+        stage_6_97_enabled as _stage_6_97_enabled_early,
+    )
+
+    _loc_prefetch: dict[str, Any] = {}
+    _loc_prefetch_thread: Any = None
+    if _stage_6_97_enabled_early():
+        def _run_loc_prefetch() -> None:
+            try:
+                _loc_prefetch["cache"] = _prefetch_loc_cache(
+                    features, product_features, ctx.repo_path,
+                )
+            except Exception:  # noqa: BLE001 — prefetch is best-effort
+                _loc_prefetch.pop("cache", None)
+
+        _loc_prefetch_thread = _threading.Thread(
+            target=_run_loc_prefetch,
+            name="faultline-6-97-loc-prefetch",
+            daemon=True,
+        )
+        _loc_prefetch_thread.start()
+
     # ── Stage 6.95 — per-entity git-history timeline ────────────────
     # Deterministic, pure, $0 LLM. Runs LAST before output by design:
     # product-feature ``paths`` are final (Stage 8 + 8.5) and user-flow
@@ -1509,12 +1554,20 @@ def run_finalize_phase(
         })
         with StageLogger(run_dir, 6, "feature_loc") as log697:
             try:
+                # R5b — adopt the prefetched per-file counts (value
+                # source only; key discipline in _PrewarmedCache). The
+                # join is here, right before the single consumer.
+                _prewarmed_loc = None
+                if _loc_prefetch_thread is not None:
+                    _loc_prefetch_thread.join()
+                    _prewarmed_loc = _loc_prefetch.get("cache")
                 loc_telemetry = apply_feature_loc(
                     features, product_features, ctx.repo_path,
                     # §4.5 conservation flow accounting (on-flow ≤ 1 by
                     # construction) — needs the final journey attachments.
                     user_flows=user_flows,
                     flows=list(bipartite.flows),
+                    prewarmed_loc=_prewarmed_loc,
                 )
                 scan_meta["feature_loc"] = loc_telemetry
                 if loc_telemetry.get("loc_accounting"):

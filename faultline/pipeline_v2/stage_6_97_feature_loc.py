@@ -81,6 +81,7 @@ __all__ = [
     "stage_6_97_enabled",
     "apply_feature_loc",
     "count_file_loc",
+    "prefetch_loc_cache",
 ]
 
 STAGE_6_97_ENV_FLAG = "FAULTLINE_STAGE_6_97_FEATURE_LOC"
@@ -227,12 +228,34 @@ def _iter_dir_files(root: Path) -> Iterable[Path]:
             yield Path(dirpath) / name
 
 
+class _PrewarmedCache(dict):
+    """Scan-wide file→LOC cache with an optional read-through prewarm map.
+
+    Key discipline (CRITICAL for byte-identity): only keys the apply
+    pass itself touches enter the dict — the prewarm map is consulted
+    for VALUES on a miss, never bulk-loaded, because
+    :func:`_apply_flow_accounting` treats key PRESENCE as "this file was
+    counted here" (a missing key means the span is not clipped). The
+    prewarm values come from the same pure ``count_file_loc`` over the
+    same checked-out tree, so a hit and a recompute are identical.
+    """
+
+    def __init__(self, prewarmed: "dict[str, int] | None" = None) -> None:
+        super().__init__()
+        self.prewarmed = prewarmed
+
+
 def _file_loc_cached(abs_path: Path, rel: str, cache: dict[str, int]) -> int:
     """Per-FILE memoised line count (the scan-wide cache is keyed by the
     normalised relative file path)."""
     if rel in cache:
         return cache[rel]
-    n = count_file_loc(abs_path, rel)
+    n: int | None = None
+    prewarmed = getattr(cache, "prewarmed", None)
+    if prewarmed is not None:
+        n = prewarmed.get(rel)
+    if n is None:
+        n = count_file_loc(abs_path, rel)
     cache[rel] = n
     return n
 
@@ -304,12 +327,53 @@ def _is_root_marker(rel: str) -> bool:
 # ── Stage body ──────────────────────────────────────────────────────────
 
 
+def prefetch_loc_cache(
+    features: list["Feature"],
+    product_features: list["Feature"] | None,
+    repo_root: Path | str,
+) -> dict[str, int]:
+    """Perf wave 2 (R5b) — pre-warm the per-file LOC counts off the
+    critical path.
+
+    Walks the same expansion surface :func:`apply_feature_loc` will walk
+    (feature/PF ``paths`` + ``member_files``) and returns a plain
+    ``{rel_file: loc}`` map computed with the same pure
+    ``count_file_loc``. PURE READS ONLY — mutates nothing on the
+    features and emits no telemetry/log events, so it is safe to run in
+    a background thread while sibling finalize stages stamp unrelated
+    attributes (``history``) on the same objects. The result feeds
+    ``apply_feature_loc(prewarmed_loc=...)`` as a VALUE source (see
+    :class:`_PrewarmedCache` for the key discipline); a superset of keys
+    here is harmless, and any failure just means the stage computes
+    inline as before.
+    """
+    root = Path(repo_root)
+    cache: dict[str, int] = {}
+    everything = list(features or []) + list(product_features or [])
+    for feat in everything:
+        try:
+            _expand_feature_files(root, getattr(feat, "paths", None), cache)
+            for mf in getattr(feat, "member_files", None) or []:
+                rel = str(getattr(mf, "path", "") or "").replace(
+                    os.sep, "/").strip("/")
+                if not rel or _is_root_marker(rel):
+                    continue
+                abs_path = root / rel
+                if abs_path.is_dir():
+                    continue
+                _file_loc_cached(abs_path, rel, cache)
+        except Exception:  # noqa: BLE001 — prefetch is best-effort
+            continue
+    return cache
+
+
 def apply_feature_loc(
     features: list["Feature"],
     product_features: list["Feature"] | None,
     repo_root: Path | str,
     user_flows: list[Any] | None = None,
     flows: list[Any] | None = None,
+    prewarmed_loc: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Stamp OWNED ``loc`` + ``loc_shared`` on every developer + product
     feature IN PLACE, populate ``member_files[].loc``, and return the
@@ -325,7 +389,10 @@ def apply_feature_loc(
     lines landing OUTSIDE the closure — the shared channel).
     """
     root = Path(repo_root)
-    cache: dict[str, int] = {}  # rel_file -> loc (scan-wide, per FILE)
+    # rel_file -> loc (scan-wide, per FILE). ``prewarmed_loc`` (R5b
+    # prefetch) is a read-through VALUE source only — key membership
+    # stays exactly what this pass computes (see _PrewarmedCache).
+    cache: dict[str, int] = _PrewarmedCache(prewarmed_loc)
 
     # Ownership is computed over DEVELOPER features only. Product-layer
     # features are duplicated into ``features[]`` (they carry the same
