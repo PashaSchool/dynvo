@@ -250,22 +250,35 @@ def test_f3_cross_family_clash_slug_equals_canonical_slug_of_display():
     from faultline.pipeline_v2.emission_integrity import canonical_slug
     from faultline.pipeline_v2.stage_6_86_anchored_mint import run_anchored_mint
 
+    def _f(name: str, entry: str) -> Flow:
+        return Flow(name=name, entry_point_file=entry, paths=[entry],
+                    authors=["a"], total_commits=1, bug_fixes=0,
+                    bug_fix_ratio=0.0, last_modified=_NOW, health_score=100.0)
+
+    # Parent-held per-vendor flows = the children's mint evidence (the
+    # Soc0 shape; W3.1 D4's husk floor folds flowless 0-LOC children).
     edr_plumb = _mint_dev("edr", [
         "backend/services/edr/base.py", "backend/services/edr/factory.py",
         "backend/services/edr/normalizer.py"],
-        flows=[Flow(name="q-flow", entry_point_file="backend/services/edr/base.py",
-                    paths=["backend/services/edr/base.py"], authors=["a"],
-                    total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
-                    last_modified=_NOW, health_score=100.0)])
+        flows=[_f("q-flow", "backend/services/edr/base.py"),
+               _f("claroty-flow", "backend/services/edr/claroty.py"),
+               _f("cortex-flow", "backend/services/edr/cortex.py"),
+               _f("defender-flow", "backend/services/edr/defender.py")])
     kids = [
         _mint_dev("edr-claroty", ["backend/services/edr/claroty.py"]),
         _mint_dev("edr-cortex", ["backend/services/edr/cortex.py"]),
         _mint_dev("edr-defender", ["backend/services/edr/defender.py"]),
     ]
     iot = [
-        _mint_dev("iot-claroty", ["backend/services/iot_ot/claroty.py"]),
-        _mint_dev("iot-zscaler", ["backend/services/iot_ot/zscaler.py"]),
-        _mint_dev("iot-crowdstrike", ["backend/services/iot_ot/crowdstrike.py"]),
+        _mint_dev("iot-claroty", ["backend/services/iot_ot/claroty.py"],
+                  flows=[_f("iot-claroty-flow",
+                            "backend/services/iot_ot/claroty.py")]),
+        _mint_dev("iot-zscaler", ["backend/services/iot_ot/zscaler.py"],
+                  flows=[_f("iot-zscaler-flow",
+                            "backend/services/iot_ot/zscaler.py")]),
+        _mint_dev("iot-crowdstrike", ["backend/services/iot_ot/crowdstrike.py"],
+                  flows=[_f("iot-crowdstrike-flow",
+                            "backend/services/iot_ot/crowdstrike.py")]),
     ]
     pfs, tele = run_anchored_mint(
         [edr_plumb, *kids, *iot], [], SimpleNamespace(

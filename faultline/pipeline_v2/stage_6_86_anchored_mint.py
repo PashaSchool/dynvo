@@ -109,6 +109,16 @@ _SHARED_REASON_NONE = "no_anchor_lineage"
 _SHARED_REASON_BAR = "sub_mint_bar_surface"
 _SHARED_REASON_SHELL = "shell_lineage_only"
 
+#: W3.1 D4 — vendor-husk floor: a hub child with NO flow evidence must
+#: own at least this many LOC of code to mint (else it folds under the
+#: hub core / enclosing package as a dev-child). 150 is the valsem4 H9
+#: calibration bound (2026-07-07): 13-scan sweep showed zero false
+#: positives at 150 — midday's 27 app-store husks (logo.tsx + config.ts,
+#: 27-34 LOC) and the comp `-(integration)` 0-LOC twins die, while
+#: real-code 0-flow connectors (tracecat google 286 / microsoft 557,
+#: Soc0 sentinelone 1,258) stay minted.
+_HUB_HUSK_LOC_FLOOR = 150
+
 
 def anchored_mint_enabled() -> bool:
     """Default ON; ``FAULTLINE_SPINE_ANCHORED_MINT=0`` restores the old
@@ -246,12 +256,33 @@ def _is_code(path: str, code_exts: tuple[str, ...]) -> bool:
     return path.lower().endswith(code_exts)
 
 
+def _files_loc(
+    repo_root: Path,
+    rel_paths: list[str],
+    cache: dict[str, int],
+) -> int:
+    """Summed LOC of *rel_paths* per the engine's Stage-6.97 counting
+    convention (tests / generated / binary / missing count 0). Cached
+    per path; called only for flowless hub children (a handful of small
+    files per repo), so the IO is bounded."""
+    from faultline.pipeline_v2.stage_6_97_feature_loc import count_file_loc
+
+    total = 0
+    for rel in rel_paths:
+        if rel not in cache:
+            cache[rel] = count_file_loc(repo_root / rel, rel)
+        total += cache[rel]
+    return total
+
+
 def _mint_bar(
     anchor: SpineAnchor,
     winners: list["Feature"],
     flow_entries: dict[str, list[str]],
     repo_has_pages: bool,
     code_exts: tuple[str, ...],
+    repo_root: Path,
+    loc_cache: dict[str, int],
 ) -> str | None:
     """``None`` when the anchor may mint, else the bar reason."""
     if not winners:
@@ -272,9 +303,20 @@ def _mint_bar(
         child_files: set[str] = set(anchor.files)
         for w in winners:
             child_files.update(anchor.matched_set(owned_paths_of(w)))
-        if any(_is_code(p, code_exts) for p in child_files):
-            return None
-        return "hub_stub_child"  # single static file class (FDW wrappers)
+        code_files = [p for p in sorted(child_files)
+                      if _is_code(p, code_exts)]
+        if not code_files:
+            return "hub_stub_child"  # single static file class (FDW wrappers)
+        # W3.1 D4 (fb3 dossier, valsem4 H9): a flowless child needs a
+        # BODY, not just a code file — the old any-code prong let
+        # logo.tsx + config.ts marketplace husks mint (midday app-store
+        # ×27; comp `aws` + `aws-(integration)` 0-LOC dup twins). Under
+        # the floor the husk folds under its hub core / enclosing
+        # package as a dev-child; the same-vendor dup-pair class dies
+        # with it (the husk twin never mints, so no pair exists).
+        if _files_loc(repo_root, code_files, loc_cache) < _HUB_HUSK_LOC_FLOOR:
+            return "hub_husk_child"
+        return None
     if anchor.source == "hub-core":
         return None  # gated on sibling mints by the caller
     # PAGE-SURFACE RULE (only in repos that have a page surface at all).
@@ -437,11 +479,14 @@ def run_anchored_mint(
         if w is not None:
             winners_by_anchor[w.canonical_id].append(f)
     anchor_by_id = {a.canonical_id: a for a in anchors}
+    mint_repo_root = Path(getattr(ctx, "repo_path", "."))
+    loc_cache: dict[str, int] = {}
     bar_by_anchor: dict[str, str | None] = {}
     for cid in sorted(winners_by_anchor):
         a = anchor_by_id[cid]
         bar_by_anchor[cid] = _mint_bar(
-            a, winners_by_anchor[cid], flow_entries, repo_has_pages, code_exts)
+            a, winners_by_anchor[cid], flow_entries, repo_has_pages,
+            code_exts, mint_repo_root, loc_cache)
     # Hub cores mint only when ≥ 1 sibling vendor minted (amendment §2:
     # a core exists relative to its children).
     minted_vendor_hubs = {
@@ -591,7 +636,8 @@ def run_anchored_mint(
         a = anchor_by_id[best]
         if a.shell:
             return None
-        bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts)
+        bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts,
+                        mint_repo_root, loc_cache)
         if bar is not None:
             return None
         mintable.add(best)
@@ -726,6 +772,15 @@ def run_anchored_mint(
                 and parent is not None):
             assignment[f.name] = (parent, f"fold:api-parent->{w.canonical_id}")
             tele["fold_api_parent"] = tele.get("fold_api_parent", 0) + 1
+            continue
+        # HUSK FOLD (W3.1 D4): a vendor-husk child folds under its hub
+        # core / enclosing package as a dev-child — the fb3 amendment
+        # rule ("flowful OR >= 150 owned LOC, else fold into the parent
+        # integrations PF").
+        if (bar_by_anchor.get(w.canonical_id) == "hub_husk_child"
+                and parent is not None):
+            assignment[f.name] = (parent, f"fold:hub-parent->{w.canonical_id}")
+            tele["fold_hub_parent"] = tele.get("fold_hub_parent", 0) + 1
             continue
         reason = (_SHARED_REASON_SHELL if w.shell else _SHARED_REASON_BAR)
         fold_pending.append((f, w, reason))

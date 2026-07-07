@@ -497,12 +497,19 @@ def _edr_fixture():
     return plumbing, kids
 
 
-def test_hub_amendment_edr_five_vendor_pfs_plus_core():
+def test_hub_amendment_edr_five_vendor_pfs_plus_core(tmp_path):
     """Amendment case 5a: Soc0 edr → 5 vendor PFs + '<hub> Core'; the
     parent's per-vendor flows count as child evidence (entry files);
-    sentinelone mints on own-code even with zero flows."""
+    sentinelone mints on own-code even with zero flows — its real
+    Soc0 body is 1,258 LOC, above the W3.1 D4 husk floor (a husk-sized
+    fake would now honestly fold)."""
     plumbing, kids = _edr_fixture()
-    pfs, tele = mint([plumbing, *kids])
+    for rel in ("backend/services/edr/sentinelone.py",
+                "backend/services/edr/schema/sentinelone_baseline.py"):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("".join(f"x{i} = {i}\n" for i in range(120)))
+    pfs, tele = mint([plumbing, *kids], ctx=ctx_of(repo_path=str(tmp_path)))
     by_name = {p.name: p for p in pfs}
     for v in ("claroty", "cortex", "crowdstrike", "defender", "sentinelone"):
         assert v in by_name, f"vendor PF {v} missing"
