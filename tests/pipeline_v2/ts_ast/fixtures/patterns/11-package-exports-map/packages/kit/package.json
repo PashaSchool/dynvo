@@ -1,0 +1,9 @@
+{
+  "name": "@acme/kit",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sub": {
+      "default": "./src/sub.ts"
+    }
+  }
+}

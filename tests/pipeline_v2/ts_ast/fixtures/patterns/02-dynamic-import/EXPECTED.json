@@ -1,0 +1,73 @@
+{
+  "case": "02-dynamic-import",
+  "defs": [
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "src/lazy.ts",
+      "kind": "function",
+      "name": "lazyThing",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 4,
+      "exported": true,
+      "file": "src/loader.ts",
+      "kind": "function",
+      "name": "loadFeature",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 8,
+      "exported": true,
+      "file": "src/loader.ts",
+      "kind": "function",
+      "name": "preload",
+      "parent": null,
+      "start_line": 6,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "dynamic",
+      "line": 2,
+      "names": [],
+      "raw_target": "./lazy",
+      "src_file": "src/loader.ts"
+    },
+    {
+      "kind": "dynamic",
+      "line": 7,
+      "names": [],
+      "raw_target": "react-dom",
+      "src_file": "src/loader.ts"
+    }
+  ],
+  "exports_index": null,
+  "notes": "dynamic import(): kind='dynamic', names=(); relative target resolves, bare target is package_external.",
+  "resolved": [
+    {
+      "kind": "dynamic",
+      "names": [],
+      "raw_target": "./lazy",
+      "resolution": "relative",
+      "src_file": "src/loader.ts",
+      "target_file": "src/lazy.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "dynamic",
+      "names": [],
+      "raw_target": "react-dom",
+      "resolution": "package_external",
+      "src_file": "src/loader.ts",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "case": "14-jsx-only",
+  "defs": [
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/banner.tsx",
+      "kind": "component",
+      "name": "Banner",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 11,
+      "exported": true,
+      "file": "src/banner.tsx",
+      "kind": "component",
+      "name": "LandingPage",
+      "parent": null,
+      "start_line": 9,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [],
+  "exports_index": {
+    "src/banner.tsx": [
+      {
+        "kind": "named",
+        "name": "Banner",
+        "origin_file": null
+      },
+      {
+        "kind": "default",
+        "name": "default",
+        "origin_file": null
+      }
+    ]
+  },
+  "notes": "JSX-only, zero imports (new JSX transform): components still detected; named default export keeps its declared name on DefSpan while exports_index entry is 'default'.",
+  "resolved": []
+}

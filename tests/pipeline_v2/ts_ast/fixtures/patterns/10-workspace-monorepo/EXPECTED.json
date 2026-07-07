@@ -1,0 +1,51 @@
+{
+  "case": "10-workspace-monorepo",
+  "defs": [
+    {
+      "end_line": 5,
+      "exported": true,
+      "file": "packages/app/src/main.ts",
+      "kind": "function",
+      "name": "bootApp",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "packages/ui/src/index.ts",
+      "kind": "function",
+      "name": "renderButton",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "renderButton"
+      ],
+      "raw_target": "@acme/ui",
+      "src_file": "packages/app/src/main.ts"
+    }
+  ],
+  "exports_index": null,
+  "notes": "cross-package workspace import via package.json 'main': resolution='workspace' to the entry file.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "renderButton"
+      ],
+      "raw_target": "@acme/ui",
+      "resolution": "workspace",
+      "src_file": "packages/app/src/main.ts",
+      "target_file": "packages/ui/src/index.ts",
+      "via_barrels": []
+    }
+  ]
+}

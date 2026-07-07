@@ -1,0 +1,84 @@
+{
+  "case": "17-multiline-imports-comments",
+  "defs": [
+    {
+      "end_line": 15,
+      "exported": true,
+      "file": "src/multi.ts",
+      "kind": "function",
+      "name": "multiUse",
+      "parent": null,
+      "start_line": 11,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 1,
+      "exported": true,
+      "file": "src/things.ts",
+      "kind": "const",
+      "name": "alphaThing",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 2,
+      "exported": true,
+      "file": "src/things.ts",
+      "kind": "const",
+      "name": "betaThing",
+      "parent": null,
+      "start_line": 2,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 2,
+      "names": [
+        "alphaThing",
+        "betaThing as beta",
+        "type:GammaKind"
+      ],
+      "raw_target": "./things",
+      "src_file": "src/multi.ts"
+    },
+    {
+      "kind": "named",
+      "line": 7,
+      "names": [
+        "useMemo"
+      ],
+      "raw_target": "react",
+      "src_file": "src/multi.ts"
+    }
+  ],
+  "exports_index": null,
+  "notes": "multiline import blocks with line + block comments and an inline rename: edge.line = statement start line (2 and 7); comments never leak into names.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "alphaThing",
+        "betaThing as beta"
+      ],
+      "raw_target": "./things",
+      "resolution": "relative",
+      "src_file": "src/multi.ts",
+      "target_file": "src/things.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "named",
+      "names": [
+        "useMemo"
+      ],
+      "raw_target": "react",
+      "resolution": "package_external",
+      "src_file": "src/multi.ts",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

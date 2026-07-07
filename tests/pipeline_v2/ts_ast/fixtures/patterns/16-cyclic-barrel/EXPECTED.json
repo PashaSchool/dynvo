@@ -1,0 +1,147 @@
+{
+  "case": "16-cyclic-barrel",
+  "defs": [
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "src/a.ts",
+      "kind": "const",
+      "name": "alpha",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "src/b.ts",
+      "kind": "const",
+      "name": "bravo",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 5,
+      "exported": true,
+      "file": "src/entry.ts",
+      "kind": "function",
+      "name": "combo",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "reexport_named",
+      "line": 1,
+      "names": [
+        "bravo"
+      ],
+      "raw_target": "./b",
+      "src_file": "src/a.ts"
+    },
+    {
+      "kind": "reexport_named",
+      "line": 1,
+      "names": [
+        "alpha"
+      ],
+      "raw_target": "./a",
+      "src_file": "src/b.ts"
+    },
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "alpha",
+        "bravo"
+      ],
+      "raw_target": "./a",
+      "src_file": "src/entry.ts"
+    }
+  ],
+  "exports_index": {
+    "src/a.ts": [
+      {
+        "kind": "named",
+        "name": "alpha",
+        "origin_file": null
+      },
+      {
+        "kind": "named",
+        "name": "bravo",
+        "origin_file": "src/b.ts"
+      }
+    ],
+    "src/b.ts": [
+      {
+        "kind": "named",
+        "name": "alpha",
+        "origin_file": "src/a.ts"
+      },
+      {
+        "kind": "named",
+        "name": "bravo",
+        "origin_file": null
+      }
+    ],
+    "src/entry.ts": [
+      {
+        "kind": "named",
+        "name": "combo",
+        "origin_file": null
+      }
+    ]
+  },
+  "notes": "A<->B re-export cycle: resolution must terminate (cycle-safe descent) \u2014 alpha found locally in a.ts, bravo through one hop a.ts->b.ts.",
+  "resolved": [
+    {
+      "kind": "reexport_named",
+      "names": [
+        "bravo"
+      ],
+      "raw_target": "./b",
+      "resolution": "relative",
+      "src_file": "src/a.ts",
+      "target_file": "src/b.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "reexport_named",
+      "names": [
+        "alpha"
+      ],
+      "raw_target": "./a",
+      "resolution": "relative",
+      "src_file": "src/b.ts",
+      "target_file": "src/a.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "named",
+      "names": [
+        "alpha"
+      ],
+      "raw_target": "./a",
+      "resolution": "relative",
+      "src_file": "src/entry.ts",
+      "target_file": "src/a.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "named",
+      "names": [
+        "bravo"
+      ],
+      "raw_target": "./a",
+      "resolution": "relative",
+      "src_file": "src/entry.ts",
+      "target_file": "src/b.ts",
+      "via_barrels": [
+        "src/a.ts"
+      ]
+    }
+  ]
+}
