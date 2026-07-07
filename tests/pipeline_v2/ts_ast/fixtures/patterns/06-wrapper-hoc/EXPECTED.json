@@ -1,0 +1,79 @@
+{
+  "case": "06-wrapper-hoc",
+  "defs": [
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/profile-card.tsx",
+      "kind": "component",
+      "name": "GuardedProfileCard",
+      "parent": null,
+      "start_line": 7,
+      "wrapper": "hoc"
+    },
+    {
+      "end_line": 5,
+      "exported": false,
+      "file": "src/profile-card.tsx",
+      "kind": "component",
+      "name": "ProfileCard",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/with-auth.tsx",
+      "kind": "function",
+      "name": "withAuth",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "withAuth"
+      ],
+      "raw_target": "./with-auth",
+      "src_file": "src/profile-card.tsx"
+    },
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "type:ComponentType"
+      ],
+      "raw_target": "react",
+      "src_file": "src/with-auth.tsx"
+    }
+  ],
+  "exports_index": null,
+  "notes": "HOC application: GuardedProfileCard wrapper='hoc' (call with local component arg); the HOC factory itself is a plain function; nested AuthGuard gets no DefSpan; non-exported base component keeps exported=false.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "withAuth"
+      ],
+      "raw_target": "./with-auth",
+      "resolution": "relative",
+      "src_file": "src/profile-card.tsx",
+      "target_file": "src/with-auth.tsx",
+      "via_barrels": []
+    },
+    {
+      "kind": "named",
+      "names": [],
+      "raw_target": "react",
+      "resolution": "package_external",
+      "src_file": "src/with-auth.tsx",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

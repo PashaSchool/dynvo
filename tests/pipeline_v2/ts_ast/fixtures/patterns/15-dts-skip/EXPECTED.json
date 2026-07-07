@@ -1,0 +1,27 @@
+{
+  "case": "15-dts-skip",
+  "defs": [
+    {
+      "end_line": 3,
+      "exported": true,
+      "file": "src/real.ts",
+      "kind": "function",
+      "name": "realWork",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [],
+  "exports_index": {
+    "src/real.ts": [
+      {
+        "kind": "named",
+        "name": "realWork",
+        "origin_file": null
+      }
+    ]
+  },
+  "notes": ".d.ts files are skipped ENTIRELY: no defs, no edges, absent from exports_index \u2014 despite tempting declare/class/export statements a naive walker would emit.",
+  "resolved": []
+}

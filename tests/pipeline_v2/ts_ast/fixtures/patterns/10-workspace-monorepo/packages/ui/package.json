@@ -1,0 +1,4 @@
+{
+  "name": "@acme/ui",
+  "main": "src/index.ts"
+}

@@ -1,0 +1,43 @@
+{
+  "case": "08-wrapper-composed",
+  "defs": [
+    {
+      "end_line": 7,
+      "exported": true,
+      "file": "src/composed.tsx",
+      "kind": "component",
+      "name": "ComposedField",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "memo"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "forwardRef",
+        "memo"
+      ],
+      "raw_target": "react",
+      "src_file": "src/composed.tsx"
+    }
+  ],
+  "exports_index": null,
+  "notes": "wrapper composition: OUTERMOST wrapper wins -> 'memo'; one DefSpan only, spanning the whole const statement.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "forwardRef",
+        "memo"
+      ],
+      "raw_target": "react",
+      "resolution": "package_external",
+      "src_file": "src/composed.tsx",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

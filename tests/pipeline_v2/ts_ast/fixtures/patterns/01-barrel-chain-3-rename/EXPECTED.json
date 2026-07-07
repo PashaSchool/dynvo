@@ -1,0 +1,218 @@
+{
+  "case": "01-barrel-chain-3-rename",
+  "defs": [
+    {
+      "end_line": 5,
+      "exported": true,
+      "file": "src/app.ts",
+      "kind": "function",
+      "name": "appMain",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 1,
+      "exported": true,
+      "file": "src/leaf.ts",
+      "kind": "const",
+      "name": "deepThing",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 5,
+      "exported": true,
+      "file": "src/leaf.ts",
+      "kind": "function",
+      "name": "leafFn",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 1,
+      "exported": true,
+      "file": "src/leaf2.ts",
+      "kind": "const",
+      "name": "otherThing",
+      "parent": null,
+      "start_line": 1,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "otherThing",
+        "renamedThing"
+      ],
+      "raw_target": "./b3",
+      "src_file": "src/app.ts"
+    },
+    {
+      "kind": "reexport_named",
+      "line": 1,
+      "names": [
+        "deepThing as renamedThing"
+      ],
+      "raw_target": "../leaf",
+      "src_file": "src/b1/index.ts"
+    },
+    {
+      "kind": "reexport_star",
+      "line": 1,
+      "names": [],
+      "raw_target": "../b1",
+      "src_file": "src/b2/index.ts"
+    },
+    {
+      "kind": "reexport_named",
+      "line": 1,
+      "names": [
+        "renamedThing"
+      ],
+      "raw_target": "../b2",
+      "src_file": "src/b3/index.ts"
+    },
+    {
+      "kind": "reexport_named",
+      "line": 2,
+      "names": [
+        "otherThing"
+      ],
+      "raw_target": "../leaf2",
+      "src_file": "src/b3/index.ts"
+    }
+  ],
+  "exports_index": {
+    "src/app.ts": [
+      {
+        "kind": "named",
+        "name": "appMain",
+        "origin_file": null
+      }
+    ],
+    "src/b1/index.ts": [
+      {
+        "kind": "named",
+        "name": "renamedThing",
+        "origin_file": "src/leaf.ts"
+      }
+    ],
+    "src/b2/index.ts": [
+      {
+        "kind": "star_from",
+        "name": "*",
+        "origin_file": "src/b1/index.ts"
+      }
+    ],
+    "src/b3/index.ts": [
+      {
+        "kind": "named",
+        "name": "otherThing",
+        "origin_file": "src/leaf2.ts"
+      },
+      {
+        "kind": "named",
+        "name": "renamedThing",
+        "origin_file": "src/b2/index.ts"
+      }
+    ],
+    "src/leaf.ts": [
+      {
+        "kind": "named",
+        "name": "deepThing",
+        "origin_file": null
+      },
+      {
+        "kind": "named",
+        "name": "leafFn",
+        "origin_file": null
+      }
+    ],
+    "src/leaf2.ts": [
+      {
+        "kind": "named",
+        "name": "otherThing",
+        "origin_file": null
+      }
+    ]
+  },
+  "notes": "3-hop transitive re-export chain with a rename at b1 and a second name (otherThing) splitting off at b3: consumer edge must yield TWO ResolvedEdges partitioned by final target.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "renamedThing"
+      ],
+      "raw_target": "./b3",
+      "resolution": "relative",
+      "src_file": "src/app.ts",
+      "target_file": "src/leaf.ts",
+      "via_barrels": [
+        "src/b3/index.ts",
+        "src/b2/index.ts",
+        "src/b1/index.ts"
+      ]
+    },
+    {
+      "kind": "named",
+      "names": [
+        "otherThing"
+      ],
+      "raw_target": "./b3",
+      "resolution": "relative",
+      "src_file": "src/app.ts",
+      "target_file": "src/leaf2.ts",
+      "via_barrels": [
+        "src/b3/index.ts"
+      ]
+    },
+    {
+      "kind": "reexport_named",
+      "names": [
+        "deepThing as renamedThing"
+      ],
+      "raw_target": "../leaf",
+      "resolution": "relative",
+      "src_file": "src/b1/index.ts",
+      "target_file": "src/leaf.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "reexport_star",
+      "names": [],
+      "raw_target": "../b1",
+      "resolution": "relative",
+      "src_file": "src/b2/index.ts",
+      "target_file": "src/b1/index.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "reexport_named",
+      "names": [
+        "renamedThing"
+      ],
+      "raw_target": "../b2",
+      "resolution": "relative",
+      "src_file": "src/b3/index.ts",
+      "target_file": "src/b2/index.ts",
+      "via_barrels": []
+    },
+    {
+      "kind": "reexport_named",
+      "names": [
+        "otherThing"
+      ],
+      "raw_target": "../leaf2",
+      "resolution": "relative",
+      "src_file": "src/b3/index.ts",
+      "target_file": "src/leaf2.ts",
+      "via_barrels": []
+    }
+  ]
+}

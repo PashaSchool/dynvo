@@ -1,0 +1,51 @@
+{
+  "case": "05-wrapper-memo",
+  "defs": [
+    {
+      "end_line": 5,
+      "exported": true,
+      "file": "src/list-item.tsx",
+      "kind": "component",
+      "name": "ListItem",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "memo"
+    },
+    {
+      "end_line": 9,
+      "exported": true,
+      "file": "src/list-item.tsx",
+      "kind": "function",
+      "name": "plainHelper",
+      "parent": null,
+      "start_line": 7,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "memo"
+      ],
+      "raw_target": "react",
+      "src_file": "src/list-item.tsx"
+    }
+  ],
+  "exports_index": null,
+  "notes": "memo component next to a plain exported function (wrapper='none' control).",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "memo"
+      ],
+      "raw_target": "react",
+      "resolution": "package_external",
+      "src_file": "src/list-item.tsx",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}

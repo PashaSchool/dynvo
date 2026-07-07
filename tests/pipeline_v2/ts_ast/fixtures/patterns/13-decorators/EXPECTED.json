@@ -1,0 +1,63 @@
+{
+  "case": "13-decorators",
+  "defs": [
+    {
+      "end_line": 13,
+      "exported": true,
+      "file": "src/users.controller.ts",
+      "kind": "class",
+      "name": "UsersController",
+      "parent": null,
+      "start_line": 3,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 8,
+      "exported": false,
+      "file": "src/users.controller.ts",
+      "kind": "method",
+      "name": "findOne",
+      "parent": "UsersController",
+      "start_line": 5,
+      "wrapper": "none"
+    },
+    {
+      "end_line": 12,
+      "exported": false,
+      "file": "src/users.controller.ts",
+      "kind": "method",
+      "name": "plainList",
+      "parent": "UsersController",
+      "start_line": 10,
+      "wrapper": "none"
+    }
+  ],
+  "edges": [
+    {
+      "kind": "named",
+      "line": 1,
+      "names": [
+        "Controller",
+        "Get"
+      ],
+      "raw_target": "@nestjs/common",
+      "src_file": "src/users.controller.ts"
+    }
+  ],
+  "exports_index": null,
+  "notes": "decorator lines belong to the decorated def's span (class 3..13, method 5..8); methods carry parent and exported=false.",
+  "resolved": [
+    {
+      "kind": "named",
+      "names": [
+        "Controller",
+        "Get"
+      ],
+      "raw_target": "@nestjs/common",
+      "resolution": "package_external",
+      "src_file": "src/users.controller.ts",
+      "target_file": null,
+      "via_barrels": []
+    }
+  ]
+}
