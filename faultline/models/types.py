@@ -324,7 +324,7 @@ class FlowNode(BaseModel):
     lines: tuple[int, int] | None = None
     role: Literal[
         "entry", "called", "support", "shared",
-        "cross_stack_client", "cross_stack_server",
+        "cross_stack_client", "cross_stack_server", "interior",
     ]
     confidence: Literal["high", "medium", "low"] = "medium"
     count: int | None = None               # only set for deep_call_subtree
@@ -555,6 +555,14 @@ class FlowSymbolAttribution(BaseModel):
                                distinct-caller count. Per
                                ``flow-feature-concept``: sharing is
                                normal — surface it, don't delete it.
+      - ``interior``         — (W4, Product-Spine §4.6) a PRODUCT
+                               component the flow's entry PAGE renders,
+                               attributed at the component's DEFINITION
+                               span in its own source file (1-hop
+                               imported product-module span). Emitted by
+                               Stage 6.55 ``refine_flow_spans``;
+                               design-system primitives never get one
+                               (import-provenance filter).
     """
 
     file: str                  # repo-relative path
@@ -564,7 +572,7 @@ class FlowSymbolAttribution(BaseModel):
     role: Literal[
         "entry", "called", "support", "shared",
         "anchor-consumer", "schema-consumer", "structural",
-        "framework-link", "branch",
+        "framework-link", "branch", "interior",
     ]
 
 

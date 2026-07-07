@@ -200,6 +200,49 @@ def run_finalize_phase(
         features, lineage_result.routes_index, repo_path=repo_path,
     )
 
+    # ── Stage 6.55 — page-interior structure (Product-Spine §4.6, W4) ──
+    # Tree-sitter parse of PAGE route files into their interior render
+    # tree (product components vs design-system primitives, labels,
+    # definition spans). Runs AFTER 6.8 (needs routes_index), BEFORE
+    # Stage 3.5 so the refined ``role="interior"`` attributions ride the
+    # expansion. Deterministic, $0 LLM, content-hash cached; inactive
+    # (byte-identical scans) when tree-sitter isn't installed.
+    # Kill-switch FAULTLINE_STAGE_6_55=0.
+    from faultline.pipeline_v2.stage_6_55_page_interior import (
+        degenerate_span_stats,
+        inject_interior_nodes,
+        refine_flow_spans,
+        run_stage_6_55,
+    )
+    write_stage_input(run_dir, 6, "page_interior", {
+        "routes_index": lineage_result.routes_index,
+        "ctx": ctx,
+    })
+    with StageLogger(run_dir, 6, "page_interior") as log6_55:
+        interior_result = run_stage_6_55(
+            ctx, lineage_result.routes_index, log6_55,
+        )
+        interior_telemetry: dict[str, Any] = {
+            "active": interior_result.active,
+        }
+        if interior_result.active:
+            interior_telemetry.update(interior_result.telemetry)
+            interior_telemetry["degenerate_spans_before"] = (
+                degenerate_span_stats(features)
+            )
+            interior_telemetry["span_refine"] = refine_flow_spans(
+                features, interior_result,
+            )
+        else:
+            interior_telemetry["reason"] = interior_result.reason
+        write_stage_artifact(
+            ctx.repo_path,
+            stage_index=6,
+            stage_name="page_interior",
+            payload=interior_telemetry,
+            run_dir=run_dir,
+        )
+
     # ── Incremental scan bookkeeping ───────────────────────────────
     # Head SHA + Stage 6 metric carry-forward for untouched features —
     # see ``incremental_wiring.apply_incremental_bookkeeping``.
@@ -281,6 +324,22 @@ def run_finalize_phase(
             run_dir=run_dir,
         )
     scan_meta["stage_3_5_flow_expansion"] = dict(fx.telemetry)
+
+    # ── Stage 6.55 (part 2) — interior nodes onto the expanded graph ──
+    # The ``role="interior"`` attributions become FlowNodes (so
+    # ``line_ranges`` / on-flow LOC accounting see real component spans)
+    # and whole-file support nodes covering a resolved component source
+    # are TIGHTENED to the definition span. Runs immediately after the
+    # Stage 3.5 expansion that built the node graph; re-projects the
+    # Phase-5 LOC views (idempotent). No-op when 6.55 was inactive.
+    if interior_result.active:
+        interior_telemetry["node_inject"] = inject_interior_nodes(
+            features, interior_result,
+        )
+        interior_telemetry["degenerate_spans_after"] = (
+            degenerate_span_stats(features)
+        )
+    scan_meta["stage_6_55_page_interior"] = dict(interior_telemetry)
 
     # ── Stage 6.9 — test-file output-tree strip ────────────────────
     # "Post-everything tree hygiene": despite the 6.9 label this is
