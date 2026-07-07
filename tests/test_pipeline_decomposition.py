@@ -129,6 +129,14 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # Stage 8.9.8 (2026-07-06, Product-Spine §4.4) — hub/child PF binding:
     # connector-hub members land on ONE product feature (sibling parity).
     (8, "hub_pf_binding"),
+    # Stage 6.55 (W4, Product-Spine §4.6) — page-interior structure:
+    # tree-sitter parse of PAGE route files into interior render trees
+    # (product components + labels + definition spans). Runs after 6.8
+    # (needs routes_index), BEFORE 3.5 so role=interior attributions
+    # ride the expansion. Inactive -> telemetry-only artifact; scans
+    # stay byte-identical without tree-sitter. See
+    # stage_6_55_page_interior.py.
+    (6, "page_interior"),
     (3, "flow_expansion"),
     (6, "test_strip"),
     (6, "generated_strip"),
