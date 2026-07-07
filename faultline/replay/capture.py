@@ -21,17 +21,29 @@ Invariants (determinism traps — see the WS1 spec):
   uuid4) — the document contains exactly the encoded object graph;
 * a capture failure NEVER breaks a scan (guarded, logged);
 * kill-switch: ``FAULTLINE_STAGE_INPUTS=0`` disables capture (default
-  ON).
+  ON);
+* capture cost stays off the hot path (perf wave R1, 2026-07-07):
+  documents serialize COMPACT — every reader goes through ``json.load``
+  (:func:`load_stage_input`); nothing byte-compares capture files, and
+  ``indent=1`` forced the pure-Python encoder (80% of papermark's
+  profiled scan time). During a pipeline run the dumps+gzip+write also
+  moves to ONE background writer thread with a bounded queue
+  (:func:`install_async_writer` / :func:`drain_async_writer`, drained
+  at scan end); ``to_jsonable`` stays synchronous so the captured state
+  is snapshotted BEFORE any later mutation.
 
 No LLM. No network. Pure local-disk JSON (+ gzip).
 """
 
 from __future__ import annotations
 
+import atexit
 import gzip
 import json
 import logging
 import os
+import queue
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +55,11 @@ __all__ = [
     "GZIP_THRESHOLD_BYTES",
     "MissingStageInputError",
     "capture_enabled",
+    "drain_async_writer",
+    "install_async_writer",
     "load_stage_input",
     "stage_input_path",
+    "uninstall_async_writer",
     "write_stage_input",
 ]
 
@@ -60,6 +75,134 @@ _INPUT_SCHEMA_VERSION = 1
 
 class MissingStageInputError(FileNotFoundError):
     """A replay was requested for a stage whose input artifact is absent."""
+
+
+# ── Background writer (perf wave R1) ────────────────────────────────────
+
+_QUEUE_MAXSIZE = 4  # bounded: backpressure beats RAM growth (state trees are big)
+
+
+class _AsyncCaptureWriter:
+    """Single FIFO background thread that serializes + writes capture docs.
+
+    * ORDER: one queue, one thread — artifacts land in submit order
+      (identical to the sync path's per-stage write order).
+    * BOUNDED: ``maxsize=4`` — a slow disk applies backpressure to the
+      pipeline instead of accumulating encoded state trees in memory.
+    * FAILURES: logged per item (the capture contract is "never break a
+      scan"), counted, and re-summarized loudly at drain time.
+    """
+
+    def __init__(self) -> None:
+        self._queue: "queue.Queue[tuple[dict, Path, int, str] | None]" = (
+            queue.Queue(maxsize=_QUEUE_MAXSIZE)
+        )
+        self.failures = 0
+        self._thread = threading.Thread(
+            target=self._loop, name="replay-capture-writer", daemon=True,
+        )
+        self._thread.start()
+
+    def submit(
+        self, doc: dict, run_dir: Path, stage_index: int, stage_name: str,
+    ) -> None:
+        self._queue.put((doc, run_dir, stage_index, stage_name))
+
+    def _loop(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                return
+            doc, run_dir, stage_index, stage_name = item
+            try:
+                _serialize_and_write(doc, run_dir, stage_index, stage_name)
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                self.failures += 1
+                logger.warning(
+                    "replay.capture(async): failed to write "
+                    "%02d-stage-%s-input under %s: %s",
+                    stage_index, stage_name, run_dir, exc,
+                )
+            finally:
+                self._queue.task_done()
+
+    def drain(self) -> None:
+        """Block until every submitted capture document is on disk."""
+        self._queue.join()
+        if self.failures:
+            logger.warning(
+                "replay.capture(async): %d capture write(s) failed this run "
+                "(see earlier warnings) — scan output is unaffected, but the "
+                "affected stages are not replayable from this run dir",
+                self.failures,
+            )
+            self.failures = 0
+
+    def stop(self) -> None:
+        self._queue.put(None)
+        self._thread.join()
+
+
+_async_writer: _AsyncCaptureWriter | None = None
+_async_lock = threading.Lock()
+
+
+def install_async_writer() -> None:
+    """Route capture writes through the background writer (idempotent).
+
+    Called by ``run_pipeline_v2`` at scan start; paired with
+    :func:`drain_async_writer` at scan end. An ``atexit`` drain guards
+    abnormal exits so an aborted scan still flushes what it queued.
+    The writer thread is shared across scans in one process — FIFO
+    order makes a later drain cover earlier leftovers too.
+    """
+    global _async_writer
+    with _async_lock:
+        if _async_writer is None:
+            _async_writer = _AsyncCaptureWriter()
+            atexit.register(drain_async_writer)
+
+
+def drain_async_writer() -> None:
+    """Block until all queued capture writes hit disk (no-op when sync)."""
+    writer = _async_writer
+    if writer is not None:
+        writer.drain()
+
+
+def uninstall_async_writer() -> None:
+    """Drain + remove the background writer (test hygiene; scans keep it)."""
+    global _async_writer
+    with _async_lock:
+        writer = _async_writer
+        _async_writer = None
+    if writer is not None:
+        writer.drain()
+        writer.stop()
+
+
+def _serialize_and_write(
+    doc: dict, target_dir: Path, stage_index: int, stage_name: str,
+) -> Path:
+    """dumps + (gzip when large) + write. Runs on the writer thread when
+    the async writer is installed, inline otherwise. COMPACT JSON — see
+    the module docstring's R1 invariant."""
+    raw = json.dumps(doc, separators=(",", ":")).encode("utf-8")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base = target_dir / _base_name(stage_index, stage_name)
+    if len(raw) > GZIP_THRESHOLD_BYTES:
+        gz_path = base.with_name(base.name + ".gz")
+        # mtime=0 → byte-stable gzip output for identical content.
+        with open(gz_path, "wb") as fp:
+            with gzip.GzipFile(fileobj=fp, mode="wb", mtime=0) as gz:
+                gz.write(raw)
+        # Drop a stale plain twin from an earlier smaller run.
+        base.unlink(missing_ok=True)
+        return gz_path
+    base.write_bytes(raw)
+    base.with_name(base.name + ".gz").unlink(missing_ok=True)
+    return base
 
 
 def capture_enabled() -> bool:
@@ -120,24 +263,20 @@ def write_stage_input(
             "input_schema_version": _INPUT_SCHEMA_VERSION,
             "stage_index": stage_index,
             "stage_name": stage_name,
+            # SYNCHRONOUS encode on purpose: to_jsonable builds a fresh
+            # tree, snapshotting the state slice BEFORE the stage (or a
+            # later stage) mutates the live objects.
             "state": {key: to_jsonable(value) for key, value in state.items()},
         }
-        raw = json.dumps(doc, indent=1).encode("utf-8")
-        target_dir = Path(run_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        base = target_dir / _base_name(stage_index, stage_name)
-        if len(raw) > GZIP_THRESHOLD_BYTES:
-            gz_path = base.with_name(base.name + ".gz")
-            # mtime=0 → byte-stable gzip output for identical content.
-            with open(gz_path, "wb") as fp:
-                with gzip.GzipFile(fileobj=fp, mode="wb", mtime=0) as gz:
-                    gz.write(raw)
-            # Drop a stale plain twin from an earlier smaller run.
-            base.unlink(missing_ok=True)
-            return gz_path
-        base.write_bytes(raw)
-        base.with_name(base.name + ".gz").unlink(missing_ok=True)
-        return base
+        writer = _async_writer
+        if writer is not None:
+            target_dir = Path(run_dir)
+            writer.submit(doc, target_dir, stage_index, stage_name)
+            # The artifact lands as .json or .json.gz depending on size,
+            # decided on the writer thread; ``stage_input_path`` resolves
+            # either form. Return the base path as the canonical handle.
+            return target_dir / _base_name(stage_index, stage_name)
+        return _serialize_and_write(doc, Path(run_dir), stage_index, stage_name)
     except Exception as exc:  # noqa: BLE001 — capture must never break a scan
         logger.warning(
             "replay.capture: failed to write %02d-stage-%s-input under %s: %s",

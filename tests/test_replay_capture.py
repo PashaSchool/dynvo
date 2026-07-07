@@ -21,6 +21,18 @@ from faultline.replay.compare import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _sync_capture_path():
+    """These tests assert the SYNC write path. A scan run earlier in the
+    same pytest process installs the R1 background writer; uninstall it so
+    file-on-disk assertions here are order-independent (run_pipeline_v2
+    now uninstalls at scan end, but an in-scan abort path must never be
+    able to break these tests)."""
+    capture.uninstall_async_writer()
+    yield
+    capture.uninstall_async_writer()
+
+
 def test_write_and_load_roundtrip(tmp_path):
     state = {"features": [1, 2, 3], "ctx": {"stack": "next-app-router"}}
     path = write_stage_input(tmp_path, 3, "flows", state)

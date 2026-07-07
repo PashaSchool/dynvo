@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from faultline.analyzer.test_mapper import _filename_match
+from faultline.analyzer.test_mapper import _filename_match, build_name_index
 from faultline.analyzer.validation import is_test_file
 
 if TYPE_CHECKING:
@@ -127,8 +127,14 @@ def build_flow_test_index(rctx: "ReachContext") -> FlowTestIndex:
 
     # Filename-convention map: for each test, which source file does it
     # cover? Reuse the shared matcher. Invert into source -> [tests].
+    # Perf wave R2: materialize the lookup set + basename index ONCE —
+    # the old per-test ``set(source_set)`` copy was O(sources) per test,
+    # and the index kills the step-4 per-test source_set scan (the 8.9M
+    # pathlib.Path constructions profiled on lobe-chat).
+    source_lookup = set(source_set)
+    name_index = build_name_index(source_lookup)
     for tf in test_files:
-        target = _filename_match(tf, set(source_set))
+        target = _filename_match(tf, source_lookup, name_index=name_index)
         if target is not None:
             bucket = index.by_source_file.setdefault(target, [])
             if tf not in bucket:

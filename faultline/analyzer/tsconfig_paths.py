@@ -54,6 +54,8 @@ NO LLM. Pure file parsing.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import logging
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -130,7 +132,35 @@ class AliasEntry:
 # ── JSON5 loader ─────────────────────────────────────────────────────────
 
 
+#: Perf wave R6 (2026-07-07): content-hash memo for JSONC/JSON5 parses.
+#: ``build_path_alias_map`` runs from EIGHT call sites per scan (Stage
+#: 2.6 closure, 6.3 import tree, 6.86 anchored mint ×2, 8.8 shared
+#: members, flow_reach, snapshots (per 6.96 worktree snapshot!),
+#: symbol_graph, plus the server-actions linker), each re-parsing the
+#: same tsconfigs with the pure-Python json5 PEG parser — 6.5s profiled
+#: on documenso. The memo is IN-PROCESS only (no on-disk state), keyed
+#: by the sha256 of the file text, so identical content parses once —
+#: including across 6.96's git-worktree snapshots when a tsconfig is
+#: unchanged. Values are deep-copied on the way in AND out so caller
+#: mutation can never poison the cache. Entries are tiny (parsed
+#: tsconfigs); unbounded growth is not a concern for a scan process.
+#: Thread-safety: plain dict get/set are atomic under the GIL; a race
+#: costs one duplicate parse of identical content — same result.
+_PARSE_CACHE: dict[str, dict | None] = {}
+
+
 def _parse_jsonc(text: str) -> dict | None:
+    """Content-hash-memoized :func:`_parse_jsonc_uncached` (see above)."""
+    key = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+    if key in _PARSE_CACHE:
+        cached = _PARSE_CACHE[key]
+        return copy.deepcopy(cached) if cached is not None else None
+    result = _parse_jsonc_uncached(text)
+    _PARSE_CACHE[key] = copy.deepcopy(result) if result is not None else None
+    return result
+
+
+def _parse_jsonc_uncached(text: str) -> dict | None:
     """Parse a tsconfig that may carry comments / trailing commas / JSON5.
 
     Tries ``json5`` first (handles every form tsconfig allows). Falls

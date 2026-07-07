@@ -64,7 +64,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from faultline.framework_linkers.base import FrameworkLink
+from faultline.framework_linkers.base import (
+    FrameworkLink,
+    canonical_sample,
+    merge_linker_telemetry,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -173,8 +177,10 @@ class _LinkerTelemetry:
             "features_processed": self.features_processed,
             "files_scanned": self.files_scanned,
             "files_unreadable": self.files_unreadable,
-            "unmatched_paths_sample": list(self.unmatched_paths_sample),
-            "sample_links": list(self.sample_links),
+            "unmatched_paths_sample": canonical_sample(
+                self.unmatched_paths_sample, 10,
+            ),
+            "sample_links": canonical_sample(self.sample_links, 5),
         }
 
 
@@ -420,6 +426,18 @@ class TrpcProcedureLinker:
         self._tracked_set: set[str] | None = None
         self._repo_root: Path | None = None
         self.telemetry: _LinkerTelemetry = _LinkerTelemetry()
+        # Perf wave R3: per-file outcomes are feature-independent —
+        # computed once per file, replayed per (feature × file).
+        # rel -> (prefilter_passed, links, telemetry delta, log events).
+        self._file_outcomes: dict[
+            str,
+            tuple[
+                bool,
+                list[FrameworkLink],
+                _LinkerTelemetry,
+                list[tuple[str, dict]],
+            ],
+        ] = {}
 
     # ── Activation ─────────────────────────────────────────────────────
 
@@ -657,50 +675,84 @@ class TrpcProcedureLinker:
             if text is None:
                 self.telemetry.files_unreadable += 1
                 continue
-            # Cheap pre-filter: any of our client identifiers used.
-            if not any(f"{c}." in text for c in _TRPC_CLIENT_IDENTIFIERS):
+            # Perf wave R3: the per-file scan (pre-filter + call-site
+            # regex + proc-map matching) is feature-independent —
+            # computed once per file, replayed per (feature × file).
+            outcome = self._file_outcomes.get(rel)
+            if outcome is None:
+                outcome = self._compute_file_outcome(rel, text, proc_map)
+                self._file_outcomes[rel] = outcome
+            scanned, file_links, tel_delta, events = outcome
+            if not scanned:
+                # Pre-filter miss: the historical path skipped such
+                # files before counting files_scanned.
                 continue
             self.telemetry.files_scanned += 1
-            for m in _CALL_SITE.finditer(text):
-                self.telemetry.procedure_call_sites_found += 1
-                # client = m.group(1)  # unused (kept for telemetry-future)
-                path = m.group(2)
-                # verb  = m.group(3)
-                line_no = _line_no(text, m.start())
-                entry = proc_map.get(path)
-                if entry is None:
-                    self.telemetry.unmatched_call_sites += 1
-                    if len(self.telemetry.unmatched_paths_sample) < 10:
-                        self.telemetry.unmatched_paths_sample.append(path)
-                    continue
-                source_symbol = _enclosing_symbol(text.splitlines(), line_no)
-                link = FrameworkLink(
-                    source_file=rel,
-                    source_symbol=source_symbol,
-                    source_line=line_no,
-                    target_file=entry.file,
-                    target_symbol=path,
-                    target_line_start=entry.line_start,
-                    target_line_end=entry.line_end,
-                    linker=self.name,
-                    link_kind="trpc-procedure",
-                    confidence=1.0,
-                    reason=f"trpc call {path} resolves to {entry.file}",
-                )
-                links.append(link)
-                if len(self.telemetry.sample_links) < 5:
-                    self.telemetry.sample_links.append({
-                        "source": f"{rel}:{line_no}",
-                        "target": f"{entry.file}:{path}",
-                        "verb": m.group(3),
-                    })
-                log.emit(
-                    feature.name,
-                    f"trpc link: {rel}:{line_no} → {entry.file}:{path}",
-                    linker=self.name, path=path, verb=m.group(3),
-                )
+            merge_linker_telemetry(self.telemetry, tel_delta)
+            for msg, kwargs in events:
+                log.emit(feature.name, msg, **kwargs)
+            links.extend(file_links)
         self.telemetry.links_emitted += len(links)
         return links
+
+    def _compute_file_outcome(
+        self,
+        rel: str,
+        text: str,
+        proc_map: dict[str, "_ProcedureEntry"],
+    ) -> tuple[
+        bool,
+        list[FrameworkLink],
+        "_LinkerTelemetry",
+        list[tuple[str, dict]],
+    ]:
+        """Feature-independent scan of ONE file (pure given text+proc_map).
+
+        The leading bool is the pre-filter verdict: ``False`` replays as
+        the historical silent skip (no ``files_scanned`` increment).
+        """
+        tel = _LinkerTelemetry()
+        events: list[tuple[str, dict]] = []
+        links: list[FrameworkLink] = []
+        # Cheap pre-filter: any of our client identifiers used.
+        if not any(f"{c}." in text for c in _TRPC_CLIENT_IDENTIFIERS):
+            return False, links, tel, events
+        for m in _CALL_SITE.finditer(text):
+            tel.procedure_call_sites_found += 1
+            # client = m.group(1)  # unused (kept for telemetry-future)
+            path = m.group(2)
+            # verb  = m.group(3)
+            line_no = _line_no(text, m.start())
+            entry = proc_map.get(path)
+            if entry is None:
+                tel.unmatched_call_sites += 1
+                tel.unmatched_paths_sample.append(path)
+                continue
+            source_symbol = _enclosing_symbol(text.splitlines(), line_no)
+            link = FrameworkLink(
+                source_file=rel,
+                source_symbol=source_symbol,
+                source_line=line_no,
+                target_file=entry.file,
+                target_symbol=path,
+                target_line_start=entry.line_start,
+                target_line_end=entry.line_end,
+                linker=self.name,
+                link_kind="trpc-procedure",
+                confidence=1.0,
+                reason=f"trpc call {path} resolves to {entry.file}",
+            )
+            links.append(link)
+            tel.sample_links.append({
+                "source": f"{rel}:{line_no}",
+                "target": f"{entry.file}:{path}",
+                "verb": m.group(3),
+            })
+            events.append((
+                f"trpc link: {rel}:{line_no} → {entry.file}:{path}",
+                {"linker": self.name, "path": path, "verb": m.group(3)},
+            ))
+        return True, links, tel, events
 
     # ── Internals ─────────────────────────────────────────────────────
 

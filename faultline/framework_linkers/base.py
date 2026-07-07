@@ -22,8 +22,10 @@ entry-points under the ``faultlines.framework_linkers`` group.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Iterable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -74,6 +76,63 @@ class FrameworkLink:
     reason: str = ""
 
 
+def canonical_sample(items: Iterable[object], cap: int) -> list:
+    """Deterministic emission of a telemetry debug-sample list.
+
+    Stage 6.4 runs ``link_for_feature`` on a ThreadPool; linkers append
+    debug samples (``unmatched_sample`` / ``sample_links`` / …) to their
+    shared per-scan telemetry FROM WORKER THREADS. The historical idiom
+    capped these lists at APPEND time (``if len(list) < N``), which
+    leaked thread completion order into scan output twice over: the
+    ORDER of the sample followed scheduling, and — worse — with more
+    candidates than the cap, the MEMBERSHIP did too (first N arrivals
+    won). The 2026-07-07 perf audit caught exactly this as a set-equal
+    reordering of ``per_linker[...].unmatched_sample`` between two
+    otherwise byte-identical papermark scans.
+
+    The fix: linkers append EVERY candidate (append is GIL-atomic) and
+    the cap moves here, into ``as_dict()`` emission — the sample becomes
+    the lexicographically-first ``cap`` items under a canonical-JSON
+    sort, which is a pure function of the collected multiset. Duplicates
+    are preserved (parity with the historical list semantics).
+    """
+    return sorted(
+        items,
+        key=lambda item: json.dumps(
+            item, sort_keys=True, separators=(",", ":"), default=str,
+        ),
+    )[:cap]
+
+
+def merge_linker_telemetry(dst: object, delta: object) -> None:
+    """Fold a per-file telemetry DELTA into the linker's shared telemetry.
+
+    Perf wave R3 (2026-07-07): linkers scan each caller file once per
+    FEATURE that references it, although the per-file result is
+    feature-independent (papermark: 1,821 scans over ≤1,297 files;
+    documenso: 3,694 over ≤1,928 — per linker). The fix computes each
+    file's outcome once against a FRESH telemetry instance (the delta)
+    and replays it per (feature × file) occurrence, so every counter in
+    ``scan_meta`` keeps its historical per-occurrence semantics —
+    output bytes unchanged.
+
+    Generic on purpose: int fields add, list fields extend (samples),
+    everything else is left alone. The delta object only ever carries
+    the fields the per-file scan itself touches; all other fields are
+    zero/empty so the fold is a no-op for them.
+    """
+    for f in dataclasses.fields(delta):  # type: ignore[arg-type]
+        value = getattr(delta, f.name)
+        if isinstance(value, bool):  # defensive: bools are ints in Python
+            continue
+        if isinstance(value, int):
+            if value:
+                setattr(dst, f.name, getattr(dst, f.name) + value)
+        elif isinstance(value, list):
+            if value:
+                getattr(dst, f.name).extend(value)
+
+
 @runtime_checkable
 class FrameworkLinker(Protocol):
     """Stage 6.4 contract.
@@ -121,4 +180,9 @@ class FrameworkLinker(Protocol):
         ...
 
 
-__all__ = ["FrameworkLink", "FrameworkLinker"]
+__all__ = [
+    "FrameworkLink",
+    "FrameworkLinker",
+    "canonical_sample",
+    "merge_linker_telemetry",
+]
