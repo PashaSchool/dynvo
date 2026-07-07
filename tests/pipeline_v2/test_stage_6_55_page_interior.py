@@ -483,3 +483,116 @@ def test_barrel_hop_end_to_end_rehomes_source_file(tmp_path: Path) -> None:
     node = next(n for n in res.pages[page].nodes if n.name == "Block")
     assert node.source_file == "packages/blocks/core/src/block.tsx"
     assert node.def_line_start == 1 and node.def_line_end >= 2
+
+
+# ── Python-template interiors (debt-pack, w4 deferred surface) ───────────
+# pretalx-class Django repos got ZERO interior evidence. Templates under
+# templates/ dirs now parse ({% block %}/{% include %}/{% extends %} via
+# regex over the template TAGS — documented choice in the module) on
+# python-routed repos only.
+
+from faultline.pipeline_v2.stage_6_55_page_interior import (  # noqa: E402
+    _enumerate_template_pages,
+    _parse_template_source,
+)
+
+_PRETALX_TMPL = b"""{% extends "orga/base.html" %}
+{% block content %}
+  <h1>Review submissions</h1>
+  {% include "orga/submission/review_card.html" %}
+  {% include "common/pagination.html" %}
+  {% include dynamic_template_var %}
+{% endblock %}
+{% block scripts %}{% endblock %}
+"""
+
+_PRETALX_TRACKED = frozenset({
+    "src/pretalx/orga/templates/orga/reviews.html",
+    "src/pretalx/orga/templates/orga/base.html",
+    "src/pretalx/orga/templates/orga/submission/review_card.html",
+    "src/pretalx/common/templates/common/pagination.html",
+    "src/pretalx/orga/urls.py",
+})
+
+
+def test_template_parse_blocks_includes_extends() -> None:
+    nodes = _parse_template_source(
+        "src/pretalx/orga/templates/orga/reviews.html",
+        _PRETALX_TMPL, _PRETALX_TRACKED)
+    by_name = {n["name"]: n for n in nodes}
+    # extends → design_system (layout chrome, families ignore it)
+    assert by_name["base"]["provenance"] == "design_system"
+    assert by_name["base"]["source_file"].endswith("orga/base.html")
+    # includes → product components with resolved template sources
+    assert by_name["review_card"]["provenance"] == "product"
+    assert by_name["review_card"]["source_file"] == \
+        "src/pretalx/orga/templates/orga/submission/review_card.html"
+    assert by_name["pagination"]["source_file"] == \
+        "src/pretalx/common/templates/common/pagination.html"
+    # blocks → headings; dynamic include skipped
+    headings = [n["name"] for n in nodes if n["kind"] == "heading"]
+    assert headings == ["content", "scripts"]
+    assert "dynamic_template_var" not in by_name
+
+
+def test_template_pages_gate_python_routes_only(monkeypatch) -> None:
+    monkeypatch.delenv("FAULTLINE_STAGE_6_55_TEMPLATES", raising=False)
+    py_routes = [{"method": "GET", "file": "src/pretalx/orga/urls.py"}]
+    ts_routes = [{"method": "PAGE", "file": "apps/web/app/page.tsx"}]
+    tmpls = _enumerate_template_pages(py_routes, _PRETALX_TRACKED)
+    assert [k for _, k in tmpls] == ["template"] * 4
+    # TS-routed repo: .html assets never enter the page list
+    assert _enumerate_template_pages(ts_routes, _PRETALX_TRACKED) == []
+    # kill-switch
+    monkeypatch.setenv("FAULTLINE_STAGE_6_55_TEMPLATES", "0")
+    assert _enumerate_template_pages(py_routes, _PRETALX_TRACKED) == []
+
+
+def test_template_ref_resolution_prefers_same_app() -> None:
+    tracked = frozenset({
+        "src/app_a/templates/shared/card.html",
+        "src/app_b/templates/shared/card.html",
+        "src/app_a/templates/pages/home.html",
+    })
+    nodes = _parse_template_source(
+        "src/app_a/templates/pages/home.html",
+        b'{% include "shared/card.html" %}', tracked)
+    assert nodes[0]["source_file"] == "src/app_a/templates/shared/card.html"
+
+
+@requires_ts
+def test_template_interiors_end_to_end_families(tmp_path: Path) -> None:
+    """pretalx-shaped e2e: two orga pages including the same partial →
+    the partial becomes an interior FAMILY; telemetry stamps
+    template_pages; a TS-only ctx stays byte-untouched."""
+    s655._MEMO.clear()
+    s655._MEMO_ORDER.clear()
+    files = {
+        "src/orga/templates/orga/reviews.html":
+            b'{% extends "orga/base.html" %}\n'
+            b'{% block content %}{% include "orga/submission/card.html" %}'
+            b"{% endblock %}\n",
+        "src/orga/templates/orga/submissions.html":
+            b'{% extends "orga/base.html" %}\n'
+            b'{% block content %}{% include "orga/submission/card.html" %}'
+            b"{% endblock %}\n",
+        "src/orga/templates/orga/base.html": b"<html></html>\n",
+        "src/orga/templates/orga/submission/card.html": b"<div></div>\n",
+    }
+    for rel, data in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    ctx = SimpleNamespace(
+        repo_path=tmp_path, cache_backend=None,
+        tracked_files=sorted(files) + ["src/orga/urls.py"],
+        workspaces=[],
+    )
+    res = get_page_interiors(
+        ctx, [{"method": "GET", "file": "src/orga/urls.py"}])
+    assert res.active
+    assert res.telemetry["template_pages"] == 4
+    assert res.telemetry["templates_capped"] == 0
+    fam_files = {f.family_dir for f in res.families}
+    assert "src/orga/templates/orga/submission" in fam_files or any(
+        "submission" in d for d in fam_files)

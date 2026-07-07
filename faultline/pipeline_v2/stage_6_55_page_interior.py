@@ -786,6 +786,179 @@ def _parse_cached(
 # ── Page enumeration ─────────────────────────────────────────────────────
 
 
+# ── Python-template interiors (debt-pack, w4 deferred surface) ───────────
+# Django/Jinja repos got ZERO interior evidence (W4 shipped TS/TSX/JSX
+# first-class; tracecat/pretalx-class python UIs documented as the next
+# surface). Minimal pass: template files under a templates/ dir become
+# "template" pages whose {% block %} / {% include %} / {% extends %}
+# structure yields interior nodes.
+#
+# PARSER CHOICE (documented honestly): REGEX over the {% … %} template
+# tags, NOT tree-sitter-html. The capability signal lives in the Django/
+# Jinja TAGS — which an HTML grammar treats as opaque text nodes anyway —
+# and the [ast] extras do not ship an html grammar, so a tree-sitter pass
+# would add a dependency to parse the one thing it cannot see. Regex over
+# the tag syntax is the house regex-AST convention (ast_extractor
+# precedent) and is exact for the three tags we read.
+#
+# Node mapping: {% include "x.html" %} → component node (provenance
+# "product", source_file resolved against the tracked template set) —
+# include-partials are the python twin of JSX child components and feed
+# _build_families unchanged; {% extends "base.html" %} → component node
+# with provenance "design_system" (layout chrome — families ignore it,
+# same as JSX design-system imports); {% block name %} → heading node
+# (author-named section, label candidate). Dynamic refs ({% include
+# template_var %}) are skipped — no honest static target.
+# Kill-switch: FAULTLINE_STAGE_6_55_TEMPLATES=0 (default ON).
+
+_TEMPLATE_EXTS = (".html", ".htm", ".jinja", ".jinja2", ".j2")
+_MAX_TEMPLATE_PAGES = 500
+
+_TMPL_TAG_RE = re.compile(
+    r"\{%-?\s*(extends|include|block)\s+([^%]*?)\s*-?%\}")
+_TMPL_REF_RE = re.compile(r"['\"]([^'\"]+)['\"]")
+
+
+def _templates_enabled() -> bool:
+    return os.environ.get("FAULTLINE_STAGE_6_55_TEMPLATES", "1") != "0"
+
+
+def _enumerate_template_pages(
+    routes_index: list[dict[str, Any]],
+    tracked: frozenset[str],
+) -> list[tuple[str, str]]:
+    """[(template file, "template")] — ONLY on python-routed repos.
+
+    The gate is structural: at least one routes_index row whose file is
+    a ``.py`` (Django/FastAPI/Flask class). TS-routed repos are
+    byte-untouched — their email/export .html assets never enter the
+    page list. Deterministic cap keeps huge template trees bounded
+    (weblate-class); the cap drops the lexicographic tail, loudly
+    counted in telemetry as ``templates_capped``.
+    """
+    if not _templates_enabled():
+        return []
+    if not any(
+        str(e.get("file") or "").endswith(".py")
+        for e in routes_index or [] if isinstance(e, dict)
+    ):
+        return []
+    tmpls = sorted(
+        f for f in tracked
+        if f.lower().endswith(_TEMPLATE_EXTS)
+        and "/templates/" in f"/{f}"
+    )
+    return [(f, "template") for f in tmpls[:_MAX_TEMPLATE_PAGES]]
+
+
+def _resolve_template_ref(
+    ref: str, page_file: str, tracked_templates: dict[str, list[str]],
+) -> str | None:
+    """Django-loader approximation: *ref* ("partials/nav.html") matches a
+    tracked template whose path ENDS with it. Same-top-segment (the
+    including file's app) wins, then the shortest path, then
+    lexicographic — deterministic without parsing loader settings."""
+    cands = tracked_templates.get(ref.rsplit("/", 1)[-1])
+    if not cands:
+        return None
+    hits = [c for c in cands if c == ref or c.endswith("/" + ref)]
+    if not hits:
+        return None
+    top = page_file.split("/", 1)[0]
+    hits.sort(key=lambda c: (0 if c.split("/", 1)[0] == top else 1,
+                             c.count("/"), c))
+    return hits[0]
+
+
+def _parse_template_source(
+    rel_path: str,
+    source: bytes,
+    tracked: frozenset[str],
+) -> list[dict[str, Any]]:
+    """Template twin of :func:`_parse_page_source` — same node-dict shape."""
+    text = source.decode("utf-8", errors="replace")
+    by_base: dict[str, list[str]] = {}
+    for f in tracked:
+        if f.lower().endswith(_TEMPLATE_EXTS):
+            by_base.setdefault(f.rsplit("/", 1)[-1], []).append(f)
+    for v in by_base.values():
+        v.sort()
+
+    raw: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    for m in _TMPL_TAG_RE.finditer(text):
+        tag, args = m.group(1), m.group(2)
+        line = text.count("\n", 0, m.start()) + 1
+        if tag == "block":
+            name = args.split()[0] if args.split() else ""
+            if name:
+                raw.append({
+                    "kind": "heading", "name": name, "label": name,
+                    "usage": [line, line], "source_kind": "local",
+                    "provenance": "product", "source_file": None,
+                    "def": None,
+                })
+            continue
+        ref_m = _TMPL_REF_RE.search(args)
+        if not ref_m:
+            continue  # dynamic ref — no honest static target
+        ref = ref_m.group(1)
+        if ref in seen_refs:
+            continue  # first usage wins (deterministic)
+        seen_refs.add(ref)
+        target = _resolve_template_ref(ref, rel_path, by_base)
+        stem = ref.rsplit("/", 1)[-1]
+        stem = stem[:stem.find(".")] if "." in stem else stem
+        raw.append({
+            "kind": "component", "name": stem, "label": None,
+            "usage": [line, line],
+            "source_kind": "local" if target else "unresolved",
+            # extends = layout chrome (families ignore design_system);
+            # include-partials are the python twin of child components.
+            "provenance": ("design_system" if tag == "extends"
+                           else "product"),
+            "source_file": target, "def": None,
+        })
+        if len(raw) >= MAX_NODES_PER_PAGE:
+            break
+    raw.sort(key=lambda d: (d["usage"][0], d["name"]))
+    return raw
+
+
+def _parse_template_cached(
+    ctx: "ScanContext",
+    rel_path: str,
+    source: bytes,
+    tracked: frozenset[str],
+    stats: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Content-hash cache wrapper for template parses ("tmpl" key
+    namespace — a template and a TSX page can never share an entry)."""
+    backend = getattr(ctx, "cache_backend", None)
+    h = hashlib.sha256()
+    h.update(b"tmpl\x00")
+    h.update(PARSER_VERSION.encode())
+    h.update(b"\x00")
+    h.update(source)
+    key = h.hexdigest()
+    if backend is not None:
+        try:
+            hit = backend.get(CacheKind.INTERIOR, key)
+            if isinstance(hit, dict) and isinstance(hit.get("nodes"), list):
+                stats["cache_hits"] += 1
+                return hit["nodes"]
+        except Exception:  # noqa: BLE001 — cache faults never break a scan
+            pass
+    nodes = _parse_template_source(rel_path, source, tracked)
+    stats["parsed"] += 1
+    if backend is not None:
+        try:
+            backend.set(CacheKind.INTERIOR, key, {"nodes": nodes})
+        except Exception:  # noqa: BLE001
+            pass
+    return nodes
+
+
 def _enumerate_pages(
     routes_index: list[dict[str, Any]],
     tracked: frozenset[str],
@@ -916,6 +1089,10 @@ def get_page_interiors(
         for p in (getattr(ctx, "tracked_files", None) or [])
     )
     pages_list = _enumerate_pages(routes_index or [], tracked)
+    # Python-template interiors (debt-pack): Django/Jinja templates join
+    # the page list on python-routed repos only — TS repos byte-untouched.
+    template_pages = _enumerate_template_pages(routes_index or [], tracked)
+    pages_list = pages_list + template_pages
 
     memo_key = hashlib.sha256(json.dumps(
         [str(getattr(ctx, "repo_path", "")), pages_list, PARSER_VERSION],
@@ -947,14 +1124,18 @@ def get_page_interiors(
         if len(data) > MAX_PAGE_BYTES:
             stats["skipped_big"] += 1
             continue
-        node_dicts = _parse_cached(
-            ctx, rel, data, tracked, ws_by_name, ws_by_path, stats)
+        if page_kind == "template":
+            node_dicts = _parse_template_cached(ctx, rel, data, tracked, stats)
+        else:
+            node_dicts = _parse_cached(
+                ctx, rel, data, tracked, ws_by_name, ws_by_path, stats)
         nodes: list[InteriorNode] = []
         for d in node_dicts:
             source_file = d.get("source_file")
             def_span: tuple[int, int] | None = None
             if (d["kind"] == "component" and source_file
-                    and d["provenance"] == "product"):
+                    and d["provenance"] == "product"
+                    and not source_file.lower().endswith(_TEMPLATE_EXTS)):
                 head = d["name"].split(".", 1)[0]
                 spans = _def_spans_of(repo_path, source_file)
                 def_span = spans.get(head)
@@ -987,20 +1168,31 @@ def get_page_interiors(
     n_design = sum(
         1 for p in pages.values() for n in p.nodes
         if n.kind == "component" and n.provenance == "design_system")
+    telemetry = {
+        "pages_seen": len(pages_list),
+        "pages_parsed": len(pages),
+        "interior_nodes": n_nodes,
+        "product_components": n_product,
+        "design_system_components": n_design,
+        "families": len(families),
+        "family_sample": [f.family_dir for f in families[:8]],
+        **stats,
+    }
+    # Stamped only when the template pass acted (python-routed repos) —
+    # TS-repo telemetry stays byte-identical.
+    if template_pages:
+        n_tmpl_seen = sum(
+            1 for f in tracked
+            if f.lower().endswith(_TEMPLATE_EXTS) and "/templates/" in f"/{f}"
+        )
+        telemetry["template_pages"] = len(template_pages)
+        telemetry["templates_capped"] = max(
+            0, n_tmpl_seen - len(template_pages))
     result = InteriorResult(
         active=True,
         pages=pages,
         families=families,
-        telemetry={
-            "pages_seen": len(pages_list),
-            "pages_parsed": len(pages),
-            "interior_nodes": n_nodes,
-            "product_components": n_product,
-            "design_system_components": n_design,
-            "families": len(families),
-            "family_sample": [f.family_dir for f in families[:8]],
-            **stats,
-        },
+        telemetry=telemetry,
     )
     _MEMO[memo_key] = result
     _MEMO_ORDER.append(memo_key)
