@@ -657,17 +657,16 @@ capability name at journey grain, or is not something a product \
 manager would put in a customer-facing feature list. Accept (true) \
 otherwise.
 
-Items with kind="lattice_split" are PARTITION PLANS, not display \
-names: an oversized catch-all journey is being split into the child \
-journeys listed in the item's context (each child carries its member-\
-flow count and the structural evidence axis it clusters on). Judge \
-the PARTITION: accept (true) when the children read as distinct, \
-recognizable user journeys a product manager would list separately — \
-this is the normal, desired outcome for a catch-all. Reject (false) \
-ONLY when the split is dishonest: children are arbitrary technical \
-shards of what is clearly ONE user journey, or child names \
-misrepresent their evidence. A reject keeps the original catch-all \
-journey unchanged.
+Items with kind="lattice_split" are PROPOSED CHILD JOURNEYS being \
+split out of an oversized catch-all journey (the item names the \
+catch-all parent, the child's member flows, and the structural \
+evidence the child clusters on). Judge EACH child on its own: accept \
+(true) when it reads as a distinct, recognizable user journey a \
+product manager would list separately from the parent — this is the \
+normal, desired outcome for a catch-all. Reject (false) ONLY a \
+dishonest child: an arbitrary technical shard of what is clearly the \
+parent's own journey, or a name that misrepresents its member flows. \
+A rejected child's flows simply stay in the original catch-all.
 
 Output STRICT JSON only:
 {"verdicts": {"<item id>": true|false, ...}}

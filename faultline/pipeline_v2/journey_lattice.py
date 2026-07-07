@@ -961,53 +961,44 @@ def run_journey_lattice(
             "split_ufs": split_ufs,
             "children": children,
             "residual_by_uf": residual_by_uf,
+            "owner_by_mid": {
+                m: str(u.id) for u, m in pooled
+                if str(u.id) in split_ids
+            },
         })
 
-    # ── Phase 3 — Draft Verifier over split PLANS (keyed seam) ─────
-    # One item per capability plan; reject → the catch-all survives
-    # byte-identically (conservative fallback, never lose).
+    # ── Phase 3 — Draft Verifier over split CHILDREN (keyed seam) ──
+    # One item per proposed CHILD journey (per-plan verdicts let one
+    # weak 1-member child poison a whole honest partition — keyed
+    # round-4 exhibit: the Soc0 investigations plan died to two thin
+    # riders). An explicitly rejected child folds its members back to
+    # the parent; a plan whose surviving children drop below the mint
+    # bar reverts entirely — the catch-all survives byte-identically
+    # (conservative fallback, never lose).
     if plans and verifier is not None:
         items = []
         for plan in plans:
-            items.append({
-                "id": plan["pf_key"],
-                "kind": "lattice_split",
-                "draft": "%s: split %s into %s" % (
-                    plan["pf_display"],
-                    " + ".join(
-                        f"'{getattr(u, 'name', '')}' ({len(u.member_flow_ids or [])} flows)"
-                        for u in plan["split_ufs"]
-                    ),
-                    "; ".join(
-                        f"'{ch['name']}' ({len(ch['mids'])} flows)"
-                        for ch in plan["children"]
-                    ),
-                ),
-                "pf_display": plan["pf_display"],
-                "context": {
-                    "parents": [
-                        {
-                            "name": str(getattr(u, "name", "")),
-                            "members": len(u.member_flow_ids or []),
-                        }
-                        for u in plan["split_ufs"]
-                    ],
-                    "children": [
-                        {
-                            "name": ch["name"],
-                            "axis": ch["axis"],
-                            "evidence_key": ch["key"],
-                            "members": len(ch["mids"]),
-                            "member_flows_sample": [
-                                str(getattr(flow_by_mid.get(m), "name", m)
-                                    or m)
-                                for m in ch["mids"][:5]
-                            ],
-                        }
-                        for ch in plan["children"]
-                    ],
-                },
-            })
+            parents_line = " + ".join(
+                f"'{getattr(u, 'name', '')}' ({len(u.member_flow_ids or [])} flows)"
+                for u in plan["split_ufs"]
+            )
+            for ch in plan["children"]:
+                items.append({
+                    "id": ch["id"],
+                    "kind": "lattice_split",
+                    "draft": ch["name"],
+                    "pf_display": plan["pf_display"],
+                    "context": {
+                        "split_from": parents_line,
+                        "capability": plan["pf_display"],
+                        "evidence": f"{ch['axis']}:{ch['key']}",
+                        "members": len(ch["mids"]),
+                        "member_flows_sample": [
+                            str(getattr(flow_by_mid.get(m), "name", m) or m)
+                            for m in ch["mids"][:5]
+                        ],
+                    },
+                })
         try:
             verdicts = verifier(items) or {}
         except Exception as exc:  # noqa: BLE001 — persona never breaks a scan
@@ -1015,10 +1006,25 @@ def run_journey_lattice(
             tele["verifier_error"] = str(exc)
         kept: list[dict[str, Any]] = []
         for plan in plans:
-            if verdicts.get(plan["pf_key"]) is False:
-                tele["verifier_rejects"] += 1
-            else:
+            surviving = []
+            for ch in plan["children"]:
+                if verdicts.get(ch["id"]) is False:
+                    tele["verifier_rejects"] += 1
+                    # Rejected child's members stay with the parent.
+                    for m in ch["mids"]:
+                        uid = plan["owner_by_mid"].get(m)
+                        if uid is not None:
+                            plan["residual_by_uf"].setdefault(
+                                uid, [],
+                            ).append(m)
+                else:
+                    surviving.append(ch)
+            if len(surviving) >= _MIN_MINTABLE:
+                plan["children"] = surviving
                 kept.append(plan)
+            elif surviving or plan["children"]:
+                tele["plans_reverted_verifier"] = (
+                    tele.get("plans_reverted_verifier", 0) + 1)
         plans = kept
 
     # ── Phase 4 — apply plans (conservation-checked) ───────────────

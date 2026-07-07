@@ -335,14 +335,34 @@ def test_verifier_reject_keeps_the_catchall_byte_identical() -> None:
     before = [u.model_dump() for u in ufs]
 
     def _verifier(items: list[dict]) -> dict[str, bool]:
-        assert items and items[0]["kind"] == "lattice_split"
-        assert items[0]["id"] == "workflows"
-        return {items[0]["id"]: False}
+        # Per-CHILD items (round-4 refinement): rejecting every child
+        # reverts the plan — the catch-all survives byte-identically.
+        assert items and all(i["kind"] == "lattice_split" for i in items)
+        assert all(i["id"].startswith("UF-L-") for i in items)
+        return {i["id"]: False for i in items}
+
+    tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
+    assert tele["verifier_rejects"] == 3
+    assert tele["journeys_created"] == 0
+    assert tele.get("plans_reverted_verifier") == 1
+    assert [u.model_dump() for u in ufs] == before
+
+
+def test_verifier_partial_reject_folds_child_to_parent() -> None:
+    ufs, devs, pfs, routes = _catchall_scene()
+    slk_id = _child_id("workflows", "slack")
+
+    def _verifier(items: list[dict]) -> dict[str, bool]:
+        return {slk_id: False}  # others accepted by default
 
     tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
     assert tele["verifier_rejects"] == 1
-    assert tele["journeys_created"] == 0
-    assert [u.model_dump() for u in ufs] == before
+    assert tele["journeys_created"] == 2  # domain + token survive
+    parent = next(u for u in ufs if u.id == "UF-010")
+    # The rejected slack members stayed with the parent.
+    for m in ("connect-slack-flow", "send-slack-alert-flow"):
+        assert m in parent.member_flow_ids
+    assert all(u.id != slk_id for u in ufs)
 
 
 def test_verifier_accept_and_missing_verdict_apply() -> None:
