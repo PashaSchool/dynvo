@@ -1660,9 +1660,9 @@ def restamp_system_triggers(
             continue
         verdicts: list[str | None] = []
         for mid in uf.member_flow_ids:
-            fl = flow_by_key.get(str(mid))
-            if fl is not None:
-                verdicts.append(_trigger_of(fl))
+            mfl = flow_by_key.get(str(mid))
+            if mfl is not None:
+                verdicts.append(_trigger_of(mfl))
         counted = [v for v in verdicts if v]
         if not counted or len(counted) != len(verdicts):
             continue  # mixed or unresolvable — stays interactive

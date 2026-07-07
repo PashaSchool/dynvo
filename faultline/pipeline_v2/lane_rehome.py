@@ -147,13 +147,13 @@ def rehome_uf_cited_lane_devs(
         if not pfid or pfid not in pf_by_slug:
             continue
         for mid in (getattr(uf, "member_flow_ids", None) or []):
-            fl = flow_by_key.get(str(mid))
-            if fl is None:
+            mfl = flow_by_key.get(str(mid))
+            if mfl is None:
                 continue
-            ep = getattr(fl, "entry_point_file", None)
+            ep = getattr(mfl, "entry_point_file", None)
             if ep:
                 cited_by_pf[pfid].add(str(ep))
-            for p in (getattr(fl, "paths", None) or []):
+            for p in (getattr(mfl, "paths", None) or []):
                 cited_by_pf[pfid].add(str(p))
     if not cited_by_pf:
         return tele
