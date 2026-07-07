@@ -482,7 +482,23 @@ def build_uf_candidates(
     verdict = _flow_verb_verdict(member_flow_names, vocab)
     src, _path = _anchor_path(anchor_id)
     is_vendor_pf = src == "hub" and " Core" not in pf_display
-    if is_vendor_pf:
+    # W3.2 D9 — a synthesized SYSTEM journey (flow-less job/route seed)
+    # is named by its OWN job resource, never the PF display: the seed
+    # exists to surface the JOB's identity; the PF is only its terminal
+    # home. The PF-display template collapsed every job under one hub
+    # into identical rows (Soc0: 11 inngest seeds → "Manage
+    # integrations" ×11 after terminal-home binding — a verifier cannot
+    # review that). Background executions template on the "run" verb.
+    is_system_seed = (
+        synthesized
+        and str(getattr(uf, "category", "") or "") == "system"
+        and bool(getattr(uf, "resource", None))
+    )
+    if is_system_seed:
+        tmpl = (templates.get("generic") or {}).get("run") or "Run {r}"
+        own = re.sub(r"[-_]+", " ", str(uf.resource)).strip()
+        template_name = tmpl.replace("{r}", _resource_phrase(own, vocab))
+    elif is_vendor_pf:
         tmpl = (templates.get("vendor") or {}).get(verdict) or "Manage {v}"
         vendor_disp = polish_display_casing(pf_display, vocab)
         # A composed "<Family> — <Vendor>" display templates on the
