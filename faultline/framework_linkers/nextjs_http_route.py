@@ -86,7 +86,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from faultline.framework_linkers.base import FrameworkLink
+from faultline.framework_linkers.base import FrameworkLink, canonical_sample
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -188,6 +188,8 @@ class _LinkerTelemetry:
     urls_unmatched: int = 0
     urls_external_skipped: int = 0
     links_emitted: int = 0
+    # Appended (uncapped) from Stage 6.4 worker threads; the emission cap
+    # + canonical ordering live in ``as_dict`` (see base.canonical_sample).
     unmatched_sample: list[dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
@@ -201,7 +203,7 @@ class _LinkerTelemetry:
             "urls_unmatched": self.urls_unmatched,
             "urls_external_skipped": self.urls_external_skipped,
             "links_emitted": self.links_emitted,
-            "unmatched_sample": list(self.unmatched_sample),
+            "unmatched_sample": canonical_sample(self.unmatched_sample, 10),
         }
 
 
@@ -602,10 +604,9 @@ class NextjsHttpRouteLinker:
                     break
             if matched_route is None:
                 self.telemetry.urls_unmatched += 1
-                if len(self.telemetry.unmatched_sample) < 10:
-                    self.telemetry.unmatched_sample.append(
-                        {"url": raw_url, "file": rel},
-                    )
+                self.telemetry.unmatched_sample.append(
+                    {"url": raw_url, "file": rel},
+                )
                 continue
 
             self.telemetry.urls_matched += 1

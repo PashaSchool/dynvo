@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from faultline.framework_linkers.base import FrameworkLink
+from faultline.framework_linkers.base import FrameworkLink, canonical_sample
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -275,7 +275,7 @@ class _LinkerTelemetry:
             "files_scanned": self.files_scanned,
             "files_unreadable": self.files_unreadable,
             "unmatched": self.unmatched,
-            "sample_links": list(self.sample_links),
+            "sample_links": canonical_sample(self.sample_links, 10),
         }
 
 
@@ -1019,8 +1019,8 @@ class StoreMutationLinker:
         return results
 
     def _record_sample(self, link: FrameworkLink) -> None:
-        if len(self.telemetry.sample_links) >= 10:
-            return
+        # Uncapped append from worker threads; the cap + canonical order
+        # are applied at ``as_dict`` emission (base.canonical_sample).
         self.telemetry.sample_links.append({
             "source": f"{link.source_file}:{link.source_line}",
             "target": f"{link.target_file}:{link.target_symbol}:L{link.target_line_start}",

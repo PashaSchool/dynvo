@@ -64,7 +64,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from faultline.framework_linkers.base import FrameworkLink
+from faultline.framework_linkers.base import FrameworkLink, canonical_sample
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -173,8 +173,10 @@ class _LinkerTelemetry:
             "features_processed": self.features_processed,
             "files_scanned": self.files_scanned,
             "files_unreadable": self.files_unreadable,
-            "unmatched_paths_sample": list(self.unmatched_paths_sample),
-            "sample_links": list(self.sample_links),
+            "unmatched_paths_sample": canonical_sample(
+                self.unmatched_paths_sample, 10,
+            ),
+            "sample_links": canonical_sample(self.sample_links, 5),
         }
 
 
@@ -670,8 +672,7 @@ class TrpcProcedureLinker:
                 entry = proc_map.get(path)
                 if entry is None:
                     self.telemetry.unmatched_call_sites += 1
-                    if len(self.telemetry.unmatched_paths_sample) < 10:
-                        self.telemetry.unmatched_paths_sample.append(path)
+                    self.telemetry.unmatched_paths_sample.append(path)
                     continue
                 source_symbol = _enclosing_symbol(text.splitlines(), line_no)
                 link = FrameworkLink(
@@ -688,12 +689,11 @@ class TrpcProcedureLinker:
                     reason=f"trpc call {path} resolves to {entry.file}",
                 )
                 links.append(link)
-                if len(self.telemetry.sample_links) < 5:
-                    self.telemetry.sample_links.append({
-                        "source": f"{rel}:{line_no}",
-                        "target": f"{entry.file}:{path}",
-                        "verb": m.group(3),
-                    })
+                self.telemetry.sample_links.append({
+                    "source": f"{rel}:{line_no}",
+                    "target": f"{entry.file}:{path}",
+                    "verb": m.group(3),
+                })
                 log.emit(
                     feature.name,
                     f"trpc link: {rel}:{line_no} → {entry.file}:{path}",

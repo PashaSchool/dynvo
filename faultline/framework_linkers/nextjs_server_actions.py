@@ -62,7 +62,7 @@ from faultline.analyzer.tsconfig_paths import (
     build_path_alias_map,
     resolve_ts_import,
 )
-from faultline.framework_linkers.base import FrameworkLink
+from faultline.framework_linkers.base import FrameworkLink, canonical_sample
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -168,7 +168,7 @@ class _LinkerTelemetry:
             "features_processed": self.features_processed,
             "files_scanned": self.files_scanned,
             "files_unreadable": self.files_unreadable,
-            "sample_links": list(self.sample_links),
+            "sample_links": canonical_sample(self.sample_links, 5),
         }
 
 
@@ -506,12 +506,11 @@ class NextjsServerActionsLinker:
                     ),
                 )
                 results.append(link)
-                if len(self.telemetry.sample_links) < 5:
-                    self.telemetry.sample_links.append({
-                        "source": f"{rel}:{line_no}",
-                        "target": f"{exp.module_file}:{exp.symbol}",
-                        "kind": "imported-action",
-                    })
+                self.telemetry.sample_links.append({
+                    "source": f"{rel}:{line_no}",
+                    "target": f"{exp.module_file}:{exp.symbol}",
+                    "kind": "imported-action",
+                })
 
         # 3. Inline JSX actions: <form action={async (...) => { "use server"; ... }}>
         for am in _JSX_ACTION_PROP.finditer(text):
@@ -553,12 +552,11 @@ class NextjsServerActionsLinker:
                 reason="inline `use server` action in JSX action prop",
             )
             results.append(link)
-            if len(self.telemetry.sample_links) < 5:
-                self.telemetry.sample_links.append({
-                    "source": f"{rel}:{line_no}",
-                    "target": f"{rel}:<inline-action>",
-                    "kind": "inline-jsx",
-                })
+            self.telemetry.sample_links.append({
+                "source": f"{rel}:{line_no}",
+                "target": f"{rel}:<inline-action>",
+                "kind": "inline-jsx",
+            })
             log.emit(
                 feature_name,
                 f"inline server-action at {rel}:{line_no}",
