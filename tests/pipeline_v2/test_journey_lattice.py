@@ -224,3 +224,84 @@ def test_deterministic_ids_and_repeat_stability(monkeypatch):
 def test_enabled_by_default(monkeypatch):
     monkeypatch.delenv(_ENV, raising=False)
     assert lattice_enabled() is True
+
+
+def _dev(name, pfid, paths):
+    return NS_DEV(name=name, layer="developer", product_feature_id=pfid,
+                  paths=paths)
+
+
+class NS_DEV:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def test_child_rehomes_to_entry_owner_pf(monkeypatch):
+    """papermark UF-003 class: catch-all under pf=workflows carries
+    team-api flows — the split child must live under the TEAMS pf
+    (entry-owner majority), not inherit the parent's home (that would
+    mint majority-foreign I15/I16 rows by construction)."""
+    monkeypatch.delenv(_ENV, raising=False)
+    ufs, flows = _investigations_fixture()
+    devs = [
+        _dev("investigations-core", "investigations",
+             [_ENTRY]),
+        _dev("notes-domain", "annotations",
+             []),
+    ]
+    # notes flows enter through a file owned by the annotations PF
+    notes_entry = "backend/routers/investigations_notes.py"
+    for fl in flows:
+        if fl.uuid in ("f7", "f8"):
+            fl.entry_point_file = notes_entry
+    devs[1].paths = [notes_entry]
+    apply_journey_lattice(ufs, flows, [], features=devs)
+    notes = next(u for u in ufs if "note" in u.name.lower())
+    assert notes.product_feature_id == "annotations"
+    lifecycle = next(u for u in ufs if "lifecycle" in u.name.lower())
+    assert lifecycle.product_feature_id == "investigations"  # parent home
+
+
+def test_dissolve_past_dominant_core_and_honest_resource(monkeypatch):
+    """Soc0 fresh-draw class: 'network security' dump with a dominant
+    widget_library trio — strays with homes leave, the core stays, the
+    UF resource turns honest (naming stack stops templating the lie)."""
+    monkeypatch.delenv(_ENV, raising=False)
+    flows = [
+        _flow("w1", "preview-widget-refresh-flow",
+              "backend/routers/widget_library.py"),
+        _flow("w2", "post-api-widget-library-widget-id-refresh-flow",
+              "backend/routers/widget_library.py"),
+        _flow("w3", "post-api-widget-library-preview-refresh-flow",
+              "backend/routers/widget_library.py"),
+        _flow("s1", "view-cases-list-flow", "frontend/src/pages/CasesPage.tsx"),
+        _flow("s2", "view-dashboard-pages-flow",
+              "frontend/src/pages/DashboardPage.tsx"),
+        _flow("s3", "browse-knowledge-entries-flow",
+              "frontend/src/pages/KnowledgePage.tsx"),
+    ]
+    dump = UserFlow(
+        id="UF-042", name="Send network security",
+        product_feature_id="network-security", intent="other",
+        resource="network-security",
+        member_flow_ids=[f.uuid for f in flows], member_count=6,
+        synthesized=True,
+        synthesis_reason="uncovered_product_feature_backstop",
+    )
+    cases = UserFlow(id="UF-010", name="Manage cases end-to-end",
+                     product_feature_id="cases", intent="manage",
+                     resource="cases", member_flow_ids=["x1"],
+                     member_count=1)
+    dash = UserFlow(id="UF-011", name="Build and browse dashboards",
+                    product_feature_id="dashboard", intent="browse",
+                    resource="dashboards", member_flow_ids=["x2"],
+                    member_count=1)
+    ufs = [dump, cases, dash]
+    tele = apply_journey_lattice(ufs, flows, [])
+    assert tele["garbage_dissolved"] == 1
+    assert tele["members_rehomed"] == 2       # cases + dashboard strays
+    assert "s1" in cases.member_flow_ids
+    assert "s2" in dash.member_flow_ids
+    # knowledge stray has no home → stays; widget core stays
+    assert set(dump.member_flow_ids) == {"w1", "w2", "w3", "s3"}
+    assert dump.resource == "widget_library"  # honest survivor resource

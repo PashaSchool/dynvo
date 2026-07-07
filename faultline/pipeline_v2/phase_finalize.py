@@ -1225,6 +1225,7 @@ def run_finalize_phase(
                     user_flows,
                     list(bipartite.flows),
                     product_features,
+                    features=features,
                     labeler=_lat_labeler,
                     verifier=_lat_verifier,
                     log=log_lat,

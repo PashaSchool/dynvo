@@ -345,6 +345,7 @@ def apply_journey_lattice(
     flows: list["Flow"],
     product_features: list[Any],
     *,
+    features: list[Any] | None = None,
     vocab: Mapping[str, Any] | None = None,
     labeler: Callable[[list[Any]], dict[str, Any] | None] | None = None,
     verifier: Callable[[list[dict[str, Any]]], dict[str, bool]] | None = None,
@@ -374,6 +375,33 @@ def apply_journey_lattice(
         for k in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
             if k:
                 flow_by_key.setdefault(str(k), fl)
+
+    # file → owning PF (dev-feature ownership; deterministic first-wins
+    # over name-sorted devs). Feeds the child re-home vote: a split
+    # child whose members ENTER through another PF's files belongs to
+    # THAT PF — inheriting the catch-all parent's home would mint
+    # majority-foreign journeys (validator I15/I16 rows) by construction.
+    owner_pf: dict[str, str] = {}
+    for dev in sorted(
+            (f for f in (features or [])
+             if getattr(f, "layer", "developer") == "developer"
+             and getattr(f, "product_feature_id", None)),
+            key=lambda f: str(getattr(f, "name", "") or "")):
+        pfid = str(dev.product_feature_id)
+        for pth in getattr(dev, "paths", None) or []:
+            owner_pf.setdefault(str(pth), pfid)
+
+    def _child_home(fls: list[Any], parent_pf: str) -> str:
+        votes: Counter[str] = Counter()
+        for fl in fls:
+            ep = str(getattr(fl, "entry_point_file", "") or "")
+            own = owner_pf.get(ep)
+            if own:
+                votes[own] += 1
+        if not votes:
+            return parent_pf
+        best, n = min(votes.items(), key=lambda kv: (-kv[1], kv[0]))
+        return best if n * 2 > len(fls) else parent_pf
 
     def _members(uf: Any) -> list[Any]:
         out = []
@@ -483,7 +511,7 @@ def apply_journey_lattice(
                 name=_template_name(verb, obj, sub_disp, vocab),
                 description=None,
                 domain=getattr(uf, "domain", None),
-                product_feature_id=pf_key or None,
+                product_feature_id=_child_home(fls, pf_key) or None,
                 intent=_INTENT_BY_VERB.get(verb, "other"),
                 resource=obj,
                 member_flow_ids=sorted(_flow_key(f) for f in fls),
@@ -603,13 +631,19 @@ def apply_journey_lattice(
         # and no dominant same-object core to keep it honest
         if qualifying >= _CATCHALL_MIN_CLUSTERS or len(objs) < 3:
             continue
-        if max(objs.values()) > floor2:
-            continue  # a dominant object core — misnamed maybe, dump no
         own = _singular(str(getattr(uf, "resource", "") or "").lower())
         if own in objs:
             continue  # honestly named after some of its members
+        # a dominant same-object core (e.g. the widget_library trio in
+        # one Soc0 draw) STAYS — only the stray singletons re-home past
+        # it; afterwards the UF's resource turns honest (the core's
+        # object) so the naming stack stops templating the lie.
+        dominant = max(objs.items(), key=lambda kv: (kv[1], kv[0]))
+        dominant_obj = dominant[0] if dominant[1] >= floor2 else None
         moved: set[str] = set()
         for fl, (obj, _sub) in keyed:
+            if dominant_obj is not None and obj == dominant_obj:
+                continue  # the core stays
             homes = [u for u in uf_by_resource.get(obj, []) if u is not uf]
             if not homes:
                 continue
@@ -627,6 +661,8 @@ def apply_journey_lattice(
         uf.member_flow_ids = sorted(
             m for m in (uf.member_flow_ids or []) if str(m) not in moved)
         uf.member_count = len(uf.member_flow_ids)
+        if dominant_obj is not None:
+            uf.resource = dominant_obj  # name the survivor honestly
         tele["garbage_dissolved"] += 1
         tele["members_rehomed"] += len(moved)
         if log is not None:
