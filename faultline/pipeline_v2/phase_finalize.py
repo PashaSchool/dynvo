@@ -943,6 +943,46 @@ def run_finalize_phase(
                 f" no-pf {rgr_tele.get('skipped_no_pf')})",
             )
 
+    # ── W3.2 — UF-evidence lane re-homing (anchored paths, BOTH) ───────
+    # The W3.1 sink-kill parked the freed mass in the lane (corpus 85K →
+    # 1.94M LOC); the journey-evidenced slice of it (final UFs citing a
+    # lane dev's files, one-PF majority, self-evident, capacity-capped)
+    # re-homes to the capability its journeys ride, provenance
+    # ``fold:uf-evidence``. Runs AFTER 6.7d + route-group seeds (the
+    # citations must reflect the FINAL journey layer) and BEFORE 6.97 so
+    # loc accounting stamps the moved membership (loc-truth I13).
+    # Deterministic, $0. Kill-switch: FAULTLINE_SPINE_LANE_REHOME=0.
+    if anchored_mint_applied and not uf_suppressed:
+        from faultline.pipeline_v2.lane_rehome import (
+            lane_rehome_enabled,
+            rehome_uf_cited_lane_devs,
+        )
+        if lane_rehome_enabled():
+            with StageLogger(run_dir, 6, "lane_rehome") as log_lr:
+                try:
+                    lr_tele = rehome_uf_cited_lane_devs(
+                        features, product_features, user_flows,
+                        list(bipartite.flows), repo_path=repo_path,
+                    )
+                    scan_meta["lane_rehome"] = lr_tele
+                    log_lr.info(
+                        "lane_rehome: checked %d rehomed %d (%d LOC) "
+                        "blocked conc=%d self=%d target=%d cap=%d" % (
+                            lr_tele.get("checked", 0),
+                            lr_tele.get("rehomed", 0),
+                            lr_tele.get("rehomed_loc", 0),
+                            lr_tele.get("blocked_concentration", 0),
+                            lr_tele.get("blocked_self_evidence", 0),
+                            lr_tele.get("blocked_target", 0),
+                            lr_tele.get("blocked_cap", 0),
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_lr.info(
+                        f"lane_rehome: FAILED ({exc}) — lane left as-is",
+                        feature=None,
+                    )
+
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to
     # the final product features / user flows. Anchors are EVIDENCE here (a match
