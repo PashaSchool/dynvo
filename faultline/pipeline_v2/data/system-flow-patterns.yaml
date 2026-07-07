@@ -63,6 +63,14 @@ content_markers:
     - "@shared_task"              # Celery
     - "@app.task"
     - "sidekiq"                   # Sidekiq (Ruby)
+    # W3.1 D9 (fb3 dossier): runtimes the pack missed — 168/168 UFs
+    # trigger=None on comp (trigger.dev), tracecat (temporal + schedules),
+    # pretalx (celery beat). Library substrings only, never app wrappers.
+    - "temporalio"                # Temporal (python SDK)
+    - "@temporalio/"              # Temporal (TS SDK)
+    - "@workflow.defn"            # Temporal python workflow
+    - "@activity.defn"            # Temporal python activity
+    - "@trigger.dev/"             # Trigger.dev SDK
   webhook:
     - "constructEvent"            # Stripe
     - "svix"                      # generic webhook delivery
@@ -74,3 +82,9 @@ content_markers:
     - "CRON_SECRET"
     - "hasCronSecret"
     - "verifyCron"
+    # W3.1 D9 — scheduler runtimes (same fb3 evidence):
+    - "beat_schedule"             # Celery beat schedule table
+    - "celery.schedules"          # crontab() import (Celery beat)
+    - "apscheduler"               # APScheduler
+    - "BackgroundScheduler("      # APScheduler direct
+    - "schedules.task("           # Trigger.dev v3 scheduled task
