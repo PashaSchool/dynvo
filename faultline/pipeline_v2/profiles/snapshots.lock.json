@@ -10,25 +10,25 @@
       "path": "/Users/pkuzina/workspace/_faultlines-testrepos/formbricks",
       "commit_sha": "f5921c66d54745130a7bf4225dba8eb5a309f905",
       "profile": "next-app-router",
-      "digest": "sha256:bbd67659457275ba180b34505ba0c54470b8c284365554bec61b4ae6efc8b4d3"
+      "digest": "sha256:d7b9db4457d2798a1b38addf0fd336df18f817258890bf5d74638f2452115206"
     },
     "dub": {
       "path": "/Users/pkuzina/workspace/_faultlines-testrepos/dub",
       "commit_sha": "263fff9ed0c82d59bbb7684fd888e41ed298d531",
       "profile": "next-app-router",
-      "digest": "sha256:4ce539c9f055b33170eaa4fd653eaf6c61f175ff6d3ae7957c12170c11788dc0"
+      "digest": "sha256:8f3b65e4efd3548a12738b878daebad597653e77fbd14c3caf0a50722f6c5050"
     },
     "traefik": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/traefik",
       "commit_sha": "6e4f397357787d8c841bf92588866d8a04e4a683",
       "profile": "default",
-      "digest": "sha256:2621ee59fd55c57d24a4b560cd84bcb078bb08fed2ecb66a9ab2a2a592dd49c8"
+      "digest": "sha256:6ea364516a163f51d36ac1e6dee02c0a6e24f7f7f89f28eb5e2546af0dc95595"
     },
     "polar": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/polar",
       "commit_sha": "aef390d613b2649cccdfc680eb9cc2b0b00c3940",
       "profile": "hybrid(default+fastapi-family+next-app-router)",
-      "digest": "sha256:a55d7e59bdff9aa2cc57ef890d9e6779ed09d1680a196e47aca8cd6470d7ae46"
+      "digest": "sha256:06c809e0dafbe75684ba2a668de2409ae8762f74f54605c733be9fd23a9cae30"
     },
     "dispatch": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/dispatch",
@@ -40,37 +40,37 @@
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/fastapi-template",
       "commit_sha": "3685fb66259fa12f8436ae7f88379fd64ca7cdbd",
       "profile": "fastapi-family",
-      "digest": "sha256:5d298ad97fe0fce711653e399c7569071197892eba301771ccf8219cd2897369"
+      "digest": "sha256:7b5ddae1f2c6f71329bd11f42daa2173389b292b522033911513fa3d91a20de1"
     },
     "litestar": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/litestar",
       "commit_sha": "64aa8476273ef3dbacf37b2504ee716624d24812",
       "profile": "fastapi-family",
-      "digest": "sha256:fd7cb91b816ff7c2528248761a42bf8c86e919b4d21b2846d6a3f82318822c7f"
+      "digest": "sha256:20d4d4d222dea71c65b4053876b4568f044dfb48e99f4df480fcd251dd170b58"
     },
     "saleor": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/saleor",
       "commit_sha": "f03b30eb612ba3a93a8cc144687325320519ee0a",
       "profile": "django",
-      "digest": "sha256:6e2abd45f399dc8e5238b800502ce0a497514f31592debeb1452975deab1c6e9"
+      "digest": "sha256:623c1ccd1b6a8313280e053c9cd09c2ea8f49529c54d0a5e6270a75962be87c2"
     },
     "weblate": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/weblate",
       "commit_sha": "16a3c863ee5330c8c209d4f9bf52e2236bb0b795",
       "profile": "django",
-      "digest": "sha256:4046913ddb8496e87a17c73a028469c50c9a60965e0d6df41c1f60fa21ad37de"
+      "digest": "sha256:5069f5a738f9ee1390fb7ed6802b4e2f3078420d2d1fa8545e8ffa8a858792b7"
     },
     "dittofeed": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/dittofeed",
       "commit_sha": "52b2bee909744d07dd5d409fd3974d4b95c66766",
       "profile": "next-pages-react",
-      "digest": "sha256:5b0b43071a2f31576148ffbcfc2172b9802ae784ef043eeb7813ccf00ceda3e3"
+      "digest": "sha256:418fdce7c626efa61cbd27f87f892e135ef9b49feebb28a7800e2658d87e9394"
     },
     "opensign": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/opensign",
       "commit_sha": "f2ada473027e9b36e0af7a459ebe703b83bc2e25",
       "profile": "next-pages-react",
-      "digest": "sha256:d55b5bfcdd78ecd14f8413800237361e4687dc9e9d222b42cc6c4db9e882cc07"
+      "digest": "sha256:54337eb78a8a7a75a5d3ec5db2c2cfa789f056fb86d3805ad55ec7c01f10d190"
     }
   }
 }
