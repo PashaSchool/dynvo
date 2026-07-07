@@ -2938,6 +2938,13 @@ def run_journey_abstraction(
     and ``telemetry["fallback"]`` is set to the reason string. On success
     ``telemetry["fallback"]`` is ``None`` and ``applied`` is ``True``.
 
+    W4.1 (first-draw brittleness): an empty/unparseable FIRST Call-1 draw no
+    longer degrades outright — it is retried once (same prompt,
+    ``telemetry["retry_used"]=1``, omitted when unused); interior-evidence
+    runs whose retry also fails fall back to the evidence-less v1 prompt +
+    cache namespace before degrading (``telemetry["fallback"]="v1_prompt"``
+    with ``applied=True`` when that path wins).
+
     Call 1 (abstraction / grain-lift) runs on :func:`resolve_abstraction_model`
     (Sonnet by default) regardless of ``model``. Call 2 (re-attribution) runs
     on the passed ``model`` (Haiku on a default scan). ``cache`` (when supplied)
@@ -3245,9 +3252,14 @@ def run_journey_abstraction(
     else:
         sys1 = _ABSTRACTION_SYSTEM
         anchor_block = ""
-    user1 = ("Repository evidence (code-grounded, no README):\n```json\n"
-             + json.dumps(digest, ensure_ascii=False) + "\n```" + anchor_block
-             + "\nEmit the JSON now.")
+    def _user_prompt(digest_: dict[str, Any]) -> str:
+        """Call-1 user message for ``digest_`` — ONE template shared by the
+        primary draw and the W4.1 v1-fallback so the two can never drift."""
+        return ("Repository evidence (code-grounded, no README):\n```json\n"
+                + json.dumps(digest_, ensure_ascii=False) + "\n```" + anchor_block
+                + "\nEmit the JSON now.")
+
+    user1 = _user_prompt(digest)
 
     # Sanitise at the boundary: keep only specs whose "name" is a non-empty
     # string. An LLM can emit a numeric/None name in otherwise-valid JSON, and
@@ -3264,18 +3276,21 @@ def run_journey_abstraction(
     from faultline.llm.decision_log import digest_hash as _dhash
     from faultline.llm.decision_log import log_decision as _dlog
 
-    def _draw(system: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    def _draw(
+        system: str, user: str, *, role: str = "journey_abstraction_draw",
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
         """One Call-1 draw → sanitised ``(uf_specs, pf_specs, fail_reason)``.
-        ``fail_reason`` is None on a usable draw."""
-        in_hash = _dhash(system, user1)
+        ``fail_reason`` is None on a usable draw. ``role`` distinguishes the
+        W4.1 brittleness redraws in the cost/decision logs."""
+        in_hash = _dhash(system, user)
         text, in_t, out_t = _call_haiku(
-            cli, model=abstraction_model, system=system, user=user1,
+            cli, model=abstraction_model, system=system, user=user,
             max_tokens=ABSTRACTION_MAX_TOKENS, llm_health=llm_health)
         tele["llm_calls"] += 1
         tele["cost_usd"] = round(
             tele["cost_usd"]
             + _record(abstraction_model, in_t, out_t,
-                      {"role": "journey_abstraction_draw",
+                      {"role": role,
                        "input_digest_hash": in_hash}),
             6,
         )
@@ -3288,7 +3303,7 @@ def run_journey_abstraction(
             return [], [], "abstraction_empty"
         try:  # decision tap — names/counts only, never content
             _dlog(
-                role="journey_abstraction_draw",
+                role=role,
                 model=abstraction_model,
                 input_digest_hash=in_hash,
                 decision={
@@ -3313,9 +3328,92 @@ def run_journey_abstraction(
     # the retry (never-worse: more UFs beats degrading the whole stage) and
     # flag ``abstraction_contract`` so the uncompressed draw is visible in
     # scan_meta.
-    uf_specs, pf_specs, fail1 = _draw(sys1)
+    uf_specs, pf_specs, fail1 = _draw(sys1, user1)
+    # The prompt the KEPT draw engaged — the grain-contract corrective retry
+    # below must re-engage the SAME prompt (the v1 one when the W4.1 fallback
+    # won), never the prompt of a draw that already failed.
+    sys_active, user_active = sys1, user1
+    used_v1_fallback = False
     if fail1:
-        return _degrade(fail1)
+        # ── W4.1 — first-draw brittleness ladder (soc0f forensics) ──────
+        # A single empty/unparseable Sonnet draw used to degrade the WHOLE
+        # stage (wave4 Soc0: one `abstraction_empty` draw silently swapped
+        # the scored journey layer for the raw 6.7 rollup — +32 phantom
+        # validator rows). Cheapest rung first, degrade stays the last
+        # resort with its reason vocabulary unchanged:
+        #   1. retry ONCE, same prompt (transient-draw class);
+        #   2. interior-evidence runs only: fall back to the evidence-less
+        #      v1 prompt + cache namespace — the wave31-proven path, which
+        #      REPLAYS its warm cache before paying for a live draw;
+        #   3. degrade (existing never-worse exit).
+        # Every redraw is cap-guarded like the contract retry: current
+        # spend + one mean-cost draw must fit under COST_CAP_USD.
+        if tele["cost_usd"] * 2 > COST_CAP_USD:
+            return _degrade(fail1)
+        tele["retry_used"] = 1
+        uf_specs, pf_specs, fail2 = _draw(
+            sys1, user1, role="journey_abstraction_retry")
+        if fail2:
+            if not interior_attached:
+                return _degrade(fail2)
+            # v1 digest: the sections riders were APPENDED to the PF lines
+            # by the attach loop, so filtering the key out restores the
+            # exact pre-W4 line dicts (insertion order included) → the
+            # json.dumps bytes, the prompt and the v1 cache key all match
+            # what an evidence-less run would compute.
+            v1_digest = dict(digest)
+            v1_digest["current_product_features"] = [
+                {k: v for k, v in line.items() if k != "sections"}
+                for line in digest["current_product_features"]
+            ]
+            v1_key = _cache_key(v1_digest, abstraction_model,
+                                reattrib_model, "spine-anchored-mint-v1")
+            v1_user = _user_prompt(v1_digest)
+            sys_active, user_active = _ANCHORED_SYSTEM, v1_user
+            # 2a. Replay the v1 namespace when warm ($0, byte-identical to
+            # the evidence-less run that recorded it — same replay shape as
+            # the primary lookup: cached specs are already post-scrub).
+            v1_hit: Any = None
+            if cache is not None:
+                try:
+                    v1_hit = cache.get(CacheKind.LLM_ABSTRACTION.value, v1_key)
+                except Exception:  # noqa: BLE001 — cache fault ≠ stage abort
+                    v1_hit = None
+            if isinstance(v1_hit, dict) and v1_hit.get("v") == ABSTRACTION_CACHE_VERSION:
+                c_abs = v1_hit.get("abstraction") or {}
+                c_map = {k: v for k, v in (v1_hit.get("map") or {}).items()
+                         if isinstance(k, str) and isinstance(v, str)}
+                if c_abs.get("user_flows") and c_abs.get("product_features") and c_map:
+                    tele["abstraction_contract"] = v1_hit.get(
+                        "contract", CONTRACT_PASS)
+                    if isinstance(v1_hit.get("first_draw_spec"), dict):
+                        tele["first_draw_spec"] = v1_hit["first_draw_spec"]
+                    try:
+                        result = _finish(c_abs, c_map)
+                    except Exception:  # noqa: BLE001 — malformed cache must never crash
+                        result = None
+                    if result is not None:
+                        # Warm THIS config's own namespace so a re-scan
+                        # replays at the primary lookup instead of
+                        # re-buying the two failed draws.
+                        if cache is not None:
+                            try:
+                                cache.set(CacheKind.LLM_ABSTRACTION.value,
+                                          key, v1_hit)
+                            except Exception:  # noqa: BLE001 — cache write never aborts
+                                pass
+                        tele["fallback"] = "v1_prompt"
+                        return result
+                    tele.pop("first_draw_spec", None)  # stale restore must not leak
+            # 2b. Live draw on the v1 prompt (cap-guarded like any redraw).
+            if tele["cost_usd"] * 3 > COST_CAP_USD * 2:
+                return _degrade(fail2)
+            uf_specs, pf_specs, fail3 = _draw(
+                _ANCHORED_SYSTEM, v1_user,
+                role="journey_abstraction_v1_fallback")
+            if fail3:
+                return _degrade(fail3)
+            used_v1_fallback = True
     n_digest_ufs = len(digest["current_user_flows"])
     n_digest_pfs = len(digest.get("current_product_features") or [])
     tele["uf_specs_emitted"] = len(uf_specs)
@@ -3357,7 +3455,7 @@ def run_journey_abstraction(
             # (documenso +8.5); the jpf corrective serves the jpf-only class.
             corrective = (_MERGE_CORRECTIVE if CONTRACT_ARMED_RATIO in armed
                           else _JPF_CORRECTIVE)
-            r_ufs, r_pfs, r_fail = _draw(sys1 + corrective)
+            r_ufs, r_pfs, r_fail = _draw(sys_active + corrective, user_active)
             if r_fail is None:
                 # Persist the FIRST draw's parsed-spec summary BEFORE the
                 # retry replaces it — the only moment both candidates exist
@@ -3451,6 +3549,11 @@ def run_journey_abstraction(
             return _degrade("reconstruct_exception")
         if result is None:
             return _degrade("reconstruct_empty")
+        if used_v1_fallback:
+            # AFTER _finish (which stamps fallback=None on success): the
+            # stage applied, but via the evidence-less v1 prompt — visible
+            # in scan_meta without flipping `applied`.
+            tele["fallback"] = "v1_prompt"
         return result
 
     # ── Call 2 — dev → capability re-attribution (Haiku / passed model) ─
