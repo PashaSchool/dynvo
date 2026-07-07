@@ -983,6 +983,53 @@ def run_finalize_phase(
                         feature=None,
                     )
 
+    # ── W3.2 D9 — system journeys survive the keyed rewrite (BOTH paths) ──
+    # wave31: 6.8b stamped system routes on 6/10 repos yet output carried
+    # ZERO system-category UFs — the 6.7d rewrite rebuilds user_flows[]
+    # from LLM journey specs and eats the thin member-less system seeds
+    # the rollup minted (Soc0's 11 flow-less inngest jobs: matched, minted,
+    # dropped). Same post-6.7d slot that keeps the route-group seeds
+    # alive: re-mint what the rewrite dropped (dedup-aware — a keyless
+    # pipeline that kept the rollup output no-ops) and re-stamp the
+    # deterministic trigger verdicts onto rebuilt journeys whose member
+    # flows ride system routes (unanimous-evidence bar). Deterministic,
+    # $0 LLM. Kill-switch: FAULTLINE_SEED_SYSTEM_UFS=0 (shared with the
+    # rollup synthesis).
+    if not uf_suppressed:
+        from faultline.pipeline_v2.stage_6_7_user_flows import (
+            restamp_system_triggers,
+            resynthesize_system_ufs,
+        )
+        with StageLogger(run_dir, 6, "system_uf_recall") as log_sys:
+            try:
+                sys_stamp_tele = restamp_system_triggers(
+                    user_flows, list(bipartite.flows),
+                    lineage_result.routes_index,
+                )
+                sys_mint_tele = resynthesize_system_ufs(
+                    user_flows, list(bipartite.flows), features,
+                    lineage_result.routes_index,
+                )
+                if (sys_mint_tele.get("minted")
+                        or sys_mint_tele.get("skipped_existing")
+                        or sys_stamp_tele.get("stamped")):
+                    scan_meta["system_uf_recall"] = {
+                        **sys_mint_tele, **sys_stamp_tele,
+                    }
+                log_sys.info(
+                    "system_uf_recall: minted %d (skipped_existing %d), "
+                    "triggers re-stamped %d" % (
+                        sys_mint_tele.get("minted", 0),
+                        sys_mint_tele.get("skipped_existing", 0),
+                        sys_stamp_tele.get("stamped", 0),
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_sys.info(
+                    f"system_uf_recall: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to
     # the final product features / user flows. Anchors are EVIDENCE here (a match
