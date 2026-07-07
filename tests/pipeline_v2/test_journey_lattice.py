@@ -645,3 +645,57 @@ def test_tier_only_route_collapses_to_core() -> None:
     assert all("management" not in (u.domain or "")
                and ":client" not in (u.domain or "") for u in ufs)
     assert tele["catchalls_split"] == 1
+
+
+def test_unowned_entry_clusters_fold_back_to_parent() -> None:
+    """A cluster whose member entries are owned by NO PF (lane mass —
+    papermark pages/api/teams/* class) never mints: it would only expose
+    the unowned entries as majority-foreign 1-member rows (I16). The
+    members stay with the parent until excavation owns the files."""
+    owned = [
+        _flow("create-workflow-flow", "pages/api/workflows/create.ts"),
+        _flow("run-workflow-flow", "pages/api/workflows/run.ts"),
+        _flow("edit-step-flow", "app/api/workflows/steps/edit.ts"),
+        _flow("add-step-flow", "app/api/workflows/steps/add.ts"),
+    ]
+    unowned = [
+        _flow("verify-domain-flow",
+              "pages/api/teams/[teamId]/domains/verify.ts", loc=200),
+        _flow("connect-slack-flow",
+              "pages/api/teams/[teamId]/slack/oauth.ts", loc=200),
+        _flow("create-token-flow",
+              "pages/api/teams/[teamId]/tokens/new.ts", loc=200),
+    ]
+    dev = _dev("workflows-dev", [f.entry_point_file for f in owned],
+               "workflows", flows=owned + unowned)
+    # The unowned entries belong to NO dev's paths (lane mass).
+    pfs = [_pf("workflows", "Workflows", "route:pages/api/workflows")]
+    routes = [
+        {"file": "pages/api/workflows/create.ts",
+         "pattern": "/api/workflows/create"},
+        {"file": "pages/api/workflows/run.ts",
+         "pattern": "/api/workflows/run"},
+        {"file": "app/api/workflows/steps/edit.ts",
+         "pattern": "/api/workflows/[id]/steps/edit"},
+        {"file": "app/api/workflows/steps/add.ts",
+         "pattern": "/api/workflows/[id]/steps/add"},
+        {"file": "pages/api/teams/[teamId]/domains/verify.ts",
+         "pattern": "/api/teams/[teamId]/domains/verify"},
+        {"file": "pages/api/teams/[teamId]/slack/oauth.ts",
+         "pattern": "/api/teams/[teamId]/slack/oauth"},
+        {"file": "pages/api/teams/[teamId]/tokens/new.ts",
+         "pattern": "/api/teams/[teamId]/tokens/new"},
+    ]
+    ufs = [_uf("UF-010", "Build automated workflows", "workflows",
+               [f.name for f in owned + unowned])]
+    tele = run_journey_lattice(ufs, [dev], pfs, routes)
+
+    # steps (owned) may mint; domains/slack/tokens (unowned) never do.
+    assert tele.get("clusters_unowned_folded", 0) >= 3
+    for u in ufs:
+        dom = str(getattr(u, "domain", "") or "")
+        assert "domain" not in dom.split(":")[-1:] or not dom
+    parent = next(u for u in ufs if u.id == "UF-010")
+    for m in ("verify-domain-flow", "connect-slack-flow",
+              "create-token-flow"):
+        assert m in parent.member_flow_ids

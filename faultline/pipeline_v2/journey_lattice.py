@@ -171,10 +171,40 @@ def _norm_token(word: str) -> str:
     return t
 
 
+#: camelCase / PascalCase boundary (``CaseDetailPage`` → 3 words).
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+#: Trailing UI-container words dropped from MULTI-token keys — a page
+#: component names its OBJECT, not a "page" family (``ChatPage`` keys
+#: ``chat`` and merges with the chat evidence family; a single-token
+#: ``view``/``page`` key survives untouched — papermark ``/view``).
+_TRAILING_CONTAINER_TOKENS = frozenset({
+    "page", "pages", "screen", "screens", "tab", "tabs",
+})
+
+
+def _key_words(text: str) -> list[str]:
+    """Camel-split words of a segment; trailing container words AND
+    trailing CRUD-leaf words dropped (multi-word only) — a detail/edit
+    view of an object is the SAME journey as the object
+    (``CaseDetailPage`` → ``case``; ``bulk-update`` → ``bulk`` → the
+    single-token CRUD check then drops the segment entirely). Casing
+    preserved for display derivation."""
+    parts = [w for w in re.split(r"[^A-Za-z0-9]+",
+                                 _CAMEL_RE.sub("-", str(text or ""))) if w]
+    while len(parts) > 1 and (
+        parts[-1].lower() in _TRAILING_CONTAINER_TOKENS
+        or _norm_token(parts[-1]) in _CRUD_LEAF_SEGS
+    ):
+        parts.pop()
+    return parts
+
+
 def _norm_key(text: str) -> str:
-    """Normalized multi-word cluster key: per-word ``_norm_token``,
-    joined by ``-`` ("AI Copilot" → "ai-copilot")."""
-    toks = [_norm_token(w) for w in re.split(r"[^A-Za-z0-9]+", str(text or ""))]
+    """Normalized multi-word cluster key: camel-split, container-word
+    dropped, per-word ``_norm_token``, joined by ``-`` ("AI Copilot" →
+    "ai-copilot", "CaseDetailPage" → "case-detail")."""
+    toks = [_norm_token(w) for w in _key_words(text)]
     return "-".join(t for t in toks if t)
 
 
@@ -285,7 +315,10 @@ def _route_family(
                 for s in chain[i + 1:]
             ):
                 continue  # architecture tier, deeper object exists
-            return _norm_key(seg), re.sub(r"[-_]+", " ", seg).strip()
+            key = _norm_key(seg)
+            if not key or key in _CRUD_LEAF_SEGS:
+                continue  # reduced to a bare CRUD leaf — same journey
+            return key, " ".join(_key_words(seg))
     return None
 
 
@@ -355,7 +388,10 @@ def _dir_family(
             for s in candidates[i + 1:]
         ):
             continue  # architecture tier, deeper object exists
-        return _norm_key(seg), re.sub(r"[-_]+", " ", seg).strip()
+        key = _norm_key(seg)
+        if not key or key in _CRUD_LEAF_SEGS:
+            continue  # reduced to a bare CRUD leaf — same journey
+        return key, " ".join(_key_words(seg))
     return None
 
 
@@ -582,6 +618,38 @@ def run_journey_lattice(
                 if key and str(key) not in flow_by_mid:
                     flow_by_mid[str(key)] = fl
 
+    # Entry-ownership map (conservation exclusions: developer layer,
+    # non-facet, PF-stamped). A cluster with NO owned member entry has
+    # no attachment evidence to stand alone as a journey — its files are
+    # lane/unowned mass (papermark pages/api/teams/*, Soc0
+    # backend/services/*), and minting it just exposes the unowned
+    # entries as majority-foreign rows at 1-member grain (keyed A/B
+    # round-2 finding: every new I16 row was exactly this class). Those
+    # members FOLD BACK to their parent — status quo ante — until the
+    # excavation arc (W4.3) gives the files an owner; then the same
+    # cluster keys mint the journeys properly on the next scan.
+    entry_owner: dict[str, str] = {}
+    for d in features:
+        if str(getattr(d, "layer", "developer") or "developer") != "developer":
+            continue
+        if getattr(d, "role", None) == "facet":
+            continue
+        pfid = getattr(d, "product_feature_id", None)
+        if not pfid:
+            continue
+        for p in getattr(d, "paths", None) or []:
+            entry_owner.setdefault(str(p), str(pfid))
+
+    def _has_owned_entry(mids: list[str]) -> bool:
+        for m in mids:
+            fl = flow_by_mid.get(m)
+            if fl is None:
+                continue
+            e = _entry_file_of(fl)
+            if e and e in entry_owner:
+                return True
+        return False
+
     patterns_by_file: dict[str, list[str]] = {}
     for r in routes_index or ():
         f = str(r.get("file") or "")
@@ -782,6 +850,13 @@ def run_journey_lattice(
                 if m in flow_by_mid
             )
             if len(mids) < 2 and loc < _MIN_CLUSTER_LOC:
+                for m in mids:
+                    residual_mids[str(owner_of[m].id)].append(m)
+                continue
+            if not _has_owned_entry(mids):
+                # No attachment evidence — fold back (see entry_owner).
+                tele["clusters_unowned_folded"] = (
+                    tele.get("clusters_unowned_folded", 0) + 1)
                 for m in mids:
                     residual_mids[str(owner_of[m].id)].append(m)
                 continue
