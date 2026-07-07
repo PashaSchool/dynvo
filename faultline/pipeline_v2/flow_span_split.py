@@ -164,13 +164,29 @@ def split_cross_pf_flow_attribution(
                 )
 
             # ── node surface: labeled sharing, no whole-file guesses ──
+            # EVIDENCE-CONSERVATION EXCEPTION (supabase smoke I4 blast,
+            # 2026-07-07: 87 flows lost their LAST spans): dropping the
+            # foreign whole-file guesses is only legal while the flow
+            # keeps ≥1 lined node — a flow whose ONLY spans are foreign
+            # support files keeps them as labeled sharing instead
+            # (retag, never zero a flow's LOC surface).
             nodes = list(getattr(flow, "nodes", None) or [])
             if nodes:
+                planned_drop = {
+                    id(n) for n in nodes
+                    if (n.file in foreign and n.role != "entry"
+                        and n.kind == "file")
+                }
+                lined_left = sum(
+                    1 for n in nodes
+                    if n.lines is not None and id(n) not in planned_drop
+                )
+                allow_drop = lined_left > 0
                 new_nodes = []
                 changed = False
                 for n in nodes:
                     if n.file in foreign and n.role != "entry":
-                        if n.kind == "file":
+                        if n.kind == "file" and allow_drop:
                             tele["foreign_file_nodes_dropped"] += 1
                             changed = True
                             continue

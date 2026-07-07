@@ -166,30 +166,67 @@ def _flow_get(flow: Any, key: str) -> Any:
     return flow.get(key) if isinstance(flow, dict) else getattr(flow, key, None)
 
 
+#: Node roles whose spans are LABELED SHARING surfaces, never ownership
+#: votes (W4 §4.6): ``interior`` — a product component the entry page
+#: renders, attributed in the component owner's file; ``shared`` — high
+#: fan-in infrastructure (excluded from core LOC by the model's own
+#: contract). Counting them dragged UFs toward component-owning PFs on
+#: the 2026-07-07 supabase smoke (I15 lane-aware 0.875 -> 0.25, I16
+#: 8.3% -> 62.9%) — evidence of composition is not evidence of home.
+_NON_VOTING_NODE_ROLES = frozenset({"interior", "shared"})
+
+
 def _flow_span_weights(flow: Any) -> dict[str, int]:
     """``{file: span_lines}`` for one member flow.
 
-    Line-range spans when the flow carries them (merged upstream into
-    non-overlapping per-file ranges by Stage 3.5); fallback: one vote per
-    member file — a flow without resolved spans still votes, just with
-    file-grain weight.
+    Preference order:
+      1. graph NODES with line spans, EXCLUDING the labeled-sharing
+         roles (``interior`` / ``shared``) — the flow's OWN narrative
+         body is what votes;
+      2. legacy ``line_ranges`` (pre-node scans only — no role info
+         exists there, and no interior spans either);
+      3. one vote per member file (file-grain fallback).
     """
     weights: dict[str, int] = {}
-    for lr in _flow_get(flow, "line_ranges") or []:
-        get = lr.get if isinstance(lr, dict) else (
-            lambda k, _l=lr: getattr(_l, k, None))
-        path = get("path")
+    nodes = _flow_get(flow, "nodes") or []
+    any_lined_node = False
+    for nd in nodes:
+        get = nd.get if isinstance(nd, dict) else (
+            lambda k, _n=nd: getattr(_n, k, None))
+        lines = get("lines")
+        if not lines or len(lines) != 2:
+            continue
+        any_lined_node = True
+        if str(get("role") or "") in _NON_VOTING_NODE_ROLES:
+            continue
+        path = get("file")
         if not path:
             continue
         try:
-            start = int(get("start_line") or 0)
-            end = int(get("end_line") or 0)
+            span = max(int(lines[1]) - int(lines[0]) + 1, 1)
         except (TypeError, ValueError):
             continue
-        span = max(end - start + 1, 1)
         weights[_norm(str(path))] = weights.get(_norm(str(path)), 0) + span
     if weights:
         return weights
+    if not any_lined_node:
+        # Legacy scans without a node graph: line_ranges carry no
+        # interior spans by construction, so they may vote.
+        for lr in _flow_get(flow, "line_ranges") or []:
+            get = lr.get if isinstance(lr, dict) else (
+                lambda k, _l=lr: getattr(_l, k, None))
+            path = get("path")
+            if not path:
+                continue
+            try:
+                start = int(get("start_line") or 0)
+                end = int(get("end_line") or 0)
+            except (TypeError, ValueError):
+                continue
+            span = max(end - start + 1, 1)
+            weights[_norm(str(path))] = weights.get(_norm(str(path)), 0) + span
+        if weights:
+            return weights
     for p in _flow_get(flow, "paths") or []:
         weights[_norm(str(p))] = weights.get(_norm(str(p)), 0) + 1
     return weights

@@ -180,3 +180,59 @@ def test_kill_switch(monkeypatch) -> None:  # noqa: ANN001
     assert flow_span_split_enabled() is False
     monkeypatch.setenv("FAULTLINE_FLOW_SPAN_SPLIT", "1")
     assert flow_span_split_enabled() is True
+
+
+def test_last_span_never_dropped_only_retagged() -> None:
+    """Evidence conservation (supabase I4 blast): a flow whose ONLY
+    lined node is a foreign whole-file support keeps it as labeled
+    sharing — a split must never zero a flow's LOC surface."""
+    from faultline.models.types import FlowNode
+
+    flow = _flow(
+        "billing/page.tsx",
+        ["billing/page.tsx", "docs/render.ts"],
+        nodes=[FlowNode(id="docs/render.ts", kind="file",
+                        file="docs/render.ts", symbol=None,
+                        lines=(1, 300), role="support",
+                        confidence="medium")],
+    )
+    billing_dev = _dev("billing", "billing", ["billing/page.tsx"], [flow])
+    docs_dev = _dev("docs", "docs", ["docs/render.ts"])
+    tele = split_cross_pf_flow_attribution(
+        [billing_dev, docs_dev], [_pf("billing"), _pf("docs")])
+    assert tele["foreign_file_nodes_dropped"] == 0
+    (node,) = flow.nodes
+    assert node.role == "shared"          # labeled, never lost
+    assert node.lines == (1, 300)
+
+
+def test_interior_and_shared_spans_never_vote_in_conservation() -> None:
+    """W4 §4.6 + supabase smoke 2026-07-07: interior/shared node spans
+    are labeled sharing — conservation span votes must ignore them, or
+    UFs get dragged to component-owning PFs (I15 0.875 -> 0.25 class)."""
+    from faultline.models.types import FlowNode
+    from faultline.pipeline_v2.conservation import _flow_span_weights
+
+    flow = _flow("billing/page.tsx", ["billing/page.tsx"], nodes=[
+        FlowNode(id="billing/page.tsx#Page", kind="entry",
+                 file="billing/page.tsx", symbol="Page", lines=(1, 30),
+                 role="entry", confidence="high"),
+        FlowNode(id="components/Big.tsx#Big", kind="function",
+                 file="components/Big.tsx", symbol="Big", lines=(1, 500),
+                 role="interior", confidence="high"),
+        FlowNode(id="lib/db.ts#open", kind="function",
+                 file="lib/db.ts", symbol="open", lines=(1, 400),
+                 role="shared", confidence="high"),
+    ])
+    weights = _flow_span_weights(flow)
+    assert weights == {"billing/page.tsx": 30}
+
+
+def test_legacy_line_ranges_still_vote_without_nodes() -> None:
+    from faultline.models.types import FlowLineRange
+    from faultline.pipeline_v2.conservation import _flow_span_weights
+
+    flow = _flow("a.ts", ["a.ts"], line_ranges=[
+        FlowLineRange(path="a.ts", start_line=1, end_line=10),
+    ])
+    assert _flow_span_weights(flow) == {"a.ts": 10}
