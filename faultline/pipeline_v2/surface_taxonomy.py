@@ -218,6 +218,7 @@ class SurfaceScopeClassifier:
     def __init__(self, patterns: dict | None = None,
                  repo_path: Any = None,
                  routes_index: Iterable[Mapping[str, Any]] | None = None,
+                 instrument_dirs: Iterable[str] | None = None,
                  ) -> None:
         cfg = patterns if patterns is not None else load_patterns()
         self._groups = _invert(cfg.get("route_groups"))
@@ -226,6 +227,12 @@ class SurfaceScopeClassifier:
         self._root_dirs = _invert(cfg.get("root_dirs"))
         self._repo_path = repo_path
         self._published_cache: dict[str, bool] = {}
+        # W4.2 Fix 1 — mechanism-detected technology-instrument dirs
+        # (Stage 6.86 telemetry). A path inside one is a dev_tooling
+        # surface signal; product-declared signals still win precedence.
+        self._instrument_dirs: tuple[str, ...] = tuple(sorted(
+            _norm(str(d)).lower() for d in (instrument_dirs or []) if d
+        ))
         self._shell_slugs = frozenset(
             str(s).lower() for s in (cfg.get("shell_slugs") or [])
         )
@@ -373,6 +380,11 @@ class SurfaceScopeClassifier:
             sc = self._ws_scope_overrides.get("/".join(segs[:2]))
             if sc:
                 hits.add(sc)
+        if self._instrument_dirs:
+            joined = "/".join(segs)
+            if any(joined == d or joined.startswith(d + "/")
+                   for d in self._instrument_dirs):
+                hits.add("dev_tooling")
         if SCOPE_PRODUCT in hits:
             return SCOPE_PRODUCT
         for sc in _NON_PRODUCT_PRECEDENCE:
@@ -925,6 +937,7 @@ def apply_emission_taxonomy(
     patterns: dict | None = None,
     repo_path: Any = None,
     adjudicator: Any = None,
+    instrument_dirs: Iterable[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list["Feature"]]:
     """Emission-time taxonomy: tag UFs/PFs, split the non-product lane,
     dissolve info-page journeys, re-bind non-product shared devs, stamp
@@ -949,7 +962,8 @@ def apply_emission_taxonomy(
         return tele, [], product_features
 
     clf = SurfaceScopeClassifier(patterns, repo_path=repo_path,
-                                 routes_index=routes_index)
+                                 routes_index=routes_index,
+                                 instrument_dirs=instrument_dirs)
     rbf = _route_by_file(routes_index)
     route_files = frozenset(rbf.keys())
     flow_by_id = _flow_lookup(flows)
