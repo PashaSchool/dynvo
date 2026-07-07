@@ -48,8 +48,12 @@ the real modules in :func:`_load_real_fns` (single place):
   Sequence[ExportEntry]]`` — M2 ``imports.extract_imports``.
 * ``resolve_fn(repo_root: str, edges: Sequence[ImportEdge],
   exports_index: Mapping[str, Sequence[ExportEntry]],
-  tracked_files: Sequence[str]) -> Sequence[ResolvedEdge]`` — M3
-  ``resolve.resolve_edges`` (batch: alias/workspace maps compiled once).
+  tracked_files: Sequence[str]) -> Sequence[ResolvedEdge] |
+  tuple[Sequence[ResolvedEdge], Mapping[str, int]]`` — M3
+  ``resolve.resolve_edges`` (batch: alias/workspace maps compiled
+  once). AMENDMENT-2: the real M3 returns ``(resolved, telemetry)``;
+  the graph builder accepts both forms and folds the telemetry under
+  ``telemetry["resolve"]``.
 
 Determinism: inputs are iterated in sorted order, every output list is
 canonically sorted (shapes.py keys), and no set iteration reaches any
@@ -145,7 +149,12 @@ DefsFn = Callable[[FileParse], Sequence[DefSpan]]
 ImportsFn = Callable[
     [FileParse], "tuple[Sequence[ImportEdge], Sequence[ExportEntry]]",
 ]
-ResolveFn = Callable[..., Sequence[ResolvedEdge]]
+# AMENDMENT-2: the real M3 returns ``(resolved, telemetry)``; plain
+# sequences (stubs / older contracts) remain accepted.
+ResolveFn = Callable[
+    ...,
+    "Sequence[ResolvedEdge] | tuple[Sequence[ResolvedEdge], Mapping[str, int]]",
+]
 
 
 def build_symbol_graph(
@@ -211,10 +220,19 @@ def build_symbol_graph(
     graph.exports_index = exports_by_file
     graph.sort_canonical()
 
+    resolve_tele: dict[str, int] | None = None
     try:
-        graph.resolved = list(resolve_fn(
+        res = resolve_fn(
             repo_root, graph.edges, graph.exports_index, tracked_sorted,
-        ))
+        )
+        # AMENDMENT-2: the real M3 returns ``(resolved, telemetry)``;
+        # plain sequences (stubs, older contracts) stay accepted.
+        if (isinstance(res, tuple) and len(res) == 2
+                and isinstance(res[1], Mapping)):
+            graph.resolved = list(res[0])
+            resolve_tele = {k: int(res[1][k]) for k in sorted(res[1])}
+        else:
+            graph.resolved = list(res)
     except Exception:  # noqa: BLE001 — resolution faults degrade whole-graph
         logger.debug("ts_ast: resolve_fn raised", exc_info=True)
         graph.resolved = []
@@ -237,6 +255,8 @@ def build_symbol_graph(
         "resolved_total": len(graph.resolved),
         "resolution_histogram": {k: histogram[k] for k in sorted(histogram)},
     }
+    if resolve_tele is not None:
+        graph.telemetry["resolve"] = resolve_tele
     return graph
 
 
@@ -259,6 +279,18 @@ def build_symbol_graph(
 #                                      components are const-assignments),
 #                                      else → function (fn-declaration)
 #   enum          any       —          enum   (NEVER flow-eligible)
+#   const         no        —          NO SymbolRange. Legacy never
+#                                      emitted data-locals, and consumer
+#                                      semantics of 'local' is CALLABLE:
+#                                      the call-graph reference-argument
+#                                      filter (call_graph.py ~595) treats
+#                                      local/function ranges as callees —
+#                                      a data const with a range becomes
+#                                      a phantom callee (guarded by
+#                                      test_wrapper_unwrap_does_not_pull_
+#                                      nonfunction_args). M5 pin 5 makes
+#                                      DefSpan kind='const' ≡ non-function
+#                                      value, so the drop is exact.
 #   any other     no        —          local  (regex parity: locals stay
 #                                      out of flow_symbols; call-graph
 #                                      handler resolution understands them)
@@ -283,7 +315,7 @@ _LEGACY_COMPONENT_FORMS = frozenset({"const", "function"})
 def _symbol_range_of(
     d: DefSpan,
     legacy_kinds: Mapping[str, str] | None = None,
-) -> "SymbolRange":
+) -> "SymbolRange | None":
     from faultline.models.types import SymbolRange
 
     if d.parent is not None:
@@ -295,6 +327,8 @@ def _symbol_range_of(
     if d.kind == "enum":
         kind = "enum"
     elif not d.exported:
+        if d.kind == "const":
+            return None  # data-local: no legacy range (see table above)
         kind = "local"
     elif d.kind == "component":
         legacy = (legacy_kinds or {}).get(d.name)
@@ -361,16 +395,22 @@ def _merge_ranges(
     for d in top_ast:
         if d.name in seen_top:
             continue
+        rng = _symbol_range_of(d, legacy_kinds)
+        if rng is None:  # data-local — no legacy range; regex may still
+            continue     # claim the name below (it never does today)
         seen_top.add(d.name)
-        top.append(_symbol_range_of(d, legacy_kinds))
+        top.append(rng)
     methods: list["SymbolRange"] = []
     seen_meth: set[tuple[str, str]] = set()
     for d in meth_ast:
         key = (d.parent or "", d.name)
         if key in seen_meth:
             continue
+        rng = _symbol_range_of(d, legacy_kinds)
+        if rng is None:  # pragma: no cover — methods always map
+            continue
         seen_meth.add(key)
-        methods.append(_symbol_range_of(d, legacy_kinds))
+        methods.append(rng)
 
     for r in regex_ranges:
         parent = getattr(r, "parent", None)
@@ -466,13 +506,23 @@ def _runtime_names(names: Sequence[str]) -> tuple[str, ...]:
     return tuple(n for n in names if not n.startswith("type:"))
 
 
+def _local_side(name: str) -> str:
+    """LOCAL binding of an M2 name (``"orig as local"`` → ``local``)."""
+    return name.rsplit(" as ", 1)[-1].strip()
+
+
 @dataclass
 class ProvenanceView:
     """Resolved-import map in the shapes the two consumers already eat."""
 
     tracked_key: frozenset[str]
     files: frozenset[str]
-    _by_src: dict[str, dict[str, ResolvedEdge]] = field(default_factory=dict)
+    #: src → raw_target → CANONICALLY-ORDERED edges. M3 legally splits
+    #: one raw barrel edge into SEVERAL resolved rows (per-name true
+    #: origins, distinct ``(target_file, via_barrels)``) — the view
+    #: keeps them all; accessors pick deterministically.
+    _by_src: dict[str, dict[str, list[ResolvedEdge]]] = \
+        field(default_factory=dict)
     _weights: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def raw_specs(self, src_file: str) -> list[str]:
@@ -491,26 +541,60 @@ class ProvenanceView:
             out.extend([spec] * weights[spec])
         return out
 
+    def _pick(self, src_file: str, spec: str) -> ResolvedEdge | None:
+        edges = self._by_src.get(src_file, {}).get(spec)
+        if not edges:
+            return None
+        for e in edges:  # first RESOLVED row in canonical order
+            if e.target_file is not None:
+                return e
+        return edges[0]
+
     def resolve(self, src_file: str, spec: str) -> str | None:
         """S2 / ``_resolve_one`` contract: tracked file or ``None``."""
-        edge = self._by_src.get(src_file, {}).get(spec)
+        edge = self._pick(src_file, spec)
         if edge is None or edge.resolution not in _IN_REPO_RESOLUTIONS:
             return None
         return edge.target_file
 
-    def lookup(self, src_file: str, spec: str) -> tuple[str | None, str] | None:
+    def lookup(
+        self,
+        src_file: str,
+        spec: str,
+        local_name: str | None = None,
+    ) -> tuple[str, str] | None:
         """6.55 ``_resolve_spec`` contract: ``(source_file, source_kind)``.
 
-        ``None`` (file or spec unknown to the graph) → caller falls back
-        to the legacy resolver for THAT spec (never lose coverage).
+        ``local_name`` (the JSX component binding, 6.55's ``head``)
+        picks the per-name origin among M3's barrel-split rows: a row
+        whose names contain the binding (M2 keeps renames as
+        ``"orig as local"`` — the LOCAL side is matched) wins over the
+        spec-level pick.
+
+        NEVER-LOSE-COVERAGE LAW: only a hit that RESOLVED to a repo
+        file is answered. ``None`` (file/spec unknown to the graph OR
+        the graph classified it external/unresolved) → the caller runs
+        the legacy resolver, whose ctx knowledge (workspace manifests
+        handed to the scan, ``@/`` heuristics) is a superset for those
+        cases — the graph must never downgrade an answer the legacy
+        path could still produce.
         """
-        edge = self._by_src.get(src_file, {}).get(spec)
-        if edge is None:
+        edges = self._by_src.get(src_file, {}).get(spec)
+        if not edges:
             return None
-        kind = _KIND_6_55.get(edge.resolution, "unresolved")
-        if edge.target_file is None and kind == "local":
-            kind = "unresolved"
-        return edge.target_file, kind
+        edge: ResolvedEdge | None = None
+        if local_name:
+            for e in edges:
+                if e.target_file is not None and any(
+                    _local_side(n) == local_name for n in e.names
+                ):
+                    edge = e
+                    break
+        if edge is None:
+            edge = self._pick(src_file, spec)
+        if edge is None or edge.target_file is None:
+            return None
+        return edge.target_file, _KIND_6_55.get(edge.resolution, "unresolved")
 
 
 def provenance_view(
@@ -532,7 +616,7 @@ def provenance_view(
         files = frozenset(
             [d.file for d in graph.defs] + [e.src_file for e in graph.edges],
         )
-    by_src: dict[str, dict[str, ResolvedEdge]] = {}
+    by_src: dict[str, dict[str, list[ResolvedEdge]]] = {}
     names_acc: dict[str, dict[str, set[str]]] = {}
     bare_seen: dict[str, set[str]] = {}
     graph.sort_canonical()
@@ -541,13 +625,12 @@ def provenance_view(
         if edge.names and not runtime:
             continue  # purely type-level import — invisible at runtime
         slot = by_src.setdefault(edge.src_file, {})
-        prev = slot.get(edge.raw_target)
-        if prev is None or (
-            prev.target_file is None and edge.target_file is not None
-        ):
-            slot[edge.raw_target] = edge
+        slot.setdefault(edge.raw_target, []).append(edge)
         acc = names_acc.setdefault(edge.src_file, {})
-        acc.setdefault(edge.raw_target, set()).update(runtime)
+        # weight by LOCAL binding names (rename rows carry "orig as local")
+        acc.setdefault(edge.raw_target, set()).update(
+            _local_side(n) for n in runtime
+        )
         if not edge.names:  # side-effect / star: counts once
             bare_seen.setdefault(edge.src_file, set()).add(edge.raw_target)
     weights: dict[str, dict[str, int]] = {}
@@ -577,6 +660,55 @@ class _PipelineFns:
     resolve_fn: ResolveFn
 
 
+class _Parsed:
+    """Carrier flowing through :func:`build_symbol_graph` for the REAL
+    pipeline: M1's ``FileParse`` (tree) + the source bytes both M1
+    ``extract_defs`` and M2 ``extract_imports`` need. Opaque to the
+    graph builder (it only hands it back to ``defs_fn``/``imports_fn``).
+    """
+
+    __slots__ = ("fp", "source")
+
+    def __init__(self, fp: Any, source: bytes) -> None:
+        self.fp = fp
+        self.source = source
+
+
+# M1/M2/M3 ship field-identical LOCAL shape dataclasses (spec §1); the
+# adapter re-mints them as the canonical shapes.py classes so payload /
+# sorting / provenance all speak ONE type (the "integrator zvede" step).
+def _to_defspan(d: Any) -> DefSpan:
+    return DefSpan(
+        file=d.file, name=d.name, kind=d.kind, start_line=d.start_line,
+        end_line=d.end_line, exported=bool(d.exported),
+        wrapper=getattr(d, "wrapper", "none") or "none",
+        parent=getattr(d, "parent", None),
+    )
+
+
+def _to_importedge(e: Any) -> ImportEdge:
+    return ImportEdge(
+        src_file=e.src_file, kind=e.kind, names=tuple(e.names),
+        raw_target=e.raw_target, line=e.line,
+    )
+
+
+def _to_exportentry(x: Any) -> ExportEntry:
+    return ExportEntry(
+        file=x.file, name=x.name, kind=x.kind,
+        origin_file=getattr(x, "origin_file", None),
+    )
+
+
+def _to_resolvededge(r: Any) -> ResolvedEdge:
+    return ResolvedEdge(
+        src_file=r.src_file, raw_target=r.raw_target,
+        target_file=r.target_file, resolution=r.resolution,
+        via_barrels=tuple(getattr(r, "via_barrels", ()) or ()),
+        names=tuple(r.names), kind=r.kind,
+    )
+
+
 _FNS_CACHE: list[Any] = [False]  # False = not probed; None = unavailable
 
 
@@ -595,10 +727,8 @@ def _load_real_fns() -> _PipelineFns | None:
     cached: Any = _FNS_CACHE[0]
     if cached is not False:
         return cached
-    # importlib keeps this correct in BOTH phases: Phase A (modules
-    # absent → ImportError → None) and Phase B (modules merged) without
-    # static-analysis knowledge of not-yet-existing files.
     import importlib
+    from pathlib import Path
 
     fns: _PipelineFns | None
     try:
@@ -610,11 +740,50 @@ def _load_real_fns() -> _PipelineFns | None:
             "faultline.pipeline_v2.ts_ast.imports")
         resolve_mod = importlib.import_module(
             "faultline.pipeline_v2.ts_ast.resolve")
+        # Touch the real entry points now so a renamed API degrades to
+        # the regex path at PROBE time, not per file (AttributeError).
+        m1_parse = parse_mod.parse_file
+        m1_defs = defs_mod.extract_defs
+        m2_imports = imports_mod.extract_imports
+        m3_resolve = resolve_mod.resolve_edges
+
+        # ── real-pipeline wrappers (M1/M2/M3 signatures as SHIPPED) ──
+        def parse_fn(
+            repo_root: str, rel: str, source: Any = None,
+        ) -> Any:
+            raw = source
+            if raw is None:
+                raw = Path(repo_root, rel).read_bytes()
+            elif isinstance(raw, str):
+                raw = raw.encode("utf-8", errors="ignore")
+            fp = m1_parse(rel, raw)  # M1: parse_file(path, source_bytes)
+            return None if fp is None else _Parsed(fp=fp, source=raw)
+
+        def defs_fn(carrier: Any) -> list[DefSpan]:
+            rows = m1_defs(carrier.fp, carrier.source)
+            return [_to_defspan(d) for d in rows]
+
+        def imports_fn(
+            carrier: Any,
+        ) -> tuple[list[ImportEdge], list[ExportEntry]]:
+            fp = carrier.fp
+            edges, exports = m2_imports(fp.path, fp.lang, fp.tree,
+                                        carrier.source)
+            return ([_to_importedge(e) for e in edges],
+                    [_to_exportentry(x) for x in exports])
+
+        def resolve_fn(
+            repo_root: str, edges: Any, exports_index: Any, tracked: Any,
+        ) -> tuple[list[ResolvedEdge], dict[str, int]]:
+            # AMENDMENT-2: M3 returns ``(resolved, telemetry)``.
+            resolved, tele = m3_resolve(
+                edges, exports_index, repo_root, frozenset(tracked),
+            )
+            return [_to_resolvededge(r) for r in resolved], dict(tele)
+
         fns = _PipelineFns(
-            parse_fn=parse_mod.parse_file,
-            defs_fn=defs_mod.extract_defs,
-            imports_fn=imports_mod.extract_imports,
-            resolve_fn=resolve_mod.resolve_edges,
+            parse_fn=parse_fn, defs_fn=defs_fn,
+            imports_fn=imports_fn, resolve_fn=resolve_fn,
         )
     except (ImportError, AttributeError):
         fns = None

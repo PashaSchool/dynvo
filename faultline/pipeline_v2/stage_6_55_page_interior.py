@@ -594,7 +594,8 @@ def _parse_page_source(
             source_kind, source_file = "local", None
         else:
             prov = current_provenance(tracked)  # W6-AST Hook C (M4)
-            hit = prov.lookup(rel_path, spec) if prov is not None else None
+            hit = (prov.lookup(rel_path, spec, head)
+                   if prov is not None else None)
             if hit is not None:
                 source_file, source_kind = hit
             else:

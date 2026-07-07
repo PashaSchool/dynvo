@@ -317,10 +317,11 @@ def test_provenance_655_contract_lookup():
     assert view.lookup(PAGE, "@/components/button") == (BTN, "workspace")
     assert view.lookup(PAGE, "@acme/ui") == (UIBTN, "workspace")
     assert view.lookup(DB, "../components/button") == (BTN, "local")
-    assert view.lookup(PAGE, "next/head") == (None, "package")
-    assert view.lookup(PAGE, "./globals.css") == (None, "unresolved")
-    # defensive: relative WITHOUT a target must not claim "local"
-    assert view.lookup(DB, "./missing") == (None, "unresolved")
+    # NEVER-LOSE-COVERAGE: target-less graph answers (external /
+    # unresolved / relative-miss) yield to the legacy resolver → None
+    assert view.lookup(PAGE, "next/head") is None
+    assert view.lookup(PAGE, "./globals.css") is None
+    assert view.lookup(DB, "./missing") is None
     # unknown spec / file → None → caller falls back to _resolve_spec
     assert view.lookup(PAGE, "./unknown") is None
     assert view.lookup("nope.ts", "./x") is None
@@ -473,6 +474,25 @@ def test_amendment1_enum_never_flow_eligible():
     assert kinds == {"Color": "enum", "Mode": "enum"}
 
 
+def test_nonexported_data_const_gets_no_range():
+    """Legacy never emitted data-locals; 'local' means CALLABLE to the
+    call-graph ref-arg filter — a ranged data const would become a
+    phantom callee (wrap(schema, handler) class)."""
+    defs = [
+        DefSpan(file="r.ts", name="schema", kind="const", start_line=1,
+                end_line=1, exported=False),
+        DefSpan(file="r.ts", name="postHandler", kind="function",
+                start_line=3, end_line=5, exported=False),
+        DefSpan(file="r.ts", name="POST", kind="const", start_line=7,
+                end_line=7, exported=True),
+    ]
+    merged = adapter._merge_ranges(defs, [])
+    names = {r.name: r.kind for r in merged}
+    assert "schema" not in names
+    assert names["postHandler"] == "local"
+    assert names["POST"] == "const"
+
+
 def test_amendment1_component_legacy_form_law():
     comp = DefSpan(file="x.tsx", name="Card", kind="component",
                    start_line=1, end_line=9, exported=True)
@@ -496,3 +516,30 @@ def test_amendment1_wrapper_separate_channel():
     assert ch[BTN] == {"Button": "forwardRef"}
     assert ch[UIBTN] == {"UiButton": "memo"}
     assert DB not in ch  # no wrapped defs there
+
+
+def test_barrel_split_name_aware_lookup():
+    """M3 splits one raw barrel edge into per-name origin rows — lookup
+    must pick by the LOCAL binding (rename kept as 'orig as local')."""
+    g = SymbolGraph(
+        resolved=[
+            ResolvedEdge(src_file=PAGE, raw_target="./barrel",
+                         target_file="src/a.tsx", resolution="relative",
+                         via_barrels=("src/barrel.ts",), names=("A",),
+                         kind="named"),
+            ResolvedEdge(src_file=PAGE, raw_target="./barrel",
+                         target_file="src/b.tsx", resolution="relative",
+                         via_barrels=("src/barrel.ts",),
+                         names=("B as Bee",), kind="named"),
+        ],
+        telemetry={"parsed_files": [PAGE]},
+    )
+    view = provenance_view(g)
+    assert view.lookup(PAGE, "./barrel", "A") == ("src/a.tsx", "local")
+    assert view.lookup(PAGE, "./barrel", "Bee") == ("src/b.tsx", "local")
+    # no binding given → deterministic first resolved row
+    assert view.lookup(PAGE, "./barrel") == ("src/a.tsx", "local")
+    # unknown binding → spec-level pick (still a resolved answer)
+    assert view.lookup(PAGE, "./barrel", "Zed") == ("src/a.tsx", "local")
+    # S2 weighting counts LOCAL names across split rows: A + Bee = 2
+    assert view.spec_occurrences(PAGE).count("./barrel") == 2
