@@ -1048,8 +1048,28 @@ def apply_emission_taxonomy(
             if ref:
                 uf_refs[ref] = uf_refs.get(ref, 0) + 1
         assignable = frozenset(NON_PRODUCT_PF_SCOPES) | {SCOPE_PRODUCT}
+
+        # W5.1 ROUTE GUARD (midday `transactions` regression): a PF that
+        # owns a real PRODUCT route file carries product-declared evidence
+        # the path lexicon undercounts — the same "real product route blocks
+        # non-product" law member_vote applies at journey grain (:602). The
+        # marketing website's `.../transactions` page (2 files) merged into
+        # the 70-file dashboard `transactions` capability made it ambiguous;
+        # a lone LLM flip then hid a core product surface into the lane. A
+        # PF anchored on a product route is never sent for a non-product
+        # flip. Structural, scale-invariant (no threshold), deterministic.
+        def _owns_product_route(pf: Any) -> bool:
+            clf_pf = _pf_clf(pf)
+            for p in (_get(pf, "paths") or []):
+                entry = rbf.get(_norm(str(p)))
+                if entry is not None and \
+                        clf_pf.classify_route_entry(entry) == SCOPE_PRODUCT:
+                    return True
+            return False
+
         items = []
         journey_guarded = 0
+        route_guarded = 0
         for pf, sc, sig in ambiguous_pfs:
             allowed = sorted(
                 ({SCOPE_PRODUCT} | set(sig)) & assignable
@@ -1059,6 +1079,9 @@ def apply_emission_taxonomy(
             if uf_refs.get(_pf_key(pf), 0) >= 2:
                 journey_guarded += 1
                 continue  # journey-rich ⇒ product-evidenced, never flip
+            if _owns_product_route(pf):
+                route_guarded += 1
+                continue  # owns a real product route ⇒ never flip to lane
             paths = [str(p) for p in (_get(pf, "paths") or [])][:5]
             items.append({
                 "id": _pf_key(pf),
@@ -1092,6 +1115,7 @@ def apply_emission_taxonomy(
         tele["adjudicator"] = {
             "ambiguous": len(ambiguous_pfs),
             "journey_guarded": journey_guarded,
+            "route_guarded": route_guarded,
             "sent": len(items),
             "verdicts": len(verdicts),
             "flips": flips,

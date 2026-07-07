@@ -416,3 +416,110 @@ def test_shared_platform_never_backstopped():
     assert tele["pf_backstop_reassigned_ufs"] == 0
     assert tele["pf_backstop_synthesized"] == 0
     assert tele["pf_backstop_uncovered"] == 0  # shared is not a donor
+
+
+# ── W5.1 — LOC-worthy flowless arm (member-less system seed) ───────────
+
+
+def _pf_loc(slug: str, display: str, loc: int) -> Feature:
+    """A flowless product feature carrying owned LOC (excavation 0-flow
+    mint shape — the validator's I8 ``pf_loc >= 1000`` bar)."""
+    pf = _pf(slug, display)
+    pf.loc = loc
+    return pf
+
+
+def test_locworthy_flowless_pf_gets_memberless_seed():
+    """A flowless PF with >= 1000 owned LOC and no UF gets a member-LESS
+    system-seed (the sole I7-exempt cover; the flow-ful arm cannot fire)."""
+    from faultline.pipeline_v2.stage_6_7_user_flows import SYSTEM_RECALL_REASON
+    devs = [_dev("settings", [])]  # flowless dev
+    d2p = {"settings": ("settings",)}
+    pfs = [_pf_loc("settings", "Settings", 27579)]
+    ufs: list[UserFlow] = []
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    assert tele["pf_backstop_locworthy"] == 1
+    assert tele["pf_backstop_synthesized"] == 0  # not the flow-ful arm
+    assert len(ufs) == 1
+    seed = ufs[0]
+    assert seed.synthesized is True
+    assert seed.synthesis_reason == SYSTEM_RECALL_REASON  # I7-exempt
+    assert seed.member_flow_ids == []  # member-less
+    assert seed.member_count == 0
+    assert seed.product_feature_id == "settings"  # satisfies I8
+    assert seed.resource == "settings"
+
+
+def test_locworthy_below_loc_bar_no_seed():
+    """A flowless PF under the 1000-LOC bar is not journey-worthy — no seed
+    (never manufacture a journey for a thin shell)."""
+    devs = [_dev("tiny", [])]
+    d2p = {"tiny": ("tiny",)}
+    pfs = [_pf_loc("tiny", "Tiny", 300)]
+    ufs: list[UserFlow] = []
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    assert tele["pf_backstop_locworthy"] == 0
+    assert ufs == []
+
+
+def test_locworthy_covered_pf_no_duplicate():
+    """A flowless high-LOC PF already referenced by a UF gets no seed."""
+    devs = [_dev("settings", [])]
+    d2p = {"settings": ("settings",)}
+    pfs = [_pf_loc("settings", "Settings", 5000)]
+    ufs = [_uf("Configure settings", "settings", [])]  # already covers it
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    assert tele["pf_backstop_locworthy"] == 0
+    assert len(ufs) == 1
+
+
+def test_locworthy_killswitch(monkeypatch):
+    """FAULTLINE_LOC_WORTHY_BACKSTOP=0 restores the flow-only backstop."""
+    monkeypatch.setenv("FAULTLINE_LOC_WORTHY_BACKSTOP", "0")
+    devs = [_dev("settings", [])]
+    d2p = {"settings": ("settings",)}
+    pfs = [_pf_loc("settings", "Settings", 27579)]
+    ufs: list[UserFlow] = []
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    assert tele["pf_backstop_locworthy"] == 0
+    assert ufs == []
+
+
+def test_locworthy_flowful_pf_uses_memberful_arm():
+    """A PF WITH flows still uses the member-ful arm even at high LOC — the
+    LOC arm is the flowless complement only."""
+    devs = [_dev("cases", [_flow("c1", loc=2000)])]
+    d2p = {"cases": ("cases",)}
+    pf = _pf_loc("cases", "Cases", 2000)
+    ufs: list[UserFlow] = []
+    tele = _backstop_uncovered_pfs(ufs, [pf], d2p, devs, set())
+    assert tele["pf_backstop_locworthy"] == 0        # not the LOC arm
+    assert tele["pf_backstop_synthesized"] == 1      # member-ful synth
+    assert ufs[0].member_flow_ids == ["c1"]          # has a member
+
+
+def test_locworthy_shared_platform_exempt():
+    """The shared/platform bucket never gets a LOC-worthy seed (I10)."""
+    devs = [_dev("infra", [])]
+    d2p = {"infra": ("shared-platform",)}
+    pfs = [_pf_loc("shared-platform", "Shared Platform", 9000)]
+    ufs: list[UserFlow] = []
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set())
+    assert tele["pf_backstop_locworthy"] == 0
+    assert ufs == []
+
+
+def test_locworthy_loc_only_skips_memberful_arm():
+    """``loc_only=True`` runs ONLY the flowless LOC arm — a flow-ful
+    uncovered PF is left untouched (its member-ful cover belongs to the
+    earlier call sites; re-synthesising here can mint an I16)."""
+    devs = [_dev("settings", []),                       # flowless, LOC-worthy
+            _dev("cases", [_flow("c1", loc=50)])]        # flow-ful, uncovered
+    d2p = {"settings": ("settings",), "cases": ("cases",)}
+    pfs = [_pf_loc("settings", "Settings", 5000), _pf_loc("cases", "Cases", 50)]
+    ufs: list[UserFlow] = []
+    tele = _backstop_uncovered_pfs(ufs, pfs, d2p, devs, set(), loc_only=True)
+    assert tele["pf_backstop_locworthy"] == 1      # settings seeded
+    assert tele["pf_backstop_synthesized"] == 0    # cases NOT synthesised
+    assert tele["pf_backstop_uncovered"] == 0
+    assert [u.product_feature_id for u in ufs] == ["settings"]

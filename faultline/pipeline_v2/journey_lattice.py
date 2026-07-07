@@ -80,9 +80,14 @@ __all__ = [
     "journey_lattice_enabled",
     "run_journey_lattice",
     "dedup_lattice_journeys",
+    "fold_thin_lattice_children",
 ]
 
 JOURNEY_LATTICE_ENV = "FAULTLINE_JOURNEY_LATTICE"
+
+#: W5.1 post-thinning fold kill-switch (default ON). ``=0`` restores the
+#: pre-fix lattice output (children left thin by the post-apply resettle).
+LATTICE_THIN_FOLD_ENV = "FAULTLINE_LATTICE_THIN_FOLD"
 
 #: Canonical child-id prefix (content-derived; see module docstring).
 _LATTICE_ID_PREFIX = "UF-L-"
@@ -1231,6 +1236,108 @@ def dedup_lattice_journeys(user_flows: list[Any]) -> dict[str, Any]:
                 tele["merged"] += 1
             else:
                 tele["into_existing"] += 1
+    if drop_ids:
+        user_flows[:] = [
+            u for u in user_flows
+            if str(getattr(u, "id", "") or "") not in drop_ids
+        ]
+    return tele
+
+
+def _lattice_thin_fold_enabled() -> bool:
+    """Default ON; ``FAULTLINE_LATTICE_THIN_FOLD=0`` disables the W5.1
+    post-thinning fold-back (restores the pre-fix child set)."""
+    return os.environ.get(LATTICE_THIN_FOLD_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def fold_thin_lattice_children(
+    user_flows: list[Any], flows: list[Any],
+) -> dict[str, Any]:
+    """W5.1 fix — fold degenerate lattice children back into a sibling.
+
+    A lattice child born legitimately (``>= 2`` members OR a ``>= 150``-LOC
+    single, per the creation bar) can be stripped BELOW that floor by the
+    post-apply conservation resettle / dedup, ending with EXACTLY ONE member
+    whose merged span-LOC is ``< _MIN_CLUSTER_LOC``. That is a shred — its
+    lone member folds back into a sibling journey of the SAME product
+    feature (the surviving split parent when present, else the fullest
+    non-shred sibling).
+
+    Conservation-safe: the member is UNION-merged into the host BEFORE the
+    child is dropped (never lost). A child that is the ONLY journey on its PF
+    (no eligible host) is LEFT in place — folding it would leave the PF
+    journey-less (validator I8). The ``>= 150``-LOC single is the intended
+    garbage-bucket rescue arm (w5lattice §E7) and is never folded.
+    Deterministic (sorted iteration). Runs AFTER ``apply_uf_conservation`` +
+    ``dedup_lattice_journeys``."""
+    tele: dict[str, Any] = {"checked": 0, "folded": 0, "no_host": 0}
+    if not _lattice_thin_fold_enabled():
+        return tele
+    flow_by_mid: dict[str, Any] = {}
+    for fl in flows:
+        mid = _flow_member_id(fl)
+        if mid and mid not in flow_by_mid:
+            flow_by_mid[mid] = fl
+
+    by_pf: dict[str, list[Any]] = {}
+    for uf in user_flows:
+        pfid = getattr(uf, "product_feature_id", None)
+        if pfid:
+            by_pf.setdefault(str(pfid), []).append(uf)
+
+    drop_ids: set[str] = set()
+    for pfid in sorted(by_pf):
+        group = by_pf[pfid]
+        children = sorted(
+            (u for u in group
+             if str(getattr(u, "id", "") or "").startswith(_LATTICE_ID_PREFIX)),
+            key=lambda u: str(u.id),
+        )
+        for child in children:
+            if str(child.id) in drop_ids:
+                continue
+            mids = list(child.member_flow_ids or [])
+            if len(mids) != 1:
+                continue  # the 1-member shred is the only fold target
+            span = (_flow_span_loc(flow_by_mid[mids[0]])
+                    if mids[0] in flow_by_mid else 0)
+            tele["checked"] += 1
+            if span >= _MIN_CLUSTER_LOC:
+                continue  # LOC-qualified single — intended rescue, keep
+            # Host = a sibling on the same PF: not this child, not dropped,
+            # and not itself a shred (>= 2 members). Prefer the surviving
+            # split parent (non-lattice), then the fullest sibling, then the
+            # lowest id — a total, deterministic order.
+            host = None
+            best_key: tuple[int, int, str] | None = None
+            for u in group:
+                if u is child or str(getattr(u, "id", "") or "") in drop_ids:
+                    continue
+                u_mids = u.member_flow_ids or []
+                if len(u_mids) <= 1:
+                    continue  # never fold a shred into another shred
+                is_lattice = str(
+                    getattr(u, "id", "") or "").startswith(_LATTICE_ID_PREFIX)
+                key = (1 if is_lattice else 0, -len(u_mids),
+                       str(getattr(u, "id", "") or ""))
+                if best_key is None or key < best_key:
+                    best_key = key
+                    host = u
+            if host is None:
+                tele["no_host"] += 1
+                continue  # sole journey on the PF (or all-shred) — leave it
+            merged = list(dict.fromkeys((host.member_flow_ids or []) + mids))
+            host.member_flow_ids = merged
+            host.member_count = len(merged)
+            routes = list(dict.fromkeys(
+                (getattr(host, "routes", None) or [])
+                + (getattr(child, "routes", None) or [])
+            ))
+            host.routes = sorted(routes)
+            drop_ids.add(str(child.id))
+            tele["folded"] += 1
     if drop_ids:
         user_flows[:] = [
             u for u in user_flows

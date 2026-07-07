@@ -567,3 +567,43 @@ def test_instrument_dirs_classify_devs_but_never_flip_anchored_pfs() -> None:
     assert [e["name"] for e in lane] == ["uikit"]
     assert lane[0]["surface_scope"] == "dev_tooling"
     assert kit_dev.surface_scope == "dev_tooling"
+
+
+# ── W5.1 — adjudicator product-route guard (midday `transactions`) ──────
+
+
+def test_adjudicator_route_guard_protects_product_route_pf() -> None:
+    """A PF that owns a real PRODUCT route file is never sent to the Surface
+    Adjudicator for a non-product flip — even when a stray marketing sibling
+    (same-key merge) makes it ambiguous. The midday `transactions` shape: a
+    dashboard route + a marketing-site `.../transactions` page. A control PF
+    whose product signal is mere lexicon (no route) is still flippable."""
+    def _flip_all(items):
+        return {i["id"]: "marketing" for i in items}
+
+    routes = [{"file": "apps/dashboard/src/app/transactions/page.tsx",
+               "pattern": "/transactions"}]
+    # transactions: OWNS a product route + a marketing-site page → ambiguous
+    transactions = _feature(
+        "transactions",
+        ["apps/dashboard/src/app/transactions/page.tsx",
+         "apps/website/src/app/transactions/page.tsx"],
+        layer="product")
+    # control: product signal is LEXICON only (no route) + marketing → flips
+    promo = _feature(
+        "promo",
+        ["app/(dashboard)/x/page.tsx", "app/(marketing)/y/page.tsx"],
+        layer="product")
+
+    tele, lane, product = apply_emission_taxonomy(
+        [], [transactions, promo], [], [], routes,
+        adjudicator=_flip_all,
+    )
+    names = {p.name for p in product}
+    assert "transactions" in names, "product-route PF flipped into the lane"
+    assert transactions.surface_scope == "product"
+    assert tele["adjudicator"]["route_guarded"] == 1
+    assert tele["adjudicator"]["journey_guarded"] == 0
+    # Control with no product route was NOT guarded — it flipped to the lane.
+    assert "promo" not in names
+    assert [e["name"] for e in lane] == ["promo"]

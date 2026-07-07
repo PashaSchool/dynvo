@@ -41,6 +41,8 @@ def _recover_uncovered_donors(
     user_flows: list[Any],
     features: list[Any],
     product_features: list[Any],
+    *,
+    loc_only: bool = False,
 ) -> dict[str, Any] | None:
     """W1.1 donor re-cover — the post-finalize-conservation backstop run.
 
@@ -72,6 +74,7 @@ def _recover_uncovered_donors(
     }
     bs_tele = _backstop_uncovered_pfs(
         user_flows, product_features, stamped_map, features, set(),
+        loc_only=loc_only,
     )
     # Provisional ids → continue the stable numbering (content-sorted
     # among the new synths, appended after the existing UF-xxx block).
@@ -89,6 +92,7 @@ def _recover_uncovered_donors(
         "uncovered": bs_tele.get("pf_backstop_uncovered", 0),
         "reassigned_ufs": bs_tele.get("pf_backstop_reassigned_ufs", 0),
         "synthesized": bs_tele.get("pf_backstop_synthesized", 0),
+        "locworthy": bs_tele.get("pf_backstop_locworthy", 0),
         "resolutions": bs_tele.get("pf_backstop_resolutions", []),
     }
 
@@ -1289,6 +1293,7 @@ def run_finalize_phase(
     # FAULTLINE_JOURNEY_LATTICE=0 (pre-W5 output byte-identical).
     from faultline.pipeline_v2.journey_lattice import (
         dedup_lattice_journeys,
+        fold_thin_lattice_children,
         journey_lattice_enabled,
         run_journey_lattice,
     )
@@ -1364,6 +1369,12 @@ def run_finalize_phase(
                     )
                     jl_tele["dedup_after"] = dedup_lattice_journeys(
                         user_flows)
+                    # W5.1 — a child the resettle/dedup stripped to a single
+                    # sub-150-LOC member is a shred; fold it back into a
+                    # sibling of the same PF (conservation-safe, never the
+                    # PF's only journey).
+                    jl_tele["thin_fold_after"] = fold_thin_lattice_children(
+                        user_flows, list(bipartite.flows))
                     _jl_donor = _recover_uncovered_donors(
                         user_flows, features, product_features,
                     )
@@ -1905,6 +1916,28 @@ def run_finalize_phase(
             log_st.info(
                 f"surface_taxonomy: FAILED ({exc}) — continuing", feature=None,
             )
+
+    # ── W5.1 — LOC-worthy PF backstop (final I8 close, $0) ─────────────
+    # Excavation (Stage 6.87) mints FLOWLESS high-LOC surfaces (supabase
+    # Settings 27.5K, Query Performance, …); the flow-based PF-UF backstop
+    # cannot seed them (no member flows). Validator I8 still demands a
+    # journey (``pf_loc >= 1000``). This runs HERE — AFTER Stage 6.97 stamps
+    # ``loc`` (the LOC arm no-ops before that) and AFTER the emission
+    # taxonomy finalised the product list (so it targets the EXACT I8 PF
+    # set) — and appends a member-LESS system-seed (the sole I7-exempt cover
+    # for a flowless surface). BEFORE emission integrity, which then
+    # reconciles the new UF refs (I12) + backpointers (I14). Gated on the
+    # journey layer being EXPECTED (``not uf_suppressed``) — NOT on 6.7d
+    # abstraction ``applied``: validator I8 scores the raw rollup too (6.7d
+    # is LLM-only, degrades keyless), so the close must run in both the
+    # abstracted and the degraded/keyless journey layers. Suppressed repos
+    # (libraries / CLIs) never get journeys, so they are skipped.
+    if not uf_suppressed:
+        _lw_tele = _recover_uncovered_donors(
+            user_flows, features, product_features, loc_only=True,
+        )
+        if _lw_tele is not None:
+            scan_meta["loc_worthy_backstop"] = _lw_tele
 
     # platform_infrastructure[] declared here; ASSEMBLED after emission
     # integrity (the I2 phantom drop must not leave stale lane rows).
