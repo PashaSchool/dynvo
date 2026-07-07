@@ -511,11 +511,22 @@ def test_reexports_and_type_space_emit_no_defs():
     assert _defs("a.ts", src) == []
 
 
-def test_enum_is_runtime_const():
+def test_enum_kind_is_enum():
+    # AMENDMENT-1: honest kind='enum' (runtime value, NOT flow-eligible;
+    # the legacy SymbolRange mapping is M4's documented table).
     src = "export enum Direction {\n  Up,\n  Down,\n}\n"
     d = _by_name(_defs("a.ts", src), "Direction")
     assert (d.kind, d.exported, d.start_line, d.end_line) == (
-        "const", True, 1, 4)
+        "enum", True, 1, 4)
+    # `const enum` (TS erasable enum) — same honest kind.
+    src2 = "export const enum Mode {\n  A,\n}\n"
+    d2 = _by_name(_defs("b.ts", src2), "Mode")
+    assert (d2.kind, d2.exported) == ("enum", True)
+    # Round-trips through the cache payload with the extended kind set.
+    fp = parse_file("a.ts", src.encode())
+    assert fp is not None
+    spans = extract_defs(fp, src.encode())
+    assert defs_from_payload(defs_to_payload(spans), "a.ts") == spans
 
 
 # ── determinism + serialisation + cache ──────────────────────────────────

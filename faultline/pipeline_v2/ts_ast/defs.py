@@ -21,7 +21,8 @@ Covered (spec §3.M1):
   * plain components: capitalized callable whose body renders JSX;
   * default-export anonymi (``name="default"``), named inner functions
     preferred (``export default memo(function Board…`` → ``Board``);
-  * ``enum`` → ``kind="const"`` (an enum compiles to a runtime value);
+  * ``enum`` → ``kind="enum"`` (AMENDMENT-1: a runtime value, kept
+    distinct so the M4 legacy mapping keeps enums non-flow-eligible);
   * ``export { a, b as c }`` / ``export default ident`` mark existing
     defs exported (no new span).
 
@@ -63,7 +64,7 @@ __all__ = [
 #: Payload namespace inside CacheKind.AST (never collides with M2+).
 _NAMESPACE = "defs"
 
-_DEF_KINDS = ("function", "class", "component", "method", "const")
+_DEF_KINDS = ("function", "class", "component", "method", "const", "enum")
 _WRAPPERS = ("none", "forwardRef", "memo", "hoc", "styled")
 
 #: React wrapper callees recognised bare (``memo(…)``) or as the LAST
@@ -116,7 +117,7 @@ class DefSpan:
 
     file: str
     name: str
-    kind: str        # 'function' | 'class' | 'component' | 'method' | 'const'
+    kind: str        # 'function' | 'class' | 'component' | 'method' | 'const' | 'enum'
     start_line: int  # 1-indexed, inclusive
     end_line: int    # 1-indexed, inclusive
     exported: bool
@@ -414,7 +415,9 @@ def _handle_declaration(
         name = _text(name_node, src) if name_node is not None else ""
         if name:
             start, end = _lines(span_node)
-            col.add(name, "const", start, end, exported)
+            # AMENDMENT-1: honest kind='enum' — a runtime value, but NOT
+            # flow-eligible; the legacy SymbolRange mapping is M4's table.
+            col.add(name, "enum", start, end, exported)
         return
     # interface / type_alias / ambient / signatures / imports → no spans.
 
