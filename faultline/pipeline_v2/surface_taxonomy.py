@@ -964,6 +964,32 @@ def apply_emission_taxonomy(
     clf = SurfaceScopeClassifier(patterns, repo_path=repo_path,
                                  routes_index=routes_index,
                                  instrument_dirs=instrument_dirs)
+    # W4.2 Fix 1 rider — PF-grain classification must not second-guess
+    # the mint with the instrument prong: a PRODUCT capability whose
+    # paths straddle instrument dirs (midday `banking` after the Fix-3
+    # provider fold + shared members) would tip dev_tooling and leave
+    # the board. The instrument prong applies at PF grain ONLY to PFs
+    # whose OWN anchor sits inside an instrument dir; every other PF
+    # classifies with the plain (pre-W4.2) signal set. Dev/UF grain
+    # keeps the instrument-aware classifier.
+    _instr = tuple(sorted(_norm(str(d)).lower()
+                          for d in (instrument_dirs or []) if d))
+    clf_plain = (SurfaceScopeClassifier(patterns, repo_path=repo_path,
+                                        routes_index=routes_index)
+                 if _instr else clf)
+
+    def _anchor_in_instruments(pf: Any) -> bool:
+        aid = str(_get(pf, "anchor_id", None) or "")
+        if ":" not in aid:
+            return False
+        path = _norm(aid.split(":", 1)[1]).lower()
+        return bool(path) and any(
+            path == d or path.startswith(d + "/") for d in _instr
+        )
+
+    def _pf_clf(pf: Any) -> SurfaceScopeClassifier:
+        return clf if _anchor_in_instruments(pf) else clf_plain
+
     rbf = _route_by_file(routes_index)
     route_files = frozenset(rbf.keys())
     flow_by_id = _flow_lookup(flows)
@@ -993,7 +1019,8 @@ def apply_emission_taxonomy(
         if _is_shared_bucket(pf):
             sc = SCOPE_PRODUCT
         else:
-            sc, ambiguous, sig = clf.classify_feature_with_signals(pf, rbf)
+            sc, ambiguous, sig = _pf_clf(pf).classify_feature_with_signals(
+                pf, rbf)
             if ambiguous:
                 ambiguous_pfs.append((pf, sc, sig))
         pf.surface_scope = sc
