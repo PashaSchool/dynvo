@@ -111,6 +111,15 @@ _CRUD_LEAF_SEGS = frozenset({
     "duplicate", "clone", "toggle", "bulk",
 })
 
+#: API-TIER segments (``/api/v1/management/surveys`` vs
+#: ``/api/v1/client/{env}/surveys``) — the tier is an ARCHITECTURE split,
+#: not a journey object, so it is transparent EXACTLY like tenant scope:
+#: only when a deeper meaningful segment exists. A repo whose ``clients``
+#: ARE the product entity (``/api/clients/{id}``, CRM class) keeps the
+#: key — no deeper segment to descend to. Keyless formbricks probe
+#: exhibit: "Manage client" / "View management" journeys.
+_TIER_SEGS = frozenset({"management", "client", "internal", "public"})
+
 #: Structural directory segments skipped by the entry-dir axis (never
 #: object families; mirrors the 6.7d structure-leak class).
 _STRUCTURAL_DIR_SEGS = frozenset({
@@ -267,10 +276,15 @@ def _route_family(
 
     for pattern in sorted(patterns_by_file.get(entry_file, ())):
         chain = _pattern_key_chain(pattern, spine_vocab, version_re)
-        for seg in chain:
+        for i, seg in enumerate(chain):
             tok = _norm_token(seg)
             if not tok or tok in root_toks or tok in _CRUD_LEAF_SEGS:
                 continue
+            if tok in _TIER_SEGS and any(
+                _norm_token(s) and _norm_token(s) not in _CRUD_LEAF_SEGS
+                for s in chain[i + 1:]
+            ):
+                continue  # architecture tier, deeper object exists
             return _norm_key(seg), re.sub(r"[-_]+", " ", seg).strip()
     return None
 
@@ -332,10 +346,15 @@ def _dir_family(
                                      "+server", "default"}
                 and not re.match(r"^[\[\($:{<*_.]", stem)):
             candidates.append(stem)
-    for seg in candidates:
+    for i, seg in enumerate(candidates):
         tok = _norm_token(seg)
         if not tok or tok in root_toks or tok in _CRUD_LEAF_SEGS:
             continue
+        if tok in _TIER_SEGS and any(
+            _norm_token(s) and _norm_token(s) not in _CRUD_LEAF_SEGS
+            for s in candidates[i + 1:]
+        ):
+            continue  # architecture tier, deeper object exists
         return _norm_key(seg), re.sub(r"[-_]+", " ", seg).strip()
     return None
 

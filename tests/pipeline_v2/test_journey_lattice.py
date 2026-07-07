@@ -588,3 +588,60 @@ def test_crud_leaf_segments_never_become_families() -> None:
     parent = next(u for u in ufs if u.id == "UF-020")
     assert sorted(parent.member_flow_ids) == [
         "create-investigation-flow", "edit-investigation-flow"]
+
+
+def test_api_tier_segments_are_transparent_with_deeper_object() -> None:
+    """/api/v1/management/surveys keys 'surveys' (tier transparent);
+    /api/clients/{id} keeps 'client' (CRM class — no deeper object)."""
+    from faultline.pipeline_v2.journey_lattice import _route_family
+    from faultline.pipeline_v2.spine_anchors import load_spine_vocab
+    import re as _re
+
+    vocab = load_spine_vocab()
+    vre = _re.compile(vocab.get("version_segment_pattern") or r"^v\d+$")
+    pbf = {
+        "a.ts": ["/api/v1/management/surveys"],
+        "b.ts": ["/api/v1/client/[envId]/responses"],
+        "c.ts": ["/api/clients/[id]"],
+    }
+    assert _route_family("a.ts", pbf, frozenset(), vocab, vre) == (
+        "survey", "surveys")
+    assert _route_family("b.ts", pbf, frozenset(), vocab, vre) == (
+        "response", "responses")
+    assert _route_family("c.ts", pbf, frozenset(), vocab, vre) == (
+        "client", "clients")
+
+
+def test_tier_only_route_collapses_to_core() -> None:
+    """A management-API route of the capability itself has no foreign
+    object — flows stay on the parent (no tier-named journey)."""
+    flows = [
+        _flow("list-surveys-flow", "api/mgmt/surveys/list.ts"),
+        _flow("client-surveys-flow", "api/client/surveys/get.ts"),
+        _flow("send-templates-flow", "api/templates/send.ts", loc=200),
+        _flow("view-health-flow", "api/health/view.ts", loc=200),
+        _flow("edit-workspace-flow", "api/workspaces/edit.ts", loc=200),
+    ]
+    devs = [_dev("survey-dev", [f.entry_point_file for f in flows],
+                 "survey", flows=flows)]
+    pfs = [_pf("survey", "Survey", "route:api/surveys")]
+    routes = [
+        {"file": "api/mgmt/surveys/list.ts",
+         "pattern": "/api/v1/management/surveys"},
+        {"file": "api/client/surveys/get.ts",
+         "pattern": "/api/v1/client/[envId]/surveys"},
+        {"file": "api/templates/send.ts", "pattern": "/api/v1/templates"},
+        {"file": "api/health/view.ts", "pattern": "/api/health"},
+        {"file": "api/workspaces/edit.ts", "pattern": "/api/workspaces"},
+    ]
+    ufs = [_uf("UF-001", "Manage surveys", "survey",
+               [f.name for f in flows])]
+    tele = run_journey_lattice(ufs, devs, pfs, routes)
+    parent = next(u for u in ufs if u.id == "UF-001")
+    # The two tier-routed survey flows stay home; no 'management'/'client'
+    # journey exists.
+    assert sorted(parent.member_flow_ids) == [
+        "client-surveys-flow", "list-surveys-flow"]
+    assert all("management" not in (u.domain or "")
+               and ":client" not in (u.domain or "") for u in ufs)
+    assert tele["catchalls_split"] == 1
