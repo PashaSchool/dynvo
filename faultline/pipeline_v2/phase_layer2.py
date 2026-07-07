@@ -722,6 +722,9 @@ def run_layer2_phase(
             carve_hub_dirs=tuple(
                 h.hub_dir for h in hub_relations if not h.member_dev_names
             ),
+            # D4 keyed husk floor (debt-pack): flowless sub-floor vendor
+            # groups fold into the parent instead of minting shell twins.
+            repo_root=ctx.repo_path,
         )
         stage_8_9_7_telemetry = vendor_split_result.as_telemetry()
         log8_9_7.info(

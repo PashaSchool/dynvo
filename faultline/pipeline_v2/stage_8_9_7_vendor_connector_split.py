@@ -101,6 +101,11 @@ class VendorSplitResult:
     carve_connectors_created: int = 0
     carve_files_moved: int = 0
     carve_sample: list[dict[str, Any]] = field(default_factory=list)
+    # Debt-pack D4 keyed follow-up — husk groups folded into the parent
+    # instead of minting (0-flow, sub-floor LOC; the comp
+    # `aws-(integration)` twin class).
+    husk_folds: int = 0
+    husk_fold_sample: list[dict[str, Any]] = field(default_factory=list)
 
     def as_telemetry(self) -> dict[str, Any]:
         tele = {
@@ -119,6 +124,10 @@ class VendorSplitResult:
             tele["carve_connectors_created"] = self.carve_connectors_created
             tele["carve_files_moved"] = self.carve_files_moved
             tele["carve_sample"] = list(self.carve_sample[:20])
+        # Same only-when-acted contract for the husk floor.
+        if self.husk_folds:
+            tele["husk_folds"] = self.husk_folds
+            tele["husk_fold_sample"] = list(self.husk_fold_sample[:20])
         return tele
 
 
@@ -182,6 +191,7 @@ def split_vendor_connectors(
     features: list["Feature"],
     hub_dirs: tuple[str, ...] = (),
     carve_hub_dirs: tuple[str, ...] = (),
+    repo_root: Any = None,
 ) -> VendorSplitResult:
     """Split connector-hub dev features per vendor. Appends the minted
     connector features to *features* in place; returns telemetry. No-op when
@@ -194,7 +204,19 @@ def split_vendor_connectors(
     ``carve_hub_dirs`` (W1.1) — MEMBER-LESS hub directories: their vendor
     DIRECTORY children are carved out of any non-facet covering dev
     (workspace anchors included, no footprint-majority rail — see module
-    docstring)."""
+    docstring).
+
+    ``repo_root`` (debt-pack, D4 keyed follow-up) — when given, arms the
+    HUSK FLOOR on both arms: a vendor group with NO flow evidence (no
+    source flow enters through its files) whose code files sum under
+    ``stage_6_86_anchored_mint._HUB_HUSK_LOC_FLOOR`` LOC does NOT mint —
+    the files stay with the parent (merge, not a standalone dev/PF).
+    This is the keyed-channel twin of the W3.1 anchored-mint floor: on
+    keyed scans the 8.9.x split minted the comp `aws-(integration)`
+    logo.tsx+config.ts shells straight past the 6.86 bar (w31x-report
+    honest-anomaly 3). Same calibrated bound (valsem4 H9, 150), same
+    flow-evidence rescue. ``None`` (replay / old callers) keeps the
+    historical behavior byte-identical."""
     from faultline.pipeline_v2.stage_8_7_anchor_desink import (
         _FILE_KEYED_SURFACES,
         _is_workspace_anchor,
@@ -209,6 +231,48 @@ def split_vendor_connectors(
     result = VendorSplitResult(enabled=_is_enabled())
     if not result.enabled:
         return result
+
+    # Husk-floor machinery (armed only when the caller passes repo_root).
+    husk_root = None
+    husk_code_exts: tuple[str, ...] = ()
+    husk_loc_cache: dict[str, int] = {}
+    if repo_root is not None:
+        from pathlib import Path
+
+        from faultline.pipeline_v2.spine_anchors import load_spine_vocab
+
+        husk_root = Path(repo_root)
+        husk_code_exts = tuple(
+            load_spine_vocab().get("code_extensions") or ())
+
+    def _fold_as_husk(source: "Feature", vendor: str,
+                      files: list[str]) -> bool:
+        """True when the vendor group is a husk (fold into parent)."""
+        if husk_root is None:
+            return False
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+            _HUB_HUSK_LOC_FLOOR,
+            _files_loc,
+            _is_code,
+        )
+
+        fileset = set(files)
+        for fl in getattr(source, "flows", None) or []:
+            ep = (fl.get("entry_point_file") if isinstance(fl, dict)
+                  else getattr(fl, "entry_point_file", None))
+            if ep in fileset:
+                return False  # flow evidence — a real connector surface
+        code_files = [p for p in files if _is_code(p, husk_code_exts)]
+        if code_files and _files_loc(
+                husk_root, code_files, husk_loc_cache) >= _HUB_HUSK_LOC_FLOOR:
+            return False
+        result.husk_folds += 1
+        if len(result.husk_fold_sample) < 20:
+            result.husk_fold_sample.append({
+                "source": source.name, "vendor": vendor,
+                "files": len(files),
+            })
+        return True
 
     devs = [
         f for f in features
@@ -280,6 +344,10 @@ def split_vendor_connectors(
                     result.collisions_skipped += 1
                     continue
                 files = sorted(arm_groups[vendor])
+                # D4 keyed husk floor: a flowless sub-floor group merges
+                # into the parent instead of minting a shell twin.
+                if _fold_as_husk(source, vendor, files):
+                    continue
                 sub = _make_subfeature(source, vendor, files, name)
                 taken_names.add(name)
                 minted_sink.append(sub)
