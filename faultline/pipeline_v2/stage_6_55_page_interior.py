@@ -57,6 +57,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from faultline.cache.backend import CacheKind
+from faultline.pipeline_v2.ts_ast.adapter import (  # W6-AST Hook C (M4)
+    INTERIOR_KEY_TAG,
+    current_provenance,
+    repo_provenance,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from faultline.models.types import Feature
@@ -588,8 +593,13 @@ def _parse_page_source(
         if spec is None:
             source_kind, source_file = "local", None
         else:
-            source_file, source_kind = _resolve_spec(
-                spec, rel_path, tracked, ws_by_name, alias_roots)
+            prov = current_provenance(tracked)  # W6-AST Hook C (M4)
+            hit = prov.lookup(rel_path, spec) if prov is not None else None
+            if hit is not None:
+                source_file, source_kind = hit
+            else:
+                source_file, source_kind = _resolve_spec(
+                    spec, rel_path, tracked, ws_by_name, alias_roots)
         provenance = _classify_provenance(
             head, source_kind, source_file, ws_by_path)
         raw.append({
@@ -764,6 +774,9 @@ def _parse_cached(
 ) -> list[dict[str, Any]]:
     backend = getattr(ctx, "cache_backend", None)
     key = _cache_key(source)
+    if current_provenance(tracked) is not None:
+        key = INTERIOR_KEY_TAG + key  # W6-AST Hook C: never share entries
+
     if backend is not None:
         try:
             hit = backend.get(CacheKind.INTERIOR, key)
@@ -1112,6 +1125,7 @@ def get_page_interiors(
                 ws_by_name[name] = path
 
     repo_path = Path(getattr(ctx, "repo_path", "."))
+    repo_provenance(str(repo_path), tracked)  # W6-AST Hook C: register view
     stats = {"parsed": 0, "cache_hits": 0, "skipped_big": 0,
              "read_errors": 0}
     pages: dict[str, PageInterior] = {}

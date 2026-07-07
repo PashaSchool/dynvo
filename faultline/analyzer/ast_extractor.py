@@ -15,6 +15,7 @@ Supported patterns:
   - ES imports:        import X from 'Y'
 """
 import ast
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -247,6 +248,16 @@ def extract_signatures(
         else:
             sig = _parse_file(rel_path, source)
             sig.symbol_ranges = extract_symbol_ranges(source)
+            if os.environ.get("FAULTLINE_TS_AST", "1").strip().lower() \
+                    not in ("0", "false", "no", "off"):
+                try:  # W6-AST Hook A (M4): AST def-spans; None → keep regex
+                    from faultline.pipeline_v2.ts_ast import adapter as _tsa
+                    upgraded = _tsa.ast_symbol_ranges(
+                        repo_path, rel_path, source, sig.symbol_ranges)
+                    if upgraded is not None:
+                        sig.symbol_ranges = upgraded
+                except Exception:  # noqa: BLE001 — fallback law
+                    pass
 
         # The T1 call-graph (flow_expansion/call_graph.py) scans a
         # symbol's body for callee identifiers via ``sig.source``. This
