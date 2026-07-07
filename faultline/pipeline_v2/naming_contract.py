@@ -158,6 +158,12 @@ def display_law_violations(
         words = _WORD_RE.findall(t)
         if any(len(w) == 1 and w.isalpha() for w in words):
             out.append("single_letter")
+    # W3.1 rider (fb3 '2025' class): a display with no letter at all —
+    # bare years, error codes, counters — names nothing; candidates/pins
+    # carrying it are law-dirty and fall through to the anchor-derived
+    # fallback.
+    if t and not any(c.isalpha() for c in t):
+        out.append("digit_only")
     if _PARAM_GLYPHS.search(t):
         out.append("param")
     exts = {str(e).lower() for e in (v.get("file_extensions") or [])}
