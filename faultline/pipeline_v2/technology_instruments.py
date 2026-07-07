@@ -124,6 +124,13 @@ _DB_TOOLS = frozenset({
     "knex", "alembic", "atlas",
 })
 
+#: Body floor for the config-only prong (S1c): a "settings artifact"
+#: carries no executable body. SAME calibration constant as the Stage
+#: 6.86 vendor-husk floor (``_HUB_HUSK_LOC_FLOOR``, valsem4 H9 — kept
+#: literal to avoid an import cycle): a 1,100-LOC single-file package is
+#: a capability candidate (the W2b F1 contract), never "config-only".
+_BODY_LOC_FLOOR = 150
+
 _SRC_EXT = frozenset({
     "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "py",
     "vue", "svelte",
@@ -414,10 +421,22 @@ def detect_technology_instruments(
         ) and ("prisma" in declared or "prisma" in repo_ext_tokens)
         has_migrations = any("/migrations/" in "/" + p for p in fs)
         n_cfg = sum(1 for p in fs if _is_config_class(p))
+        # Source body of NEAR-CONFIG units only (≤2 src files — bounded
+        # IO); unreadable counts as a large body (never config-only).
+        src_loc = 0
+        if 0 < n_src <= 2:
+            for rel in src:
+                try:
+                    text = (repo_path / rel).read_text(
+                        encoding="utf-8", errors="ignore")
+                    src_loc += sum(1 for ln in text.splitlines()
+                                   if ln.strip())
+                except OSError:
+                    src_loc += _BODY_LOC_FLOOR
         base = u.rsplit("/", 1)[-1]
         man_suffix = str(man.get("name") or "").split("/")[-1]
         return {
-            "files": len(fs), "src": n_src,
+            "files": len(fs), "src": n_src, "src_loc": src_loc,
             "declared": declared,
             "dep_share": share,
             "top_tok": top_tok, "top_share": top_share,
@@ -490,7 +509,8 @@ def detect_technology_instruments(
             elif (f["migrations"] and f["top_tok"] in _DB_TOOLS
                   and f["top_share"] >= 0.5):
                 sig = "S1b-migrations:" + f["top_tok"]
-            elif (f["src"] <= 2 and f["cfg_share"] >= 0.5 and inf == 0):
+            elif (f["src"] <= 2 and f["cfg_share"] >= 0.5 and inf == 0
+                  and f["src_loc"] < _BODY_LOC_FLOOR):
                 sig = "S1c-config-only"
             elif (f["top_share"] >= 0.5 and len(dou) <= 1 and inf >= 3):
                 sig = "S1d-dep:" + f["top_tok"]
