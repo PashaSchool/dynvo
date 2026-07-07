@@ -699,3 +699,35 @@ def test_unowned_entry_clusters_fold_back_to_parent() -> None:
     for m in ("verify-domain-flow", "connect-slack-flow",
               "create-token-flow"):
         assert m in parent.member_flow_ids
+
+
+def test_action_keys_never_shred_a_journey() -> None:
+    """The billing shards (keyed round-3): /billing/pause + unpause +
+    upgrade + manage are ACTIONS of one journey — a single-token key in
+    verb position of its member flow names folds to core."""
+    flows = [
+        _flow("manage-billing-flow", "api/billing/manage.ts", loc=200),
+        _flow("pause-subscription-flow", "api/billing/pause.ts", loc=200),
+        _flow("unpause-subscription-flow", "api/billing/unpause/a.ts",
+              loc=200),
+        _flow("unpause-plan-flow", "api/billing/unpause/b.ts", loc=200),
+        _flow("upgrade-plan-flow", "api/billing/upgrade.ts", loc=200),
+    ]
+    devs = [_dev("billing-dev", [f.entry_point_file for f in flows],
+                 "billing", flows=flows)]
+    pfs = [_pf("billing", "Billing", "route:api/billing")]
+    routes = [
+        {"file": "api/billing/manage.ts", "pattern": "/api/billing/manage"},
+        {"file": "api/billing/pause.ts", "pattern": "/api/billing/pause"},
+        {"file": "api/billing/unpause/a.ts",
+         "pattern": "/api/billing/unpause/a"},
+        {"file": "api/billing/unpause/b.ts",
+         "pattern": "/api/billing/unpause/b"},
+        {"file": "api/billing/upgrade.ts", "pattern": "/api/billing/upgrade"},
+    ]
+    ufs = [_uf("UF-016", "Manage team billing and plan", "billing",
+               [f.name for f in flows])]
+    tele = run_journey_lattice(ufs, devs, pfs, routes)
+    assert tele["catchalls_split"] == 0
+    assert tele.get("clusters_action_folded", 0) >= 3
+    assert len(ufs) == 1 and ufs[0].member_count == 5

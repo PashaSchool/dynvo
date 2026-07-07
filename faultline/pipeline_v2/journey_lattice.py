@@ -753,6 +753,22 @@ def run_journey_lattice(
                 return ("dir", *hit)
             return None
 
+        # Segments with DEEPER continuations anywhere in this PF's pool —
+        # an object family has substructure (/notes/add); an action leaf
+        # never does (/billing/pause). Feeds the action-key guard below.
+        segs_with_children: set[str] = set()
+        for uf, mid in pooled:
+            fl = flow_by_mid.get(mid)
+            entry = _entry_file_of(fl) if fl is not None else None
+            for pattern in patterns_by_file.get(entry or "", ()):
+                msegs = [
+                    _norm_token(sg) for sg in str(pattern).split("/")
+                    if sg and not re.match(r"^[\[\($:{<*]", sg)
+                ]
+                msegs = [sg for sg in msegs if sg]
+                for sg in msegs[:-1]:
+                    segs_with_children.add(sg)
+
         for uf, mid in pooled:
             ev = _evidence(mid)
             if ev is None:
@@ -801,6 +817,58 @@ def run_journey_lattice(
             toks = _key_tokens(key)
             if toks and toks <= root_toks:
                 cl.is_core = True
+                continue
+            # ACTION-KEY guard (keyed round-3 forensics, the billing
+            # shards: /billing/pause + /billing/unpause + /billing/
+            # upgrade shredded a clean 10-flow journey into 'Manage
+            # pause'/'Manage unpause'/'Manage upgrade'/'Manage manage').
+            # A single-token key sitting in VERB position of its member
+            # flow names is the flows' ACTION, not an object family —
+            # same actor+intent+outcome as the parent core. Mechanism,
+            # not vocabulary: the flows themselves testify.
+            if len(toks) == 1:
+                tok = next(iter(toks))
+                action_votes = 0
+                for m in cl.mids:
+                    fl = flow_by_mid.get(m)
+                    name = str(getattr(fl, "name", "") or "") if fl else ""
+                    # (a) verb position: the flow's own name leads with
+                    # the key token ("pause-subscription-flow" / pause).
+                    if _norm_token(re.split(
+                        r"[^a-z0-9]+", name.lower(), 1,
+                    )[0]) == tok:
+                        action_votes += 1
+                        continue
+                    # (b) terminal leaf under the capability root: the
+                    # key is the LAST meaningful segment of the member's
+                    # route pattern, a root word precedes it, the key
+                    # has NO deeper continuation anywhere in this PF's
+                    # pool (an object family has substructure —
+                    # /notes/add; /billing/pause never does), and the
+                    # cluster is small (<= 3 — action leaves are thin;
+                    # a 12-flow terminal family is a real sub-surface).
+                    # A terminal key with no root prefix (papermark
+                    # /view/[linkId]) is a real surface and keeps.
+                    if (len(cl.mids) > 3
+                            or tok in segs_with_children):
+                        continue
+                    entry = _entry_file_of(fl) if fl is not None else None
+                    for pattern in patterns_by_file.get(entry or "", ()):
+                        segs = [
+                            _norm_token(sg)
+                            for sg in str(pattern).split("/")
+                            if sg and not re.match(r"^[\[\($:{<*]", sg)
+                        ]
+                        segs = [sg for sg in segs if sg]
+                        if (segs and segs[-1] == tok
+                                and any(sg in root_toks
+                                        for sg in segs[:-1])):
+                            action_votes += 1
+                            break
+                if action_votes * 2 >= len(cl.mids):
+                    cl.is_core = True
+                    tele["clusters_action_folded"] = (
+                        tele.get("clusters_action_folded", 0) + 1)
         qualifying: dict[str, _Cluster] = {}
         for key in sorted(clusters):
             cl = clusters[key]
