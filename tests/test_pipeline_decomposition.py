@@ -170,6 +170,13 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # {"is_monorepo": False} view for single repos). See
     # stage_6_6_monorepo_assembly.py.
     (6, "monorepo_assembly"),
+    # FILELANE (2026-07-08) — file-level shared-infrastructure lane.
+    # Reclassifies unowned high-fan-in infra files into the
+    # platform_infrastructure lane. Runs BEFORE feature_loc so the LOC pass
+    # accounts for the new lane devs (conservation by construction). $0,
+    # deterministic, default ON (FAULTLINE_FILE_LANE=0 off → this artifact
+    # is absent). See file_lane.py.
+    (6, "file_lane"),
     # Stage 6.97 (2026-07-05) — deterministic feature-level LOC. $0,
     # additive flat ``loc`` on dev features + dedup PF rollup; telemetry
     # artifact emitted on every run (default ON). See
