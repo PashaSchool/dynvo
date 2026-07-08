@@ -338,7 +338,7 @@ def _split_one(
 
 def _make_sub(
     parent: "UserFlow", sub_id: str, name: str, member_ids: list[str],
-    name_confidence: Literal["high", "low"] = "high",
+    name_confidence: Literal["high", "medium", "low"] = "high",
 ) -> "UserFlow":
     """A sub-UF inherits the parent's domain/intent/resource/pf-link; 6.7b
     refines name/description/ui_tier/acceptance downstream."""

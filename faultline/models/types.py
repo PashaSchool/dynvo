@@ -1052,8 +1052,14 @@ class UserFlow(BaseModel):
     # evidence bundle (no route / nav-label / product-string vocabulary
     # for the primary member flow), when the Stage 6.7b validator fell
     # back to the deterministic template name, or when the scan ran
-    # LLM-degraded. Defaults to "high" for old-JSON rehydration.
-    name_confidence: Literal["high", "low"] = "high"
+    # LLM-degraded. "medium" (B5, 2026-07) marks a backstop journey whose
+    # name was re-derived from a STRONG multi-member evidence agreement
+    # (≥2 members concur on resource + action) in ``synth_quality`` —
+    # confident enough to drop the "~" hedge, but code-derived rather than
+    # authored. Additive tier: downstream consumers that only special-case
+    # "low" (landing viewer, dashboard ``parseNameConfidence``) read
+    # "medium" as confident. Defaults to "high" for old-JSON rehydration.
+    name_confidence: Literal["high", "medium", "low"] = "high"
     # Phase 3 dual-evidence (2026-07): {"code": [paths], "anchors": [{text,source,
     # locator}], "confidence": 0-1} — code + product-source corroboration, attached
     # deterministically by dual_evidence.py. Additive/optional; None when not computed.
