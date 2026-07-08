@@ -236,12 +236,18 @@ _MULTISLASH_RE = re.compile(r"/{2,}")
 
 
 def _app_domains_on() -> bool:
-    """Master kill-switch for the B2 Django enhancements (default ON).
+    """Opt-in switch for the B2 Django URL-param transparency — default OFF.
 
-    ``=0`` restores the pre-B2 slug/route emission byte-for-byte.
+    The transparency rewrites the anchor slug + the emitted route pattern,
+    and the pattern is SERIALIZED into ``routes_index`` (scan output that
+    ``normalize_scan`` does NOT strip) — so default-ON would drift the
+    snapshot-gate SHA on every pinned Django repo (saleor / weblate).
+    Shipping it OFF keeps the merge output-neutral (byte-identical to
+    main) with zero re-pin; enable per-scan with
+    ``FAULTLINE_DJANGO_APP_DOMAINS=1`` (unset / ``=0`` = legacy).
     """
-    return (os.environ.get("FAULTLINE_DJANGO_APP_DOMAINS", "1")
-            or "1").strip().lower() not in {"0", "false", "no", "off"}
+    return (os.environ.get("FAULTLINE_DJANGO_APP_DOMAINS", "0")
+            or "0").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _strip_url_params(route: str) -> str:

@@ -44,7 +44,15 @@ _SKIP_DIRS = frozenset({
     "migrations", "static", "media", ".next", "dist", "build", ".mypy_cache",
     ".pytest_cache", "site-packages", ".eggs",
 })
-_NON_EXTERNAL = frozenset({"relative", "workspace", "tsconfig_alias"})
+# Non-external denominator = every FIRST-PARTY edge, resolved OR NOT.
+# ``unresolved`` is the resolver's first-party-but-no-file-found bucket
+# (a relative import, or an absolute import whose head IS a repo package,
+# that failed to land on a file). It MUST count against resolution-% —
+# excluding it inflates the number (the ts_ast-ruler counts every
+# non-external SPEC in the denominator, resolved or not). ``package_external``
+# (stdlib / third-party) stays out.
+_NON_EXTERNAL = frozenset(
+    {"relative", "workspace", "tsconfig_alias", "unresolved"})
 
 
 def collect_py_files(repo: Path, subpath: str, max_files: int | None

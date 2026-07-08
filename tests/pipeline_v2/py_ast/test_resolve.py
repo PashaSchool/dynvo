@@ -152,6 +152,33 @@ def test_conservative_root_discovery_no_false_root() -> None:
     assert r.roots == [""]
 
 
+def test_declared_dep_collision_is_external(tmp_path) -> None:
+    """A repo dir whose name collides with a declared PyPI dep → external.
+
+    onyx ships a ``backend/alembic/`` dir + depends on the PyPI
+    ``alembic``; ``from alembic.config import X`` is the third-party
+    tool, not the repo dir — it must resolve external, not first-party
+    unresolved (which would deflate resolution-%).
+    """
+    (tmp_path / "requirements.txt").write_text(
+        "alembic>=1.13\ncelery==5.3\nredis\n", encoding="utf-8")
+    files = {
+        "alembic/env.py": "from alembic.config import Config\n",
+        "app/tasks.py": "from celery import shared_task\nimport redis\n",
+        # a REAL first-party submodule of the alembic dir still resolves
+        "alembic/versions/__init__.py": "",
+        "app/uses_versions.py": "from alembic.versions import x\n",
+    }
+    resolved, _ = _resolve(files, repo_root=str(tmp_path))
+    assert _res(resolved, "alembic/env.py", "alembic.config") \
+        == "package_external"
+    assert _res(resolved, "app/tasks.py", "celery") == "package_external"
+    assert _res(resolved, "app/tasks.py", "redis") == "package_external"
+    # first-party submodule that DOES exist still resolves in-repo
+    assert _res(resolved, "app/uses_versions.py", "alembic.versions") \
+        in ("workspace", "relative")
+
+
 def test_deterministic_resolution() -> None:
     files = {
         "a/__init__.py": "",

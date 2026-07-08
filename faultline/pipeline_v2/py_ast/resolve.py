@@ -99,6 +99,11 @@ class PyResolver:
         self.module_to_file = self._build_module_index()
         self._pkg_modules = self._build_package_set()
         self._top_level = self._build_top_level()
+        # Third-party packages the repo DECLARES (requirements / pyproject):
+        # grounds the external classification when a PyPI package name
+        # collides with a repo directory name (``alembic/`` dir + the PyPI
+        # ``alembic`` tool; ``onyx.background.celery`` + PyPI ``celery``).
+        self._declared_deps = self._build_declared_deps()
         # per-__init__ re-export map: name -> raw relative target (barrel)
         self._reexports = self._build_reexport_map(edges)
 
@@ -135,6 +140,65 @@ class PyResolver:
             for m in re.finditer(r"where\s*=\s*\[?\s*['\"]([^'\"]+)['\"]", text):
                 roots.append(m.group(1).strip("/"))
         return roots
+
+    @staticmethod
+    def _norm_dep(name: str) -> str:
+        """Canonical form for matching a dep name against an import head."""
+        return name.strip().lower().replace("-", "_")
+
+    def _build_declared_deps(self) -> frozenset[str]:
+        """Declared third-party package names (requirements* + pyproject).
+
+        Read from the repo root AND every source root (onyx ships
+        ``backend/requirements/*.txt``). Names are normalised to the
+        import-head form (lower, ``-``→``_``) so ``from celery import x``
+        matches a ``celery`` requirement. Best-effort: any read/parse
+        failure is silently skipped (grounding is corroboration, not a
+        hard gate).
+        """
+        import glob
+
+        deps: set[str] = set()
+        bases = {self.repo_root}
+        for r in self.roots:
+            if r:
+                bases.add(os.path.join(self.repo_root, r))
+        # requirements*.txt (flat + requirements/ dir)
+        for base in bases:
+            paths = glob.glob(os.path.join(base, "requirements*.txt"))
+            paths += glob.glob(os.path.join(base, "requirements", "*.txt"))
+            for path in paths:
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                        for line in fh:
+                            s = line.strip()
+                            if not s or s.startswith(("#", "-", "git+", "http")):
+                                continue
+                            m = re.match(r"([A-Za-z0-9][A-Za-z0-9._-]*)", s)
+                            if m:
+                                deps.add(self._norm_dep(m.group(1)))
+                except OSError:
+                    continue
+        # pyproject.toml [project]/[tool.poetry] dependency tables
+        for base in bases:
+            path = os.path.join(base, "pyproject.toml")
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            # PEP-621 list: dependencies = ["celery>=5", "redis"]
+            for m in re.finditer(
+                r'["\']([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:[<>=~!\[;]|["\'])',
+                text,
+            ):
+                deps.add(self._norm_dep(m.group(1)))
+            # poetry table: celery = "^5.0"  (bare key = version)
+            for m in re.finditer(
+                r'(?m)^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=\s*["\{]', text,
+            ):
+                deps.add(self._norm_dep(m.group(1)))
+        return frozenset(deps)
 
     def _resolves_under(self, comp: str, root: str) -> bool:
         base = (root.rstrip("/") + "/") if root else ""
@@ -324,7 +388,17 @@ class PyResolver:
         head = raw.split(".", 1)[0]
         if head not in self._top_level:
             return [self._edge(edge, None, "package_external", raw)]
-        return self._resolve_module_edge(edge, raw, names, "workspace")
+        result = self._resolve_module_edge(edge, raw, names, "workspace")
+        # Name-collision guard: ``head`` is a repo top-level dir BUT the
+        # import landed on no repo file AND ``head`` is a declared PyPI
+        # dependency → it is the third-party package (a repo ``celery/`` /
+        # ``alembic/`` dir shadowing the PyPI package), classify external
+        # so it never counts against first-party resolution.
+        if head in self._declared_deps and all(
+            r.target_file is None for r in result
+        ):
+            return [self._edge(edge, None, "package_external", raw)]
+        return result
 
     def _resolve_relative_edge(self, edge: ImportEdge) -> list[ResolvedEdge]:
         parsed = self._resolve_relative(edge.src_file, edge.raw_target)
