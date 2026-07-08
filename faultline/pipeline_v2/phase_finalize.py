@@ -2119,6 +2119,62 @@ def run_finalize_phase(
             payload=ei_result.as_dict(),
             run_dir=run_dir,
         )
+
+        # ── FILELANE — file-level shared-infrastructure lane ──────────────
+        # Runs AFTER emission_integrity settles the FINAL features (so our
+        # appended lane devs are never phantom-dropped) and BEFORE the
+        # path_index rebuild below + build_platform_infrastructure_lane: the
+        # emitted path_index (the validator's file_owner_pf source) then reads
+        # the reclassified unowned-infra files as lane-owned, and the lane
+        # surface emits them. Strictly additive — only NEW pfid=None lane devs
+        # are appended; existing PFs/devs untouched. Kill-switch
+        # FAULTLINE_FILE_LANE=0 → no devs appended → byte-identical.
+        from faultline.pipeline_v2.file_lane import (
+            file_lane_enabled,
+            run_file_lane_infra,
+        )
+        # Gated on anchored_mint_applied: the lane surface
+        # (build_platform_infrastructure_lane) only emits on the anchored
+        # path, so appending lane devs is meaningful only there. When the
+        # mint did not run there is no lane schema to extend (old-schema
+        # scans stay byte-identical).
+        if file_lane_enabled() and anchored_mint_applied:
+            with StageLogger(run_dir, 7, "file_lane") as log_fl:
+                try:
+                    fl_tele = run_file_lane_infra(
+                        features, product_features,
+                        lineage_result.routes_index, ctx,
+                    )
+                    scan_meta["file_lane"] = fl_tele
+                    log_fl.info(
+                        "file_lane: laned %d files -> %d lane devs (%d LOC), "
+                        "threshold %d = ceil(%.3f * %d PFs); blocked "
+                        "owned=%d pf_paths=%d surface=%d low_fanin=%d"
+                        % (
+                            fl_tele.get("laned_files", 0),
+                            fl_tele.get("laned_devs", 0),
+                            fl_tele.get("laned_loc", 0),
+                            fl_tele.get("threshold", 0),
+                            fl_tele.get("pct", 0.0),
+                            fl_tele.get("num_product_features", 0),
+                            fl_tele.get("blocked_owned", 0),
+                            fl_tele.get("blocked_pf_paths", 0),
+                            fl_tele.get("blocked_surface", 0),
+                            fl_tele.get("blocked_low_fanin", 0),
+                        ),
+                        feature=None,
+                    )
+                    write_stage_artifact(
+                        ctx.repo_path, stage_index=7, stage_name="file_lane",
+                        payload=dict(fl_tele), run_dir=run_dir,
+                    )
+                except Exception as exc:  # noqa: BLE001 — lane must never break a scan
+                    scan_meta.setdefault("warnings", []).append(
+                        f"file-lane failed ({exc}); no infra reclassified"
+                    )
+                    log_fl.info(
+                        f"file_lane: FAILED ({exc}) — continuing", feature=None)
+
         # W1.1 — path_index emission refresh. Lineage builds the index at
         # the TOP of this phase, but 6.9 test-strip / 6.9b generated-strip
         # / the 8.9.7 carve legitimately remove paths from features AFTER
