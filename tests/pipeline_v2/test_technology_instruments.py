@@ -12,7 +12,9 @@ import json
 from pathlib import Path
 
 from faultline.pipeline_v2.technology_instruments import (
+    CONFIG_LANE_ENV,
     TECH_INSTRUMENTS_ENV,
+    config_lane_enabled,
     detect_technology_instruments,
     tech_instruments_enabled,
 )
@@ -339,3 +341,139 @@ def test_unrelated_fdir_is_no_satellite(tmp_path: Path) -> None:
     tele = _detect(tmp_path, tracked,
                    fdirs=["apps/web/src/features/ticketing"])
     assert not tele["satellites"]
+
+
+# ── B1: config consumed through a config channel (prettier-config shape) ──
+# The documenso exhibit: `packages/prettier-config` is a settings artifact
+# (index.cjs = `module.exports = {...}`, tool declared as its dep) but the
+# root `prettier.config.cjs` = `module.exports = require('@acme/prettier-
+# config')` creates a REAL import edge, so the strict S1c `inf == 0` guard
+# missed it and it minted as a PF — while `eslint-config` (referenced via an
+# `extends` STRING, no edge) laned correctly. Kill-switch FAULTLINE_CONFIG_LANE.
+
+
+def _prettier_config_repo(repo: Path) -> list[str]:
+    """The prettier-config shape: a config-only package consumed ONLY by a
+    root ``*.config.cjs`` re-export shim (a config channel)."""
+    return [
+        _manifest(repo, "", "root", private=True,
+                  dev_deps={"prettier": "^3.6.2"}),
+        _manifest(repo, "packages/prettier-config", "@acme/prettier-config",
+                  deps={"prettier": "^3.6.2"}),
+        _write(repo, "packages/prettier-config/index.cjs",
+               "module.exports = {\n  printWidth: 100,\n"
+               "  singleQuote: true,\n  semi: true,\n};\n"),
+        # the ONLY consumer is a config-channel file (basename *.config.cjs)
+        _write(repo, "prettier.config.cjs",
+               "module.exports = require('@acme/prettier-config');\n"),
+    ]
+
+
+def test_config_consumed_via_channel_is_an_instrument(tmp_path: Path) -> None:
+    """FLAG ON: the config-channel re-export does not make it product."""
+    tele = _detect(tmp_path, _prettier_config_repo(tmp_path))
+    assert (tele["instruments"].get("packages/prettier-config")
+            == "S1c-config-consumed")
+    assert "packages/prettier-config" in tele["dirs"]
+
+
+def test_config_consumed_kill_switch_byte_identity(
+        tmp_path: Path, monkeypatch) -> None:
+    """FLAG OFF (=0): strict ``inf == 0`` restored — the package with a
+    real importer mints as a PF exactly as pre-B1 main."""
+    monkeypatch.setenv(CONFIG_LANE_ENV, "0")
+    assert config_lane_enabled() is False
+    tele = _detect(tmp_path, _prettier_config_repo(tmp_path))
+    assert "packages/prettier-config" not in tele["instruments"]
+    assert "packages/prettier-config" not in tele["dirs"]
+
+
+def test_config_lane_flag_default_on(monkeypatch) -> None:
+    monkeypatch.delenv(CONFIG_LANE_ENV, raising=False)
+    assert config_lane_enabled() is True
+    monkeypatch.setenv(CONFIG_LANE_ENV, "false")
+    assert config_lane_enabled() is False
+
+
+# ── Anti-case 1: the `extends`-STRING class stays laned, unchanged ───────
+def test_eslint_extends_string_stays_config_only(tmp_path: Path) -> None:
+    """`.eslintrc.cjs` references the package via an `extends` STRING (no
+    import edge) -> inf == 0 -> classic S1c-config-only. B1 must not change
+    this: `S1c-config-only`, never `S1c-config-consumed`."""
+    tracked = [
+        _manifest(tmp_path, "", "root", private=True),
+        _manifest(tmp_path, "packages/eslint-config", "@acme/eslint-config",
+                  deps={"eslint": "^8.57.0"}),
+        _write(tmp_path, "packages/eslint-config/index.cjs",
+               "module.exports = { extends: ['next'] };\n"),
+        # `extends` is a data STRING, NOT a require -> no import edge.
+        _write(tmp_path, ".eslintrc.cjs",
+               "module.exports = { extends: ['@acme/eslint-config'] };\n"),
+    ]
+    tele = _detect(tmp_path, tracked)
+    assert (tele["instruments"].get("packages/eslint-config")
+            == "S1c-config-only")
+
+
+# ── Anti-case 2: a config-SHAPED unit consumed by PRODUCT code -> product ─
+def test_config_shaped_but_consumed_by_product_code_stays_product(
+        tmp_path: Path) -> None:
+    """Same tiny config-only shape, but the sole importer is a product
+    source file (`page.tsx`), NOT a config channel. cfg_consumed is False
+    (not all importers are config channels) -> never demoted."""
+    tracked = [
+        _manifest(tmp_path, "", "root", private=True),
+        _manifest(tmp_path, "packages/settings-kit", "@acme/settings-kit",
+                  deps={"zod": "3.0.0"}),
+        _write(tmp_path, "packages/settings-kit/index.cjs",
+               "module.exports = { flag: true };\n"),
+        _manifest(tmp_path, "apps/web", "@acme/web", private=True),
+        # imported by PRODUCT code (not a *.config.* / .*rc* file).
+        _write(tmp_path, "apps/web/src/page.tsx",
+               "import cfg from '@acme/settings-kit';\nexport default cfg;\n"),
+    ]
+    tele = _detect(tmp_path, tracked)
+    assert "packages/settings-kit" not in tele["instruments"]
+
+
+# ── Anti-case 2b: MIXED importers (one config channel + one product) ─────
+def test_config_consumed_requires_all_importers_config_channel(
+        tmp_path: Path) -> None:
+    """If even ONE importer is product code, cfg_consumed is False."""
+    tracked = [
+        _manifest(tmp_path, "", "root", private=True),
+        _manifest(tmp_path, "packages/fmt-config", "@acme/fmt-config",
+                  deps={"prettier": "3.0.0"}),
+        _write(tmp_path, "packages/fmt-config/index.cjs",
+               "module.exports = { printWidth: 80 };\n"),
+        _write(tmp_path, "prettier.config.cjs",
+               "module.exports = require('@acme/fmt-config');\n"),
+        _manifest(tmp_path, "apps/web", "@acme/web", private=True),
+        _write(tmp_path, "apps/web/src/page.tsx",
+               "import fmt from '@acme/fmt-config';\nexport default fmt;\n"),
+    ]
+    tele = _detect(tmp_path, tracked)
+    assert "packages/fmt-config" not in tele["instruments"]
+
+
+# ── Anti-case 3: a config-NAMED package that ships product code -> product ─
+def test_config_named_but_ships_product_code_stays_product(
+        tmp_path: Path) -> None:
+    """A `packages/prettier-config`-NAMED package that actually ships
+    product source (4 code files, config-minority) is NOT demoted even with
+    a config-channel importer. The name is never the trigger — the shape is
+    (src > 2, cfg_share < 0.5)."""
+    tracked = [
+        _manifest(tmp_path, "", "root", private=True),
+        _manifest(tmp_path, "packages/prettier-config", "@acme/prettier-config",
+                  private=True),
+        _write(tmp_path, "prettier.config.cjs",
+               "module.exports = require('@acme/prettier-config');\n"),
+    ]
+    for i in range(4):
+        tracked.append(_write(
+            tmp_path, f"packages/prettier-config/src/rule{i}.ts",
+            f"export function computeRule{i}(x: number) "
+            "{\n  return x * 2 + 1;\n}\n"))
+    tele = _detect(tmp_path, tracked)
+    assert "packages/prettier-config" not in tele["instruments"]
