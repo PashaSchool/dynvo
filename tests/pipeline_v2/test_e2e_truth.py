@@ -487,3 +487,70 @@ def test_matched_authored_names_route_only():
     assert "UF-001" in out and out["UF-001"] == ["Teams"]
     assert "UF-002" not in out          # weak via=name excluded
     assert "UF-003" not in out          # negative excluded
+
+
+# -- Track C: cross-process (PYTHONHASHSEED) determinism -------------------
+
+import os as _os          # noqa: E402
+import subprocess as _sp  # noqa: E402
+import sys as _sys        # noqa: E402
+
+# A fixture that STRESSES both set-based tie-breaks: one journey resolves to
+# two EQUAL-LENGTH route families owned by two different PFs (dominant-fam tie
+# AND owner-majority tie). Before the total-order fix the minted resource/PF
+# drifted with PYTHONHASHSEED (4th non-det class). The driver prints a
+# canonical signature of every minted UF.
+_DET_DRIVER = r'''
+from faultline.pipeline_v2.e2e_truth import synthesize_orphan_journeys
+from types import SimpleNamespace
+
+def devf(name, paths, pf):
+    return SimpleNamespace(name=name, paths=paths, product_feature_id=pf,
+                           role=None, layer="developer", flows=[])
+def pf(name):
+    return SimpleNamespace(id=name, name=name, display_name=name.title(),
+                           layer="product", paths=[])
+
+routes = [
+    {"pattern": "/team/[id]/reports", "file": "app/team/reports.tsx"},
+    {"pattern": "/team/[id]/exports", "file": "app/team/exports.tsx"},
+    {"pattern": "/team/[id]/billing", "file": "app/team/billing.tsx"},
+]
+devs = [devf("reports", ["app/team/reports.tsx"], "reports"),
+        devf("exports", ["app/team/exports.tsx"], "exports"),
+        devf("billing", ["app/team/billing.tsx"], "billing")]
+pfs = [pf("reports"), pf("exports"), pf("billing")]
+payload = {"orphan_journeys": [
+    {"title_chain": ["[DASH]: view team dashboards"],
+     "urls_touched": ["/team/:id/reports", "/team/:id/exports"], "steps": []},
+    {"title_chain": ["[DASH]: filter team dashboards"],
+     "urls_touched": ["/team/:id/exports", "/team/:id/reports"], "steps": []},
+    {"title_chain": ["[BILL]: open billing"],
+     "urls_touched": ["/team/:id/billing"], "steps": []},
+], "uf_e2e_evidence": {}, "matched": []}
+res = synthesize_orphan_journeys(payload, pfs, devs, routes, [])
+sig = "|".join(f"{u.name}:{u.product_feature_id}:{u.resource}:{u.id}:"
+               f"{','.join(u.routes)}" for u, _ in res["minted"])
+print(f"{res['tele']['minted']}||{sig}")
+'''
+
+
+def _run_seed(seed: str) -> str:
+    env = dict(_os.environ)
+    env["PYTHONHASHSEED"] = seed
+    # ensure the worktree package is importable in the child
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+    out = _sp.run([_sys.executable, "-c", _DET_DRIVER], env=env,
+                  capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def test_orphan_synthesis_cross_process_determinism():
+    """Minted set is IDENTICAL across PYTHONHASHSEED values (separate
+    processes) — proves the resource/dominant/owner picks are total-ordered,
+    not set-iteration-order dependent."""
+    sigs = {_run_seed(s) for s in ("0", "1", "424242", "7")}
+    assert len(sigs) == 1, f"non-deterministic across PYTHONHASHSEED: {sigs}"
+    only = next(iter(sigs))
+    assert only.startswith("2||"), only  # 2 groups (DASH, BILL) minted

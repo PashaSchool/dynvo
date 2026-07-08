@@ -915,21 +915,27 @@ def _label_to_name(label: str) -> str:
     return s
 
 
-#: Route segments that are ACTIONS / structural markers, never the product
-#: noun a journey is "about" — skipped when picking a UF resource from a
-#: route family (``(t, document, edit)`` → ``document``, not ``edit``).
+#: UNIVERSAL CRUD/action VERBS + framework route-structure markers (Next/Remix
+#: ``index``/``layout``) — never the product NOUN a journey is "about". Skipped
+#: when picking a UF resource from a route family (``(t, document, edit)`` →
+#: ``document``). Universal-only, NO repo/domain vocabulary — a domain noun a
+#: SPECIFIC repo happens to route on (documenso's ``envelope``/``folder``/sign-
+#: status segments) is a legitimate resource elsewhere; hardcoding it here would
+#: violate [[rule-no-repo-specific-paths]] / [[rule-no-magic-tuning]]. Version
+#: segments (``v1``…) never reach here — ``_pattern_key_chain`` drops them.
 _ACTION_SEGMENTS = frozenset({
-    "edit", "new", "create", "complete", "index", "layout", "folder", "f",
-    "expired", "rejected", "waiting", "settings", "setting", "delete",
-    "update", "add", "remove", "list", "view", "detail", "details", "page",
-    "envelope", "v0", "v1", "v2", "api",
+    "create", "new", "add", "edit", "update", "delete", "remove",
+    "list", "view", "index", "layout",
 })
 
 
 def _resource_from_fam(fam: tuple[str, ...]) -> str | None:
-    """Deepest product-noun segment of a route family (skip actions/markers)."""
+    """Deepest product-noun segment of a route family. Skips generic
+    action verbs / framework markers (``_ACTION_SEGMENTS``) and single-char
+    route shorthands (Remix folder-route ``f`` etc. — never a product noun;
+    a universal length rule, not a vocabulary)."""
     for tok in reversed(fam):
-        if tok and tok not in _ACTION_SEGMENTS:
+        if len(tok) > 1 and tok not in _ACTION_SEGMENTS:
             return tok
     return fam[-1] if fam else None
 
@@ -1042,15 +1048,18 @@ def synthesize_orphan_journeys(
                         for u in (o.get("urls_touched") or [])) if f
         }
         files: set[str] = set()
-        dominant: tuple[str, ...] | None = None
+        overlapping: set[tuple[str, ...]] = set()
         for jf in j_fams:
             for rfam, rfiles in route_fam_files.items():
                 if _fam_overlap(jf, rfam) > 0:
                     files |= rfiles
-                    if dominant is None or len(rfam) > len(dominant):
-                        dominant = rfam
-        if not files:
+                    overlapping.add(rfam)
+        if not overlapping:
             return None, None
+        # dominant = deepest resolved route family; TOTAL-ORDER tie-break
+        # (length, then tuple) so the pick is independent of set-iteration
+        # order (PYTHONHASHSEED-invariant) — never bare max(..., key=len).
+        dominant = max(overlapping, key=lambda t: (len(t), t))
         owners: dict[str, int] = {}
         for f in files:
             owner = file_pf.get(f)
@@ -1093,8 +1102,10 @@ def synthesize_orphan_journeys(
     for key in sorted(groups):
         g = groups[key]
         pfk = g["pf"]
-        # dominant family = the deepest resolved route family in the group.
-        fam = max(g["fams"], key=len) if g["fams"] else ()
+        # dominant family = the deepest resolved route family in the group;
+        # TOTAL-ORDER tie-break (length, then tuple) — g["fams"] is a set, so
+        # a bare max(..., key=len) would be PYTHONHASHSEED-dependent on ties.
+        fam = max(g["fams"], key=lambda t: (len(t), t)) if g["fams"] else ()
         resource = _resource_from_fam(fam) if fam else None
         if not resource:
             resource = normalize_anchor_key(g["label"]).split("-")[-1] or "journey"
