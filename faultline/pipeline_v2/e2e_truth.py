@@ -780,3 +780,398 @@ def scan_meta_view(payload: dict[str, Any]) -> dict[str, Any]:
         # no silent caps: full list always lives in the stage artifact
         "orphan_titles_truncated": max(0, len(titles) - 50),
     }
+
+
+# --------------------------------------------------------------------------
+# Orphan-journey → synthesized UF (Track C — recall of maintainer journeys)
+# --------------------------------------------------------------------------
+#
+# ``run_e2e_truth`` only REPORTS orphan journeys (recall holes the
+# maintainer named). This half BRINGS THEM INTO DETECTION: each groundable
+# orphan becomes a tagged, PF-bound ``UserFlow`` so the board/panel sees the
+# journey. Deterministic, $0 LLM, purely additive.
+#
+# Trust-invariant contract (the reason these are safe to append):
+#   * I21 (no orphan UF) — every minted UF carries a resolvable
+#     ``product_feature_id``; an orphan whose routes bind to no PF is
+#     DROPPED, never emitted null-bound.
+#   * I7 (>=1 member flow) — these are RECALL HOLES: by definition no flow
+#     was detected for them, so they are member-less. Tagged
+#     ``synthesis_reason="e2e_journey_recall"`` — the SAME "member-less,
+#     intentional, verifier-reviewable seed" class the D9-carve already
+#     exempts for ``system_flow_recall`` (the carve set extends to this
+#     reason; see the Track-C report). They carry ``routes`` (the
+#     maintainer-navigated URLs) as their code-surface evidence.
+#   * I15/I16/I19 — gated only for UFs with member flows; member-less by
+#     construction ⇒ structurally exempt.
+#   * I6 (no test-origin flow) — untouched: the flow graph is NOT mutated;
+#     the spec file is never cited as a path/entry.
+# ``binding_confidence="low"`` + ``name_confidence="low"`` flag every one
+# for verifier review (the PF binding is only as good as the current PF
+# segmentation).
+
+E2E_ORPHAN_UF_ENV = "FAULTLINE_E2E_ORPHAN_UF"
+
+#: Tag distinguishing e2e-authored recall seeds from the system-flow seeds
+#: (``system_flow_recall``) and the PF-UF backstop reasons. Interactive by
+#: nature (playwright drives a browser) — never a system journey.
+E2E_ORPHAN_REASON = "e2e_journey_recall"
+
+#: Cap on minted journeys per scan — a bound on additive output size, NOT a
+#: tuned threshold (the grain is the maintainer's own journey label; this
+#: only stops a pathological spec suite from flooding the board).
+_ORPHAN_UF_CAP = 60
+
+
+def orphan_uf_enabled() -> bool:
+    """Default ON; ``FAULTLINE_E2E_ORPHAN_UF=0`` disables orphan→UF
+    synthesis (output byte-identical to e2e-truth-report-only)."""
+    return os.environ.get(E2E_ORPHAN_UF_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+# Negative / error-path journeys — the maintainer scripts these to assert a
+# GUARD (auth denial, validation error, hierarchy invariant), not a product
+# capability. Not UF-grade (e2emerge flagged the "verify role hierarchy
+# after promotion" / "cannot promote non-existent user" class). A tiny,
+# universal error-vocabulary honesty filter — never a domain vocabulary.
+_NEG_TITLE_RE = re.compile(
+    r"\b(cannot|can'?t|can\s?not|should\s+not|shouldn'?t|must\s+not|do\s+not|"
+    r"don'?t|invalid|errors?|fails?|failure|failing|unauthori[sz]ed|"
+    r"forbidden|rejects?|rejected|denied|deny|non-?existent|not\s+found|"
+    r"not\s+allowed|prevents?|prevented|blocks?|blocked|disallow|"
+    r"without\s+(?:auth|permission|access|login)|no\s+access|"
+    r"verify\s+.*\bafter\b|handles?\s+.*\berror|negative)\b",
+    re.IGNORECASE,
+)
+
+_LABEL_TAG_RE = re.compile(r"^\s*\[([^\]]+)\]")
+
+
+def _is_negative_journey(title_chain: tuple[str, ...]) -> bool:
+    return bool(_NEG_TITLE_RE.search(" > ".join(title_chain)))
+
+
+def clean_route_pattern(pattern: str) -> str:
+    """Framework-filename route pattern → clean URL path for family keying.
+
+    Remix flat-routes encode the URL in the FILENAME: ``+`` terminates a
+    folder segment, ``.`` separates nested URL segments, ``$param`` is
+    dynamic, ``_index``/``_layout`` are markers, and a leading-underscore
+    segment (``_authenticated``, ``_recipient``) is a PATHLESS layout group.
+    The routes index stores that raw form, so its family key
+    (``t-team-url``/``documents-index``) never matches the CLEAN URL an e2e
+    spec navigates (``/t/:id/documents`` → ``t``/``document``). Normalizing
+    the pattern here reconciles them. Already-clean patterns (Next
+    ``[id]``, FastAPI ``{id}``, Rails ``:id``) pass through — their dynamic
+    glyphs are dropped by ``_pattern_key_chain`` downstream — so this is a
+    no-op for non-Remix stacks. [[rule-no-magic-tuning]]: pure structural
+    normalization, no thresholds.
+    """
+    segs: list[str] = []
+    for raw in str(pattern).split("/"):
+        if not raw:
+            continue
+        for part in raw.split("."):
+            part = part.rstrip("+")
+            if not part:
+                continue
+            if part[0] in "$[{":       # $teamUrl / [id] / {id} dynamic → drop
+                continue
+            if part[0] == "_":          # _authenticated group, _index, _layout
+                continue
+            segs.append(part)
+    return "/" + "/".join(segs)
+
+
+def _journey_label(title_chain: tuple[str, ...]) -> str:
+    """The maintainer's own journey label — the bracketed tag
+    (``[BULK_ACTIONS]``) or the prefix before the first ``:`` / `` - `` /
+    `` > `` separator. Collapses many ``it`` cases of one describe/tag into
+    a single journey (the natural product grain)."""
+    t = (title_chain[0] if title_chain else "").strip()
+    m = _LABEL_TAG_RE.match(t)
+    if m:
+        return m.group(1).strip()
+    for sep in (" - ", ": ", ":", " > "):
+        if sep in t:
+            head = t.split(sep, 1)[0].strip()
+            if head:
+                return head
+    return t
+
+
+def _label_to_name(label: str) -> str:
+    """Provisional display name from a journey label. ALL-CAPS / snake tags
+    (``BULK_ACTIONS``) title-case; already-phrased labels
+    (``Find Documents UI``) are kept. The naming contract polishes/overrides
+    downstream via the authored channel."""
+    s = re.sub(r"[_\-]+", " ", label).strip()
+    if not s:
+        return label.strip() or "Journey"
+    if s.replace(" ", "").isupper() or s.islower():
+        s = s.title()
+    return s
+
+
+#: UNIVERSAL CRUD/action VERBS + framework route-structure markers (Next/Remix
+#: ``index``/``layout``) — never the product NOUN a journey is "about". Skipped
+#: when picking a UF resource from a route family (``(t, document, edit)`` →
+#: ``document``). Universal-only, NO repo/domain vocabulary — a domain noun a
+#: SPECIFIC repo happens to route on (documenso's ``envelope``/``folder``/sign-
+#: status segments) is a legitimate resource elsewhere; hardcoding it here would
+#: violate [[rule-no-repo-specific-paths]] / [[rule-no-magic-tuning]]. Version
+#: segments (``v1``…) never reach here — ``_pattern_key_chain`` drops them.
+_ACTION_SEGMENTS = frozenset({
+    "create", "new", "add", "edit", "update", "delete", "remove",
+    "list", "view", "index", "layout",
+})
+
+
+def _resource_from_fam(fam: tuple[str, ...]) -> str | None:
+    """Deepest product-noun segment of a route family. Skips generic
+    action verbs / framework markers (``_ACTION_SEGMENTS``) and single-char
+    route shorthands (Remix folder-route ``f`` etc. — never a product noun;
+    a universal length rule, not a vocabulary)."""
+    for tok in reversed(fam):
+        if len(tok) > 1 and tok not in _ACTION_SEGMENTS:
+            return tok
+    return fam[-1] if fam else None
+
+
+_AUTHOR_RE = re.compile(
+    r"\b(create|creating|add|adding|upload|uploading|new|sign\s?up|signup|"
+    r"register|compose|draft|generate|import)\b", re.IGNORECASE)
+_BROWSE_RE = re.compile(
+    r"\b(view|viewing|browse|browsing|list|find|finding|search|searching|"
+    r"see|render|rendering|display|visible|preview|open|read)\b",
+    re.IGNORECASE)
+_MANAGE_RE = re.compile(
+    r"\b(delete|deleting|remove|edit|editing|update|updating|manage|"
+    r"managing|rename|move|moving|promote|assign|configure|settings|"
+    r"archive|restore|duplicate|share|resend)\b", re.IGNORECASE)
+_BULK_RE = re.compile(
+    r"\b(bulk|multiple|batch|select\s+all|checkbox(?:es)?)\b", re.IGNORECASE)
+_EXPORT_RE = re.compile(r"\b(export|download|downloading)\b", re.IGNORECASE)
+
+
+def _journey_intent(text: str) -> str:
+    """UF intent from the journey text (author|browse|manage|bulk|export|
+    execute). Deterministic verb heuristic over a universal action
+    vocabulary — never a domain vocabulary."""
+    if _BULK_RE.search(text):
+        return "bulk"
+    if _EXPORT_RE.search(text):
+        return "export"
+    if _AUTHOR_RE.search(text):
+        return "author"
+    if _MANAGE_RE.search(text):
+        return "manage"
+    if _BROWSE_RE.search(text):
+        return "browse"
+    return "execute"
+
+
+def _pf_key(pf: Any) -> str:
+    return str(_uf_get(pf, "id", None) or _uf_get(pf, "name", "") or "")
+
+
+def synthesize_orphan_journeys(
+    payload: dict[str, Any],
+    product_features: list[Any],
+    developer_features: list[Any],
+    routes_index: list[dict[str, Any]] | None,
+    user_flows: list[Any],
+) -> dict[str, Any]:
+    """Mint tagged, PF-bound ``UserFlow`` rows from groundable orphan
+    journeys. Deterministic, $0 LLM, additive.
+
+    Pipeline: filter negative/error journeys → key each journey's URLs to
+    route families (Remix-normalized) → resolve to handler files →
+    majority file→PF owner (drop if unbound: I21) → group by
+    ``(PF, journey-label)`` → one tagged UF per group.
+
+    Returns ``{"minted": [(UserFlow, [authored_titles]), ...],
+    "tele": {...}}``. The caller appends the UFs and renumbers the
+    provisional ``UF-000`` ids.
+    """
+    from faultline.models.types import UserFlow
+
+    orphans = payload.get("orphan_journeys") or []
+    tele: dict[str, Any] = {
+        "enabled": True,
+        "orphans_in": len(orphans),
+        "filtered_negative": 0,
+        "dropped_no_route_ev": 0,
+        "dropped_unbound_pf": 0,
+        "dropped_dup_existing": 0,
+        "groups": 0,
+        "minted": 0,
+        "minted_names": [],
+        "capped": 0,
+    }
+    if not orphans:
+        return {"minted": [], "tele": tele}
+
+    vocab = load_spine_vocab()
+    version_re = re.compile(vocab.get("version_segment_pattern") or r"^v\d+$")
+
+    # file → PF owner (dev features' owned paths; shared/facet excluded).
+    from faultline.pipeline_v2.conservation import (
+        build_file_pf_owner, dev_views_for,
+    )
+    pf_keys = frozenset(_pf_key(p) for p in product_features) - {""}
+    file_pf = build_file_pf_owner(
+        dev_views_for(developer_features), real_pf_keys=pf_keys)
+
+    # route family → handler files (normalized pattern).
+    route_fam_files: dict[tuple[str, ...], set[str]] = {}
+    for r in routes_index or []:
+        fam = _fam(clean_route_pattern(r.get("pattern") or ""),
+                   vocab, version_re)
+        if fam:
+            route_fam_files.setdefault(fam, set()).add(str(r.get("file") or ""))
+
+    # Existing UF surfaces to dedup against: (pf_key, resource-key).
+    existing_surfaces: set[tuple[str, str]] = set()
+    for uf in user_flows:
+        pfk = str(_uf_get(uf, "product_feature_id", "") or "")
+        res = normalize_anchor_key(str(_uf_get(uf, "resource", "") or ""))
+        if pfk and res:
+            existing_surfaces.add((pfk, res))
+
+    def _resolve(o: dict[str, Any]) -> tuple[str | None, tuple[str, ...] | None]:
+        """(bound PF key, dominant route family) for one orphan, or (None, _)."""
+        j_fams = {
+            f for f in (_fam(u, vocab, version_re)
+                        for u in (o.get("urls_touched") or [])) if f
+        }
+        files: set[str] = set()
+        overlapping: set[tuple[str, ...]] = set()
+        for jf in j_fams:
+            for rfam, rfiles in route_fam_files.items():
+                if _fam_overlap(jf, rfam) > 0:
+                    files |= rfiles
+                    overlapping.add(rfam)
+        if not overlapping:
+            return None, None
+        # dominant = deepest resolved route family; TOTAL-ORDER tie-break
+        # (length, then tuple) so the pick is independent of set-iteration
+        # order (PYTHONHASHSEED-invariant) — never bare max(..., key=len).
+        dominant = max(overlapping, key=lambda t: (len(t), t))
+        owners: dict[str, int] = {}
+        for f in files:
+            owner = file_pf.get(f)
+            if owner:
+                owners[owner] = owners.get(owner, 0) + 1
+        if not owners:
+            return None, dominant
+        # majority owner; ties broken lexicographically (determinism).
+        best = sorted(owners.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+        return best, dominant
+
+    # Group orphans by (PF, journey label). Insertion order is stable
+    # (orphans arrive sorted by journey_id from the payload).
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for o in orphans:
+        chain = tuple(o.get("title_chain") or [])
+        if _is_negative_journey(chain):
+            tele["filtered_negative"] += 1
+            continue
+        pfk, dominant = _resolve(o)
+        if dominant is None:
+            tele["dropped_no_route_ev"] += 1
+            continue
+        if not pfk:
+            tele["dropped_unbound_pf"] += 1
+            continue
+        label = _journey_label(chain)
+        key = (pfk, normalize_anchor_key(label) or label.lower())
+        g = groups.setdefault(key, {
+            "pf": pfk, "label": label, "titles": [], "urls": set(),
+            "fams": set(),
+        })
+        g["titles"].append(" > ".join(chain))
+        g["urls"].update(o.get("urls_touched") or [])
+        if dominant:
+            g["fams"].add(dominant)
+
+    tele["groups"] = len(groups)
+    minted: list[tuple[Any, list[str]]] = []
+    for key in sorted(groups):
+        g = groups[key]
+        pfk = g["pf"]
+        # dominant family = the deepest resolved route family in the group;
+        # TOTAL-ORDER tie-break (length, then tuple) — g["fams"] is a set, so
+        # a bare max(..., key=len) would be PYTHONHASHSEED-dependent on ties.
+        fam = max(g["fams"], key=lambda t: (len(t), t)) if g["fams"] else ()
+        resource = _resource_from_fam(fam) if fam else None
+        if not resource:
+            resource = normalize_anchor_key(g["label"]).split("-")[-1] or "journey"
+        if (pfk, normalize_anchor_key(resource)) in existing_surfaces:
+            tele["dropped_dup_existing"] += 1
+            continue
+        if len(minted) >= _ORPHAN_UF_CAP:
+            tele["capped"] += 1
+            continue
+        name = _label_to_name(g["label"])
+        intent = _journey_intent(" ".join(g["titles"][:6]) + " " + name)
+        routes = sorted(g["urls"])
+        uf = UserFlow(
+            id="UF-000",                 # provisional — caller renumbers
+            name=name,
+            resource=resource,
+            domain=None,
+            product_feature_id=pfk,
+            intent=intent,
+            member_flow_ids=[],
+            member_count=0,
+            routes=routes,
+            refined=True,                # 6.7b already ran; skip re-refine
+            category="interactive",      # playwright drives a browser
+            name_confidence="low",
+            binding_confidence="low",
+            synthesized=True,
+            synthesis_reason=E2E_ORPHAN_REASON,
+        )
+        minted.append((uf, g["titles"]))
+        if len(tele["minted_names"]) < 50:
+            tele["minted_names"].append(f"{name} → {pfk}")
+
+    tele["minted"] = len(minted)
+    return {"minted": minted, "tele": tele}
+
+
+def matched_authored_names(payload: dict[str, Any]) -> dict[str, list[str]]:
+    """``{uf_id: [authored journey labels]}`` for MATCHED journeys — the
+    maintainer's own names, fed to the naming contract's authored channel
+    so an existing UF's display can prefer the authored label over a
+    derived template (Track C-2, authored priority; deterministic).
+
+    ROUTE-EVIDENCE ONLY: a journey is used to name a UF exactly when it was
+    matched by route-family overlap (``via == "route"``). Content-token
+    name-fallback matches (``via == "name"``) are the engine's WEAKEST tie
+    (documenso stitches API journeys onto a "forks" UF that way) — feeding
+    their titles would MISNAME the UF, so they are excluded. Negative/error
+    and weak journey titles are also dropped.
+    """
+    per_uf: dict[str, list[str]] = {}
+    for row in payload.get("matched") or []:
+        if row.get("via") != "route":
+            continue
+        uid = str(row.get("uf_id") or "")
+        if not uid:
+            continue
+        chain = tuple(row.get("title_chain") or [])
+        if not chain or _is_negative_journey(chain):
+            continue
+        if " > ".join(chain).strip().lower() in _WEAK_TITLES:
+            continue
+        lbl = _label_to_name(_journey_label(chain))
+        if not lbl or lbl.strip().lower() in _WEAK_TITLES:
+            continue
+        labels = per_uf.setdefault(uid, [])
+        if lbl not in labels:
+            labels.append(lbl)
+    return {uid: labels[:3] for uid, labels in sorted(per_uf.items()) if labels}

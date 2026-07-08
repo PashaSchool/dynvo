@@ -462,11 +462,19 @@ def build_uf_candidates(
     pf: Any | None,
     vocab: Mapping[str, Any],
     member_flow_names: Iterable[str] = (),
+    authored: Iterable[str] = (),
 ) -> list[str]:
     """Ranked display candidates for one user flow. Journey templates
     (verb-led, actor+intent+outcome shape) lead when the current name is
     a twin of its PF or the UF is backstop-synthesized; a law-clean
-    existing name leads otherwise (no churn of good journey names)."""
+    existing name leads otherwise (no churn of good journey names).
+
+    ``authored`` (Track C) — MAINTAINER-authored journey labels from e2e
+    specs. When supplied they lead ALL other candidates: the maintainer
+    literally named this journey, which outranks any derived template. Each
+    is still polished + law-gated by the caller like any candidate, so an
+    unlawful authored string simply falls through to the derived set.
+    Empty (the default) ⇒ byte-identical to the pre-Track-C ranking."""
     current = str(getattr(uf, "name", "") or "")
     pf_display = (
         str(getattr(pf, "display_name", None) or getattr(pf, "name", "") or "")
@@ -516,6 +524,10 @@ def build_uf_candidates(
     def _add(c: str | None) -> None:
         if c and c.strip() and c not in out:
             out.append(c.strip())
+
+    # Track C — maintainer-authored labels lead (highest authority below LAW).
+    for a in authored:
+        _add(polish_display_casing(str(a), vocab))
 
     polished_current = polish_display_casing(current, vocab)
     current_clean = not display_law_violations(
@@ -579,6 +591,7 @@ def run_naming_contract(
     product_strings: Any = None,
     routes_index: Iterable[Mapping[str, Any]] | None = None,
     thesis_tokens: Iterable[str] = (),
+    uf_authored_names: Mapping[str, Iterable[str]] | None = None,
     labeler: Callable[[list[_PendingItem]], dict[str, Any]] | None = None,
     verifier: Callable[[list[dict[str, Any]]], dict[str, bool]] | None = None,
 ) -> dict[str, Any]:
@@ -610,6 +623,11 @@ def run_naming_contract(
 
     def _law_fix(law: str) -> None:
         tele["laws_fixed"][law] = tele["laws_fixed"].get(law, 0) + 1
+
+    _authored_map: Mapping[str, Iterable[str]] = uf_authored_names or {}
+
+    def _authored_for(uf: Any) -> list[str]:
+        return list(_authored_map.get(str(getattr(uf, "id", "") or ""), ()) or ())
 
     # Flow display names by member id (verb evidence for UF templates).
     flow_name_by_id: dict[str, str] = {}
@@ -720,7 +738,8 @@ def run_naming_contract(
             flow_name_by_id.get(str(m), str(m))
             for m in (getattr(uf, "member_flow_ids", None) or [])
         ]
-        candidates = build_uf_candidates(uf, pf, vocab, member_names)
+        candidates = build_uf_candidates(
+            uf, pf, vocab, member_names, authored=_authored_for(uf))
         violations = display_law_violations(
             polish_display_casing(current, vocab), vocab,
             pf_display=pf_display or None)
@@ -841,7 +860,9 @@ def run_naming_contract(
                 flow_name_by_id.get(str(m), str(m))
                 for m in (getattr(uf, "member_flow_ids", None) or [])
             ]
-            for cand in build_uf_candidates(uf, live_pf, vocab, member_names):
+            for cand in build_uf_candidates(
+                    uf, live_pf, vocab, member_names,
+                    authored=_authored_for(uf)):
                 if not display_law_violations(
                     cand, vocab, pf_display=live_disp,
                 ):

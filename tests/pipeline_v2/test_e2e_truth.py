@@ -311,3 +311,246 @@ def test_determinism_two_runs_identical(tmp_path):
     # file order is sorted regardless of creation order
     assert [o["file"] for o in p1["orphan_journeys"]] == [
         "e2e/b.spec.ts", "e2e/c.spec.ts"]
+
+
+# -- Track C: orphan-journey → UF synthesis --------------------------------
+
+from faultline.pipeline_v2.e2e_truth import (  # noqa: E402
+    E2E_ORPHAN_REASON,
+    E2E_ORPHAN_UF_ENV,
+    clean_route_pattern,
+    _is_negative_journey,
+    _journey_label,
+    matched_authored_names,
+    orphan_uf_enabled,
+    synthesize_orphan_journeys,
+)
+
+# Remix flat-route file that a documenso journey /t/:id/documents navigates.
+_DOCS_ROUTE = "apps/remix/app/routes/_authenticated+/t.$teamUrl+/documents._index.tsx"
+
+
+def _devf(name, paths, pf, role=None):
+    return SimpleNamespace(name=name, paths=paths, product_feature_id=pf,
+                           role=role, layer="developer", flows=[])
+
+
+def _pf(name):
+    return SimpleNamespace(id=name, name=name, display_name=name.title(),
+                           layer="product", paths=[])
+
+
+def _orphan(title, urls):
+    return {"title_chain": [title], "urls_touched": urls, "steps": [],
+            "file": "e2e/x.spec.ts", "runner_project": "."}
+
+
+def test_orphan_uf_flag_default_on(monkeypatch):
+    monkeypatch.delenv(E2E_ORPHAN_UF_ENV, raising=False)
+    assert orphan_uf_enabled()
+    monkeypatch.setenv(E2E_ORPHAN_UF_ENV, "0")
+    assert not orphan_uf_enabled()
+    monkeypatch.setenv(E2E_ORPHAN_UF_ENV, "false")
+    assert not orphan_uf_enabled()
+
+
+def test_clean_route_pattern_remix_and_passthrough():
+    assert clean_route_pattern(
+        "/_authenticated+/t.$teamUrl+/documents._index") == "/t/documents"
+    assert clean_route_pattern(
+        "/_recipient+/sign.$token+/complete") == "/sign/complete"
+    assert clean_route_pattern("/_unauthenticated+/signup") == "/signup"
+    # dynamic glyphs dropped early (downstream keychain drops them anyway)
+    assert clean_route_pattern("/t/[id]/documents") == "/t/documents"
+    assert clean_route_pattern("/api/v1/users") == "/api/v1/users"
+
+
+def test_is_negative_journey():
+    assert _is_negative_journey(("[ADMIN]: cannot promote non-existent user",))
+    assert _is_negative_journey(("should not allow access when required",))
+    assert _is_negative_journey(("verify role hierarchy after promotion",))
+    assert not _is_negative_journey(("[BULK_ACTIONS]: select multiple documents",))
+    assert not _is_negative_journey(("upload a PDF document",))
+
+
+def test_journey_label():
+    assert _journey_label(("[BULK_ACTIONS]: can select multiple",)) == "BULK_ACTIONS"
+    assert _journey_label(("Find Documents UI - Team Context",)) == "Find Documents UI"
+    assert _journey_label(("simple title",)) == "simple title"
+
+
+def test_orphan_synthesis_mints_grouped_pf_bound_uf():
+    dev = _devf("documents-route", [_DOCS_ROUTE], "documents")
+    routes_index = [{"pattern": "/_authenticated+/t.$teamUrl+/documents._index",
+                     "file": _DOCS_ROUTE}]
+    payload = {
+        "orphan_journeys": [
+            _orphan("[BULK_ACTIONS]: can select multiple documents",
+                    ["/t/:param/documents"]),
+            _orphan("[BULK_ACTIONS]: header checkbox selects all",
+                    ["/t/:param/documents"]),
+        ],
+        "uf_e2e_evidence": {}, "matched": [],
+    }
+    res = synthesize_orphan_journeys(payload, [_pf("documents")], [dev],
+                                     routes_index, [])
+    minted = res["minted"]
+    assert len(minted) == 1                       # grouped by (pf, tag)
+    uf, titles = minted[0]
+    assert uf.product_feature_id == "documents"   # I21-safe binding
+    assert uf.synthesis_reason == E2E_ORPHAN_REASON
+    assert uf.synthesized is True
+    assert uf.member_flow_ids == []               # recall hole: no flow
+    assert uf.category == "interactive"           # playwright drives a browser
+    assert uf.name_confidence == "low"
+    assert uf.binding_confidence == "low"
+    assert uf.resource == "document"              # noun, not the /edit action
+    assert uf.routes == ["/t/:param/documents"]   # evidence
+    assert len(titles) == 2                        # both bulk tests grouped
+    assert res["tele"]["minted"] == 1
+
+
+def test_orphan_negative_paths_filtered_not_minted():
+    dev = _devf("documents-route", [_DOCS_ROUTE], "documents")
+    routes_index = [{"pattern": "/_authenticated+/t.$teamUrl+/documents._index",
+                     "file": _DOCS_ROUTE}]
+    payload = {
+        "orphan_journeys": [
+            _orphan("[ADMIN]: cannot promote non-existent user",
+                    ["/t/:param/documents"]),
+        ],
+        "uf_e2e_evidence": {}, "matched": [],
+    }
+    res = synthesize_orphan_journeys(payload, [_pf("documents")], [dev],
+                                     routes_index, [])
+    assert res["tele"]["filtered_negative"] == 1
+    assert res["minted"] == []
+
+
+def test_orphan_unbound_pf_dropped_i21_safe():
+    # Route file is owned by NO product feature → journey must be dropped,
+    # never emitted with a null product_feature_id (I21).
+    routes_index = [{"pattern": "/_authenticated+/t.$teamUrl+/documents._index",
+                     "file": _DOCS_ROUTE}]
+    payload = {
+        "orphan_journeys": [
+            _orphan("[BULK_ACTIONS]: select documents", ["/t/:param/documents"]),
+        ],
+        "uf_e2e_evidence": {}, "matched": [],
+    }
+    res = synthesize_orphan_journeys(payload, [], [], routes_index, [])
+    assert res["minted"] == []
+    assert res["tele"]["dropped_unbound_pf"] == 1
+    assert all(uf.product_feature_id for uf, _ in res["minted"])  # trivially true
+
+
+def test_orphan_no_route_evidence_dropped():
+    payload = {
+        "orphan_journeys": [_orphan("[X]: does a thing", [])],  # no urls
+        "uf_e2e_evidence": {}, "matched": [],
+    }
+    res = synthesize_orphan_journeys(payload, [_pf("documents")], [], [], [])
+    assert res["minted"] == []
+    assert res["tele"]["dropped_no_route_ev"] == 1
+
+
+def test_orphan_synthesis_deterministic():
+    dev = _devf("documents-route", [_DOCS_ROUTE], "documents")
+    routes_index = [{"pattern": "/_authenticated+/t.$teamUrl+/documents._index",
+                     "file": _DOCS_ROUTE}]
+    payload = {
+        "orphan_journeys": [
+            _orphan("[BULK_ACTIONS]: a", ["/t/:param/documents"]),
+            _orphan("[DOCUMENTS]: b", ["/t/:param/documents"]),
+        ],
+        "uf_e2e_evidence": {}, "matched": [],
+    }
+    a = synthesize_orphan_journeys(payload, [_pf("documents")], [dev],
+                                   routes_index, [])
+    b = synthesize_orphan_journeys(payload, [_pf("documents")], [dev],
+                                   routes_index, [])
+    assert [(u.name, u.product_feature_id, tuple(u.routes)) for u, _ in a["minted"]] == \
+           [(u.name, u.product_feature_id, tuple(u.routes)) for u, _ in b["minted"]]
+
+
+def test_matched_authored_names_route_only():
+    # via="route" contributes; via="name" (weak fallback) is excluded.
+    payload = {"matched": [
+        {"via": "route", "uf_id": "UF-001",
+         "title_chain": ["[TEAMS]: create folder"]},
+        {"via": "name", "uf_id": "UF-002",
+         "title_chain": ["Find Documents API"]},
+        {"via": "route", "uf_id": "UF-003",
+         "title_chain": ["cannot delete locked doc"]},  # negative → skip
+    ], "uf_e2e_evidence": {}}
+    out = matched_authored_names(payload)
+    assert "UF-001" in out and out["UF-001"] == ["Teams"]
+    assert "UF-002" not in out          # weak via=name excluded
+    assert "UF-003" not in out          # negative excluded
+
+
+# -- Track C: cross-process (PYTHONHASHSEED) determinism -------------------
+
+import os as _os          # noqa: E402
+import subprocess as _sp  # noqa: E402
+import sys as _sys        # noqa: E402
+
+# A fixture that STRESSES both set-based tie-breaks: one journey resolves to
+# two EQUAL-LENGTH route families owned by two different PFs (dominant-fam tie
+# AND owner-majority tie). Before the total-order fix the minted resource/PF
+# drifted with PYTHONHASHSEED (4th non-det class). The driver prints a
+# canonical signature of every minted UF.
+_DET_DRIVER = r'''
+from faultline.pipeline_v2.e2e_truth import synthesize_orphan_journeys
+from types import SimpleNamespace
+
+def devf(name, paths, pf):
+    return SimpleNamespace(name=name, paths=paths, product_feature_id=pf,
+                           role=None, layer="developer", flows=[])
+def pf(name):
+    return SimpleNamespace(id=name, name=name, display_name=name.title(),
+                           layer="product", paths=[])
+
+routes = [
+    {"pattern": "/team/[id]/reports", "file": "app/team/reports.tsx"},
+    {"pattern": "/team/[id]/exports", "file": "app/team/exports.tsx"},
+    {"pattern": "/team/[id]/billing", "file": "app/team/billing.tsx"},
+]
+devs = [devf("reports", ["app/team/reports.tsx"], "reports"),
+        devf("exports", ["app/team/exports.tsx"], "exports"),
+        devf("billing", ["app/team/billing.tsx"], "billing")]
+pfs = [pf("reports"), pf("exports"), pf("billing")]
+payload = {"orphan_journeys": [
+    {"title_chain": ["[DASH]: view team dashboards"],
+     "urls_touched": ["/team/:id/reports", "/team/:id/exports"], "steps": []},
+    {"title_chain": ["[DASH]: filter team dashboards"],
+     "urls_touched": ["/team/:id/exports", "/team/:id/reports"], "steps": []},
+    {"title_chain": ["[BILL]: open billing"],
+     "urls_touched": ["/team/:id/billing"], "steps": []},
+], "uf_e2e_evidence": {}, "matched": []}
+res = synthesize_orphan_journeys(payload, pfs, devs, routes, [])
+sig = "|".join(f"{u.name}:{u.product_feature_id}:{u.resource}:{u.id}:"
+               f"{','.join(u.routes)}" for u, _ in res["minted"])
+print(f"{res['tele']['minted']}||{sig}")
+'''
+
+
+def _run_seed(seed: str) -> str:
+    env = dict(_os.environ)
+    env["PYTHONHASHSEED"] = seed
+    # ensure the worktree package is importable in the child
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+    out = _sp.run([_sys.executable, "-c", _DET_DRIVER], env=env,
+                  capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def test_orphan_synthesis_cross_process_determinism():
+    """Minted set is IDENTICAL across PYTHONHASHSEED values (separate
+    processes) — proves the resource/dominant/owner picks are total-ordered,
+    not set-iteration-order dependent."""
+    sigs = {_run_seed(s) for s in ("0", "1", "424242", "7")}
+    assert len(sigs) == 1, f"non-deterministic across PYTHONHASHSEED: {sigs}"
+    only = next(iter(sigs))
+    assert only.startswith("2||"), only  # 2 groups (DASH, BILL) minted

@@ -1453,8 +1453,13 @@ def run_finalize_phase(
     # e2e specs report e2e_absent, zero impact. Kill-switch
     # FAULTLINE_E2E_TRUTH=0 ⇒ byte-identical.
     from faultline.pipeline_v2.e2e_truth import (
-        e2e_truth_enabled, run_e2e_truth, scan_meta_view,
+        e2e_truth_enabled, matched_authored_names, orphan_uf_enabled,
+        run_e2e_truth, scan_meta_view, synthesize_orphan_journeys,
     )
+    # Track C — maintainer-authored journey display names ({uf_id: [labels]}),
+    # consumed by the naming contract's authored channel at Stage 7 (below).
+    _e2e_authored_names: dict[str, list[str]] = {}
+    e2e_payload: dict[str, Any] | None = None
     if e2e_truth_enabled():
         with StageLogger(run_dir, 6, "e2e_truth") as log_e2e:
             try:
@@ -1482,6 +1487,58 @@ def run_finalize_phase(
             except Exception as exc:  # noqa: BLE001 — never break a scan
                 log_e2e.info(
                     f"e2e_truth: FAILED ({exc}) — continuing", feature=None,
+                )
+
+    # ── Stage 6.98b — orphan-journey → UF synthesis (Track C, recall) ──
+    # Each groundable orphan journey (maintainer-named recall hole) becomes
+    # a tagged, PF-bound member-less UserFlow so the board/panel surfaces it.
+    # Deterministic, $0 LLM, additive. Runs immediately after e2e_truth (its
+    # payload feeds this). Also captures authored display names for MATCHED
+    # UFs (route-evidence only) for the naming contract. Kill-switch
+    # FAULTLINE_E2E_ORPHAN_UF=0 ⇒ output byte-identical to e2e-truth-only.
+    if (e2e_truth_enabled() and orphan_uf_enabled()
+            and e2e_payload is not None and not e2e_payload.get("e2e_absent")):
+        with StageLogger(run_dir, 6, "e2e_orphan_uf") as log_orph:
+            try:
+                _synth = synthesize_orphan_journeys(
+                    e2e_payload, product_features, features,
+                    lineage_result.routes_index, user_flows,
+                )
+                minted = _synth["minted"]
+                if minted:
+                    max_id = 0
+                    for uf in user_flows:
+                        _m = re.match(r"^UF-(\d+)$", str(uf.id or ""))
+                        if _m:
+                            max_id = max(max_id, int(_m.group(1)))
+                    fresh = [uf for uf, _titles in minted]
+                    fresh.sort(key=lambda u: ((u.name or "").lower(),
+                                              str(u.resource or "")))
+                    for i, uf in enumerate(fresh, start=1):
+                        uf.id = f"UF-{max_id + i:03d}"
+                    for uf, _titles in minted:
+                        user_flows.append(uf)
+                        _e2e_authored_names[uf.id] = [uf.name]
+                # C2 — authored names for MATCHED UFs (route-evidence only).
+                for uid, labels in matched_authored_names(e2e_payload).items():
+                    _e2e_authored_names.setdefault(uid, list(labels))
+                scan_meta["e2e_orphan_uf"] = _synth["tele"]
+                log_orph.info(
+                    "e2e_orphan_uf: minted=%d (groups=%d, "
+                    "filtered_neg=%d, dropped_no_route=%d, dropped_unbound=%d), "
+                    "matched_authored=%d" % (
+                        _synth["tele"]["minted"],
+                        _synth["tele"]["groups"],
+                        _synth["tele"]["filtered_negative"],
+                        _synth["tele"]["dropped_no_route_ev"],
+                        _synth["tele"]["dropped_unbound_pf"],
+                        len(_e2e_authored_names),
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_orph.info(
+                    f"e2e_orphan_uf: FAILED ({exc}) — continuing", feature=None,
                 )
 
     # ── Perf wave 2 (R5b) — 6.97 LOC prefetch overlaps the 6.95→6.96 chain ──
@@ -2159,6 +2216,7 @@ def run_finalize_phase(
                     keeper_on=keeper_enabled(),
                     product_strings=product_strings,
                     routes_index=lineage_result.routes_index,
+                    uf_authored_names=_e2e_authored_names,
                     labeler=_nc_labeler,
                     verifier=_nc_verifier,
                 )
