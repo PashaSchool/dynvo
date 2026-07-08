@@ -557,6 +557,22 @@ class ProvenanceView:
             return None
         return edge.target_file
 
+    def workspace_targets(self, src_file: str) -> frozenset[str]:
+        """Track-A A1: the in-repo targets ``src_file`` reaches through a
+        FIRST-PARTY WORKSPACE-PACKAGE import (``resolution="workspace"``) —
+        the cross-package DOMAIN dependencies (``@scope/emails`` →
+        packages/emails), distinct from same-app relative / ``@/`` alias
+        imports (local utils). This is the domain-specific provenance
+        signal the re-home attraction reads; local + external edges are
+        deliberately excluded (they are not cross-package domain evidence).
+        """
+        out: set[str] = set()
+        for edges in self._by_src.get(src_file, {}).values():
+            for e in edges:
+                if e.resolution == "workspace" and e.target_file is not None:
+                    out.add(e.target_file)
+        return frozenset(out)
+
     def lookup(
         self,
         src_file: str,

@@ -1189,6 +1189,45 @@ def run_finalize_phase(
                         feature=None,
                     )
 
+    # ── Track-A A1 — provenance re-home (import-graph channel) ─────────
+    # Complements lane_rehome's UF-CITATION channel with the ts_ast
+    # IMPORT-GRAPH channel: a lane entry file re-homes to the journey PF it
+    # provenance-connects to (imports that PF's first-party domain package)
+    # ONLY when the journey layer unanimously agrees (confirmation-gated →
+    # can only turn a FOREIGN entry NATIVE, never the reverse). Same window
+    # as lane_rehome — AFTER the final journey layer, BEFORE 6.97 loc so the
+    # moved membership is loc-stamped. Kill-switch FAULTLINE_PROV_ATTACH=0.
+    if anchored_mint_applied and not uf_suppressed:
+        from faultline.pipeline_v2.provenance_rehome import (
+            prov_attach_enabled,
+            run_provenance_rehome,
+        )
+        if prov_attach_enabled():
+            with StageLogger(run_dir, 6, "provenance_rehome") as log_prh:
+                try:
+                    prh_tele = run_provenance_rehome(
+                        user_flows, features, product_features, ctx,
+                    )
+                    if prh_tele.get("entries_rehomed"):
+                        scan_meta["provenance_rehome"] = prh_tele
+                    log_prh.info(
+                        "provenance_rehome: confirmed %d rehomed %d "
+                        "pfs_widened %d skip(conflict=%d owned=%d) ties=%d" % (
+                            prh_tele.get("entries_confirmed", 0),
+                            prh_tele.get("entries_rehomed", 0),
+                            prh_tele.get("pfs_widened", 0),
+                            prh_tele.get("skipped_journey_conflict", 0),
+                            prh_tele.get("skipped_owned", 0),
+                            prh_tele.get("abstained_ties", 0),
+                        ),
+                        feature=None,
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_prh.info(
+                        f"provenance_rehome: FAILED ({exc}) — lane left as-is",
+                        feature=None,
+                    )
+
     # ── W3.2 D9 — system journeys survive the keyed rewrite (BOTH paths) ──
     # wave31: 6.8b stamped system routes on 6/10 repos yet output carried
     # ZERO system-category UFs — the 6.7d rewrite rebuilds user_flows[]
