@@ -472,3 +472,72 @@ def test_is_layer2_noop_decision() -> None:
         base_scan=None,
         gate_meta={"incremental_gate_features_touched": 0},
     ) is False
+
+
+# ── Track C: orphan-journey → UF synthesis end-to-end wiring ─────────────
+
+def test_e2e_orphan_uf_synthesis_wired(tmp_path, monkeypatch):
+    """A repo with an e2e spec navigating an uncovered route surface mints a
+    tagged, PF-bound, member-less e2e_journey_recall UserFlow end-to-end."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    _patch_llm_stages(monkeypatch)
+
+    pw = 'import { test } from "@playwright/test";\n'
+    repo = tmp_path / "docapp"
+    _git_init_with_one_commit(repo, {
+        "package.json": json.dumps(
+            {"name": "docapp", "dependencies": {"next": "14.0.0"}}),
+        "next.config.js": "module.exports = {};\n",
+        "app/documents/page.tsx": "export default function P(){return null}\n",
+        "app/documents/[id]/page.tsx": "export default function P(){return null}\n",
+        "app/settings/page.tsx": "export default function P(){return null}\n",
+        "e2e/docs.spec.ts": pw + (
+            'test("[DOCUMENTS]: browse documents list", async ({ page }) => {\n'
+            '  await page.goto("/documents");\n});\n'
+            'test("[DOCUMENTS]: open a document", async ({ page }) => {\n'
+            '  await page.goto("/documents/abc");\n});\n'),
+    })
+
+    out = tmp_path / "fm.json"
+    run_pipeline_v2(repo, model="haiku", out_path=out)
+    d = json.loads(out.read_text())
+
+    meta = (d.get("scan_meta") or {}).get("e2e_orphan_uf")
+    assert meta is not None and meta["enabled"] is True   # stage ran
+    e2e_ufs = [u for u in (d.get("user_flows") or [])
+               if u.get("synthesis_reason") == "e2e_journey_recall"]
+    assert len(e2e_ufs) >= 1                               # minted a journey
+    for u in e2e_ufs:
+        assert u.get("product_feature_id")                # I21-safe binding
+        assert not (u.get("member_flow_ids") or [])       # recall hole: member-less
+        assert u.get("category") == "interactive"
+        assert u.get("routes")                            # route evidence carried
+        assert u.get("id", "").startswith("UF-")          # renumbered
+
+
+def test_e2e_orphan_uf_kill_switch(tmp_path, monkeypatch):
+    """FAULTLINE_E2E_ORPHAN_UF=0 ⇒ stage does not run, no minted UFs."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setenv("FAULTLINE_E2E_ORPHAN_UF", "0")
+    _patch_llm_stages(monkeypatch)
+
+    pw = 'import { test } from "@playwright/test";\n'
+    repo = tmp_path / "docapp2"
+    _git_init_with_one_commit(repo, {
+        "package.json": json.dumps(
+            {"name": "docapp2", "dependencies": {"next": "14.0.0"}}),
+        "next.config.js": "module.exports = {};\n",
+        "app/documents/page.tsx": "export default function P(){return null}\n",
+        "app/documents/[id]/page.tsx": "export default function P(){return null}\n",
+        "e2e/docs.spec.ts": pw + (
+            'test("[DOCUMENTS]: browse", async ({ page }) => {\n'
+            '  await page.goto("/documents");\n});\n'),
+    })
+    out = tmp_path / "fm2.json"
+    run_pipeline_v2(repo, model="haiku", out_path=out)
+    d = json.loads(out.read_text())
+    assert "e2e_orphan_uf" not in (d.get("scan_meta") or {})
+    assert not [u for u in (d.get("user_flows") or [])
+                if u.get("synthesis_reason") == "e2e_journey_recall"]
