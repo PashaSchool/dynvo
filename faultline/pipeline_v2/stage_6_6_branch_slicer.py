@@ -459,8 +459,25 @@ class StageResult:
 # tree-sitter slicing per feature is independent (each thread parses
 # files via a thread-local parser + writes only to its own feature).
 # Modest parallelism shortens wall time on monorepos.
+#
+# The wall budget is SCALE-INVARIANT (aligned with Stages 6.3/6.4): a
+# per-feature time allowance × feature count, NOT a flat wall. A repo with
+# 10x the features gets 10x the budget, so on a healthy repo nothing is
+# skipped. When an absolute budget IS supplied it is interpreted
+# DETERMINISTICALLY as a count of per-feature allowances
+# (``keep_count = floor(budget / per_feature_sec)``): the SAME canonical
+# suffix of features is skipped every run regardless of thread-completion
+# timing (D-CLUSTER fix). Override the resolved wall directly with
+# FAULTLINE_STAGE_6_6_BUDGET_SEC (absolute seconds) or the per-feature
+# allowance with FAULTLINE_STAGE_6_6_PER_FEATURE_SEC. An external runner can
+# still enforce a hard ceiling via WORKER_TIMEOUT_SEC.
 DEFAULT_MAX_WORKERS = 4
-DEFAULT_WALL_BUDGET_SEC = 90.0
+# Per-feature time allowance (seconds). Effective default wall =
+# DEFAULT_PER_FEATURE_BUDGET_SEC * len(features).
+DEFAULT_PER_FEATURE_BUDGET_SEC = 6.0
+# Backward-compat alias for callers/tests importing the old flat default.
+# No longer used to compute the wall (see resolution in run_stage_6_6).
+DEFAULT_WALL_BUDGET_SEC = DEFAULT_PER_FEATURE_BUDGET_SEC
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
@@ -904,12 +921,40 @@ def run_stage_6_6(
             max_workers = max(1, int(raw)) if raw else DEFAULT_MAX_WORKERS
         except ValueError:
             max_workers = DEFAULT_MAX_WORKERS
-    if wall_budget_sec is None:
+    # Per-feature time allowance — always resolved; factor of the default
+    # scale-invariant wall AND divisor of the deterministic seconds→count cut.
+    raw_pf = os.environ.get("FAULTLINE_STAGE_6_6_PER_FEATURE_SEC")
+    try:
+        per_feature_sec = (
+            float(raw_pf) if raw_pf else DEFAULT_PER_FEATURE_BUDGET_SEC
+        )
+    except ValueError:
+        per_feature_sec = DEFAULT_PER_FEATURE_BUDGET_SEC
+
+    # Absolute-seconds override: caller arg wins, else env. Interpreted
+    # DETERMINISTICALLY as a budget of per-feature allowances
+    # (keep_count = floor(budget / per_feature_sec)) — NOT a wall-clock
+    # deadline — so the SAME features are skipped every run (D-CLUSTER fix).
+    override_sec: float | None = wall_budget_sec
+    if override_sec is None:
         raw = os.environ.get("FAULTLINE_STAGE_6_6_BUDGET_SEC")
-        try:
-            wall_budget_sec = float(raw) if raw else DEFAULT_WALL_BUDGET_SEC
-        except ValueError:
-            wall_budget_sec = DEFAULT_WALL_BUDGET_SEC
+        if raw:
+            try:
+                override_sec = float(raw)
+            except ValueError:
+                override_sec = None
+
+    n_features = len(features)
+    if override_sec is not None:
+        wall_budget_sec = override_sec
+        if override_sec <= 0 or per_feature_sec <= 0:
+            keep_count = n_features
+        else:
+            keep_count = min(n_features, int(override_sec // per_feature_sec))
+    else:
+        # Default: scale-invariant wall covers every feature by construction.
+        wall_budget_sec = per_feature_sec * max(1, n_features)
+        keep_count = n_features
 
     result = StageResult(
         active=True,
@@ -917,31 +962,36 @@ def run_stage_6_6(
         budget_sec=wall_budget_sec or 0.0,
         max_workers=max_workers,
     )
+    result.budget_exceeded = keep_count < n_features
     sample_target = 5
 
-    def _budget_exhausted() -> bool:
-        if wall_budget_sec is None or wall_budget_sec <= 0:
-            return False
-        return (time.monotonic() - t0) >= wall_budget_sec
-
+    # Deterministic degradation: keep the canonically-lowest ``keep_count``
+    # features (stable content key = name + sorted paths); skip the rest. The
+    # kept SET is a pure function of the features' CONTENT — independent of the
+    # input list order AND of thread timing. Output order stays original.
+    canonical_order = sorted(
+        range(n_features),
+        key=lambda i: (features[i].name or "", tuple(sorted(features[i].paths or []))),
+    )
+    kept_indices = set(canonical_order[:keep_count])
     sub_results: dict[int, _PerFeatureBranchResult] = {}
-    budget_skipped_indices: list[int] = []
+    budget_skipped_indices: list[int] = [
+        i for i in range(n_features) if i not in kept_indices
+    ]
 
     if max_workers <= 1:
         # Serial path.
-        for index, feature in enumerate(features):
-            if _budget_exhausted():
-                result.budget_exceeded = True
-                budget_skipped_indices.append(index)
+        for index in range(n_features):
+            if index not in kept_indices:
                 continue
             try:
                 sub_results[index] = _slice_for_feature(
-                    feature, index, ctx=ctx, log=log,
+                    features[index], index, ctx=ctx, log=log,
                     sample_target=sample_target,
                 )
             except Exception as exc:  # noqa: BLE001 — defensive
                 log.warn(
-                    f"feature-worker-error name={feature.name} "
+                    f"feature-worker-error name={features[index].name} "
                     f"{type(exc).__name__}: {exc}",
                 )
                 logger.warning("stage_6_6 worker raised", exc_info=True)
@@ -953,10 +1003,11 @@ def run_stage_6_6(
             future_to_index = {
                 pool.submit(
                     _slice_for_feature,
-                    feature, index, ctx=ctx, log=log,
+                    features[index], index, ctx=ctx, log=log,
                     sample_target=sample_target,
                 ): index
-                for index, feature in enumerate(features)
+                for index in range(n_features)
+                if index in kept_indices
             }
             for fut in as_completed(future_to_index):
                 index = future_to_index[fut]
@@ -968,15 +1019,6 @@ def run_stage_6_6(
                         f"{type(exc).__name__}: {exc}",
                     )
                     logger.warning("stage_6_6 worker raised", exc_info=True)
-                if not result.budget_exceeded and _budget_exhausted():
-                    result.budget_exceeded = True
-                    for pending_fut, pending_idx in future_to_index.items():
-                        if (
-                            pending_idx not in sub_results
-                            and not pending_fut.done()
-                        ):
-                            if pending_fut.cancel():
-                                budget_skipped_indices.append(pending_idx)
 
     # Apply phase — main thread mutates feature attribution lists and
     # accumulates the global result in original feature order.

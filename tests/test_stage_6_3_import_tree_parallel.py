@@ -250,14 +250,18 @@ def test_artifact_payload_carries_concurrency_block(tmp_path: Path) -> None:
     from faultline.pipeline_v2.stage_6_3_import_tree import build_artifact_payload
 
     ctx, feats = _build_multi_feature_repo(tmp_path, n_features=2)
-    res = enrich_with_import_tree(ctx, feats, max_workers=2, wall_budget_sec=10.0)
+    # A clearly-generous budget: under the deterministic seconds→count
+    # semantics it affords floor(1000 / 6.0) = 166 features >> 2, so nothing
+    # is skipped. (The old wall-clock semantics treated any modest value as
+    # "plenty of wall time"; the value is arbitrary for this payload check.)
+    res = enrich_with_import_tree(ctx, feats, max_workers=2, wall_budget_sec=1000.0)
     payload = build_artifact_payload(
         res,
         max_depth=8, max_files_per_feature=100, max_symbols_per_feature=500,
     )
     assert "concurrency" in payload
     assert payload["concurrency"]["max_workers"] == 2
-    assert payload["concurrency"]["budget_sec"] == 10.0
+    assert payload["concurrency"]["budget_sec"] == 1000.0
     assert payload["concurrency"]["budget_exceeded"] is False
 
 

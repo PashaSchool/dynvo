@@ -85,16 +85,20 @@ def flow_walltime_exceeded(
 def budget_exceeded(
     *, stage: str, budget_sec: float, features_skipped: int, elapsed_sec: float,
 ) -> Degradation:
-    """A per-stage TIME budget (enrichment stages 6.3 / 6.4 / 6.6) was hit, so
-    ``features_skipped`` features were left un-enriched. Same partial class as
-    :func:`flow_walltime_exceeded` but for the deterministic enrichment stages."""
+    """A per-stage enrichment budget (stages 6.3 / 6.4 / 6.6) was exceeded, so
+    ``features_skipped`` features (a deterministic canonical suffix) were left
+    un-enriched. The budget is applied as a DETERMINISTIC per-feature-allowance
+    COUNT, not a wall-clock deadline, so the skipped set is a pure function of
+    input; ``elapsed_sec`` is retained only as informational telemetry (it is a
+    volatile measurement and is scrubbed from the byte-identity digest — it must
+    never appear in ``detail``)."""
     return make(
         TYPE_BUDGET_EXCEEDED,
         stage=stage,
         severity=SEVERITY_PARTIAL,
         detail=(
-            f"{stage} hit its {budget_sec}s time budget "
-            f"({elapsed_sec}s elapsed); {features_skipped} feature(s) skipped"
+            f"{stage} enrichment budget exceeded "
+            f"(budget_sec={budget_sec}); {features_skipped} feature(s) skipped"
         ),
         budget_sec=budget_sec,
         features_skipped=features_skipped,

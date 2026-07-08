@@ -1611,55 +1611,79 @@ def enrich_with_import_tree(
             )
         except ValueError:
             max_workers = DEFAULT_MAX_WORKERS
-    if wall_budget_sec is None:
-        # Absolute-seconds override wins if set; otherwise derive a
-        # scale-invariant wall = per-feature allowance * feature count.
+    # Per-feature time allowance — always resolved; it is both the factor of
+    # the default scale-invariant wall AND the divisor of the deterministic
+    # seconds→count cut below.
+    env_per_feat = os.environ.get("FAULTLINE_STAGE_6_3_PER_FEATURE_SEC")
+    try:
+        per_feature_sec = (
+            float(env_per_feat) if env_per_feat
+            else DEFAULT_PER_FEATURE_BUDGET_SEC
+        )
+    except ValueError:
+        per_feature_sec = DEFAULT_PER_FEATURE_BUDGET_SEC
+
+    # Absolute-seconds override: caller arg wins, else env. When present it is
+    # interpreted DETERMINISTICALLY as a budget of per-feature allowances —
+    # ``keep_count = floor(budget / per_feature_sec)`` — NOT a wall-clock
+    # deadline. This is what makes graceful degradation reproducible: the
+    # SAME features are skipped every run regardless of thread-completion
+    # timing (D-CLUSTER fix). See the module header for the rationale.
+    override_sec: float | None = wall_budget_sec
+    if override_sec is None:
         env_budget = os.environ.get("FAULTLINE_STAGE_6_3_BUDGET_SEC")
         if env_budget:
             try:
-                wall_budget_sec = float(env_budget)
+                override_sec = float(env_budget)
             except ValueError:
-                wall_budget_sec = None
-        if wall_budget_sec is None:
-            env_per_feat = os.environ.get(
-                "FAULTLINE_STAGE_6_3_PER_FEATURE_SEC"
-            )
-            try:
-                per_feature_sec = (
-                    float(env_per_feat) if env_per_feat
-                    else DEFAULT_PER_FEATURE_BUDGET_SEC
-                )
-            except ValueError:
-                per_feature_sec = DEFAULT_PER_FEATURE_BUDGET_SEC
-            wall_budget_sec = per_feature_sec * max(1, len(features))
+                override_sec = None
+
+    n_features = len(features)
+    if override_sec is not None:
+        wall_budget_sec = override_sec
+        if override_sec <= 0 or per_feature_sec <= 0:
+            # Guard disabled → process every feature.
+            keep_count = n_features
+        else:
+            keep_count = min(n_features, int(override_sec // per_feature_sec))
+    else:
+        # Default: scale-invariant wall covers every feature by construction,
+        # so keep_count == n_features (computed directly to avoid float drift).
+        wall_budget_sec = per_feature_sec * max(1, n_features)
+        keep_count = n_features
+
+    # Deterministic degradation: keep the canonically-lowest ``keep_count``
+    # features (stable content key = name + sorted paths) and skip the rest.
+    # The kept SET is a pure function of the features' CONTENT — independent of
+    # the input list order AND of thread-completion timing. Output order is
+    # untouched (the apply phase re-emits in the original feature order).
+    canonical_order = sorted(
+        range(n_features),
+        key=lambda i: (features[i].name or "", tuple(sorted(features[i].paths or []))),
+    )
+    kept_indices = set(canonical_order[:keep_count])
+    budget_skipped_indices = [i for i in range(n_features) if i not in kept_indices]
+    budget_exceeded = keep_count < n_features
 
     if log:
         log.info(
             f"concurrency: max_workers={max_workers} "
-            f"wall_budget_sec={wall_budget_sec}",
+            f"wall_budget_sec={wall_budget_sec} "
+            f"keep_count={keep_count}/{n_features}",
         )
 
     # Result map keyed by feature index so we can reassemble per_feature
     # in the original order, regardless of thread completion order.
     result_by_index: dict[int, _PerFeatureResult] = {}
-    budget_skipped_indices: list[int] = []
-    budget_exceeded = False
-
-    def _budget_exhausted() -> bool:
-        if wall_budget_sec is None or wall_budget_sec <= 0:
-            return False
-        return (time.monotonic() - t0) >= wall_budget_sec
+    # Only the kept features are dispatched; skipped ones are never started.
 
     if max_workers <= 1:
-        # Legacy serial path — preserves exact behaviour for tests that
-        # rely on deterministic ordering of log emit events.
-        for index, feature in enumerate(features):
-            if _budget_exhausted():
-                budget_exceeded = True
-                budget_skipped_indices.append(index)
+        # Serial path.
+        for index in range(n_features):
+            if index not in kept_indices:
                 continue
             result_by_index[index] = _compute_one_feature(
-                feature, index,
+                features[index], index,
                 ctx=ctx, cache=cache, alias_map=alias_map,
                 tracked_files=tracked_files,
                 max_depth=max_depth,
@@ -1668,11 +1692,8 @@ def enrich_with_import_tree(
                 log=log,
             )
     else:
-        # Parallel path — submit all features up front; check the
-        # budget on each completion. Once exhausted, mark every still-
-        # pending feature as ``budget_skipped`` (we cannot cancel an
-        # in-flight thread but the ``Future.cancel`` call will succeed
-        # for any task the executor has not yet started).
+        # Parallel path — submit the kept features; collect results in any
+        # completion order (result_by_index reassembles original order).
         with ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="stage6_3",
@@ -1680,7 +1701,7 @@ def enrich_with_import_tree(
             future_to_index = {
                 pool.submit(
                     _compute_one_feature,
-                    feature, index,
+                    features[index], index,
                     ctx=ctx, cache=cache, alias_map=alias_map,
                     tracked_files=tracked_files,
                     max_depth=max_depth,
@@ -1688,21 +1709,14 @@ def enrich_with_import_tree(
                     max_symbols_per_feature=max_symbols_per_feature,
                     log=log,
                 ): index
-                for index, feature in enumerate(features)
+                for index in range(n_features)
+                if index in kept_indices
             }
-            from concurrent.futures import CancelledError
 
             for fut in as_completed(future_to_index):
                 index = future_to_index[fut]
                 try:
                     result_by_index[index] = fut.result()
-                except CancelledError:
-                    # Future was cancelled by the budget-exhausted
-                    # branch below; treat as a budget skip, NOT an
-                    # error. The apply phase recognises a None entry
-                    # in result_by_index as ``budget_skipped`` so we
-                    # leave this index unset and continue.
-                    continue
                 except Exception as exc:  # noqa: BLE001 — defensive
                     # A worker exception should never break Stage 6.3.
                     # Record a no-op enrichment for the feature so the
@@ -1733,20 +1747,6 @@ def enrich_with_import_tree(
                     logger.warning(
                         "stage_6_3 worker raised", exc_info=True,
                     )
-                if not budget_exceeded and _budget_exhausted():
-                    budget_exceeded = True
-                    # Cancel everything not yet running.
-                    for pending_fut, pending_idx in future_to_index.items():
-                        if (
-                            pending_idx not in result_by_index
-                            and not pending_fut.done()
-                        ):
-                            if pending_fut.cancel():
-                                budget_skipped_indices.append(pending_idx)
-            # After the with-block exits, any remaining future MUST be
-            # complete; if it isn't (e.g. cancel returned False), we
-            # already have a result. Index gaps remain only for
-            # cancelled ones, which were appended above.
 
     # ── Apply phase (single-threaded) ────────────────────────────────
     # Iterate in original feature order so per_feature telemetry stays
