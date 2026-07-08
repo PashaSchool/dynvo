@@ -48,6 +48,7 @@ No LLM. No network. Pure file-system scan + regex.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -220,6 +221,68 @@ def _route_to_slug(route: str) -> str:
     return slug or "root"
 
 
+# ── B2: apps-as-domains + URL-param transparency (FAULTLINE_DJANGO_APP_DOMAINS)
+# Django URL captures (``<int:pk>`` / ``<slug:name>`` / ``<uuid:id>`` /
+# ``(?P<pk>\d+)``) are IDENTITY params, not resources — the ts-side
+# tenancy-transparency law applied to Python. Left in the pattern they
+# leak into deterministic flow/UF names ("recruitment manager int mid
+# int rid"). Stripped, the resource noun surfaces ("recruitment
+# manager") and downstream naming matches the product vocabulary.
+
+_PARAM_NAMED_GROUP_RE = re.compile(r"\(\?P<\w+>[^)]*\)")  # (?P<pk>\d+)
+_PARAM_ANGLE_RE = re.compile(r"<[^>]*>")                  # <int:pk> / <slug>
+_PARAM_BARE_GROUP_RE = re.compile(r"\([^)]*\)")           # bare (\d+) group
+_MULTISLASH_RE = re.compile(r"/{2,}")
+
+
+def _app_domains_on() -> bool:
+    """Master kill-switch for the B2 Django enhancements (default ON).
+
+    ``=0`` restores the pre-B2 slug/route emission byte-for-byte.
+    """
+    return (os.environ.get("FAULTLINE_DJANGO_APP_DOMAINS", "1")
+            or "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _strip_url_params(route: str) -> str:
+    """Drop every URL-capture param + regex scaffolding from a pattern.
+
+    ``employee/<int:pk>/edit`` → ``employee/edit`` ;
+    ``^posts/(?P<pk>\\d+)/$`` → ``posts`` ;
+    ``recruitment-manager/<int:mid>/<int:rid>/`` → ``recruitment-manager``.
+    Static resource segments survive; identity params vanish.
+    """
+    r = _PARAM_NAMED_GROUP_RE.sub("", route)
+    r = _PARAM_ANGLE_RE.sub("", r)
+    r = _PARAM_BARE_GROUP_RE.sub("", r)
+    r = re.sub(r"[\^\$\\?+*\[\]{}|]", "", r)
+    r = _MULTISLASH_RE.sub("/", r)
+    return r.strip("/ ")
+
+
+def _transparent_pattern(route: str) -> str:
+    """Param-transparent, joined route pattern (``/`` for an all-param route)."""
+    seg = _strip_url_params(route)
+    return _join_path(seg) if seg else "/"
+
+
+def _route_to_slug_transparent(route: str) -> str:
+    """Slug = first STATIC (non-param) path segment of the pattern.
+
+    Unlike :func:`_route_to_slug` (which can yield ``int-pk`` when a
+    pattern LEADS with a capture, e.g. ``<int:pk>/edit``), this skips
+    param-only segments so the resource root always surfaces.
+    """
+    cleaned = _strip_url_params(route)
+    for seg in cleaned.split("/"):
+        seg = seg.strip()
+        if seg:
+            slug = slugify(seg)
+            if slug:
+                return slug
+    return "root"
+
+
 def _view_symbol(arg_blob: str, c: "_Compiled") -> str | None:
     """Extract the view symbol / reverse name from a route's arg blob."""
     m = c.view_ref_re.search(arg_blob)
@@ -266,6 +329,7 @@ class DjangoExtractor:
         c = _compile(self._config)
         if not self.is_active(ctx):
             return []
+        app_domains = _app_domains_on()
 
         # ── Pass A: collect HTTP view classes per file (symbol → file) ──
         # Maps a view class name to the file that declares it, so a route
@@ -349,7 +413,16 @@ class DjangoExtractor:
                     # skip emitting it as its own leaf feature but keep its
                     # prefix as the resource name when meaningful.
                     is_include = "include(" in arg_blob
-                    slug = _route_to_slug(route_literal)
+                    # B2 (FAULTLINE_DJANGO_APP_DOMAINS): param-transparent
+                    # slug + route pattern so identity captures never leak
+                    # into deterministic flow/UF names. Flag off → the
+                    # legacy slug/pattern, byte-for-byte.
+                    if app_domains:
+                        slug = _route_to_slug_transparent(route_literal)
+                        route_pattern = _transparent_pattern(route_literal)
+                    else:
+                        slug = _route_to_slug(route_literal)
+                        route_pattern = _join_path(route_literal)
                     if not slug or slug == "root" or is_noise(slug):
                         if not is_include:
                             continue
@@ -361,7 +434,7 @@ class DjangoExtractor:
                     # downstream symbol attribution has the entry point.
                     method_slot = view_sym or func.upper()
                     buckets[slug]["routes"].append(
-                        (_join_path(route_literal), method_slot, rel_posix),
+                        (route_pattern, method_slot, rel_posix),
                     )
                     buckets[slug]["files"].add(rel_posix)
                     if view_sym:
