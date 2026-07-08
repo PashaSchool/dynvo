@@ -44,8 +44,14 @@ Signals (S3 = V1-pass is the hard prerequisite; ≥1 of S1/S2 decides):
     dominant declared import (documenso/typebot ``packages/prisma``,
     midday ``packages/db`` + drizzle).
   * **S1c config-only unit** — ≤2 source files, config-majority
-    content, imported by nobody (``packages/tsconfig``,
-    ``eslint-config``): the unit is a settings artifact.
+    content, AND either imported by nobody (``packages/tsconfig``;
+    ``eslint-config`` referenced via an ``extends`` STRING, no import
+    edge) OR consumed ONLY through config channels — every importer is a
+    ``*.config.*`` / ``.*rc*`` file (a root ``prettier.config.cjs`` =
+    ``module.exports = require('@scope/prettier-config')`` re-export;
+    B1, kill-switch ``FAULTLINE_CONFIG_LANE``). Either way the unit is a
+    settings artifact, not a library consumed by product code. The
+    package name is never the trigger.
   * **S1d dominant-dependency wrapper** — ≥50% of the unit's source
     files import ONE non-ambient declared dependency and the unit
     imports ≤1 other in-repo unit (midday ``packages/email`` 87%
@@ -93,11 +99,17 @@ from typing import Any, Iterable, Mapping
 
 __all__ = [
     "TECH_INSTRUMENTS_ENV",
+    "CONFIG_LANE_ENV",
     "tech_instruments_enabled",
+    "config_lane_enabled",
     "detect_technology_instruments",
 ]
 
 TECH_INSTRUMENTS_ENV = "FAULTLINE_TECH_INSTRUMENTS"
+#: B1 kill-switch — the config-channel relaxation of S1c (below). Default
+#: ON; ``FAULTLINE_CONFIG_LANE=0`` keeps the strict ``inf == 0`` guard so
+#: output is byte-identical to pre-B1 main.
+CONFIG_LANE_ENV = "FAULTLINE_CONFIG_LANE"
 
 #: Shared-package container roots a candidate must live under (mirrors
 #: ``stage_6_86_anchored_mint._LANE_SHARED_PKG_ROOTS`` — kept literal to
@@ -151,6 +163,19 @@ def tech_instruments_enabled() -> bool:
     }
 
 
+def config_lane_enabled() -> bool:
+    """B1 config-lane relaxation. Default ON; ``FAULTLINE_CONFIG_LANE=0``
+    restores byte-identical output to main.
+
+    OFF keeps the S1c ``inf == 0`` guard strict, so a config-only package
+    consumed only through a config-channel re-export (a root
+    ``prettier.config.cjs`` = ``module.exports = require('@scope/prettier-
+    config')``) mints as a PF exactly as pre-B1. ON lanes it with the
+    ``eslint-config`` / ``tsconfig`` class it belongs to."""
+    return (os.environ.get(CONFIG_LANE_ENV, "1") or "1").strip().lower() \
+        not in {"0", "false"}
+
+
 def _norm(tok: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(tok).lower())
 
@@ -189,6 +214,21 @@ def _is_config_class(path: str) -> bool:
         return True
     ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
     return ext in _CONFIG_EXT
+
+
+def _is_config_channel_file(path: str) -> bool:
+    """A file that consumes shared config through a CONFIG channel: its
+    basename is an ecosystem config entry-point (``*.config.*``) or an rc
+    file (``.*rc*``). Reuses the S1a marker regexes so "config channel"
+    has ONE definition across the module.
+
+    B1: a config-only package imported SOLELY by such files (the root
+    ``prettier.config.cjs`` re-export shim) is a settings artifact
+    consumed by a config channel — not a library consumed by product
+    code. Structure/file-system grounded; the importer's NAME is never
+    the trigger."""
+    base = path.rsplit("/", 1)[-1]
+    return bool(_MARKER_CONFIG_RE.match(base) or _MARKER_RC_RE.match(base))
 
 
 def detect_technology_instruments(
@@ -486,6 +526,7 @@ def detect_technology_instruments(
         return None
 
     instruments: dict[str, str] = {}
+    config_lane = config_lane_enabled()  # B1 kill-switch (S1c relaxation)
 
     def _dou(u: str) -> set[str]:
         return {t for t in out_units.get(u, ()) if t not in instruments}
@@ -505,6 +546,17 @@ def detect_technology_instruments(
             dou = _dou(u)
             inf = len(in_files.get(u, ()))
             inu = len(in_units.get(u, ()))
+            # B1 — config-channel consumption. True iff the unit HAS
+            # importers and every importer file is a config-channel file
+            # (``*.config.*`` / ``.*rc*``). Gated by the kill-switch:
+            # flag-OFF short-circuits to False so S1c stays byte-identical
+            # (``inf == 0`` only). Pure bool; no set escapes into output.
+            cfg_consumed = (
+                config_lane
+                and inf > 0
+                and all(_is_config_channel_file(p)
+                        for p in in_files.get(u, ()))
+            )
             sig: str | None = None
             # S1a alignment is STRICT: the marker's token must itself be
             # a WIDELY-IMPORTED dep of the unit (midday `workbench` /
@@ -523,9 +575,16 @@ def detect_technology_instruments(
             elif (f["migrations"] and f["top_tok"] in _DB_TOOLS
                   and f["top_share"] >= 0.5):
                 sig = "S1b-migrations:" + f["top_tok"]
-            elif (f["src"] <= 2 and f["cfg_share"] >= 0.5 and inf == 0
-                  and f["src_loc"] < _BODY_LOC_FLOOR):
-                sig = "S1c-config-only"
+            elif (f["src"] <= 2 and f["cfg_share"] >= 0.5
+                  and f["src_loc"] < _BODY_LOC_FLOOR
+                  and (inf == 0 or cfg_consumed)):
+                # inf==0: settings artifact imported by nobody (``tsconfig``;
+                # ``eslint-config`` referenced via an `extends` STRING — no
+                # import edge). cfg_consumed (B1): imported ONLY by
+                # config-channel files (a ``prettier.config.cjs`` re-export)
+                # — still a settings artifact, never product code.
+                sig = ("S1c-config-only" if inf == 0
+                       else "S1c-config-consumed")
             elif (f["top_share"] >= 0.5 and len(dou) <= 1 and inf >= 3):
                 sig = "S1d-dep:" + f["top_tok"]
             elif (1 <= len(f["non_ambient_ext"]) <= 2
