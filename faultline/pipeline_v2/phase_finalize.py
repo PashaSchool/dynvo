@@ -1443,6 +1443,47 @@ def run_finalize_phase(
             except Exception as _de_exc:  # noqa: BLE001 — evidence is best-effort, never fatal
                 log_de.info(f"dual_evidence skipped: {_de_exc}", feature=None)
 
+    # ── Stage 6.98 — E2E-journey truth (deterministic, $0 LLM) ──────
+    # Maintainer-authored playwright/cypress journeys as UF evidence:
+    # matched journeys CONFIRM UFs (uf_e2e_evidence in the stage
+    # artifact); journeys no UF claims are NAMED recall holes
+    # (orphan_journeys[]). Runs after the journey layer is fully
+    # settled (post 6.7d/seeds/husk-fold — same vantage as
+    # dual_evidence, BEFORE the 6.97 LOC prefetch below). Repos without
+    # e2e specs report e2e_absent, zero impact. Kill-switch
+    # FAULTLINE_E2E_TRUTH=0 ⇒ byte-identical.
+    from faultline.pipeline_v2.e2e_truth import (
+        e2e_truth_enabled, run_e2e_truth, scan_meta_view,
+    )
+    if e2e_truth_enabled():
+        with StageLogger(run_dir, 6, "e2e_truth") as log_e2e:
+            try:
+                e2e_payload = run_e2e_truth(
+                    repo_path, user_flows,
+                    routes_index=lineage_result.routes_index,
+                    flows=list(bipartite.flows),
+                )
+                scan_meta["e2e_truth"] = scan_meta_view(e2e_payload)
+                write_stage_artifact(
+                    repo_path, 6, "e2e_truth", e2e_payload,
+                    run_dir=run_dir,
+                )
+                log_e2e.info(
+                    "e2e_truth: specs=%d journeys=%d matched=%d "
+                    "orphans=%d absent=%s" % (
+                        e2e_payload["spec_files"],
+                        e2e_payload["journeys"],
+                        e2e_payload["counts"]["matched"],
+                        e2e_payload["counts"]["orphans"],
+                        e2e_payload["e2e_absent"],
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_e2e.info(
+                    f"e2e_truth: FAILED ({exc}) — continuing", feature=None,
+                )
+
     # ── Perf wave 2 (R5b) — 6.97 LOC prefetch overlaps the 6.95→6.96 chain ──
     # DAG verified at this base: Stage 6.97 feature-LOC reads only
     # {feature/PF paths + member_files + the checked-out tree,

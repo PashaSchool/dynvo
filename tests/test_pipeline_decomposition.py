@@ -156,6 +156,13 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # (FAULTLINE_JOURNEY_LATTICE=0 off). Telemetry artifact emitted on
     # every enabled run. See journey_lattice.py.
     (6, "journey_lattice"),
+    # Stage 6.98 (2026-07-07) — E2E-journey truth. Deterministic, $0,
+    # additive; playwright/cypress journeys matched against final UFs
+    # (post 6.7d/seeds/husk-fold, same vantage as dual_evidence — its
+    # artifact writes AFTER journey_lattice/dual_evidence, BEFORE 6.95
+    # history). Emits even without specs (e2e_absent). FAULTLINE_E2E_TRUTH=0
+    # off. See e2e_truth.py.
+    (6, "e2e_truth"),
     (6, "history"),
     (6, "impact"),
     # Stage 6.6 (2026-06) — Monorepo Assembly View. Deterministic, $0,
