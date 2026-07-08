@@ -57,7 +57,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "NAMING_CONTRACT_ENV",
+    "HUMANIZE_ROUTE_NAMES_ENV",
     "naming_contract_enabled",
+    "humanize_route_names_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -95,12 +97,180 @@ _API_SEGS = frozenset({"api", "trpc", "rest", "graphql", "rpc"})
 #: Version-dir segments (v1/v2 class) — never display words.
 _VERSION_SEG = re.compile(r"^v\d+$", re.IGNORECASE)
 
+#: Kill-switch for the route-template humanizer (B2). Default ON; ``=0``
+#: restores the pre-B2 anchor humanization byte-identically (a route
+#: display keeps whatever the legacy ``_meaningful_segments`` produced).
+HUMANIZE_ROUTE_NAMES_ENV = "FAULTLINE_HUMANIZE_ROUTE_NAMES"
+
+#: A word-adjacent ``+`` (Remix flat-route folder nesting marker) or a
+#: leading ``_`` word (pathless/layout prefix) that leaked into a display.
+_TRAILING_PLUS_RE = re.compile(r"\w\+")
+
 
 def naming_contract_enabled() -> bool:
     """Default ON; ``FAULTLINE_NAMING_CONTRACT=0`` restores pre-W3 output."""
     return os.environ.get(NAMING_CONTRACT_ENV, "1").strip().lower() not in {
         "0", "false",
     }
+
+
+def humanize_route_names_enabled() -> bool:
+    """Default ON; ``FAULTLINE_HUMANIZE_ROUTE_NAMES=0`` restores the pre-B2
+    anchor humanization (byte-identical route display names)."""
+    return os.environ.get(HUMANIZE_ROUTE_NAMES_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+# ── Route-template humanization (B2 — router-family aware) ──────────────
+#
+# File-system routers encode structure IN the path/filename with dialect
+# glyphs that are dev machinery, never product words: trailing ``+``
+# (folder nesting), ``$param`` / ``:param`` / ``{param}`` (dynamic),
+# ``_layout`` (pathless), ``[escaped]`` (literal escape), ``.`` (path
+# separator inside one folder name), ``[param]`` (dynamic — DROP),
+# ``(group)`` (route group — unwrap). ``[..]`` means the OPPOSITE thing
+# across dialects (escape vs dynamic), so a dialect is read from the
+# path's own STRUCTURAL markers (never a stack NAME — trunk-purity G3)
+# into capability flags that drive the per-segment rule. Every rule is
+# generic to the marker — never a repo-specific literal.
+
+
+@dataclass(frozen=True)
+class _RouteDialect:
+    """Structural capabilities of a filesystem router, inferred from a
+    path's own glyphs (not a stack name):
+
+    * ``flat_nesting`` — a trailing ``+`` on a folder groups nested
+      routes (flat-routes convention) and is not a display word.
+    * ``bracket_escape`` — ``[x]`` is a LITERAL escape (keep the inner
+      text) rather than a dynamic-param placeholder (drop it). The two
+      readings are mutually exclusive per router; a router that addresses
+      params with ``$`` never uses brackets for params.
+    """
+
+    flat_nesting: bool
+    bracket_escape: bool
+
+
+def _route_dialect(path: str) -> _RouteDialect:
+    """Read a path's router capabilities from its structural markers."""
+    segs = [s for s in (path or "").split("/") if s]
+    low = {s.lower() for s in segs}
+    dollar_params = any("$" in s for s in segs)
+    plus_folders = any(len(s) > 1 and s.endswith("+") for s in segs)
+    routes_root = "routes" in low and ("app" in low or "src" in low)
+    dotted_layout = any(s.startswith("_") and "." in s for s in segs)
+    flat = plus_folders or dollar_params or routes_root or dotted_layout
+    return _RouteDialect(flat_nesting=flat, bracket_escape=dollar_params or flat)
+
+
+def _param_noun(seg: str, vocab: Mapping[str, Any]) -> str | None:
+    """The human NOUN of a dynamic route param, or ``None`` for pure
+    addressing. ``$teamUrl`` → ``"team"`` (the ``Url`` addressing suffix
+    drops), ``$documentId`` → ``"document"``, ``$id``/``$slug``/``$token``
+    → ``None`` (an opaque identifier names nothing)."""
+    raw = (seg or "").strip()
+    raw = raw.lstrip("$:{<*[").rstrip("}>]").strip("[]")
+    raw = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", raw)
+    words = [w.lower() for w in re.split(r"[-_\s]+", raw) if w]
+    addr = {str(a).lower() for a in (vocab.get("route_addressing_suffixes") or [])}
+    core = [w for w in words if w not in addr]
+    return " ".join(core) if core else None
+
+
+def _normalize_route_segment(
+    seg: str, dialect: _RouteDialect, vocab: Mapping[str, Any],
+) -> str | None:
+    """One path segment → a human display token (space-joined for
+    dot-notation), or ``None`` to drop (layout prefix, dynamic param,
+    empty). Router-template glyphs are removed per the path's dialect."""
+    s = (seg or "").strip()
+    if not s:
+        return None
+    if dialect.flat_nesting:
+        stripped = s.rstrip("+")           # flat-route folder nesting marker
+        if stripped:
+            s = stripped
+    if s.startswith("_"):
+        return None                        # pathless / layout — organises files
+    g = _GROUP_SEG.match(s)
+    if g:                                  # route group "(marketing)" → word
+        s = g.group(1).strip()
+        if not s:
+            return None
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        if dialect.bracket_escape:         # escaped LITERAL → unwrap
+            inner = inner.strip("._")
+            if not inner:
+                return None
+            s = inner
+        else:
+            return None                    # bracket-dynamic param → drop
+    if "." in s:                           # Remix dot = URL separator
+        parts: list[str] = []
+        for p in s.split("."):
+            p = p.strip()
+            if not p:
+                continue
+            if _DYNAMIC_SEG.match(p) or p[0] in "$:{":
+                noun = _param_noun(p, vocab)
+                if noun:
+                    parts.append(noun)
+                continue
+            if p.startswith("_"):
+                continue
+            if len(p) == 1 and p.isalpha():
+                continue                   # single-char URL scaffold ("/p/")
+            parts.append(p)
+        return " ".join(parts) if parts else None
+    if _DYNAMIC_SEG.match(s):
+        return _param_noun(s, vocab)
+    return s
+
+
+def _peel_edge_single_letters(text: str | None) -> str | None:
+    """Repair a display carrying edge single-letter words (the ``/p/$url``
+    → "P URL" class): drop leading/trailing 1-char alpha words so the
+    single_letter law passes ("P URL" → "URL"). Interior single letters
+    and all-single-letter strings are left intact."""
+    if not text:
+        return text
+    words = text.split(" ")
+    if len(words) <= 1 or not any(
+        len(w) == 1 and w.isalpha() for w in words
+    ):
+        return text
+    while len(words) > 1 and len(words[0]) == 1 and words[0].isalpha():
+        words = words[1:]
+    while len(words) > 1 and len(words[-1]) == 1 and words[-1].isalpha():
+        words = words[:-1]
+    return " ".join(words)
+
+
+def _has_route_template_residue(text: str) -> bool:
+    """True when a display still carries router-template machinery: a
+    param glyph (``$ : { } [ ] < > *``), a word-adjacent ``+`` (Remix
+    nesting), or a leading-underscore word (layout prefix)."""
+    t = text or ""
+    if _PARAM_GLYPHS.search(t) or _TRAILING_PLUS_RE.search(t):
+        return True
+    return any(w.startswith("_") for w in t.split(" ") if w)
+
+
+def _strip_display_residue(text: str, vocab: Mapping[str, Any]) -> str | None:
+    """Last-resort string scrub of route-template residue from a display
+    (used only when no clean anchor word is available). Removes param
+    glyphs, trailing ``+``, leading-underscore words, then peels edge
+    single letters + re-polishes. May return ``None`` when nothing human
+    remains."""
+    t = _PARAM_GLYPHS.sub("", text or "")
+    t = re.sub(r"\+", "", t)
+    words = [w for w in t.split(" ") if w and not w.startswith("_")]
+    out = _peel_edge_single_letters(" ".join(words))
+    out = polish_display_casing((out or "").strip(), vocab)
+    return out or None
 
 
 def load_naming_vocab() -> dict[str, Any]:
@@ -196,7 +366,14 @@ def _display_word(seg: str, vocab: Mapping[str, Any]) -> str:
 def _meaningful_segments(path: str, vocab: Mapping[str, Any]) -> list[str]:
     """Author-meaningful display words of an anchor-id path: route groups
     unwrap to their word; params, api/version segments, and structural
-    code-location segments drop."""
+    code-location segments drop.
+
+    With ``FAULTLINE_HUMANIZE_ROUTE_NAMES`` on (B2, default) the walk is
+    router-template aware — Remix ``+``/``$``/``_layout``/``[escape]``/dot
+    notation is normalized (see ``_route_meaningful_segments``). ``=0``
+    restores this legacy body byte-identically."""
+    if humanize_route_names_enabled():
+        return _route_meaningful_segments(path, vocab)
     structural = {str(s).lower() for s in (vocab.get("structural_segments") or [])}
     hub_containers = {str(s).lower()
                       for s in (vocab.get("hub_container_segments") or [])}
@@ -223,6 +400,58 @@ def _meaningful_segments(path: str, vocab: Mapping[str, Any]) -> list[str]:
         if low in structural or low in hub_containers or low in _API_SEGS:
             continue
         out.append(s)
+    return out
+
+
+def _route_meaningful_segments(
+    path: str, vocab: Mapping[str, Any],
+) -> list[str]:
+    """Router-template-aware meaningful segments (B2). Each ``/``-segment
+    is normalized per the detected router family; structural / hub /
+    extension leaves drop; api / version / tenant-scope tokens are
+    TRANSPARENT only when a deeper meaningful token exists (mirrors
+    ``spine_anchors._pattern_key_chain`` — ``/workspaces/{id}/tables`` →
+    "Tables", but a terminal ``/api`` or ``/t/$teamUrl`` still keys its
+    own surface). Never returns empty when any token survives."""
+    structural = {str(s).lower() for s in (vocab.get("structural_segments") or [])}
+    hub_containers = {str(s).lower()
+                      for s in (vocab.get("hub_container_segments") or [])}
+    exts = {str(e).lower() for e in (vocab.get("file_extensions") or [])}
+    tenant_scope = {
+        str(s).lower() for s in (vocab.get("tenant_scope_segments") or [])
+    }
+    dialect = _route_dialect(path)
+
+    tokens: list[str] = []
+    for seg in (path or "").split("/"):
+        tok = _normalize_route_segment(seg, dialect, vocab)
+        if tok is None:
+            continue
+        # File-anchor leaf extension ("schema.json") → stem (file_stem law).
+        m = re.match(r"^(.+)\.([A-Za-z0-9]{1,5})$", tok)
+        if m and m.group(2).lower() in exts:
+            tok = m.group(1)
+        low = tok.lower()
+        if low in structural or low in hub_containers:
+            continue
+        tokens.append(tok)
+
+    def _transparent(i: int) -> bool:
+        low = tokens[i].lower()
+        if not (low in _API_SEGS or _VERSION_SEG.match(low)
+                or low in tenant_scope):
+            return False
+        # transparent only if a deeper NON-transparent token follows.
+        for j in range(i + 1, len(tokens)):
+            lj = tokens[j].lower()
+            if not (lj in _API_SEGS or _VERSION_SEG.match(lj)
+                    or lj in tenant_scope):
+                return True
+        return False
+
+    out = [t for i, t in enumerate(tokens) if not _transparent(i)]
+    if not out and tokens:
+        out = [tokens[-1]]
     return out
 
 
@@ -254,6 +483,9 @@ def humanize_anchor_display(
         return None, None
     base = _display_word(segs[-1], vocab)
     qual = _display_word(segs[-2], vocab) if len(segs) >= 2 else None
+    if humanize_route_names_enabled():
+        base = _peel_edge_single_letters(base) or ""
+        qual = _peel_edge_single_letters(qual)
     return (base or None), (qual or None)
 
 
@@ -402,6 +634,12 @@ def build_pf_candidates(
         qual_match and len(qual_match.group(1).split()) >= 3
     )
     current_dirty = bool(display_law_violations(polished_current, vocab))
+    # B2: a route display carrying template residue ('Admin+', 'API+',
+    # 'Internal+', 'P.$URL') is dirty even when the param LAW misses the
+    # '+'/'_'-prefix class — yield to the humanized anchor word.
+    if (humanize_route_names_enabled() and src == "route"
+            and _has_route_template_residue(polished_current)):
+        current_dirty = True
     base, qual = (None, None) if src == "hub" else humanize_anchor_display(
         anchor_id, vocab)
     if current_dirty or verbose_qualified:
@@ -690,8 +928,33 @@ def run_naming_contract(
             # current verbatim (never-worse; mint guaranteed uniqueness).
             base, qual = humanize_anchor_display(anchor_id, vocab)
             fallback = polish_display_casing(current, vocab)
-            if base and qual and f"{base} ({qual})".strip().lower() not in taken:
-                fallback = f"{base} ({qual})"
+            bq = f"{base} ({qual})" if base and qual else None
+            if humanize_route_names_enabled():
+                # B2: the qualified fallback must be LAW-clean AND free of
+                # route-template residue (the pre-B2 path emitted
+                # "T.$team URL+ (Authenticated+)" here without checking).
+                if (bq and not display_law_violations(bq, vocab)
+                        and not _has_route_template_residue(bq)
+                        and bq.strip().lower() not in taken):
+                    fallback = bq
+                    tele["display_collisions_qualified"] += 1
+                elif (base and not display_law_violations(base, vocab)
+                        and not _has_route_template_residue(base)
+                        and base.strip().lower() not in taken):
+                    fallback = base
+                elif (display_law_violations(fallback, vocab)
+                        or _has_route_template_residue(fallback)):
+                    scrubbed = _strip_display_residue(fallback, vocab)
+                    from_slug = _display_word(slug, vocab) if slug else None
+                    if (scrubbed and not display_law_violations(scrubbed, vocab)
+                            and scrubbed.strip().lower() not in taken):
+                        fallback = scrubbed
+                    elif (from_slug
+                            and not display_law_violations(from_slug, vocab)
+                            and from_slug.strip().lower() not in taken):
+                        fallback = from_slug
+            elif bq and bq.strip().lower() not in taken:
+                fallback = bq
                 tele["display_collisions_qualified"] += 1
             elif display_law_violations(fallback, vocab) and slug:
                 from_slug = _display_word(slug, vocab)

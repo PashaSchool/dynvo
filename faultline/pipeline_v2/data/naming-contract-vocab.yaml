@@ -331,6 +331,48 @@ structural_segments:
   - web
   - www
 
+# URL tenancy-scope segments (mirrors spine-anchor-vocab tenant_scope_
+# segments — kept local to the display vocab so naming stays self-
+# contained). Consumed ONLY by the route-template humanizer
+# (FAULTLINE_HUMANIZE_ROUTE_NAMES): a scope word whose next URL segment
+# is a dynamic param is tenant ADDRESSING and drops when a DEEPER
+# meaningful segment exists (`/workspaces/{id}/tables` → "Tables"); a
+# scope word that is the terminal capability still keys its surface
+# (`/t/$teamUrl` → "Team"). Tiny universal vocabulary (rule-no-magic-
+# tuning): scope words only.
+tenant_scope_segments:
+  - workspace
+  - workspaces
+  - org
+  - orgs
+  - organization
+  - organizations
+  - team
+  - teams
+  - tenant
+  - tenants
+  - account
+  - accounts
+
+# Addressing-suffix tokens stripped from a DYNAMIC route param when
+# deriving its human noun ($teamUrl → "team", $documentId → "document",
+# $id/$slug/$token → nothing = pure addressing, transparent). Universal
+# URL-identifier vocabulary; never repo-specific.
+route_addressing_suffixes:
+  - id
+  - url
+  - slug
+  - token
+  - uuid
+  - guid
+  - key
+  - ref
+  - hash
+  - pk
+  - handle
+  - code
+  - name
+
 # Compose bounds for labeler-composed displays (grammar hard limits).
 compose_max_words: 8
 compose_max_chars: 60
