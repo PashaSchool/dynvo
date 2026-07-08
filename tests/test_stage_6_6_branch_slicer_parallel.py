@@ -146,15 +146,19 @@ def test_budget_exceeded_triggers_skip(tmp_path: Path) -> None:
 def test_telemetry_carries_concurrency_block(tmp_path: Path) -> None:
     ctx, feats = _build_n_features(tmp_path, n=2)
     with StageLogger(tmp_path, 6, "bs_tel") as log:
+        # A clearly-generous budget: under the deterministic seconds→count
+        # semantics it affords floor(1000 / 6.0) = 166 features >> 2, so
+        # nothing is skipped. (The value is arbitrary for this telemetry
+        # check; the old wall-clock semantics read it as "plenty of wall".)
         res = run_stage_6_6(
             ctx, feats, log,
-            max_workers=2, wall_budget_sec=5.0,
+            max_workers=2, wall_budget_sec=1000.0,
         )
     tel = res.telemetry()
     assert tel["active"] is True
     assert "concurrency" in tel
     assert tel["concurrency"]["max_workers"] == 2
-    assert tel["concurrency"]["budget_sec"] == 5.0
+    assert tel["concurrency"]["budget_sec"] == 1000.0
     assert tel["concurrency"]["budget_exceeded"] is False
 
 

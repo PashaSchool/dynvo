@@ -311,34 +311,65 @@ def run_stage_6_4(
             )
             logger.warning("linker.is_active raised", exc_info=True)
 
-    # Resolve the wall budget. Absolute override (caller/env) wins;
-    # otherwise derive a scale-invariant wall proportional to the
-    # (active-linker × feature) work units so big repos are not skipped.
+    # Per-(feature × active-linker) time allowance — always resolved; the
+    # factor of the default scale-invariant wall AND the divisor of the
+    # deterministic seconds→count cut below.
+    per_unit_sec = _resolve_float_env(
+        "FAULTLINE_STAGE_6_4_PER_FEATURE_SEC",
+        DEFAULT_PER_UNIT_BUDGET_SEC,
+    )
+    n_features = len(features)
+    n_active = len(active)
+    total_units = n_features * n_active
+
+    # Resolve the wall budget + the deterministic degradation boundary.
+    # Absolute override (caller/env) is interpreted as a budget of per-unit
+    # allowances: keep_units = floor(budget / per_unit_sec). The kept
+    # work-units are the canonical PREFIX of the linker-major order
+    # ((linker0 × all features), then (linker1 × all features), …); the
+    # skipped ones are the complementary SUFFIX — a pure function of input,
+    # never of thread-completion timing (D-CLUSTER fix). The default wall is
+    # scale-invariant so nothing is skipped on a healthy repo.
     if budget_override is not None:
         wall_budget_sec = budget_override
+        if budget_override <= 0 or per_unit_sec <= 0:
+            keep_units = total_units
+        else:
+            keep_units = min(total_units, int(budget_override // per_unit_sec))
     else:
-        per_unit_sec = _resolve_float_env(
-            "FAULTLINE_STAGE_6_4_PER_FEATURE_SEC",
-            DEFAULT_PER_UNIT_BUDGET_SEC,
-        )
-        work_units = max(1, len(features)) * max(1, len(active))
-        wall_budget_sec = per_unit_sec * work_units
+        wall_budget_sec = per_unit_sec * (max(1, n_features) * max(1, n_active))
+        keep_units = total_units
 
     per_linker: dict[str, dict[str, Any]] = {}
     links_total = 0
-    budget_exceeded = False
+    budget_exceeded = keep_units < total_units
     total_budget_skipped = 0
 
-    for linker in active:
-        if budget_exceeded:
-            # Once the wall budget is busted, skip the remaining
-            # linkers wholesale. Telemetry captures how many.
+    # Canonical feature order (stable content key = name + sorted paths) so the
+    # per-linker cut keeps the SAME features every run, independent of the input
+    # list order AND of thread-completion timing. Computed once; reused per
+    # linker. Output/attach order stays the original feature order.
+    canonical_order = sorted(
+        range(n_features),
+        key=lambda i: (features[i].name or "", tuple(sorted(features[i].paths or []))),
+    )
+
+    for l_idx, linker in enumerate(active):
+        # Deterministic cut over the linker-major work-unit order: this
+        # linker occupies work-units [l_idx*n_features, (l_idx+1)*n_features).
+        units_before = l_idx * n_features
+        keep_in_linker = max(0, min(n_features, keep_units - units_before))
+        per_linker_skipped = n_features - keep_in_linker
+
+        if keep_in_linker <= 0:
+            # Whole linker is past the budget cut → skipped wholesale
+            # (a canonical suffix of the work-unit order; timing-free).
             per_linker[linker.name] = {
                 "links_emitted": 0,
                 "links_attached_to_features": 0,
-                "budget_skipped": len(features),
+                "budget_skipped": n_features,
             }
-            total_budget_skipped += len(features)
+            total_budget_skipped += n_features
             log.warn(
                 f"linker-budget-skipped: {linker.name} "
                 f"budget_sec={wall_budget_sec}",
@@ -346,21 +377,16 @@ def run_stage_6_4(
             )
             continue
 
+        # Keep the canonically-lowest ``keep_in_linker`` features for this linker.
+        kept_indices = set(canonical_order[:keep_in_linker])
         linker_total = 0
-        per_linker_skipped = 0
-
-        def _budget_exhausted() -> bool:
-            if wall_budget_sec is None or wall_budget_sec <= 0:
-                return False
-            return (time.monotonic() - t0) >= wall_budget_sec
 
         if max_workers <= 1:
             # Serial path.
-            for feature in features:
-                if _budget_exhausted():
-                    budget_exceeded = True
-                    per_linker_skipped += 1
+            for index in range(n_features):
+                if index not in kept_indices:
                     continue
+                feature = features[index]
                 links, err = _compute_links_for_feature(
                     linker, feature, ctx, log,
                 )
@@ -376,7 +402,8 @@ def run_stage_6_4(
                 added = _attach_links_to_feature(feature, links)
                 linker_total += added
         else:
-            # Parallel path.
+            # Parallel path — dispatch the kept features; apply serially in
+            # original order so attribution dedup is deterministic.
             with ThreadPoolExecutor(
                 max_workers=max_workers,
                 thread_name_prefix=f"stage6_4_{linker.name}",
@@ -384,12 +411,11 @@ def run_stage_6_4(
                 future_to_index: dict[Any, int] = {
                     pool.submit(
                         _compute_links_for_feature,
-                        linker, feature, ctx, log,
+                        linker, features[index], ctx, log,
                     ): index
-                    for index, feature in enumerate(features)
+                    for index in range(n_features)
+                    if index in kept_indices
                 }
-                # Collect results, then apply serially in original order
-                # so attribution dedup is deterministic.
                 links_by_index: dict[int, list[FrameworkLink]] = {}
                 for fut in as_completed(future_to_index):
                     idx = future_to_index[fut]
@@ -406,25 +432,14 @@ def run_stage_6_4(
                             feature=features[idx].name,
                         )
                     links_by_index[idx] = links
-                    if not budget_exceeded and _budget_exhausted():
-                        budget_exceeded = True
-                        # Cancel anything not yet started.
-                        for pending_fut, pending_idx in future_to_index.items():
-                            if (
-                                pending_idx not in links_by_index
-                                and not pending_fut.done()
-                            ):
-                                if pending_fut.cancel():
-                                    per_linker_skipped += 1
-                                    # Mark as empty so we don't apply
-                                    # anything for that feature.
-                                    links_by_index[pending_idx] = []
 
-                for index, feature in enumerate(features):
+                for index in range(n_features):
+                    if index not in kept_indices:
+                        continue
                     feat_links = links_by_index.get(index)
                     if not feat_links:
                         continue
-                    added = _attach_links_to_feature(feature, feat_links)
+                    added = _attach_links_to_feature(features[index], feat_links)
                     linker_total += added
 
         links_total += linker_total

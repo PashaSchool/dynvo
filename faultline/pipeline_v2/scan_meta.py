@@ -204,23 +204,25 @@ def build_warnings(
     warnings: list[str] = []
     warnings.extend(stage3.warnings)
     warnings.extend(stage4.warnings)
+    # NB: budget degradation is now a DETERMINISTIC per-feature-allowance count
+    # (Stages 6.3/6.4/6.6). The volatile wall-clock ``elapsed_sec`` is
+    # deliberately NOT embedded in these warning strings — it made the scan
+    # output non-byte-identical on the degradation path. It remains available
+    # as the per-stage ``elapsed_sec`` telemetry key (scrubbed from the digest).
     if enrichment.budget_exceeded:
         warnings.append(
             f"stage_6_3_budget_exceeded budget_sec={enrichment.budget_sec} "
-            f"features_skipped={enrichment.features_budget_skipped} "
-            f"elapsed_sec={enrichment.elapsed_sec}"
+            f"features_skipped={enrichment.features_budget_skipped}"
         )
     if enrich_result.budget_exceeded:
         warnings.append(
             f"stage_6_4_budget_exceeded budget_sec={enrich_result.budget_sec} "
-            f"features_skipped={enrich_result.features_budget_skipped} "
-            f"elapsed_sec={enrich_result.elapsed_sec}"
+            f"features_skipped={enrich_result.features_budget_skipped}"
         )
     if getattr(branch_result, "budget_exceeded", False):
         warnings.append(
             f"stage_6_6_budget_exceeded budget_sec={branch_result.budget_sec} "
-            f"features_skipped={branch_result.features_budget_skipped} "
-            f"elapsed_sec={branch_result.elapsed_sec}"
+            f"features_skipped={branch_result.features_budget_skipped}"
         )
     if llm_share > LLM_FALLBACK_WARN_THRESHOLD:
         # Sprint A1: informational nudge only. The old 30%-share cap
