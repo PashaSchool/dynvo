@@ -77,7 +77,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "JOURNEY_LATTICE_ENV",
+    "JOURNEY_LATTICE_V2_ENV",
     "journey_lattice_enabled",
+    "journey_lattice_v2_enabled",
     "run_journey_lattice",
     "dedup_lattice_journeys",
     "fold_thin_lattice_children",
@@ -88,6 +90,13 @@ JOURNEY_LATTICE_ENV = "FAULTLINE_JOURNEY_LATTICE"
 #: W5.1 post-thinning fold kill-switch (default ON). ``=0`` restores the
 #: pre-fix lattice output (children left thin by the post-apply resettle).
 LATTICE_THIN_FOLD_ENV = "FAULTLINE_LATTICE_THIN_FOLD"
+
+#: W5.2 ACTION-axis kill-switch (default ON; fix B6). ``=0`` restores the
+#: pre-B6 object-only lattice output byte-identically. The action axis is an
+#: additive second partition dimension that runs ONLY on organic journeys the
+#: object axis could not split (single-router REST surfaces collapse to one
+#: route family); it never touches the object-axis code path.
+JOURNEY_LATTICE_V2_ENV = "FAULTLINE_JOURNEY_LATTICE_V2"
 
 #: Canonical child-id prefix (content-derived; see module docstring).
 _LATTICE_ID_PREFIX = "UF-L-"
@@ -160,6 +169,14 @@ def journey_lattice_enabled() -> bool:
     """Default ON; ``FAULTLINE_JOURNEY_LATTICE=0`` restores pre-W5
     output byte-identically."""
     return os.environ.get(JOURNEY_LATTICE_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def journey_lattice_v2_enabled() -> bool:
+    """Action axis (B6). Default ON; ``FAULTLINE_JOURNEY_LATTICE_V2=0``
+    restores the pre-B6 object-only lattice output byte-identically."""
+    return os.environ.get(JOURNEY_LATTICE_V2_ENV, "1").strip().lower() not in {
         "0", "false",
     }
 
@@ -557,6 +574,117 @@ def _merge_subset_duplicates(
             u for u in user_flows
             if str(getattr(u, "id", "") or "") not in drop_ids
         ]
+
+
+# ── Action axis (W5.2 / B6) — within-resource intent partition ──────────
+
+#: Action-family vocab file (B6). Runtime source of truth; byte-identical
+#: authoring copy at eval/journey-action-families.yaml (drift-guarded).
+_ACTION_FAMILIES_FILE = "journey-action-families.yaml"
+
+#: Deterministic child order + display word + reused verb verdict per action
+#: family. Reads carry the "view" verdict (intent ``browse``); writes + the
+#: domain-action ("act") family carry "manage".
+_ACTION_FAMILY_ORDER = ("browse", "view", "create", "update", "delete", "act")
+_ACTION_WORD = {
+    "browse": "Browse", "view": "View", "create": "Create",
+    "update": "Update", "delete": "Delete", "act": "Manage",
+}
+_ACTION_VERDICT = {
+    "browse": "view", "view": "view", "create": "manage",
+    "update": "manage", "delete": "manage", "act": "manage",
+}
+
+
+def load_action_families() -> dict[str, Any]:
+    """Packaged action-family vocab (cached by the loader — pure data)."""
+    from faultline.pipeline_v2.data import load_yaml
+
+    return load_yaml(_ACTION_FAMILIES_FILE)
+
+
+def _action_family(name: str, vocab: Mapping[str, Any]) -> str | None:
+    """Coarse user-intent family from a flow name's LEADING verb (the leading
+    token of a code-generated flow name IS its action). No secondary-token
+    fallback — precision over recall; an unclassified head folds to residual
+    and stays with the parent. GET-class reads split by an id marker
+    (collection ``browse`` vs single-member ``view``)."""
+    toks = [t for t in re.split(r"[^a-z0-9]+", str(name or "").lower()) if t]
+    if not toks:
+        return None
+    head = toks[0]
+    id_markers = {str(m).lower() for m in (vocab.get("id_markers") or ("id",))}
+    has_id = bool(id_markers & set(toks))
+    if head in {str(v).lower() for v in (vocab.get("browse") or ())}:
+        return "browse"
+    if head in {str(v).lower() for v in (vocab.get("read") or ())}:
+        return "view" if has_id else "browse"
+    if head in {str(v).lower() for v in (vocab.get("create") or ())}:
+        return "create"
+    if head in {str(v).lower() for v in (vocab.get("update") or ())}:
+        return "update"
+    if head in {str(v).lower() for v in (vocab.get("delete") or ())}:
+        return "delete"
+    if head in {str(v).lower() for v in (vocab.get("act") or ())}:
+        return "act"
+    return None
+
+
+def _action_child_name(
+    family: str, pf_display: str, naming_vocab: Mapping[str, Any],
+) -> tuple[str, list[str]]:
+    """``(name, candidates)`` — "<ActionWord> <resource>" in W3-law-clean form
+    (mirrors :func:`_deterministic_name`; first clean candidate wins)."""
+    from faultline.pipeline_v2.naming_contract import (
+        _resource_phrase,
+        display_law_violations,
+        polish_display_casing,
+    )
+
+    obj = _resource_phrase(pf_display, naming_vocab) or pf_display
+    word = _ACTION_WORD.get(family, "Manage")
+    raw: list[str] = [f"{word} {obj}"]
+    for alt in ("Manage", "View", "Configure"):
+        cand = f"{alt} {obj}"
+        if cand not in raw:
+            raw.append(cand)
+    polished = [polish_display_casing(c, naming_vocab) for c in raw]
+    clean = [
+        c for c in polished
+        if not display_law_violations(c, naming_vocab, pf_display=pf_display or None)
+    ]
+    if clean:
+        return clean[0], clean
+    return polished[0], polished
+
+
+def _is_lattice_born(uf: Any) -> bool:
+    """A journey already produced/partitioned by the lattice — the action axis
+    only ever operates on ORGANIC (6.7d-abstracted) journeys."""
+    return (
+        str(getattr(uf, "id", "") or "").startswith(_LATTICE_ID_PREFIX)
+        or str(getattr(uf, "domain", "") or "").startswith("lattice:")
+    )
+
+
+def _resource_is_action_domain(
+    uf: Any, naming_vocab: Mapping[str, Any],
+) -> bool:
+    """True when the journey's RESOURCE word is itself one of the engine's
+    own flow-verb-class members (``auth``/``callback``/``sync``/``login``…) —
+    the "resource" is an ACTION DOMAIN, not a countable entity, so a CRUD
+    partition is meaningless grain-noise ("Create auth" from POST /logout).
+    Reuses the naming vocab's existing semantic table — no new dictionary."""
+    classes: Mapping[str, Any] = naming_vocab.get("flow_verb_classes") or {}
+    verb_words = {
+        _norm_token(str(w))
+        for verbs in classes.values() for w in (verbs or ())
+    }
+    verb_words.discard("")
+    for tok in re.split(r"[^A-Za-z0-9]+", str(getattr(uf, "resource", "") or "")):
+        if _norm_token(tok) in verb_words:
+            return True
+    return False
 
 
 # ── Stage runner ────────────────────────────────────────────────────────
@@ -972,6 +1100,121 @@ def run_journey_lattice(
             },
         })
 
+    # ── Phase 2b — ACTION-grain partition (W5.2 / B6, V2-flag-guarded) ──
+    # The object axis (route/section/dir) cannot separate a single-router REST
+    # surface: `_route_family` keys off the flow's ENTRY FILE and returns the
+    # first meaningful segment across ALL of that file's patterns, so 29
+    # endpoints in one `routers/cases.py` collapse to ONE route family and the
+    # journey never reaches the catch-all bar. The action axis partitions such
+    # a journey by USER INTENT — the leading verb of each member flow name —
+    # into browse/view/create/update/delete/act families, each independently
+    # clearing the engine's journey bar (>= 2 members OR >= 150 span LOC). A
+    # split fires only when >= min_action_families (3) families qualify: action
+    # families are always partially present (reads + writes), so 2 is the noise
+    # floor and >= 3 is the genuine full-CRUD resource-management signature.
+    # Runs ONLY on organic journeys the object axis left unsplit; emits the same
+    # plan shape, so Phase 3/4/5 (verifier / apply / labeler) are unchanged.
+    if journey_lattice_v2_enabled():
+        object_split_ids = {
+            str(getattr(u, "id", "") or "")
+            for plan in plans for u in plan["split_ufs"]
+        }
+        action_vocab = load_action_families()
+        min_action_families = max(
+            int(action_vocab.get("min_action_families", 3) or 3), _MIN_MINTABLE
+        )
+        for pf_key in sorted(by_pf):
+            pf = pf_by_key[pf_key]
+            pf_display = _pf_display_of(pf)
+            # Action-split AT MOST ONE journey per PF — the largest organic
+            # journey the object axis left unsplit (the resource's catch-all).
+            # Splitting sibling journeys too would collide on the content-
+            # derived child ids (same pf + same action family) and over-
+            # fragment the capability. Ties broken by smallest id (stable).
+            pf_candidates = [
+                u for u in by_pf[pf_key]
+                if str(getattr(u, "id", "") or "") not in object_split_ids
+                and not _is_lattice_born(u)
+                and not _resource_is_action_domain(u, naming_vocab)
+            ]
+            if not pf_candidates:
+                continue
+            a_uf = sorted(
+                pf_candidates,
+                key=lambda u: (-len(getattr(u, "member_flow_ids", None) or []),
+                               str(getattr(u, "id", "") or "")),
+            )[0]
+            a_uid = str(getattr(a_uf, "id", "") or "")
+            a_member_ids = list(getattr(a_uf, "member_flow_ids", None) or [])
+            # Cluster members by action family (head verb).
+            a_fam_mids: dict[str, list[str]] = {}
+            for mid in a_member_ids:
+                fl = flow_by_mid.get(mid)
+                fam = _action_family(
+                    str(getattr(fl, "name", "") or "")
+                    if fl is not None else "", action_vocab)
+                if fam is not None:
+                    a_fam_mids.setdefault(fam, []).append(mid)
+            # Qualifying families: >= 2 members STRICT — no LOC arm. An
+            # object family with one 150-LOC page is real journey MASS, but
+            # ONE flow's head verb is a single datapoint, not a corroborated
+            # intent family; a 1-member "Update monitors" child is noise.
+            a_qual: dict[str, list[str]] = {}
+            for fam, fam_members in a_fam_mids.items():
+                if len(fam_members) >= 2:
+                    a_qual[fam] = fam_members
+            if len(a_qual) < min_action_families:
+                continue
+            # Materialize one child per qualifying family (owned-entry
+            # gated — an unowned family folds back to residual, exactly
+            # like the object axis).
+            a_children: list[dict[str, Any]] = []
+            a_claimed: set[str] = set()
+            res_slug = _norm_key(pf_display) or pf_key
+            a_resource = (
+                str(getattr(a_uf, "resource", "") or "") or pf_display)
+            for fam in _ACTION_FAMILY_ORDER:
+                fam_members = a_qual.get(fam) or []
+                if not fam_members:
+                    continue
+                if not _has_owned_entry(fam_members):
+                    tele["clusters_unowned_folded"] = (
+                        tele.get("clusters_unowned_folded", 0) + 1)
+                    continue
+                fam_loc = sum(
+                    _flow_span_loc(flow_by_mid[m]) for m in fam_members
+                    if m in flow_by_mid)
+                a_name, a_name_candidates = _action_child_name(
+                    fam, pf_display, naming_vocab)
+                a_key = f"{res_slug}-{fam}"
+                a_children.append({
+                    "id": _child_id(pf_key, f"action:{a_key}"),
+                    "key": a_key,
+                    "resource": a_resource or a_key.replace("-", " "),
+                    "axis": "action",
+                    "phrase": pf_display,
+                    "name": a_name,
+                    "candidates": a_name_candidates,
+                    "verdict": _ACTION_VERDICT.get(fam, "manage"),
+                    "mids": list(fam_members),
+                    "loc": fam_loc,
+                })
+                a_claimed.update(fam_members)
+            if len(a_children) < min_action_families:
+                continue
+            a_residual = [m for m in a_member_ids if m not in a_claimed]
+            plans.append({
+                "pf_key": pf_key,
+                "pf_display": pf_display,
+                "split_ufs": [a_uf],
+                "children": a_children,
+                "residual_by_uf": {a_uid: a_residual},
+                "owner_by_mid": {m: a_uid for m in a_member_ids},
+            })
+            tele["catchalls_detected"] += 1
+            tele["action_catchalls_detected"] = (
+                tele.get("action_catchalls_detected", 0) + 1)
+
     # ── Phase 3 — Draft Verifier over split CHILDREN (keyed seam) ──
     # One item per proposed CHILD journey (per-plan verdicts let one
     # weak 1-member child poison a whole honest partition — keyed
@@ -1070,7 +1313,7 @@ def run_journey_lattice(
             child = UserFlow(
                 id=ch["id"],
                 name=ch["name"],
-                resource=ch["key"].replace("-", " "),
+                resource=ch.get("resource") or ch["key"].replace("-", " "),
                 domain=f"lattice:{ch['axis']}:{ch['key']}",
                 product_feature_id=plan["pf_key"],
                 intent=_intent_for_verb(ch["verdict"]),
