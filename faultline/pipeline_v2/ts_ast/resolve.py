@@ -59,12 +59,27 @@ NO LLM. Pure config parsing + graph walking.
 from __future__ import annotations
 
 import json
+import os
 import posixpath
 from collections.abc import Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 
 from faultline.analyzer.import_graph import detect_workspace_package_map
+
+#: Track-A (W6-AST provenance): opt the resolver's workspace-map build into
+#: the recursive ``**`` glob expansion (STANDARD pnpm ``packages/**`` layout).
+#: Default ON; ``FAULTLINE_WS_DEEP_GLOB=0`` restores the legacy ``**``-skip so
+#: the resolver — and therefore every ts_ast provenance consumer — is
+#: byte-identical to pre-Track-A. Only THIS caller opts in; flow_reach /
+#: snapshots / symbol_graph keep the shallow map (contained blast radius).
+_WS_DEEP_GLOB_ENV = "FAULTLINE_WS_DEEP_GLOB"
+_WS_DEEP_FALSY = frozenset({"0", "false", "no", "off"})
+
+
+def _ws_deep_glob_enabled() -> bool:
+    return (os.environ.get(_WS_DEEP_GLOB_ENV, "1") or "1").strip().lower() \
+        not in _WS_DEEP_FALSY
 from faultline.analyzer.tsconfig_paths import (
     AliasEntry,
     build_path_alias_map,
@@ -384,7 +399,8 @@ def _context_for(repo_root: str) -> _RepoContext:
     ctx = _RepoContext(
         repo_root=repo_root,
         alias_entries=alias_entries,
-        workspace_packages=detect_workspace_package_map(repo_root),
+        workspace_packages=detect_workspace_package_map(
+            repo_root, deep=_ws_deep_glob_enabled()),
         _pkg_json_cache={},
     )
     _CTX_CACHE[repo_root] = ctx
