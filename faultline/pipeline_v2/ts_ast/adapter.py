@@ -573,6 +573,24 @@ class ProvenanceView:
                     out.add(e.target_file)
         return frozenset(out)
 
+    def in_repo_targets(self, src_file: str) -> frozenset[str]:
+        """ALL distinct in-repo files ``src_file`` imports, across EVERY
+        in-repo resolution (``relative`` / ``tsconfig_alias`` /
+        ``workspace``) — the full resolved out-edge set for fan-in
+        analysis. Broader than :meth:`workspace_targets` (workspace-only)
+        and than :meth:`resolve` (first pick per spec): a barrel edge M3
+        split into several per-name origins contributes ALL its resolved
+        targets. External / unresolved edges are excluded. The Python view
+        (``py_ast``) reuses this class, so one accessor serves both langs.
+        """
+        out: set[str] = set()
+        for edges in self._by_src.get(src_file, {}).values():
+            for e in edges:
+                if (e.resolution in _IN_REPO_RESOLUTIONS
+                        and e.target_file is not None):
+                    out.add(e.target_file)
+        return frozenset(out)
+
     def lookup(
         self,
         src_file: str,

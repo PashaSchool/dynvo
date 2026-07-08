@@ -114,6 +114,12 @@ _SHARED_REASON_SHELL = "shell_lineage_only"
 #: packages/prisma …) lane directly under this reason; the fold ladder
 #: never routes instrument code into a product capability.
 _SHARED_REASON_INSTRUMENT = "technology_instrument"
+#: FILELANE (2026-07-08) — a FILE-level shared-infra resident: an unowned
+#: file with high import fan-in across DISTINCT product features and no
+#: product surface (``faultline.pipeline_v2.file_lane``). The lane's file
+#: mirror of the instrument reason (package-level); both are neutral
+#: ground the validator I15 denominator excludes.
+_SHARED_REASON_INFRA_FANIN = "shared_infra_fanin"
 
 #: W3.1 D4 — vendor-husk floor: a hub child with NO flow evidence must
 #: own at least this many LOC of code to mint (else it folds under the
@@ -1360,7 +1366,7 @@ def build_platform_infrastructure_lane(
     # tooling lanes, never mints).
     lane_reasons = {_SHARED_REASON_NONE, _SHARED_REASON_BAR,
                     _SHARED_REASON_SHELL, ANCHORED_HUSK_REASON,
-                    _SHARED_REASON_INSTRUMENT}
+                    _SHARED_REASON_INSTRUMENT, _SHARED_REASON_INFRA_FANIN}
     for f in developer_features:
         if getattr(f, "layer", "developer") != "developer":
             continue
