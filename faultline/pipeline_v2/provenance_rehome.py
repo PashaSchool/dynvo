@@ -160,27 +160,54 @@ def run_provenance_rehome(
             for p in owned:
                 lane_owner_of.setdefault(p, f)
 
+    # PACKAGE-root aggregation: a workspace target file
+    # (``packages/db/src/schema/integration.ts``) is domain evidence for its
+    # PACKAGE (``packages/db``), not for itself — so a SHARED infra package
+    # (``@scope/db``, imported by many PFs) is ambiguous as a whole even when
+    # an individual FILE inside it is coincidentally imported by one PF
+    # (the openstatus tie: a lone db-schema file tied ``notification-slack``
+    # with the real ``@scope/emails`` domain signal and abstained the fix).
+    from faultline.analyzer.import_graph import detect_workspace_package_map
+    from faultline.pipeline_v2.ts_ast.resolve import _ws_deep_glob_enabled
+    ws_dirs = sorted(
+        set(detect_workspace_package_map(
+            str(repo_path), deep=_ws_deep_glob_enabled()).values()),
+        key=lambda d: (-len(d), d),
+    )
+
+    def _pkg_root(tgt: str) -> str:
+        for d in ws_dirs:  # longest dir prefix wins (nested pkgs)
+            if tgt == d or tgt.startswith(d + "/"):
+                return d
+        return tgt  # not under a known workspace pkg — its own root
+
     # DOMAIN co-import index — the ONLY provenance channel (see docstring):
-    # a first-party WORKSPACE-package target (resolution="workspace") and the
-    # product PFs whose OWNED code imports it cross-package. A target imported
-    # by EXACTLY ONE PF is that PF's domain package; a ubiquitous one
-    # (``@scope/db``) has many PF importers → ambiguous → no evidence. NOT
-    # direct-ownership of imported files (mint-placement noise) and NOT
-    # relative/alias imports (same-app locals).
+    # each first-party WORKSPACE PACKAGE (resolution="workspace", aggregated
+    # to its package root) and the product PFs whose OWNED code imports it
+    # cross-package. A package imported by EXACTLY ONE PF is that PF's domain
+    # package; a ubiquitous one has many PF importers → ambiguous → no
+    # evidence. NOT direct-ownership of imported files (mint-placement noise)
+    # and NOT relative/alias imports (same-app locals).
     pkg_pf_importers: dict[str, set[str]] = defaultdict(set)
     for src, pfid in file_owner_pf.items():
         if not _is_ts_js(src):
             continue
         for tgt in view.workspace_targets(src):
-            pkg_pf_importers[tgt].add(pfid)
+            pkg_pf_importers[_pkg_root(tgt)].add(pfid)
 
     def _attraction(entry: str) -> str | None:
         """The product PF an entry file provenance-attracts to — strict
-        unique argmax over its workspace-package targets owned by a SINGLE
-        PF, else None (no evidence / tie / ambiguous shared package)."""
+        unique argmax over the DISTINCT workspace PACKAGES it imports that
+        are owned by a SINGLE PF, else None (no evidence / tie / ambiguous
+        shared package)."""
         evidence: Counter[str] = Counter()
+        seen_roots: set[str] = set()
         for tgt in view.workspace_targets(entry):
-            importers = pkg_pf_importers.get(tgt)
+            root = _pkg_root(tgt)
+            if root in seen_roots:
+                continue
+            seen_roots.add(root)
+            importers = pkg_pf_importers.get(root)
             if importers and len(importers) == 1:
                 evidence[next(iter(importers))] += 1
         if not evidence:

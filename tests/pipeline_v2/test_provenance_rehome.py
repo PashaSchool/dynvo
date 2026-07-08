@@ -187,6 +187,46 @@ def test_only_workspace_resolution_counts(monkeypatch) -> None:
     assert tele["entries_rehomed"] == 0
 
 
+def test_shared_infra_package_root_breaks_the_tie(monkeypatch) -> None:
+    # The exact openstatus abstain: the sender imports @scope/emails (a DOMAIN
+    # package, 1 PF) AND a FILE inside the SHARED @scope/db package that is
+    # coincidentally imported by only one OTHER PF. File-level evidence ties
+    # (email 1 : billing 1) → abstain. Package-root aggregation sees @scope/db
+    # imported by MANY PFs (ambiguous) → only @scope/emails survives → email.
+    import faultline.analyzer.import_graph as ig
+    monkeypatch.setattr(
+        ig, "detect_workspace_package_map",
+        lambda root, deep=False: {
+            "@scope/emails": "packages/emails", "@scope/db": "packages/db"})
+    DBFILE = "packages/db/src/schema/integration.ts"
+    email_pf = _pf("email", [EMAIL_PF_FILE], "route:email")
+    email_dev = _dev("email-owner", [EMAIL_PF_FILE], pfid="email")
+    billing_pf = _pf("billing", ["packages/billing/x.ts"], "route:billing")
+    billing_dev = _dev("billing-owner", ["packages/billing/x.ts"], pfid="billing")
+    monitors_pf = _pf("monitors", ["packages/monitors/x.ts"], "route:monitors")
+    monitors_dev = _dev("monitors-owner", ["packages/monitors/x.ts"], pfid="monitors")
+    sender_flow = _flow("send-emails-flow", SENDER, "F1")
+    lane_dev = _dev("workflows", [SENDER], flows=[sender_flow])
+    view = _view({
+        EMAIL_PF_FILE: [(EMAIL_PKG, "workspace")],
+        "packages/billing/x.ts": [(DBFILE, "workspace")],
+        "packages/monitors/x.ts": [("packages/db/src/index.ts", "workspace")],
+        SENDER: [(EMAIL_PKG, "workspace"), (DBFILE, "workspace")],
+    })
+    _patch(monkeypatch, view)
+    ctx = _Ctx([EMAIL_PF_FILE, SENDER, DBFILE, "packages/billing/x.ts",
+                "packages/monitors/x.ts", "packages/db/src/index.ts"])
+    tele = PR.run_provenance_rehome(
+        [_uf("UF-1", "email", ["F1"])],
+        [email_dev, billing_dev, monitors_dev, lane_dev],
+        [email_pf, billing_pf, monitors_pf], ctx)
+    assert tele["entries_rehomed"] == 1, (
+        "package-root aggregation should resolve the shared-db tie to email")
+    assert any(d.product_feature_id == "email" and SENDER in (d.paths or [])
+               for d in [email_dev, billing_dev, monitors_dev, lane_dev]
+               ) or SENDER in (email_pf.paths or [])
+
+
 def test_kill_switch_no_op(monkeypatch) -> None:
     monkeypatch.setenv("FAULTLINE_PROV_ATTACH", "0")
     assert PR.prov_attach_enabled() is False
