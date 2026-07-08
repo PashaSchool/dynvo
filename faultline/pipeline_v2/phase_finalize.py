@@ -2388,6 +2388,54 @@ def run_finalize_phase(
     scan_meta["cost_usd"] = round(tracker.total_cost_usd, 4)
     scan_meta["calls"] = tracker.call_count
 
+    # ── Stage 6.97b — journey-level LOC (B3, $0, deterministic, additive) ─
+    # Operator bug B3: ``user_flows[].loc`` was ``None`` for EVERY journey
+    # (the engine never emitted a UF-level LOC), so the dashboard LOC column
+    # was blank for all journeys. Stamp ``UserFlow.loc`` = the UNION of the
+    # OWNED line-range spans across the UF's member flows (per-file merged;
+    # role="interior" + shared_paths-ledger nodes excluded — mirrors the
+    # validator's ``_spine_flow_loc_owned`` selection). Runs LAST — after
+    # W5.1's member-less backstop appends, emission integrity, terminal
+    # home, and naming — so EVERY surviving journey (including mc=0
+    # placeholders → honest ``0``) is stamped from FINAL membership.
+    # STRICTLY ADDITIVE: the only output-JSON change is the new
+    # ``user_flows[].loc`` key (telemetry stays in the side artifact / log,
+    # never scan_meta, so the flag-ON vs flag-OFF diff is exactly ``loc``).
+    # Kill-switch FAULTLINE_UF_LOC=0 → loc stays None → serializer omits it
+    # → byte-identical to the pre-B3 engine. Metric must never break a scan.
+    from faultline.pipeline_v2.stage_6_97b_uf_loc import (
+        apply_uf_loc,
+        uf_loc_enabled,
+    )
+    if uf_loc_enabled():
+        with StageLogger(run_dir, 7, "uf_loc") as log_ufloc:
+            try:
+                _uf_loc_tele = apply_uf_loc(user_flows, list(bipartite.flows))
+                log_ufloc.info(
+                    "uf_loc: stamped %d journeys (%d with loc>0, %d zero)"
+                    % (
+                        _uf_loc_tele["user_flows_total"],
+                        _uf_loc_tele["user_flows_with_loc"],
+                        _uf_loc_tele["user_flows_zero_loc"],
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=7,
+                    stage_name="uf_loc",
+                    payload=_uf_loc_tele,
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — metric must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"uf-loc stage failed ({exc}); user_flows[].loc left unset"
+                )
+                log_ufloc.info(
+                    f"uf_loc: FAILED ({exc}) — continuing without uf loc",
+                    feature=None,
+                )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {

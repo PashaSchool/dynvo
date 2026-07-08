@@ -1092,6 +1092,17 @@ class UserFlow(BaseModel):
     # consumers can rank/inspect weak bindings. ``None`` (omitted) for
     # bindings that passed the majority bar.
     binding_confidence: str | None = None
+    # B3 (2026-07-08) — journey-level LOC. UNION of the OWNED line-range
+    # spans across this UF's member flows (per-file merged; role="interior"
+    # + shared_paths-ledger nodes excluded — mirrors the validator's
+    # ``_spine_flow_loc_owned`` selection). Stamped by Stage 6.97b
+    # (``stage_6_97b_uf_loc``), gated by ``FAULTLINE_UF_LOC`` (default ON).
+    # A journey with zero resolvable member spans (e.g. an mc=0
+    # system-recall placeholder) carries an HONEST ``0``, never null.
+    # ``None`` (OMITTED from dumps — see the serializer) when the stage did
+    # not run (kill-switch off / old JSON), keeping default output
+    # byte-identical to engines that predate the field.
+    loc: int | None = None
 
     @model_serializer(mode="wrap")
     def _omit_none_identity(self, handler: Any) -> Any:
@@ -1116,6 +1127,12 @@ class UserFlow(BaseModel):
                 data.pop("surface_scope", None)
             if data.get("binding_confidence") is None:
                 data.pop("binding_confidence", None)
+            # B3 — journey LOC is only present when Stage 6.97b ran
+            # (FAULTLINE_UF_LOC on). A computed 0 is a real value and
+            # stays; only the uncomputed sentinel (None) is dropped so
+            # kill-switch-off / old-JSON dumps are byte-identical.
+            if data.get("loc") is None:
+                data.pop("loc", None)
         return data
 
 
