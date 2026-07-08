@@ -41,11 +41,29 @@ as ``P``-owned. By construction the move only turns FOREIGN entries NATIVE
 Conservation: the entry MOVES (never duplicates); the lane dev keeps its
 residual.
 
-Requires ``FAULTLINE_TS_AST`` (the graph) and runs BEFORE ``build_path_index``
-/ emission integrity, so the emitted ``path_index`` — the validator's
-``file_owner_pf`` source — reflects the correction. Deterministic, $0 LLM.
-Kill-switch ``FAULTLINE_PROV_ATTACH=0`` → scans byte-identical to pre-Track-A
-(no view built, no move made).
+DUAL-LANGUAGE PROVENANCE (Track-B integration). The re-home reads BOTH
+import graphs, dispatched by entry-file language: TS/JS entries resolve
+through ``ts_ast`` (cross-package pnpm ``@scope/pkg`` domain imports);
+``.py`` entries resolve through ``py_ast`` (absolute first-party module
+imports — Soc0 backend, onyx FastAPI, horilla Django). Both providers
+project the IDENTICAL ``ProvenanceView`` shape (py_ast re-exports the
+ts_ast view class by design), so the confirmation gate — single-PF
+domain package + journey unanimity + lane-owned — is ONE code path over
+both languages. The domain grain differs only in how a target file rolls
+up to its "package": TS uses the pnpm workspace map; Python uses the
+target's immediate package directory (siblings = one domain module,
+mirroring the ts_ast package-root aggregation). A file's provenance is
+read from its OWN language's graph, so a mixed repo (Next front-end +
+FastAPI back-end) re-homes each side through the right graph.
+
+Requires ``FAULTLINE_TS_AST`` and/or ``FAULTLINE_PY_AST`` (at least one
+graph) and runs BEFORE ``build_path_index`` / emission integrity, so the
+emitted ``path_index`` — the validator's ``file_owner_pf`` source —
+reflects the correction. Deterministic, $0 LLM. Kill-switch
+``FAULTLINE_PROV_ATTACH=0`` → scans byte-identical to pre-Track-A (the
+stage is skipped at the call site: no view built, no move made). Setting
+``FAULTLINE_PY_AST=0`` restores the TS-only Track-A behaviour byte-
+identically (the Python provider yields no view → no Python re-home).
 """
 
 from __future__ import annotations
@@ -79,6 +97,8 @@ _TS_JS_SUFFIXES = (
     ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs",
 )
 _DECL_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
+_PY_SUFFIXES = (".py",)
+_PY_STUB_SUFFIXES = (".pyi",)
 
 
 def prov_attach_enabled() -> bool:
@@ -94,6 +114,47 @@ def _is_ts_js(rel: str) -> bool:
     return low.endswith(_TS_JS_SUFFIXES) and not low.endswith(_DECL_SUFFIXES)
 
 
+def _is_py(rel: str) -> bool:
+    """A Python source file py_ast provenance covers (``.pyi`` stubs are
+    excluded — they carry no runtime imports, mirroring py_ast's own filter)."""
+    low = rel.lower()
+    return low.endswith(_PY_SUFFIXES) and not low.endswith(_PY_STUB_SUFFIXES)
+
+
+def _is_prov_src(rel: str) -> bool:
+    """A source file EITHER provenance graph can speak for (TS/JS or Python)."""
+    return _is_ts_js(rel) or _is_py(rel)
+
+
+class _UnifiedProvenance:
+    """Language-dispatched provenance over the two ``ProvenanceView`` graphs.
+
+    ``workspace_targets(src)`` routes to the ts_ast view for TS/JS files and
+    the py_ast view for ``.py`` files. Each underlying view holds ONLY its own
+    language's edges, so a mis-routed query would return empty anyway — the
+    dispatch just makes intent explicit and skips a needless lookup. Either
+    view may be ``None`` (that language's graph off / unavailable) → empty.
+    The two views share ONE class (py_ast re-exports ts_ast's), so the caller
+    reads a single interface regardless of language. Determinism: each
+    delegate returns a canonical ``frozenset`` and the outcome logic in
+    :func:`run_provenance_rehome` is order-invariant (ties abstain)."""
+
+    __slots__ = ("_ts", "_py")
+
+    def __init__(self, ts_view: Any, py_view: Any) -> None:
+        self._ts = ts_view
+        self._py = py_view
+
+    def workspace_targets(self, src_file: str) -> frozenset[str]:
+        if _is_ts_js(src_file):
+            return (self._ts.workspace_targets(src_file)
+                    if self._ts is not None else frozenset())
+        if _is_py(src_file):
+            return (self._py.workspace_targets(src_file)
+                    if self._py is not None else frozenset())
+        return frozenset()
+
+
 def _pf_key(pf: Any) -> str | None:
     return getattr(pf, "id", None) or getattr(pf, "name", None)
 
@@ -107,9 +168,16 @@ def run_provenance_rehome(
     """See module docstring. Mutates lane devs / ``product_features`` in
     place and appends member devs to ``developer_features``. Returns
     telemetry for ``scan_meta.provenance_rehome``."""
+    # Both providers are imported at CALL time (inside the function) so a
+    # per-language monkeypatch on the adapter module takes effect (the test
+    # discipline the ts-only stage already relied on).
     from faultline.pipeline_v2.ts_ast.adapter import (
-        repo_provenance,
+        repo_provenance as _ts_repo_provenance,
         ts_ast_enabled,
+    )
+    from faultline.pipeline_v2.py_ast.adapter import (
+        py_ast_enabled,
+        repo_provenance as _py_repo_provenance,
     )
 
     tele: dict[str, Any] = {
@@ -118,9 +186,11 @@ def run_provenance_rehome(
         "skipped_journey_conflict": 0, "skipped_owned": 0,
         "abstained_ties": 0, "samples": [],
     }
-    if not ts_ast_enabled():
+    ts_on = ts_ast_enabled()
+    py_on = py_ast_enabled()
+    if not ts_on and not py_on:
         tele["enabled"] = False
-        tele["reason"] = "ts_ast disabled"
+        tele["reason"] = "ts_ast and py_ast disabled"
         return tele
     tracked = frozenset(
         str(p).replace("\\", "/")
@@ -129,11 +199,17 @@ def run_provenance_rehome(
     if not tracked:
         return tele
     repo_path = Path(getattr(ctx, "repo_path", "."))
-    view = repo_provenance(str(repo_path), tracked)
-    if view is None:  # flag off / tree-sitter absent / build failed
+    # One provenance graph per language present; each provider returns None
+    # when its flag is off / its toolchain is absent / the build failed
+    # (fallback law) — the other language still re-homes.
+    ts_view = _ts_repo_provenance(str(repo_path), tracked) if ts_on else None
+    py_view = _py_repo_provenance(str(repo_path), tracked) if py_on else None
+    if ts_view is None and py_view is None:  # nothing to read → no move
         tele["enabled"] = False
         tele["reason"] = "no provenance view"
         return tele
+    tele["providers"] = {"ts": ts_view is not None, "py": py_view is not None}
+    view = _UnifiedProvenance(ts_view, py_view)
 
     devs = [
         f for f in developer_features
@@ -176,10 +252,20 @@ def run_provenance_rehome(
     )
 
     def _pkg_root(tgt: str) -> str:
-        for d in ws_dirs:  # longest dir prefix wins (nested pkgs)
-            if tgt == d or tgt.startswith(d + "/"):
-                return d
-        return tgt  # not under a known workspace pkg — its own root
+        if _is_ts_js(tgt):
+            for d in ws_dirs:  # longest dir prefix wins (nested pkgs)
+                if tgt == d or tgt.startswith(d + "/"):
+                    return d
+            return tgt  # not under a known workspace pkg — its own root
+        # Python (and any non-TS target): there is no pnpm workspace map, so
+        # the domain unit is the target's IMMEDIATE package DIRECTORY. Sibling
+        # modules of one domain (``recruitment/models.py`` +
+        # ``recruitment/views.py``) roll up together, so a lone module inside
+        # a SHARED package cannot coincidentally out-vote a real single-PF
+        # domain package — the ts_ast 949114c package-root fix, ported to
+        # Python's directory-is-package layout. Pure path op (deterministic).
+        slash = tgt.rfind("/")
+        return tgt[:slash] if slash > 0 else tgt
 
     # DOMAIN co-import index — the ONLY provenance channel (see docstring):
     # each first-party WORKSPACE PACKAGE (resolution="workspace", aggregated
@@ -190,10 +276,17 @@ def run_provenance_rehome(
     # and NOT relative/alias imports (same-app locals).
     pkg_pf_importers: dict[str, set[str]] = defaultdict(set)
     for src, pfid in file_owner_pf.items():
-        if not _is_ts_js(src):
+        if not _is_prov_src(src):
             continue
         for tgt in view.workspace_targets(src):
             pkg_pf_importers[_pkg_root(tgt)].add(pfid)
+    # DIAGNOSTIC (deterministic): the provenance-signal richness — how many
+    # domain package-roots are imported by EXACTLY ONE PF (the raw material a
+    # re-home needs). Zero here means the corpus offers no single-PF domain
+    # evidence at all (keyless journeys often lack the PF-owned import surface).
+    tele["single_pf_packages"] = sum(
+        1 for imp in pkg_pf_importers.values() if len(imp) == 1)
+    tele["lane_prov_files"] = sum(1 for p in lane_owner_of if _is_prov_src(p))
 
     def _attraction(entry: str) -> str | None:
         """The product PF an entry file provenance-attracts to — strict
@@ -243,8 +336,14 @@ def run_provenance_rehome(
             if ep:
                 entry_journey_pfs[ep].add(pfid)
 
-    # Confirmed re-homes: entry E -> PF P.
+    # Confirmed re-homes: entry E -> PF P.  DIAGNOSTIC counters (deterministic,
+    # order-invariant) explain a 0-fire: how many journey-carried entries were
+    # examined, how many reached the provenance test (unanimous + lane-owned +
+    # prov-language), and how many of THOSE found no single-PF domain evidence.
     confirmed: dict[str, str] = {}
+    tele["entries_examined"] = len(entry_journey_pfs)
+    lane_candidates = 0
+    abstained_no_attraction = 0
     for ep, journey_pfs in entry_journey_pfs.items():
         if len(journey_pfs) != 1:
             if len(journey_pfs) > 1:
@@ -255,14 +354,22 @@ def run_provenance_rehome(
             if file_owner_pf.get(ep) != p:
                 tele["skipped_owned"] += 1
             continue
-        if not _is_ts_js(ep) or ep not in lane_owner_of:
+        if not _is_prov_src(ep) or ep not in lane_owner_of:
             continue
+        lane_candidates += 1
         if _attraction(ep) == p:
             tele["entries_confirmed"] += 1
             confirmed[ep] = p
+        else:
+            abstained_no_attraction += 1
+    tele["lane_candidates"] = lane_candidates
+    tele["abstained_no_attraction"] = abstained_no_attraction
 
     if not confirmed:
         return tele
+    # language split of the confirmed re-homes (Track-B integration telemetry).
+    tele["confirmed_ts"] = sum(1 for ep in confirmed if _is_ts_js(ep))
+    tele["confirmed_py"] = sum(1 for ep in confirmed if _is_py(ep))
 
     used_dev_names = {f.name for f in devs}
     by_pf: dict[str, list[str]] = defaultdict(list)

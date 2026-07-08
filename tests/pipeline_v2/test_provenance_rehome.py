@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import faultline.pipeline_v2.ts_ast.adapter as adapter
+import faultline.pipeline_v2.py_ast.adapter as py_adapter
 from faultline.models.types import Feature, Flow, UserFlow
 from faultline.pipeline_v2 import provenance_rehome as PR
 from faultline.pipeline_v2.ts_ast.adapter import ProvenanceView
@@ -233,8 +234,165 @@ def test_kill_switch_no_op(monkeypatch) -> None:
     ufs, devs, pfs, ctx = _base_world(monkeypatch)
     before = len(devs)
     # the stage is skipped by the CALLER on flag off; the function itself is
-    # only reached when enabled, but ts_ast guard + no view also no-op it.
+    # only reached when enabled, but BOTH providers off also no-op it.
     monkeypatch.setattr(adapter, "ts_ast_enabled", lambda: False)
+    monkeypatch.setattr(py_adapter, "py_ast_enabled", lambda: False)
     tele = PR.run_provenance_rehome(ufs, devs, pfs, ctx)
     assert tele["applied"] is False
+    assert tele["enabled"] is False
     assert len(devs) == before
+
+
+# ── Track-B integration: Python (py_ast) provenance re-home ──────────────
+#
+# The re-home now dispatches provenance by entry-file language: ``.py`` entries
+# read the py_ast import graph (absolute first-party module imports), TS/JS the
+# ts_ast graph — through ONE ``ProvenanceView`` interface. Python's domain
+# "package" is the target's immediate directory (dir-is-package), mirroring the
+# ts_ast pnpm package-root aggregation.
+
+REC_MODEL = "apps/recruitment/models.py"
+REC_SVC = "apps/recruitment/service.py"
+JOB_TASK = "apps/jobs/tasks.py"          # lane entry in a SIBLING app dir
+
+
+def _py_patch(monkeypatch, view, *, py_on=True) -> None:
+    """py-only world: ts_ast off, py_ast on with a stubbed view."""
+    monkeypatch.setattr(adapter, "ts_ast_enabled", lambda: False)
+    monkeypatch.setattr(py_adapter, "py_ast_enabled", lambda: py_on)
+    monkeypatch.setattr(
+        py_adapter, "repo_provenance", lambda root, tracked: view)
+
+
+def _py_world(monkeypatch, *, py_on=True):
+    """A Django-shaped world: the ``recruitment`` PF's own service imports the
+    recruitment domain models; a LANE job task (sibling ``apps/jobs``) recruited
+    by the recruitment journey imports the SAME recruitment models."""
+    rec_pf = _pf("recruitment", [REC_SVC], "route:apps/recruitment")
+    rec_dev = _dev("recruitment-owner", [REC_SVC], pfid="recruitment")
+    task_flow = _flow("run-recruitment-job", JOB_TASK, "F1")
+    lane_dev = _dev("jobs", [JOB_TASK, "apps/jobs/other.py"], flows=[task_flow])
+    view = _view({
+        REC_SVC: [(REC_MODEL, "workspace")],
+        JOB_TASK: [(REC_MODEL, "workspace")],
+    })
+    _py_patch(monkeypatch, view, py_on=py_on)
+    ctx = _Ctx([REC_SVC, REC_MODEL, JOB_TASK, "apps/jobs/other.py"])
+    ufs = [_uf("UF-1", "recruitment", ["F1"])]
+    return ufs, [rec_dev, lane_dev], [rec_pf], ctx
+
+
+def test_python_lane_entry_rehomes_via_py_ast(monkeypatch) -> None:
+    ufs, devs, pfs, ctx = _py_world(monkeypatch)
+    tele = PR.run_provenance_rehome(ufs, devs, pfs, ctx)
+    assert tele["entries_rehomed"] == 1
+    assert tele.get("confirmed_py") == 1
+    assert tele.get("confirmed_ts", 0) == 0
+    assert tele["providers"] == {"ts": False, "py": True}
+    rehomed = [d for d in devs if d.product_feature_id == "recruitment"
+               and JOB_TASK in (d.paths or [])]
+    assert rehomed, "python lane entry not re-homed to its journey PF"
+    lane = next(d for d in devs if d.name == "jobs")
+    assert JOB_TASK not in (lane.paths or []), "lane dev still owns the entry"
+    assert "apps/jobs/other.py" in (lane.paths or []), \
+        "conservation: only the entry moves, sibling lane file stays"
+    rec_pf = next(p for p in pfs if p.name == "recruitment")
+    assert JOB_TASK in (rec_pf.paths or []), "PF not widened by the py re-home"
+
+
+def test_python_kill_switch_py_ast_off(monkeypatch) -> None:
+    # py_ast off (+ ts off) → no view built → byte-identical no-op.
+    ufs, devs, pfs, ctx = _py_world(monkeypatch, py_on=False)
+    before = len(devs)
+    tele = PR.run_provenance_rehome(ufs, devs, pfs, ctx)
+    assert tele["applied"] is False
+    assert tele["enabled"] is False
+    assert len(devs) == before
+
+
+def test_python_journey_conflict_blocks_rehome(monkeypatch) -> None:
+    # the SAME python entry is a member of journeys on two PFs → abstain.
+    ufs, devs, pfs, ctx = _py_world(monkeypatch)
+    other = _pf("payroll", ["apps/payroll/service.py"], "route:apps/payroll")
+    pfs.append(other)
+    ufs.append(_uf("UF-2", "payroll", ["F1"]))
+    tele = PR.run_provenance_rehome(ufs, devs, pfs, ctx)
+    assert tele["entries_rehomed"] == 0
+    assert tele["skipped_journey_conflict"] == 1
+
+
+def test_python_shared_package_dir_is_ambiguous(monkeypatch) -> None:
+    # A shared python package DIRECTORY imported by TWO PFs is not single-PF
+    # domain evidence — the immediate-dir package-root makes ``apps/common``
+    # ambiguous, so a lane entry importing ONLY it abstains (ts 949114c parity).
+    SHARED = "apps/common/db.py"
+    rec_pf = _pf("recruitment", [REC_SVC], "route:apps/recruitment")
+    rec_dev = _dev("recruitment-owner", [REC_SVC], pfid="recruitment")
+    pay_pf = _pf("payroll", ["apps/payroll/service.py"], "route:apps/payroll")
+    pay_dev = _dev("payroll-owner", ["apps/payroll/service.py"], pfid="payroll")
+    task_flow = _flow("run-job", JOB_TASK, "F1")
+    lane_dev = _dev("jobs", [JOB_TASK], flows=[task_flow])
+    view = _view({
+        REC_SVC: [(SHARED, "workspace")],
+        "apps/payroll/service.py": [(SHARED, "workspace")],
+        JOB_TASK: [(SHARED, "workspace")],   # lane entry imports ONLY shared
+    })
+    _py_patch(monkeypatch, view)
+    ctx = _Ctx([REC_SVC, "apps/payroll/service.py", JOB_TASK, SHARED])
+    tele = PR.run_provenance_rehome(
+        [_uf("UF-1", "recruitment", ["F1"])],
+        [rec_dev, pay_dev, lane_dev], [rec_pf, pay_pf], ctx)
+    assert tele["entries_rehomed"] == 0, \
+        "a shared package dir (2 PF importers) must not be single-PF evidence"
+
+
+def test_python_relative_import_is_not_domain_evidence(monkeypatch) -> None:
+    # py_ast classifies same-package PEP-328 imports as ``relative`` — those
+    # are same-app locals, not cross-module domain evidence → no attraction.
+    rec_pf = _pf("recruitment", [REC_SVC], "route:apps/recruitment")
+    rec_dev = _dev("recruitment-owner", [REC_SVC], pfid="recruitment")
+    task_flow = _flow("run-job", JOB_TASK, "F1")
+    lane_dev = _dev("jobs", [JOB_TASK], flows=[task_flow])
+    view = _view({
+        REC_SVC: [(REC_MODEL, "relative")],   # NOT workspace
+        JOB_TASK: [(REC_MODEL, "relative")],
+    })
+    _py_patch(monkeypatch, view)
+    ctx = _Ctx([REC_SVC, REC_MODEL, JOB_TASK])
+    tele = PR.run_provenance_rehome(
+        [_uf("UF-1", "recruitment", ["F1"])], [rec_dev, lane_dev], [rec_pf], ctx)
+    assert tele["entries_rehomed"] == 0
+
+
+def test_mixed_repo_dispatches_each_entry_to_its_graph(monkeypatch) -> None:
+    # A full-stack repo: the TS sender re-homes through ts_ast, the Python job
+    # through py_ast — one stage, two graphs, dispatched by entry language.
+    ts_view = _view({
+        EMAIL_PF_FILE: [(EMAIL_PKG, "workspace")],
+        SENDER: [(EMAIL_PKG, "workspace")],
+    })
+    py_view = _view({
+        REC_SVC: [(REC_MODEL, "workspace")],
+        JOB_TASK: [(REC_MODEL, "workspace")],
+    })
+    monkeypatch.setattr(adapter, "ts_ast_enabled", lambda: True)
+    monkeypatch.setattr(adapter, "repo_provenance", lambda root, tracked: ts_view)
+    monkeypatch.setattr(py_adapter, "py_ast_enabled", lambda: True)
+    monkeypatch.setattr(
+        py_adapter, "repo_provenance", lambda root, tracked: py_view)
+    email_pf = _pf("email", [EMAIL_PF_FILE], "route:email")
+    email_dev = _dev("email-owner", [EMAIL_PF_FILE], pfid="email")
+    ts_flow = _flow("send-emails", SENDER, "F-TS")
+    ts_lane = _dev("workflows", [SENDER], flows=[ts_flow])
+    rec_pf = _pf("recruitment", [REC_SVC], "route:recruitment")
+    rec_dev = _dev("recruitment-owner", [REC_SVC], pfid="recruitment")
+    py_flow = _flow("run-job", JOB_TASK, "F-PY")
+    py_lane = _dev("jobs", [JOB_TASK], flows=[py_flow])
+    ctx = _Ctx([EMAIL_PF_FILE, SENDER, REC_SVC, REC_MODEL, JOB_TASK])
+    ufs = [_uf("UF-TS", "email", ["F-TS"]), _uf("UF-PY", "recruitment", ["F-PY"])]
+    tele = PR.run_provenance_rehome(
+        ufs, [email_dev, ts_lane, rec_dev, py_lane], [email_pf, rec_pf], ctx)
+    assert tele["entries_rehomed"] == 2
+    assert tele["confirmed_ts"] == 1
+    assert tele["confirmed_py"] == 1
+    assert tele["providers"] == {"ts": True, "py": True}

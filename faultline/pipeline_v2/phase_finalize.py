@@ -1212,13 +1212,24 @@ def run_finalize_phase(
                         scan_meta["provenance_rehome"] = prh_tele
                     log_prh.info(
                         "provenance_rehome: confirmed %d rehomed %d "
-                        "pfs_widened %d skip(conflict=%d owned=%d) ties=%d" % (
+                        "pfs_widened %d skip(conflict=%d owned=%d) ties=%d | "
+                        "providers=%s confirmed(ts=%d py=%d) examined=%d "
+                        "lane_cand=%d no_attr=%d single_pf_pkgs=%d "
+                        "lane_prov_files=%d" % (
                             prh_tele.get("entries_confirmed", 0),
                             prh_tele.get("entries_rehomed", 0),
                             prh_tele.get("pfs_widened", 0),
                             prh_tele.get("skipped_journey_conflict", 0),
                             prh_tele.get("skipped_owned", 0),
                             prh_tele.get("abstained_ties", 0),
+                            prh_tele.get("providers"),
+                            prh_tele.get("confirmed_ts", 0),
+                            prh_tele.get("confirmed_py", 0),
+                            prh_tele.get("entries_examined", 0),
+                            prh_tele.get("lane_candidates", 0),
+                            prh_tele.get("abstained_no_attraction", 0),
+                            prh_tele.get("single_pf_packages", 0),
+                            prh_tele.get("lane_prov_files", 0),
                         ),
                         feature=None,
                     )
