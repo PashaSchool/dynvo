@@ -199,6 +199,10 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # off). Telemetry artifact emitted on every run. See
     # naming_contract.py.
     (7, "naming_contract"),
+    # Stage 6.97b (B4-fix wave, 2026-07-08) — UF-level LOC: union of owned
+    # member-flow spans per journey (validator floc_owned semantics).
+    # Additive field only; $0/deterministic, FAULTLINE_UF_LOC=0 off.
+    (7, "uf_loc"),
 ]
 
 
