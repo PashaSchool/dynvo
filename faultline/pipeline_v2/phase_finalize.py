@@ -2351,6 +2351,34 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── B4 synthesized-journey quality (Stage 6.98) ────────────────────
+    # Runs AFTER the naming contract (so demoted seeds/regrounded backstops
+    # carry their final display names) and BEFORE the lane + Stage-7 write.
+    # (a) Demote member-less ``system_flow_recall`` seeds out of user_flows[]
+    #     into scan_meta["system_flow_seeds"] — a hollow journey (0 members,
+    #     0 loc) is not a journey. (b) Reground single-member GENERIC backstop
+    #     names from their member flow. OUTPUT-ONLY: mutates user_flows[] in
+    #     place + flow backpointers + the display channel; validator-neutral
+    #     (I7 tracked-only, I24/I13 untouched, I14 backpointers nulled).
+    #     Kill-switch: FAULTLINE_SYNTH_QUALITY=0 restores pre-B4 output
+    #     byte-identically.
+    from faultline.pipeline_v2.synth_quality import (
+        run_synth_quality,
+        synth_quality_enabled,
+    )
+    if synth_quality_enabled():
+        try:
+            run_synth_quality(
+                user_flows,
+                list(bipartite.flows),
+                product_features,
+                scan_meta,
+            )
+        except Exception as exc:  # noqa: BLE001 — quality pass never breaks a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"synth-quality pass failed ({exc}); journeys unchanged"
+            )
+
     # ── platform_infrastructure[] lane (Wave 2b, operator amendment) ───
     # The anchored path's residual surface: one row per lane resident
     # (product_feature_id=None + shared_reason). Assembled AFTER emission

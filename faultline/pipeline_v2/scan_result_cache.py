@@ -112,12 +112,17 @@ ENV_OUTPUT_FLAGS = (
     # both reshape the emitted user_flows[] layer.
     "FAULTLINE_LATTICE_THIN_FOLD",
     "FAULTLINE_LOC_WORTHY_BACKSTOP",
+    # B4 (2026-07-08) — synthesized-journey quality: demotes member-less
+    # system_flow_recall seeds out of user_flows[] and regrounds single-member
+    # backstop journey names. Reshapes the emitted user_flows[] layer.
+    "FAULTLINE_SYNTH_QUALITY",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
 #: against a new key layout (they simply won't match — silent invalidation).
 #: v3 (W5.1): added FAULTLINE_LATTICE_THIN_FOLD + FAULTLINE_LOC_WORTHY_BACKSTOP.
-KEY_SCHEMA_VERSION = 3
+#: v4 (B4): added FAULTLINE_SYNTH_QUALITY.
+KEY_SCHEMA_VERSION = 4
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
