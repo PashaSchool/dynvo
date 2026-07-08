@@ -578,8 +578,43 @@ class TestExpandWorkspaceGlob:
             "packages/app-store"
         ]
 
-    def test_multi_wildcard_skipped(self, tmp_path) -> None:
+    def test_multi_wildcard_skipped_by_default(self, tmp_path) -> None:
+        # Legacy byte-identity: ``**`` globs are skipped unless deep=True.
+        _os_test.makedirs(str(tmp_path / "packages" / "emails"))
+        _write(str(tmp_path), "packages/emails/package.json", "{}")
         assert _expand_workspace_glob(str(tmp_path), "packages/**/src") == []
+        assert _expand_workspace_glob(str(tmp_path), "packages/**/*") == []
+        assert _expand_workspace_glob(str(tmp_path), "packages/**") == []
+
+    def test_deep_glob_walks_nested_manifest_dirs(self, tmp_path) -> None:
+        # Track-A: the standard pnpm ``packages/**/*`` layout — packages
+        # both DIRECTLY under packages/ and NESTED (notifications/email).
+        _write(str(tmp_path), "packages/emails/package.json", "{}")
+        _write(str(tmp_path), "packages/db/package.json", "{}")
+        _write(str(tmp_path), "packages/notifications/email/package.json", "{}")
+        _write(str(tmp_path), "packages/readme.md", "x")  # no manifest → skip
+        got = _expand_workspace_glob(str(tmp_path), "packages/**/*", deep=True)
+        assert got == [
+            "packages/db",
+            "packages/emails",
+            "packages/notifications/email",
+        ]
+        # ``packages/**`` (no trailing /*) behaves identically.
+        assert _expand_workspace_glob(
+            str(tmp_path), "packages/**", deep=True) == got
+
+    def test_deep_glob_prunes_node_modules(self, tmp_path) -> None:
+        _write(str(tmp_path), "packages/ui/package.json", "{}")
+        # a dependency manifest nested in node_modules must NEVER surface.
+        _write(str(tmp_path),
+               "packages/ui/node_modules/left-pad/package.json", "{}")
+        _write(str(tmp_path), "packages/ui/dist/package.json", "{}")
+        got = _expand_workspace_glob(str(tmp_path), "packages/**/*", deep=True)
+        assert got == ["packages/ui"]
+
+    def test_deep_glob_missing_prefix_is_empty(self, tmp_path) -> None:
+        assert _expand_workspace_glob(
+            str(tmp_path), "packages/**/*", deep=True) == []
 
 
 class TestDetectWorkspacePackageMap:
@@ -612,6 +647,28 @@ class TestDetectWorkspacePackageMap:
     def test_empty_when_no_workspaces(self, tmp_path) -> None:
         _write(str(tmp_path), "package.json", _json_test.dumps({"name": "solo"}))
         assert detect_workspace_package_map(str(tmp_path)) == {}
+
+    def test_deep_pnpm_star_star_layout(self, tmp_path) -> None:
+        # The measured openstatus/documenso/typebot shape: ``packages/**/*``
+        # in pnpm-workspace.yaml. deep=False misses every packages/* pkg;
+        # deep=True recovers them (the Track-A workspace-resolution fix).
+        _write(str(tmp_path), "pnpm-workspace.yaml",
+               "packages:\n  - 'apps/*'\n  - 'packages/**/*'\n")
+        _write(str(tmp_path), "apps/web/package.json",
+               _json_test.dumps({"name": "@scope/web"}))
+        _write(str(tmp_path), "packages/emails/package.json",
+               _json_test.dumps({"name": "@scope/emails"}))
+        _write(str(tmp_path), "packages/notifications/email/package.json",
+               _json_test.dumps({"name": "@scope/notification-emails"}))
+
+        shallow = detect_workspace_package_map(str(tmp_path))
+        assert shallow == {"@scope/web": "apps/web"}  # legacy: packages/** lost
+
+        deep = detect_workspace_package_map(str(tmp_path), deep=True)
+        assert deep["@scope/web"] == "apps/web"
+        assert deep["@scope/emails"] == "packages/emails"
+        assert deep["@scope/notification-emails"] == \
+            "packages/notifications/email"
 
 
 class TestResolveScopedWorkspaceImport:

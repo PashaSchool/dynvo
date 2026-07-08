@@ -598,6 +598,18 @@ def detect_monorepo_packages(repo_root: str) -> set[str]:
 # is a flat list of glob strings, recovered with a tolerant line scan below.
 _WS_GLOB_RE = None  # placeholder; pattern compiled lazily in the function
 
+#: Dirs never walked while expanding a recursive ``**`` workspace glob — a
+#: workspace package is never nested inside these, and descending them
+#: (``node_modules`` especially) would surface thousands of dependency
+#: manifests and blow the walk cost. Track-A note: pruning is what makes the
+#: ``**`` expansion both correct and bounded.
+_WS_DEEP_PRUNE = frozenset({
+    "node_modules", ".git", ".hg", ".svn", ".yarn", "dist", "build",
+    ".next", ".nuxt", ".svelte-kit", "out", "coverage", ".turbo",
+    ".cache", "__pycache__", ".venv", "venv", "vendor", "target",
+    ".output", "storybook-static",
+})
+
 
 def _read_workspace_globs(repo_root: str) -> list[str]:
     """Collect workspace glob patterns from package manager config.
@@ -664,22 +676,48 @@ def _read_workspace_globs(repo_root: str) -> list[str]:
     return globs
 
 
-def _expand_workspace_glob(repo_root: str, glob: str) -> list[str]:
+def _expand_workspace_glob(
+    repo_root: str, glob: str, deep: bool = False,
+) -> list[str]:
     """Expand ONE workspace glob into concrete package directories.
 
-    Only the trailing-``/*`` (single-segment wildcard) form is expanded by
-    listing immediate child directories — that covers the overwhelmingly
-    dominant workspace conventions (``packages/*``, ``packages/features/*``,
-    ``apps/api/*``). A literal path (no wildcard) is returned as-is when it
-    exists. We deliberately do NOT implement full globbing (``**``) — a
-    package dir is identified by carrying its own ``package.json``, checked
-    by the caller, so over-listing here is harmless.
+    The trailing-``/*`` (single-segment wildcard) form is expanded by
+    listing immediate child directories — that covers the dominant
+    conventions (``packages/*``, ``packages/features/*``, ``apps/api/*``).
+    A literal path (no wildcard) is returned as-is when it exists.
+
+    ``deep`` (Track-A, W6-AST provenance): recursive ``**`` containers
+    (``packages/**``, ``packages/**/*`` — the STANDARD pnpm monorepo
+    layout) are expanded by walking the fixed prefix and surfacing every
+    ``package.json``-bearing descendant directory (``node_modules`` and
+    build dirs pruned). Left DISABLED by default so every existing caller
+    (flow_reach / snapshots / symbol_graph) stays byte-identical; the
+    ts_ast resolver opts in under ``FAULTLINE_WS_DEEP_GLOB``. Without it,
+    ``**`` globs are skipped exactly as before (crippling first-party
+    resolution on the ``packages/**`` layout — the measured bug).
 
     Returns repo-relative directory paths (forward-slash).
     """
     glob = glob.strip().rstrip("/")
     if not glob:
         return []
+    # Recursive container — must precede the ``/*`` branch (``packages/**/*``
+    # ends with ``/*`` yet is a ``**`` walk). ``package.json`` is the real
+    # membership gate the caller re-applies, so surfacing only manifest-bearing
+    # descendants is exact and bounded.
+    if deep and "**" in glob:
+        prefix = glob.split("**", 1)[0].strip("/")
+        base_abs = os.path.join(repo_root, prefix) if prefix else repo_root
+        if not os.path.isdir(base_abs):
+            return []
+        deep_dirs: list[str] = []
+        for dirpath, dirnames, filenames in os.walk(base_abs):
+            dirnames[:] = [d for d in dirnames if d not in _WS_DEEP_PRUNE]
+            if "package.json" in filenames:
+                rel = os.path.relpath(dirpath, repo_root).replace(os.sep, "/")
+                if rel != ".":
+                    deep_dirs.append(rel)
+        return sorted(deep_dirs)
     if glob.endswith("/*"):
         parent_rel = glob[:-2]
         parent_abs = os.path.join(repo_root, parent_rel)
@@ -701,7 +739,9 @@ def _expand_workspace_glob(repo_root: str, glob: str) -> list[str]:
     return []
 
 
-def detect_workspace_package_map(repo_root: str) -> dict[str, str]:
+def detect_workspace_package_map(
+    repo_root: str, deep: bool = False,
+) -> dict[str, str]:
     """Map each workspace package's declared ``name`` → its directory.
 
     This is the structural backbone for resolving scoped monorepo imports
@@ -732,7 +772,7 @@ def detect_workspace_package_map(repo_root: str) -> dict[str, str]:
     dirs: list[str] = []
     seen_dirs: set[str] = set()
     for g in globs:
-        for d in _expand_workspace_glob(repo_root, g):
+        for d in _expand_workspace_glob(repo_root, g, deep=deep):
             if d not in seen_dirs:
                 seen_dirs.add(d)
                 dirs.append(d)

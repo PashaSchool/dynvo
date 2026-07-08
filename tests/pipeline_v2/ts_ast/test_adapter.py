@@ -312,6 +312,17 @@ def test_provenance_s2_contract_resolve_and_occurrences():
     assert occ_page.count("next/head") == 1
 
 
+def test_provenance_workspace_targets_first_party_only():
+    # Track-A A1: only cross-package WORKSPACE-resolution targets are the
+    # domain signal. PAGE imports @acme/ui (workspace → packages/ui) AND
+    # @/components/button (tsconfig_alias → same-app) AND next/head (external).
+    view = provenance_view(_build())
+    assert view.workspace_targets(PAGE) == frozenset({UIBTN})
+    assert BTN not in view.workspace_targets(PAGE)  # alias, not workspace
+    assert view.workspace_targets(DB) == frozenset()  # relative only
+    assert view.workspace_targets("unknown.ts") == frozenset()
+
+
 def test_provenance_655_contract_lookup():
     view = provenance_view(_build())
     assert view.lookup(PAGE, "@/components/button") == (BTN, "workspace")
