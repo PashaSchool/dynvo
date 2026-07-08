@@ -1177,7 +1177,24 @@ def run_journey_lattice(
                 fam_members = a_qual.get(fam) or []
                 if not fam_members:
                     continue
-                if not _has_owned_entry(fam_members):
+                # Majority-owned entry gate — the I16 ruler applied at MINT
+                # time: a family whose known-owner entries are majority-
+                # foreign (> 0.5) would be born a misattached journey the
+                # coarse parent kept under the radar; it folds to residual
+                # (status quo ante). chk == 0 (no owned entry at all) folds
+                # too — no attachment evidence to stand alone (the object
+                # axis' _has_owned_entry contract, strengthened to the
+                # validator's own threshold for the finer action grain).
+                a_chk = a_mis = 0
+                for m in fam_members:
+                    fl = flow_by_mid.get(m)
+                    e = _entry_file_of(fl) if fl is not None else None
+                    own = entry_owner.get(e or "")
+                    if own:
+                        a_chk += 1
+                        if own != pf_key:
+                            a_mis += 1
+                if a_chk == 0 or a_mis * 2 > a_chk:
                     tele["clusters_unowned_folded"] = (
                         tele.get("clusters_unowned_folded", 0) + 1)
                     continue

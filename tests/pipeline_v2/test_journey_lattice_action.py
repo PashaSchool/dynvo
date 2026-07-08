@@ -453,6 +453,38 @@ def test_single_member_families_never_qualify() -> None:
     assert [str(u.id) for u in ufs] == ["UF-022"]
 
 
+def test_majority_foreign_family_folds_back() -> None:
+    """The I16 ruler applied at mint time: an action family whose known-owner
+    entries are majority-owned by OTHER PFs would be born a misattached
+    journey (Soc0 'Update labels' 2/3-foreign class) — it folds to residual;
+    when that drops the plan below the bar, the catch-all survives intact."""
+    own_entry = "backend/routers/labels.py"
+    foreign_entry = "frontend/src/pages/SettingsPage.tsx"
+    names_own = [
+        "list-labels-flow", "get-api-labels-summary-flow",   # browse (owned)
+        "post-api-labels-flow", "post-api-labels-bulk-flow",  # create (owned)
+    ]
+    names_foreign = [
+        "patch-api-labels-label-id-flow", "update-label-flow",  # update
+    ]
+    flows = ([_flow(n, own_entry) for n in names_own]
+             + [_flow(n, foreign_entry) for n in names_foreign])
+    devs = [
+        _dev("api-labels", [own_entry], "labels",
+             flows=flows),  # flows looked up via this dev
+        _dev("settings-page", [foreign_entry], "settings"),
+    ]
+    pfs = [_pf("labels", "Labels"), _pf("settings", "Settings")]
+    ufs = [_uf("UF-038", "Manage labels and track changes", "labels",
+               [f.name for f in flows], resource="label")]
+    tele = run_journey_lattice(ufs, devs, pfs, [])
+    # update family (2 members, both foreign-owned) folds; only browse +
+    # create remain -> below the >=3 bar -> no split at all.
+    assert tele.get("action_catchalls_detected", 0) == 0
+    assert [str(u.id) for u in ufs] == ["UF-038"]
+    assert tele.get("clusters_unowned_folded", 0) >= 1
+
+
 def test_unowned_families_fold_back() -> None:
     """A family with no owned entry (developer-layer PF-stamped path) has no
     attachment evidence — it folds to residual exactly like the object axis;
