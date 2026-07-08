@@ -47,7 +47,11 @@ from typing import Any
 #: (sample_links, unmatched_sample order) while every content array
 #: stayed identical across 6 runs (2026-07-03 calibration). Inside
 #: ``scan_meta``, ``*_sample`` keys are illustrative debug telemetry by
-#: convention, so they are scrubbed wholesale. The scrub is deliberately
+#: convention, so they are scrubbed wholesale. ``stage_6_55_page_interior``
+#: (AST-parse cache telemetry: cache_hits + parsed) is warmth-dependent —
+#: a cold run parses what a warm run serves from cache, so BOTH counters
+#: drift between cold/warm runs of identical code (B1 gate calibration,
+#: 2026-07-08). The scrub is deliberately
 #: scoped to the ``scan_meta`` subtree so a same-named CONTENT field
 #: elsewhere could never be masked.
 _VOLATILE_IN_SCAN_META = frozenset(
@@ -62,6 +66,7 @@ _VOLATILE_IN_SCAN_META = frozenset(
         "finished_at",
         "sample_links",
         "stage_6_3_cache_hits",
+        "stage_6_55_page_interior",
     }
 )
 

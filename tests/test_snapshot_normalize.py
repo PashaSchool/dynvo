@@ -28,6 +28,7 @@ def _doc(**overrides):
             "calls": 0,
             "stage_artifact_dir": "/tmp/state/logs/repo/run",
             "stage_6_3_cache_hits": 46855,
+            "stage_6_55_page_interior": {"cache_hits": 120, "parsed": 34},
             "stage_6_3_elapsed_sec": 3.2,
             "framework_profile": "default",
             "stage_6_4": {
@@ -57,6 +58,7 @@ def test_volatile_fields_are_stripped() -> None:
         "stage_artifact_dir",
         "stage_6_3_cache_hits",
         "stage_6_3_elapsed_sec",
+        "stage_6_55_page_interior",
     ):
         assert key not in meta, key
     linker = meta["stage_6_4"]["per_linker"]["nextjs-http-route"]
