@@ -125,6 +125,10 @@ ENV_OUTPUT_FLAGS = (
     # no-surface, already-shared member files are forced role="shared"
     # everywhere. Reshapes member_files[].role (the I23 anchor-body view).
     "FAULTLINE_SHARED_LEAF_CONSISTENCY",
+    # B15b (2026-07-09) — data-file shared-leaf rail: large pure-data blobs
+    # (locale packs) consumed by >=2 PFs, no surface, are forced role="shared".
+    # Reshapes member_files[].role.
+    "FAULTLINE_DATA_LEAF",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -133,7 +137,8 @@ ENV_OUTPUT_FLAGS = (
 #: v4 (B4): added FAULTLINE_SYNTH_QUALITY.
 #: v5 (B13): added FAULTLINE_BACKSTOP_OWNED_COVER.
 #: v6 (B15): added FAULTLINE_SHARED_LEAF_CONSISTENCY.
-KEY_SCHEMA_VERSION = 6
+#: v7 (B15b): added FAULTLINE_DATA_LEAF.
+KEY_SCHEMA_VERSION = 7
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

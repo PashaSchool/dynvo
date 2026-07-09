@@ -1879,6 +1879,8 @@ def run_finalize_phase(
     # Gated on anchored_mint_applied: no lane schema to extend otherwise.
     # Kill-switch FAULTLINE_FILE_LANE=0 → no devs appended → byte-identical.
     from faultline.pipeline_v2.file_lane import (
+        data_leaf_enabled,
+        enforce_data_leaf_shared,
         enforce_shared_leaf_consistency,
         file_lane_enabled,
         run_file_lane_infra,
@@ -2009,6 +2011,22 @@ def run_finalize_phase(
                     f"feature_loc: FAILED ({exc}) — continuing without loc",
                     feature=None,
                 )
+
+    # ── B15b — data-file shared-leaf rail (§4b, runs AFTER 6.97 so repo_loc is
+    #    available for the scale-invariant LOC floor; before the path_index
+    #    rebuild + I23 body read). Force role="shared" on large shared-DATA leaf
+    #    files (i18n locale packs, template JSON) the closure attributed as body.
+    #    Kill-switch FAULTLINE_DATA_LEAF=0 -> byte-identical. Never breaks a scan.
+    if data_leaf_enabled() and anchored_mint_applied:
+        try:
+            _repo_loc = (scan_meta.get("loc_accounting") or {}).get("repo_loc")
+            dl_tele = enforce_data_leaf_shared(
+                features, product_features, lineage_result.routes_index,
+                _repo_loc)
+            scan_meta["data_leaf"] = dl_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"data-leaf rail failed ({exc}); no roles changed")
 
     # ── Draw-native flowless-shell resolution (RC2 fix-3 Part B, $0) ──
     # A 6.7d Call-1 draw can emit a capability whose devs own >= 1k LOC but

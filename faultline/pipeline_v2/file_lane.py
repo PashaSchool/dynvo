@@ -69,13 +69,16 @@ __all__ = [
     "FILE_LANE_ENV",
     "FILE_LANE_PCT_ENV",
     "SHARED_LEAF_CONSISTENCY_ENV",
+    "DATA_LEAF_ENV",
     "DEFAULT_FILE_LANE_PCT",
     "SHARED_FLOOR",
     "file_lane_enabled",
     "file_lane_pct",
     "shared_leaf_consistency_enabled",
+    "data_leaf_enabled",
     "run_file_lane_infra",
     "enforce_shared_leaf_consistency",
+    "enforce_data_leaf_shared",
 ]
 
 FILE_LANE_ENV = "FAULTLINE_FILE_LANE"
@@ -129,6 +132,28 @@ def shared_leaf_consistency_enabled() -> bool:
     output (the B15 consistency post-pass becomes a no-op — no roles changed)."""
     return (os.environ.get(SHARED_LEAF_CONSISTENCY_ENV, "1") or "1").strip().lower() \
         not in _FALSY
+
+
+#: B15b (§4b DATA-FILE rail, re-ratified). A SEPARATE sub-flag (not the B15
+#: consistency flag): the two rails ship / roll back independently — B15 is a
+#: consistency law (shared-tagged files made consistent), B15b deliberately DROPS
+#: that guard to reach the closure-EVERYWHERE locale blobs (de/en.json), so it
+#: carries the heavier over-fire risk and deserves its own kill-switch + A/B.
+DATA_LEAF_ENV = "FAULTLINE_DATA_LEAF"
+
+#: A data blob is "large" when its LOC is >= this fraction of repo source LOC.
+#: Scale-invariant (no absolute constant, rule-no-magic-tuning) — calibrated at
+#: the MAX-MARGIN split of the measured corpus gap: locale packs + template-asset
+#: blobs sit at 1.3-2.4% of repo_loc (Soc0 de/en/fr/pt.json 2.06%; kan board/
+#: template/member/settings assets 1.3-2.4%); the nearest SPARED data file
+#: (documenso prisma schema) is at 0.54% — 0.01 sits in the middle of that gap.
+DATA_LEAF_LOC_FRAC = 0.01
+
+
+def data_leaf_enabled() -> bool:
+    """Default ON; ``FAULTLINE_DATA_LEAF=0`` restores byte-identical output
+    (the B15b data-file rail becomes a no-op — no roles changed)."""
+    return (os.environ.get(DATA_LEAF_ENV, "1") or "1").strip().lower() not in _FALSY
 
 
 def file_lane_pct() -> float:
@@ -543,4 +568,89 @@ def enforce_shared_leaf_consistency(
     tele["forced_shared_files"] = len(forced)
     tele["forced_member_rows"] = rows
     tele["samples"] = sorted(forced)[:20]
+    return tele
+
+
+# ── B15b: data-file shared-leaf rail (§4b, re-ratified) ──────────────────────
+
+
+def _file_suffix(rel: str) -> str:
+    base = rel.replace("\\", "/").rsplit("/", 1)[-1]
+    dot = base.rfind(".")
+    return base[dot:].lower() if dot > 0 else ""
+
+
+def enforce_data_leaf_shared(
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+    routes_index: list[dict[str, Any]] | None,
+    repo_loc: Any,
+) -> dict[str, Any]:
+    """B15b §4b — force ``role="shared"`` on large shared-DATA leaf files (i18n
+    locale packs, template/seed JSON) that the closure BFS attributed as owned
+    body. A file qualifies when ALL hold: (1) pure DATA — a non-code extension
+    (the engine's OWN code/data boundary via ``code_extensions``; a ``.json`` /
+    ``.yaml`` / ``.toml`` has ZERO code symbols by construction); (2) large —
+    ``loc >= DATA_LEAF_LOC_FRAC * repo_loc`` (scale-invariant); (3) shared —
+    claimed by ``>= 2`` distinct PFs; (4) not a product surface (S3).
+
+    UNLIKE the B15 consistency law this does NOT require the file be
+    ``role="shared"`` anywhere — that is why it reaches the closure-EVERYWHERE
+    locale blobs B15 could not; the dropped guard is why (1)+(2)+(4) are strict
+    and the FULL over-fire list is emitted (``samples``) as the central gate.
+    In-place, deterministic. No-op (byte-identical) when off / no repo_loc.
+    """
+    tele: dict[str, Any] = {
+        "enabled": True, "applied": False, "floor_loc": 0,
+        "forced_shared_files": 0, "forced_member_rows": 0, "samples": [],
+    }
+    if not data_leaf_enabled():
+        tele["enabled"] = False
+        return tele
+    if not isinstance(repo_loc, (int, float)) or repo_loc <= 0:
+        tele["reason"] = "no repo_loc"
+        return tele
+    pf_list = [pf for pf in (product_features or []) if _pf_key(pf)]
+    if len(pf_list) < 2:
+        return tele
+    floor = DATA_LEAF_LOC_FRAC * repo_loc
+    tele["floor_loc"] = int(floor)
+    from faultline.pipeline_v2.spine_anchors import load_spine_vocab
+    code_exts = frozenset(load_spine_vocab().get("code_extensions") or ())
+    surface = _surface_paths(product_features, routes_index)
+
+    claim_pfs: dict[str, set[str]] = {}
+    loc_of: dict[str, float] = {}
+    for pf in pf_list:
+        key = _pf_key(pf) or ""
+        for mf in (getattr(pf, "member_files", None) or []):
+            path = getattr(mf, "path", None)
+            if not path:
+                continue
+            claim_pfs.setdefault(path, set()).add(key)
+            loc = getattr(mf, "loc", None)
+            if isinstance(loc, (int, float)):
+                loc_of[path] = max(loc_of.get(path, 0.0), float(loc))
+
+    forced = {
+        p for p, pfs_ in claim_pfs.items()
+        if len(pfs_) >= 2
+        and p not in surface
+        and _file_suffix(p) not in code_exts
+        and loc_of.get(p, 0.0) >= floor
+    }
+    if not forced:
+        return tele
+
+    rows = 0
+    for feat in list(product_features or []) + list(developer_features or []):
+        for mf in (getattr(feat, "member_files", None) or []):
+            if getattr(mf, "path", None) in forced \
+                    and getattr(mf, "role", None) != "shared":
+                mf.role = "shared"
+                rows += 1
+    tele["applied"] = True
+    tele["forced_shared_files"] = len(forced)
+    tele["forced_member_rows"] = rows
+    tele["samples"] = sorted(forced)   # FULL list — the over-fire audit gate
     return tele
