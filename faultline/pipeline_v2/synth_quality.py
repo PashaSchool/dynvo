@@ -75,6 +75,33 @@ _UI_PRIMITIVE_STOP = frozenset({
     "screen", "widget", "row", "card", "list",
 })
 
+#: Universal CRUD verb families (B5). A member-flow verb maps to one of the
+#: four lifecycle families; a backstop whose members GENUINELY span the
+#: lifecycle (≥3 families incl. at least one create/delete) is a "managed
+#: resource" journey — the broad verb "Manage" is then the honest verdict
+#: (a narrow template verb like "View" undersells it). Same class as
+#: ``_UI_PRIMITIVE_STOP``: a UNIVERSAL linguistic set (English CRUD verbs),
+#: scale- and repo-invariant — NOT a corpus-tuned magic list, NOT a
+#: stack pattern (those live in YAML). ``read`` verbs overlap the vocab's
+#: ``view`` flow-verb-class by design; the two are consumed for different
+#: verdicts (CRUD-span vs dominant-intent).
+_CRUD_FAMILIES: dict[str, frozenset[str]] = {
+    "create": frozenset({"create", "add", "new", "insert", "register"}),
+    "read": frozenset({"view", "read", "get", "list", "show", "browse",
+                       "display", "render", "fetch"}),
+    "update": frozenset({"update", "edit", "modify", "change", "configure",
+                         "set", "rename", "toggle", "manage"}),
+    "delete": frozenset({"delete", "remove", "destroy", "archive"}),
+}
+_VERB_TO_CRUD: dict[str, str] = {
+    v: fam for fam, verbs in _CRUD_FAMILIES.items() for v in verbs
+}
+
+#: Verb tokens that carry no resource meaning when aggregating member
+#: objects (leading verbs already dropped by ``_split_member``; these are
+#: trailing path/scaffold artifacts of a ``short_label`` — ``-src-2`` etc.).
+_OBJ_STOP = frozenset({"src", "flow"})
+
 
 def synth_quality_enabled() -> bool:
     """Default ON; ``FAULTLINE_SYNTH_QUALITY=0`` restores pre-B4 output
@@ -221,6 +248,142 @@ def _split_member(label: str) -> tuple[str, list[str]]:
     return verb, obj
 
 
+# ── (b.2) multi-member backstop derivation (B5) ──────────────────────────────
+#
+# B4 named backstop journeys only in the unambiguous SINGLE-member case. B5
+# raises the derivation power to the MULTI-member case (2..N members) by
+# aggregating member evidence — flow-name verbs + objects, the UF's own
+# code-derived ``resource`` — into an actor+intent+outcome verdict. The
+# single-member path (b) is unchanged (byte-identical). All rules are
+# deterministic, universal (no repo hardcodes, no README, no LLM) and,
+# critically, CONSERVATIVE: a change fires only when the members clearly
+# out-vote the template. Three shapes fire (validated on the wave-9 corpus):
+#
+#   * REGROUND — the UF ``resource`` (engine-derived from the members) is
+#     token-disjoint from the PF display: the template named the CONTAINER,
+#     not what the members DO ("View network security" whose 4 members are
+#     all knowledge CRUD → "Manage knowledge"). Re-grounds onto the member
+#     resource; needs a confident verb verdict (below) to fire.
+#   * CRUD-UPGRADE — members genuinely span the CRUD lifecycle but the
+#     template picked a narrow read verb ("View log drains" whose members
+#     create/read/update/delete → "Manage log drains").
+#   * VERB-CORRECT — a single flow-verb-class strictly dominates the members
+#     yet differs from the template verb (the template verb won only via
+#     class-precedence, not vote): "Send network security" (6/8 members are
+#     view-class, only 2 are send-class) → "View network security".
+#
+# Anti-cases that DON'T fire (kept template, honest low-confidence "~"): no
+# dominant class AND no CRUD span (heterogeneous members); resource matches
+# the PF and the template verb already reflects the members; an already-
+# specialized (non-template) name; a vendor-composed hub PF.
+
+
+def _tokset(text: str) -> set[str]:
+    return {t for t in _KEBAB_SPLIT.split((text or "").lower()) if t}
+
+
+def _stem(tok: str) -> str:
+    """Cheap plural fold ("drains" -> "drain") for the disjoint test only."""
+    return tok[:-1] if len(tok) > 3 and tok.endswith("s") else tok
+
+
+def _template_shaped(name: str, pf_display: str) -> bool:
+    """True when ``name`` is the bare journey TEMPLATE "<verb> <PF display>":
+    a leading word followed by tokens that are all in the PF display. A name
+    carrying its OWN content token (already specialized — B4 single-member
+    renames, authored labels) is NOT template-shaped and is left untouched."""
+    words = (name or "").split()
+    if len(words) < 2:
+        return False
+    rest = _tokset(" ".join(words[1:]))
+    pf = _tokset(pf_display)
+    return bool(rest) and rest <= pf
+
+
+def _resource_lc(display: str) -> str:
+    """Lower-cased resource words of a PF display ("Log Drains" -> "log
+    drains"); acronym/brand re-casing is re-applied by the caller's polish."""
+    return " ".join(w.lower() for w in (display or "").split())
+
+
+def _derive_multi_member_name(
+    members: list[str],
+    resource: str,
+    pf_display: str,
+    current: str,
+    verb_class: dict[str, str],
+) -> tuple[str | None, bool]:
+    """Verdict for a backstop with ≥2 members. Returns ``(candidate, strong)``
+    where ``candidate`` is the un-polished display (or ``None`` to keep the
+    template) and ``strong`` marks a ≥2-member resource+action agreement
+    (drives the low→medium confidence bump). Pure; no side effects."""
+    from collections import Counter
+
+    if not _template_shaped(current, pf_display):
+        return None, False  # already specialized — never rewrite
+
+    classes: list[str] = []
+    crud: set[str] = set()
+    for lbl in members:
+        verb, _obj = _split_member(lbl)
+        if not verb:
+            continue
+        cls = verb_class.get(verb)
+        if cls:
+            classes.append(cls)
+        fam = _VERB_TO_CRUD.get(verb)
+        if fam:
+            crud.add(fam)
+    n = len(members)
+    if n < 2:
+        return None, False
+
+    counts = Counter(classes)
+    dom_cls, dom_n = counts.most_common(1)[0] if counts else (None, 0)
+    dominant = dom_cls if dom_n * 2 > n else None  # strictly > half
+    crud_span = len(crud) >= 3 and bool(crud & {"create", "delete"})
+
+    if crud_span:
+        verb_disp: str | None = "Manage"
+    elif dominant:
+        verb_disp = dominant.capitalize()
+    else:
+        verb_disp = None  # heterogeneous — no confident intent
+
+    # REGROUND: member resource token-disjoint (plural-folded) from the PF.
+    res_toks = _tokset(resource)
+    pf_toks = _tokset(pf_display)
+    disjoint = bool(res_toks) and not (
+        {_stem(t) for t in res_toks} & {_stem(t) for t in pf_toks}
+    )
+    if disjoint:
+        if verb_disp is None:
+            return None, False  # disjoint but no confident intent — keep
+        if not re.fullmatch(r"[a-z0-9-]+", resource or ""):
+            return None, False  # resource carries route/param junk — unsafe
+        res_phrase = re.sub(r"[-_]+", " ", resource).strip()
+        return f"{verb_disp} {res_phrase}", crud_span
+
+    # resource == PF display from here (template resource retained).
+    cur_verb = (current.split() or [""])[0].lower()
+    # CRUD-UPGRADE: lifecycle span but a narrow (non-Manage) template verb.
+    if crud_span and cur_verb != "manage":
+        return f"Manage {_resource_lc(pf_display)}", True
+    # VERB-CORRECT: a single class dominates but differs from the template.
+    if dominant and verb_class.get(cur_verb) != dominant:
+        return f"{dominant.capitalize()} {_resource_lc(pf_display)}", False
+    return None, False
+
+
+def _verb_class_index(vocab: Any) -> dict[str, str]:
+    """``verb token -> flow_verb_class`` from the naming vocab (data-driven)."""
+    out: dict[str, str] = {}
+    for cls, verbs in (vocab.get("flow_verb_classes") or {}).items():
+        for v in (verbs or []):
+            out[str(v).lower()] = str(cls)
+    return out
+
+
 def reground_backstop_uf_names(
     user_flows: list[Any],
     flows: list[Any],
@@ -250,6 +413,7 @@ def reground_backstop_uf_names(
         for x in (v.get(key) or [])
     }
     flow_by_id = _flow_by_member_id(flows)
+    verb_class = _verb_class_index(v)
     pf_by_key: dict[str, Any] = {}
     for pf in (product_features or []):
         key = _get(pf, "id", None) or _get(pf, "name", None)
@@ -261,13 +425,14 @@ def reground_backstop_uf_names(
         for u in user_flows
     }
     renames: list[dict[str, Any]] = []
+    confidence_raised = 0
 
     for uf in user_flows:
         if _get(uf, "synthesis_reason", None) != BACKSTOP_REASON:
             continue
         mfids = _get(uf, "member_flow_ids", None) or []
-        if len(mfids) != 1:
-            continue  # only the unambiguous single-member case
+        if not mfids:
+            continue  # member-less backstop — no evidence to derive from
         pf = pf_by_key.get(str(_get(uf, "product_feature_id", None) or ""))
         pf_display = (
             str(_get(pf, "display_name", None)
@@ -276,21 +441,39 @@ def reground_backstop_uf_names(
         )
         if _HUB_COMPOSE_SEP in pf_display:
             continue  # vendor-composed surface — vendor is the journey subject
-        fl = flow_by_id.get(str(mfids[0]))
-        if fl is None:
-            continue
-        verb, obj = _split_member(_member_flow_label(fl))
-        if not verb.isalpha() or verb in noun_lead or not obj:
-            continue  # no clean verb-led member evidence
 
         current = str(_get(uf, "name", "") or "")
-        cur_tokens = {t for t in _KEBAB_SPLIT.split(current.lower()) if t}
-        # Adopt only when the member adds ≥1 content token the template lacks.
-        if not any(t not in cur_tokens for t in obj):
-            continue
+        candidate: str | None = None
+        strong = False
 
-        candidate = polish_display_casing(
-            verb.capitalize() + " " + " ".join(obj), v)
+        if len(mfids) == 1:
+            # ── (b) single-member path — B4, unchanged (byte-identical) ──
+            fl = flow_by_id.get(str(mfids[0]))
+            if fl is None:
+                continue
+            verb, obj = _split_member(_member_flow_label(fl))
+            if not verb.isalpha() or verb in noun_lead or not obj:
+                continue  # no clean verb-led member evidence
+            cur_tokens = {t for t in _KEBAB_SPLIT.split(current.lower()) if t}
+            # Adopt only when the member adds ≥1 token the template lacks.
+            if not any(t not in cur_tokens for t in obj):
+                continue
+            candidate = polish_display_casing(
+                verb.capitalize() + " " + " ".join(obj), v)
+        else:
+            # ── (b.2) multi-member path — B5, aggregate member evidence ──
+            members = [
+                _member_flow_label(flow_by_id[str(m)])
+                for m in mfids if flow_by_id.get(str(m)) is not None
+            ]
+            raw, strong = _derive_multi_member_name(
+                members, str(_get(uf, "resource", "") or ""),
+                pf_display, current, verb_class)
+            if raw is not None:
+                candidate = polish_display_casing(raw, v)
+
+        if candidate is None:
+            continue
         cand_l = candidate.strip().lower()
         if cand_l == current.strip().lower():
             continue
@@ -301,16 +484,30 @@ def reground_backstop_uf_names(
 
         taken.discard(current.strip().lower())
         taken.add(cand_l)
-        renames.append({
+        rec: dict[str, Any] = {
             "id": _get(uf, "id", None),
             "product_feature_id": _get(uf, "product_feature_id", None),
             "before": current, "after": candidate,
-        })
+        }
         _set(uf, "name", candidate)
+        # B5: raise low → medium ONLY on a STRONG (≥2 members agreeing on
+        # resource + action) multi-member derivation. Single-member renames
+        # and weak (verb-correction) renames keep their honest low "~".
+        if strong and str(
+            _get(uf, "name_confidence", "") or ""
+        ).strip().lower() == "low":
+            _set(uf, "name_confidence", "medium")
+            rec["confidence"] = "medium"
+            confidence_raised += 1
+        renames.append(rec)
 
     if renames:
         scan_meta.setdefault("synth_quality", {})["backstop_renamed"] = renames
-    return {"renamed": len(renames), "renames": renames}
+    return {
+        "renamed": len(renames),
+        "confidence_raised": confidence_raised,
+        "renames": renames,
+    }
 
 
 def run_synth_quality(
@@ -330,17 +527,24 @@ def run_synth_quality(
     demote_tele = demote_system_flow_seeds(user_flows, flows, scan_meta)
     name_tele = reground_backstop_uf_names(
         user_flows, flows, product_features, scan_meta, vocab=vocab)
+    raised = name_tele.get("confidence_raised", 0)
     tele = {
         "enabled": True,
         "backstop_renamed": name_tele["renamed"],
+        "backstop_confidence_raised": raised,
         "system_seeds_demoted": demote_tele["demoted"],
         "backpointers_cleared": demote_tele["backpointers_cleared"],
     }
-    scan_meta.setdefault("synth_quality", {}).update({
+    sq = scan_meta.setdefault("synth_quality", {})
+    sq.update({
         "backstop_renamed_count": name_tele["renamed"],
         "system_seeds_demoted": demote_tele["demoted"],
         "backpointers_cleared": demote_tele["backpointers_cleared"],
     })
+    # Additive telemetry — only when B5 raised a confidence, so scans where
+    # the multi-member pass is inert stay byte-identical to pre-B5 output.
+    if raised:
+        sq["backstop_confidence_raised"] = raised
     return tele
 
 
