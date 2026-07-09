@@ -116,13 +116,19 @@ ENV_OUTPUT_FLAGS = (
     # system_flow_recall seeds out of user_flows[] and regrounds single-member
     # backstop journey names. Reshapes the emitted user_flows[] layer.
     "FAULTLINE_SYNTH_QUALITY",
+    # B13 (2026-07-09) — backstop own-entry cover: the synthesize arm bundles
+    # only own-entry flows (else a member-less seed) and every member-less
+    # I8-cover seed carries an honest coverage-marker name + flag. Reshapes
+    # the emitted user_flows[] layer.
+    "FAULTLINE_BACKSTOP_OWNED_COVER",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
 #: against a new key layout (they simply won't match — silent invalidation).
 #: v3 (W5.1): added FAULTLINE_LATTICE_THIN_FOLD + FAULTLINE_LOC_WORTHY_BACKSTOP.
 #: v4 (B4): added FAULTLINE_SYNTH_QUALITY.
-KEY_SCHEMA_VERSION = 4
+#: v5 (B13): added FAULTLINE_BACKSTOP_OWNED_COVER.
+KEY_SCHEMA_VERSION = 5
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

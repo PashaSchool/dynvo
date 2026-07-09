@@ -1148,6 +1148,17 @@ class UserFlow(BaseModel):
     # not run (kill-switch off / old JSON), keeping default output
     # byte-identical to engines that predate the field.
     loc: int | None = None
+    # B13 (2026-07-09) — machine-readable coverage-marker flag. ``True`` for a
+    # member-LESS I8-cover SEED (``synthesized=True`` + ``member_count=0``):
+    # a route/LOC-coverage placeholder that exists ONLY so a journey-worthy PF
+    # is not "фіча без юзер-фловів" (validator I8), NOT a real user journey.
+    # Any viewer MUST render these as a gap-band / coverage row, never a
+    # journey row. Set (with an honest ``Uncovered: <PF> routes`` name) by
+    # ``synth_quality.honest_coverage_markers`` behind
+    # ``FAULTLINE_BACKSTOP_OWNED_COVER``. OMITTED from dumps when ``False``
+    # (default) so non-seed UFs / kill-switch-off / old JSON stay
+    # byte-identical.
+    is_coverage_marker: bool = False
 
     @model_serializer(mode="wrap")
     def _omit_none_identity(self, handler: Any) -> Any:
@@ -1178,6 +1189,11 @@ class UserFlow(BaseModel):
             # kill-switch-off / old-JSON dumps are byte-identical.
             if data.get("loc") is None:
                 data.pop("loc", None)
+            # B13 — the coverage-marker flag is present only on member-less
+            # I8-cover seeds under the FAULTLINE_BACKSTOP_OWNED_COVER arm; a
+            # default-False dump is byte-identical to pre-B13 output.
+            if data.get("is_coverage_marker") is False:
+                data.pop("is_coverage_marker", None)
         return data
 
 

@@ -2052,6 +2052,21 @@ def _loc_worthy_backstop_enabled() -> bool:
     return os.environ.get("FAULTLINE_LOC_WORTHY_BACKSTOP", "1") != "0"
 
 
+BACKSTOP_OWNED_COVER_ENV = "FAULTLINE_BACKSTOP_OWNED_COVER"
+
+
+def backstop_owned_cover_enabled() -> bool:
+    """B13 (default ON; ``FAULTLINE_BACKSTOP_OWNED_COVER=0`` restores the
+    byte-identical pre-B13 backstop). When ON, the synthesize arm bundles
+    ONLY flows whose ENTRY-OWNER is the covered PF (the validator's I16
+    ruler, via :func:`_flow_home_map`) — a PF with no own-entry flow gets a
+    member-less coverage seed instead of a majority-foreign bundle — and
+    every member-less I8-cover seed is stamped an honest coverage marker
+    (``synth_quality.honest_coverage_markers``)."""
+    return os.environ.get(BACKSTOP_OWNED_COVER_ENV, "1").strip().lower() \
+        not in {"0", "false"}
+
+
 def _feature_loc_attr(f: Any) -> int:
     """Owned LOC of an in-memory Feature — mirrors the validator's
     ``feature_loc`` file-based arm (``loc``/``total_loc``/``loc_files``).
@@ -2146,6 +2161,15 @@ def _backstop_uncovered_pfs(
             flow_obj[mid] = fl
             if slug_for:
                 pf_flows[slug_for].append(mid)
+
+    # B13 — entry-owner HOME per flow (the validator's I16 ruler: entry-owner
+    # first, dev-stamp fallback; None = lane/unowned). The synthesize arm
+    # bundles ONLY own-entry flows so a coverage journey is never
+    # majority-foreign. Computed once, flag-guarded (off => empty => the
+    # pre-B13 containment path stays byte-identical).
+    _owned_cover = backstop_owned_cover_enabled()
+    home: dict[str, str | None] = (
+        _flow_home_map(developer_features) if _owned_cover else {})
 
     # W1.1 — conservation-compatible reassignment (defect: the 2026-07-06
     # validation wave proved the reassign arm PING-PONGS with §4.5: it
@@ -2277,12 +2301,58 @@ def _backstop_uncovered_pfs(
             continue
 
         # ── 2. synthesize ONE thin journey (output-only, tagged) ───────
-        pool = [m for m in pf_flows[slug] if m not in claimed]
-        if not pool:
-            # Every owned flow is claimed by other journeys (all minority
-            # shares). Board completeness wins: reference the top flows
-            # anyway — the journey is tagged, eval excludes it by tag.
-            pool = list(pf_flows[slug])
+        if _owned_cover:
+            # B13: bundle ONLY own-entry flows (entry-owner IS this PF) so the
+            # synthesized journey can never be majority-foreign (validator
+            # I16 — the containment-vs-entry gap that made 13 corpus backstop
+            # UFs majority-foreign). A PF whose flows ALL enter foreign
+            # surfaces has no own journey → emit a member-LESS coverage seed
+            # (I8 covers on ANY UF ref — member_count is irrelevant; I16 never
+            # fires at chk=0; the SYSTEM_RECALL_REASON reason is I7 D9-carve
+            # exempt) instead of a foreign bundle.
+            #
+            # ``home`` is the validator's I16 owner: a member counts as FOREIGN
+            # only when its entry file is owned by a DIFFERENT PF. ``None`` is
+            # lane/unowned — "no evidence of foreignness, inheritable by any
+            # journey" (``_flow_home_map`` doctrine) — and never trips I16
+            # (the ruler skips owner=None), so own-and-inheritable both stay;
+            # only genuinely-foreign entries (``home == other PF``) are dropped.
+            pool = [m for m in pf_flows[slug]
+                    if m not in claimed and home.get(m) in (None, slug)]
+            if not pool:
+                pool = [m for m in pf_flows[slug]
+                        if home.get(m) in (None, slug)]
+            if not pool:
+                new_ufs.append(UserFlow(
+                    id="UF-000",  # provisional — caller renumbers after sort
+                    name=display,
+                    resource=slug,
+                    domain=None,
+                    product_feature_id=slug,
+                    intent=_intent_for(display),
+                    member_flow_ids=[],
+                    member_count=0,
+                    routes=[],
+                    refined=True,
+                    name_confidence="low",
+                    ui_tier="no-ui",
+                    category="system",
+                    synthesized=True,
+                    synthesis_reason=SYSTEM_RECALL_REASON,
+                ))
+                covered[slug] += 1
+                tele["pf_backstop_owned_seed"] = (
+                    tele.get("pf_backstop_owned_seed", 0) + 1)
+                _resolve(slug, "owned_cover_seed",
+                         {"reason": "no_own_entry_flow"})
+                continue
+        else:
+            pool = [m for m in pf_flows[slug] if m not in claimed]
+            if not pool:
+                # Every owned flow is claimed by other journeys (all minority
+                # shares). Board completeness wins: reference the top flows
+                # anyway — the journey is tagged, eval excludes it by tag.
+                pool = list(pf_flows[slug])
         pool.sort(key=lambda m: (-flow_loc.get(m, 0), m))
         members = pool[:_BACKSTOP_MEMBER_CAP]
         if not members:
