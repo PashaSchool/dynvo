@@ -51,7 +51,13 @@ from typing import Any
 #: (AST-parse cache telemetry: cache_hits + parsed) is warmth-dependent —
 #: a cold run parses what a warm run serves from cache, so BOTH counters
 #: drift between cold/warm runs of identical code (B1 gate calibration,
-#: 2026-07-08). The scrub is deliberately
+#: 2026-07-08). ``router_files_parsed`` (nested per-linker at
+#: ``stage_6_4/per_linker/<linker>/``) is a wall-clock-budget telemetry
+#: counter — how many router files the linker managed to parse inside
+#: its time budget — so it drifts under CPU load between otherwise
+#: identical runs (B5 kill-switch gate calibration, 2026-07-08); it is
+#: scrubbed at any depth like the per-linker ``sample_links`` /
+#: ``*_sample`` debug fields. The scrub is deliberately
 #: scoped to the ``scan_meta`` subtree so a same-named CONTENT field
 #: elsewhere could never be masked.
 _VOLATILE_IN_SCAN_META = frozenset(
@@ -67,6 +73,7 @@ _VOLATILE_IN_SCAN_META = frozenset(
         "sample_links",
         "stage_6_3_cache_hits",
         "stage_6_55_page_interior",
+        "router_files_parsed",
     }
 )
 

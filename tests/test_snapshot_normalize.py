@@ -37,6 +37,7 @@ def _doc(**overrides):
                         "matched": 10,
                         "sample_links": [{"source": "x.ts:1"}],
                         "unmatched_sample": [{"file": "y.ts"}],
+                        "router_files_parsed": 7,
                     }
                 }
             },
@@ -64,6 +65,7 @@ def test_volatile_fields_are_stripped() -> None:
     linker = meta["stage_6_4"]["per_linker"]["nextjs-http-route"]
     assert "sample_links" not in linker
     assert "unmatched_sample" not in linker
+    assert "router_files_parsed" not in linker  # CPU-load-volatile budget counter
     assert linker["matched"] == 10  # content survives
 
 
