@@ -10,67 +10,67 @@
       "path": "/Users/pkuzina/workspace/_faultlines-testrepos/formbricks",
       "commit_sha": "f5921c66d54745130a7bf4225dba8eb5a309f905",
       "profile": "next-app-router",
-      "digest": "sha256:5dea8132d82906632d21053508806c67952f64253a8a2789acc9e61e9a646cd8"
+      "digest": "sha256:11fbbef5103ff7cecb8841c0a93fbe6aaba60d2a8fa10edf71e4a304ec6ad213"
     },
     "dub": {
       "path": "/Users/pkuzina/workspace/_faultlines-testrepos/dub",
       "commit_sha": "263fff9ed0c82d59bbb7684fd888e41ed298d531",
       "profile": "next-app-router",
-      "digest": "sha256:2405aa6751a095e2cfd7003ec01f09521193f8f63bbc6a6eabc81af80060285b"
+      "digest": "sha256:0bf6ef5ee971f15084db0c0bb15b9cc96d67c6e6adb4bdaffbd90d4c098763f5"
     },
     "traefik": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/traefik",
       "commit_sha": "6e4f397357787d8c841bf92588866d8a04e4a683",
       "profile": "default",
-      "digest": "sha256:8d465b4a9b94cbfdbd947e02a8ec9c540a2b9b92579409bc8366a52d7381a5d1"
+      "digest": "sha256:d01d2859de293c3bc05899b9e4e07272ba245b0822c8738141dd74ebbda3b1c9"
     },
     "polar": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/polar",
       "commit_sha": "aef390d613b2649cccdfc680eb9cc2b0b00c3940",
       "profile": "hybrid(default+fastapi-family+next-app-router)",
-      "digest": "sha256:df05ef67b3a4f529613a82de3493fc24daab3e83e0a08c8317db44bb4dc1d88e"
+      "digest": "sha256:32a5b23c54bb616aa9554098035288d90b5cdec8bb70a76016f4f5bb16c129ec"
     },
     "dispatch": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/dispatch",
       "commit_sha": "dd2837e82a0bf5565b1b4b4b91ea30b7262d4061",
       "profile": "hybrid(default+fastapi-family)",
-      "digest": "sha256:7d82dc6f367ca5d5d2854102d6c5a258c629d2eefd7bea5b24afb50bae104e27"
+      "digest": "sha256:059816403c2ae5b117de8592e6a18087b488f7d3a3d18cca9d0d9f7b09e8b9dc"
     },
     "fastapi-template": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/fastapi-template",
       "commit_sha": "3685fb66259fa12f8436ae7f88379fd64ca7cdbd",
       "profile": "fastapi-family",
-      "digest": "sha256:3f2839014deee3f97b2f7d11e9db9aa53d5df83c3e3a640c05d44f9967906087"
+      "digest": "sha256:069e653f2213770824d7a154f79537f016e7fd41d6e86a95ae074a3c5cc8ea7e"
     },
     "litestar": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/litestar",
       "commit_sha": "64aa8476273ef3dbacf37b2504ee716624d24812",
       "profile": "fastapi-family",
-      "digest": "sha256:79e9a189014b451aec10d243a5403216f8680c5211352939e8d86b7034cdb77e"
+      "digest": "sha256:a79c27dda2fdbebe9e5490076ad7afb14bbd17114a4df01690f988e288f51342"
     },
     "saleor": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/saleor",
       "commit_sha": "f03b30eb612ba3a93a8cc144687325320519ee0a",
       "profile": "django",
-      "digest": "sha256:3ed31c786458e9fc699ec0735a92627023c85ac952f8fd0d726dbe24dcc5ab2f"
+      "digest": "sha256:c290a7ec972f043157a24e2385abcc79261288022b06593d53e9236fe38d886e"
     },
     "weblate": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/weblate",
       "commit_sha": "16a3c863ee5330c8c209d4f9bf52e2236bb0b795",
       "profile": "django",
-      "digest": "sha256:d2f28714d07aaf5d96f42b69f419f44ae184d94ee1053ddd5bf6644bf3ce057c"
+      "digest": "sha256:874339a4a0cfab5696c718c2d2145513477631f507ca530c95d67e1afc761494"
     },
     "dittofeed": {
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/dittofeed",
       "commit_sha": "52b2bee909744d07dd5d409fd3974d4b95c66766",
       "profile": "next-pages-react",
-      "digest": "sha256:a53dc828dbbaada3950394e017a326fc85bf01e5054522f076b3373b2d4ac107"
+      "digest": "sha256:96f817252d60765a3cf44b29b05da18297a887f6f8739f9268db2cf97322183e"
     },
     "opensign": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/opensign",
       "commit_sha": "f2ada473027e9b36e0af7a459ebe703b83bc2e25",
       "profile": "next-pages-react",
-      "digest": "sha256:96896065fb4721e2ce5ee74c44ac7c9ce88412cacf323c9d6436223f4088c2d2"
+      "digest": "sha256:51303084d1376f694f377b15b9655c2891761a9514e406a9266d2e616e029b9b"
     }
   }
 }
