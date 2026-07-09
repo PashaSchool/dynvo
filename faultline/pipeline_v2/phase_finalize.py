@@ -1879,8 +1879,10 @@ def run_finalize_phase(
     # Gated on anchored_mint_applied: no lane schema to extend otherwise.
     # Kill-switch FAULTLINE_FILE_LANE=0 → no devs appended → byte-identical.
     from faultline.pipeline_v2.file_lane import (
+        enforce_shared_leaf_consistency,
         file_lane_enabled,
         run_file_lane_infra,
+        shared_leaf_consistency_enabled,
     )
     if file_lane_enabled() and anchored_mint_applied:
         with StageLogger(run_dir, 6, "file_lane") as log_fl:
@@ -1918,6 +1920,21 @@ def run_finalize_phase(
                 )
                 log_fl.info(
                     f"file_lane: FAILED ({exc}) — continuing", feature=None)
+
+    # ── B15 — shared-leaf role consistency (post file_lane, pre path_index) ──
+    #    Force high-cross-PF-fan-in, no-surface, already-shared-somewhere member
+    #    files to role="shared" everywhere (the i18n-locale class re-attributed
+    #    as closure body). Runs here so the change lands BEFORE the path_index
+    #    rebuild + I23 body read. Kill-switch FAULTLINE_SHARED_LEAF_CONSISTENCY=0
+    #    -> no roles changed -> byte-identical. Never breaks a scan.
+    if shared_leaf_consistency_enabled() and anchored_mint_applied:
+        try:
+            slc_tele = enforce_shared_leaf_consistency(
+                features, product_features, lineage_result.routes_index)
+            scan_meta["shared_leaf_consistency"] = slc_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"shared-leaf-consistency failed ({exc}); no roles changed")
 
     # ── Stage 6.97 — feature-level LOC ($0, deterministic, additive) ──
     #    Flat ``loc`` on every dev feature (sum of owned-file line counts;

@@ -121,6 +121,10 @@ ENV_OUTPUT_FLAGS = (
     # I8-cover seed carries an honest coverage-marker name + flag. Reshapes
     # the emitted user_flows[] layer.
     "FAULTLINE_BACKSTOP_OWNED_COVER",
+    # B15 (2026-07-09) — shared-leaf role consistency: high-cross-PF-fan-in,
+    # no-surface, already-shared member files are forced role="shared"
+    # everywhere. Reshapes member_files[].role (the I23 anchor-body view).
+    "FAULTLINE_SHARED_LEAF_CONSISTENCY",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -128,7 +132,8 @@ ENV_OUTPUT_FLAGS = (
 #: v3 (W5.1): added FAULTLINE_LATTICE_THIN_FOLD + FAULTLINE_LOC_WORTHY_BACKSTOP.
 #: v4 (B4): added FAULTLINE_SYNTH_QUALITY.
 #: v5 (B13): added FAULTLINE_BACKSTOP_OWNED_COVER.
-KEY_SCHEMA_VERSION = 5
+#: v6 (B15): added FAULTLINE_SHARED_LEAF_CONSISTENCY.
+KEY_SCHEMA_VERSION = 6
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

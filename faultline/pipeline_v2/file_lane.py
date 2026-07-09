@@ -68,15 +68,25 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "FILE_LANE_ENV",
     "FILE_LANE_PCT_ENV",
+    "SHARED_LEAF_CONSISTENCY_ENV",
     "DEFAULT_FILE_LANE_PCT",
     "SHARED_FLOOR",
     "file_lane_enabled",
     "file_lane_pct",
+    "shared_leaf_consistency_enabled",
     "run_file_lane_infra",
+    "enforce_shared_leaf_consistency",
 ]
 
 FILE_LANE_ENV = "FAULTLINE_FILE_LANE"
 FILE_LANE_PCT_ENV = "FAULTLINE_FILE_LANE_PCT"
+#: B15 — role-CONSISTENCY law for shared-leaf member files. Same scale-invariant
+#: fan-in threshold as the lane; a member file that is high cross-PF-fan-in, NOT a
+#: product surface, and ALREADY ``role="shared"`` in >= 1 feature is shared infra
+#: (i18n locale blobs, fixtures, fonts) — force ``role="shared"`` in EVERY feature
+#: that claims it, so the I23 anchor-body check (which excludes ``shared``) stops
+#: counting it as a PF's own body. Kill-switch ``=0`` -> byte-identical.
+SHARED_LEAF_CONSISTENCY_ENV = "FAULTLINE_SHARED_LEAF_CONSISTENCY"
 
 #: Corpus-calibrated fan-in fraction (see filelane-report.md calibration curve):
 #: a file joins the lane when imported by ``>= ceil(pct * num_product_features)``
@@ -111,6 +121,13 @@ def file_lane_enabled() -> bool:
     """Default ON; ``FAULTLINE_FILE_LANE=0`` restores byte-identical output
     (this stage becomes a no-op — no lane devs appended, no view built)."""
     return (os.environ.get(FILE_LANE_ENV, "1") or "1").strip().lower() \
+        not in _FALSY
+
+
+def shared_leaf_consistency_enabled() -> bool:
+    """Default ON; ``FAULTLINE_SHARED_LEAF_CONSISTENCY=0`` restores byte-identical
+    output (the B15 consistency post-pass becomes a no-op — no roles changed)."""
+    return (os.environ.get(SHARED_LEAF_CONSISTENCY_ENV, "1") or "1").strip().lower() \
         not in _FALSY
 
 
@@ -432,3 +449,98 @@ def _make_lane_dev(
         "participants": [],
         "history": None,
     })
+
+
+# ── B15: shared-leaf role consistency (post-emission) ────────────────────────
+
+
+def _surface_paths(product_features: list["Feature"],
+                   routes_index: list[dict[str, Any]] | None) -> set[str]:
+    """S3 no-product-surface set — mirrors ``run_file_lane_infra``: a PF anchor
+    file (the tail of ``anchor_id``) and every routes_index file. A product
+    surface is NEVER reclassified shared, however widely claimed."""
+    surface: set[str] = set()
+    for pf in product_features or []:
+        aid = str(getattr(pf, "anchor_id", None) or "")
+        if ":" in aid:
+            tail = aid.split(":", 1)[1]
+            if tail:
+                surface.add(tail)
+    for r in (routes_index or []):
+        fp = r.get("file") if isinstance(r, dict) else None
+        if fp:
+            surface.add(str(fp))
+    return surface
+
+
+def enforce_shared_leaf_consistency(
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+    routes_index: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """B15 — role-CONSISTENCY law for shared-leaf member files.
+
+    A file claimed as a member file by MANY features (cross-PF claim fan-in
+    ``>= max(SHARED_FLOOR, ceil(pct * num_pfs))`` — the SAME scale-invariant
+    threshold the lane uses), that is NOT a product surface, and that is
+    ALREADY ``role="shared"`` on >= 1 feature, is shared infrastructure the
+    closure BFS re-attributed inconsistently (the i18n-locale class: the same
+    ``locales/*.json`` tagged ``shared`` on one PF but ``closure`` on another).
+    Force ``role="shared"`` on EVERY member-file row for that path so the I23
+    anchor-body coherence check (which excludes ``role="shared"``) stops
+    counting it as any single PF's own body.
+
+    In-place, deterministic (sorted), idempotent. NEVER touches a low-fan-in
+    owned asset (fan-in floor) nor a product surface (S3). No-op — and
+    byte-identical — when the flag is off. Returns telemetry incl. the caught
+    files so non-i18n high-fan-in leaves (fonts/fixtures) are logged, not hidden.
+    """
+    tele: dict[str, Any] = {
+        "enabled": True, "applied": False, "threshold": 0,
+        "forced_shared_files": 0, "forced_member_rows": 0, "samples": [],
+    }
+    if not shared_leaf_consistency_enabled():
+        tele["enabled"] = False
+        return tele
+    pf_list = [pf for pf in (product_features or []) if _pf_key(pf)]
+    num_pfs = len(pf_list)
+    if num_pfs == 0:
+        return tele
+    threshold = max(SHARED_FLOOR, math.ceil(file_lane_pct() * num_pfs))
+    tele["threshold"] = threshold
+    surface = _surface_paths(product_features, routes_index)
+
+    # cross-PF claim fan-in + already-shared-somewhere over PF member files.
+    claim_pfs: dict[str, set[str]] = defaultdict(set)
+    shared_somewhere: set[str] = set()
+    for pf in pf_list:
+        key = _pf_key(pf) or ""
+        for mf in (getattr(pf, "member_files", None) or []):
+            path = getattr(mf, "path", None)
+            if not path:
+                continue
+            claim_pfs[path].add(key)
+            if getattr(mf, "role", None) == "shared":
+                shared_somewhere.add(path)
+
+    forced = {
+        p for p, pfs_ in claim_pfs.items()
+        if len(pfs_) >= threshold and p not in surface and p in shared_somewhere
+    }
+    if not forced:
+        return tele
+
+    # Force role='shared' on every claimant (PF + dev) — closure/co-commit/
+    # url-link -> shared. Deterministic feature order; only non-shared rows move.
+    rows = 0
+    for feat in list(product_features or []) + list(developer_features or []):
+        for mf in (getattr(feat, "member_files", None) or []):
+            if getattr(mf, "path", None) in forced \
+                    and getattr(mf, "role", None) != "shared":
+                mf.role = "shared"
+                rows += 1
+    tele["applied"] = True
+    tele["forced_shared_files"] = len(forced)
+    tele["forced_member_rows"] = rows
+    tele["samples"] = sorted(forced)[:20]
+    return tele
