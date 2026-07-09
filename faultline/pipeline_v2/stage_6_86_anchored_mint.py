@@ -79,6 +79,7 @@ from faultline.pipeline_v2.spine_anchors import (
     SpineAnchor,
     build_spine_anchors,
     load_spine_vocab,
+    normalize_anchor_key,
     owned_paths_of,
 )
 
@@ -87,6 +88,8 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 
 __all__ = [
     "ANCHORED_MINT_ENV",
+    "MINT_DOMAIN_FOLD_ENV",
+    "mint_domain_fold_enabled",
     "anchored_mint_enabled",
     "run_anchored_mint",
     "build_platform_infrastructure_lane",
@@ -96,6 +99,17 @@ __all__ = [
 ]
 
 ANCHORED_MINT_ENV = "FAULTLINE_SPINE_ANCHORED_MINT"
+
+#: B8c (2026-07-09) — mint-time domain-fold rail. A flowful router dev that
+#: the fold ladder folds into a DISTINCT-domain plurality host PF re-homes to
+#: its OWN ``<domain>-page`` surface PF when that surface already exists (the
+#: webhook exhibit: ``api-webhooks`` + ``webhook-detail-page`` reunite on
+#: ``webhooks-page`` so the "Create and manage webhooks" journey re-forms
+#: own-PF, I16-clean). Binds ONLY to surfaces that already receive ≥1 dev, so
+#: PF count cannot rise (over-decomposition = 0 by construction); same-domain
+#: and surface-less routers stay folded exactly as before. Kill-switch:
+#: ``FAULTLINE_MINT_DOMAIN_FOLD_V2=0`` restores the byte-identical pre-B8c fold.
+MINT_DOMAIN_FOLD_ENV = "FAULTLINE_MINT_DOMAIN_FOLD_V2"
 
 #: θ — the majority threshold (calibration §F: U-cap is monotonically
 #: decreasing in θ; 0.5 is the conservation-law dual of §4.5).
@@ -172,6 +186,108 @@ def anchored_mint_enabled() -> bool:
     return os.environ.get(ANCHORED_MINT_ENV, "1").strip().lower() not in {
         "0", "false",
     }
+
+
+def mint_domain_fold_enabled() -> bool:
+    """Default ON; ``FAULTLINE_MINT_DOMAIN_FOLD_V2=0`` restores the
+    byte-identical pre-B8c fold (a distinct-domain router stays folded into
+    its plurality host instead of re-homing to its own surface PF)."""
+    return os.environ.get(MINT_DOMAIN_FOLD_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+#: The surface token stripped to recover a route anchor's DOMAIN family. Only
+#: ``-page`` appears as a surface-PF suffix in practice (``webhooks-page``,
+#: ``settings-page``); the api-side domain anchors (``webhook``, ``setting``)
+#: carry no surface token, so a single suffix is sufficient and scale-invariant.
+_SURFACE_PAGE_SUFFIX = "-page"
+
+
+def _domain_family(key: str) -> str:
+    """Route-family DOMAIN of an anchor key: strip a trailing ``-page``
+    surface token, then singularise the remaining stem with the SAME guarded
+    house singularizer every anchor key already uses (``normalize_anchor_key``
+    only singularises the LAST token, so ``webhooks-page`` keeps ``webhooks``
+    plural — this collapses it).
+
+    ``webhooks-page`` → ``webhook``; ``webhook`` → ``webhook``;
+    ``detection`` → ``detection``; ``settings-page`` → ``setting``.
+    A degenerate/empty stem falls back to the input key unchanged.
+    """
+    stem = key
+    if stem.endswith(_SURFACE_PAGE_SUFFIX) and len(stem) > len(_SURFACE_PAGE_SUFFIX):
+        stem = stem[: -len(_SURFACE_PAGE_SUFFIX)]
+    return normalize_anchor_key(stem) or key
+
+
+def _mint_domain_fold_rebinds(
+    assignment: dict[str, tuple[str, str]],
+    winner_by_dev: dict[str, "SpineAnchor | None"],
+    anchor_by_id: dict[str, SpineAnchor],
+    dev_by_name: dict[str, "Feature"],
+) -> list[tuple[str, str, str]]:
+    """B8c rail — re-home flowful devs FOLDED into a distinct-domain host
+    onto their own EXISTING ``<domain>-page`` surface PF.
+
+    Returns a deterministically-ordered list of
+    ``(dev_name, surface_cid, provenance)`` rebinds; the caller applies them.
+    Pure (no mutation, no I/O). The two structural rails, no magic counts:
+
+    * **distinct-from-host** — the dev's route-family domain differs from the
+      host PF's own route domain (a same-domain router — a ``detection`` router
+      folding into ``detections`` — is NOT distinct → stays folded).
+    * **existing surface PF** — a genuine ``<domain>-page`` page-route anchor
+      that ALREADY receives ≥1 dev in *assignment*. Because the target already
+      mints, PF count cannot rise and no product-judgment "should this domain
+      be a PF?" call is made — the engine already decided by minting the page.
+      A surface-less domain (admin/compliance/entra: no page PF) never
+      qualifies → stays folded.
+    """
+    # Index existing page-surface PFs by domain family. A candidate is a route
+    # anchor whose cid ends ``-page``, that carries ≥1 page_route_file (a real
+    # frontend surface, not an api-only route), AND that already receives a dev
+    # (so it is an EXISTING PF — the rail never mints). Deterministic: iterate
+    # sorted cids and keep the alpha-min on the (rare) same-family collision.
+    existing_targets = {cid for cid, _prov in assignment.values()}
+    surface_by_family: dict[str, str] = {}
+    for cid in sorted(existing_targets):
+        a = anchor_by_id.get(cid)
+        if a is None or a.source != "route":
+            continue
+        if not a.canonical_id.endswith(_SURFACE_PAGE_SUFFIX):
+            continue
+        if not a.page_route_files:
+            continue
+        surface_by_family.setdefault(_domain_family(a.key), cid)
+    if not surface_by_family:
+        return []
+
+    rebinds: list[tuple[str, str, str]] = []
+    for name in sorted(assignment):
+        host_cid, prov = assignment[name]
+        if not prov.startswith("fold:"):
+            continue  # only re-home FOLDED devs — lineage / mint stay put
+        f = dev_by_name.get(name)
+        if f is None or not getattr(f, "flows", None):
+            continue  # flowful devs only (the fold LAW's own population)
+        w = winner_by_dev.get(name)
+        if w is None or not w.canonical_id.startswith("route:"):
+            continue  # route-family domain only
+        dev_fam = _domain_family(w.key)
+        host_a = anchor_by_id.get(host_cid)
+        host_fam = (
+            _domain_family(host_a.key)
+            if host_a is not None and host_a.canonical_id.startswith("route:")
+            else None
+        )
+        if host_fam == dev_fam:
+            continue  # same domain → still folds (anti-case preserved)
+        surf_cid = surface_by_family.get(dev_fam)
+        if surf_cid is None or surf_cid == host_cid:
+            continue  # surface-less, or already home
+        rebinds.append((name, surf_cid, f"fold:surface->route:{dev_fam}"))
+    return rebinds
 
 
 # ── Per-dev classification ───────────────────────────────────────────────
@@ -1132,6 +1248,22 @@ def run_anchored_mint(
             tele["law_flowful_in_lane"] = (
                 tele.get("law_flowful_in_lane", 0) + 1)
         infra[f.name] = reason
+
+    # B8c domain-fold rail (mint-time) — re-home flowful devs that folded
+    # into a DISTINCT-domain host onto their own EXISTING <domain>-page
+    # surface PF (the webhook 1→18 unification). Binds only to surfaces that
+    # already receive a dev, so PF count cannot rise; same-domain and
+    # surface-less routers stay folded. Runs AFTER the whole fold ladder so
+    # every fold provenance (walk / import / span / …) is visible, and BEFORE
+    # Pass 4 so the re-homed devs mint under the surface PF. Kill-switch
+    # ``FAULTLINE_MINT_DOMAIN_FOLD_V2=0`` skips it entirely (byte-identical).
+    if mint_domain_fold_enabled():
+        _rebind_dev_by_name = {f.name: f for f in in_scope}
+        for _name, _surf_cid, _prov in _mint_domain_fold_rebinds(
+                assignment, winner_by_dev, anchor_by_id, _rebind_dev_by_name):
+            assignment[_name] = (_surf_cid, _prov)
+            tele["mint_domain_fold_rebind"] = (
+                tele.get("mint_domain_fold_rebind", 0) + 1)
 
     # Pass 4 — build the anchored product features.
     devs_by_anchor: dict[str, list["Feature"]] = defaultdict(list)
