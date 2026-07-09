@@ -23,9 +23,11 @@ import pytest
 
 from faultline.models.types import Feature, Flow, FlowNode, UserFlow
 from faultline.pipeline_v2.journey_lattice import (
+    JOURNEY_LATTICE_B7_ENV,
     JOURNEY_LATTICE_V2_ENV,
     _action_family,
     _child_id,
+    journey_lattice_b7_enabled,
     journey_lattice_v2_enabled,
     load_action_families,
     run_journey_lattice,
@@ -487,10 +489,12 @@ def test_majority_foreign_family_folds_back() -> None:
 
 def test_attach_floor_folds_weakly_attached_families() -> None:
     """The validator's I15 ruler as an ELIGIBILITY floor (papermark
-    'workflows' class): a parent journey whose non-lane flow files sprawl
-    far outside the PF scope is already misattached by the board's measure —
-    grain surgery would re-measure the weak mass N times, so the journey is
-    skipped and the catch-all survives intact."""
+    'workflows' class): a capability misattached at EVERY grain — the parent
+    AND every child sprawl far outside the PF scope (share 0.1 each) — is
+    skipped and the catch-all survives intact. This is the anti-case the B7
+    max-child gate must preserve: no child clears the floor, so nothing
+    rescues the split (contrast ``test_b7_diluted_parent_...``, where one
+    in-scope child does). Passes with B7 default-ON."""
     entry = "app/api/workflows/route.ts"
     sprawl = [f"lib/shared/util-{i}.ts" for i in range(9)]  # foreign mass
 
@@ -558,3 +562,93 @@ def test_unowned_families_fold_back() -> None:
     assert tele.get("action_catchalls_detected", 0) == 0
     assert [str(u.id) for u in ufs] == ["UF-037"]
     assert sorted(ufs[0].member_flow_ids) == sorted(_CASES_FLOW_NAMES)
+
+
+# ── B7: diluted-parent recovery (the live Soc0 UF-037 divergence) ────────
+#
+# On the live keyed board UF-037 'Manage cases end-to-end' did NOT split even
+# though B6's wave9 offline sim split it: the pre-split parent's 6.88-time
+# lane-attach share fell below the floor (a few lane-diluted / stray members
+# drag the mean down), so B6's parent-ONLY floor skipped it — while its
+# 'View cases' child is a pure in-scope sub-journey (share 1.0). B7 gates
+# eligibility on the MAX child instead of the parent mean: a capability with
+# even one floor-clearing child splits; only a UNIFORMLY misattached
+# capability (every child below the floor — papermark) is skipped. The change
+# is a MONOTONE relaxation: NEW-skip ⊆ OLD-skip, so no B6 split un-splits.
+
+
+def _diluted_cases_scene() -> tuple[list[UserFlow], list[Feature],
+                                    list[Feature], list[dict]]:
+    """A cases catch-all whose PARENT attach is below the floor (browse +
+    create members each sprawl into 4 distinct foreign files → parent share
+    1/17 ≈ 0.06) but whose VIEW child is fully in-scope (share 1.0)."""
+    entry = _CASES_ROUTER
+
+    def wide(name: str, tag: str) -> Flow:
+        f = _flow(name, entry)
+        f.paths = [entry] + [f"lib/shared/{tag}-{i}.ts" for i in range(4)]
+        return f
+
+    def tight(name: str) -> Flow:
+        f = _flow(name, entry)
+        f.paths = [entry]  # pure in-scope → child share 1.0
+        return f
+
+    flows = [
+        wide("list-cases-flow", "b1"),             # browse (weak)
+        wide("get-api-cases-summary-flow", "b2"),  # browse (weak)
+        wide("post-api-cases-flow", "c1"),         # create (weak)
+        wide("post-api-cases-bulk-flow", "c2"),    # create (weak)
+        tight("get-api-cases-case-id-flow"),           # view (in-scope 1.0)
+        tight("get-api-cases-case-id-timeline-flow"),  # view (in-scope 1.0)
+    ]
+    devs = [_dev("api-cases", [entry], "cases", flows=flows)]
+    pfs = [_pf("cases", "Cases")]
+    ufs = [_uf("UF-037", "Manage cases end-to-end", "cases",
+               [f.name for f in flows], resource="case")]
+    return ufs, devs, pfs, []
+
+
+def test_b7_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(JOURNEY_LATTICE_B7_ENV, raising=False)
+    assert journey_lattice_b7_enabled() is True
+    monkeypatch.setenv(JOURNEY_LATTICE_B7_ENV, "0")
+    assert journey_lattice_b7_enabled() is False
+
+
+def test_b7_diluted_parent_with_attached_child_splits() -> None:
+    """The fix: a sub-floor PARENT that still owns a floor-clearing child
+    (View cases, share 1.0) splits — the low parent mean is an averaging
+    artifact, not misattachment. The weak browse/create children (share
+    ≈0.1) still MINT: the max child is the ELIGIBILITY signal, never a
+    per-child fold (that per-child fold is exactly what B6 rejected)."""
+    ufs, devs, pfs, routes = _diluted_cases_scene()
+    tele = run_journey_lattice(ufs, devs, pfs, routes)
+    assert tele.get("action_catchalls_detected") == 1
+    assert tele.get("action_parent_attach_skipped", 0) == 0
+    children = [u for u in ufs if str(u.domain or "").startswith(
+        "lattice:action:")]
+    assert {u.name for u in children} == {
+        "Browse cases", "Create cases", "View cases"}
+    assert "UF-037" not in {str(u.id) for u in ufs}
+
+
+def test_b7_off_restores_b6_parent_floor_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B7=0 restores B6 byte-behaviour: the parent-ONLY floor skips the same
+    diluted catch-all (the child attach is never consulted)."""
+    monkeypatch.setenv(JOURNEY_LATTICE_B7_ENV, "0")
+    ufs, devs, pfs, routes = _diluted_cases_scene()
+    tele = run_journey_lattice(ufs, devs, pfs, routes)
+    assert tele.get("action_catchalls_detected", 0) == 0
+    assert tele.get("action_parent_attach_skipped", 0) == 1
+    # parent survives intact — no lattice children, all 6 members retained.
+    assert [str(u.id) for u in ufs] == ["UF-037"]
+    assert not any(
+        str(u.domain or "").startswith("lattice:action:") for u in ufs)
+    assert sorted(ufs[0].member_flow_ids) == sorted([
+        "list-cases-flow", "get-api-cases-summary-flow",
+        "post-api-cases-flow", "post-api-cases-bulk-flow",
+        "get-api-cases-case-id-flow", "get-api-cases-case-id-timeline-flow",
+    ])

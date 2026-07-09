@@ -98,6 +98,15 @@ LATTICE_THIN_FOLD_ENV = "FAULTLINE_LATTICE_THIN_FOLD"
 #: route family); it never touches the object-axis code path.
 JOURNEY_LATTICE_V2_ENV = "FAULTLINE_JOURNEY_LATTICE_V2"
 
+#: W5.2 fix B7 — action-axis I15 eligibility in MAX-CHILD form (default ON).
+#: ``=0`` restores B6's parent-only attach floor byte-identically (the
+#: eligibility gate then skips a catch-all purely on its pre-split parent
+#: share). B7 relaxes that gate to skip ONLY a UNIFORMLY misattached
+#: capability (parent AND every minted child below the floor); a diluted
+#: parent that still contains a floor-clearing sub-journey splits. Monotone:
+#: B7 never un-splits a B6 split (NEW-skip ⊆ OLD-skip).
+JOURNEY_LATTICE_B7_ENV = "FAULTLINE_JOURNEY_LATTICE_B7"
+
 #: Canonical child-id prefix (content-derived; see module docstring).
 _LATTICE_ID_PREFIX = "UF-L-"
 
@@ -177,6 +186,16 @@ def journey_lattice_v2_enabled() -> bool:
     """Action axis (B6). Default ON; ``FAULTLINE_JOURNEY_LATTICE_V2=0``
     restores the pre-B6 object-only lattice output byte-identically."""
     return os.environ.get(JOURNEY_LATTICE_V2_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def journey_lattice_b7_enabled() -> bool:
+    """Max-child I15 eligibility (B7). Default ON;
+    ``FAULTLINE_JOURNEY_LATTICE_B7=0`` restores B6's parent-only attach floor
+    byte-identically (the eligibility gate skips on the pre-split parent share
+    alone)."""
+    return os.environ.get(JOURNEY_LATTICE_B7_ENV, "1").strip().lower() not in {
         "0", "false",
     }
 
@@ -1179,6 +1198,18 @@ def run_journey_lattice(
             if dpf and str(dpf) in pf_scope_map:
                 pf_scope_map[str(dpf)].update(
                     str(p) for p in (getattr(d, "paths", None) or []))
+
+        def _mids_files(mids: list[str]) -> set[str]:
+            """Union of the validator's I15 flow files over a member set —
+            the ``_lane_attach_share`` numerator source (shared by the parent
+            attach and the B7 per-child attach)."""
+            fs: set[str] = set()
+            for m in mids:
+                fl = flow_by_mid.get(m)
+                if fl is not None:
+                    fs |= _flow_files_of(fl)
+            return fs
+
         for pf_key in sorted(by_pf):
             pf = pf_by_key[pf_key]
             pf_display = _pf_display_of(pf)
@@ -1202,21 +1233,24 @@ def run_journey_lattice(
             )[0]
             a_uid = str(getattr(a_uf, "id", "") or "")
             a_member_ids = list(getattr(a_uf, "member_flow_ids", None) or [])
-            # I15 eligibility floor (validator ruler) on the PRE-SPLIT
-            # parent: a journey whose non-lane flow files sit < 0.34 inside
-            # its PF scope is already misattached by the board's own measure
-            # — refining its grain re-measures the same weak mass N times and
-            # multiplies I15 rows (papermark 'workflows': parent passed by a
-            # hair, five children each minted a fresh row). Such a journey
-            # needs attachment forensics, not grain surgery — skip it.
-            parent_files: set[str] = set()
-            for m in a_member_ids:
-                fl = flow_by_mid.get(m)
-                if fl is not None:
-                    parent_files |= _flow_files_of(fl)
+            # I15 attach eligibility (validator ruler) on the PRE-SPLIT parent
+            # — its non-lane flow files inside the PF scope. A sub-floor parent
+            # is misattached by the board's own measure; splitting re-measures
+            # the same weak mass N times and multiplies I15 rows (papermark
+            # 'workflows': parent 0.327, every child <= 0.288). B6 skipped on
+            # the parent share alone. B7 (default) DEFERS the skip to the
+            # max-child gate below: a low parent share is often only an
+            # averaging artifact — a few lane-diluted / stray members dilute an
+            # otherwise-rich catch-all, and the 6.88-time lane approximation
+            # sinks the mean below the floor on the live board (Soc0 'Manage
+            # cases': parent skipped live yet its 'View cases' child is 1.0).
+            pf_scope = pf_scope_map.get(pf_key, set())
             parent_share = _lane_attach_share(
-                parent_files, pf_scope_map.get(pf_key, set()), lane_files)
-            if parent_share is not None and parent_share < _I15_ATTACH_FLOOR:
+                _mids_files(a_member_ids), pf_scope, lane_files)
+            parent_below = (
+                parent_share is not None and parent_share < _I15_ATTACH_FLOOR)
+            if parent_below and not journey_lattice_b7_enabled():
+                # B6 behaviour (flag off): the parent share alone gates.
                 tele["action_parent_attach_skipped"] = (
                     tele.get("action_parent_attach_skipped", 0) + 1)
                 continue
@@ -1293,6 +1327,29 @@ def run_journey_lattice(
                 a_claimed.update(fam_members)
             if len(a_children) < min_action_families:
                 continue
+            # B7 max-child I15 eligibility (reached only with the flag ON and a
+            # sub-floor parent): skip ONLY when the capability is misattached at
+            # EVERY grain — the parent AND every minted child sit below the
+            # floor (papermark 'workflows'). When even one action-child clears
+            # the floor the capability owns a genuinely-attached sub-journey
+            # (Soc0 'View cases': 9 GET-by-id flows, share 1.0) that the diluted
+            # parent mean hides and that MUST be surfaced. Gating on the max
+            # child (not the mean) is robust to the 6.88-time lane noise and is
+            # a monotone relaxation of B6 (never un-splits a B6 split). A
+            # lane-only child (share None → the validator skips it) counts as
+            # clearing — it is never itself an I15 row.
+            if parent_below:
+                child_clears = False
+                for ch in a_children:
+                    cs = _lane_attach_share(
+                        _mids_files(ch["mids"]), pf_scope, lane_files)
+                    if cs is None or cs >= _I15_ATTACH_FLOOR:
+                        child_clears = True
+                        break
+                if not child_clears:
+                    tele["action_parent_attach_skipped"] = (
+                        tele.get("action_parent_attach_skipped", 0) + 1)
+                    continue
             a_residual = [m for m in a_member_ids if m not in a_claimed]
             plans.append({
                 "pf_key": pf_key,
