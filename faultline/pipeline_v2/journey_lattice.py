@@ -595,6 +595,37 @@ _ACTION_VERDICT = {
     "update": "manage", "delete": "manage", "act": "manage",
 }
 
+#: The validator's I15 attach-overlap floor (eval/validate_scan.py), applied
+#: at ACTION-child mint time — a reused ruler, not new tuning. A journey whose
+#: non-lane flow files sit < 34% inside its PF scope is misattached by the
+#: board's own measure; minting children of a borderline capability
+#: re-measures the same weak mass N times and multiplies I15 rows (papermark
+#: 'workflows' class: parent passed lane-aware by a hair, five children at
+#: 0.29-0.33 each minted a fresh row).
+_I15_ATTACH_FLOOR = 0.34
+
+
+def _flow_files_of(flow: Any) -> set[str]:
+    """The validator's ``_spine_flow_files`` ruler: ``paths`` first, the
+    entry-point file as the fallback."""
+    ps = getattr(flow, "paths", None) or []
+    if not ps:
+        e = _entry_file_of(flow)
+        ps = [e] if e else []
+    return {str(p) for p in ps}
+
+
+def _lane_attach_share(
+    files: set[str], scope: set[str], lane_files: frozenset[str] | set[str],
+) -> float | None:
+    """Lane-aware attach share (validator I15 ruler): lane-owned files are
+    neutral ground a journey traverses — excluded from the denominator.
+    ``None`` = lane-only file set (the validator skips those UFs)."""
+    eff = files - lane_files
+    if not eff:
+        return None
+    return len(eff & scope) / len(eff)
+
 
 def load_action_families() -> dict[str, Any]:
     """Packaged action-family vocab (cached by the loader — pure data)."""
@@ -1123,6 +1154,31 @@ def run_journey_lattice(
         min_action_families = max(
             int(action_vocab.get("min_action_families", 3) or 3), _MIN_MINTABLE
         )
+        # Lane files (validator I15 denominator exclusion): at 6.88 time the
+        # platform-infrastructure lane residents are exactly the developer
+        # features WITHOUT a product attachment (they move to the
+        # platform_infrastructure[] array at emission).
+        lane_files: set[str] = set()
+        for d in features:
+            lay = str(getattr(d, "layer", "developer") or "developer")
+            if lay != "developer":
+                continue
+            if getattr(d, "product_feature_id", None):
+                continue
+            for p in (getattr(d, "paths", None) or []):
+                lane_files.add(str(p))
+        # PF member scope (validator I15 ruler): pf.paths ∪ member dev paths.
+        pf_scope_map: dict[str, set[str]] = {}
+        for pf in product_features:
+            k = _pf_key_of(pf)
+            if k:
+                pf_scope_map.setdefault(k, set()).update(
+                    str(p) for p in (getattr(pf, "paths", None) or []))
+        for d in features:
+            dpf = getattr(d, "product_feature_id", None)
+            if dpf and str(dpf) in pf_scope_map:
+                pf_scope_map[str(dpf)].update(
+                    str(p) for p in (getattr(d, "paths", None) or []))
         for pf_key in sorted(by_pf):
             pf = pf_by_key[pf_key]
             pf_display = _pf_display_of(pf)
@@ -1146,6 +1202,24 @@ def run_journey_lattice(
             )[0]
             a_uid = str(getattr(a_uf, "id", "") or "")
             a_member_ids = list(getattr(a_uf, "member_flow_ids", None) or [])
+            # I15 eligibility floor (validator ruler) on the PRE-SPLIT
+            # parent: a journey whose non-lane flow files sit < 0.34 inside
+            # its PF scope is already misattached by the board's own measure
+            # — refining its grain re-measures the same weak mass N times and
+            # multiplies I15 rows (papermark 'workflows': parent passed by a
+            # hair, five children each minted a fresh row). Such a journey
+            # needs attachment forensics, not grain surgery — skip it.
+            parent_files: set[str] = set()
+            for m in a_member_ids:
+                fl = flow_by_mid.get(m)
+                if fl is not None:
+                    parent_files |= _flow_files_of(fl)
+            parent_share = _lane_attach_share(
+                parent_files, pf_scope_map.get(pf_key, set()), lane_files)
+            if parent_share is not None and parent_share < _I15_ATTACH_FLOOR:
+                tele["action_parent_attach_skipped"] = (
+                    tele.get("action_parent_attach_skipped", 0) + 1)
+                continue
             # Cluster members by action family (head verb).
             a_fam_mids: dict[str, list[str]] = {}
             for mid in a_member_ids:

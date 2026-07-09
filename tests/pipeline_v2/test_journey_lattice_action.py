@@ -485,6 +485,69 @@ def test_majority_foreign_family_folds_back() -> None:
     assert tele.get("clusters_unowned_folded", 0) >= 1
 
 
+def test_attach_floor_folds_weakly_attached_families() -> None:
+    """The validator's I15 ruler as an ELIGIBILITY floor (papermark
+    'workflows' class): a parent journey whose non-lane flow files sprawl
+    far outside the PF scope is already misattached by the board's measure —
+    grain surgery would re-measure the weak mass N times, so the journey is
+    skipped and the catch-all survives intact."""
+    entry = "app/api/workflows/route.ts"
+    sprawl = [f"lib/shared/util-{i}.ts" for i in range(9)]  # foreign mass
+
+    def wide_flow(name: str) -> Flow:
+        f = _flow(name, entry)
+        f.paths = [entry] + sprawl  # 1/10 inside PF scope < 0.34
+        return f
+
+    names = [
+        "list-workflows-flow", "get-api-workflows-summary-flow",   # browse
+        "post-api-workflows-flow", "create-workflow-flow",          # create
+        "patch-api-workflows-id-flow", "update-workflow-flow",      # update
+    ]
+    flows = [wide_flow(n) for n in names]
+    devs = [_dev("workflows-api", [entry], "workflows", flows=flows)]
+    pfs = [_pf("workflows", "Workflows")]
+    ufs = [_uf("UF-007", "Browse and filter workflows", "workflows",
+               [f.name for f in flows], resource="workflow")]
+    tele = run_journey_lattice(ufs, devs, pfs, [])
+    assert tele.get("action_catchalls_detected", 0) == 0
+    assert [str(u.id) for u in ufs] == ["UF-007"]
+    assert tele.get("action_parent_attach_skipped", 0) == 1
+
+
+def test_attach_floor_lane_files_are_neutral() -> None:
+    """Lane-owned files (pfid-None dev features at 6.88 time) are excluded
+    from the attach denominator — a journey traversing shared infrastructure
+    still splits when its non-lane files sit inside the PF scope."""
+    entry = "backend/routers/cases.py"
+    lane = [f"packages/ui/comp-{i}.tsx" for i in range(9)]
+
+    def lane_flow(name: str) -> Flow:
+        f = _flow(name, entry)
+        f.paths = [entry] + lane  # non-lane share = 1/1 inside scope
+        return f
+
+    names = [
+        "list-cases-flow", "get-api-cases-summary-flow",     # browse
+        "post-api-cases-flow", "post-api-cases-bulk-flow",   # create
+        "patch-api-cases-case-id-flow", "update-case-flow",  # update
+    ]
+    flows = [lane_flow(n) for n in names]
+    devs = [
+        _dev("api-cases", [entry], "cases", flows=flows),
+        _dev("ui-lane", lane, None),  # pfid=None -> lane resident
+    ]
+    pfs = [_pf("cases", "Cases")]
+    ufs = [_uf("UF-037", "Manage cases end-to-end", "cases",
+               [f.name for f in flows], resource="case")]
+    tele = run_journey_lattice(ufs, devs, pfs, [])
+    assert tele.get("action_catchalls_detected", 0) == 1
+    children = [u for u in ufs if str(u.domain or "").startswith(
+        "lattice:action:")]
+    assert {u.name for u in children} == {
+        "Browse cases", "Create cases", "Update cases"}
+
+
 def test_unowned_families_fold_back() -> None:
     """A family with no owned entry (developer-layer PF-stamped path) has no
     attachment evidence — it folds to residual exactly like the object axis;
