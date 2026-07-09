@@ -206,6 +206,45 @@ class Flow(BaseModel):
     # no file is lost, it is re-labeled. Empty for scans produced
     # before W4 and when the anchored mint didn't run.
     shared_paths: list["FlowSharedPath"] = []
+    # B11 (2026-07-09) — flow-level OWNED-vs-SHARED span LOC, a DISPLAY
+    # partition (not an excision) of the flow's owned span footprint.
+    # ``loc`` counts the lines of this flow's owned spans (the validator's
+    # ``_spine_flow_loc_owned`` selection: nodes with a valid 2-int span,
+    # excluding role="interior" + shared_paths-ledger files) that NO OTHER
+    # flow covers — the story unique to this journey. ``loc_shared`` counts
+    # the owned-span lines this flow SHARES with ≥1 sibling flow (the
+    # blast-radius surface — a shared helper/layout legitimately belongs to
+    # every flow that uses it, per flow-feature-concept). By construction
+    # ``loc + loc_shared == union of this flow's owned spans`` (the same
+    # figure ``_spine_flow_loc_owned`` yields) — conservation, so I13 loc
+    # accounting is unmoved and I19's node-derived owned numerator is
+    # untouched (these fields are additive, the node ledger is not mutated).
+    # Without them the dashboard blends distinct flows sharing one file into
+    # an identical file-grain LOC (the reactive-resume email trio all read
+    # "113"); the split shows the honest ~13 unique / ~100 shared instead.
+    # ``None`` (serializer-omitted) on scans produced before the stage or
+    # with FAULTLINE_FLOW_LOC=0 → byte-identical to the pre-B11 engine.
+    loc: int | None = None
+    loc_shared: int | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_none_flow_loc(self, handler: Any) -> Any:
+        """Drop the B11 owned/shared LOC fields from dumps when unset.
+
+        A scan produced with ``FAULTLINE_FLOW_LOC=0`` (or a pre-B11 engine)
+        leaves ``loc``/``loc_shared`` at their ``None`` default; popping them
+        keeps the flow's serialized shape byte-identical to the pre-B11 engine
+        (snapshot-gate digest contract). Mirrors ``UserFlow._omit_none_identity``
+        for the UF-loc field. Every other field is emitted exactly as the
+        default handler produces it (including pre-existing ``None`` fields such
+        as ``health_trend``), so nothing else shifts.
+        """
+        data = handler(self)
+        if isinstance(data, dict):
+            for key in ("loc", "loc_shared"):
+                if data.get(key) is None:
+                    data.pop(key, None)
+        return data
 
 
 class SymbolRange(BaseModel):

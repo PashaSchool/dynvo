@@ -203,6 +203,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # member-flow spans per journey (validator floc_owned semantics).
     # Additive field only; $0/deterministic, FAULTLINE_UF_LOC=0 off.
     (7, "uf_loc"),
+    # Stage 6.97c (B11, 2026-07-09) — flow-level OWNED/SHARED LOC: partitions
+    # each flow's owned span footprint into exclusive (loc) vs cross-flow
+    # shared (loc_shared). Additive fields only; $0/deterministic,
+    # FAULTLINE_FLOW_LOC=0 off. Runs right after uf_loc.
+    (7, "flow_loc"),
 ]
 
 
