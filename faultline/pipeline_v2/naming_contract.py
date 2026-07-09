@@ -102,6 +102,24 @@ _VERSION_SEG = re.compile(r"^v\d+$", re.IGNORECASE)
 #: display keeps whatever the legacy ``_meaningful_segments`` produced).
 HUMANIZE_ROUTE_NAMES_ENV = "FAULTLINE_HUMANIZE_ROUTE_NAMES"
 
+#: B9 UF name laws kill-switch (default ON). ``=0`` restores base UF display
+#: names + name_confidence byte-identically.
+UF_NAME_LAWS_ENV = "FAULTLINE_UF_NAME_LAWS"
+
+#: Deterministic display word per action family (the labeler's lossy collapse
+#: — two distinct action-family children both "Configure X" — is undone here).
+_ACTION_FAMILY_WORD = {
+    "browse": "Browse", "view": "View", "create": "Create",
+    "update": "Update", "delete": "Delete", "act": "Manage",
+}
+#: Write families a name may not claim without a member performing that action.
+_WRITE_FAMILIES = frozenset({"create", "update", "delete"})
+#: Read families (collection vs member reads).
+_READ_FAMILIES = frozenset({"browse", "view"})
+#: Packaged action-family vocab file (same authoring copy the lattice uses;
+#: loaded directly to avoid a circular import with journey_lattice).
+_ACTION_FAMILIES_VOCAB_FILE = "journey-action-families.yaml"
+
 #: A word-adjacent ``+`` (Remix flat-route folder nesting marker) or a
 #: leading ``_`` word (pathless/layout prefix) that leaked into a display.
 _TRAILING_PLUS_RE = re.compile(r"\w\+")
@@ -110,6 +128,16 @@ _TRAILING_PLUS_RE = re.compile(r"\w\+")
 def naming_contract_enabled() -> bool:
     """Default ON; ``FAULTLINE_NAMING_CONTRACT=0`` restores pre-W3 output."""
     return os.environ.get(NAMING_CONTRACT_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def uf_name_laws_enabled() -> bool:
+    """UF name laws (B9): name-claim narrowing + UF-vs-UF display uniqueness +
+    evidence-derived name_confidence, applied over FINAL members at emission.
+    Default ON; ``FAULTLINE_UF_NAME_LAWS=0`` restores the base display names +
+    name_confidence byte-identically."""
+    return os.environ.get(UF_NAME_LAWS_ENV, "1").strip().lower() not in {
         "0", "false",
     }
 
@@ -819,6 +847,253 @@ class _PendingItem:
     pf_display: str | None = None  # UF items: the owning PF display
 
 
+_action_families_cache: dict[str, Any] | None = None
+
+
+def _action_family_index(vocab: Mapping[str, Any]) -> dict[str, Any]:
+    """Reverse verb→family index + id-markers from the packaged action-family
+    vocab (browse/read/create/update/delete/act). Cached; loaded directly to
+    avoid a circular import with journey_lattice."""
+    global _action_families_cache
+    if _action_families_cache is None:
+        try:
+            av = load_yaml(_ACTION_FAMILIES_VOCAB_FILE)
+        except Exception:  # noqa: BLE001 — vocab optional; laws degrade to no-op
+            av = {}
+        verb2fam: dict[str, str] = {}
+        for fam in ("browse", "read", "create", "update", "delete", "act"):
+            for v in (av.get(fam) or ()):
+                verb2fam[str(v).lower()] = fam
+        _action_families_cache = {
+            "verb2fam": verb2fam,
+            "id_markers": {str(m).lower() for m in (av.get("id_markers") or ("id",))},
+        }
+    return _action_families_cache
+
+
+def _flow_action_family(name: str, idx: Mapping[str, Any]) -> str | None:
+    """Coarse CRUD family of a flow name's LEADING verb (mirrors the lattice's
+    ``_action_family``: GET-class reads split by an id marker)."""
+    toks = [t for t in re.split(r"[^a-z0-9]+", str(name or "").lower()) if t]
+    if not toks:
+        return None
+    fam = idx["verb2fam"].get(toks[0])
+    if fam == "read":
+        return "view" if (idx["id_markers"] & set(toks)) else "browse"
+    return fam
+
+
+def _name_lead_family(display: str, idx: Mapping[str, Any]) -> str | None:
+    """The CRUD family a UF DISPLAY name's leading word claims ('Create and
+    manage webhooks' → 'create'). Reads never over-claim, so map read→its
+    write-less family only when unambiguous."""
+    toks = [t for t in re.split(r"[^A-Za-z0-9]+", str(display or "").lower()) if t]
+    if not toks:
+        return None
+    fam = idx["verb2fam"].get(toks[0])
+    if fam == "read":
+        return "view" if "id" in toks else "browse"
+    return fam
+
+
+def _action_family_from_domain(domain: str) -> str | None:
+    """``lattice:action:<res>-<fam>`` → ``<fam>`` (the labeler-collapsed
+    action child's true family)."""
+    d = str(domain or "")
+    if not d.startswith("lattice:action:"):
+        return None
+    key = d.split("lattice:action:", 1)[1]
+    fam = key.rsplit("-", 1)[-1] if "-" in key else ""
+    return fam if fam in _ACTION_FAMILY_WORD else None
+
+
+def _uf_protected(uf: Any, authored_ids: set[str], keeper_on: bool) -> bool:
+    """Maintainer-authored or pinned journeys are never re-worded by the laws."""
+    if str(getattr(uf, "id", "") or "") in authored_ids:
+        return True
+    return bool(
+        keeper_on and isinstance(getattr(uf, "identity", None), dict)
+        and (uf.identity or {}).get("pinned_from")
+    )
+
+
+def _conf_hist(user_flows: Iterable[Any]) -> dict[str, int]:
+    h = {"high": 0, "medium": 0, "low": 0}
+    for u in user_flows:
+        c = str(getattr(u, "name_confidence", "") or "low")
+        h[c] = h.get(c, 0) + 1
+    return h
+
+
+def _apply_uf_name_laws(
+    user_flows: list[Any],
+    pf_by_slug: Mapping[str, Any],
+    vocab: Mapping[str, Any],
+    flow_name_by_id: Mapping[str, str],
+    tele: dict[str, Any],
+    *,
+    authored_ids: set[str],
+    keeper_on: bool,
+) -> None:
+    """B9 — three deterministic UF display laws over FINAL members/names, run
+    AFTER the labeler so labeler-introduced collisions/over-claims are caught.
+    Mutates ONLY ``uf.name`` / ``uf.name_confidence`` — identity, membership,
+    product_feature_id, paths untouched (I12/I14/I15/I16-neutral)."""
+    from collections import defaultdict
+
+    idx = _action_family_index(vocab)
+
+    def _members(uf: Any) -> list[str]:
+        return [flow_name_by_id.get(str(m), str(m))
+                for m in (getattr(uf, "member_flow_ids", None) or [])]
+
+    def _mfams(names: list[str]) -> set[str]:
+        return {f for f in (_flow_action_family(n, idx) for n in names) if f}
+
+    def _pfd(uf: Any) -> str:
+        pf = pf_by_slug.get(str(getattr(uf, "product_feature_id", None) or ""))
+        return (str(getattr(pf, "display_name", None) or getattr(pf, "name", "") or "")
+                if pf is not None else "")
+
+    def _res(uf: Any) -> str:
+        base = str(getattr(uf, "resource", "") or "") or _pfd(uf)
+        base = re.sub(r"[-_]+", " ", base).strip()
+        return _resource_phrase(base, vocab) or base
+
+    def _folded(uf: Any) -> str:
+        return str(getattr(uf, "name", "") or "").strip().lower()
+
+    def _is_lattice(uf: Any) -> bool:
+        return (str(getattr(uf, "domain", "") or "").startswith("lattice")
+                or str(getattr(uf, "id", "") or "").startswith("UF-L-"))
+
+    ordered = sorted(user_flows, key=lambda u: str(getattr(u, "id", "") or ""))
+    narrowed: set[str] = set()
+    qualified: set[str] = set()
+
+    # ── Law B — name-claim narrowing (ORGANIC journeys only) ─────────
+    # A name that LEADS with a write family (create/update/delete) while EVERY
+    # member is a read (browse/view) claims an action absent from the evidence
+    # → narrow to the strictly-narrower read name "<Browse|View> <resource>"
+    # (never widen to the generic "Manage" fallback). Mixed-member over-claims
+    # (some act/write member) are left named but flagged low by Law C, and
+    # justified wide names (a real write member) are untouched entirely.
+    # Lattice action children are EXEMPT — their canonical "<Family>
+    # <resource>" identity is authored by Law A, not a false claim.
+    for uf in ordered:
+        if _uf_protected(uf, authored_ids, keeper_on) or _is_lattice(uf):
+            continue
+        names = _members(uf)
+        if not names:
+            continue
+        mfams = _mfams(names)
+        lead = _name_lead_family(str(getattr(uf, "name", "") or ""), idx)
+        if (lead in _WRITE_FAMILIES and mfams and mfams <= _READ_FAMILIES
+                and lead not in mfams):
+            word = "View" if "view" in mfams else "Browse"
+            cand = polish_display_casing(f"{word} {_res(uf)}".strip(), vocab)
+            if (cand and cand.strip().lower() != _folded(uf)
+                    and not display_law_violations(cand, vocab, pf_display=_pfd(uf) or None)):
+                uf.name = cand
+                narrowed.add(str(getattr(uf, "id", "") or ""))
+                tele["uf_claim_narrowed"] = tele.get("uf_claim_narrowed", 0) + 1
+
+    # ── Law A — UF-vs-UF display uniqueness (never a numeric suffix) ──
+    # step 1: undo the labeler's lossy collapse — a colliding lattice action
+    # child reverts to its deterministic "<Family> <resource>" name.
+    groups: dict[str, list[Any]] = defaultdict(list)
+    for uf in ordered:
+        groups[_folded(uf)].append(uf)
+    for _f, grp in sorted(groups.items()):
+        if len(grp) < 2:
+            continue
+        for uf in grp:
+            if _uf_protected(uf, authored_ids, keeper_on):
+                continue
+            fam = _action_family_from_domain(str(getattr(uf, "domain", "") or ""))
+            if not fam:
+                continue
+            cand = polish_display_casing(
+                f"{_ACTION_FAMILY_WORD[fam]} {_res(uf)}".strip(), vocab)
+            if (cand and cand.strip().lower() != _folded(uf)
+                    and not display_law_violations(cand, vocab, pf_display=_pfd(uf) or None)):
+                uf.name = cand
+    # step 2: qualify any residual collision from distinguishing evidence.
+    taken: dict[str, str] = {}
+    for uf in ordered:
+        taken.setdefault(_folded(uf), str(getattr(uf, "id", "") or ""))
+    groups = defaultdict(list)
+    for uf in ordered:
+        groups[_folded(uf)].append(uf)
+    for _f, grp in sorted(groups.items()):
+        if len(grp) < 2:
+            continue
+        keep = grp[0]  # smallest id keeps the base display
+        for uf in grp[1:]:
+            if _uf_protected(uf, authored_ids, keeper_on):
+                continue
+            base = str(getattr(uf, "name", "") or "")
+            quals: list[str] = []
+            # distinct resource, then owning PF, then route/domain tail
+            r = str(getattr(uf, "resource", "") or "")
+            if r and r.strip().lower() != str(getattr(keep, "resource", "") or "").strip().lower():
+                quals.append(_resource_phrase(r, vocab) or r)
+            pfd = _pfd(uf)
+            if pfd and pfd.strip().lower() != _pfd(keep).strip().lower():
+                quals.append(pfd)
+            fam = _action_family_from_domain(str(getattr(uf, "domain", "") or ""))
+            if fam:
+                quals.append(_ACTION_FAMILY_WORD[fam].lower())
+            for q in quals:
+                cand = polish_display_casing(f"{base} ({q})", vocab)
+                fld = cand.strip().lower()
+                if (fld not in taken
+                        and not display_law_violations(cand, vocab, pf_display=pfd or None)):
+                    uf.name = cand
+                    taken[fld] = str(getattr(uf, "id", "") or "")
+                    qualified.add(str(getattr(uf, "id", "") or ""))
+                    tele["uf_uniqueness_qualified"] = tele.get("uf_uniqueness_qualified", 0) + 1
+                    break
+
+    # ── Law C — evidence-derived name_confidence (one rubric, all sources) ──
+    tele["confidence_before"] = _conf_hist(user_flows)
+    for uf in ordered:
+        uid = str(getattr(uf, "id", "") or "")
+        names = _members(uf)
+        if not names:
+            uf.name_confidence = "low"
+            continue
+        if uid in narrowed:
+            uf.name_confidence = "low"
+            continue
+        mfams = _mfams(names)
+        lead = _name_lead_family(str(getattr(uf, "name", "") or ""), idx)
+
+        # resource-grounded: the name's resource phrase overlaps the PF display
+        # (member-grounded) or a member flow name — singular/plural-robust so
+        # "webhook" grounds against "webhooks".
+        def _sing(t: str) -> str:
+            return t[:-1] if (t.endswith("s") and len(t) > 3) else t
+
+        def _toks(text: str) -> set[str]:
+            return {_sing(t) for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t}
+
+        res_toks = _toks(_res(uf))
+        member_toks = set().union(*(_toks(n) for n in names)) if names else set()
+        res_grounded = bool(res_toks & member_toks) or bool(res_toks & _toks(_pfd(uf)))
+        # A specific verb must be performed by a member; a generic lead
+        # (Manage/Overview — not in any CRUD family) is grounded by any member
+        # action (it abstracts, it does not over-claim a specific verb).
+        verb_grounded = (lead in mfams) or (lead is None and len(mfams) >= 1)
+        if res_grounded and verb_grounded and uid not in qualified:
+            uf.name_confidence = "high"
+        elif res_grounded:
+            uf.name_confidence = "medium"
+        else:
+            uf.name_confidence = "low"
+    tele["confidence_after"] = _conf_hist(user_flows)
+
+
 def run_naming_contract(
     product_features: list[Any],
     user_flows: list[Any],
@@ -1216,6 +1491,16 @@ def run_naming_contract(
             tele["display_collisions_qualified"] += 1
         else:
             seen[folded] = str(getattr(pf, "name", "") or "")
+
+    # ── B9 UF name laws (post-labeler, evaluated over FINAL members) ──
+    # Runs AFTER the labeler so labeler-introduced collisions/over-claims are
+    # caught; composes with membership fixes (evaluates ACTUAL members).
+    if uf_name_laws_enabled():
+        _apply_uf_name_laws(
+            user_flows, pf_by_slug, vocab, flow_name_by_id, tele,
+            authored_ids={str(k) for k in _authored_map.keys()},
+            keeper_on=keeper_on,
+        )
 
     tele["labeler_pending"] = len(pending)
     return tele
