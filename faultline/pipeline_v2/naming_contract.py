@@ -58,8 +58,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "NAMING_CONTRACT_ENV",
     "HUMANIZE_ROUTE_NAMES_ENV",
+    "PF_NAME_LAW_ENV",
     "naming_contract_enabled",
     "humanize_route_names_enabled",
+    "pf_name_law_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -106,6 +108,21 @@ HUMANIZE_ROUTE_NAMES_ENV = "FAULTLINE_HUMANIZE_ROUTE_NAMES"
 #: names + name_confidence byte-identically.
 UF_NAME_LAWS_ENV = "FAULTLINE_UF_NAME_LAWS"
 
+#: B16 PF dev-grain suffix law kill-switch (default ON). ``=0`` restores the
+#: pre-B16 PF display names byte-identically (a route-dir leak like
+#: 'policy-page' keeps its "Policy Page" display).
+PF_NAME_LAW_ENV = "FAULTLINE_PF_NAME_LAW"
+
+#: Dev-grain surface nouns that must never TRAIL a product-feature display
+#: when the route anchor's terminal dir segment leaked them (operator
+#: doctrine: 'there is no such thing as a page in product features'). Anchor-
+#: form-gated in :func:`_strip_pf_devgrain_suffix` — a display word here is
+#: stripped ONLY when the anchor dir ends '-<word>' ('policy-page' ->
+#: 'Policy'; 'investigation-flow' -> 'Investigation'). A capability that
+#: merely CONTAINS one ('Landing Page Builder', anchor '*-builder') is never
+#: touched. Fixed, scale-invariant vocabulary — corroboration, not tuning.
+_PF_DEVGRAIN_SUFFIX_TOKENS = frozenset({"page", "screen", "view", "flow"})
+
 #: Deterministic display word per action family (the labeler's lossy collapse
 #: — two distinct action-family children both "Configure X" — is undone here).
 _ACTION_FAMILY_WORD = {
@@ -146,6 +163,17 @@ def humanize_route_names_enabled() -> bool:
     """Default ON; ``FAULTLINE_HUMANIZE_ROUTE_NAMES=0`` restores the pre-B2
     anchor humanization (byte-identical route display names)."""
     return os.environ.get(HUMANIZE_ROUTE_NAMES_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def pf_name_law_enabled() -> bool:
+    """PF dev-grain suffix law (B16): a route-dir-naming leak
+    ('policy-page' -> 'Policy Page') is stripped to the capability
+    ('Policy') at the display channel. Default ON;
+    ``FAULTLINE_PF_NAME_LAW=0`` restores the pre-B16 PF displays
+    byte-identically."""
+    return os.environ.get(PF_NAME_LAW_ENV, "1").strip().lower() not in {
         "0", "false",
     }
 
@@ -539,6 +567,105 @@ def hub_composition_display(
     if vendor.strip().lower() == family.strip().lower():
         return None  # degenerate (vendor dir == family dir)
     return f"{family} — {vendor}"
+
+
+# ── PF dev-grain suffix law (B16 — display channel only) ────────────────
+
+
+def _anchor_terminal_segment(anchor_id: str) -> str | None:
+    """Last author-meaningful dir segment of a ``route:`` anchor
+    ('policy-page' for 'route:policy-page'); ``None`` for non-route anchors
+    or when only params remain. Route groups unwrap ('(dashboard)' ->
+    'dashboard'); param/dynamic segments ('[id]', '$teamUrl') are skipped."""
+    src, path = _anchor_path(anchor_id)
+    if src != "route":
+        return None
+    for seg in reversed((path or "").split("/")):
+        s = seg.strip()
+        if not s:
+            continue
+        if _DYNAMIC_SEG.match(s):
+            continue
+        g = _GROUP_SEG.match(s)
+        if g:
+            s = g.group(1).strip()
+            if not s:
+                continue
+        return s
+    return None
+
+
+def _strip_pf_devgrain_suffix(
+    display: str, anchor_id: str, vocab: Mapping[str, Any],
+) -> str | None:
+    """The dev-grain-suffix-stripped display, or ``None`` if nothing to
+    strip.
+
+    Anchor-form-driven (never token-blind): the display's TRAILING word W
+    (one of :data:`_PF_DEVGRAIN_SUFFIX_TOKENS`) is stripped ONLY when the
+    route anchor's terminal dir segment ENDS with ``-W`` — i.e. the token is
+    a repo-dir-naming leak ('policy-page' -> 'Policy Page' -> 'Policy';
+    'investigation-flow' -> 'Investigation Flow' -> 'Investigation'). 'flow'
+    is therefore stripped ONLY behind a ``route:*-flow`` anchor (the
+    capability "Investigation Flow" vs a flow-suffix leak is decided by the
+    anchor form, per operator brief). Guards: 'Landing Page Builder' (anchor
+    '*-builder', trailing word 'Builder') is untouched; a bare "Page" (single
+    word, or a strip that would leave nothing / a single letter) is kept."""
+    terminal = _anchor_terminal_segment(anchor_id)
+    if not terminal:
+        return None
+    tl = terminal.lower()
+    tok = next(
+        (w for w in sorted(_PF_DEVGRAIN_SUFFIX_TOKENS) if tl.endswith("-" + w)),
+        None,
+    )
+    if tok is None:
+        return None
+    words = (display or "").split()
+    if len(words) < 2 or words[-1].lower() != tok:
+        return None
+    stripped = " ".join(words[:-1]).strip()
+    if not stripped or len(stripped.replace(" ", "")) <= 1:
+        return None
+    if display_law_violations(stripped, vocab):
+        return None
+    polished = polish_display_casing(stripped, vocab)
+    return polished if polished.strip().lower() != (display or "").strip().lower() else None
+
+
+def _apply_pf_devgrain_law(
+    chosen: str,
+    anchor_id: str,
+    slug: str,
+    vocab: Mapping[str, Any],
+    taken: Mapping[str, str],
+    tele: dict[str, Any],
+) -> tuple[str, bool]:
+    """Return ``(display, stripped?)`` after the PF dev-grain suffix law.
+
+    A clean strip fires when the stripped capability name is still UNIQUE.
+    On a post-strip COLLISION — the stripped name is already claimed by a
+    sibling PF (a fragmented capability: 'Detections Page' -> 'Detections'
+    == existing route:detection) — the current display is kept UNCHANGED
+    (never a duplicate, never a qualifier) and recorded as the Part-2
+    unification signal. Doctrine: LAW > PIN; display channel only; the
+    existing PF-vs-PF uniqueness law (``taken``) decides the collision."""
+    stripped = _strip_pf_devgrain_suffix(chosen, anchor_id, vocab)
+    if not stripped:
+        return chosen, False
+    folded = stripped.strip().lower()
+    if folded in taken:
+        tele["pf_devgrain_collision"] = tele.get("pf_devgrain_collision", 0) + 1
+        tele.setdefault("pf_devgrain_collision_samples", []).append({
+            "slug": slug,
+            "anchor_id": anchor_id,
+            "kept": chosen,
+            "would_be": stripped,
+            "collides_with": taken.get(folded),
+        })
+        return chosen, False
+    tele["pf_devgrain_stripped"] = tele.get("pf_devgrain_stripped", 0) + 1
+    return stripped, True
 
 
 # ── Nav-label channel (authored labels; product_strings nav pairs) ──────
@@ -1133,6 +1260,12 @@ def run_naming_contract(
         "display_collisions_qualified": 0,
         "casing_polished": 0,
     }
+    # B16 PF dev-grain law telemetry — added ONLY when the law is ON so a
+    # ``FAULTLINE_PF_NAME_LAW=0`` scan_meta.naming_contract is byte-identical
+    # to the pre-B16 emission.
+    if pf_name_law_enabled():
+        tele["pf_devgrain_stripped"] = 0
+        tele["pf_devgrain_collision"] = 0
 
     def _law_fix(law: str) -> None:
         tele["laws_fixed"][law] = tele["laws_fixed"].get(law, 0) + 1
@@ -1239,6 +1372,17 @@ def run_naming_contract(
                     fallback = from_slug
             chosen = fallback
 
+        # ── B16: PF dev-grain suffix law (LAW > PIN, display channel) ──
+        # A route-dir leak ('Policy Page' from route:policy-page) strips to
+        # the capability ('Policy'); a strip that collides with a sibling PF
+        # is kept as-is (the Part-2 unification signal). Runs after the
+        # existing selection so it also overrides a stale pin.
+        if pf_name_law_enabled():
+            new_chosen, stripped_law = _apply_pf_devgrain_law(
+                chosen, anchor_id, slug, vocab, taken, tele)
+            if stripped_law:
+                chosen, pinned = new_chosen, False
+
         taken[chosen.strip().lower()] = slug
         if pinned:
             tele["pf_pinned"] += 1
@@ -1256,7 +1400,12 @@ def run_naming_contract(
             pending.append(_PendingItem(
                 kind="pf", key=slug, current=chosen,
                 candidates=[c for c in candidates
-                            if not display_law_violations(c, vocab)],
+                            if not display_law_violations(c, vocab)
+                            # B16: never offer the persona a dev-grain-leak
+                            # candidate (would re-introduce "Page").
+                            and not (pf_name_law_enabled()
+                                     and _strip_pf_devgrain_suffix(
+                                         c, anchor_id, vocab))],
                 context={
                     "anchor_id": anchor_id,
                     "nav_label": nav_labels.get(slug),

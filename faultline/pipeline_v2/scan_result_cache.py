@@ -129,6 +129,10 @@ ENV_OUTPUT_FLAGS = (
     # (locale packs) consumed by >=2 PFs, no surface, are forced role="shared".
     # Reshapes member_files[].role.
     "FAULTLINE_DATA_LEAF",
+    # B16 (2026-07-10) — PF dev-grain suffix law: a route-dir-naming leak
+    # ('policy-page' -> 'Policy Page') is stripped to the capability
+    # ('Policy') at the display channel. Reshapes product_features[].display_name.
+    "FAULTLINE_PF_NAME_LAW",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -138,7 +142,8 @@ ENV_OUTPUT_FLAGS = (
 #: v5 (B13): added FAULTLINE_BACKSTOP_OWNED_COVER.
 #: v6 (B15): added FAULTLINE_SHARED_LEAF_CONSISTENCY.
 #: v7 (B15b): added FAULTLINE_DATA_LEAF.
-KEY_SCHEMA_VERSION = 7
+#: v8 (B16): added FAULTLINE_PF_NAME_LAW.
+KEY_SCHEMA_VERSION = 8
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
