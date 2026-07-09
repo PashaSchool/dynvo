@@ -2464,6 +2464,54 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Stage 6.97c — flow-level OWNED/SHARED LOC (B11, $0, additive) ─
+    # Operator bug B11: distinct flows sharing one file rendered an IDENTICAL
+    # file-grain LOC (the reactive-resume email trio all read "113"). Stamp
+    # ``flows[].loc`` (owned-EXCLUSIVE span lines — the flow's unique story)
+    # and ``flows[].loc_shared`` (owned span lines shared with ≥1 sibling flow
+    # — blast-radius). By construction ``loc + loc_shared`` equals the flow's
+    # ``_spine_flow_loc_owned`` union (the historical "113"), so it is a pure
+    # DISPLAY partition: I13 loc-accounting is unmoved and I19's node-derived
+    # owned numerator is untouched (additive fields; the node ledger is not
+    # mutated). Runs right after 6.97b (UF loc) — spans are final. STRICTLY
+    # ADDITIVE: the only output-JSON change is the two new keys (telemetry
+    # lives in the side artifact / log, never scan_meta, so the flag-ON vs
+    # flag-OFF diff is exactly ``loc``/``loc_shared``). Kill-switch
+    # FAULTLINE_FLOW_LOC=0 → both stay None → serializer omits → byte-identical
+    # to the pre-B11 engine. Metric must never break a scan.
+    from faultline.pipeline_v2.stage_6_97c_flow_loc import (
+        apply_flow_loc,
+        flow_loc_enabled,
+    )
+    if flow_loc_enabled():
+        with StageLogger(run_dir, 7, "flow_loc") as log_flowloc:
+            try:
+                _flow_loc_tele = apply_flow_loc(list(bipartite.flows))
+                log_flowloc.info(
+                    "flow_loc: stamped %d flows (%d with shared span, %d "
+                    "exclusive-only)" % (
+                        _flow_loc_tele["flows_total"],
+                        _flow_loc_tele["flows_with_shared"],
+                        _flow_loc_tele["flows_exclusive_only"],
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=7,
+                    stage_name="flow_loc",
+                    payload=_flow_loc_tele,
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — metric must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"flow-loc stage failed ({exc}); flows[].loc left unset"
+                )
+                log_flowloc.info(
+                    f"flow_loc: FAILED ({exc}) — continuing without flow loc",
+                    feature=None,
+                )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {
