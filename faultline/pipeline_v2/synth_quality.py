@@ -144,6 +144,20 @@ def uf_worthiness_enabled() -> bool:
     }
 
 
+#: B13 — honest coverage-marker naming/typing of member-less I8-cover seeds.
+#: The SAME flag that gates the backstop own-entry filter (kept in lock-step so
+#: the kill-switch restores byte-identical output). Registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+BACKSTOP_OWNED_COVER_ENV = "FAULTLINE_BACKSTOP_OWNED_COVER"
+
+
+def backstop_owned_cover_enabled() -> bool:
+    """Default ON; ``FAULTLINE_BACKSTOP_OWNED_COVER=0`` restores the pre-B13
+    seed names ('Run X' verb template) and drops the coverage-marker flag."""
+    return os.environ.get(BACKSTOP_OWNED_COVER_ENV, "1").strip().lower() \
+        not in {"0", "false", "no", "off"}
+
+
 # ── universal accessors (typed models / namespaces AND raw JSON dicts) ───────
 # Production passes pydantic ``UserFlow`` / ``Flow`` objects (attribute access);
 # the offline validator-sim + sweep pass raw scan-JSON dicts (item access). Both
@@ -651,6 +665,53 @@ def reground_backstop_uf_names(
     }
 
 
+def _coverage_marker_name(subject: str) -> str:
+    """Honest gap-band label for a member-LESS I8-cover seed — a
+    route-coverage marker derived from the PF/resource subject (W3-lawful),
+    NEVER a journey verb ('Run X'). E.g. ``'Uncovered: SentinelOne routes'``."""
+    subj = re.sub(r"\s+", " ", str(subject or "").strip()) or "capability"
+    return f"Uncovered: {subj} routes"
+
+
+def honest_coverage_markers(
+    user_flows: list[Any],
+    product_features: list[Any],
+    scan_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """B13 Part-2(a) — every SURVIVING member-LESS I8-cover seed (``synthesized``
+    + ``member_count == 0``) gets a machine-readable ``is_coverage_marker`` flag
+    and an honest ``'Uncovered: <PF> routes'`` name (replacing the ``'Run X'``
+    verb template) so ANY viewer renders it as a coverage gap-band, not a
+    journey row. Deterministic + idempotent; runs AFTER the hollow-seed
+    demotion so only the seeds I8 genuinely needs are marked. No-op (and
+    byte-identical) when ``FAULTLINE_BACKSTOP_OWNED_COVER=0``."""
+    if not backstop_owned_cover_enabled():
+        return {"marked": 0}
+    pf_display: dict[str, str] = {}
+    for pf in product_features or []:
+        key = str(_get(pf, "name", "") or _get(pf, "id", "") or "")
+        if key:
+            pf_display[key] = str(_get(pf, "display_name", None) or key)
+    marked = 0
+    for uf in sorted(user_flows, key=lambda u: str(_get(u, "id", ""))):
+        if not _get(uf, "synthesized", False):
+            continue
+        if (_get(uf, "member_count", 0) or 0) != 0:
+            continue
+        if _get(uf, "member_flow_ids", None):
+            continue  # defensive — a real member set is never a marker
+        pfid = _get(uf, "product_feature_id", None)
+        subject = (pf_display.get(str(pfid)) if pfid else None) \
+            or _get(uf, "resource", None) or _get(uf, "name", "")
+        _set(uf, "name", _coverage_marker_name(subject))
+        _set(uf, "is_coverage_marker", True)
+        _set(uf, "name_confidence", "low")
+        marked += 1
+    if marked:
+        scan_meta.setdefault("synth_quality", {})["coverage_markers"] = marked
+    return {"marked": marked}
+
+
 def run_synth_quality(
     user_flows: list[Any],
     flows: list[Any],
@@ -676,6 +737,10 @@ def run_synth_quality(
     name_tele = reground_backstop_uf_names(
         user_flows, flows, product_features, scan_meta, vocab=vocab)
     raised = name_tele.get("confidence_raised", 0)
+    # B13 Part-2(a) — honest coverage-marker naming/typing of the member-less
+    # I8-cover seeds that SURVIVED demotion (the ones I8 genuinely needs).
+    marker_tele = honest_coverage_markers(
+        user_flows, product_features, scan_meta)
     tele = {
         "enabled": True,
         "backstop_renamed": name_tele["renamed"],
@@ -683,6 +748,7 @@ def run_synth_quality(
         "system_seeds_demoted": demote_tele["demoted"],
         "backpointers_cleared": demote_tele["backpointers_cleared"],
         "ui_chrome_demoted": chrome_tele["demoted"],
+        "coverage_markers": marker_tele["marked"],
     }
     sq = scan_meta.setdefault("synth_quality", {})
     sq.update({
@@ -700,12 +766,15 @@ def run_synth_quality(
 __all__ = [
     "SYNTH_QUALITY_ENV",
     "UF_WORTHINESS_ENV",
+    "BACKSTOP_OWNED_COVER_ENV",
     "SYSTEM_RECALL_REASON",
     "BACKSTOP_REASON",
     "synth_quality_enabled",
     "uf_worthiness_enabled",
+    "backstop_owned_cover_enabled",
     "demote_system_flow_seeds",
     "demote_ui_chrome_ufs",
     "reground_backstop_uf_names",
+    "honest_coverage_markers",
     "run_synth_quality",
 ]
