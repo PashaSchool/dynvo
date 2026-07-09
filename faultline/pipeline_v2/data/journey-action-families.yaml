@@ -1,0 +1,161 @@
+# journey-action-families.yaml — action-grain intent families for the
+# journey-lattice ACTION axis (Product-Spine W5.2 / fix B6).
+#
+# WHY: the object axis (route/section/dir) cannot separate a single-router
+# REST surface — e.g. a FastAPI `routers/cases.py` with 29 endpoints — because
+# `_route_family` is keyed by the flow's ENTRY FILE and returns the first
+# meaningful segment across all of that file's patterns, so every endpoint in
+# the file collapses to ONE route family. The action axis partitions such a
+# catch-all journey by USER INTENT instead, derived from the leading verb of
+# each member flow's (code-generated) name.
+#
+# These verb lists encode UNIVERSAL HTTP / CRUD semantics — they are NOT
+# stack-specific patterns. The leading token of a generated flow name IS its
+# action (mechanism); the lists merely bucket that verb into a coarse family
+# (corroboration, per memory/feedback-mechanisms-over-vocabularies).
+#
+# Authoring copy. The runtime source of truth is the byte-identical package
+# copy at faultline/pipeline_v2/data/journey-action-families.yaml; the drift
+# guard lives in tests/pipeline_v2/test_journey_lattice_action.py.
+
+# Read-of-collection verbs — always the "browse" family.
+browse:
+  - list
+  - search
+  - sort
+  - group
+  - rank
+  - analyze
+  - filter
+  - browse
+  - query
+  - find
+  - discover
+  - overview
+  - summary
+  - index
+  - aggregate
+  - pivot
+  - feed
+  - explore
+
+# Read verbs whose grain (collection vs single member) is decided by an id
+# marker in the flow name — "browse" when absent, "view" when present
+# (get-...-case-id-... reads one member; get-...-summary reads the collection).
+read:
+  - get
+  - view
+  - show
+  - read
+  - open
+  - inspect
+  - preview
+  - display
+  - render
+  - retrieve
+  - fetch
+  - access
+  - load
+  - lookup
+  - describe
+  - peek
+
+create:
+  - post
+  - create
+  - add
+  - new
+  - compose
+  - draft
+  - upload
+  - invite
+  - generate
+  - import
+  - submit
+
+update:
+  - patch
+  - put
+  - update
+  - edit
+  - set
+  - change
+  - rename
+  - resync
+  - toggle
+  - assign
+  - configure
+  - move
+  - reorder
+  - enable
+  - disable
+  - activate
+  - deactivate
+  - pause
+  - resume
+  - unpause
+  - upgrade
+  - downgrade
+  - publish
+  - approve
+  - adopt
+  - apply
+
+delete:
+  - delete
+  - remove
+  - archive
+  - purge
+  - revoke
+  - clear
+  - cancel
+  - unlink
+  - drop
+
+# Domain-action verbs ONLY. Deliberately EXCLUDES noun-ish / UI-shell verbs
+# (build, track, monitor, process, render) that name a container rather than a
+# distinct user action — those fall to residual and stay with the parent, so a
+# responsive "build-resume-on-desktop/mobile" editor shell is never mistaken
+# for a separate journey.
+act:
+  - investigate
+  - review
+  - respond
+  - remediate
+  - resolve
+  - triage
+  - escalate
+  - run
+  - execute
+  - invoke
+  - trigger
+  - verify
+  - validate
+  - export
+  - download
+  - send
+  - notify
+  - share
+  - reject
+
+# Tokens that mark a route-member (vs collection) read in a generated flow
+# name — get-...-id-... reads a single member ("view").
+id_markers:
+  - id
+
+# A journey action-splits only when its members populate at least this many
+# QUALIFYING action families. A family qualifies with >= 2 member flows —
+# STRICT, no LOC arm: one flow's head verb is a single datapoint, not a
+# corroborated intent family (an object family's 150-LOC single page is real
+# journey mass; a 1-member "Update monitors" child is noise). Action families
+# are always partially present in any journey (every surface has reads +
+# writes), so 2 is the noise floor; >=3 distinct families is the genuine
+# resource-management (full-CRUD) surface signature. Scale-invariant — it does
+# not scale with repo or journey size, so it is NOT a magic count limit.
+#
+# Additional guard (in code, faultline/pipeline_v2/journey_lattice.py):
+# a journey whose RESOURCE word is itself a member of the naming vocab's
+# flow_verb_classes (auth/callback/sync/login...) is an ACTION DOMAIN, not a
+# countable entity — CRUD partition there is grain-noise ("Create auth" from
+# POST /logout) and is skipped. Reuses the engine's existing semantic table.
+min_action_families: 3
