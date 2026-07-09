@@ -100,12 +100,17 @@ from typing import Any, Iterable, Mapping
 __all__ = [
     "TECH_INSTRUMENTS_ENV",
     "CONFIG_LANE_ENV",
+    "TRANSPORT_LANE_ENV",
     "tech_instruments_enabled",
     "config_lane_enabled",
+    "transport_lane_enabled",
     "detect_technology_instruments",
 ]
 
 TECH_INSTRUMENTS_ENV = "FAULTLINE_TECH_INSTRUMENTS"
+#: B19 transport-package lane (design-review, default OFF). See
+#: :func:`transport_lane_enabled`.
+TRANSPORT_LANE_ENV = "FAULTLINE_TECH_TRANSPORT_LANE"
 #: B1 kill-switch — the config-channel relaxation of S1c (below). Default
 #: ON; ``FAULTLINE_CONFIG_LANE=0`` keeps the strict ``inf == 0`` guard so
 #: output is byte-identical to pre-B1 main.
@@ -174,6 +179,24 @@ def config_lane_enabled() -> bool:
     ``eslint-config`` / ``tsconfig`` class it belongs to."""
     return (os.environ.get(CONFIG_LANE_ENV, "1") or "1").strip().lower() \
         not in {"0", "false"}
+
+
+def transport_lane_enabled() -> bool:
+    """B19 — transport-package lane (design-review). A ws-package whose
+    name-key matches its OWN declared external dependency family (the S2
+    ``name-dep`` corroboration — a package NAMED after the library it wraps,
+    e.g. ``packages/trpc`` -> ``@trpc/*``) is a transport/adapter instrument
+    EVEN WHEN it fans out broadly into domain (a transport re-routes domain
+    by construction). ON waives the ``len(dou) <= 1`` fan-out guard for the
+    name-dep prong ONLY.
+
+    Default **OFF** — this REVERSES a documented design decision (the S2
+    docstring deliberately keeps ``trpc`` product). Awaiting operator
+    ratification; ``FAULTLINE_TECH_TRANSPORT_LANE=1`` opts in. OFF is
+    byte-identical to pre-B19."""
+    return os.environ.get(TRANSPORT_LANE_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
 
 
 def _norm(tok: str) -> str:
@@ -527,6 +550,7 @@ def detect_technology_instruments(
 
     instruments: dict[str, str] = {}
     config_lane = config_lane_enabled()  # B1 kill-switch (S1c relaxation)
+    transport_lane = transport_lane_enabled()  # B19 (design-review, def OFF)
 
     def _dou(u: str) -> set[str]:
         return {t for t in out_units.get(u, ()) if t not in instruments}
@@ -595,10 +619,20 @@ def detect_technology_instruments(
                 sig = "S1e-thin-wrapper"
             elif (f["name_keys"] & ui_keys) and inf >= 5 and inu >= 2:
                 sig = "S1f-design-system"
-            elif inf >= 5 and inu >= 3 and len(dou) <= 1:
+            elif inf >= 5 and inu >= 3 and (
+                    len(dou) <= 1
+                    # B19 transport prong (design-review, default OFF): a
+                    # broadly-imported package NAMED after its own external
+                    # dependency family re-routes domain by construction, so a
+                    # high domain fan-out is its signature, not a domain-core
+                    # tell. Waive the fan-out guard for the name-dep prong ONLY
+                    # (the weaker infra-noun prong still requires len(dou)<=1).
+                    or (transport_lane
+                        and (f["name_keys"] & repo_ext_tokens))):
                 if f["name_keys"] & repo_ext_tokens:
-                    sig = "S2-asymmetry:name-dep"
-                elif f["name_keys"] & nouns:
+                    sig = ("S2-asymmetry:name-dep" if len(dou) <= 1
+                           else "S2-transport:name-dep-fanout")
+                elif f["name_keys"] & nouns:  # reachable only when dou<=1
                     sig = "S2-asymmetry:infra-noun"
             if sig:
                 instruments[u] = sig
