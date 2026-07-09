@@ -58,6 +58,31 @@ BACKSTOP_REASON = "uncovered_product_feature_backstop"
 
 SYNTH_QUALITY_ENV = "FAULTLINE_SYNTH_QUALITY"
 
+#: B10 journey-worthiness floor kill-switch (default ON). ``=0`` restores base
+#: output byte-identically (no UI-chrome demotion).
+UF_WORTHINESS_ENV = "FAULTLINE_UF_WORTHINESS"
+
+#: Pure UI-manipulation verbs (show/hide a component) — never a domain action.
+#: Corroborating vocab; the STRUCTURAL trigger is no-domain-resource (below).
+_CHROME_VERBS = frozenset({
+    "toggle", "collapse", "expand", "show", "hide", "open", "close",
+    "reveal", "dismiss", "pin", "unpin", "minimize", "maximize", "fold",
+    "unfold",
+})
+#: UI-chrome component nouns — the object of a chrome affordance. A domain
+#: noun (theme, account, resume, invoice…) is deliberately ABSENT so a
+#: capability that merely shares a chrome verb (Toggle theme) is not demoted.
+_CHROME_NOUNS = frozenset({
+    "sidebar", "panel", "drawer", "dialog", "modal", "tooltip", "menu",
+    "accordion", "popover", "overlay", "collapsible", "flyout", "navbar",
+    "topbar", "dropdown",
+})
+#: Persistence-write signals on a flow's OWNED symbols — a chrome affordance
+#: that persists product state (Toggle theme → setThemeCookie) touches a real
+#: domain resource and is NEVER demoted (the structural safety gate).
+_PERSIST_KEYWORDS = ("cookie", "localstorage", "sessionstorage", "indexeddb",
+                     "persist")
+
 #: Vendor-composed PF display marker (Product-Spine §4.8 hub composition
 #: "<Family> — <Vendor>"). A journey on such a surface keeps the vendor-named
 #: template — the vendor is the recognizable subject, not a member mechanic.
@@ -107,6 +132,14 @@ def synth_quality_enabled() -> bool:
     """Default ON; ``FAULTLINE_SYNTH_QUALITY=0`` restores pre-B4 output
     byte-identically (both passes no-op)."""
     return os.environ.get(SYNTH_QUALITY_ENV, "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def uf_worthiness_enabled() -> bool:
+    """Journey-worthiness floor (B10). Default ON; ``FAULTLINE_UF_WORTHINESS=0``
+    restores base output byte-identically (no UI-chrome demotion)."""
+    return os.environ.get(UF_WORTHINESS_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off",
     }
 
@@ -214,6 +247,114 @@ def demote_system_flow_seeds(
         "kept_i8_cover_seeds": len(kept_seed_ids),
         "backpointers_cleared": cleared,
         "seed_names": [s["name"] for s in seeds],
+    }
+
+
+# ── (a.2) journey-worthiness floor — UI-chrome demotion (B10) ────────────────
+
+
+def _owned_symbols(fl: Any) -> list[str]:
+    """The flow's OWNED symbols (``loc_nodes``) — the flow's own code, NOT the
+    shared utils its span traverses (a chrome getter vs a persistence write)."""
+    out: list[str] = []
+    for nd in (_get(fl, "loc_nodes", None) or []):
+        s = _get(nd, "symbol", None)
+        if s:
+            out.append(str(s))
+    return out
+
+
+def _wtoks(text: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", str(text or "").lower()) if t]
+
+
+def _is_ui_chrome_uf(uf: Any, flow_by_id: dict[str, Any]) -> bool:
+    """A UF whose members are ALL pure UI-chrome affordances (show/hide a
+    component, no domain resource). Most-conservative conjunction:
+      1. every member's LEADING verb ∈ chrome verbs (a single CRUD/domain
+         member — 'Delete account' — disqualifies the whole UF);
+      2. no member persists product state on its OWNED symbols (the structural
+         gate: 'Toggle theme' → setThemeCookie survives);
+      3. the UF's object noun ∈ chrome nouns (a domain object — theme,
+         account — survives even when it shares a chrome verb).
+    Smallness / LOC is NEVER a trigger — only this chrome-class conjunction."""
+    mids = _get(uf, "member_flow_ids", None) or []
+    if not mids:
+        return False  # member-less seeds are the system-seed pass's job
+    obj_tokens: set[str] = set()
+    for mid in mids:
+        fl = flow_by_id.get(str(mid))
+        toks = _wtoks(_get(fl, "name", "") if fl is not None else "")
+        if not toks or toks[0] not in _CHROME_VERBS:
+            return False
+        obj_tokens.update(toks[1:])
+        if fl is not None:
+            for sym in _owned_symbols(fl):
+                low = sym.lower()
+                if any(k in low for k in _PERSIST_KEYWORDS):
+                    return False  # persists domain state → journey-worthy
+    for src in (_get(uf, "name", ""), _get(uf, "resource", "")):
+        obj_tokens.update(_wtoks(src))
+    obj_tokens -= _CHROME_VERBS
+    obj_tokens -= _OBJ_STOP
+    return bool(obj_tokens & _CHROME_NOUNS)
+
+
+def demote_ui_chrome_ufs(
+    user_flows: list[Any], flows: list[Any], scan_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Demote UI-chrome UFs out of ``user_flows`` into
+    ``scan_meta["ui_chrome_demoted"]``; null their flow backpointers (I14).
+
+    I8-SAFE BY CONSTRUCTION (the B4 discriminator): a chrome UF is demoted only
+    when its PF is None OR still covered by >= 1 OTHER (non-chrome) surviving
+    user flow. A chrome UF that is its PF's SOLE cover is KEPT — an honest
+    recall gap, never an I8 re-fire. Deterministic, input order preserved."""
+    flow_by_id = _flow_by_member_id(flows)
+    chrome_set = {id(uf) for uf in user_flows if _is_ui_chrome_uf(uf, flow_by_id)}
+    other_pf_cover: dict[str, int] = {}
+    for uf in user_flows:
+        if id(uf) in chrome_set:
+            continue
+        pf = _get(uf, "product_feature_id", None)
+        if pf:
+            other_pf_cover[str(pf)] = other_pf_cover.get(str(pf), 0) + 1
+
+    kept: list[Any] = []
+    demoted: list[Any] = []
+    for uf in user_flows:
+        if id(uf) in chrome_set:
+            pf = _get(uf, "product_feature_id", None)
+            if not pf or other_pf_cover.get(str(pf), 0) > 0:
+                demoted.append(uf)
+                continue
+        kept.append(uf)
+
+    recs = [{
+        "id": _get(uf, "id", None),
+        "name": _get(uf, "name", None),
+        "product_feature_id": _get(uf, "product_feature_id", None),
+        "resource": _get(uf, "resource", None),
+        "member_flow_ids": list(_get(uf, "member_flow_ids", None) or []),
+        "reason": "ui_chrome_affordance",
+    } for uf in demoted]
+    scan_meta["ui_chrome_demoted"] = recs
+
+    cleared = 0
+    if demoted:
+        demoted_ids = {_get(uf, "id", None) for uf in demoted}
+        demoted_ids.discard(None)
+        for fl in flows:  # I14 — no dangling backpointer may survive
+            if _get(fl, "user_flow_id", None) in demoted_ids:
+                _set(fl, "user_flow_id", None)
+                cleared += 1
+        user_flows[:] = kept
+
+    return {
+        "demoted": len(demoted),
+        "kept_sole_cover_chrome": len(chrome_set) - len(demoted),
+        "backpointers_cleared": cleared,
+        "demoted_names": [r["name"] for r in recs],
     }
 
 
@@ -525,6 +666,13 @@ def run_synth_quality(
     if not synth_quality_enabled():
         return {"enabled": False}
     demote_tele = demote_system_flow_seeds(user_flows, flows, scan_meta)
+    # B10 journey-worthiness floor — demote UI-chrome affordances (I8-safe;
+    # only when its PF keeps other cover). Runs AFTER the member-less system
+    # seeds so its other-cover count reflects the final surviving set.
+    chrome_tele = (
+        demote_ui_chrome_ufs(user_flows, flows, scan_meta)
+        if uf_worthiness_enabled() else {"demoted": 0, "backpointers_cleared": 0}
+    )
     name_tele = reground_backstop_uf_names(
         user_flows, flows, product_features, scan_meta, vocab=vocab)
     raised = name_tele.get("confidence_raised", 0)
@@ -534,6 +682,7 @@ def run_synth_quality(
         "backstop_confidence_raised": raised,
         "system_seeds_demoted": demote_tele["demoted"],
         "backpointers_cleared": demote_tele["backpointers_cleared"],
+        "ui_chrome_demoted": chrome_tele["demoted"],
     }
     sq = scan_meta.setdefault("synth_quality", {})
     sq.update({
@@ -550,10 +699,13 @@ def run_synth_quality(
 
 __all__ = [
     "SYNTH_QUALITY_ENV",
+    "UF_WORTHINESS_ENV",
     "SYSTEM_RECALL_REASON",
     "BACKSTOP_REASON",
     "synth_quality_enabled",
+    "uf_worthiness_enabled",
     "demote_system_flow_seeds",
+    "demote_ui_chrome_ufs",
     "reground_backstop_uf_names",
     "run_synth_quality",
 ]
