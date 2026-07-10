@@ -180,6 +180,14 @@ ENV_OUTPUT_FLAGS = (
     # + product_features[] + developer_features[] carve chunks. Default
     # OFF.
     "FAULTLINE_MEGA_PF_NAV_REHOME",
+    # B31 (2026-07-10) — distinct recall-row display names: every synthesized
+    # recall row (e2e / route-group / backstop) in a display-name collision
+    # group is re-derived from its own (authored label | intent+resource |
+    # route-terminal) evidence at Stage 6.98 — per-board uniqueness by
+    # construction. Reshapes user_flows[].name. KEY_SCHEMA_VERSION is NOT
+    # bumped on this branch — reconciled at merge by the orchestrator
+    # (established practice, B23 precedent).
+    "FAULTLINE_RECALL_ROW_NAMES",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

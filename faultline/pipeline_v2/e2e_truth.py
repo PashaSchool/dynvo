@@ -1148,6 +1148,13 @@ def synthesize_orphan_journeys(
             # any span reaches the output.
             surface_candidate_files=sorted(
                 f for f in g["files"] if f) or None,
+            # B31 — the maintainer's own journey label, carried past every
+            # downstream naming channel so the Stage-6.98 recall-row naming
+            # pass (``synth_quality.distinct_recall_row_names``) can restore
+            # it when a keyed persona (verifier / labeler) reverts the
+            # display to a colliding generic template. NEVER serialized
+            # (excluded field).
+            authored_label=name,
         )
         minted.append((uf, g["titles"]))
         if len(tele["minted_names"]) < 50:
