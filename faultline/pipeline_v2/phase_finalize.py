@@ -1708,13 +1708,17 @@ def run_finalize_phase(
                     )
                 log_b24.info(
                     "mega_pf_nav_rehome: triggered=%s ufs_rehomed=%d "
-                    "minted=%d carved=%d floor_drops=%d"
+                    "minted=%d carved=%d floor_drops=%d qual=%d census=%s"
                     % (
                         ",".join(b24_tele.get("triggered") or []) or "-",
                         b24_tele.get("ufs_rehomed", 0),
                         b24_tele.get("pfs_minted", 0),
                         b24_tele.get("devs_carved", 0),
                         len(b24_tele.get("floor_drops") or []),
+                        len(b24_tele.get("qualifying_groups") or []),
+                        ";".join(
+                            f"{c['pf']}:{c['ufs']}:{c['share']}"
+                            for c in (b24_tele.get("census") or [])[:3]),
                     ),
                     feature=None,
                 )

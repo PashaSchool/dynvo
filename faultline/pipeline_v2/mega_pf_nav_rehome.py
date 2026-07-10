@@ -294,9 +294,19 @@ def run_mega_pf_nav_rehome(
                 break
 
     # ── T2: strict top + dominance share ────────────────────────────
+    # MEMBER-FUL journeys only (live diag 2026-07-10, keyless supabase):
+    # at 6.986-time the board still carries the member-less recall /
+    # system seeds that ui_chrome / synth_quality demote before
+    # emission — they inflated the live denominator (26/106 = 0.245
+    # vs the emitted member-ful 35/69 = 0.507 the corpus ruler was
+    # calibrated against). A member-less seed is a coverage marker,
+    # not a journey (B4/B13): it can neither vote a grain nor move, so
+    # it counts on NEITHER side of the dominance ratio.
     home_counter: Counter = Counter(
         str(_attr(u, "product_feature_id"))
-        for u in user_flows if _attr(u, "product_feature_id"))
+        for u in user_flows
+        if _attr(u, "product_feature_id")
+        and (_attr(u, "member_flow_ids") or []))
     total_homed = sum(home_counter.values())
     if not total_homed:
         return tele

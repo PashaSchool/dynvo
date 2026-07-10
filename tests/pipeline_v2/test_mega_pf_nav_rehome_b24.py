@@ -473,3 +473,22 @@ def test_no_flowful_dev_left_pathless():
                 f"flowful dev '{d.name}' stranded pathless"
         assert getattr(d, "product_feature_id", "x") is not None or \
             not getattr(d, "flows", None)
+
+
+# ── 10. member-less seeds never dilute the dominance census ─────────────
+
+
+def test_memberless_seeds_do_not_dilute_share():
+    """Live diag (keyless supabase 2026-07-10): at 6.986-time the board
+    still carries member-less recall/system seeds that later stages
+    demote — with them in the denominator the umbrella read 0.245 and
+    the trigger missed. Member-less rows count on NEITHER side."""
+    devs, pfs, ufs, flows, ri, grain = _supabase_scene()
+    # 30 member-less seeds homed to billing: with the old all-homed
+    # census projects' share would be 8/40 = 0.20 < 0.25 (no trigger).
+    seeds = [UF(f"UF-s{i}", f"Run seed {i}", "billing", members=())
+             for i in range(30)]
+    tele = _run(devs, pfs, ufs + seeds, flows, ri, grain)
+    assert tele["triggered"] == ["projects"]
+    # seeds are untouched (they can neither vote nor move)
+    assert all(u.product_feature_id == "billing" for u in seeds)
