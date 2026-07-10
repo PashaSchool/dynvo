@@ -96,8 +96,10 @@ _TS_MAP_DYNAMIC_RE = re.compile(
 
 
 def dispatch_registry_enabled() -> bool:
-    """Default OFF; ``FAULTLINE_DISPATCH_REGISTRY_FLOWS=1`` enables."""
-    return os.environ.get(DISPATCH_REGISTRY_ENV, "").strip() in {
+    """Default ON since the 2026-07-10 keyed Soc0 OFF/ON A/B (markers 3->1,
+    +8 registry-bounded mints, validator 8->7, gauntlet CLEAR both sides).
+    ``=0`` restores the pre-B34 board byte-identically."""
+    return os.environ.get(DISPATCH_REGISTRY_ENV, "1").strip() in {
         "1", "true", "True",
     }
 

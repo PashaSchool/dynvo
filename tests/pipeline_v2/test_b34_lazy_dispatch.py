@@ -3,7 +3,7 @@
 Covers the spec's anti-cases: TYPE_CHECKING excluded; optional deps
 marked not minted; cycle-breaking imports never become registries;
 dead-code (undeclared) connectors never revive; covered targets are
-never duplicated; no owner → no seed; both flags default OFF.
+never duplicated; no owner → no seed; both flags default ON (=0 kill-switch).
 """
 
 from __future__ import annotations
@@ -38,9 +38,15 @@ def _write(root: Path, rel: str, content: str) -> None:
 # ── flags ───────────────────────────────────────────────────────────────
 
 
-def test_flags_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flags_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default flipped ON by the 2026-07-10 keyed Soc0 A/B decision;
+    # =0 remains the kill-switch back to the pre-B34 board.
     monkeypatch.delenv(LAZY_IMPORT_EDGES_ENV, raising=False)
     monkeypatch.delenv(DISPATCH_REGISTRY_ENV, raising=False)
+    assert lazy_import_edges_enabled() is True
+    assert dispatch_registry_enabled() is True
+    monkeypatch.setenv(LAZY_IMPORT_EDGES_ENV, "0")
+    monkeypatch.setenv(DISPATCH_REGISTRY_ENV, "0")
     assert lazy_import_edges_enabled() is False
     assert dispatch_registry_enabled() is False
 

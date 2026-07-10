@@ -66,8 +66,10 @@ _TS_REQUIRE_RE = re.compile(r"^(\s*).*?\brequire\(\s*['\"]([^'\"]+)['\"]")
 
 
 def lazy_import_edges_enabled() -> bool:
-    """Default OFF; ``FAULTLINE_LAZY_IMPORT_EDGES=1`` enables."""
-    return os.environ.get(LAZY_IMPORT_EDGES_ENV, "").strip() in {
+    """Default ON since the 2026-07-10 keyed Soc0 OFF/ON A/B (markers 3->1,
+    both exhibit classes dissolved, validator 8->7, gauntlet CLEAR both
+    sides). ``=0`` restores the pre-B34 artifact byte-identically."""
+    return os.environ.get(LAZY_IMPORT_EDGES_ENV, "1").strip() in {
         "1", "true", "True",
     }
 

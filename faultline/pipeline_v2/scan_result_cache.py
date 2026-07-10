@@ -240,7 +240,10 @@ ENV_OUTPUT_FLAGS = (
 #: v18 (B30): added FAULTLINE_FLOW_NAME_V2.
 #: v19 (B31): added FAULTLINE_RECALL_ROW_NAMES.
 #: v20 (B34): added FAULTLINE_LAZY_IMPORT_EDGES + FAULTLINE_DISPATCH_REGISTRY_FLOWS.
-KEY_SCHEMA_VERSION = 20
+#: v21 (B34 flip): both B34 flags default OFF -> ON — the default flip changes
+#: what "unset" means, so cached entries keyed under unset must not be served
+#: across it (B4/B24 precedent).
+KEY_SCHEMA_VERSION = 21
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
