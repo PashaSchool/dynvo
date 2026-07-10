@@ -147,6 +147,10 @@ ENV_OUTPUT_FLAGS = (
     # the platform_infrastructure lane. (Sibling tech-instrument flags were an
     # unkeyed cache-correctness gap — registering this one per the B4 precedent.)
     "FAULTLINE_TECH_TRANSPORT_LANE",
+    # B20 (2026-07-10) — path_index-aware I16 journey re-home: a majority-foreign
+    # UF re-homes to its strict-majority entry-owner PF. Reshapes
+    # user_flows[].product_feature_id.
+    "FAULTLINE_I16_REHOME_B20",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -159,7 +163,8 @@ ENV_OUTPUT_FLAGS = (
 #: v8 (B16): added FAULTLINE_PF_NAME_LAW.
 #: v9 (B16 Part 2): added FAULTLINE_PF_SIBLING_UNIFY.
 #: v10 (B19): added FAULTLINE_TECH_TRANSPORT_LANE.
-KEY_SCHEMA_VERSION = 10
+#: v11 (B20): added FAULTLINE_I16_REHOME_B20.
+KEY_SCHEMA_VERSION = 11
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

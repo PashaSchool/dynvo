@@ -2456,6 +2456,27 @@ def run_finalize_phase(
                 f"platform-infrastructure lane failed ({exc}); lane empty"
             )
 
+    # ── Stage 6.99 — path_index-aware I16 journey re-home (B20) ────────
+    # Re-home each majority-foreign UF to its STRICT-MAJORITY entry-owner PF,
+    # applying the validator's own I16 ruler AFTER the final path_index (2264)
+    # AND the lane (above) exist — so the owner map matches the validator
+    # exactly and the strict-majority guarantees I16 clears. Mutates ONLY
+    # user_flows[].product_feature_id. Kill-switch FAULTLINE_I16_REHOME_B20=0.
+    from faultline.pipeline_v2.stage_6_99_i16_rehome import (
+        i16_rehome_enabled,
+        rehome_foreign_entry_ufs,
+    )
+    if i16_rehome_enabled():
+        try:
+            rh_tele = rehome_foreign_entry_ufs(
+                user_flows, features, product_features,
+                lineage_result.path_index, platform_infrastructure)
+            if rh_tele.get("rehomed"):
+                scan_meta["i16_rehome"] = rh_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"i16-rehome failed ({exc}); UF homes left as-is")
+
     # ── W3 rider — full-bill LLM cost refresh (chain4 finding) ─────
     # ``run.py`` snapshots ``cost_usd``/``calls`` into scan_meta BEFORE
     # this phase runs, so every finalize-phase LLM call (6.7c splitter,
