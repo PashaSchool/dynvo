@@ -172,6 +172,14 @@ ENV_OUTPUT_FLAGS = (
     # layer. Sub-flag of FAULTLINE_BACKSTOP_OWNED_COVER (lock-step: spans
     # exist only where the B13 marker flag exists).
     "FAULTLINE_MARKER_SURFACE_COORDS",
+    # B24 (2026-07-10) — Stage 6.986 mega-PF nav-area re-home + floor-gated
+    # mint: a board-dominating umbrella PF's journeys re-home onto their
+    # nav-area sibling PFs (attach-floor / all-rung-I16-rail gated) and an
+    # above-floor area with no sibling mints its own PF (supabase
+    # 'projects' -> 'database'). Reshapes user_flows[].product_feature_id
+    # + product_features[] + developer_features[] carve chunks. Default
+    # OFF.
+    "FAULTLINE_MEGA_PF_NAV_REHOME",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -188,7 +196,8 @@ ENV_OUTPUT_FLAGS = (
 #: v12 (B22a): added FAULTLINE_FOLD_CROSSAPP_GUARD.
 #: v13 (B22): added FAULTLINE_TRANSPORT_LANE_HANDOFF + FAULTLINE_TRANSPORT_HANDOFF_PLURALITY.
 #: v14 (B23): added FAULTLINE_MARKER_SURFACE_COORDS.
-KEY_SCHEMA_VERSION = 14
+#: v15 (B24): added FAULTLINE_MEGA_PF_NAV_REHOME.
+KEY_SCHEMA_VERSION = 15
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
