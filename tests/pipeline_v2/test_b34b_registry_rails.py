@@ -54,15 +54,32 @@ def test_repeated_tsx_kind_skipped() -> None:
     assert ui_skipped == 3
 
 
-def test_unique_tsx_kind_kept() -> None:
-    # routing-forms class: distinct component kinds — real pages.
+def test_symbolless_component_map_skipped_even_unique_kind() -> None:
+    # Rail 3 (keyed-supabase 328-hollow evidence): symbol-less map
+    # entries pointing at JSX components are RENDER-catalog entries —
+    # skipped even when every kind is unique (design-system
+    # `__registry__` demo widgets, lazy page chunks).
     targets = [
         _t("apps/rf.tsx", "form-edit", "", "apps/rf/FormEdit.tsx"),
         _t("apps/rf.tsx", "route-builder", "", "apps/rf/RouteBuilder.tsx"),
     ]
     kept, cores, ui_skipped = _apply_registry_rails(targets)
+    assert kept == []
+    assert ui_skipped == 2
+
+
+def test_symbolful_unique_tsx_kind_kept() -> None:
+    # A switch registry RETURNING imported components with distinct
+    # symbols is a capability dispatch — symbol-ful unique kinds pass.
+    targets = [
+        _t("apps/reg.ts", "editor", "DateTimeEditor",
+           "apps/grid/DateTimeEditor.tsx"),
+        _t("apps/reg.ts", "number", "NumberEditor",
+           "apps/grid/NumberEditor.tsx"),
+    ]
+    kept, cores, ui_skipped = _apply_registry_rails(targets)
     assert len(kept) == 2 and ui_skipped == 0
-    assert cores["apps/rf/FormEdit.tsx"] == "form-edit"
+    assert cores["apps/grid/DateTimeEditor.tsx"] == "date-time-editor"
 
 
 def test_repeated_server_kind_not_skipped_but_qualified() -> None:
@@ -160,8 +177,10 @@ def test_same_target_file_two_keys_counts_once() -> None:
 
 
 def test_mint_qualified_no_ordinals(tmp_path: Path) -> None:
-    _write(tmp_path, "packages/app-store/alby/api/index.ts", "export default 1;\n")
-    _write(tmp_path, "packages/app-store/paypal/api/index.ts", "export default 1;\n")
+    _write(tmp_path, "packages/app-store/alby/api/index.ts",
+           "export async function add() { return 1; }\n")
+    _write(tmp_path, "packages/app-store/paypal/api/index.ts",
+           "export async function add() { return 1; }\n")
     _write(tmp_path, "packages/app-store/reg.ts", """
         export const map = {
           alby: () => import('./alby/api/index'),
@@ -184,3 +203,50 @@ def test_mint_qualified_no_ordinals(tmp_path: Path) -> None:
     # distinct WITHOUT the qualifier rung — and no ordinals anywhere.
     assert tele["qualified_by_registry_key"] == 0
     assert tele["ordinal_fallback"] == 0
+
+
+def test_no_export_no_anchor_no_mint(tmp_path: Path) -> None:
+    # A side-effect-only module has nothing to anchor spans on — a mint
+    # would be a HOLLOW row (loc 0/0), the keyed-supabase gauntlet FAIL
+    # class. No anchor, no flow.
+    _write(tmp_path, "packages/jobs/side-effect.ts",
+           "console.log('boot');\n")
+    _write(tmp_path, "packages/jobs/other-effect.ts",
+           "console.log('boot2');\n")
+    _write(tmp_path, "packages/jobs/reg.ts", """
+        export const map = {
+          a: () => import('./side-effect'),
+          b: () => import('./other-effect'),
+        };
+    """)
+    files = ["packages/jobs/side-effect.ts",
+             "packages/jobs/other-effect.ts", "packages/jobs/reg.ts"]
+    targets = detect_ts_registries(tmp_path, files)
+    assert len(targets) == 2
+    fwf = _fwf("jobs", files)
+    tele = mint_dispatch_seeds([fwf], targets, tmp_path)
+    assert fwf.flows == []
+    assert tele["skipped_no_anchor"] == 2
+
+
+def test_supabase_catalog_shape_skipped(tmp_path: Path) -> None:
+    # design-system `__registry__` catalog: React.lazy component map.
+    _write(tmp_path, "apps/ds/registry/accordion-demo.tsx",
+           "export default function AccordionDemo() { return null; }\n")
+    _write(tmp_path, "apps/ds/registry/admonition-demo.tsx",
+           "export default function AdmonitionDemo() { return null; }\n")
+    _write(tmp_path, "apps/ds/__registry__/index.tsx", """
+        export const registry = {
+          'accordion-demo': React.lazy(() => import('../registry/accordion-demo')),
+          'admonition-demo': React.lazy(() => import('../registry/admonition-demo')),
+        };
+    """)
+    files = ["apps/ds/registry/accordion-demo.tsx",
+             "apps/ds/registry/admonition-demo.tsx",
+             "apps/ds/__registry__/index.tsx"]
+    targets = detect_ts_registries(tmp_path, files)
+    assert len(targets) == 2
+    fwf = _fwf("design-system", files)
+    tele = mint_dispatch_seeds([fwf], targets, tmp_path)
+    assert fwf.flows == []
+    assert tele["skipped_ui_component_kind"] == 2

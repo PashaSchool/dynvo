@@ -408,9 +408,19 @@ def _apply_registry_rails(
     kept: list[RegistryTarget] = []
     ui_skipped = 0
     for t in targets:
+        # Rail 1: repeated component KIND across one registry's entries
+        # (cal.com EventTypeAppCardInterface x26, per-app Setup.tsx).
         if t.target_file.endswith(_UI_EXT) and len(
             kind_files[(t.registry_file, _target_kind(t))],
         ) >= 2:
+            ui_skipped += 1
+            continue
+        # Rail 3 (B34-b keyed-supabase evidence, 328 hollow demo widgets):
+        # a SYMBOL-LESS map entry pointing at a JSX component file is a
+        # RENDER-catalog entry (design-system `__registry__` demos, icon
+        # catalogs, lazy page chunks) — components render, capabilities
+        # are invoked. Never mint.
+        if not t.symbol and t.target_file.endswith(_UI_EXT):
             ui_skipped += 1
             continue
         kept.append(t)
@@ -475,6 +485,7 @@ def mint_dispatch_seeds(
         "skipped_covered": 0,
         "skipped_no_owner": 0,
         "skipped_unnameable": 0,
+        "skipped_no_anchor": 0,
         "skipped_ui_component_kind": 0,
         "qualified_by_registry_key": 0,
         "ordinal_fallback": 0,
@@ -498,6 +509,32 @@ def mint_dispatch_seeds(
         if not core:
             tele["skipped_unnameable"] += 1
             continue
+        # Anchor resolution (hollow guard, B34-b): a seed without a
+        # symbol anchors NO spans downstream — flow-loc stamps 0/0 and
+        # the board shows a hollow row (the keyed-supabase
+        # obstacle-course FAIL class: 328 rows). Registry-declared
+        # symbols anchor directly; symbol-less map targets resolve
+        # their DOMINANT exported symbol (first export, source order);
+        # a target with no resolvable export is NOT minted — no
+        # anchor, no flow.
+        sigs = extract_signatures([t.target_file], str(repo_path))
+        sig = sigs.get(t.target_file)
+        symbol = t.symbol
+        if not symbol and sig is not None and sig.exports:
+            symbol = sig.exports[0]
+        if not symbol:
+            tele["skipped_no_anchor"] += 1
+            continue
+        entry_line: int | None = None
+        if sig is not None:
+            start = next(
+                (r.start_line for r in sig.symbol_ranges
+                 if r.name == symbol),
+                None,
+            )
+            if start is not None:
+                entry_line = resolve_handler_line(sig, symbol, start)
+
         if _seed_core(t) != core:
             tele["qualified_by_registry_key"] += 1
         name = core if core.startswith("run-") else f"run-{core}"
@@ -515,19 +552,6 @@ def mint_dispatch_seeds(
             tele["ordinal_fallback"] += 1
         seen.add(key)
 
-        entry_line: int | None = None
-        if t.symbol:
-            sigs = extract_signatures([t.target_file], str(repo_path))
-            sig = sigs.get(t.target_file)
-            if sig is not None:
-                start = next(
-                    (r.start_line for r in sig.symbol_ranges
-                     if r.name == t.symbol),
-                    None,
-                )
-                if start is not None:
-                    entry_line = resolve_handler_line(sig, t.symbol, start)
-
         owner.flows.append(FlowSpec(
             name=name,
             description=(
@@ -536,7 +560,7 @@ def mint_dispatch_seeds(
             ),
             entry_point_file=t.target_file,
             entry_point_line=entry_line,
-            symbol_names=[t.symbol] if t.symbol else [],
+            symbol_names=[symbol],
         ))
         covered.add(t.target_file)  # one seed per target file
         tele["minted"] += 1
