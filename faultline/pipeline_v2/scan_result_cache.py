@@ -188,6 +188,15 @@ ENV_OUTPUT_FLAGS = (
     # KEY_SCHEMA bump per the B30 brief — the schema version is reconciled
     # at merge alongside the sibling B25-B32 wave flags.
     "FAULTLINE_FLOW_NAME_V2",
+    # B34 (2026-07-10) — lazy-import edges (Tier 1, artifact side-channel)
+    # + dispatch-registry system-flow seeds (Tier 2, appends flows[] rows
+    # for uncovered string-dispatched connectors). Tier 2 reshapes
+    # flows[] / developer_features[].flows[] and, transitively, the UF
+    # recall layer (flowless-PF markers dissolve). Both default OFF.
+    # Appended WITHOUT a KEY_SCHEMA bump per the wave convention —
+    # reconciled at merge.
+    "FAULTLINE_LAZY_IMPORT_EDGES",
+    "FAULTLINE_DISPATCH_REGISTRY_FLOWS",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
