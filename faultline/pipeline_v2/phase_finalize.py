@@ -2502,6 +2502,12 @@ def run_finalize_phase(
                     uf_authored_names=_e2e_authored_names,
                     labeler=_nc_labeler,
                     verifier=_nc_verifier,
+                    # B27 — arms the package-manifest display channel: a
+                    # package-dir-anchored PF takes the display name the
+                    # package DECLARES in its own metadata (config.json /
+                    # metadata module / package.json), word-split fallback
+                    # below. FAULTLINE_PF_MANIFEST_NAME=0 restores pre-B27.
+                    repo_root=ctx.repo_path,
                 )
                 scan_meta["naming_contract"] = nc_tele
                 log_nc.info(

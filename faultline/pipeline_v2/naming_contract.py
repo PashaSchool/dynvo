@@ -52,6 +52,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
 from faultline.pipeline_v2.data import load_yaml
+from faultline.pipeline_v2.manifest_display import (
+    manifest_display_name,
+    package_dir_of_anchor,
+    pf_manifest_name_enabled,
+    word_split_slug,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -564,10 +570,18 @@ def humanize_anchor_display(
 
 def hub_composition_display(
     anchor_id: str, current_display: str, vocab: Mapping[str, Any],
+    *,
+    vendor_display: str | None = None,
 ) -> str | None:
     """"<Family> — <Vendor>" for a ``hub:<dir>/<vendor>`` anchor
     (Product-Spine §4.8 hub composition). ``None`` for non-hub anchors
-    and hub CORE anchors (whose family display already carries "Core")."""
+    and hub CORE anchors (whose family display already carries "Core").
+
+    ``vendor_display`` (B27) — the vendor word from the package's OWN
+    declared metadata; when supplied it replaces the current-display
+    vendor word so the family decoration keeps composing
+    ("App Store — Stripe"). ``None`` (the default) is byte-identical to
+    the pre-B27 composition."""
     src, path = _anchor_path(anchor_id)
     if src != "hub":
         return None
@@ -578,12 +592,52 @@ def hub_composition_display(
     if not family_segs:
         return None
     family = _display_word(family_segs[-1], vocab)
-    vendor = polish_display_casing(current_display, vocab)
+    vendor = vendor_display or polish_display_casing(current_display, vocab)
     if not family or not vendor:
         return None
     if vendor.strip().lower() == family.strip().lower():
         return None  # degenerate (vendor dir == family dir)
     return f"{family} — {vendor}"
+
+
+def _package_manifest_display(
+    anchor_id: str, vocab: Mapping[str, Any], repo_root: Any,
+    current_display: str = "",
+) -> tuple[str | None, str]:
+    """B27 — ``(display, source)`` for a package-dir-anchored PF from the
+    package's OWN declared metadata; ``(None, "")`` when the flag is off,
+    no repo root is available, the anchor is not a package dir, or no
+    rung yields a name.
+
+    ``source`` is ``"manifest"`` (an authored metadata name — used
+    verbatim, casing-polished) or ``"wordsplit"`` (the mechanical
+    letter/digit split of the dir slug — strictly the rung below).
+
+    A hub CORE (designed "<Family> Core" display — same convention
+    :func:`build_uf_candidates` keys on) never takes a manifest name:
+    the family dir's own metadata names the FAMILY package, not the
+    core capability."""
+    if repo_root is None or not pf_manifest_name_enabled():
+        return None, ""
+    src, _path = _anchor_path(anchor_id)
+    if src == "hub" and " Core" in (current_display or ""):
+        return None, ""
+    pkg_dir = package_dir_of_anchor(anchor_id)
+    if not pkg_dir:
+        return None, ""
+    authored = manifest_display_name(repo_root, pkg_dir)
+    if authored:
+        if authored == authored.lower() and " " not in authored:
+            # A slug-cased authored name ("report-studio") is authored
+            # NAMING, not authored CASING — titleize it like any path
+            # word; an intentionally-cased name (WipeMyCal, Close.com)
+            # ships verbatim (casing-polished).
+            return _display_word(authored, vocab), "manifest"
+        return polish_display_casing(authored, vocab), "manifest"
+    split = word_split_slug(pkg_dir.rsplit("/", 1)[-1])
+    if split:
+        return _display_word(split, vocab), "wordsplit"
+    return None, ""
 
 
 # ── PF dev-grain suffix law (B16 — display channel only) ────────────────
@@ -806,10 +860,20 @@ def build_pf_candidates(
     vocab: Mapping[str, Any],
     *,
     nav_label: str | None = None,
+    repo_root: Any = None,
 ) -> list[str]:
     """Ranked display candidates for one product feature (dedup, order-
     preserving). The CURRENT display (casing-polished) is always present
-    — the contract can never invent from nothing (never-worse)."""
+    — the contract can never invent from nothing (never-worse).
+
+    ``repo_root`` (B27) arms the package-manifest channel: a package-dir-
+    anchored PF (``hub:``-vendor / ``ws:``) leads with the display name
+    the package DECLARES in its own metadata (config.json name /
+    metadata-module name / package.json displayName / authored name),
+    composing with the existing hub decoration ("App Store — Stripe"); a
+    mechanical letter/digit word-split of the dir slug is the rung below
+    ("Exchange 2013 Calendar"). ``None`` (the default) or
+    ``FAULTLINE_PF_MANIFEST_NAME=0`` is byte-identical to pre-B27."""
     slug = str(getattr(pf, "name", "") or "")
     current = str(
         getattr(pf, "display_name", None)
@@ -824,8 +888,15 @@ def build_pf_candidates(
 
     if nav_label:
         _add(polish_display_casing(nav_label, vocab))
+    pkg_display, _pkg_src = _package_manifest_display(
+        anchor_id, vocab, repo_root, current)
+    if pkg_display:
+        _add(hub_composition_display(
+            anchor_id, current, vocab, vendor_display=pkg_display))
     _add(hub_composition_display(anchor_id, current, vocab))
     src, _p = _anchor_path(anchor_id)
+    if pkg_display and src != "hub":
+        _add(pkg_display)  # bare manifest name for a ws package anchor
     polished_current = polish_display_casing(current, vocab)
     # The collision-qualified verbose class ("Discord (Route Apps Web
     # Src App Landing Redirect Discord)") or a law-dirty current display
@@ -847,6 +918,11 @@ def build_pf_candidates(
         current_dirty = True
     base, qual = (None, None) if src == "hub" else humanize_anchor_display(
         anchor_id, vocab)
+    if pkg_display and base:
+        # B27 — the manifest word replaces the dir-slug base so the
+        # existing "(Qualifier)" decoration keeps composing
+        # ("Stripe (App Store)" instead of "Stripepayment (App Store)").
+        base = pkg_display
     if current_dirty or verbose_qualified:
         if base:
             _add(base)
@@ -1284,6 +1360,7 @@ def run_naming_contract(
     uf_authored_names: Mapping[str, Iterable[str]] | None = None,
     labeler: Callable[[list[_PendingItem]], dict[str, Any]] | None = None,
     verifier: Callable[[list[dict[str, Any]]], dict[str, bool]] | None = None,
+    repo_root: Any = None,
 ) -> dict[str, Any]:
     """Apply the display-name contract in place; return telemetry.
 
@@ -1293,6 +1370,11 @@ def run_naming_contract(
     injected by the caller so this module stays LLM-free and fully
     unit-testable (keyless scans pass ``labeler=None`` and take the
     deterministic top choice everywhere).
+
+    ``repo_root`` (B27) arms the package-manifest display channel for
+    package-dir-anchored PFs (see :func:`build_pf_candidates`). ``None``
+    (the default) or ``FAULTLINE_PF_MANIFEST_NAME=0`` keeps the emission
+    byte-identical to pre-B27.
     """
     vocab = load_naming_vocab()
     tele: dict[str, Any] = {
@@ -1318,6 +1400,14 @@ def run_naming_contract(
         tele["pf_devgrain_collision"] = 0
     if uf_devgrain_name_enabled():
         tele["uf_devgrain_stripped"] = 0   # B16 Part-1b
+    # B27 package-manifest telemetry — added ONLY when the channel is
+    # armed (flag ON + repo root available) so a
+    # ``FAULTLINE_PF_MANIFEST_NAME=0`` scan_meta.naming_contract is
+    # byte-identical to the pre-B27 emission.
+    manifest_channel_on = repo_root is not None and pf_manifest_name_enabled()
+    if manifest_channel_on:
+        tele["pf_manifest_named"] = 0
+        tele["pf_wordsplit_named"] = 0
 
     def _law_fix(law: str) -> None:
         tele["laws_fixed"][law] = tele["laws_fixed"].get(law, 0) + 1
@@ -1355,7 +1445,13 @@ def run_naming_contract(
         )
         anchor_id = str(getattr(pf, "anchor_id", None) or "")
         candidates = build_pf_candidates(
-            pf, vocab, nav_label=nav_labels.get(slug))
+            pf, vocab, nav_label=nav_labels.get(slug), repo_root=repo_root)
+        # B27 — the package's own declared display word (None when the
+        # channel is off / not a package-dir anchor). Cached read.
+        pkg_display, pkg_src = (
+            _package_manifest_display(anchor_id, vocab, repo_root, current)
+            if manifest_channel_on else (None, "")
+        )
 
         chosen: str | None = None
         pinned = False
@@ -1387,6 +1483,10 @@ def run_naming_contract(
             # cannot survive canonical_slug), else keep the polished
             # current verbatim (never-worse; mint guaranteed uniqueness).
             base, qual = humanize_anchor_display(anchor_id, vocab)
+            if pkg_display:
+                # B27 — the manifest word replaces the dir-slug base so
+                # the "(Qualifier)" decoration keeps composing.
+                base = pkg_display
             fallback = polish_display_casing(current, vocab)
             bq = f"{base} ({qual})" if base and qual else None
             if humanize_route_names_enabled():
@@ -1448,6 +1548,13 @@ def run_naming_contract(
             pf.display_name = chosen
         elif getattr(pf, "display_name", None) != chosen:
             pf.display_name = chosen
+        # B27 telemetry — the committed display carries the package's
+        # own declared word (bare, hub-composed, or "(Qualifier)"-form).
+        if (pkg_display and not pinned and chosen != current and (
+                chosen == pkg_display
+                or chosen.endswith(f"— {pkg_display}")
+                or chosen.startswith(f"{pkg_display} ("))):
+            tele[f"pf_{pkg_src}_named"] += 1
         if not pinned and len(candidates) > 1 and labeler is not None:
             pending.append(_PendingItem(
                 kind="pf", key=slug, current=chosen,

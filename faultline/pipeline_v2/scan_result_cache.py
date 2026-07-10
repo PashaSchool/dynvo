@@ -180,6 +180,14 @@ ENV_OUTPUT_FLAGS = (
     # + product_features[] + developer_features[] carve chunks. Default
     # OFF.
     "FAULTLINE_MEGA_PF_NAV_REHOME",
+    # B27 (2026-07-10) — package-manifest PF display names: a package-dir-
+    # anchored PF (hub:-vendor / ws:) takes its display from the package's
+    # OWN declared metadata (config.json "name" / metadata-module name /
+    # package.json displayName / authored name), with a mechanical
+    # letter/digit word-split of the dir slug as the rung below. Reshapes
+    # product_features[].display_name (+ the UF display templates derived
+    # from it).
+    "FAULTLINE_PF_MANIFEST_NAME",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -200,6 +208,8 @@ ENV_OUTPUT_FLAGS = (
 #: v16 (B24 flip): FAULTLINE_MEGA_PF_NAV_REHOME default OFF -> ON — the
 #: default flip changes what "unset" means, so cached entries keyed under
 #: unset must not be served across it (B4 precedent).
+#: (B27): added FAULTLINE_PF_MANIFEST_NAME — version number reconciled
+#: at merge by the orchestrator (established practice; do not bump here).
 KEY_SCHEMA_VERSION = 16
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
