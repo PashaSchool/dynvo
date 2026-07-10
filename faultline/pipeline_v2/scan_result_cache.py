@@ -216,6 +216,18 @@ ENV_OUTPUT_FLAGS = (
     # recall layer (flowless-PF markers dissolve). Both default OFF.
     "FAULTLINE_LAZY_IMPORT_EDGES",
     "FAULTLINE_DISPATCH_REGISTRY_FLOWS",
+    # B28 (2026-07-10) — non-product app scope: demo/mock/example-bodied
+    # features (Shape E): S1g types-only instrument prong + P-B
+    # registry-publisher / P-D hub-fixture workspace overrides behind the
+    # R1/R2 rails; PFs bodied inside such workspaces leave
+    # product_features[] into non_product_surfaces[] with their journeys.
+    # Reshapes product_features[] + user_flows[] + the lanes. Default ON.
+    "FAULTLINE_NONPRODUCT_SCOPE",
+    # B28 (2026-07-10) — Shape D: a PRODUCT-scoped PF anchored inside a
+    # non-product workspace re-anchors in place to its evidence-majority
+    # product surface (majority-dir election). Reshapes
+    # product_features[].anchor_id only. Default ON.
+    "FAULTLINE_DOCS_REANCHOR",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
