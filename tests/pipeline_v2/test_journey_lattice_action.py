@@ -24,10 +24,12 @@ import pytest
 from faultline.models.types import Feature, Flow, FlowNode, UserFlow
 from faultline.pipeline_v2.journey_lattice import (
     JOURNEY_LATTICE_B7_ENV,
+    JOURNEY_LATTICE_B25_ENV,
     JOURNEY_LATTICE_V2_ENV,
     _action_family,
     _child_id,
     journey_lattice_b7_enabled,
+    journey_lattice_b25_enabled,
     journey_lattice_v2_enabled,
     load_action_families,
     run_journey_lattice,
@@ -308,10 +310,14 @@ def test_small_crud_of_one_resource_not_split() -> None:
     assert [str(u.id) for u in ufs] == ["UF-020"]
 
 
-def test_object_axis_split_takes_precedence() -> None:
-    """A journey the OBJECT axis splits is never re-touched by the action
-    axis (papermark teams-api scene from the W5 suite: distinct route
-    families → object split fires; action pass must skip it)."""
+def _dual_axis_scene() -> tuple[list[UserFlow], list[Feature], list[Feature],
+                                list[dict]]:
+    """A catch-all that qualifies on BOTH axes (papermark teams-api scene
+    from the W5 suite): distinct route families (domain/token/slack) give
+    the object axis its buckets, while the member verbs (create ×2,
+    delete ×2, act ×3) form the >=3-family full-CRUD signature the action
+    axis needs. Pass-1 precedence goes to the object axis; B25 releases
+    the slot when the Draft Verifier fully reverts that plan."""
     flows = [
         _flow("create-workflow-flow", "pages/api/workflows/create.ts"),
         _flow("run-workflow-flow", "pages/api/workflows/run.ts"),
@@ -352,6 +358,14 @@ def test_object_axis_split_takes_precedence() -> None:
     ]
     ufs = [_uf("UF-010", "Build automated workflows", "workflows",
                [f.name for f in flows])]
+    return ufs, devs, pfs, routes
+
+
+def test_object_axis_split_takes_precedence() -> None:
+    """A journey the OBJECT axis splits is never re-touched by the action
+    axis (papermark teams-api scene from the W5 suite: distinct route
+    families → object split fires; action pass must skip it)."""
+    ufs, devs, pfs, routes = _dual_axis_scene()
     tele = run_journey_lattice(ufs, devs, pfs, routes)
     assert tele["catchalls_split"] == 1
     assert tele.get("action_catchalls_detected", 0) == 0
@@ -652,3 +666,158 @@ def test_b7_off_restores_b6_parent_floor_skip(
         "post-api-cases-flow", "post-api-cases-bulk-flow",
         "get-api-cases-case-id-flow", "get-api-cases-case-id-timeline-flow",
     ])
+
+
+# ── Fix B25 — verifier-revert slot release ───────────────────────────────
+#
+# The Soc0 'Manage cases end-to-end' wave12-14 signature: the object axis
+# claims the catch-all with a doomed plan (a single-router route shard),
+# the Draft Verifier honestly kills it, and pre-B25 the pf's ONE
+# action-split slot stayed consumed forever — the healthy action plan was
+# never built. B25 releases the slot exactly once per pf per scan, screens
+# the recovered action plan in ONE additional verifier batch, and a
+# reverted ACTION plan is always final (no re-entry loop).
+
+
+def test_b25_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert journey_lattice_b25_enabled()
+    monkeypatch.setenv(JOURNEY_LATTICE_B25_ENV, "0")
+    assert not journey_lattice_b25_enabled()
+    monkeypatch.setenv(JOURNEY_LATTICE_B25_ENV, "false")
+    assert not journey_lattice_b25_enabled()
+
+
+def test_b25_full_revert_releases_slot_to_action_axis() -> None:
+    """Full object-plan revert → the slot releases once and the recovered
+    ACTION plan (screened by the second batch) applies."""
+    ufs, devs, pfs, routes = _dual_axis_scene()
+    original_members = sorted(ufs[0].member_flow_ids)
+    batches: list[list[str]] = []
+
+    def _verifier(items: list[dict]) -> dict[str, bool]:
+        batches.append([i["context"]["evidence"] for i in items])
+        if len(batches) == 1:
+            # Pass 1 is the OBJECT plan — reject every child (the Soc0
+            # 'View export' class: dishonest shards of the parent).
+            assert all(not e.startswith("action:") for e in batches[0])
+            return {i["id"]: False for i in items}
+        return {}  # recovery batch: missing verdict defaults to ACCEPT
+
+    tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
+    assert len(batches) == 2
+    assert all(e.startswith("action:") for e in batches[1])
+    assert tele.get("slots_released") == 1
+    assert tele.get("slot_release_pfs") == ["workflows"]
+    assert tele.get("slot_release_recovered") == 1
+    assert tele.get("plans_reverted_verifier") == 1  # the object plan only
+    assert tele["catchalls_split"] == 1
+    assert tele["journeys_created"] == 3
+
+    children = [u for u in ufs
+                if str(u.domain or "").startswith("lattice:action:")]
+    assert sorted(str(u.domain) for u in children) == [
+        "lattice:action:workflow-act",
+        "lattice:action:workflow-create",
+        "lattice:action:workflow-delete",
+    ]
+    # No object child was minted anywhere.
+    assert not any(str(u.domain or "").startswith(("lattice:route:",
+                                                   "lattice:dir:"))
+                   for u in ufs)
+    # Conservation (I13/I14 substrate): children + residual parent
+    # partition the original member union exactly.
+    assert sorted(m for u in ufs for m in (u.member_flow_ids or [])) == \
+        original_members
+    assert tele["conservation_reverts"] == 0
+
+
+def test_b25_partial_revert_keeps_slot_consumed() -> None:
+    """A PARTIALLY surviving plan applies — the slot is genuinely spent, so
+    there is no release: one batch, no action children."""
+    ufs, devs, pfs, routes = _dual_axis_scene()
+    batches: list[int] = []
+
+    def _verifier(items: list[dict]) -> dict[str, bool]:
+        batches.append(len(items))
+        # Reject ONE object child (slack); domain + token survive >= the
+        # mint bar, so the plan applies partially.
+        return {i["id"]: False for i in items
+                if i["context"]["evidence"] == "route:slack"}
+
+    tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
+    assert batches == [3]
+    assert "slots_released" not in tele
+    assert tele.get("plans_reverted_verifier") is None
+    assert tele["journeys_created"] == 2  # domain + token applied
+    assert not any(str(u.domain or "").startswith("lattice:action:")
+                   for u in ufs)
+
+
+def test_b25_reject_everything_is_bounded_and_byte_identical() -> None:
+    """The explicit no-infinite-loop property: a verifier that rejects
+    EVERYTHING forever sees exactly TWO batches — pass 1 plus the single
+    slot-release recovery (a pf releases at most ONCE; a reverted action
+    plan is final) — and the board survives byte-identically."""
+    ufs, devs, pfs, routes = _dual_axis_scene()
+    before = [u.model_dump() for u in ufs]
+    calls = 0
+
+    def _verifier(items: list[dict]) -> dict[str, bool]:
+        nonlocal calls
+        calls += 1
+        return {i["id"]: False for i in items}
+
+    tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
+    assert calls == 2
+    assert tele.get("slots_released") == 1
+    assert tele.get("slot_release_recovered") == 0
+    assert tele.get("plans_reverted_verifier") == 2
+    assert tele["journeys_created"] == 0
+    assert [u.model_dump() for u in ufs] == before
+
+
+def test_b25_action_plan_revert_is_final_no_release() -> None:
+    """No re-entry: when the pf's pass-1 plan IS the action plan (the
+    object axis never claimed the UF), a full revert is final — one batch,
+    no release."""
+    ufs, devs, pfs, routes = _cases_scene()
+    before = [u.model_dump() for u in ufs]
+    calls = 0
+
+    def _verifier(items: list[dict]) -> dict[str, bool]:
+        nonlocal calls
+        calls += 1
+        assert all(i["context"]["evidence"].startswith("action:")
+                   for i in items)
+        return {i["id"]: False for i in items}
+
+    tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
+    assert calls == 1
+    assert tele.get("plans_reverted_verifier") == 1
+    assert "slots_released" not in tele
+    assert [u.model_dump() for u in ufs] == before
+
+
+def test_b25_off_restores_pre_b25_single_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kill-switch: B25=0 restores the pre-B25 slot behavior — a full
+    revert keeps the slot consumed (one batch, no recovery, no release
+    telemetry), the catch-all byte-identical."""
+    monkeypatch.setenv(JOURNEY_LATTICE_B25_ENV, "0")
+    ufs, devs, pfs, routes = _dual_axis_scene()
+    before = [u.model_dump() for u in ufs]
+    calls = 0
+
+    def _verifier(items: list[dict]) -> dict[str, bool]:
+        nonlocal calls
+        calls += 1
+        return {i["id"]: False for i in items}
+
+    tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
+    assert calls == 1
+    assert tele["verifier_rejects"] == 3
+    assert tele.get("plans_reverted_verifier") == 1
+    assert "slots_released" not in tele
+    assert tele["journeys_created"] == 0
+    assert [u.model_dump() for u in ufs] == before

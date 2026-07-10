@@ -107,6 +107,23 @@ JOURNEY_LATTICE_V2_ENV = "FAULTLINE_JOURNEY_LATTICE_V2"
 #: B7 never un-splits a B6 split (NEW-skip ⊆ OLD-skip).
 JOURNEY_LATTICE_B7_ENV = "FAULTLINE_JOURNEY_LATTICE_B7"
 
+#: Fix B25 — verifier-revert slot release (default ON). A plan the Draft
+#: Verifier fully reverts leaves its catch-all byte-identical on the board,
+#: yet its parent UF was already recorded in the action axis' claimed-UF
+#: exclusion set (computed PRE-verifier) — permanently consuming the PF's
+#: single action-split slot. Soc0 'Manage cases end-to-end' (waves 12-14):
+#: a doomed object plan ('View export' — a 28-member single-router route
+#: shard) was honestly rejected, its revert restored the catch-all, and the
+#: healthy action plan (browse/view/create/update, all I16-clean) was never
+#: built. With B25 ON, a pf whose plans ALL fully reverted — and that never
+#: got a pass-1 action plan (a reverted ACTION plan is final; no re-entry)
+#: — re-runs the Phase-2b action detection once, screened by ONE additional
+#: verifier batch. Hard cap: a slot releases at most ONCE per pf per scan.
+#: Keyless byte-neutral by construction (no verifier → no reverts → the
+#: path is unreachable). ``=0`` restores the pre-B25 slot behavior
+#: byte-identically.
+JOURNEY_LATTICE_B25_ENV = "FAULTLINE_JOURNEY_LATTICE_B25"
+
 #: Canonical child-id prefix (content-derived; see module docstring).
 _LATTICE_ID_PREFIX = "UF-L-"
 
@@ -196,6 +213,17 @@ def journey_lattice_b7_enabled() -> bool:
     byte-identically (the eligibility gate skips on the pre-split parent share
     alone)."""
     return os.environ.get(JOURNEY_LATTICE_B7_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def journey_lattice_b25_enabled() -> bool:
+    """Verifier-revert slot release (B25). Default ON;
+    ``FAULTLINE_JOURNEY_LATTICE_B25=0`` restores the pre-B25 behavior
+    byte-identically (a fully-reverted plan keeps its pf's action-split
+    slot consumed). Keyless scans never reach the gated path (no verifier
+    → no reverts), so the flag is inert there in both positions."""
+    return os.environ.get(JOURNEY_LATTICE_B25_ENV, "1").strip().lower() not in {
         "0", "false",
     }
 
@@ -1164,6 +1192,11 @@ def run_journey_lattice(
     # floor and >= 3 is the genuine full-CRUD resource-management signature.
     # Runs ONLY on organic journeys the object axis left unsplit; emits the same
     # plan shape, so Phase 3/4/5 (verifier / apply / labeler) are unchanged.
+    # B25 — the Phase-2b detection closure escapes the V2 block through this
+    # handle so Phase 3b (verifier-revert slot release) can re-run it for a
+    # pf whose plan fully reverted; stays None when the V2 axis is off.
+    action_plan_builder: (
+        Callable[[str, set[str]], dict[str, Any] | None] | None) = None
     if journey_lattice_v2_enabled():
         object_split_ids = {
             str(getattr(u, "id", "") or "")
@@ -1210,7 +1243,15 @@ def run_journey_lattice(
                     fs |= _flow_files_of(fl)
             return fs
 
-        for pf_key in sorted(by_pf):
+        def _action_plan_for_pf(
+            pf_key: str, excluded_uf_ids: set[str],
+        ) -> dict[str, Any] | None:
+            """Phase-2b action detection for ONE pf — the exact inline loop
+            body, parameterized on the claimed-UF exclusion set so the B25
+            slot release (Phase 3b) can re-run it after the Draft Verifier
+            fully reverts a pf's plan. Returns the plan (caller appends) or
+            ``None``; mutates the shared telemetry exactly as the inline
+            form did."""
             pf = pf_by_key[pf_key]
             pf_display = _pf_display_of(pf)
             # Action-split AT MOST ONE journey per PF — the largest organic
@@ -1220,12 +1261,12 @@ def run_journey_lattice(
             # fragment the capability. Ties broken by smallest id (stable).
             pf_candidates = [
                 u for u in by_pf[pf_key]
-                if str(getattr(u, "id", "") or "") not in object_split_ids
+                if str(getattr(u, "id", "") or "") not in excluded_uf_ids
                 and not _is_lattice_born(u)
                 and not _resource_is_action_domain(u, naming_vocab)
             ]
             if not pf_candidates:
-                continue
+                return None
             a_uf = sorted(
                 pf_candidates,
                 key=lambda u: (-len(getattr(u, "member_flow_ids", None) or []),
@@ -1253,7 +1294,7 @@ def run_journey_lattice(
                 # B6 behaviour (flag off): the parent share alone gates.
                 tele["action_parent_attach_skipped"] = (
                     tele.get("action_parent_attach_skipped", 0) + 1)
-                continue
+                return None
             # Cluster members by action family (head verb).
             a_fam_mids: dict[str, list[str]] = {}
             for mid in a_member_ids:
@@ -1272,7 +1313,7 @@ def run_journey_lattice(
                 if len(fam_members) >= 2:
                     a_qual[fam] = fam_members
             if len(a_qual) < min_action_families:
-                continue
+                return None
             # Materialize one child per qualifying family (owned-entry
             # gated — an unowned family folds back to residual, exactly
             # like the object axis).
@@ -1326,7 +1367,7 @@ def run_journey_lattice(
                 })
                 a_claimed.update(fam_members)
             if len(a_children) < min_action_families:
-                continue
+                return None
             # B7 max-child I15 eligibility (reached only with the flag ON and a
             # sub-floor parent): skip ONLY when the capability is misattached at
             # EVERY grain — the parent AND every minted child sit below the
@@ -1349,19 +1390,25 @@ def run_journey_lattice(
                 if not child_clears:
                     tele["action_parent_attach_skipped"] = (
                         tele.get("action_parent_attach_skipped", 0) + 1)
-                    continue
+                    return None
             a_residual = [m for m in a_member_ids if m not in a_claimed]
-            plans.append({
+            tele["catchalls_detected"] += 1
+            tele["action_catchalls_detected"] = (
+                tele.get("action_catchalls_detected", 0) + 1)
+            return {
                 "pf_key": pf_key,
                 "pf_display": pf_display,
                 "split_ufs": [a_uf],
                 "children": a_children,
                 "residual_by_uf": {a_uid: a_residual},
                 "owner_by_mid": {m: a_uid for m in a_member_ids},
-            })
-            tele["catchalls_detected"] += 1
-            tele["action_catchalls_detected"] = (
-                tele.get("action_catchalls_detected", 0) + 1)
+            }
+
+        action_plan_builder = _action_plan_for_pf
+        for pf_key in sorted(by_pf):
+            a_plan = _action_plan_for_pf(pf_key, object_split_ids)
+            if a_plan is not None:
+                plans.append(a_plan)
 
     # ── Phase 3 — Draft Verifier over split CHILDREN (keyed seam) ──
     # One item per proposed CHILD journey (per-plan verdicts let one
@@ -1372,56 +1419,121 @@ def run_journey_lattice(
     # bar reverts entirely — the catch-all survives byte-identically
     # (conservative fallback, never lose).
     if plans and verifier is not None:
-        items = []
-        for plan in plans:
-            parents_line = " + ".join(
-                f"'{getattr(u, 'name', '')}' ({len(u.member_flow_ids or [])} flows)"
-                for u in plan["split_ufs"]
-            )
-            for ch in plan["children"]:
-                items.append({
-                    "id": ch["id"],
-                    "kind": "lattice_split",
-                    "draft": ch["name"],
-                    "pf_display": plan["pf_display"],
-                    "context": {
-                        "split_from": parents_line,
-                        "capability": plan["pf_display"],
-                        "evidence": f"{ch['axis']}:{ch['key']}",
-                        "members": len(ch["mids"]),
-                        "member_flows_sample": [
-                            str(getattr(flow_by_mid.get(m), "name", m) or m)
-                            for m in ch["mids"][:5]
-                        ],
-                    },
-                })
+        def _verifier_items(
+            plan_list: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            items: list[dict[str, Any]] = []
+            for plan in plan_list:
+                parents_line = " + ".join(
+                    f"'{getattr(u, 'name', '')}' ({len(u.member_flow_ids or [])} flows)"
+                    for u in plan["split_ufs"]
+                )
+                for ch in plan["children"]:
+                    items.append({
+                        "id": ch["id"],
+                        "kind": "lattice_split",
+                        "draft": ch["name"],
+                        "pf_display": plan["pf_display"],
+                        "context": {
+                            "split_from": parents_line,
+                            "capability": plan["pf_display"],
+                            "evidence": f"{ch['axis']}:{ch['key']}",
+                            "members": len(ch["mids"]),
+                            "member_flows_sample": [
+                                str(getattr(flow_by_mid.get(m), "name", m) or m)
+                                for m in ch["mids"][:5]
+                            ],
+                        },
+                    })
+            return items
+
+        def _screen_plans(
+            plan_list: list[dict[str, Any]],
+            verdicts: Mapping[str, Any],
+        ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+            """Fold explicit child rejects; split plans into (kept,
+            fully-reverted). Exactly the pre-B25 verdict fold — reverted
+            plans are merely RECORDED for the Phase-3b slot release."""
+            kept: list[dict[str, Any]] = []
+            reverted: list[dict[str, Any]] = []
+            for plan in plan_list:
+                surviving = []
+                for ch in plan["children"]:
+                    if verdicts.get(ch["id"]) is False:
+                        tele["verifier_rejects"] += 1
+                        # Rejected child's members stay with the parent.
+                        for m in ch["mids"]:
+                            uid = plan["owner_by_mid"].get(m)
+                            if uid is not None:
+                                plan["residual_by_uf"].setdefault(
+                                    uid, [],
+                                ).append(m)
+                    else:
+                        surviving.append(ch)
+                if len(surviving) >= _MIN_MINTABLE:
+                    plan["children"] = surviving
+                    kept.append(plan)
+                elif surviving or plan["children"]:
+                    tele["plans_reverted_verifier"] = (
+                        tele.get("plans_reverted_verifier", 0) + 1)
+                    reverted.append(plan)
+            return kept, reverted
+
+        # B25 bookkeeping — pfs that already spent their one action shot in
+        # pass 1 (kept OR reverted): a reverted ACTION plan is final and is
+        # never re-asked (the no-re-entry hard rule).
+        action_pfs_pass1 = {
+            str(plan["pf_key"]) for plan in plans
+            if any(ch.get("axis") == "action" for ch in plan["children"])
+        }
         try:
-            verdicts = verifier(items) or {}
+            verdicts = verifier(_verifier_items(plans)) or {}
         except Exception as exc:  # noqa: BLE001 — persona never breaks a scan
             verdicts = {}
             tele["verifier_error"] = str(exc)
-        kept: list[dict[str, Any]] = []
-        for plan in plans:
-            surviving = []
-            for ch in plan["children"]:
-                if verdicts.get(ch["id"]) is False:
-                    tele["verifier_rejects"] += 1
-                    # Rejected child's members stay with the parent.
-                    for m in ch["mids"]:
-                        uid = plan["owner_by_mid"].get(m)
-                        if uid is not None:
-                            plan["residual_by_uf"].setdefault(
-                                uid, [],
-                            ).append(m)
-                else:
-                    surviving.append(ch)
-            if len(surviving) >= _MIN_MINTABLE:
-                plan["children"] = surviving
-                kept.append(plan)
-            elif surviving or plan["children"]:
-                tele["plans_reverted_verifier"] = (
-                    tele.get("plans_reverted_verifier", 0) + 1)
-        plans = kept
+        plans, reverted_plans = _screen_plans(plans, verdicts)
+
+        # ── Phase 3b — B25 verifier-revert slot release (keyed seam) ──
+        # A fully-reverted plan leaves its catch-all byte-identical on the
+        # board, yet its parent UF already consumed the pf's one split slot
+        # via the PRE-verifier exclusion set — so the action axis never got
+        # its turn (Soc0 'Manage cases end-to-end': the object axis claimed
+        # the catch-all with a doomed single-router route shard, the
+        # verifier honestly killed it, and the healthy action plan was
+        # never built). Release the slot ONCE: re-run the Phase-2b action
+        # detection for each such pf (excluding UFs claimed by KEPT plans),
+        # screen the recovered plans in ONE additional verifier batch, and
+        # apply survivors through the unchanged Phase-4/5 path. Bounded by
+        # construction: at most one release per pf per scan, action plans
+        # never re-enter, and there is no second recovery round.
+        if (reverted_plans and action_plan_builder is not None
+                and journey_lattice_b25_enabled()):
+            kept_uf_ids = {
+                str(getattr(u, "id", "") or "")
+                for plan in plans for u in plan["split_ufs"]
+            }
+            released_pfs: set[str] = set()
+            recovered: list[dict[str, Any]] = []
+            for plan in reverted_plans:
+                r_pf = str(plan["pf_key"])
+                if r_pf in released_pfs or r_pf in action_pfs_pass1:
+                    continue  # hard cap: at most ONE release per pf per scan
+                released_pfs.add(r_pf)
+                r_plan = action_plan_builder(r_pf, kept_uf_ids)
+                if r_plan is not None:
+                    recovered.append(r_plan)
+            if released_pfs:
+                tele["slots_released"] = len(released_pfs)
+                tele["slot_release_pfs"] = sorted(released_pfs)
+            if recovered:
+                try:
+                    r_verdicts = verifier(_verifier_items(recovered)) or {}
+                except Exception as exc:  # noqa: BLE001
+                    r_verdicts = {}
+                    tele["verifier_error"] = str(exc)
+                r_kept, _r_reverted = _screen_plans(recovered, r_verdicts)
+                tele["slot_release_recovered"] = len(r_kept)
+                plans.extend(r_kept)
 
     # ── Phase 4 — apply plans (conservation-checked) ───────────────
     applied_children: list[tuple[dict[str, Any], Any]] = []

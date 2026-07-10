@@ -335,17 +335,27 @@ def test_verifier_reject_keeps_the_catchall_byte_identical() -> None:
     ufs, devs, pfs, routes = _catchall_scene()
     before = [u.model_dump() for u in ufs]
 
+    batches: list[list[str]] = []
+
     def _verifier(items: list[dict]) -> dict[str, bool]:
         # Per-CHILD items (round-4 refinement): rejecting every child
         # reverts the plan — the catch-all survives byte-identically.
         assert items and all(i["kind"] == "lattice_split" for i in items)
         assert all(i["id"].startswith("UF-L-") for i in items)
+        batches.append([i["id"] for i in items])
         return {i["id"]: False for i in items}
 
     tele = run_journey_lattice(ufs, devs, pfs, routes, verifier=_verifier)
-    assert tele["verifier_rejects"] == 3
+    # B25 (default ON): the fully-reverted object plan releases the pf's
+    # slot ONCE — the action axis gets one recovery batch (also rejected
+    # here, and final). Exactly two batches, never a third; the catch-all
+    # still survives byte-identically.
+    assert len(batches) == 2
+    assert tele["verifier_rejects"] == 6
     assert tele["journeys_created"] == 0
-    assert tele.get("plans_reverted_verifier") == 1
+    assert tele.get("plans_reverted_verifier") == 2
+    assert tele.get("slots_released") == 1
+    assert tele.get("slot_release_recovered") == 0
     assert [u.model_dump() for u in ufs] == before
 
 

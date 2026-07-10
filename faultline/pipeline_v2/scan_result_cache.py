@@ -216,6 +216,13 @@ ENV_OUTPUT_FLAGS = (
     # recall layer (flowless-PF markers dissolve). Both default OFF.
     "FAULTLINE_LAZY_IMPORT_EDGES",
     "FAULTLINE_DISPATCH_REGISTRY_FLOWS",
+    # B25 (2026-07-10) — journey-lattice verifier-revert slot release: a pf
+    # whose split plan the Draft Verifier fully reverted re-runs the
+    # Phase-2b action detection once (one extra verifier batch, hard-capped
+    # at one release per pf per scan). Reshapes the emitted user_flows[]
+    # layer on keyed scans (keyless is unreachable — no verifier, no
+    # reverts).
+    "FAULTLINE_JOURNEY_LATTICE_B25",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
