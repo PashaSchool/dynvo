@@ -96,12 +96,13 @@ _TS_MAP_DYNAMIC_RE = re.compile(
 
 
 def dispatch_registry_enabled() -> bool:
-    """Default OFF — the 2026-07-10 ON-flip was REVERTED same day: the first
-    keyed supabase run under ON minted 328 hollow UI-demo widget flows from
-    docs-MDX registries (obstacle-course hollow-rows FAIL). Re-flip only
-    after the B34-b rails (UI micro-component skip + app-dir qualifier)
-    merge with a keyed supabase proof. ``=1`` enables."""
-    return os.environ.get(DISPATCH_REGISTRY_ENV, "0").strip() in {
+    """Default ON since the 2026-07-10 B34-b re-flip proof (keyed supabase +
+    Soc0 with the rails merged: hollow=0 on both, markers 14->4 / 3->1,
+    Soc0 gauntlet CLEAR). History: the first ON-flip was reverted the same
+    day after 328 hollow UI-demo mints on supabase; the B34-b anchor guard
+    now makes hollow mints structurally impossible. ``=0`` restores the
+    pre-B34 board byte-identically."""
+    return os.environ.get(DISPATCH_REGISTRY_ENV, "1").strip() in {
         "1", "true", "True",
     }
 
