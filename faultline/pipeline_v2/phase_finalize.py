@@ -2730,6 +2730,59 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── B30 — deterministic verb+resource flow naming (name channel) ──
+    # Runs LAST (after 6.97c flow-loc, immediately before Stage 7) so
+    # every consumer of the old names — UF rollup, lattice, lineage,
+    # dedup, ids — already ran: the only output change is
+    # ``flows[].name`` + its ``display_name``/``short_label`` kebab
+    # mirrors. ``flow.id``/``uuid`` (the join keys) are never touched;
+    # the Flow objects are shared with ``developer_features[].flows[]``
+    # so one in-place mutation updates both views. Kill-switch
+    # FAULTLINE_FLOW_NAME_V2=0 skips the stage → byte-identical output.
+    # Telemetry lives in the side artifact/log only (never scan_meta),
+    # mirroring the 6.97c precedent, so the flag ON/OFF diff is exactly
+    # the name fields.
+    from faultline.pipeline_v2.flow_name_v2 import (
+        apply_flow_name_v2,
+        flow_name_v2_enabled,
+    )
+    if flow_name_v2_enabled():
+        with StageLogger(run_dir, 7, "flow_name_v2") as log_fnv2:
+            try:
+                _fnv2_tele = apply_flow_name_v2(
+                    list(bipartite.flows),
+                    routes_index=lineage_result.routes_index,
+                    repo_path=ctx.repo_path,
+                )
+                log_fnv2.info(
+                    "flow_name_v2: renamed %d/%d flows (route=%d symbol=%d "
+                    "honest-fallback=%d feature-qualified=%d ordinal=%d)" % (
+                        _fnv2_tele["renamed_total"],
+                        _fnv2_tele["flows_total"],
+                        _fnv2_tele["renamed_route"],
+                        _fnv2_tele["renamed_symbol"],
+                        _fnv2_tele["kept_honest_fallback"],
+                        _fnv2_tele["collision_feature_qualified"],
+                        _fnv2_tele["collision_ordinal"],
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=7,
+                    stage_name="flow_name_v2",
+                    payload=_fnv2_tele,
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — naming must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"flow-name-v2 stage failed ({exc}); flow names left as-is"
+                )
+                log_fnv2.info(
+                    f"flow_name_v2: FAILED ({exc}) — continuing with old names",
+                    feature=None,
+                )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {

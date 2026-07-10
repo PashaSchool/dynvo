@@ -180,6 +180,14 @@ ENV_OUTPUT_FLAGS = (
     # + product_features[] + developer_features[] carve chunks. Default
     # OFF.
     "FAULTLINE_MEGA_PF_NAV_REHOME",
+    # B30 (2026-07-10) — deterministic verb+resource flow naming: route-slug
+    # path-echo flow names (``api-account-passkeys-flow``) are renamed to
+    # verb+resource (``manage-account-passkeys-flow``) at the very end of the
+    # finalize phase. Reshapes flows[].name/display_name/short_label (the
+    # operator-visible name channel). Default ON. NOTE: appended WITHOUT a
+    # KEY_SCHEMA bump per the B30 brief — the schema version is reconciled
+    # at merge alongside the sibling B25-B32 wave flags.
+    "FAULTLINE_FLOW_NAME_V2",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
