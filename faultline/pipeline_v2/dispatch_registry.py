@@ -287,24 +287,165 @@ def detect_ts_registries(
     ))
 
 
-# ── seed minting ────────────────────────────────────────────────────────
+# ── seed minting + B34-b registry rails ─────────────────────────────────
+
+#: UI component extensions — rail 1 applies only to JSX component files.
+_UI_EXT = (".tsx", ".jsx")
+
+#: Convention-marker file stems that carry no capability meaning (mirror
+#: of ``flow_display_name._humanize_file_basename``'s marker set) — the
+#: base name walks up to the nearest meaningful path segments instead
+#: (``<app>/api/index.ts`` → ``<app>-api``, never ``index``).
+_BASE_STEM_MARKERS = frozenset({
+    "index", "route", "page", "layout", "handler", "default", "main",
+    "+page", "+server", "_app", "_document", "middleware",
+})
+
+
+def _target_kind(target: RegistryTarget) -> str:
+    """Rail-1 grouping key: the declared symbol, else the file stem —
+    "which KIND of module is this registry entry" (``Setup``,
+    ``EventTypeAppCardInterface``, ``CalendarService``…)."""
+    if target.symbol:
+        return target.symbol
+    stem = target.target_file.rsplit("/", 1)[-1]
+    return re.sub(r"\.[A-Za-z0-9]+$", "", stem)
+
+
+def _seed_core(target: RegistryTarget) -> str:
+    """Kebab core (no ``run-`` prefix, no ``-flow`` suffix) for a target.
+
+    Symbol first (B30 machinery); for symbol-less targets the file stem —
+    and when the stem is a convention marker, up to two meaningful
+    trailing path segments (``packages/app-store/alby/api/index.ts`` →
+    ``alby-api``)."""
+    if target.symbol:
+        base = _symbol_name(target.symbol)
+        if base:
+            return base[: -len("-flow")]
+    parts = target.target_file.replace("\\", "/").split("/")
+    stem = re.sub(r"\.[A-Za-z0-9]+$", "", parts[-1])
+    if stem and stem not in _BASE_STEM_MARKERS:
+        # Meaningful stem — pre-rail behavior, byte-stable names.
+        return _slugify(stem)
+    # Convention-marker stem (<app>/api/index.ts) — up to two meaningful
+    # trailing directory segments instead ("alby-api", never "index").
+    meaningful = [
+        s for s in parts[:-1] if s and s not in _BASE_STEM_MARKERS
+    ]
+    if not meaningful:
+        return ""
+    return _slugify("-".join(meaningful[-2:]))
 
 
 def _seed_name(target: RegistryTarget) -> str:
-    """``run-<symbol>-flow`` via the B30 symbol machinery; file-stem
-    fallback when the registry declared no symbol."""
-    base = _symbol_name(target.symbol) if target.symbol else ""
-    if not base:
-        stem = target.target_file.rsplit("/", 1)[-1]
-        stem = re.sub(r"\.[A-Za-z0-9]+$", "", stem)
-        slug = _slugify(stem)
-        if not slug:
-            return ""
-        base = f"{slug}-flow"
-    core = base[: -len("-flow")]
+    """``run-<core>-flow``; empty when nothing honest to name."""
+    core = _seed_core(target)
+    if not core:
+        return ""
     if core.startswith("run-"):
-        return base
+        return f"{core}-flow"
     return f"run-{core}-flow"
+
+
+def _registry_group_token(
+    target: RegistryTarget,
+    group_targets: list[RegistryTarget],
+) -> str:
+    """Rail-2 qualifier token for ``target`` within its registry group.
+
+    The registry's own declared KEY is the maintainer's name for the
+    entry (the app slug in cal.com's generated maps, the vendor string
+    in a branch factory) — use it when present. Fallback: the first
+    path segment where this target diverges from its registry siblings
+    (``packages/app-store/<app>/…`` → the app dir)."""
+    if target.key:
+        tok = _slugify(target.key)
+        if tok:
+            return tok
+    paths = sorted({t.target_file for t in group_targets})
+    if len(paths) < 2:
+        return ""
+    own = target.target_file.split("/")
+    common = 0
+    while all(
+        len(p.split("/")) > common and p.split("/")[common] == own[common]
+        for p in paths
+    ) and common < len(own) - 1:
+        common += 1
+    return _slugify(own[common]) if common < len(own) else ""
+
+
+def _apply_registry_rails(
+    targets: list[RegistryTarget],
+) -> tuple[list[RegistryTarget], dict[str, str], int]:
+    """B34-b rails over the detected target set.
+
+    Rail 1 — *UI micro-component skip*: within ONE registry, a kind
+    (symbol / file stem) declared for >=2 DISTINCT component files
+    (``.tsx``/``.jsx``) is a per-entry UI wrapper (cal.com's
+    ``EventTypeAppCardInterface`` x26, per-app ``Setup.tsx``) — interior
+    of the entry's card, not a capability. Those targets are NOT minted
+    (not laned — simply skipped). Unique-kind components and ALL
+    non-component (server) targets pass.
+
+    Rail 2 — *registry-key qualifier BEFORE ordinals*: when >=2 distinct
+    surviving target FILES share one base name (cal.com's
+    ``CalendarService`` x11, ``<app>/api/index.ts`` x85), every such
+    target's name is qualified with its registry-declared key / app-dir
+    token (``run-zoom-calendar-service-flow``), so downstream
+    disambiguation never falls to ordinals. Unique base names are left
+    untouched — Soc0's factory mints stay byte-identical.
+
+    Returns (kept_targets, {target_file: final_core}, ui_skipped).
+    """
+    kind_files: dict[tuple[str, str], set[str]] = {}
+    for t in targets:
+        kind_files.setdefault(
+            (t.registry_file, _target_kind(t)), set(),
+        ).add(t.target_file)
+
+    kept: list[RegistryTarget] = []
+    ui_skipped = 0
+    for t in targets:
+        if t.target_file.endswith(_UI_EXT) and len(
+            kind_files[(t.registry_file, _target_kind(t))],
+        ) >= 2:
+            ui_skipped += 1
+            continue
+        kept.append(t)
+
+    # One name decision per DISTINCT target file (only one seed can ever
+    # mint per file) — first target in deterministic order wins.
+    by_file: dict[str, RegistryTarget] = {}
+    for t in kept:
+        by_file.setdefault(t.target_file, t)
+    by_registry: dict[str, list[RegistryTarget]] = {}
+    for t in by_file.values():
+        by_registry.setdefault(t.registry_file, []).append(t)
+
+    base_files: dict[str, set[str]] = {}
+    for t in by_file.values():
+        core = _seed_core(t)
+        if core:
+            base_files.setdefault(core, set()).add(t.target_file)
+
+    cores: dict[str, str] = {}
+    for t in by_file.values():
+        core = _seed_core(t)
+        if not core:
+            continue
+        if len(base_files[core]) >= 2:
+            tok = _registry_group_token(t, by_registry[t.registry_file])
+            if tok:
+                core_tokens = core.split("-")
+                kept_tok = [
+                    x for x in tok.split("-") if x not in core_tokens
+                ]
+                if kept_tok:
+                    core = "-".join([*kept_tok, core])
+        cores[t.target_file] = core
+    return kept, cores, ui_skipped
 
 
 def mint_dispatch_seeds(
@@ -334,8 +475,16 @@ def mint_dispatch_seeds(
         "skipped_covered": 0,
         "skipped_no_owner": 0,
         "skipped_unnameable": 0,
+        "skipped_ui_component_kind": 0,
+        "qualified_by_registry_key": 0,
+        "ordinal_fallback": 0,
         "seeds": [],
     }
+    # B34-b rails: UI micro-component kinds skipped; duplicated base
+    # names pre-qualified with the registry's own key/app token.
+    targets, rail_cores, ui_skipped = _apply_registry_rails(targets)
+    tele["skipped_ui_component_kind"] = ui_skipped
+
     seen: set[tuple[str, str]] = set()
     for t in targets:
         if t.target_file in covered:
@@ -345,13 +494,25 @@ def mint_dispatch_seeds(
         if owner is None:
             tele["skipped_no_owner"] += 1
             continue
-        name = _seed_name(t)
-        if not name:
+        core = rail_cores.get(t.target_file, "")
+        if not core:
             tele["skipped_unnameable"] += 1
             continue
+        if _seed_core(t) != core:
+            tele["qualified_by_registry_key"] += 1
+        name = core if core.startswith("run-") else f"run-{core}"
+        name = f"{name}-flow"
         key = (owner.feature.name, name)
         if key in seen:
-            continue
+            # Same feature already minted this name for ANOTHER file —
+            # last-resort ordinal (never expected on the rails corpus).
+            ordinal = 2
+            base = name[: -len("-flow")]
+            while (owner.feature.name, f"{base}-{ordinal}-flow") in seen:
+                ordinal += 1
+            name = f"{base}-{ordinal}-flow"
+            key = (owner.feature.name, name)
+            tele["ordinal_fallback"] += 1
         seen.add(key)
 
         entry_line: int | None = None
