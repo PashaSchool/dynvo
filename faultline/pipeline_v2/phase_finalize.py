@@ -1600,6 +1600,73 @@ def run_finalize_phase(
                     f"e2e_orphan_uf: FAILED ({exc}) — continuing", feature=None,
                 )
 
+    # ── Stage 6.985 — transport-lane journey-conservation handoff (B22) ──
+    # The transport prong (B19, default OFF) no longer lanes at mint —
+    # 6.86 emitted candidate MARKS instead — and THIS stage resolves them
+    # after the LAST journey producer (6.98b above) and BEFORE the 6.97
+    # LOC prefetch (the lane_rehome slot family: loc-truth I13 + the lane
+    # accounting below hold with zero extra plumbing; the emission
+    # path_index refresh picks the moved devs up automatically). Per
+    # candidate PF: every homed journey re-homes to the product PF it
+    # serves (strict-majority span vote → deterministic consumer
+    # completion → flagged plurality), route-group targets are excavated
+    # at the SAME grain the vote used, devs follow, and only then the PF
+    # converts to a platform-infrastructure lane resident. CONSERVATION
+    # GATE (operator law): ANY unresolved journey → the PF does NOT lane
+    # (exact flag-OFF output + blocked telemetry) — no journey is EVER
+    # dissolved. Deterministic, $0 LLM; inert (no scan_meta key, no
+    # output change) unless candidates exist. Kill-switch
+    # FAULTLINE_TRANSPORT_LANE_HANDOFF=0 restores B19 mint-time laning.
+    from faultline.pipeline_v2.transport_handoff import (
+        run_transport_handoff,
+        transport_handoff_enabled,
+    )
+    _transport_candidates = dict(
+        ((scan_meta.get("stage_6_86_anchored_mint") or {})
+         .get("technology_instruments") or {})
+        .get("transport_candidates") or {}
+    )
+    if transport_handoff_enabled() and _transport_candidates:
+        with StageLogger(run_dir, 6, "transport_handoff") as log_th:
+            try:
+                th_tele = run_transport_handoff(
+                    features, product_features, user_flows,
+                    list(bipartite.flows), lineage_result.routes_index,
+                    ctx, _transport_candidates,
+                    extractor_signals=stage1_out,
+                )
+                scan_meta["transport_handoff"] = th_tele
+                log_th.info(
+                    "transport_handoff: candidates=%d laned=%d blocked=%d "
+                    "ufs_rehomed=%d devs(rehomed=%d laned=%d) minted=%d"
+                    % (
+                        len(th_tele.get("candidates") or []),
+                        len(th_tele.get("laned") or []),
+                        len(th_tele.get("conservation_blocked") or {}),
+                        th_tele.get("ufs_rehomed", 0),
+                        th_tele.get("devs_rehomed", 0),
+                        th_tele.get("devs_laned", 0),
+                        th_tele.get("pfs_minted", 0),
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=6,
+                    stage_name="transport_handoff",
+                    payload=dict(th_tele),
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"transport-handoff failed ({exc}); "
+                    f"candidate PFs left product (no journey touched)"
+                )
+                log_th.info(
+                    f"transport_handoff: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Perf wave 2 (R5b) — 6.97 LOC prefetch overlaps the 6.95→6.96 chain ──
     # DAG verified at this base: Stage 6.97 feature-LOC reads only
     # {feature/PF paths + member_files + the checked-out tree,

@@ -151,6 +151,15 @@ ENV_OUTPUT_FLAGS = (
     # UF re-homes to its strict-majority entry-owner PF. Reshapes
     # user_flows[].product_feature_id.
     "FAULTLINE_I16_REHOME_B20",
+    # B22 (2026-07-10) — transport-lane journey-conservation handoff (Stage
+    # 6.985): the transport prong marks candidates at 6.86 and the handoff
+    # re-homes their journeys/devs post-journey-layer before laning the PF
+    # (all-or-nothing conservation gate). Reshapes product_features[] +
+    # user_flows[].product_feature_id + the platform lane when candidates
+    # exist. Sub-flag of the plurality rung keys alongside it.
+    #: (B22) FAULTLINE_TRANSPORT_LANE_HANDOFF — version reconciled at merge
+    "FAULTLINE_TRANSPORT_LANE_HANDOFF",
+    "FAULTLINE_TRANSPORT_HANDOFF_PLURALITY",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

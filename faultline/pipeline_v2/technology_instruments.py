@@ -674,6 +674,29 @@ def detect_technology_instruments(
             break
     tele["rounds"] = rounds
 
+    # B22 — transport-lane handoff: the S2 transport verdict becomes a
+    # candidate MARK, not an instrument dir. The fixed point above is
+    # UNCHANGED (candidates influenced sibling classification exactly as
+    # under B19 mint-time laning); only the EMISSION changes: candidates
+    # leave ``instruments``/``dirs`` (so the unit mints normally and its
+    # journeys mint normally — 6.86 sees no instrument dir) and ride out
+    # in ``transport_candidates`` for Stage 6.985 to resolve AFTER the
+    # journey layer settles. Popped BEFORE the satellite pass so a
+    # candidate's fdir satellites stay product alongside it. The key is
+    # emitted only when non-empty: handoff-OFF (or transport-OFF) output
+    # stays byte-identical to HEAD.
+    if transport_lane and instruments:
+        from faultline.pipeline_v2.transport_handoff import (
+            transport_handoff_enabled,
+        )
+        if transport_handoff_enabled():
+            transport_candidates: dict[str, str] = {}
+            for u in sorted(instruments):
+                if instruments[u].startswith("S2-transport:"):
+                    transport_candidates[u] = instruments.pop(u)
+            if transport_candidates:
+                tele["transport_candidates"] = transport_candidates
+
     # satellite fdirs
     satellites: dict[str, str] = {}
     for u in sorted(units):
