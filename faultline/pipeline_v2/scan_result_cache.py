@@ -156,6 +156,14 @@ ENV_OUTPUT_FLAGS = (
     # annexation). Reshapes developer_features[].product_feature_id +
     # path_index ownership + the platform_infrastructure lane.
     "FAULTLINE_FOLD_CROSSAPP_GUARD",
+    # B22 (2026-07-10) — transport-lane journey-conservation handoff (Stage
+    # 6.985): the transport prong marks candidates at 6.86 and the handoff
+    # re-homes their journeys/devs post-journey-layer before laning the PF
+    # (all-or-nothing conservation gate). Reshapes product_features[] +
+    # user_flows[].product_feature_id + the platform lane when candidates
+    # exist. Sub-flag of the plurality rung keys alongside it.
+    "FAULTLINE_TRANSPORT_LANE_HANDOFF",
+    "FAULTLINE_TRANSPORT_HANDOFF_PLURALITY",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -170,7 +178,8 @@ ENV_OUTPUT_FLAGS = (
 #: v10 (B19): added FAULTLINE_TECH_TRANSPORT_LANE.
 #: v11 (B20): added FAULTLINE_I16_REHOME_B20.
 #: v12 (B22a): added FAULTLINE_FOLD_CROSSAPP_GUARD.
-KEY_SCHEMA_VERSION = 12
+#: v13 (B22): added FAULTLINE_TRANSPORT_LANE_HANDOFF + FAULTLINE_TRANSPORT_HANDOFF_PLURALITY.
+KEY_SCHEMA_VERSION = 13
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
