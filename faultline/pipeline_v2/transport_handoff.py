@@ -231,7 +231,14 @@ class TargetGrainIndex:
         routes_index: Iterable[Mapping[str, Any]] | None = None,
         excluded_units: Iterable[str] = (),
         candidate_pf_keys: Iterable[str] = (),
+        tenant_descent: bool = False,
     ) -> None:
+        #: B24 (Stage 6.986) opt-in rung: the route-GROUP grain descends
+        #: through tenant-address pairs (``project/[ref]/database`` keys
+        #: ``database``, not ``project``) — see :func:`_tenant_descend`.
+        #: Default OFF: 6.985 callers keep the ratified B22 grain
+        #: byte-identically.
+        self._tenant_descent = bool(tenant_descent)
         self._excluded = tuple(sorted(str(u).strip("/")
                                       for u in excluded_units if u))
         self._cand_keys = frozenset(candidate_pf_keys)
@@ -314,11 +321,22 @@ class TargetGrainIndex:
                 seg1 = seg1.rsplit(".", 1)[0]  # strip extension
                 seg1 = seg1.split(".", 1)[0] or seg1
             prefix = f"{root}/{seg1}"
+            if self._tenant_descent and len(rest) > 1:
+                ext = _tenant_descend(rest)
+                if ext is not None:
+                    seg1, rel_prefix = ext
+                    prefix = f"{root}/{rel_prefix}"
             cid = f"route:{prefix}"
             if check_allowed and cid not in self._allowed_groups:
                 return None
             return (cid, _group_display(seg1), len(prefix))
         return None
+
+    @property
+    def routes_roots(self) -> tuple[str, ...]:
+        """The product-scoped routes roots (longest-first) — read-only
+        (B24 same-app rail)."""
+        return tuple(self._roots)
 
     def grain_of_file(self, path: str) -> GrainTarget | None:
         if path in self._memo:
@@ -375,6 +393,53 @@ class TargetGrainIndex:
         matched by a plain prefix test."""
         g = self._route_group_of(path)
         return g[0] if g is not None else None
+
+
+#: Framework leaf-file stems that never key a nav area (Next App Router
+#: page/route conventions + Remix index markers) — structural addressing,
+#: mirrors the 6.7d structure-leak class.
+_AREA_LEAF_STEMS = frozenset({
+    "page", "route", "index", "layout", "template", "loading", "error",
+    "not-found", "_index",
+})
+
+
+def _tenant_descend(segs: list[str]) -> tuple[str, str] | None:
+    """B24 nav-area rung: ``(area_token, literal_prefix)`` after
+    consuming ``(static, dynamic+)`` tenant-address pairs while a deeper
+    non-CRUD static segment exists (the W4 tenancy-transparency rule of
+    ``spine_anchors._pattern_key_chain``, applied to the group grain):
+    ``project/[ref]/database/backups.tsx`` keys ``database``,
+    ``org/[slug]/sso.tsx`` keys ``sso`` (leaf stem), while
+    ``documents/[id]/edit`` keeps the B22 group (CRUD leaves never key)
+    and ``support/new.tsx`` keeps ``support`` (no tenant pair).
+    ``None`` → no descent (the caller keeps the B22 top-level group)."""
+    from faultline.pipeline_v2.journey_lattice import _CRUD_LEAF_SEGS
+    from faultline.pipeline_v2.spine_anchors import _DYNAMIC_RE
+
+    def _stem(seg: str) -> str:
+        s = seg.rsplit(".", 1)[0]
+        return s.split(".", 1)[0] or s
+
+    i, n = 0, len(segs)
+    descended = False
+    while i + 1 < n and not _DYNAMIC_RE.match(segs[i]) \
+            and _DYNAMIC_RE.match(segs[i + 1]):
+        j = i + 2
+        while j < n and _DYNAMIC_RE.match(segs[j]):
+            j += 1
+        if j >= n:
+            break
+        tok = _stem(segs[j]) if j == n - 1 else segs[j]
+        if (not tok or _DYNAMIC_RE.match(tok)
+                or tok in _CRUD_LEAF_SEGS or tok in _AREA_LEAF_STEMS):
+            break
+        i, descended = j, True
+    if not descended:
+        return None
+    if i == n - 1:  # leaf file keys by extensionless stem
+        return (_stem(segs[i]), "/".join(segs[:i] + [_stem(segs[i])]))
+    return (segs[i], "/".join(segs[: i + 1]))
 
 
 def _group_display(seg: str) -> str:
@@ -1131,13 +1196,16 @@ def _build_owner_map(
     return owner, neutral
 
 
-def _carve_chunk(src: Any, cid: str, files: list[str]) -> Any:
+def _carve_chunk(src: Any, cid: str, files: list[str],
+                 marker: str = _HANDOFF_MARKER) -> Any:
     """8.9.x-style chunk dev for a carved group grain (mirrors
     ``lane_excavation._make_excav_dev`` with the handoff marker;
-    content-derived uuid — uuid4 would churn byte-identity)."""
+    content-derived uuid — uuid4 would churn byte-identity). ``marker``
+    stamps the provenance channel (default: this stage's; Stage 6.986
+    passes its own — byte-identical for existing callers)."""
     import hashlib
 
-    name = f"{str(_attr(src, 'name'))}-{_HANDOFF_MARKER}"
+    name = f"{str(_attr(src, 'name'))}-{marker}"
     uuid = hashlib.sha256(
         f"transport-carve-v1|{_attr(src, 'uuid') or _attr(src, 'name')}|"
         f"{cid}|{name}".encode("utf-8")).hexdigest()[:32]
@@ -1146,7 +1214,7 @@ def _carve_chunk(src: Any, cid: str, files: list[str]) -> Any:
         members = [
             MemberFile(
                 path=p, role="anchor", confidence=1.0, primary=True,
-                evidence=f"{_HANDOFF_MARKER} carve of '{src.name}'",
+                evidence=f"{marker} carve of '{src.name}'",
             )
             for p in sorted(files)
         ]
@@ -1156,7 +1224,7 @@ def _carve_chunk(src: Any, cid: str, files: list[str]) -> Any:
             "paths": sorted(files),
             "member_files": members,
             "description": (
-                f"{_HANDOFF_MARKER} carve '{cid}' of '{src.name}'"),
+                f"{marker} carve '{cid}' of '{src.name}'"),
             "uuid": uuid,
             "split_from": getattr(src, "uuid", None),
             "previous_names": [], "merged_from": [],
@@ -1177,7 +1245,7 @@ def _carve_chunk(src: Any, cid: str, files: list[str]) -> Any:
     ch.paths = sorted(files)
     ch.member_files = [
         {"path": p, "role": "anchor", "confidence": 1.0, "primary": True,
-         "evidence": f"{_HANDOFF_MARKER} carve of '{_attr(src, 'name')}'"}
+         "evidence": f"{marker} carve of '{_attr(src, 'name')}'"}
         for p in sorted(files)
     ]
     ch.flows = []

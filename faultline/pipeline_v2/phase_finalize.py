@@ -1668,6 +1668,66 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Stage 6.986 — mega-PF nav-area journey re-home + mint (B24) ──
+    # A board-dominating umbrella PF (>=25% of homed journeys) whose
+    # journeys strict-majority-cluster into >=3 distinct nav-area route
+    # groups re-homes those journeys onto their EXISTING sibling PFs
+    # (attach-floor + all-rung I16 rail + surface/same-app rails) and
+    # mints a group with no sibling ONLY above the lattice floor
+    # (>=3 UFs / >=3 flows) — supabase 'projects' class. Runs AFTER
+    # 6.985 (journey layer final, transport folds resolved; candidates
+    # excluded as sources/targets) and BEFORE the 6.97 LOC prefetch so
+    # mint + carve are loc-stamped/path_indexed like any other PF.
+    # Conservation: re-home ONLY (unresolved journeys stay; source
+    # keeps >=1). Deterministic, $0 LLM; default OFF; inert (no
+    # scan_meta key) unless the trigger fires.
+    from faultline.pipeline_v2.mega_pf_nav_rehome import (
+        mega_pf_nav_rehome_enabled,
+        run_mega_pf_nav_rehome,
+    )
+    if (mega_pf_nav_rehome_enabled() and anchored_mint_applied
+            and not uf_suppressed):
+        with StageLogger(run_dir, 6, "mega_pf_nav_rehome") as log_b24:
+            try:
+                b24_tele = run_mega_pf_nav_rehome(
+                    features, product_features, user_flows,
+                    list(bipartite.flows), lineage_result.routes_index,
+                    ctx,
+                    extractor_signals=stage1_out,
+                    feature_flow_edges=list(bipartite.edges),
+                    transport_candidate_units=set(_transport_candidates),
+                )
+                if b24_tele.get("triggered"):
+                    scan_meta["mega_pf_nav_rehome"] = b24_tele
+                    write_stage_artifact(
+                        ctx.repo_path,
+                        stage_index=6,
+                        stage_name="mega_pf_nav_rehome",
+                        payload=dict(b24_tele),
+                        run_dir=run_dir,
+                    )
+                log_b24.info(
+                    "mega_pf_nav_rehome: triggered=%s ufs_rehomed=%d "
+                    "minted=%d carved=%d floor_drops=%d"
+                    % (
+                        ",".join(b24_tele.get("triggered") or []) or "-",
+                        b24_tele.get("ufs_rehomed", 0),
+                        b24_tele.get("pfs_minted", 0),
+                        b24_tele.get("devs_carved", 0),
+                        len(b24_tele.get("floor_drops") or []),
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"mega-pf nav re-home failed ({exc}); "
+                    f"journeys left untouched"
+                )
+                log_b24.info(
+                    f"mega_pf_nav_rehome: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Perf wave 2 (R5b) — 6.97 LOC prefetch overlaps the 6.95→6.96 chain ──
     # DAG verified at this base: Stage 6.97 feature-LOC reads only
     # {feature/PF paths + member_files + the checked-out tree,

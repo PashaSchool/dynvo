@@ -164,6 +164,14 @@ ENV_OUTPUT_FLAGS = (
     # exist. Sub-flag of the plurality rung keys alongside it.
     "FAULTLINE_TRANSPORT_LANE_HANDOFF",
     "FAULTLINE_TRANSPORT_HANDOFF_PLURALITY",
+    # B24 (2026-07-10) — Stage 6.986 mega-PF nav-area re-home + floor-gated
+    # mint: a board-dominating umbrella PF's journeys re-home onto their
+    # nav-area sibling PFs (attach-floor / all-rung-I16-rail gated) and an
+    # above-floor area with no sibling mints its own PF (supabase
+    # 'projects' -> 'database'). Reshapes user_flows[].product_feature_id
+    # + product_features[] + developer_features[] carve chunks. Default
+    # OFF. (KEY_SCHEMA bump deferred to the merge — v14 reserved.)
+    "FAULTLINE_MEGA_PF_NAV_REHOME",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
