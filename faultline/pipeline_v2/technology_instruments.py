@@ -79,11 +79,25 @@ Signals (S3 = V1-pass is the hard prerequisite; ≥1 of S1/S2 decides):
     a broadly-imported ws-package NAMED after its OWN external dependency
     family (documenso ``packages/trpc`` → ``@trpc/*``) re-routes domain by
     construction, so a HIGH domain fan-out is its transport signature, not a
-    domain-core tell. (This intentionally reverses the pre-B19 note that kept
-    ``trpc`` product: the operator-audit and PM-recognizability both say a
-    transport is plumbing, not a capability — ratified 2026-07-10. The
-    ``packages/lib`` anti-case is safe because its name matches no external
-    dep, so it never takes this prong.)
+    domain-core tell. (This reverses the pre-B19 note that kept ``trpc``
+    product: the operator-audit and PM-recognizability both say a transport
+    is plumbing, not a capability. The ``packages/lib`` anti-case is safe
+    because its name matches no external dep.)
+
+    **OPEN QUESTION — default OFF pending a journey re-home (B19 keyed A/B,
+    2026-07-10).** The classifier lanes ``trpc`` cleanly (documenso PFs
+    18→17, laned away = ``['tRPC']``, zero domain-core collateral), BUT the
+    journeys that were HOMED to the ``trpc`` PF are not re-homed — they
+    DISSOLVE. On documenso ~20 real product journeys ("Browse and audit
+    documents", "Export signed envelopes", "Manage embedded documents,
+    templates and envelopes") vanish into ``Uncovered: … routes`` markers
+    (79→42 UFs). The validator "improves" (12→7 violations) ONLY because the
+    misattached journeys are gone — coverage LOSS disguised as cleanup, not a
+    real gain. Laning a transport must be COUPLED with a path_index-aware
+    journey re-home (B20 — redistribute the transport's journeys to the
+    product PFs they serve, "ride role=shared on consumers") BEFORE this
+    prong defaults ON. Until B20 lands, ``FAULTLINE_TECH_TRANSPORT_LANE``
+    stays OFF (the classifier is correct; the coverage handoff is missing).
 
 Fixed point: "imports no DOMAIN" ignores edges into already-classified
 instruments (cache → logger/db), recomputed until stable.
@@ -200,10 +214,14 @@ def transport_lane_enabled() -> bool:
     by construction). ON waives the ``len(dou) <= 1`` fan-out guard for the
     name-dep prong ONLY.
 
-    Default **OFF** — this REVERSES a documented design decision (the S2
-    docstring deliberately keeps ``trpc`` product). Awaiting operator
-    ratification; ``FAULTLINE_TECH_TRANSPORT_LANE=1`` opts in. OFF is
-    byte-identical to pre-B19."""
+    Default **OFF** — the CLASSIFIER is ratified (a transport is plumbing),
+    but the keyed A/B (2026-07-10) showed that laning a transport DISSOLVES
+    the real product journeys homed to it (documenso 79→42 UFs, ~20 real
+    journeys lost) because there is no journey re-home yet. It stays OFF
+    until B20's path_index-aware re-home redistributes the transport's
+    journeys to their consuming product PFs (see the S2 transport-prong
+    docstring). ``FAULTLINE_TECH_TRANSPORT_LANE=1`` opts in for that coupled
+    work. OFF is byte-identical to pre-B19."""
     return os.environ.get(TRANSPORT_LANE_ENV, "0").strip().lower() in {
         "1", "true",
     }
