@@ -129,6 +129,12 @@ ENV_OUTPUT_FLAGS = (
     # (locale packs) consumed by >=2 PFs, no surface, are forced role="shared".
     # Reshapes member_files[].role.
     "FAULTLINE_DATA_LEAF",
+    # B19 (2026-07-10) — transport-package lane: a ws-package named after its
+    # own external dependency family (packages/trpc -> @trpc/*) with no product
+    # surface lanes as a technology_instrument. Reshapes product_features[] +
+    # the platform_infrastructure lane. (Sibling tech-instrument flags were an
+    # unkeyed cache-correctness gap — registering this one per the B4 precedent.)
+    "FAULTLINE_TECH_TRANSPORT_LANE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -138,7 +144,10 @@ ENV_OUTPUT_FLAGS = (
 #: v5 (B13): added FAULTLINE_BACKSTOP_OWNED_COVER.
 #: v6 (B15): added FAULTLINE_SHARED_LEAF_CONSISTENCY.
 #: v7 (B15b): added FAULTLINE_DATA_LEAF.
-KEY_SCHEMA_VERSION = 7
+#: v8 (B19): added FAULTLINE_TECH_TRANSPORT_LANE. (NOTE: b16 branches bump v8/v9
+#: in parallel off the post-merge main — reconcile the absolute number on merge;
+#: only the flag-set membership matters for correctness.)
+KEY_SCHEMA_VERSION = 8
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

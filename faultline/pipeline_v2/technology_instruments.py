@@ -72,8 +72,18 @@ Signals (S3 = V1-pass is the hard prerequisite; ≥1 of S1/S2 decides):
     (fixed-point), corroborated by name == a declared dependency
     token (midday ``packages/supabase``) or an infra-noun (typebot
     ``packages/telemetry``). Breadth + corroboration keeps domain
-    cores (documenso ``packages/lib``/``trpc``: heavy importers of
-    domain, or corroboration-less) product.
+    cores (documenso ``packages/lib``: a heavy importer of domain whose
+    name matches NO external dependency) product.
+  * **S2 transport prong (B19)** — the fan-out guard is WAIVED for the
+    name==dep corroboration when ``FAULTLINE_TECH_TRANSPORT_LANE`` is on:
+    a broadly-imported ws-package NAMED after its OWN external dependency
+    family (documenso ``packages/trpc`` → ``@trpc/*``) re-routes domain by
+    construction, so a HIGH domain fan-out is its transport signature, not a
+    domain-core tell. (This intentionally reverses the pre-B19 note that kept
+    ``trpc`` product: the operator-audit and PM-recognizability both say a
+    transport is plumbing, not a capability — ratified 2026-07-10. The
+    ``packages/lib`` anti-case is safe because its name matches no external
+    dep, so it never takes this prong.)
 
 Fixed point: "imports no DOMAIN" ignores edges into already-classified
 instruments (cache → logger/db), recomputed until stable.
