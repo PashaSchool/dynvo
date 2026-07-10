@@ -72,8 +72,32 @@ Signals (S3 = V1-pass is the hard prerequisite; ≥1 of S1/S2 decides):
     (fixed-point), corroborated by name == a declared dependency
     token (midday ``packages/supabase``) or an infra-noun (typebot
     ``packages/telemetry``). Breadth + corroboration keeps domain
-    cores (documenso ``packages/lib``/``trpc``: heavy importers of
-    domain, or corroboration-less) product.
+    cores (documenso ``packages/lib``: a heavy importer of domain whose
+    name matches NO external dependency) product.
+  * **S2 transport prong (B19)** — the fan-out guard is WAIVED for the
+    name==dep corroboration when ``FAULTLINE_TECH_TRANSPORT_LANE`` is on:
+    a broadly-imported ws-package NAMED after its OWN external dependency
+    family (documenso ``packages/trpc`` → ``@trpc/*``) re-routes domain by
+    construction, so a HIGH domain fan-out is its transport signature, not a
+    domain-core tell. (This reverses the pre-B19 note that kept ``trpc``
+    product: the operator-audit and PM-recognizability both say a transport
+    is plumbing, not a capability. The ``packages/lib`` anti-case is safe
+    because its name matches no external dep.)
+
+    **OPEN QUESTION — default OFF pending a journey re-home (B19 keyed A/B,
+    2026-07-10).** The classifier lanes ``trpc`` cleanly (documenso PFs
+    18→17, laned away = ``['tRPC']``, zero domain-core collateral), BUT the
+    journeys that were HOMED to the ``trpc`` PF are not re-homed — they
+    DISSOLVE. On documenso ~20 real product journeys ("Browse and audit
+    documents", "Export signed envelopes", "Manage embedded documents,
+    templates and envelopes") vanish into ``Uncovered: … routes`` markers
+    (79→42 UFs). The validator "improves" (12→7 violations) ONLY because the
+    misattached journeys are gone — coverage LOSS disguised as cleanup, not a
+    real gain. Laning a transport must be COUPLED with a path_index-aware
+    journey re-home (B20 — redistribute the transport's journeys to the
+    product PFs they serve, "ride role=shared on consumers") BEFORE this
+    prong defaults ON. Until B20 lands, ``FAULTLINE_TECH_TRANSPORT_LANE``
+    stays OFF (the classifier is correct; the coverage handoff is missing).
 
 Fixed point: "imports no DOMAIN" ignores edges into already-classified
 instruments (cache → logger/db), recomputed until stable.
@@ -100,12 +124,17 @@ from typing import Any, Iterable, Mapping
 __all__ = [
     "TECH_INSTRUMENTS_ENV",
     "CONFIG_LANE_ENV",
+    "TRANSPORT_LANE_ENV",
     "tech_instruments_enabled",
     "config_lane_enabled",
+    "transport_lane_enabled",
     "detect_technology_instruments",
 ]
 
 TECH_INSTRUMENTS_ENV = "FAULTLINE_TECH_INSTRUMENTS"
+#: B19 transport-package lane (design-review, default OFF). See
+#: :func:`transport_lane_enabled`.
+TRANSPORT_LANE_ENV = "FAULTLINE_TECH_TRANSPORT_LANE"
 #: B1 kill-switch — the config-channel relaxation of S1c (below). Default
 #: ON; ``FAULTLINE_CONFIG_LANE=0`` keeps the strict ``inf == 0`` guard so
 #: output is byte-identical to pre-B1 main.
@@ -174,6 +203,28 @@ def config_lane_enabled() -> bool:
     ``eslint-config`` / ``tsconfig`` class it belongs to."""
     return (os.environ.get(CONFIG_LANE_ENV, "1") or "1").strip().lower() \
         not in {"0", "false"}
+
+
+def transport_lane_enabled() -> bool:
+    """B19 — transport-package lane (design-review). A ws-package whose
+    name-key matches its OWN declared external dependency family (the S2
+    ``name-dep`` corroboration — a package NAMED after the library it wraps,
+    e.g. ``packages/trpc`` -> ``@trpc/*``) is a transport/adapter instrument
+    EVEN WHEN it fans out broadly into domain (a transport re-routes domain
+    by construction). ON waives the ``len(dou) <= 1`` fan-out guard for the
+    name-dep prong ONLY.
+
+    Default **OFF** — the CLASSIFIER is ratified (a transport is plumbing),
+    but the keyed A/B (2026-07-10) showed that laning a transport DISSOLVES
+    the real product journeys homed to it (documenso 79→42 UFs, ~20 real
+    journeys lost) because there is no journey re-home yet. It stays OFF
+    until B20's path_index-aware re-home redistributes the transport's
+    journeys to their consuming product PFs (see the S2 transport-prong
+    docstring). ``FAULTLINE_TECH_TRANSPORT_LANE=1`` opts in for that coupled
+    work. OFF is byte-identical to pre-B19."""
+    return os.environ.get(TRANSPORT_LANE_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
 
 
 def _norm(tok: str) -> str:
@@ -527,6 +578,7 @@ def detect_technology_instruments(
 
     instruments: dict[str, str] = {}
     config_lane = config_lane_enabled()  # B1 kill-switch (S1c relaxation)
+    transport_lane = transport_lane_enabled()  # B19 (design-review, def OFF)
 
     def _dou(u: str) -> set[str]:
         return {t for t in out_units.get(u, ()) if t not in instruments}
@@ -595,10 +647,20 @@ def detect_technology_instruments(
                 sig = "S1e-thin-wrapper"
             elif (f["name_keys"] & ui_keys) and inf >= 5 and inu >= 2:
                 sig = "S1f-design-system"
-            elif inf >= 5 and inu >= 3 and len(dou) <= 1:
+            elif inf >= 5 and inu >= 3 and (
+                    len(dou) <= 1
+                    # B19 transport prong (design-review, default OFF): a
+                    # broadly-imported package NAMED after its own external
+                    # dependency family re-routes domain by construction, so a
+                    # high domain fan-out is its signature, not a domain-core
+                    # tell. Waive the fan-out guard for the name-dep prong ONLY
+                    # (the weaker infra-noun prong still requires len(dou)<=1).
+                    or (transport_lane
+                        and (f["name_keys"] & repo_ext_tokens))):
                 if f["name_keys"] & repo_ext_tokens:
-                    sig = "S2-asymmetry:name-dep"
-                elif f["name_keys"] & nouns:
+                    sig = ("S2-asymmetry:name-dep" if len(dou) <= 1
+                           else "S2-transport:name-dep-fanout")
+                elif f["name_keys"] & nouns:  # reachable only when dou<=1
                     sig = "S2-asymmetry:infra-noun"
             if sig:
                 instruments[u] = sig
