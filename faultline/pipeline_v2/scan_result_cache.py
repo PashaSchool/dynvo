@@ -151,6 +151,11 @@ ENV_OUTPUT_FLAGS = (
     # UF re-homes to its strict-majority entry-owner PF. Reshapes
     # user_flows[].product_feature_id.
     "FAULTLINE_I16_REHOME_B20",
+    # B22a (2026-07-10) — cross-app fold guard: the mint's ancestor-walk rung
+    # may not annex a dev across a workspace-unit boundary (documenso trpc
+    # annexation). Reshapes developer_features[].product_feature_id +
+    # path_index ownership + the platform_infrastructure lane.
+    "FAULTLINE_FOLD_CROSSAPP_GUARD",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -164,7 +169,8 @@ ENV_OUTPUT_FLAGS = (
 #: v9 (B16 Part 2): added FAULTLINE_PF_SIBLING_UNIFY.
 #: v10 (B19): added FAULTLINE_TECH_TRANSPORT_LANE.
 #: v11 (B20): added FAULTLINE_I16_REHOME_B20.
-KEY_SCHEMA_VERSION = 11
+#: v12 (B22a): added FAULTLINE_FOLD_CROSSAPP_GUARD.
+KEY_SCHEMA_VERSION = 12
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
