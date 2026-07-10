@@ -1159,6 +1159,25 @@ class UserFlow(BaseModel):
     # (default) so non-seed UFs / kill-switch-off / old JSON stay
     # byte-identical.
     is_coverage_marker: bool = False
+    # B23 (2026-07-10) — REAL code coordinates for a member-less coverage
+    # marker: its trigger surface's files as whole-file ``(path, 1, loc)``
+    # spans (honest for an UNCOVERED surface — no flow ever traced a finer
+    # grain there). Attached by ``synth_quality.attach_marker_surface_coords``
+    # behind ``FAULTLINE_MARKER_SURFACE_COORDS`` from the files the mint
+    # sites resolved (e2e route-family files / system route-group files /
+    # home-PF member files as fallback), restricted to files NO flow
+    # already claims — a marker must never re-attribute covered code.
+    # Stage 6.97b stamps ``loc`` from these spans when the UF has no member
+    # spans. ``None`` (OMITTED from dumps — see the serializer) on
+    # non-markers, markers whose surface never honestly resolved (they stay
+    # loc=0), kill-switch off, and old JSON — those dumps stay byte-identical.
+    surface_files: list["FlowLineRange"] | None = None
+    # B23 — mint-side candidate ledger: the RAW resolver/trigger file paths
+    # a mint site had in hand (BEFORE the claimed-file filter and the loc
+    # measurement). Pipeline plumbing only: consumed and cleared by
+    # ``attach_marker_surface_coords``; NEVER serialized (field-level
+    # ``exclude=True`` plus a defensive pop in the serializer).
+    surface_candidate_files: list[str] | None = Field(default=None, exclude=True)
 
     @model_serializer(mode="wrap")
     def _omit_none_identity(self, handler: Any) -> Any:
@@ -1194,6 +1213,14 @@ class UserFlow(BaseModel):
             # default-False dump is byte-identical to pre-B13 output.
             if data.get("is_coverage_marker") is False:
                 data.pop("is_coverage_marker", None)
+            # B23 — surface coordinates exist only on markers whose trigger
+            # surface honestly resolved under FAULTLINE_MARKER_SURFACE_COORDS;
+            # a None dump is byte-identical to pre-B23 output. The candidate
+            # ledger is pipeline plumbing and must NEVER serialize (the
+            # field is exclude=True; this pop is defensive belt-and-braces).
+            if data.get("surface_files") is None:
+                data.pop("surface_files", None)
+            data.pop("surface_candidate_files", None)
         return data
 
 

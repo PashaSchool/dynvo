@@ -164,6 +164,14 @@ ENV_OUTPUT_FLAGS = (
     # exist. Sub-flag of the plurality rung keys alongside it.
     "FAULTLINE_TRANSPORT_LANE_HANDOFF",
     "FAULTLINE_TRANSPORT_HANDOFF_PLURALITY",
+    # B23 (2026-07-10) — marker surface coordinates: member-less coverage
+    # markers carry their uncovered trigger surface as whole-file spans
+    # (user_flows[].surface_files, honest loc>0 via 6.97b) and Track-C e2e
+    # markers keep their maintainer-authored labels instead of the
+    # 'Uncovered: <PF> routes' rename. Reshapes the emitted user_flows[]
+    # layer. Sub-flag of FAULTLINE_BACKSTOP_OWNED_COVER (lock-step: spans
+    # exist only where the B13 marker flag exists).
+    "FAULTLINE_MARKER_SURFACE_COORDS",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -179,6 +187,8 @@ ENV_OUTPUT_FLAGS = (
 #: v11 (B20): added FAULTLINE_I16_REHOME_B20.
 #: v12 (B22a): added FAULTLINE_FOLD_CROSSAPP_GUARD.
 #: v13 (B22): added FAULTLINE_TRANSPORT_LANE_HANDOFF + FAULTLINE_TRANSPORT_HANDOFF_PLURALITY.
+#: (B23): added FAULTLINE_MARKER_SURFACE_COORDS — version number reconciled
+#: at merge by the orchestrator (established practice; do not bump here).
 KEY_SCHEMA_VERSION = 13
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept

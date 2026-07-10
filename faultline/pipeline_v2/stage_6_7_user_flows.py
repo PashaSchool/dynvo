@@ -1661,6 +1661,12 @@ def resynthesize_system_ufs(
             synthesized=True,
             synthesis_reason=SYSTEM_RECALL_REASON,
             binding_confidence="low" if pf_home else None,
+            # B23 — the system route-group's handler files (this seed's
+            # trigger surface). NEVER serialized (excluded field): consumed
+            # by ``synth_quality.attach_marker_surface_coords`` at 6.98
+            # behind FAULTLINE_MARKER_SURFACE_COORDS (claimed-file +
+            # measured-loc honesty gates apply there).
+            surface_candidate_files=gfiles or None,
         ))
         existing_names.add(name.strip().lower())
         tele["minted"] += 1
