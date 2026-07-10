@@ -209,6 +209,13 @@ ENV_OUTPUT_FLAGS = (
     # route-terminal) evidence at Stage 6.98 — per-board uniqueness by
     # construction. Reshapes user_flows[].name.
     "FAULTLINE_RECALL_ROW_NAMES",
+    # B34 (2026-07-10) — lazy-import edges (Tier 1, artifact side-channel)
+    # + dispatch-registry system-flow seeds (Tier 2, appends flows[] rows
+    # for uncovered string-dispatched connectors). Tier 2 reshapes
+    # flows[] / developer_features[].flows[] and, transitively, the UF
+    # recall layer (flowless-PF markers dissolve). Both default OFF.
+    "FAULTLINE_LAZY_IMPORT_EDGES",
+    "FAULTLINE_DISPATCH_REGISTRY_FLOWS",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -232,7 +239,8 @@ ENV_OUTPUT_FLAGS = (
 #: v17 (B26+B27): added FAULTLINE_HUB_PLUMBING_CHILD + FAULTLINE_PF_MANIFEST_NAME.
 #: v18 (B30): added FAULTLINE_FLOW_NAME_V2.
 #: v19 (B31): added FAULTLINE_RECALL_ROW_NAMES.
-KEY_SCHEMA_VERSION = 19
+#: v20 (B34): added FAULTLINE_LAZY_IMPORT_EDGES + FAULTLINE_DISPATCH_REGISTRY_FLOWS.
+KEY_SCHEMA_VERSION = 20
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

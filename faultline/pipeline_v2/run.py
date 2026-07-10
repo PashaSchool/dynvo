@@ -642,6 +642,92 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # ── B34 — lazy-import edges + dispatch-registry seeds ($0) ─────
+    # Tier 1 (FAULTLINE_LAZY_IMPORT_EDGES): collect function-level /
+    # dynamic import edges (kind="lazy") — side-channel artifact only,
+    # scan JSON untouched, NO traversal change anywhere. Tier 2
+    # (FAULTLINE_DISPATCH_REGISTRY_FLOWS): detect string-keyed dispatch
+    # registries (branch-local lazy-import factories, TS switch/object
+    # registries) and append ONE deterministic FlowSpec per UNCOVERED
+    # registry target to its owning feature — downstream stages (5.5
+    # ids, lineage, UF rollup, recall) treat these seeds like any other
+    # flow, so a flowless connector PF gains honest member flows and
+    # its `Uncovered:` marker dissolves naturally. Both flags default
+    # OFF → this block is byte-inert on default scans.
+    from faultline.pipeline_v2.dispatch_registry import (
+        dispatch_registry_enabled,
+        run_dispatch_registry_stage,
+    )
+    from faultline.pipeline_v2.lazy_imports import (
+        collect_lazy_import_edges,
+        lazy_import_edges_enabled,
+    )
+    if lazy_import_edges_enabled() or dispatch_registry_enabled():
+        with StageLogger(run_dir, 3, "lazy_imports") as log_li:
+            try:
+                _lazy_edges = collect_lazy_import_edges(
+                    ctx.repo_path, list(ctx.tracked_files),
+                )
+                log_li.info(
+                    "lazy_imports: %d resolved repo-internal edges "
+                    "(py=%d ts=%d optional=%d)" % (
+                        len(_lazy_edges),
+                        sum(1 for e in _lazy_edges if e.lang == "py"),
+                        sum(1 for e in _lazy_edges if e.lang == "ts"),
+                        sum(1 for e in _lazy_edges if e.optional),
+                    ),
+                    feature=None,
+                )
+                if lazy_import_edges_enabled():
+                    write_stage_artifact(
+                        ctx.repo_path, stage_index=3,
+                        stage_name="lazy_imports",
+                        payload={
+                            "edges": [
+                                {
+                                    "src": e.src, "target": e.target,
+                                    "target_file": e.target_file,
+                                    "lang": e.lang, "kind": e.kind,
+                                    "optional": e.optional,
+                                } for e in _lazy_edges
+                            ],
+                        },
+                        run_dir=run_dir,
+                    )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                _lazy_edges = []
+                log_li.info(
+                    f"lazy_imports: FAILED ({exc}) — continuing without edges",
+                    feature=None,
+                )
+        if dispatch_registry_enabled():
+            with StageLogger(run_dir, 3, "dispatch_registry") as log_dr:
+                try:
+                    _dr_tele = run_dispatch_registry_stage(
+                        stage3.features_with_flows, ctx, _lazy_edges,
+                    )
+                    log_dr.info(
+                        "dispatch_registry: minted %d seeds "
+                        "(targets=%d py=%d ts=%d covered-skip=%d "
+                        "no-owner-skip=%d)" % (
+                            _dr_tele["minted"], _dr_tele["targets_total"],
+                            _dr_tele["py_targets"], _dr_tele["ts_targets"],
+                            _dr_tele["skipped_covered"],
+                            _dr_tele["skipped_no_owner"],
+                        ),
+                        feature=None,
+                    )
+                    write_stage_artifact(
+                        ctx.repo_path, stage_index=3,
+                        stage_name="dispatch_registry",
+                        payload=_dr_tele, run_dir=run_dir,
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_dr.info(
+                        f"dispatch_registry: FAILED ({exc}) — no seeds minted",
+                        feature=None,
+                    )
+
     # ── Stage 4 — residual LLM fallback (cluster + saturation) ─────
     write_stage_input(run_dir, 4, "residual", {
         "unattributed": unattributed,
