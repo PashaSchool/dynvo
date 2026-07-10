@@ -13,8 +13,8 @@ route-subtree (nav-area) ownership, the B22a fold-annexation family.
 
 THE FIX (operator decision "B-narrow + single database mint",
 generalized — mechanisms, not vocabularies): under
-``FAULTLINE_MEGA_PF_NAV_REHOME`` (default OFF; the flip decision comes
-from the keyed supabase OFF/ON A/B):
+``FAULTLINE_MEGA_PF_NAV_REHOME`` (default ON since the 2026-07-10 keyed
+supabase OFF/ON A/B; ``=0`` restores the pre-B24 board):
 
 TRIGGER (both prongs, board's strict top-UF-count PF only):
   * T1 nav-multiplicity — the PF's homed journeys strict-majority-
@@ -137,9 +137,12 @@ _MINT_MIN_FLOWS = 3
 
 
 def mega_pf_nav_rehome_enabled() -> bool:
-    """Default OFF (Phase-2 landing posture; the default flip is the
-    keyed supabase OFF/ON A/B decision, not this branch)."""
-    return os.environ.get(MEGA_PF_NAV_REHOME_ENV, "0").strip().lower() in {
+    """Default ON since the keyed supabase OFF/ON A/B (2026-07-10,
+    orchestrator flip decision): validator 22->20, I15 lane-aware median
+    0.592->0.631, I16 0->0, journey conservation held (the single row
+    delta was an uncovered-surface marker whose surface gained real
+    journeys). ``=0`` restores the pre-B24 board byte-identically."""
+    return os.environ.get(MEGA_PF_NAV_REHOME_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

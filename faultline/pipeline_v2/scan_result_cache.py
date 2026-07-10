@@ -197,7 +197,10 @@ ENV_OUTPUT_FLAGS = (
 #: v13 (B22): added FAULTLINE_TRANSPORT_LANE_HANDOFF + FAULTLINE_TRANSPORT_HANDOFF_PLURALITY.
 #: v14 (B23): added FAULTLINE_MARKER_SURFACE_COORDS.
 #: v15 (B24): added FAULTLINE_MEGA_PF_NAV_REHOME.
-KEY_SCHEMA_VERSION = 15
+#: v16 (B24 flip): FAULTLINE_MEGA_PF_NAV_REHOME default OFF -> ON — the
+#: default flip changes what "unset" means, so cached entries keyed under
+#: unset must not be served across it (B4 precedent).
+KEY_SCHEMA_VERSION = 16
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

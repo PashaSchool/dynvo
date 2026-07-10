@@ -439,9 +439,11 @@ def test_shared_residual_never_carves_unique_residual_does():
 # ── 8. flag posture + determinism ───────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch):
+def test_flag_default_on(monkeypatch):
+    # Default flipped ON by the 2026-07-10 keyed supabase A/B decision;
+    # =0 remains the kill-switch back to the pre-B24 board.
     monkeypatch.delenv(MEGA_PF_NAV_REHOME_ENV, raising=False)
-    assert mega_pf_nav_rehome_enabled() is False
+    assert mega_pf_nav_rehome_enabled() is True
     monkeypatch.setenv(MEGA_PF_NAV_REHOME_ENV, "0")
     assert mega_pf_nav_rehome_enabled() is False
     monkeypatch.setenv(MEGA_PF_NAV_REHOME_ENV, "1")
