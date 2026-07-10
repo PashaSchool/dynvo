@@ -1039,16 +1039,22 @@ def run_anchored_mint(
     _anchor_unit_cache: dict[str, str | None] = {}
 
     def _anchor_unit(cid: str) -> str | None:
-        """The single workspace unit holding EVERY evidence unit of
-        anchor *cid*, or ``None`` (a multi-unit or non-unit anchor is
-        never foreign — the guard cannot call it an annexation)."""
+        """The single workspace unit holding the anchor's evidence, or
+        ``None`` when the evidence spans ≥2 units or sits wholly outside
+        every unit (a genuinely cross-unit / non-unit anchor is never
+        foreign — the guard cannot call it an annexation). Evidence
+        OUTSIDE any unit (root-level files) does not veto a single-unit
+        anchor — a ``packages/email`` anchor with a stray root manifest
+        is still a packages/email anchor (documenso keyless
+        calibration: ``route:email`` must stay foreign to
+        ``apps/openpage-api`` devs)."""
         if cid not in _anchor_unit_cache:
             a = anchor_by_id.get(cid)
             unit: str | None = None
             if a is not None:
                 units = {
-                    _unit_of(str(u), _fold_guard_units)
-                    for u in list(a.prefixes) + sorted(a.files)
+                    u for ev in list(a.prefixes) + sorted(a.files)
+                    if (u := _unit_of(str(ev), _fold_guard_units)) is not None
                 }
                 if len(units) == 1:
                     unit = next(iter(units))
@@ -1122,6 +1128,15 @@ def run_anchored_mint(
         if not foreign:
             return _walk(frozenset()), False
         guarded = _walk(foreign)
+        if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+            tele.setdefault("fold_debug", []).append({
+                "dev": f.name, "rung": "walk-guard",
+                "dev_units": sorted(dev_units),
+                "foreign": sorted(foreign)[:8],
+                "guarded": guarded,
+                "guarded_unit": (_anchor_unit(guarded)
+                                 if guarded is not None else None),
+            })
         if guarded is not None:
             if guarded != _walk(frozenset()):
                 # the annexation fix: the dev re-homes inside a unit it

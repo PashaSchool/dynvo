@@ -166,6 +166,26 @@ def test_isolated_cross_unit_dev_lanes_with_its_unit() -> None:
     assert lane[0]["shared_reason"] == _SHARED_REASON_CROSS_UNIT
 
 
+def test_root_level_evidence_does_not_unfence_anchor() -> None:
+    """documenso keyless calibration: an anchor whose evidence is one
+    unit PLUS a root-level file (outside every unit) is still a
+    single-unit anchor — the stray root evidence must not turn it into
+    an unconstrained target for cross-unit devs."""
+    devs, routes = _monorepo_fixture()
+    # merge a root-level file into the /metrics route anchor's evidence
+    routes = routes + [
+        {"pattern": "/metrics", "method": "PAGE", "file": "metrics.tsx"},
+    ]
+    victim = _victim_isolated()
+    all_devs = devs + [victim]
+    pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+    assert victim.product_feature_id is None, (
+        "B22a REGRESSION: root-level anchor evidence unfenced the "
+        "foreign unit — the isolated dev annexed to {!r}".format(
+            victim.product_feature_id))
+    assert victim.shared_reason == _SHARED_REASON_CROSS_UNIT
+
+
 # ── (b) same-unit fold untouched (anti-case) ─────────────────────────────
 
 
