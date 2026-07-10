@@ -351,6 +351,13 @@ def test_tenant_descent_walk():
     assert _tenant_descend(["project", "[ref]", "page.tsx"]) is None   # stem
     assert _tenant_descend(["a", "[x]", "b", "[y]", "c", "d.tsx"]) \
         == ("c", "a/[x]/b/[y]/c")                                # multi-pair
+    # transparent protocol/version hop (the live "api"-mint exhibit)
+    assert _tenant_descend(["api", "incidents", "banner.ts"]) \
+        == ("incidents", "api/incidents")
+    assert _tenant_descend(["api", "v1", "functions", "x.ts"]) \
+        == ("functions", "api/v1/functions")
+    assert _tenant_descend(["api", "route.ts"]) is None
+    assert _tenant_descend(["api", "v1", "edit.ts"]) is None     # CRUD leaf
 
 
 def test_descent_off_by_default_keeps_b22_grain():
@@ -492,3 +499,41 @@ def test_memberless_seeds_do_not_dilute_share():
     assert tele["triggered"] == ["projects"]
     # seeds are untouched (they can neither vote nor move)
     assert all(u.product_feature_id == "billing" for u in seeds)
+
+
+# ── 11. non-product-surface journeys never dilute the census ────────────
+
+
+def test_nonproduct_surface_homes_do_not_dilute_share():
+    """Live diag #2 (keyless supabase): the 6.986 board still carries
+    journeys homed to blog/careers-class PFs that the emission
+    partitioner later moves off the product board — with them in the
+    denominator the umbrella read 0.245. Homes the SurfaceScopeClassifier
+    scopes non-product count on NEITHER side."""
+    devs, pfs, ufs, flows, ri, grain = _supabase_scene()
+    # a marketing PF whose paths are routes_index-scoped 'marketing'
+    mk_files = [f"apps/www/pages/blog/p{i}.tsx" for i in range(4)]
+    blog = PF("blog", "route:apps/www/pages/blog")
+    blog.paths = list(mk_files)
+    pfs.append(blog)
+    ri2 = ri + [{"file": f, "pattern": "/" + f.split("pages/")[-1],
+                 "surface_scope": "marketing"} for f in mk_files]
+    for i, f in enumerate(mk_files):
+        flows.append(Fl(f"f-mk{i}", f, [f]))
+    # 30 marketing journeys homed to blog: with them in the denominator
+    # projects' share would be 8/40 = 0.20 < 0.25 (no trigger).
+    mk_ufs = [UF(f"UF-m{i}", f"Read blog {i}", "blog",
+                 [f"f-mk{i % 4}"]) for i in range(30)]
+    grain2 = _grain(
+        [a for a in (
+            _anchor(f"route:{ROOT}/api/platform/projects",
+                    f"{ROOT}/api/platform/projects", "Projects"),
+            _anchor(f"route:{ROOT}/project/[ref]/settings",
+                    f"{ROOT}/project/[ref]/settings", "Settings"),
+            _anchor(f"route:{ROOT}/project/[ref]/logs",
+                    f"{ROOT}/project/[ref]/logs", "Logs"),
+        )], pfs, ri2)
+    tele = run_mega_pf_nav_rehome(
+        devs, pfs, ufs + mk_ufs, flows, ri2, Ctx(), grain_index=grain2)
+    assert tele["triggered"] == ["projects"]
+    assert all(u.product_feature_id == "blog" for u in mk_ufs)

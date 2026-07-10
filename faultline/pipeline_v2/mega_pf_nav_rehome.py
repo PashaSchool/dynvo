@@ -234,6 +234,50 @@ def _full_paths(f: Any) -> list[str]:
     return [str(p) for p in (_attr(f, "paths") or [])] or _owned_of(f)
 
 
+def _product_home_fn(product_features: list[Any],
+                     routes_index: Any, ctx: Any):
+    """``pf_key -> bool`` — does the emission partitioner's OWN
+    deterministic classifier scope this PF ``product``? (Read-only
+    reuse of :class:`surface_taxonomy.SurfaceScopeClassifier`; the
+    non-product rows leave the board at emission, so the trigger ruler
+    — calibrated on emitted boards — must not count journeys homed to
+    them.) Classifier unavailable → fail-open ``product`` (mirrors the
+    classifier's conservative no-paths default)."""
+    pf_by_key = {(str(_attr(pf, "id") or _attr(pf, "name"))): pf
+                 for pf in product_features
+                 if (_attr(pf, "id") or _attr(pf, "name"))}
+    clf = rbf = None
+    try:
+        from faultline.pipeline_v2.surface_taxonomy import (
+            SurfaceScopeClassifier,
+            _route_by_file,
+            taxonomy_enabled,
+        )
+        if taxonomy_enabled():
+            clf = SurfaceScopeClassifier(
+                None, repo_path=_attr(ctx, "repo_path", None),
+                routes_index=routes_index)
+            rbf = _route_by_file(routes_index)
+    except Exception:  # noqa: BLE001 — census fail-open
+        clf = None
+    memo: dict[str, bool] = {}
+
+    def _is_product(key: str) -> bool:
+        if key in memo:
+            return memo[key]
+        out = True
+        pf = pf_by_key.get(key)
+        if clf is not None and pf is not None:
+            try:
+                out = clf.classify_feature(pf, rbf) == "product"
+            except Exception:  # noqa: BLE001 — fail-open
+                out = True
+        memo[key] = out
+        return out
+
+    return _is_product
+
+
 def run_mega_pf_nav_rehome(
     developer_features: list[Any],
     product_features: list[Any],
@@ -294,19 +338,29 @@ def run_mega_pf_nav_rehome(
                 break
 
     # ── T2: strict top + dominance share ────────────────────────────
-    # MEMBER-FUL journeys only (live diag 2026-07-10, keyless supabase):
-    # at 6.986-time the board still carries the member-less recall /
-    # system seeds that ui_chrome / synth_quality demote before
-    # emission — they inflated the live denominator (26/106 = 0.245
-    # vs the emitted member-ful 35/69 = 0.507 the corpus ruler was
-    # calibrated against). A member-less seed is a coverage marker,
-    # not a journey (B4/B13): it can neither vote a grain nor move, so
-    # it counts on NEITHER side of the dominance ratio.
+    # The census must measure the BOARD THE RULER WAS CALIBRATED ON —
+    # the emitted product board — not the raw 6.986-slot journey list
+    # (live diag, keyless supabase 2026-07-10: the slot still carries
+    # (a) member-less recall/system seeds and (b) journeys homed to
+    # NON-PRODUCT surfaces (blog/careers/docs-info rows) that
+    # apply_emission_taxonomy later moves off the board — together they
+    # diluted the live share to 26/106 = 0.245 vs the emitted
+    # member-ful product census 26/57 = 0.456). So the census counts a
+    # journey iff it (1) has member flows — a member-less seed is a
+    # coverage marker, not a journey (B4/B13); it can neither vote nor
+    # move — and (2) is homed to a PF the emission partitioner's OWN
+    # deterministic classifier scopes 'product' (read-only reuse of
+    # SurfaceScopeClassifier — one ruler, no new vocabulary; classifier
+    # unavailable → fail-open product, the classifier's own
+    # conservative default).
+    _is_product_home = _product_home_fn(product_features, routes_index,
+                                        ctx)
     home_counter: Counter = Counter(
         str(_attr(u, "product_feature_id"))
         for u in user_flows
         if _attr(u, "product_feature_id")
-        and (_attr(u, "member_flow_ids") or []))
+        and (_attr(u, "member_flow_ids") or [])
+        and _is_product_home(str(_attr(u, "product_feature_id"))))
     total_homed = sum(home_counter.values())
     if not total_homed:
         return tele
@@ -397,6 +451,14 @@ def run_mega_pf_nav_rehome(
             if str(_attr(u, "surface_scope") or "product") != \
                     str(_attr(tpf, "surface_scope") or "product"):
                 _stay(u, "surface_scope_mismatch")
+                continue
+            if not _is_product_home(key):
+                # the emission partitioner will move this PF off the
+                # board — a product journey never re-homes onto a
+                # leaving surface (stage-time tags are still None, so
+                # the tag-equality rail above is vacuous live; THIS is
+                # the real surface rail).
+                _stay(u, "target_not_product_surface")
                 continue
             taid = str(_attr(tpf, "anchor_id") or "")
             tpath = taid.split(":", 1)[-1] if ":" in taid else ""

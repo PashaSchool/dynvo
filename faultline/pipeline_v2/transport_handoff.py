@@ -421,20 +421,48 @@ def _tenant_descend(segs: list[str]) -> tuple[str, str] | None:
         s = seg.rsplit(".", 1)[0]
         return s.split(".", 1)[0] or s
 
+    def _transparent(seg: str) -> bool:
+        # protocol/version addressing — never a nav area itself when a
+        # deeper segment exists (the _pattern_key_chain transparency
+        # class; live exhibit: apps/studio/app/api/... minting a PF
+        # named "api")
+        return seg in ("api", "trpc", "rest", "graphql", "rpc") or bool(
+            re.match(r"^v\d+$", seg))
+
+    def _valid_area(tok: str) -> bool:
+        return bool(tok) and not _DYNAMIC_RE.match(tok) \
+            and tok not in _CRUD_LEAF_SEGS and tok not in _AREA_LEAF_STEMS
+
     i, n = 0, len(segs)
     descended = False
-    while i + 1 < n and not _DYNAMIC_RE.match(segs[i]) \
-            and _DYNAMIC_RE.match(segs[i + 1]):
-        j = i + 2
-        while j < n and _DYNAMIC_RE.match(segs[j]):
-            j += 1
-        if j >= n:
+    while True:
+        # transparent hop: api / trpc / vN with deeper segments
+        if i + 1 < n and _transparent(segs[i]):
+            j = i + 1
+            tok = _stem(segs[j]) if j == n - 1 else segs[j]
+            if (_transparent(segs[j]) or _DYNAMIC_RE.match(segs[j])) \
+                    and j < n - 1:
+                i = j  # api/v1/… — keep hopping
+                continue
+            if _valid_area(tok) and not _transparent(tok):
+                i, descended = j, True
+                continue
             break
-        tok = _stem(segs[j]) if j == n - 1 else segs[j]
-        if (not tok or _DYNAMIC_RE.match(tok)
-                or tok in _CRUD_LEAF_SEGS or tok in _AREA_LEAF_STEMS):
-            break
-        i, descended = j, True
+        # tenant-address pair: static + dynamic+ with a deeper
+        # non-CRUD static beyond
+        if i + 1 < n and not _DYNAMIC_RE.match(segs[i]) \
+                and _DYNAMIC_RE.match(segs[i + 1]):
+            j = i + 2
+            while j < n and _DYNAMIC_RE.match(segs[j]):
+                j += 1
+            if j >= n:
+                break
+            tok = _stem(segs[j]) if j == n - 1 else segs[j]
+            if not _valid_area(tok):
+                break
+            i, descended = j, True
+            continue
+        break
     if not descended:
         return None
     if i == n - 1:  # leaf file keys by extensionless stem
