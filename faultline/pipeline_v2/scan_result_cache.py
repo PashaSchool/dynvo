@@ -180,6 +180,13 @@ ENV_OUTPUT_FLAGS = (
     # + product_features[] + developer_features[] carve chunks. Default
     # OFF.
     "FAULTLINE_MEGA_PF_NAV_REHOME",
+    # B25 (2026-07-10) — journey-lattice verifier-revert slot release: a pf
+    # whose split plan the Draft Verifier fully reverted re-runs the
+    # Phase-2b action detection once (one extra verifier batch, hard-capped
+    # at one release per pf per scan). Reshapes the emitted user_flows[]
+    # layer on keyed scans (keyless is unreachable — no verifier, no
+    # reverts).
+    "FAULTLINE_JOURNEY_LATTICE_B25",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -200,6 +207,8 @@ ENV_OUTPUT_FLAGS = (
 #: v16 (B24 flip): FAULTLINE_MEGA_PF_NAV_REHOME default OFF -> ON — the
 #: default flip changes what "unset" means, so cached entries keyed under
 #: unset must not be served across it (B4 precedent).
+#: (B25): added FAULTLINE_JOURNEY_LATTICE_B25 — schema bump reconciled at
+#: merge by the operator (not bumped on the branch).
 KEY_SCHEMA_VERSION = 16
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
