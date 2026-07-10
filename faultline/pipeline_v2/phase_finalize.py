@@ -485,6 +485,7 @@ def run_finalize_phase(
     anchored_mint_applied = False
     anchored_hub_stamps: dict[str, str] = {}
     instrument_dirs: frozenset[str] = frozenset()  # W4.2 Fix 1
+    dev_artifact_units: frozenset[str] = frozenset()  # B28 P-D marks
     if anchored_mint_enabled():
         write_stage_input(run_dir, 6, "anchored_mint", {
             "features": features,
@@ -541,6 +542,13 @@ def run_finalize_phase(
                     instrument_dirs = frozenset(
                         (mint_tele.get("technology_instruments") or {})
                         .get("dirs") or []
+                    )
+                    # B28 P-D — hub-fixture marks ride the same tele to
+                    # the emission taxonomy (mark-only at 6.86; the
+                    # R1/R2 rails + lane consumption live emission-side).
+                    dev_artifact_units = frozenset(
+                        (mint_tele.get("technology_instruments") or {})
+                        .get("dev_artifact_units") or ()
                     )
                 scan_meta["stage_6_86_anchored_mint"] = {
                     k: v for k, v in mint_tele.items()
@@ -2261,6 +2269,7 @@ def run_finalize_phase(
                     repo_path=repo_path,
                     adjudicator=_st_adjudicator,
                     instrument_dirs=instrument_dirs,
+                    dev_artifact_units=dev_artifact_units,  # B28 P-D
                 )
             )
             scan_meta["surface_taxonomy_emission"] = st_tele
