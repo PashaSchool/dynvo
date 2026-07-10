@@ -89,7 +89,9 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 __all__ = [
     "ANCHORED_MINT_ENV",
     "MINT_DOMAIN_FOLD_ENV",
+    "FOLD_CROSSAPP_GUARD_ENV",
     "mint_domain_fold_enabled",
+    "fold_crossapp_guard_enabled",
     "anchored_mint_enabled",
     "run_anchored_mint",
     "build_platform_infrastructure_lane",
@@ -110,6 +112,24 @@ ANCHORED_MINT_ENV = "FAULTLINE_SPINE_ANCHORED_MINT"
 #: and surface-less routers stay folded exactly as before. Kill-switch:
 #: ``FAULTLINE_MINT_DOMAIN_FOLD_V2=0`` restores the byte-identical pre-B8c fold.
 MINT_DOMAIN_FOLD_ENV = "FAULTLINE_MINT_DOMAIN_FOLD_V2"
+
+#: B22a (2026-07-10) — cross-app fold guard. The terminal ancestor-walk rung
+#: (``fold:walk``) votes by plurality of ALL assigned files at the first
+#: populated ancestor level; a dev whose own workspace unit holds no minted
+#: anchor escalates to repo root, where the repo's BIGGEST anchor annexes it
+#: across the workspace boundary (documenso forensic: the ``ws:packages/trpc``
+#: PF annexed ~90 product files / 11,783 journey span-lines outside
+#: ``packages/trpc`` — embed/o/sign-token/d-token from ``apps/remix``, plus
+#: ``apps/docs`` and ``apps/openpage-api`` devs — poisoning every downstream
+#: owner-map ruler). The guard voids walk votes for anchors whose evidence
+#: sits wholly in a FOREIGN workspace unit (a unit holding none of the dev's
+#: own files). Unit roots come from the repo's OWN manifests (Stage-0
+#: ``detect_workspace``: pnpm-workspace.yaml globs, package.json
+#: "workspaces", turbo/nx/lerna/cargo/go; fallback: top-level dirs with their
+#: own unit manifest) — mechanisms, not vocabularies; no thresholds.
+#: Kill-switch: ``FAULTLINE_FOLD_CROSSAPP_GUARD=0`` restores the unguarded
+#: walk byte-identically.
+FOLD_CROSSAPP_GUARD_ENV = "FAULTLINE_FOLD_CROSSAPP_GUARD"
 
 #: θ — the majority threshold (calibration §F: U-cap is monotonically
 #: decreasing in θ; 0.5 is the conservation-law dual of §4.5).
@@ -134,6 +154,13 @@ _SHARED_REASON_INSTRUMENT = "technology_instrument"
 #: mirror of the instrument reason (package-level); both are neutral
 #: ground the validator I15 denominator excludes.
 _SHARED_REASON_INFRA_FANIN = "shared_infra_fanin"
+#: B22a — a flowful dev ISOLATED in a workspace unit that holds no minted
+#: anchor: every target the ancestor-walk could reach sits across a
+#: workspace-unit boundary, so annexing it would poison the owner map (the
+#: documenso apps/docs / apps/openpage-api class). It lanes WITH its unit
+#: (the unit's shell is already a lane resident) instead of riding a foreign
+#: PF; counted as ``fold_walk_crossunit_laned``, never as a law breach.
+_SHARED_REASON_CROSS_UNIT = "cross_unit_isolation"
 
 #: W3.1 D4 — vendor-husk floor: a hub child with NO flow evidence must
 #: own at least this many LOC of code to mint (else it folds under the
@@ -195,6 +222,50 @@ def mint_domain_fold_enabled() -> bool:
     return os.environ.get(MINT_DOMAIN_FOLD_ENV, "1").strip().lower() not in {
         "0", "false",
     }
+
+
+def fold_crossapp_guard_enabled() -> bool:
+    """Default ON; ``FAULTLINE_FOLD_CROSSAPP_GUARD=0`` restores the
+    unguarded ancestor-walk (pre-B22a cross-app annexation) byte-identically
+    for A/B."""
+    return os.environ.get(FOLD_CROSSAPP_GUARD_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def _workspace_unit_roots(ctx: Any) -> tuple[str, ...]:
+    """Workspace-unit roots (an app or a workspace package), derived from
+    the repo's OWN manifests — never from directory-name vocabulary.
+
+    Primary: ``ctx.workspaces`` (Stage-0 ``detect_workspace`` output —
+    pnpm-workspace.yaml globs, package.json "workspaces", turbo / nx /
+    lerna / cargo / go). Fallback for non-workspace repos: a TOP-LEVEL dir
+    carrying its own unit manifest (the spine-anchor
+    ``unit_manifest_files`` convention — the Soc0 backend/ + frontend/
+    class). Sorted longest-first so nested units resolve to the most
+    specific root. Empty on single-unit repos → the guard is inert.
+    """
+    roots: set[str] = set()
+    for w in (getattr(ctx, "workspaces", None) or []):
+        p = str(getattr(w, "path", "") or "").replace("\\", "/").strip("/")
+        if p:
+            roots.add(p)
+    if not roots:
+        manifests = set(load_spine_vocab().get("unit_manifest_files") or [])
+        for t in (getattr(ctx, "tracked_files", None) or []):
+            segs = str(t).split("/")
+            if len(segs) == 2 and segs[1] in manifests:
+                roots.add(segs[0])
+    return tuple(sorted(roots, key=lambda r: (-len(r), r)))
+
+
+def _unit_of(path: str, unit_roots: tuple[str, ...]) -> str | None:
+    """The most specific workspace unit holding *path* (longest-prefix
+    match over ``unit_roots``), or ``None`` outside every unit."""
+    for r in unit_roots:
+        if path == r or path.startswith(r + "/"):
+            return r
+    return None
 
 
 #: The surface token stripped to recover a route anchor's DOMAIN family. Only
@@ -960,12 +1031,53 @@ def run_anchored_mint(
             return None
         return best
 
-    def _ancestor_walk(f: "Feature") -> str | None:
+    # ── B22a — cross-app fold guard state (walk rung only) ───────────
+    # Unit roots from the repo's own manifests; empty tuple ⇒ guard inert
+    # (single-unit repos, or kill-switch FAULTLINE_FOLD_CROSSAPP_GUARD=0).
+    _fold_guard_units: tuple[str, ...] = (
+        _workspace_unit_roots(ctx) if fold_crossapp_guard_enabled() else ())
+    _anchor_unit_cache: dict[str, str | None] = {}
+
+    def _anchor_unit(cid: str) -> str | None:
+        """The single workspace unit holding the anchor's evidence, or
+        ``None`` when the evidence spans ≥2 units or sits wholly outside
+        every unit (a genuinely cross-unit / non-unit anchor is never
+        foreign — the guard cannot call it an annexation). Evidence
+        OUTSIDE any unit (root-level files) does not veto a single-unit
+        anchor — a ``packages/email`` anchor with a stray root manifest
+        is still a packages/email anchor (documenso keyless
+        calibration: ``route:email`` must stay foreign to
+        ``apps/openpage-api`` devs)."""
+        if cid not in _anchor_unit_cache:
+            a = anchor_by_id.get(cid)
+            unit: str | None = None
+            if a is not None:
+                units = {
+                    u for ev in list(a.prefixes) + sorted(a.files)
+                    if (u := _unit_of(str(ev), _fold_guard_units)) is not None
+                }
+                if len(units) == 1:
+                    unit = next(iter(units))
+            _anchor_unit_cache[cid] = unit
+        return _anchor_unit_cache[cid]
+
+    def _ancestor_walk(f: "Feature") -> tuple[str | None, bool]:
         """W2b.1 law rung L3 — nearest-ancestor plurality: walk UP from
         the dev's owned files' common dir; the first level where ANY
         assigned dev owns files decides by plurality of their anchors.
         Total whenever ≥1 dev is assigned (the repo-root level sees
-        every assigned file)."""
+        every assigned file).
+
+        B22a cross-app fold guard (default ON): a vote for an anchor
+        whose evidence sits wholly inside a FOREIGN workspace unit — a
+        unit holding none of the dev's own files — is void; the walk may
+        never annex a dev across the workspace boundary (the documenso
+        ``ws:packages/trpc`` exhibit). Same-unit folds and a package
+        folding within its own subtree are untouched. Returns
+        ``(target, guard_isolated)``: ``guard_isolated`` is True only
+        when the guard voided EVERY target the unguarded walk would have
+        reached (the caller lanes the dev with its own unit instead of
+        recording a law breach)."""
         owned = owned_by_dev.get(f.name) or []
         dirs = [p.rsplit("/", 1)[0] if "/" in p else "" for p in owned]
         if dirs:
@@ -985,19 +1097,56 @@ def run_anchored_mint(
             for name in sorted(assignment)
             for p in owned_by_dev.get(name, ())
         }
-        level = common
-        while True:
-            votes: Counter[str] = Counter()
-            for p, cid in assigned_file_cid.items():
-                if not level or p.startswith(level + "/"):
-                    votes[cid] += 1
-            if votes:
-                (_best, n), = votes.most_common(1)
-                tied = sorted(c for c, v in votes.items() if v == n)
-                return tied[0]
-            if not level:
-                return None
-            level = level.rsplit("/", 1)[0] if "/" in level else ""
+
+        def _walk(skip: frozenset[str]) -> str | None:
+            level = common
+            while True:
+                votes: Counter[str] = Counter()
+                for p, cid in assigned_file_cid.items():
+                    if cid in skip:
+                        continue
+                    if not level or p.startswith(level + "/"):
+                        votes[cid] += 1
+                if votes:
+                    (_best, n), = votes.most_common(1)
+                    tied = sorted(c for c, v in votes.items() if v == n)
+                    return tied[0]
+                if not level:
+                    return None
+                level = level.rsplit("/", 1)[0] if "/" in level else ""
+
+        if not _fold_guard_units:
+            return _walk(frozenset()), False
+        dev_units = frozenset(
+            u for p in owned
+            if (u := _unit_of(p, _fold_guard_units)) is not None)
+        if not dev_units:
+            return _walk(frozenset()), False
+        foreign = frozenset(
+            cid for cid in set(assigned_file_cid.values())
+            if (au := _anchor_unit(cid)) is not None and au not in dev_units)
+        if not foreign:
+            return _walk(frozenset()), False
+        guarded = _walk(foreign)
+        if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+            tele.setdefault("fold_debug", []).append({
+                "dev": f.name, "rung": "walk-guard",
+                "dev_units": sorted(dev_units),
+                "foreign": sorted(foreign)[:8],
+                "guarded": guarded,
+                "guarded_unit": (_anchor_unit(guarded)
+                                 if guarded is not None else None),
+            })
+        if guarded is not None:
+            if guarded != _walk(frozenset()):
+                # the annexation fix: the dev re-homes inside a unit it
+                # actually lives in instead of the foreign plurality.
+                tele["fold_walk_crossunit_rehomed"] = (
+                    tele.get("fold_walk_crossunit_rehomed", 0) + 1)
+            return guarded, False
+        # every reachable target is cross-unit ⇒ the dev is ISOLATED in
+        # a unit with no minted anchor; annexing it is the B22a disease.
+        return None, _walk(frozenset()) is not None
 
     fold_pending: list[tuple["Feature", SpineAnchor | None, str]] = []
     for f in sorted(in_scope, key=lambda x: x.name):
@@ -1235,11 +1384,22 @@ def run_anchored_mint(
                 assignment[f.name] = (target, f"fold:span->{src}")
                 tele["fold_span_vote"] = tele.get("fold_span_vote", 0) + 1
                 continue
-            target = _ancestor_walk(f)
+            target, guard_isolated = _ancestor_walk(f)
             if target is not None:
                 assignment[f.name] = (target, f"fold:walk->{src}")
                 tele["fold_ancestor_walk"] = (
                     tele.get("fold_ancestor_walk", 0) + 1)
+                continue
+            if guard_isolated:
+                # B22a — every walk target sits across a workspace-unit
+                # boundary: the dev lanes WITH its own unit (whose shell
+                # is already a lane resident) instead of poisoning a
+                # foreign PF's owner map. Deliberately NOT counted as
+                # ``law_flowful_in_lane`` — this is the guard's honest
+                # refusal, not an assignment-less degenerate scan.
+                tele["fold_walk_crossunit_laned"] = (
+                    tele.get("fold_walk_crossunit_laned", 0) + 1)
+                infra[f.name] = _SHARED_REASON_CROSS_UNIT
                 continue
         if flowful:
             # Reachable ONLY on degenerate scans (zero mintable anchors,
@@ -1498,7 +1658,8 @@ def build_platform_infrastructure_lane(
     # tooling lanes, never mints).
     lane_reasons = {_SHARED_REASON_NONE, _SHARED_REASON_BAR,
                     _SHARED_REASON_SHELL, ANCHORED_HUSK_REASON,
-                    _SHARED_REASON_INSTRUMENT, _SHARED_REASON_INFRA_FANIN}
+                    _SHARED_REASON_INSTRUMENT, _SHARED_REASON_INFRA_FANIN,
+                    _SHARED_REASON_CROSS_UNIT}
     for f in developer_features:
         if getattr(f, "layer", "developer") != "developer":
             continue
