@@ -95,6 +95,13 @@ def rehome_foreign_entry_ufs(
                 flow_by_uuid[u] = fl
     pf_keys = {(_attr(pf, "id") or _attr(pf, "name")) for pf in product_features}
 
+    # Orphan guard (I8): a re-home must not strip the LAST journey off its
+    # source PF — a flowful PF left with zero UFs re-arms I8. Track a running
+    # UF-count per home and never let it fall to 0.
+    uf_count: Counter = Counter(
+        _attr(u, "product_feature_id") for u in user_flows
+        if _attr(u, "product_feature_id"))
+
     for uf in user_flows:
         pfid = _attr(uf, "product_feature_id")
         if not pfid:
@@ -125,7 +132,11 @@ def rehome_foreign_entry_ufs(
         top_ct, top_owner = cand[0]
         if top_ct / chk <= 0.5 or top_owner == pfid or top_owner not in pf_keys:
             continue  # no strict-majority PF target -> distributed/lane residual
+        if uf_count[pfid] <= 1:
+            continue  # orphan guard — do NOT strip the source PF's last journey (I8)
         uf.product_feature_id = top_owner
+        uf_count[pfid] -= 1
+        uf_count[top_owner] += 1
         tele["rehomed"] += 1
         tele["moves"].append({
             "uf": _attr(uf, "name"), "from": pfid, "to": top_owner,

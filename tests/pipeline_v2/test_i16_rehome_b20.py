@@ -89,12 +89,14 @@ def test_plurality_not_majority_does_not_rehome():
 
 def test_strict_majority_rehomes_and_clears():
     # home A: 1; foreign B: 3 (chk=4, mis=3 majority-foreign). B=3/4=0.75 strict
-    # majority -> re-home to B; new foreign = 1/4 < 0.5 (cleared).
+    # majority -> re-home to B; new foreign = 1/4 < 0.5 (cleared). A keeps a
+    # second journey so the orphan guard permits the move.
     devs, pfs, pidx = _scene([
         ("f1", "a/1.ts", "A"),
         ("f2", "b/1.ts", "B"), ("f3", "b/2.ts", "B"), ("f4", "b/3.ts", "B")])
+    keeper = UF("keeper", "A", ["f1"])
     uf = UF("j", "A", ["f1", "f2", "f3", "f4"])
-    tele = rehome_foreign_entry_ufs([uf], devs, pfs, pidx)
+    tele = rehome_foreign_entry_ufs([keeper, uf], devs, pfs, pidx)
     assert tele["rehomed"] == 1
     assert uf.product_feature_id == "B"
     m = tele["moves"][0]
@@ -121,6 +123,31 @@ def test_lane_entry_never_a_target():
     # owner B=1/5=0.2 -> not strict majority -> untouched.
     assert tele["rehomed"] == 0
     assert uf.product_feature_id == "A"
+
+
+def test_orphan_guard_keeps_source_last_journey():
+    # 'A' has ONE UF; it is majority-foreign with a strict-majority target B.
+    # Re-homing would leave A flowful-but-UF-less (I8) -> orphan guard blocks.
+    devs, pfs, pidx = _scene([
+        ("f1", "a/1.ts", "A"),
+        ("f2", "b/1.ts", "B"), ("f3", "b/2.ts", "B"), ("f4", "b/3.ts", "B")])
+    uf = UF("solo-A", "A", ["f1", "f2", "f3", "f4"])
+    tele = rehome_foreign_entry_ufs([uf], devs, pfs, pidx)
+    assert tele["rehomed"] == 0            # A's last journey is not stripped
+    assert uf.product_feature_id == "A"
+
+
+def test_source_with_other_journeys_still_rehomes():
+    # 'A' has TWO UFs; re-homing one leaves A with a journey -> allowed.
+    devs, pfs, pidx = _scene([
+        ("f1", "a/1.ts", "A"),
+        ("f2", "b/1.ts", "B"), ("f3", "b/2.ts", "B"), ("f4", "b/3.ts", "B")])
+    keeper = UF("keeper", "A", ["f1"])           # stays on A (home, not foreign)
+    mover = UF("mover", "A", ["f1", "f2", "f3", "f4"])  # 3/4 foreign -> B
+    tele = rehome_foreign_entry_ufs([keeper, mover], devs, pfs, pidx)
+    assert tele["rehomed"] == 1
+    assert mover.product_feature_id == "B"
+    assert keeper.product_feature_id == "A"
 
 
 def test_flag_off_noop(monkeypatch):
