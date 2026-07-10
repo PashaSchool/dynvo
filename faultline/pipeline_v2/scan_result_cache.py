@@ -141,6 +141,10 @@ ENV_OUTPUT_FLAGS = (
     # collapse to one. Reshapes product_features[] + developer/user-flow
     # product_feature_id links.
     "FAULTLINE_PF_SIBLING_UNIFY",
+    # B20 (2026-07-10) — path_index-aware I16 journey re-home: a majority-foreign
+    # UF re-homes to its strict-majority entry-owner PF. Reshapes
+    # user_flows[].product_feature_id.
+    "FAULTLINE_I16_REHOME_B20",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -152,7 +156,8 @@ ENV_OUTPUT_FLAGS = (
 #: v7 (B15b): added FAULTLINE_DATA_LEAF.
 #: v8 (B16): added FAULTLINE_PF_NAME_LAW.
 #: v9 (B16 Part 2): added FAULTLINE_PF_SIBLING_UNIFY.
-KEY_SCHEMA_VERSION = 9
+#: v10 (B20): added FAULTLINE_I16_REHOME_B20.
+KEY_SCHEMA_VERSION = 10
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
