@@ -180,6 +180,25 @@ ENV_OUTPUT_FLAGS = (
     # + product_features[] + developer_features[] carve chunks. Default
     # OFF.
     "FAULTLINE_MEGA_PF_NAV_REHOME",
+    # B26 (2026-07-10) — hub plumbing child: the dir-per-vendor child
+    # filter tests the segment against the plumbing/stop vocabularies
+    # NORMALIZED (underscore-stripped, singularized; vendor-beats-
+    # plumbing guard), and the 6.86 mint bar backstops with
+    # ``hub_plumbing_child`` — a shared-helper dir inside a connector hub
+    # (cal.com ``app-store/_utils``) never mints a PF; its devs fold to
+    # the enclosing package / hub core. Reshapes product_features[] +
+    # developer_features[].product_feature_id on affected repos.
+    # NOTE: registered WITHOUT a KEY_SCHEMA_VERSION bump — reconciled at
+    # merge by the coordinator (single bump per merge train).
+    "FAULTLINE_HUB_PLUMBING_CHILD",
+    # B27 (2026-07-10) — package-manifest PF display names: a package-dir-
+    # anchored PF (hub:-vendor / ws:) takes its display from the package's
+    # OWN declared metadata (config.json "name" / metadata-module name /
+    # package.json displayName / authored name), with a mechanical
+    # letter/digit word-split of the dir slug as the rung below. Reshapes
+    # product_features[].display_name (+ the UF display templates derived
+    # from it).
+    "FAULTLINE_PF_MANIFEST_NAME",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -200,7 +219,8 @@ ENV_OUTPUT_FLAGS = (
 #: v16 (B24 flip): FAULTLINE_MEGA_PF_NAV_REHOME default OFF -> ON — the
 #: default flip changes what "unset" means, so cached entries keyed under
 #: unset must not be served across it (B4 precedent).
-KEY_SCHEMA_VERSION = 16
+#: v17 (B26+B27): added FAULTLINE_HUB_PLUMBING_CHILD + FAULTLINE_PF_MANIFEST_NAME.
+KEY_SCHEMA_VERSION = 17
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
