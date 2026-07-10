@@ -105,12 +105,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (3, "flows"),
     # B34 (2026-07-10) — lazy-import edge collection, side-channel
     # artifact, DEFAULT ON (FAULTLINE_LAZY_IMPORT_EDGES=0 suppresses).
-    # The sibling dispatch_registry artifact emits only under
-    # FAULTLINE_DISPATCH_REGISTRY_FLOWS=1 (default OFF since the
-    # f709a2a revert), so it is NOT in the default sequence.
-    # (Registration was missed by both the eb53d0d flip and the
-    # f709a2a revert — repaired here alongside the B34-b rails.)
     (3, "lazy_imports"),
+    # B34-b re-flip (2026-07-10, 350c17a) — dispatch_registry is DEFAULT ON
+    # since the rails proof (hollow=0 on keyed supabase+Soc0);
+    # FAULTLINE_DISPATCH_REGISTRY_FLOWS=0 suppresses this artifact.
+    (3, "dispatch_registry"),
     (4, "residual"),
     (5, "postprocess"),
     (5, "sibling_collapse"),
