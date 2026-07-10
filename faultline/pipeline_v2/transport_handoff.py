@@ -1131,10 +1131,9 @@ def _carve_chunk(src: Any, cid: str, files: list[str]) -> Any:
             "history": None, "shared_reason": None,
         })
 
-    class _Chunk:  # test/sim stubs (no pydantic surface)
-        pass
+    from types import SimpleNamespace  # test/sim stubs (no pydantic)
 
-    ch = _Chunk()
+    ch: Any = SimpleNamespace()
     ch.layer = "developer"
     ch.name = name
     ch.display_name = name
