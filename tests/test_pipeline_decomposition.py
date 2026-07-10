@@ -103,6 +103,14 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     (2, "reconcile"),
     (2, "membership_closure"),
     (3, "flows"),
+    # B34 (2026-07-10, default ON since eb53d0d) — lazy-import edge
+    # collection (side-channel artifact) + dispatch-registry seed
+    # telemetry. Both emit right after Stage 3 flows;
+    # FAULTLINE_LAZY_IMPORT_EDGES=0 / FAULTLINE_DISPATCH_REGISTRY_FLOWS=0
+    # suppress them. (Registration was missed by the flip commit —
+    # repaired here alongside the B34-b rails.)
+    (3, "lazy_imports"),
+    (3, "dispatch_registry"),
     (4, "residual"),
     (5, "postprocess"),
     (5, "sibling_collapse"),
