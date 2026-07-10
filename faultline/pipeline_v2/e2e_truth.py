@@ -1041,8 +1041,14 @@ def synthesize_orphan_journeys(
         if pfk and res:
             existing_surfaces.add((pfk, res))
 
-    def _resolve(o: dict[str, Any]) -> tuple[str | None, tuple[str, ...] | None]:
-        """(bound PF key, dominant route family) for one orphan, or (None, _)."""
+    def _resolve(
+        o: dict[str, Any],
+    ) -> tuple[str | None, tuple[str, ...] | None, set[str]]:
+        """(bound PF key, dominant route family, resolved route-handler
+        files) for one orphan, or (None, _, files). B23: the files used to
+        vote the PF owner are RETURNED (previously discarded) — they are
+        the journey's code surface and feed the marker's ``surface_files``
+        coordinates downstream (``synth_quality.attach_marker_surface_coords``)."""
         j_fams = {
             f for f in (_fam(u, vocab, version_re)
                         for u in (o.get("urls_touched") or [])) if f
@@ -1055,7 +1061,7 @@ def synthesize_orphan_journeys(
                     files |= rfiles
                     overlapping.add(rfam)
         if not overlapping:
-            return None, None
+            return None, None, files
         # dominant = deepest resolved route family; TOTAL-ORDER tie-break
         # (length, then tuple) so the pick is independent of set-iteration
         # order (PYTHONHASHSEED-invariant) — never bare max(..., key=len).
@@ -1066,10 +1072,10 @@ def synthesize_orphan_journeys(
             if owner:
                 owners[owner] = owners.get(owner, 0) + 1
         if not owners:
-            return None, dominant
+            return None, dominant, files
         # majority owner; ties broken lexicographically (determinism).
         best = sorted(owners.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-        return best, dominant
+        return best, dominant, files
 
     # Group orphans by (PF, journey label). Insertion order is stable
     # (orphans arrive sorted by journey_id from the payload).
@@ -1079,7 +1085,7 @@ def synthesize_orphan_journeys(
         if _is_negative_journey(chain):
             tele["filtered_negative"] += 1
             continue
-        pfk, dominant = _resolve(o)
+        pfk, dominant, rfiles = _resolve(o)
         if dominant is None:
             tele["dropped_no_route_ev"] += 1
             continue
@@ -1090,12 +1096,13 @@ def synthesize_orphan_journeys(
         key = (pfk, normalize_anchor_key(label) or label.lower())
         g = groups.setdefault(key, {
             "pf": pfk, "label": label, "titles": [], "urls": set(),
-            "fams": set(),
+            "fams": set(), "files": set(),
         })
         g["titles"].append(" > ".join(chain))
         g["urls"].update(o.get("urls_touched") or [])
         if dominant:
             g["fams"].add(dominant)
+        g["files"] |= rfiles  # B23 — journey code surface, kept for coords
 
     tele["groups"] = len(groups)
     minted: list[tuple[Any, list[str]]] = []
@@ -1134,6 +1141,13 @@ def synthesize_orphan_journeys(
             binding_confidence="low",
             synthesized=True,
             synthesis_reason=E2E_ORPHAN_REASON,
+            # B23 — the resolver's route-handler files (the journey's code
+            # surface). NEVER serialized (excluded field): consumed by
+            # ``synth_quality.attach_marker_surface_coords`` at 6.98, which
+            # applies the claimed-file + measured-loc honesty gates before
+            # any span reaches the output.
+            surface_candidate_files=sorted(
+                f for f in g["files"] if f) or None,
         )
         minted.append((uf, g["titles"]))
         if len(tele["minted_names"]) < 50:

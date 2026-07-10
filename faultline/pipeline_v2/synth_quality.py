@@ -55,6 +55,9 @@ from typing import Any
 # module never imports the heavy synthesis stages — output-only, zero coupling).
 SYSTEM_RECALL_REASON = "system_flow_recall"
 BACKSTOP_REASON = "uncovered_product_feature_backstop"
+#: Track-C e2e orphan-journey recall seeds (``e2e_truth.E2E_ORPHAN_REASON``) —
+#: maintainer-AUTHORED journey placeholders, never renamed under B23.
+E2E_RECALL_REASON = "e2e_journey_recall"
 
 SYNTH_QUALITY_ENV = "FAULTLINE_SYNTH_QUALITY"
 
@@ -155,6 +158,24 @@ def backstop_owned_cover_enabled() -> bool:
     """Default ON; ``FAULTLINE_BACKSTOP_OWNED_COVER=0`` restores the pre-B13
     seed names ('Run X' verb template) and drops the coverage-marker flag."""
     return os.environ.get(BACKSTOP_OWNED_COVER_ENV, "1").strip().lower() \
+        not in {"0", "false", "no", "off"}
+
+
+#: B23 — real code coordinates + authored-label preservation for member-less
+#: coverage markers. Gates BOTH halves in lock-step: (a) the surface-span
+#: attachment (``attach_marker_surface_coords``) and (b) the e2e authored-label
+#: carve inside ``honest_coverage_markers`` (Track-C playwright names are the
+#: maintainer's own journey labels — renaming them to ``'Uncovered: <PF>
+#: routes'`` collapsed 13-18 DISTINCT journeys per board into duplicate rows).
+#: Registered in ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+MARKER_SURFACE_COORDS_ENV = "FAULTLINE_MARKER_SURFACE_COORDS"
+
+
+def marker_surface_coords_enabled() -> bool:
+    """Default ON; ``FAULTLINE_MARKER_SURFACE_COORDS=0`` restores today's
+    markers byte-identically (no surface spans, e2e labels renamed to the
+    B13 ``'Uncovered: <PF> routes'`` template)."""
+    return os.environ.get(MARKER_SURFACE_COORDS_ENV, "1").strip().lower() \
         not in {"0", "false", "no", "off"}
 
 
@@ -684,15 +705,27 @@ def honest_coverage_markers(
     verb template) so ANY viewer renders it as a coverage gap-band, not a
     journey row. Deterministic + idempotent; runs AFTER the hollow-seed
     demotion so only the seeds I8 genuinely needs are marked. No-op (and
-    byte-identical) when ``FAULTLINE_BACKSTOP_OWNED_COVER=0``."""
+    byte-identical) when ``FAULTLINE_BACKSTOP_OWNED_COVER=0``.
+
+    B23 carve (behind ``FAULTLINE_MARKER_SURFACE_COORDS``, default ON): a
+    Track-C e2e seed (``synthesis_reason="e2e_journey_recall"``) KEEPS its
+    maintainer-authored playwright label — renaming those to the PF-subject
+    template collapsed 13-18 DISTINCT authored journeys per board into
+    identical ``'Uncovered: tRPC routes'`` rows (the template has no
+    collision guard and the subject is the shared home PF). The flag and
+    the low confidence still apply — the row is still a member-less
+    placeholder — only the NAME is preserved. ``=0`` restores the B13
+    rename byte-identically."""
     if not backstop_owned_cover_enabled():
         return {"marked": 0}
+    preserve_e2e = marker_surface_coords_enabled()
     pf_display: dict[str, str] = {}
     for pf in product_features or []:
         key = str(_get(pf, "name", "") or _get(pf, "id", "") or "")
         if key:
             pf_display[key] = str(_get(pf, "display_name", None) or key)
     marked = 0
+    labels_preserved = 0
     for uf in sorted(user_flows, key=lambda u: str(_get(u, "id", ""))):
         if not _get(uf, "synthesized", False):
             continue
@@ -700,6 +733,14 @@ def honest_coverage_markers(
             continue
         if _get(uf, "member_flow_ids", None):
             continue  # defensive — a real member set is never a marker
+        if preserve_e2e and \
+                _get(uf, "synthesis_reason", None) == E2E_RECALL_REASON:
+            # B23 — authored label kept; marker typing still applies.
+            _set(uf, "is_coverage_marker", True)
+            _set(uf, "name_confidence", "low")
+            marked += 1
+            labels_preserved += 1
+            continue
         pfid = _get(uf, "product_feature_id", None)
         subject = (pf_display.get(str(pfid)) if pfid else None) \
             or _get(uf, "resource", None) or _get(uf, "name", "")
@@ -709,7 +750,177 @@ def honest_coverage_markers(
         marked += 1
     if marked:
         scan_meta.setdefault("synth_quality", {})["coverage_markers"] = marked
-    return {"marked": marked}
+    if labels_preserved:
+        # Additive telemetry — key absent on scans with no e2e markers so
+        # marker-less boards stay byte-identical under flag ON.
+        scan_meta.setdefault("synth_quality", {})[
+            "coverage_marker_labels_preserved"] = labels_preserved
+    return {"marked": marked, "labels_preserved": labels_preserved}
+
+
+# ── B23 — real code coordinates for member-less coverage markers ─────────────
+
+
+def _is_member_less_marker(uf: Any) -> bool:
+    """The SAME structural predicate ``honest_coverage_markers`` uses: a
+    synthesized UF with zero member flows (any synthesis reason)."""
+    if not bool(_get(uf, "synthesized", False)):
+        return False
+    if (_get(uf, "member_count", 0) or 0) != 0:
+        return False
+    return not (_get(uf, "member_flow_ids", None) or [])
+
+
+def _clear_candidates(uf: Any) -> None:
+    """Drop the mint-side candidate ledger without ADDING a key to dict
+    inputs (the offline sim must not grow new keys on untouched rows)."""
+    if isinstance(uf, dict):
+        uf.pop("surface_candidate_files", None)
+    elif getattr(uf, "surface_candidate_files", None) is not None:
+        setattr(uf, "surface_candidate_files", None)
+
+
+def attach_marker_surface_coords(
+    user_flows: list[Any],
+    flows: list[Any],
+    product_features: list[Any],
+    developer_features: list[Any] | None,
+    scan_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """B23 — attach REAL code coordinates to member-less coverage markers.
+
+    Every surviving marker points at a trigger surface the engine already
+    resolved once: the e2e orphan resolver's route-family files (carried
+    from the mint via ``surface_candidate_files``), the 6.7 system
+    route-group files (same carrier), or — fallback for 6.7d-minted seeds
+    that carry no candidates — the home PF's ``member_files``. This pass
+    turns that surface into whole-file ``(path, 1, loc)`` spans on
+    ``uf.surface_files`` so Stage 6.97b can stamp an honest ``loc > 0``
+    ("uncovered surface: N files / M LOC"), under two HONESTY gates:
+
+      * CLAIMED-FILE filter — a file any flow already traverses
+        (``entry_point_file`` / ``paths`` / ``shared_paths``) is covered
+        code and never re-attributed to an "Uncovered" row. A marker whose
+        ENTIRE surface is already claimed (the cal.com thin-shim class:
+        journeys mis-bound through 3-18-LOC tRPC router files because the
+        scan's routes_index carries no page routes) attaches NOTHING and is
+        counted in ``residual_claimed`` — forcing coordinates through those
+        shims would be fake precision; the upstream routes_index gap owns
+        that fix.
+      * MEASURED-LOC filter — only files with a positive ``loc`` in the
+        dev/PF ``member_files`` ledger get a span (whole-file end line =
+        the ledger LOC; honest for an uncovered surface — no flow ever
+        traced a finer grain there). Unmeasured files are counted, never
+        guessed.
+
+    Deterministic (sorted UFs / files; no set iteration on the output
+    path), $0 LLM, output-only. No-op (byte-identical output) when
+    ``FAULTLINE_MARKER_SURFACE_COORDS=0`` or the B13 marker regime is off
+    (``FAULTLINE_BACKSTOP_OWNED_COVER=0`` — lock-step: spans exist only
+    where the marker flag exists).
+    """
+    if not (marker_surface_coords_enabled() and backstop_owned_cover_enabled()):
+        return {"attached": 0}
+
+    # Files already covered by ANY flow — conservative claim set (mirrors
+    # the validator's I24 touch + the path_index flow_uuids ruler).
+    claimed: set[str] = set()
+    for fl in flows or []:
+        ep = _get(fl, "entry_point_file", None)
+        if ep:
+            claimed.add(str(ep))
+        for p in (_get(fl, "paths", None) or []):
+            if p:
+                claimed.add(str(p))
+        for sp in (_get(fl, "shared_paths", None) or []):
+            p = _get(sp, "path", None)
+            if p:
+                claimed.add(str(p))
+
+    # file → LOC ledger (dev-feature + PF member_files; first writer wins —
+    # the ledgers agree on file LOC, iteration is input-list-ordered).
+    file_loc: dict[str, int] = {}
+    for feat in list(developer_features or []) + list(product_features or []):
+        for m in (_get(feat, "member_files", None) or []):
+            p = _get(m, "path", None)
+            loc = _get(m, "loc", None)
+            if p and str(p) not in file_loc and isinstance(loc, int) \
+                    and not isinstance(loc, bool) and loc > 0:
+                file_loc[str(p)] = loc
+
+    # Home-PF member files — the fallback surface for system seeds minted
+    # without a carried candidate set (the 6.7d flowless/no-own-entry arms).
+    pf_files: dict[str, list[str]] = {}
+    for pf in product_features or []:
+        key = str(_get(pf, "name", "") or _get(pf, "id", "") or "")
+        if not key:
+            continue
+        paths = sorted({
+            str(_get(m, "path", None))
+            for m in (_get(pf, "member_files", None) or [])
+            if _get(m, "path", None)
+        })
+        if paths:
+            pf_files[key] = paths
+
+    attached = 0
+    residual_claimed = 0
+    residual_unmeasured = 0
+    residual_no_surface = 0
+    for uf in sorted(user_flows, key=lambda u: str(_get(u, "id", ""))):
+        if not _is_member_less_marker(uf):
+            _clear_candidates(uf)  # hygiene — plumbing never outlives 6.98
+            continue
+        if _get(uf, "surface_files", None):
+            _clear_candidates(uf)
+            continue  # idempotent — never re-derive attached spans
+        cand = [str(c) for c in (_get(uf, "surface_candidate_files", None)
+                                 or []) if c]
+        if not cand and \
+                _get(uf, "synthesis_reason", None) == SYSTEM_RECALL_REASON:
+            # Home-PF member files — fallback for the 6.7d system arms only.
+            # An e2e marker without carried candidates must NEVER inherit a
+            # whole PF surface (a mega-PF home would hand one maintainer
+            # journey a 1000+-file span — over-broad, not its surface).
+            pfid = _get(uf, "product_feature_id", None)
+            cand = pf_files.get(str(pfid), []) if pfid else []
+        cand = sorted(set(cand))
+        _clear_candidates(uf)
+        if not cand:
+            residual_no_surface += 1
+            continue
+        unclaimed = [p for p in cand if p not in claimed]
+        if not unclaimed:
+            residual_claimed += 1  # thin-shim class — honest 0, no fake spans
+            continue
+        spans: list[dict[str, Any]] = [
+            {"path": p, "start_line": 1, "end_line": file_loc[p]}
+            for p in unclaimed if p in file_loc
+        ]
+        if not spans:
+            residual_unmeasured += 1
+            continue
+        if isinstance(uf, dict):
+            uf["surface_files"] = spans
+        else:
+            # Live path — typed spans on the pydantic model (duck-typed
+            # fixtures accept the same objects; attribute access only).
+            from faultline.models.types import FlowLineRange
+            setattr(uf, "surface_files", [FlowLineRange(**s) for s in spans])
+        attached += 1
+
+    tele = {
+        "attached": attached,
+        "residual_claimed": residual_claimed,
+        "residual_unmeasured": residual_unmeasured,
+        "residual_no_surface": residual_no_surface,
+    }
+    if attached or residual_claimed or residual_unmeasured \
+            or residual_no_surface:
+        # Additive telemetry — the key exists only on boards that HAVE
+        # markers, so marker-less scans stay byte-identical under flag ON.
+        scan_meta.setdefault("synth_quality", {})["surface_coords"] = dict(tele)
+    return tele
 
 
 def run_synth_quality(
@@ -718,6 +929,7 @@ def run_synth_quality(
     product_features: list[Any],
     scan_meta: dict[str, Any],
     vocab: Any | None = None,
+    developer_features: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Both B4 passes, in order: demote the hollow system seeds first (so the
     naming collision set excludes soon-removed seeds), then reground backstop
@@ -741,6 +953,12 @@ def run_synth_quality(
     # I8-cover seeds that SURVIVED demotion (the ones I8 genuinely needs).
     marker_tele = honest_coverage_markers(
         user_flows, product_features, scan_meta)
+    # B23 — real code coordinates for the surviving markers (surface spans
+    # from the mint-carried candidates / home-PF fallback; claimed-file and
+    # measured-loc honesty gates). Runs AFTER the marker typing so the span
+    # ledger exists exactly where the marker flag exists.
+    coords_tele = attach_marker_surface_coords(
+        user_flows, flows, product_features, developer_features, scan_meta)
     tele = {
         "enabled": True,
         "backstop_renamed": name_tele["renamed"],
@@ -749,6 +967,7 @@ def run_synth_quality(
         "backpointers_cleared": demote_tele["backpointers_cleared"],
         "ui_chrome_demoted": chrome_tele["demoted"],
         "coverage_markers": marker_tele["marked"],
+        "surface_coords_attached": coords_tele.get("attached", 0),
     }
     sq = scan_meta.setdefault("synth_quality", {})
     sq.update({
@@ -767,14 +986,18 @@ __all__ = [
     "SYNTH_QUALITY_ENV",
     "UF_WORTHINESS_ENV",
     "BACKSTOP_OWNED_COVER_ENV",
+    "MARKER_SURFACE_COORDS_ENV",
     "SYSTEM_RECALL_REASON",
     "BACKSTOP_REASON",
+    "E2E_RECALL_REASON",
     "synth_quality_enabled",
     "uf_worthiness_enabled",
     "backstop_owned_cover_enabled",
+    "marker_surface_coords_enabled",
     "demote_system_flow_seeds",
     "demote_ui_chrome_ufs",
     "reground_backstop_uf_names",
     "honest_coverage_markers",
+    "attach_marker_surface_coords",
     "run_synth_quality",
 ]

@@ -42,6 +42,18 @@ placeholder with no member flows, or a journey whose every member span is
 null-line / interior / shared-out) gets ``loc = 0`` — an honest integer,
 not ``None``.
 
+B23 surface-span fallback (member-less coverage markers)
+---------------------------------------------------------
+A member-LESS coverage marker (``is_coverage_marker`` seed) can carry
+``surface_files`` — whole-file ``(path, 1, loc)`` spans of its UNCOVERED
+trigger surface, attached by ``synth_quality.attach_marker_surface_coords``
+behind ``FAULTLINE_MARKER_SURFACE_COORDS``. When a UF has NO member flows
+and its owned LOC is therefore 0, its ``loc`` is stamped from the per-file
+UNION of those surface spans instead ("uncovered surface: N files / M
+LOC"). UFs with member flows never read the fallback (their owned spans
+stay the single source of truth), and scans without surface spans (flag
+off / pre-B23) are byte-identical to before.
+
 Additivity / kill-switch
 ------------------------
 Strictly ADDITIVE: the only output change is the new ``UserFlow.loc``
@@ -157,6 +169,25 @@ def _uf_owned_loc(uf: Any, flow_by_key: dict[str, Any]) -> int:
     return sum(union_span_len(spans_by_file[p]) for p in sorted(spans_by_file))
 
 
+def _uf_surface_loc(uf: Any) -> int:
+    """B23 — surface LOC of a member-less coverage marker: the per-file
+    UNION of its ``surface_files`` spans (whole-file ``(path, 1, loc)``
+    records attached by ``synth_quality.attach_marker_surface_coords``).
+    0 when the field is absent/empty (pre-B23 scans, flag off, residual
+    markers) — the caller then keeps the honest owned-LOC 0."""
+    def _get(obj: Any, key: str) -> Any:
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+    spans_by_file: dict[str, list[tuple[int, int]]] = {}
+    for rec in (getattr(uf, "surface_files", None) or []):
+        path = _get(rec, "path")
+        span = _valid_span((_get(rec, "start_line"), _get(rec, "end_line")))
+        if not path or span is None:
+            continue
+        spans_by_file.setdefault(str(path), []).append(span)
+    return sum(union_span_len(spans_by_file[p]) for p in sorted(spans_by_file))
+
+
 def apply_uf_loc(
     user_flows: list[Any] | None,
     flows: list[Any] | None,
@@ -175,16 +206,30 @@ def apply_uf_loc(
 
     stamped = 0
     nonzero = 0
+    surface_stamped = 0
     for uf in (user_flows or []):
         loc = _uf_owned_loc(uf, flow_by_key)
+        if loc == 0 and not (getattr(uf, "member_flow_ids", None) or []):
+            # B23 — member-less coverage marker: fall back to its uncovered
+            # trigger-surface spans (absent field ⇒ 0 ⇒ honest 0 as before).
+            surface = _uf_surface_loc(uf)
+            if surface > 0:
+                loc = surface
+                surface_stamped += 1
         uf.loc = loc
         stamped += 1
         if loc > 0:
             nonzero += 1
 
-    return {
+    tele = {
         "enabled": True,
         "user_flows_total": stamped,
         "user_flows_with_loc": nonzero,
         "user_flows_zero_loc": stamped - nonzero,
     }
+    # Additive (B5-precedent): the key exists only when a marker actually
+    # took the surface fallback, so scans without B23 spans keep the
+    # pre-B23 telemetry shape byte-identically.
+    if surface_stamped:
+        tele["user_flows_surface_loc"] = surface_stamped
+    return tele

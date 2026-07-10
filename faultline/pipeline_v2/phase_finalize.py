@@ -2485,6 +2485,15 @@ def run_finalize_phase(
     #     (I7 tracked-only, I24/I13 untouched, I14 backpointers nulled).
     #     Kill-switch: FAULTLINE_SYNTH_QUALITY=0 restores pre-B4 output
     #     byte-identically.
+    # B23 (behind FAULTLINE_MARKER_SURFACE_COORDS, default ON): the pass
+    #     additionally (c) preserves the maintainer-authored labels of
+    #     Track-C e2e markers (no more 13-18 identical 'Uncovered: <PF>
+    #     routes' rows per board) and (d) attaches REAL surface coordinates
+    #     (``surface_files`` whole-file spans) to member-less coverage
+    #     markers from the mint-carried resolver files / home-PF member
+    #     files — Stage 6.97b (below, runs later) then stamps an honest
+    #     loc>0 from those spans. ``developer_features`` feeds the per-file
+    #     LOC ledger and stays untouched.
     from faultline.pipeline_v2.synth_quality import (
         run_synth_quality,
         synth_quality_enabled,
@@ -2496,6 +2505,7 @@ def run_finalize_phase(
                 list(bipartite.flows),
                 product_features,
                 scan_meta,
+                developer_features=features,
             )
         except Exception as exc:  # noqa: BLE001 — quality pass never breaks a scan
             scan_meta.setdefault("warnings", []).append(
