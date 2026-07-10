@@ -67,12 +67,16 @@ class PF:
 
 
 class Fl:
-    def __init__(self, uuid, ranges, ep=None):
+    def __init__(self, uuid, ranges, ep=None, paths=None):
         self.uuid = uuid
         self.entry_point_file = ep
         self.line_ranges = [
             {"path": p, "start_line": 1, "end_line": n} for p, n in ranges
         ]
+        # the validator's I15 flow-file surface (attach-floor mirror);
+        # defaults to the span files, exactly like real flows.
+        self.paths = list(paths) if paths is not None else \
+            [p for p, _n in ranges]
 
 
 class UF:
@@ -327,22 +331,33 @@ def test_plurality_subflag_off_blocks(monkeypatch):
     assert reasons == {"UF-004": "split"}
 
 
-def test_plurality_i16_rail_refuses():
-    # Plurality target = billing, but the journey's member ENTRIES sit
-    # on the candidate's OWN annexed files (pre-state: owned by the
-    # dissolving home → I16-clean today) which the plan re-homes to the
-    # embed target → post-move the entries are majority-foreign to
-    # billing → a NEW I16 row → rail refuses → gate blocks (measured
-    # rail, not vibes; a PRE-flagged journey would be exempt — only the
-    # clean→flagged transition counts).
+def _rail_scene(ep1, ep2):
+    """A genuinely distributed 2-member journey with attach ≥ 0.34 at
+    the billing plurality target (2 of 5 flow files inside billing
+    scope) so the RAIL, not the attach floor, decides."""
     fl = Fl("f-mix", [("app/routes/billing/index.tsx", 30),
-                      ("app/routes/admin/index.tsx", 20),
+                      ("app/routes/billing/extra.tsx", 10),
+                      ("app/routes/admin/index.tsx", 30),
                       ("app/routes/embed/page.tsx", 20)],
-            ep="app/routes/embed/page.tsx")
-    fl2 = Fl("f-mix2", [], ep="app/routes/embed/sign.tsx")
+            ep=ep1)
+    fl2 = Fl("f-mix2", [], ep=ep2, paths=[])
     uf = UF("UF-004", "View audit log", "rpc", members=["f-mix", "f-mix2"])
-    devs, pfs, ufs, flows, grain = _scene(extra_ufs=[uf],
-                                          extra_flows=[fl, fl2])
+    return _scene(
+        extra_ufs=[uf], extra_flows=[fl, fl2],
+        extra_devs=[Dev("billing2", "billing",
+                        ["app/routes/billing/extra.tsx"])])
+
+
+def test_plurality_i16_rail_refuses():
+    # Plurality target = billing (40/90 top, no strict), but the
+    # journey's member ENTRIES sit on the candidate's OWN annexed files
+    # (pre-state: owned by the dissolving home → I16-clean today) which
+    # the plan re-homes to the embed target → post-move the entries are
+    # majority-foreign to billing → a NEW I16 row → rail refuses → gate
+    # blocks (measured rail, not vibes; a PRE-flagged journey would be
+    # exempt — only the clean→flagged transition counts).
+    devs, pfs, ufs, flows, grain = _rail_scene(
+        "app/routes/embed/page.tsx", "app/routes/embed/sign.tsx")
     tele = _run(devs, pfs, ufs, flows, grain)
     assert tele["laned"] == []
     reasons = {b["uf"]: b["reason"]
@@ -355,14 +370,8 @@ def test_plurality_preflagged_journey_exempt_from_rail():
     # today (owned by admin while homed to rpc → pre-flagged I16 row):
     # moving it cannot CREATE a row, so the rail allows the plurality
     # re-home (ratified wording: zero NEW I16 rows).
-    fl = Fl("f-mix", [("app/routes/billing/index.tsx", 30),
-                      ("app/routes/admin/index.tsx", 20),
-                      ("app/routes/embed/page.tsx", 20)],
-            ep="app/routes/admin/index.tsx")
-    fl2 = Fl("f-mix2", [], ep="app/routes/admin/index.tsx")
-    uf = UF("UF-004", "View audit log", "rpc", members=["f-mix", "f-mix2"])
-    devs, pfs, ufs, flows, grain = _scene(extra_ufs=[uf],
-                                          extra_flows=[fl, fl2])
+    devs, pfs, ufs, flows, grain = _rail_scene(
+        "app/routes/admin/index.tsx", "app/routes/admin/index.tsx")
     tele = _run(devs, pfs, ufs, flows, grain)
     assert [row["unit"] for row in tele["laned"]] == [UNIT]
     assert next(u for u in ufs if u.id == "UF-004").product_feature_id \
@@ -458,3 +467,105 @@ def test_hub_cutoff_floor_and_scale():
 def test_hub_cutoff_monotone():
     vals = [hub_cutoff(n) for n in range(0, 20001, 250)]
     assert vals == sorted(vals)
+
+
+# ── PHASE-2 REWORK (2026-07-10): attach floor + flowful-dev guard ────────
+
+
+def test_attach_floor_blocks_thin_rehome():
+    """A strict span-mass majority whose target the journey's own flow
+    files barely touch (attach < 0.34, the validator's I15 ruler) is
+    UNRESOLVED → gate refuses (keyed A/B exhibit: 'Copy document
+    recipient link' cov 0.005 → fresh I15+I16 rows)."""
+    f1 = Fl("f-thin1", [("app/routes/billing/index.tsx", 60)],
+            ep="app/routes/billing/index.tsx")
+    f2 = Fl("f-thin2", [("packages/other/a.ts", 20),
+                        ("packages/other/b.ts", 20)])
+    uf = UF("UF-006", "Thin journey", "rpc", members=["f-thin1", "f-thin2"])
+    devs, pfs, ufs, flows, grain = _scene(extra_ufs=[uf],
+                                          extra_flows=[f1, f2])
+    tele = _run(devs, pfs, ufs, flows, grain)
+    assert tele["laned"] == []
+    blocked = {b["uf"]: b for b in
+               tele["conservation_blocked"][UNIT]["blocked"]}
+    assert blocked["UF-006"]["reason"] == "attach_floor"
+    assert blocked["UF-006"]["attach"] == 0.333  # 1/3 < 0.34
+    # exact flag-OFF state.
+    assert next(u for u in ufs if u.id == "UF-006").product_feature_id \
+        == "rpc"
+    assert any(pf.name == "rpc" for pf in pfs)
+
+
+def test_attach_floor_single_flow_exempt():
+    """The validator's I15 gate only fires on UFs with >=2 member flows
+    — the floor mirrors that carve exactly (no over-blocking)."""
+    f1 = Fl("f-solo", [("app/routes/billing/index.tsx", 60),
+                       ("packages/other/a.ts", 20),
+                       ("packages/other/b.ts", 20)],
+            ep="app/routes/billing/index.tsx")
+    uf = UF("UF-006", "Single-flow journey", "rpc", members=["f-solo"])
+    devs, pfs, ufs, flows, grain = _scene(extra_ufs=[uf],
+                                          extra_flows=[f1])
+    tele = _run(devs, pfs, ufs, flows, grain)
+    assert [row["unit"] for row in tele["laned"]] == [UNIT]
+    assert next(u for u in ufs if u.id == "UF-006").product_feature_id \
+        == "billing"
+
+
+def test_i16_rail_guards_every_rung():
+    """Rework: the zero-NEW-I16-rows rail applies to r1/r2 too (the
+    keyed A/B showed an r2 re-home minting a fresh row). A STRICT
+    re-home whose entries end majority-foreign post-move is refused."""
+    f1 = Fl("f-mix", [("app/routes/billing/index.tsx", 50),
+                      ("app/routes/billing/extra.tsx", 10),
+                      ("app/routes/admin/index.tsx", 20),
+                      ("app/routes/embed/page.tsx", 20)],
+            ep="app/routes/embed/page.tsx")
+    f2 = Fl("f-mix2", [], ep="app/routes/embed/sign.tsx", paths=[])
+    uf = UF("UF-006", "Strict but foreign-entry", "rpc",
+            members=["f-mix", "f-mix2"])
+    devs, pfs, ufs, flows, grain = _scene(
+        extra_ufs=[uf], extra_flows=[f1, f2],
+        extra_devs=[Dev("billing2", "billing",
+                        ["app/routes/billing/extra.tsx"])])
+    # billing 60/100 non-lane mass = r1-strict; attach 2/5 = 0.4 ok;
+    # entries (embed x2) re-owned to the embed target => 2/2 foreign
+    # to billing => NEW I16 row => refused with the generic rail tag.
+    tele = _run(devs, pfs, ufs, flows, grain)
+    assert tele["laned"] == []
+    reasons = {b["uf"]: b["reason"]
+               for b in tele["conservation_blocked"][UNIT]["blocked"]}
+    assert reasons == {"UF-006": "i16_rail"}
+
+
+def test_flowful_dev_never_lanes():
+    """Rework (validator I9): a dev with attached flows must never land
+    in the platform lane — it re-homes with a resolved journey or the
+    candidate is refused."""
+    router_flow = Fl("f-router", [(f"{UNIT}/server/router.ts", 30)],
+                     ep=f"{UNIT}/server/router.ts")
+    devs, pfs, ufs, flows, grain = _scene(extra_flows=[router_flow])
+    dev_by_name = {d.name: d for d in devs}
+    dev_by_name["rpc-router"].flows = [router_flow]  # flowful router dev
+    tele = _run(devs, pfs, ufs, flows, grain)
+    assert tele["laned"] == []
+    blocked = tele["conservation_blocked"][UNIT]["blocked"]
+    stranded = next(b for b in blocked
+                    if b["reason"] == "flowful_dev_would_lane")
+    assert ["rpc-router", 0] in stranded["top2"]
+    # I9-shape structural assert: NO flowful dev sits in the lane.
+    for d in devs:
+        if d.flows:
+            assert not (d.product_feature_id is None
+                        and d.shared_reason == "technology_instrument")
+
+
+def test_flowless_router_dev_still_lanes():
+    """The guard is flow-keyed, not name-keyed: the flowless router dev
+    lanes exactly as before."""
+    devs, pfs, ufs, flows, grain = _scene()
+    tele = _run(devs, pfs, ufs, flows, grain)
+    assert [row["unit"] for row in tele["laned"]] == [UNIT]
+    d = next(x for x in devs if x.name == "rpc-router")
+    assert d.product_feature_id is None
+    assert d.shared_reason == "technology_instrument"
