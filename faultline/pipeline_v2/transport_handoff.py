@@ -1440,7 +1440,15 @@ def run_transport_handoff(
 
         # ── plan: PROJECTED target scopes (the validator's I15 view) ──
         # scope(PF) = pf.paths ∪ member devs' paths ∪ planned dev moves;
-        # scope(NEW cid) = whole-dev contributors ∪ carve files.
+        # scope(NEW cid) = whole-dev contributors ∪ carve files. The
+        # validator reads FULL ``paths`` (owned + shared claims), so the
+        # mirror does too — a primary-owned-only scope under-estimates
+        # attach and over-refuses (old-pair resim exhibit: 'Manage
+        # account utilities' cov 1.00 blocked at a phantom 0.2 attach).
+        def _full_paths(f: Any) -> list[str]:
+            return [str(p) for p in (_attr(f, "paths") or [])] \
+                or _owned_of(f)
+
         planned_scope: dict[str, set[str]] = defaultdict(set)
         for pf in product_features:
             key = str(_attr(pf, "id") or _attr(pf, "name") or "")
@@ -1450,11 +1458,11 @@ def run_transport_handoff(
         for f in devs:
             pfid = _attr(f, "product_feature_id")
             if pfid:
-                planned_scope["pf:" + str(pfid)].update(_owned_of(f))
+                planned_scope["pf:" + str(pfid)].update(_full_paths(f))
         for f in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
             t = dev_plan[str(_attr(f, "name"))]
             if t is not None:
-                planned_scope[_grain_key(t)].update(_owned_of(f))
+                planned_scope[_grain_key(t)].update(_full_paths(f))
         for cid, plan in carve_preview.items():
             for _dev_name, files in plan:
                 planned_scope["new:" + cid].update(files)
