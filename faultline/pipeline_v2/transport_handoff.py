@@ -54,9 +54,15 @@ RUNG LADDER (per homed UF, deterministic, $0 LLM):
 
 CONSERVATION GATE (operator law, mechanized): the handoff is
 all-or-nothing per candidate PF. It lanes ONLY if EVERY homed UF
-resolved a target (and every NEW target has a contributing dev so the
-mint is never a phantom). ANY unresolved UF → the candidate does NOT
-lane — the scan output for that PF is exactly the flag-OFF output plus
+resolved a target AND every resolution clears the ATTACH FLOOR (Phase-2
+rework: the journey's projected lane-aware attach at its target must
+clear the validator's own I15 0.34 ruler — thin majorities never ship a
+home the journey's files barely touch) AND no re-home creates a NEW I16
+row (the rail, every rung) AND every NEW target has a contributor (the
+mint is never a phantom) AND no FLOWFUL dev would land in the lane
+(validator I9: the platform lane is flowless plumbing only). ANY failed
+leg → the candidate does NOT lane — the scan output for that PF is
+exactly the flag-OFF output plus
 ``scan_meta.transport_handoff.conservation_blocked`` telemetry with
 per-UF reasons. The stage plans first and applies only a verified plan;
 a hard UF-count invariant (before == after, no other PF loses a
@@ -113,8 +119,17 @@ _HANDOFF_MARKER = "transport-handoff"
 
 #: Coverage telemetry floor (design §4 thin-coverage class): a strict
 #: re-home whose VOTING mass covers < 34% of the journey's span mass is
-#: accepted (dissolution is worse than a thin honest home) but marked.
+#: marked in telemetry.
 _THIN_COVERAGE = 0.34
+
+#: Attach-floor gate (Phase-2 rework, 2026-07-10): a rung's target only
+#: counts as RESOLVED when the journey's PROJECTED lane-aware attach at
+#: the target clears the SAME 0.34 floor the validator's I15 gate uses
+#: (the E-report random-tail bound — one provenance, one value, no new
+#: constant). The keyed A/B showed thin re-homes shipping fresh
+#: I15/I16 rows; thin target ⇒ UNRESOLVED ⇒ the all-or-nothing gate
+#: refuses the candidate (journeys stay put — refusal is success).
+_ATTACH_FLOOR = _THIN_COVERAGE
 
 #: Sub-second per-file read guard for the export-surface parser.
 _MAX_PARSE_BYTES = 512 * 1024
@@ -783,6 +798,10 @@ class UfResolution:
     voting_mass: int = 0
     coverage: float = 0.0
     thin_coverage: bool = False
+    #: projected lane-aware attach at the target (the I15 mirror) —
+    #: filled by the attach-floor pass; None when exempt (mf<2 /
+    #: lane-only / synthesized).
+    attach: float | None = None
     top2: list[tuple[str, int]] = field(default_factory=list)
     reason: str | None = None  # unresolved reason
 
@@ -916,6 +935,23 @@ class _FileResolver:
                 out = (None, "split", votes)
         self._seed[path] = out
         return out
+
+
+def _uf_flow_files(uf: Any, flow_by_uuid: Mapping[str, Any]) -> set[str]:
+    """The journey's flow-file surface — the validator's exact I15 view
+    (``_spine_flow_files``: union of member flows' ``paths``, falling
+    back to the entry file when a flow carries no path list)."""
+    out: set[str] = set()
+    for fid in (_attr(uf, "member_flow_ids") or []):
+        fl = flow_by_uuid.get(fid)
+        if fl is None:
+            continue
+        ps = [str(p) for p in (_attr(fl, "paths") or []) if p]
+        if not ps:
+            ep = _attr(fl, "entry_point_file")
+            ps = [str(ep)] if ep else []
+        out.update(ps)
+    return out
 
 
 def _uf_span_mass(uf: Any, flow_by_uuid: Mapping[str, Any]) -> Counter:
@@ -1377,14 +1413,13 @@ def run_transport_handoff(
                     target = GrainTarget(kind, key)
             dev_plan[str(_attr(f, "name"))] = target  # None → lane residual
 
-        # ── plan: NEW-target demand + contributing-dev check ──────────
+        # ── plan: INITIAL NEW-target demand + carve preview ────────────
         uf_new_demand = {
             r.target.key for r in resolutions
             if r.target is not None and r.target.kind == "new"}
         dev_targets_new = {
             t.key for t in dev_plan.values()
             if t is not None and t.kind == "new"}
-        mintable_new = sorted(uf_new_demand)
         # A demanded NEW target no WHOLE dev re-homes to can still mint
         # from a CARVE (lane_excavation's 8.9.x discipline): candidate
         # devs' own files inside the group grain become a chunk dev
@@ -1402,20 +1437,87 @@ def run_transport_handoff(
                     plan.append((str(_attr(f, "name")), files))
             if plan:
                 carve_preview[cid] = plan
-        undevved = sorted(
-            uf_new_demand - dev_targets_new - set(carve_preview))
 
-        # ── plan: plurality I16 rail over the PLANNED owner map ───────
+        # ── plan: PROJECTED target scopes (the validator's I15 view) ──
+        # scope(PF) = pf.paths ∪ member devs' paths ∪ planned dev moves;
+        # scope(NEW cid) = whole-dev contributors ∪ carve files. The
+        # validator reads FULL ``paths`` (owned + shared claims), so the
+        # mirror does too — a primary-owned-only scope under-estimates
+        # attach and over-refuses (old-pair resim exhibit: 'Manage
+        # account utilities' cov 1.00 blocked at a phantom 0.2 attach).
+        def _full_paths(f: Any) -> list[str]:
+            return [str(p) for p in (_attr(f, "paths") or [])] \
+                or _owned_of(f)
+
+        planned_scope: dict[str, set[str]] = defaultdict(set)
+        for pf in product_features:
+            key = str(_attr(pf, "id") or _attr(pf, "name") or "")
+            if key:
+                planned_scope["pf:" + key].update(
+                    str(p) for p in (_attr(pf, "paths") or []))
+        for f in devs:
+            pfid = _attr(f, "product_feature_id")
+            if pfid:
+                planned_scope["pf:" + str(pfid)].update(_full_paths(f))
+        for f in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
+            t = dev_plan[str(_attr(f, "name"))]
+            if t is not None:
+                planned_scope[_grain_key(t)].update(_full_paths(f))
+        for cid, plan in carve_preview.items():
+            for _dev_name, files in plan:
+                planned_scope["new:" + cid].update(files)
+
+        # ── plan: ATTACH FLOOR (rework a, 2026-07-10) — a rung's target
+        # counts as RESOLVED only if the journey's projected lane-aware
+        # attach at the target clears the SAME 0.34 floor the
+        # validator's I15 gate uses (its exact ruler mirrored: flow
+        # PATHS union, lane/neutral files out of the denominator, only
+        # journeys with ≥2 member flows gated). A strict/consumer/
+        # plurality majority over a SLIVER of a journey must not ship a
+        # home the journey's own files barely touch (keyed A/B exhibit:
+        # 'Copy document recipient link' cov 0.005 → attach 0.04 →
+        # fresh I15+I16 rows). Thin target → UNRESOLVED → the
+        # all-or-nothing gate refuses the candidate (status quo).
+        for r in resolutions:
+            if r.target is None:
+                continue
+            uf = next(u for u in homed
+                      if str(_attr(u, "id") or "") == r.uf_id)
+            if len(_attr(uf, "member_flow_ids") or []) < 2:
+                continue  # validator's single-flow carve — not gated
+            ffiles = _uf_flow_files(uf, flow_by_uuid)
+            eff = {p for p in ffiles
+                   if not resolver.in_lane(p) and not resolver.is_neutral(p)}
+            if not eff:
+                continue  # lane-only journey — validator skips it too
+            scope = planned_scope.get(_grain_key(r.target), set())
+            attach = len(eff & scope) / len(eff)
+            r.attach = attach
+            if attach < _ATTACH_FLOOR:
+                r.rung, r.target = None, None
+                r.reason = "attach_floor"
+
+        # ── plan: I16 rail over the PLANNED owner map — EVERY rung ────
+        # (rework, 2026-07-10: the zero-NEW-I16-rows principle was
+        # ratified for r3 only — a ratification gap; the keyed A/B
+        # showed an r2 re-home minting a fresh I16 row, so the rail now
+        # guards every rung.)
+        demand_after_floor = {
+            r.target.key for r in resolutions
+            if r.target is not None and r.target.kind == "new"}
         planned_owner = dict(owner_map)
         for f in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
             t = dev_plan[str(_attr(f, "name"))]
-            planned = t.key if t is not None else None
+            planned = None
+            if t is not None and (
+                    t.kind == "pf" or t.key in demand_after_floor):
+                planned = t.key
             for p in _owned_of(f):
                 if owner_map.get(p) == cand_key or planned_owner.get(p) \
                         == cand_key:
                     planned_owner[p] = planned
         for r in resolutions:
-            if r.rung != "r3-plurality" or r.target is None:
+            if r.target is None:
                 continue
             uf = next(u for u in homed
                       if str(_attr(u, "id") or "") == r.uf_id)
@@ -1428,15 +1530,42 @@ def run_transport_handoff(
             post_flagged = _i16_flagged(
                 uf, r.target.key, flow_by_uuid, planned_owner, resolver)
             if post_flagged and not pre_flagged:
+                reason = ("plurality_i16_rail" if r.rung == "r3-plurality"
+                          else "i16_rail")
                 r.rung, r.target = None, None
-                r.reason = "plurality_i16_rail"
+                r.reason = reason
+
+        # ── plan: FINAL demand + contributors (post floor/rail) ───────
+        uf_new_demand = {
+            r.target.key for r in resolutions
+            if r.target is not None and r.target.kind == "new"}
+        mintable_new = sorted(uf_new_demand)
+        carve_preview = {cid: plan for cid, plan in carve_preview.items()
+                         if cid in uf_new_demand}
+        undevved = sorted(
+            uf_new_demand - dev_targets_new - set(carve_preview))
+
+        # ── plan: flowful-dev guard (rework b — validator I9) ─────────
+        # A dev with attached flows must NEVER lane (I9: the platform
+        # lane is flowless plumbing only): it either re-homes to a
+        # target that will exist post-apply, or the candidate is
+        # UNRESOLVED (keyed A/B exhibit: flowful `d-token` laned).
+        flowful_stranded: list[str] = []
+        for f in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
+            if not (_attr(f, "flows") or []):
+                continue
+            t = dev_plan[str(_attr(f, "name"))]
+            if t is None or (t.kind == "new" and t.key not in uf_new_demand):
+                flowful_stranded.append(str(_attr(f, "name")))
 
         # ── conservation gate (all-or-nothing) ────────────────────────
         unresolved = [r for r in resolutions if r.target is None]
         blocked_reasons: list[dict[str, Any]] = [
             {"uf": r.uf_id, "name": r.name,
              "reason": r.reason or "unresolved",
-             "top2": [[k, c] for k, c in r.top2]}
+             "top2": [[k, c] for k, c in r.top2],
+             **({"attach": round(r.attach, 3)}
+                if r.attach is not None else {})}
             for r in unresolved
         ]
         if undevved:
@@ -1444,6 +1573,11 @@ def run_transport_handoff(
                 {"uf": None, "name": None,
                  "reason": "new_target_without_devs",
                  "top2": [[k, 0] for k in undevved]})
+        if flowful_stranded:
+            blocked_reasons.append(
+                {"uf": None, "name": None,
+                 "reason": "flowful_dev_would_lane",
+                 "top2": [[n, 0] for n in flowful_stranded]})
         if blocked_reasons:
             tele["conservation_blocked"][unit] = {
                 "pf": cand_key, "ufs_homed": len(homed),
@@ -1558,6 +1692,8 @@ def run_transport_handoff(
                     "uf": r.uf_id, "name": r.name, "rung": r.rung,
                     "to": u.product_feature_id,
                     "coverage": round(r.coverage, 3),
+                    **({"attach": round(r.attach, 3)}
+                       if r.attach is not None else {}),
                     **({"thin_coverage": True} if r.thin_coverage else {}),
                 })
 
