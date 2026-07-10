@@ -216,6 +216,12 @@ ENV_OUTPUT_FLAGS = (
     # recall layer (flowless-PF markers dissolve). Both default OFF.
     "FAULTLINE_LAZY_IMPORT_EDGES",
     "FAULTLINE_DISPATCH_REGISTRY_FLOWS",
+    # B28 (2026-07-10) — non-product app scope (Shape E lane + S1g types-only
+    # prong; journeys ride to non_product_surfaces). Default ON.
+    "FAULTLINE_NONPRODUCT_SCOPE",
+    # B28 (2026-07-10) — Shape D docs re-anchor (majority-dir election).
+    # Reshapes product_features[].anchor_id only. Default ON.
+    "FAULTLINE_DOCS_REANCHOR",
     # B25 (2026-07-10) — journey-lattice verifier-revert slot release: a pf
     # whose split plan the Draft Verifier fully reverted re-runs the
     # Phase-2b action detection once (one extra verifier batch, hard-capped
@@ -253,7 +259,8 @@ ENV_OUTPUT_FLAGS = (
 #: v22 (B25): added FAULTLINE_JOURNEY_LATTICE_B25.
 #: v23 (B34 dispatch revert): FAULTLINE_DISPATCH_REGISTRY_FLOWS default ON -> OFF
 #: (supabase 328 hollow UI-demo mints; re-flip after B34-b rails + keyed proof).
-KEY_SCHEMA_VERSION = 23
+#: v24 (B28): added FAULTLINE_NONPRODUCT_SCOPE + FAULTLINE_DOCS_REANCHOR.
+KEY_SCHEMA_VERSION = 24
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

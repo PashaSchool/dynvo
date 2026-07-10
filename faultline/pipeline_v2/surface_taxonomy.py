@@ -79,12 +79,16 @@ __all__ = [
     "SURFACE_TAXONOMY_ENV",
     "SURFACE_LANE_ENV",
     "SHARED_REASONS_ENV",
+    "NONPRODUCT_SCOPE_ENV",
+    "DOCS_REANCHOR_ENV",
     "SURFACE_SCOPES",
     "SCOPE_PRODUCT",
     "NON_PRODUCT_PF_SCOPES",
     "taxonomy_enabled",
     "lane_enabled",
     "shared_reasons_enabled",
+    "nonproduct_scope_enabled",
+    "docs_reanchor_enabled",
     "SurfaceScopeClassifier",
     "load_patterns",
     "is_non_product_dev",
@@ -95,6 +99,22 @@ __all__ = [
 SURFACE_TAXONOMY_ENV = "FAULTLINE_SURFACE_TAXONOMY"
 SURFACE_LANE_ENV = "FAULTLINE_SURFACE_LANE"
 SHARED_REASONS_ENV = "FAULTLINE_SHARED_REASONS"
+#: B28 (Shape E) — dev-artifact workspace detection: P-B registry-publisher
+#: manifests + P-D hub-fixture marks (Stage 6.86 telemetry) join the
+#: emission classifier's instrument-dirs channel behind the R1
+#: (journey-isolation strict-minority) + R2 (dominant-app) rails; the S1g
+#: types-only prong in ``technology_instruments`` keys on the same flag.
+#: Default ON; ``FAULTLINE_NONPRODUCT_SCOPE=0`` restores this slice
+#: byte-identically.
+NONPRODUCT_SCOPE_ENV = "FAULTLINE_NONPRODUCT_SCOPE"
+#: B28 (Shape D) — a PRODUCT-scoped PF anchored inside a non-product app
+#: (supabase ``auth`` @ ``route:apps/docs/app/guides/auth`` whose body is
+#: 107/107 ``apps/studio/**``) re-anchors in place to its
+#: evidence-majority product surface (majority-dir election, route-lineage
+#: preferred). Journeys/uuid/paths untouched — conservation trivial.
+#: Default ON; ``FAULTLINE_DOCS_REANCHOR=0`` restores this slice
+#: byte-identically.
+DOCS_REANCHOR_ENV = "FAULTLINE_DOCS_REANCHOR"
 
 _PATTERNS_FILE = "surface-scope-patterns.yaml"
 
@@ -166,6 +186,16 @@ def lane_enabled() -> bool:
 def shared_reasons_enabled() -> bool:
     """I22 stamping — default ON, ``FAULTLINE_SHARED_REASONS=0`` off."""
     return _flag(SHARED_REASONS_ENV)
+
+
+def nonproduct_scope_enabled() -> bool:
+    """B28 Shape E — default ON, ``FAULTLINE_NONPRODUCT_SCOPE=0`` off."""
+    return _flag(NONPRODUCT_SCOPE_ENV)
+
+
+def docs_reanchor_enabled() -> bool:
+    """B28 Shape D — default ON, ``FAULTLINE_DOCS_REANCHOR=0`` off."""
+    return _flag(DOCS_REANCHOR_ENV)
 
 
 def load_patterns() -> dict[str, Any]:
@@ -928,6 +958,266 @@ def _shared_reason_for(dev: Any, clf: SurfaceScopeClassifier) -> str:
     return "no_anchor_lineage"
 
 
+# ── B28 — dev-artifact workspaces (Shape E) + Shape-D re-anchor ────────
+
+
+def _workspace_unit(path: str | None) -> str | None:
+    """Workspace grain of a path: ``<seg0>/<seg1>`` when two segments
+    exist (``apps/docs``, ``blocks/vue``, ``packages/app-store``), else
+    the root segment. No container vocabulary — B28 candidacy is decided
+    by manifests/marks, never by the container's name."""
+    if not path:
+        return None
+    segs = [s for s in _norm(str(path)).split("/") if s]
+    if not segs:
+        return None
+    return "/".join(segs[:2]) if len(segs) >= 2 else segs[0]
+
+
+def _is_registry_publisher(repo_path: Any, ws_dir: str) -> bool:
+    """B28 P-B — the workspace's own manifests declare a component-registry
+    PUBLISHER (the shadcn registry convention): ``components.json`` at the
+    workspace root **plus** registry evidence (a ``registry/`` source tree,
+    a ``registry.json``, or a ``shadcn build`` script). Mere shadcn
+    CONSUMERS carry ``components.json`` alone (measured: papermark,
+    openstatus ×3, supabase ``packages/ui``) and never fire."""
+    try:
+        from pathlib import Path as _Path
+
+        root = _Path(repo_path) / ws_dir
+        if not (root / "components.json").is_file():
+            return False
+        if (root / "registry").is_dir() or (root / "registry.json").is_file():
+            return True
+        pj = root / "package.json"
+        if pj.is_file():
+            import json as _json
+
+            doc = _json.loads(pj.read_text(encoding="utf-8"))
+            if isinstance(doc, dict):
+                scripts = " ".join(
+                    str(v) for v in (doc.get("scripts") or {}).values()
+                )
+                return "shadcn build" in scripts
+    except (OSError, ValueError):  # unreadable manifest → no override
+        return False
+    return False
+
+
+def _dev_artifact_dirs(
+    developer_features: Iterable[Any],
+    product_features: Iterable[Any],
+    user_flows: Iterable[Any],
+    flows: Iterable[Any],
+    repo_path: Any,
+    marked_units: Iterable[str],
+    tele: dict[str, Any],
+) -> set[str]:
+    """Collect B28 Shape-E candidate workspaces (P-B manifests + the P-D
+    marks from Stage 6.86) and gate them behind the two hard rails:
+
+    * **R1 journey-isolation (strict minority)** — entry contributions of
+      journeys homed OUTSIDE the workspace must be a strict minority of
+      the workspace's entry contributions (zero-tolerance is too brittle:
+      one ui-library registry template mirrors a studio route);
+    * **R2 dominant-app guard** — never the workspace holding the strict
+      majority of the board's member-flow entries (the repo whose
+      registry IS the product — shadcn-class).
+
+    Survivors join the classifier's instrument-dirs channel, so the
+    EXISTING strict-majority feature vote + emission lane execute the
+    demotion — journeys ride along (operator ruling 2026-07-10)."""
+    def _under(path: str | None, prefix: str) -> bool:
+        return bool(path) and (
+            path == prefix or str(path).startswith(prefix + "/"))
+
+    flow_by_id = _flow_lookup(flows)
+    pf_anchor_path: dict[str, str] = {}
+    for pf in product_features:
+        aid = str(_get(pf, "anchor_id") or "")
+        if ":" in aid:
+            apath = _norm(aid.split(":", 1)[1])
+            if "/" in apath:  # short keyed-artifact anchors have no unit
+                pf_anchor_path[_pf_key(pf)] = apath
+
+    # Candidates are PF-ANCHORED dirs only — B28's mandate is "PFs
+    # anchored inside non-product apps"; a dev-artifact workspace nobody
+    # anchors a PF in changes nothing on the product board, so touching
+    # it (dev-grain scope shifts) would be pure blast radius. P-D marks
+    # keep their own hub-child grain; P-B checks the 2-seg workspace of
+    # each anchor.
+    cands: dict[str, str] = {}
+    for u in marked_units or ():
+        nu = _norm(str(u))
+        if nu and any(_under(ap, nu) for ap in pf_anchor_path.values()):
+            cands[nu] = "P-D:hub-fixture"
+    if repo_path is not None:
+        checked: set[str] = set()
+        for ap in sorted(pf_anchor_path.values()):
+            ws = _workspace_unit(ap)
+            if not ws or "/" not in ws or ws in cands or ws in checked:
+                continue
+            checked.add(ws)
+            if _is_registry_publisher(repo_path, ws):
+                cands[ws] = "P-B:registry-publisher"
+    if not cands:
+        return set()
+    # R1/R2 rails at each candidate's OWN grain (2-seg workspace or
+    # hub-child dir): internal = entries under the candidate from
+    # journeys whose home PF is anchored under it too; external = entries
+    # under it from journeys homed elsewhere.
+    entries: list[tuple[str, str | None]] = []  # (entry, home anchor)
+    for uf in user_flows:
+        home = pf_anchor_path.get(
+            str(_get(uf, "product_feature_id") or ""))
+        for mid in _get(uf, "member_flow_ids") or []:
+            fl = flow_by_id.get(str(mid))
+            entry = _entry_of(fl) if fl is not None else None
+            if entry:
+                entries.append((_norm(entry), home))
+    total = len(entries)
+
+    applied: set[str] = set()
+    blocked: dict[str, str] = {}
+    for cand in sorted(cands):
+        i = sum(1 for e, home in entries
+                if _under(e, cand) and _under(home, cand))
+        x = sum(1 for e, home in entries
+                if _under(e, cand) and not _under(home, cand))
+        if x and x >= i:
+            blocked[cand] = f"R1:external {x} >= internal {i}"
+            continue
+        if total and (i + x) * 2 > total:
+            blocked[cand] = "R2:dominant-app"
+            continue
+        applied.add(cand)
+    tele["candidates"] = dict(sorted(cands.items()))
+    tele["applied"] = sorted(applied)
+    if blocked:
+        tele["blocked"] = blocked
+    return applied
+
+
+_CODE_FILE_EXT_RE = re.compile(
+    r"\.(?:tsx?|jsx?|mjs|cjs|mts|cts|vue|svelte|py)$"
+)
+
+
+def _majority_dir(paths: list[str]) -> str | None:
+    """Deepest directory reached by descending while ONE child holds a
+    strict majority of the ORIGINAL path mass (scale-invariant — the
+    B20/B22 strict-majority family at directory grain). Anchoring the
+    bar to the original mass stops the walk from compounding relative
+    majorities into an over-deep election (midday ``insights``: the
+    remaining-mass rule descended to ``…/src/content/prompts``; the
+    original-mass rule stops at ``packages/insights/src``)."""
+    if not paths:
+        return None
+    total = len(paths)
+    cur = ""
+    while True:
+        kids: dict[str, int] = {}
+        for p in paths:
+            if cur and not p.startswith(cur + "/"):
+                continue
+            rel = p[len(cur):].lstrip("/") if cur else p
+            segs = rel.split("/")
+            if len(segs) > 1:
+                kids[segs[0]] = kids.get(segs[0], 0) + 1
+        if not kids:
+            return cur or None
+        best = max(sorted(kids), key=lambda k: kids[k])
+        if kids[best] * 2 <= total:
+            return cur or None
+        cur = (cur + "/" if cur else "") + best
+
+
+def _reanchor_mislocated_pfs(
+    product_features: list[Any],
+    clf: SurfaceScopeClassifier,
+    route_files: frozenset[str],
+    tele: dict[str, Any],
+) -> None:
+    """B28 Shape D — a PRODUCT-scoped PF whose anchor sits inside a
+    non-product workspace but whose OWN evidence majority lives outside it
+    (supabase docs-guides class: ``auth`` anchored at
+    ``route:apps/docs/app/guides/auth`` with 107/107 studio paths) keeps
+    its journeys and its uuid and re-anchors in place:
+
+    1. ``outside`` = owned paths not under the anchor workspace; a strict
+       majority is required (an inside-majority PF is the LANE's case);
+    2. elect the majority-dir walk result when it lands strictly deeper
+       than the workspace root; else fall back to the common prefix of
+       the outside ROUTE files (anchor-lineage law) — extension-stripped
+       when it is a single file; else refuse (telemetry, no mutation);
+    3. anchor kind: ``route:`` when the elected prefix carries
+       routes_index lineage, else ``fdir:``.
+    """
+    moves: list[dict[str, str]] = []
+    refused: dict[str, str] = {}
+    stripped_routes = {
+        _CODE_FILE_EXT_RE.sub("", rf): rf for rf in route_files
+    }
+    for pf in product_features:
+        if _is_shared_bucket(pf):
+            continue
+        if str(_get(pf, "surface_scope") or "") != SCOPE_PRODUCT:
+            continue
+        aid = str(_get(pf, "anchor_id") or "")
+        if ":" not in aid:
+            continue
+        apath = _norm(aid.split(":", 1)[1])
+        if "/" not in apath:
+            continue  # short keyed-artifact anchor — no workspace unit
+        unit = _workspace_unit(apath)
+        if not unit:
+            continue
+        unit_scope = clf.classify_path(unit)
+        if unit_scope in (None, SCOPE_PRODUCT):
+            continue
+        name = str(_get(pf, "display_name") or _get(pf, "name") or "?")
+        paths = [_norm(str(p)) for p in (_get(pf, "paths") or [])]
+        outside = [p for p in paths if _workspace_unit(p) != unit]
+        if not paths or len(outside) * 2 <= len(paths):
+            # body majority INSIDE the non-product workspace — the
+            # emission lane owns that shape; nothing to re-anchor.
+            continue
+        unit_depth = len(unit.split("/"))
+        elected = _majority_dir(outside)
+        if not elected or len(elected.split("/")) <= unit_depth:
+            rfiles = [p for p in outside if p in route_files]
+            common: str | None = None
+            if rfiles:
+                segs_list = [p.split("/") for p in rfiles]
+                out: list[str] = []
+                for segs in zip(*segs_list):
+                    if len(set(segs)) == 1:
+                        out.append(segs[0])
+                    else:
+                        break
+                common = "/".join(out) or None
+                if common and _CODE_FILE_EXT_RE.search(common):
+                    common = _CODE_FILE_EXT_RE.sub("", common)
+            if common and len(common.split("/")) > unit_depth:
+                elected = common
+            else:
+                refused[name] = "no-deep-majority-dir"
+                continue
+        has_route = elected in stripped_routes or any(
+            rf == elected or rf.startswith(elected + "/")
+            for rf in route_files
+        )
+        new_aid = ("route:" if has_route else "fdir:") + elected
+        if new_aid == aid:
+            continue
+        moves.append({"pf": name, "from": aid, "to": new_aid})
+        _stamp(pf, "anchor_id", new_aid)
+    if moves:
+        tele["reanchored"] = moves
+    if refused:
+        tele["refused"] = refused
+
+
 def apply_emission_taxonomy(
     developer_features: list["Feature"],
     product_features: list["Feature"],
@@ -938,6 +1228,7 @@ def apply_emission_taxonomy(
     repo_path: Any = None,
     adjudicator: Any = None,
     instrument_dirs: Iterable[str] | None = None,
+    dev_artifact_units: Iterable[str] = (),
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list["Feature"]]:
     """Emission-time taxonomy: tag UFs/PFs, split the non-product lane,
     dissolve info-page journeys, re-bind non-product shared devs, stamp
@@ -960,6 +1251,25 @@ def apply_emission_taxonomy(
     tele: dict[str, Any] = {"enabled": taxonomy_enabled()}
     if not taxonomy_enabled():
         return tele, [], product_features
+
+    # B28 Shape E — P-B/P-D dev-artifact workspaces join the instrument
+    # channel behind the R1/R2 rails BEFORE the classifier is built, so
+    # the existing strict-majority vote + emission lane execute the
+    # demotion with journeys riding along. Flag-OFF (or no survivors)
+    # leaves ``instrument_dirs`` byte-identical.
+    if nonproduct_scope_enabled():
+        dev_tele: dict[str, Any] = {}
+        extra = _dev_artifact_dirs(
+            developer_features, product_features, user_flows, flows,
+            repo_path, dev_artifact_units, dev_tele,
+        )
+        if extra:
+            instrument_dirs = tuple(sorted(
+                {_norm(str(d)) for d in (instrument_dirs or []) if d}
+                | extra
+            ))
+        if dev_tele.get("candidates"):
+            tele["dev_artifact"] = dev_tele
 
     clf = SurfaceScopeClassifier(patterns, repo_path=repo_path,
                                  routes_index=routes_index,
@@ -1121,6 +1431,20 @@ def apply_emission_taxonomy(
             "flips": flips,
         }
         tele["pf_scopes"] = pf_counts
+
+    # B28 Shape D — PRODUCT-scoped PFs anchored inside non-product
+    # workspaces re-anchor to their evidence-majority product surface.
+    # Runs on FINAL scopes (post-adjudicator) and BEFORE the lane split
+    # (a laned PF is Shape E and never re-anchors). No journey, uuid or
+    # path mutation — conservation trivial; validator I23 reads the
+    # healed anchor.
+    if docs_reanchor_enabled():
+        reanchor_tele: dict[str, Any] = {}
+        _reanchor_mislocated_pfs(
+            product_features, clf, route_files, reanchor_tele,
+        )
+        if reanchor_tele:
+            tele["docs_reanchor"] = reanchor_tele
 
     lane: list[dict[str, Any]] = []
     if lane_enabled():
