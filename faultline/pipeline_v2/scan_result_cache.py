@@ -203,6 +203,12 @@ ENV_OUTPUT_FLAGS = (
     # finalize phase. Reshapes flows[].name/display_name/short_label (the
     # operator-visible name channel). Default ON.
     "FAULTLINE_FLOW_NAME_V2",
+    # B31 (2026-07-10) — distinct recall-row display names: every synthesized
+    # recall row (e2e / route-group / backstop) in a display-name collision
+    # group is re-derived from its own (authored label | intent+resource |
+    # route-terminal) evidence at Stage 6.98 — per-board uniqueness by
+    # construction. Reshapes user_flows[].name.
+    "FAULTLINE_RECALL_ROW_NAMES",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -225,7 +231,8 @@ ENV_OUTPUT_FLAGS = (
 #: unset must not be served across it (B4 precedent).
 #: v17 (B26+B27): added FAULTLINE_HUB_PLUMBING_CHILD + FAULTLINE_PF_MANIFEST_NAME.
 #: v18 (B30): added FAULTLINE_FLOW_NAME_V2.
-KEY_SCHEMA_VERSION = 18
+#: v19 (B31): added FAULTLINE_RECALL_ROW_NAMES.
+KEY_SCHEMA_VERSION = 19
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

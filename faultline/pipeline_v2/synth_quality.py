@@ -58,6 +58,25 @@ BACKSTOP_REASON = "uncovered_product_feature_backstop"
 #: Track-C e2e orphan-journey recall seeds (``e2e_truth.E2E_ORPHAN_REASON``) —
 #: maintainer-AUTHORED journey placeholders, never renamed under B23.
 E2E_RECALL_REASON = "e2e_journey_recall"
+#: Route-group recall rows (``route_group_recall._REASON``) and the 6.7d
+#: promoted-capability backstop subclass — the remaining synthesized
+#: recall-row families the B31 distinct-names law covers.
+ROUTE_GROUP_REASON = "route_group_recall"
+PROMOTED_BACKSTOP_REASON = "promoted_capability_backstop"
+
+#: B31 — every synthesized recall-row family: rows the engine minted for
+#: RECALL bookkeeping (coverage markers, route-group recall, PF backstops).
+#: These are the rows whose display names may collapse onto one generic
+#: template string (wave-14 class 1: documenso 'Manage tRPC' ×7) because
+#: authored-channel protection exempts them from the naming contract's
+#: uniqueness law while a persona channel reverts them to the template.
+_RECALL_REASONS = frozenset({
+    E2E_RECALL_REASON,
+    ROUTE_GROUP_REASON,
+    BACKSTOP_REASON,
+    SYSTEM_RECALL_REASON,
+    PROMOTED_BACKSTOP_REASON,
+})
 
 SYNTH_QUALITY_ENV = "FAULTLINE_SYNTH_QUALITY"
 
@@ -176,6 +195,18 @@ def marker_surface_coords_enabled() -> bool:
     markers byte-identically (no surface spans, e2e labels renamed to the
     B13 ``'Uncovered: <PF> routes'`` template)."""
     return os.environ.get(MARKER_SURFACE_COORDS_ENV, "1").strip().lower() \
+        not in {"0", "false", "no", "off"}
+
+
+#: B31 — distinct display names for synthesized recall rows. Registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+RECALL_ROW_NAMES_ENV = "FAULTLINE_RECALL_ROW_NAMES"
+
+
+def recall_row_names_enabled() -> bool:
+    """Default ON; ``FAULTLINE_RECALL_ROW_NAMES=0`` restores today's recall-row
+    display names byte-identically (colliding generic templates kept)."""
+    return os.environ.get(RECALL_ROW_NAMES_ENV, "1").strip().lower() \
         not in {"0", "false", "no", "off"}
 
 
@@ -923,6 +954,290 @@ def attach_marker_surface_coords(
     return tele
 
 
+# ── B31 — distinct display names for synthesized recall rows ─────────────────
+#
+# Wave-14 class 1: recall rows (e2e_journey_recall / route_group_recall / PF
+# backstops) collapse onto ONE generic template string per PF — documenso
+# 'Manage tRPC' ×7, 'Manage team' ×11; supabase 'Manage projects' ×3. Two
+# structural causes, both immune to the naming contract's own uniqueness law:
+#
+#   * authored-channel PROTECTION — a UF whose id is in the Track-C authored
+#     map is exempt from ``_apply_uf_name_laws`` (Law A) BY DESIGN, but a
+#     keyed persona channel (Draft Verifier revert / PM-Labeler pick) can
+#     still write the generic ``<Verb> <PF-display>`` template onto it with
+#     no collision guard — the protection then locks the collision in;
+#   * template echo — several route-group/backstop rows under one PF derive
+#     the same ``<Verb> <PF-display>`` echo when their (intent, resource)
+#     evidence never reaches the display channel.
+#
+# The fix is a LAST-WRITER display law at Stage 6.98 (this module runs after
+# the naming contract): every synthesized recall row in a display-name
+# collision group is re-derived from its OWN row data, authored-first —
+#
+#   rung 1  authored label (Track-C mint carrier ``authored_label``) verbatim;
+#   rung 2  authored label + " (<PF display>)" (cross-PF authored twins);
+#   rung 3  ``<intent-verb> <resource>`` — deterministic journey template
+#           over the row's own (intent, resource) fields;
+#   rung 4  rung 3 + " (<route terminal>)" (deepest route's last clean word);
+#   rung 5  rung 3 + " (<PF display>)";
+#   rung 6  current name + " (<route terminal>)";
+#   rung 7  current name + " (<PF display>)".
+#
+# Every candidate is casing-polished + display-law-gated + uniqueness-gated
+# against the LIVE board (per-board uniqueness by construction; a row whose
+# whole ladder collides keeps its name and is counted, never suffixed with a
+# number). Organic journeys are NEVER touched. Deterministic, $0 LLM,
+# display-channel only. Gap-band eligibility of mc=0 markers is carried by
+# the STRUCTURAL fields (``is_coverage_marker`` / ``synthesis_reason``),
+# never by the display name — this pass preserves both fields untouched.
+#
+# Kill-switch: ``FAULTLINE_RECALL_ROW_NAMES`` (default ON; ``=0`` restores
+# today's names byte-identically). Registered in
+# ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+
+#: intent → journey-language display template. MIRRORS
+#: ``stage_6_7_user_flows.NAME_TMPL`` (kept as literals so this output-only
+#: module never imports the heavy synthesis stage — same precedent as the
+#: synthesis-reason tags above). ``other`` deliberately maps to the broad
+#: ``Manage`` verdict instead of the bare ``{r}`` echo: a bare-resource
+#: display would mint a single-noun / PF-twin name, which the display laws
+#: reject anyway.
+_INTENT_TMPL: dict[str, str] = {
+    "author": "Create & edit {r}",
+    "browse": "Browse & filter {r}",
+    "lifecycle": "Transition {r} through its lifecycle",
+    "execute": "Run {r}",
+    "manage": "Manage {r}",
+    "bulk": "Bulk-manage {r}",
+    "export": "Export {r}",
+}
+
+#: A resource/terminal must be a clean kebab/word token before it may enter a
+#: display (same guard class as ``reground_backstop_uf_names``): route params
+#: (``:param``), globs (``**``), dialect glyphs (``$``, ``+``) never leak.
+_CLEAN_TOKEN_RE = re.compile(r"[a-z][a-z0-9_-]*")
+
+
+def _is_recall_row(uf: Any) -> bool:
+    """A synthesized recall-bookkeeping row (marker or thin recall UF) —
+    the ONLY rows this pass may rename. Organic journeys never qualify."""
+    if not bool(_get(uf, "synthesized", False)):
+        return False
+    return _get(uf, "synthesis_reason", None) in _RECALL_REASONS
+
+
+def _clear_authored_label(uf: Any) -> None:
+    """Drop the mint-side authored-label carrier without ADDING a key to
+    dict inputs (the offline sim must not grow new keys on untouched rows)."""
+    if isinstance(uf, dict):
+        uf.pop("authored_label", None)
+    elif getattr(uf, "authored_label", None) is not None:
+        setattr(uf, "authored_label", None)
+
+
+def _resource_phrase_b31(resource: str) -> str | None:
+    """``legacy-editor`` → ``legacy editor``; ``None`` when the resource is
+    absent or carries route/param junk (unsafe for a display)."""
+    res = str(resource or "").strip().lower()
+    if not res or not _CLEAN_TOKEN_RE.fullmatch(res):
+        return None
+    phrase = re.sub(r"[-_]+", " ", res).strip()
+    return phrase or None
+
+
+def _route_terminals(uf: Any) -> list[str]:
+    """Deterministic route-terminal qualifiers for one recall row: for each
+    route (deepest first, then lexicographic) the LAST clean path word —
+    params/globs/dialect glyphs skipped. ``/sign/:param/complete`` →
+    ``complete``; ``/sign/:param`` → ``sign``."""
+    out: list[str] = []
+    routes = [str(r) for r in (_get(uf, "routes", None) or []) if r]
+    for route in sorted(
+        routes, key=lambda r: (-len([s for s in r.split("/") if s]), r)
+    ):
+        for seg in reversed([s for s in route.split("/") if s]):
+            s = seg.strip().lower()
+            if not _CLEAN_TOKEN_RE.fullmatch(s):
+                continue  # :param / ** / $dialect / numeric — never a word
+            term = re.sub(r"[-_]+", " ", s).strip()
+            if term and term not in out:
+                out.append(term)
+            break
+    return out
+
+
+def _recall_name_candidates(
+    uf: Any, pf_display: str, current: str,
+) -> list[str]:
+    """The B31 rung ladder (raw, un-polished candidate strings, ranked).
+    Authored-first (B23 law), then the (intent, resource) composition, then
+    route-terminal / PF qualifiers — see the pass docstring above."""
+    out: list[str] = []
+
+    def _add(c: str | None) -> None:
+        c = " ".join(str(c or "").split())
+        if c and c not in out:
+            out.append(c)
+
+    authored = str(_get(uf, "authored_label", None) or "").strip()
+    if authored:
+        _add(authored)
+        if pf_display:
+            _add(f"{authored} ({pf_display})")
+
+    res_phrase = _resource_phrase_b31(str(_get(uf, "resource", "") or ""))
+    composed: str | None = None
+    if res_phrase:
+        intent = str(_get(uf, "intent", "") or "").strip().lower()
+        tmpl = _INTENT_TMPL.get(intent) or _INTENT_TMPL["manage"]
+        composed = tmpl.format(r=res_phrase)
+    # A terminal that merely repeats the resource phrase qualifies nothing
+    # ("Manage admin (admin)") — skip it.
+    terminals = [t for t in _route_terminals(uf) if t != (res_phrase or "")]
+    if composed:
+        _add(composed)
+        for term in terminals:
+            _add(f"{composed} ({term})")
+        if pf_display:
+            _add(f"{composed} ({pf_display})")
+    if current:
+        for term in terminals:
+            _add(f"{current} ({term})")
+        if pf_display:
+            _add(f"{current} ({pf_display})")
+    return out
+
+
+def distinct_recall_row_names(
+    user_flows: list[Any],
+    product_features: list[Any],
+    scan_meta: dict[str, Any],
+    vocab: Any | None = None,
+) -> dict[str, Any]:
+    """B31 — per-board display-name uniqueness for synthesized recall rows.
+
+    For every display-name collision group that contains ≥1 synthesized
+    recall row, re-derive EACH such row's name from its own data via the
+    rung ladder (authored label → (intent, resource) composition →
+    route-terminal / PF qualifier). Organic rows are never touched; a row
+    whose entire ladder collides keeps its current name (counted in
+    ``residual_collisions`` — honest failure beats a numeric suffix).
+
+    Deterministic (sorted groups / rows / terminals), idempotent (a second
+    run finds no collision groups), $0 LLM, display-channel only —
+    ``is_coverage_marker`` / ``synthesis_reason`` / membership / ids are
+    untouched, so gap-band eligibility (structural, name-independent) is
+    preserved by construction. No-op (byte-identical output) when
+    ``FAULTLINE_RECALL_ROW_NAMES=0``.
+    """
+    if not recall_row_names_enabled():
+        return {"renamed": 0}
+    # Reuse the naming-contract display laws + casing polish (import, never
+    # rewrite — this module stays out of the naming-contract zone).
+    from faultline.pipeline_v2.naming_contract import (
+        display_law_violations,
+        load_naming_vocab,
+        polish_display_casing,
+    )
+
+    v = vocab if vocab is not None else load_naming_vocab()
+    b23_on = marker_surface_coords_enabled()
+
+    pf_display: dict[str, str] = {}
+    for pf in product_features or []:
+        key = str(_get(pf, "name", "") or _get(pf, "id", "") or "")
+        if key:
+            pf_display[key] = str(_get(pf, "display_name", None) or key)
+
+    def _fold(name: Any) -> str:
+        return str(name or "").strip().lower()
+
+    groups: dict[str, list[Any]] = {}
+    for uf in user_flows:
+        f = _fold(_get(uf, "name", ""))
+        if f:
+            groups.setdefault(f, []).append(uf)
+
+    taken: set[str] = set(groups)
+    renames: list[dict[str, Any]] = []
+    residual = 0
+    kept = 0
+
+    for fold_name in sorted(k for k, g in groups.items() if len(g) > 1):
+        grp = groups[fold_name]
+        movers: list[Any] = []
+        holders = 0
+        for uf in grp:
+            # Under FAULTLINE_MARKER_SURFACE_COORDS=0 the e2e markers are
+            # intentionally back on the B13 ``'Uncovered: <PF> routes'``
+            # naming regime — this pass must not fight that kill-switch.
+            if _is_recall_row(uf) and not (
+                not b23_on
+                and _get(uf, "synthesis_reason", None) == E2E_RECALL_REASON
+                and _is_member_less_marker(uf)
+            ):
+                movers.append(uf)
+            else:
+                holders += 1
+        if not movers:
+            continue
+        if holders == 0:
+            # No organic holder — the base name is vacated; the FIRST mover
+            # whose ladder re-derives it may honestly re-adopt it.
+            taken.discard(fold_name)
+        for uf in sorted(movers, key=lambda u: str(_get(u, "id", ""))):
+            current = str(_get(uf, "name", "") or "")
+            pfid = str(_get(uf, "product_feature_id", None) or "")
+            pfd = pf_display.get(pfid, "")
+            new_name: str | None = None
+            for raw in _recall_name_candidates(uf, pfd, current):
+                cand = polish_display_casing(raw, v)
+                cf = _fold(cand)
+                if not cf or cf in taken:
+                    continue
+                if display_law_violations(cand, v, pf_display=pfd or None):
+                    continue
+                new_name = cand
+                break
+            if new_name is None:
+                taken.add(_fold(current))  # ladder exhausted — honest keep
+                residual += 1
+                continue
+            taken.add(_fold(new_name))
+            if new_name == current:
+                kept += 1  # re-adopted its own (now unique) name
+                continue
+            renames.append({
+                "id": _get(uf, "id", None),
+                "product_feature_id": _get(uf, "product_feature_id", None),
+                "synthesis_reason": _get(uf, "synthesis_reason", None),
+                "before": current,
+                "after": new_name,
+            })
+            _set(uf, "name", new_name)
+
+    # Hygiene — the authored-label carrier never outlives 6.98 (mirrors the
+    # ``surface_candidate_files`` contract; dict rows never GROW a key).
+    for uf in user_flows:
+        _clear_authored_label(uf)
+
+    tele = {
+        "renamed": len(renames),
+        "kept": kept,
+        "residual_collisions": residual,
+    }
+    if renames or residual:
+        # Additive telemetry — the key exists only on boards that HAD a
+        # recall-row collision, so clean boards stay byte-identical under
+        # flag ON.
+        sq = scan_meta.setdefault("synth_quality", {})
+        sq["recall_row_names"] = {
+            "renamed": [dict(r) for r in renames],
+            "residual_collisions": residual,
+        }
+    return tele
+
+
 def run_synth_quality(
     user_flows: list[Any],
     flows: list[Any],
@@ -959,6 +1274,12 @@ def run_synth_quality(
     # ledger exists exactly where the marker flag exists.
     coords_tele = attach_marker_surface_coords(
         user_flows, flows, product_features, developer_features, scan_meta)
+    # B31 — distinct display names for synthesized recall rows. Runs LAST
+    # (this module is the final display writer of the scan): every naming
+    # channel above — contract, personas, reground, marker typing — has
+    # spoken, so any surviving collision is final unless resolved here.
+    recall_tele = distinct_recall_row_names(
+        user_flows, product_features, scan_meta, vocab=vocab)
     tele = {
         "enabled": True,
         "backstop_renamed": name_tele["renamed"],
@@ -968,6 +1289,7 @@ def run_synth_quality(
         "ui_chrome_demoted": chrome_tele["demoted"],
         "coverage_markers": marker_tele["marked"],
         "surface_coords_attached": coords_tele.get("attached", 0),
+        "recall_rows_renamed": recall_tele.get("renamed", 0),
     }
     sq = scan_meta.setdefault("synth_quality", {})
     sq.update({
@@ -987,17 +1309,22 @@ __all__ = [
     "UF_WORTHINESS_ENV",
     "BACKSTOP_OWNED_COVER_ENV",
     "MARKER_SURFACE_COORDS_ENV",
+    "RECALL_ROW_NAMES_ENV",
     "SYSTEM_RECALL_REASON",
     "BACKSTOP_REASON",
     "E2E_RECALL_REASON",
+    "ROUTE_GROUP_REASON",
+    "PROMOTED_BACKSTOP_REASON",
     "synth_quality_enabled",
     "uf_worthiness_enabled",
     "backstop_owned_cover_enabled",
     "marker_surface_coords_enabled",
+    "recall_row_names_enabled",
     "demote_system_flow_seeds",
     "demote_ui_chrome_ufs",
     "reground_backstop_uf_names",
     "honest_coverage_markers",
     "attach_marker_surface_coords",
+    "distinct_recall_row_names",
     "run_synth_quality",
 ]

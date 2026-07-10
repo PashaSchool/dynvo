@@ -1178,6 +1178,15 @@ class UserFlow(BaseModel):
     # ``attach_marker_surface_coords``; NEVER serialized (field-level
     # ``exclude=True`` plus a defensive pop in the serializer).
     surface_candidate_files: list[str] | None = Field(default=None, exclude=True)
+    # B31 — mint-side authored journey label (Track-C e2e orphan mints: the
+    # maintainer's own playwright label, e.g. "Bulk Actions"). Carried so the
+    # Stage-6.98 recall-row naming pass
+    # (``synth_quality.distinct_recall_row_names``) can restore it when a
+    # downstream naming channel (keyed persona verifier / labeler) reverted
+    # the display to a colliding generic template. Pipeline plumbing only —
+    # NEVER serialized (field-level ``exclude=True`` plus a defensive pop in
+    # the serializer).
+    authored_label: str | None = Field(default=None, exclude=True)
 
     @model_serializer(mode="wrap")
     def _omit_none_identity(self, handler: Any) -> Any:
@@ -1221,6 +1230,9 @@ class UserFlow(BaseModel):
             if data.get("surface_files") is None:
                 data.pop("surface_files", None)
             data.pop("surface_candidate_files", None)
+            # B31 — the authored-label carrier is pipeline plumbing and must
+            # NEVER serialize (exclude=True; this pop is belt-and-braces).
+            data.pop("authored_label", None)
         return data
 
 
