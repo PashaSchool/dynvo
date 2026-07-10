@@ -112,11 +112,6 @@ def _anchors():
                     source="route", display="Admin",
                     prefixes=("app/routes/admin",),
                     sources=frozenset({"route"})),
-        # UNMINTED route group — the excavation target.
-        SpineAnchor(canonical_id="route:app/routes/embed", key="embed",
-                    source="route", display="Embed",
-                    prefixes=("app/routes/embed",),
-                    sources=frozenset({"route"})),
         # A shell anchor over everything — must never answer.
         SpineAnchor(canonical_id="ws:app", key="app", source="ws-app",
                     display="App", prefixes=("app",),
@@ -126,6 +121,16 @@ def _anchors():
                     display="Rpc", prefixes=(UNIT,),
                     sources=frozenset({"ws-pkg"})),
     ]
+
+
+#: routes_index — establishes the routes ROOT (app/routes) the grain's
+#: route-GROUP channel derives NEW targets from ("embed" is unminted).
+ROUTES = [
+    {"file": "app/routes/billing/index.tsx", "pattern": "/billing"},
+    {"file": "app/routes/admin/index.tsx", "pattern": "/admin"},
+    {"file": "app/routes/embed/page.tsx", "pattern": "/embed"},
+    {"file": "app/routes/embed/sign.tsx", "pattern": "/embed/:id"},
+]
 
 
 def _scene(extra_ufs=(), extra_flows=(), extra_devs=()):
@@ -153,14 +158,14 @@ def _scene(extra_ufs=(), extra_flows=(), extra_devs=()):
         UF("UF-002", "Embed documents", "rpc", members=["f-embed"]),
     ] + list(extra_ufs)
     grain = TargetGrainIndex(
-        _anchors(), pfs, excluded_units=[UNIT],
+        _anchors(), pfs, routes_index=ROUTES, excluded_units=[UNIT],
         candidate_pf_keys={"rpc"})
     return devs, pfs, ufs, flows, grain
 
 
 def _run(devs, pfs, ufs, flows, grain, candidates=None, routes_index=None):
     return run_transport_handoff(
-        devs, pfs, ufs, flows, routes_index or [], Ctx(),
+        devs, pfs, ufs, flows, routes_index or ROUTES, Ctx(),
         candidates if candidates is not None
         else {UNIT: "S2-transport:name-dep-fanout"},
         grain_index=grain,
@@ -323,9 +328,33 @@ def test_plurality_subflag_off_blocks(monkeypatch):
 
 
 def test_plurality_i16_rail_refuses():
-    # Plurality target = billing, but the journey's member ENTRIES are
-    # majority-owned by admin post-move → a NEW I16 row → rail refuses
-    # → gate blocks (measured rail, not vibes).
+    # Plurality target = billing, but the journey's member ENTRIES sit
+    # on the candidate's OWN annexed files (pre-state: owned by the
+    # dissolving home → I16-clean today) which the plan re-homes to the
+    # embed target → post-move the entries are majority-foreign to
+    # billing → a NEW I16 row → rail refuses → gate blocks (measured
+    # rail, not vibes; a PRE-flagged journey would be exempt — only the
+    # clean→flagged transition counts).
+    fl = Fl("f-mix", [("app/routes/billing/index.tsx", 30),
+                      ("app/routes/admin/index.tsx", 20),
+                      ("app/routes/embed/page.tsx", 20)],
+            ep="app/routes/embed/page.tsx")
+    fl2 = Fl("f-mix2", [], ep="app/routes/embed/sign.tsx")
+    uf = UF("UF-004", "View audit log", "rpc", members=["f-mix", "f-mix2"])
+    devs, pfs, ufs, flows, grain = _scene(extra_ufs=[uf],
+                                          extra_flows=[fl, fl2])
+    tele = _run(devs, pfs, ufs, flows, grain)
+    assert tele["laned"] == []
+    reasons = {b["uf"]: b["reason"]
+               for b in tele["conservation_blocked"][UNIT]["blocked"]}
+    assert reasons == {"UF-004": "plurality_i16_rail"}
+
+
+def test_plurality_preflagged_journey_exempt_from_rail():
+    # The SAME distributed journey but its entries are ALREADY foreign
+    # today (owned by admin while homed to rpc → pre-flagged I16 row):
+    # moving it cannot CREATE a row, so the rail allows the plurality
+    # re-home (ratified wording: zero NEW I16 rows).
     fl = Fl("f-mix", [("app/routes/billing/index.tsx", 30),
                       ("app/routes/admin/index.tsx", 20),
                       ("app/routes/embed/page.tsx", 20)],
@@ -335,10 +364,10 @@ def test_plurality_i16_rail_refuses():
     devs, pfs, ufs, flows, grain = _scene(extra_ufs=[uf],
                                           extra_flows=[fl, fl2])
     tele = _run(devs, pfs, ufs, flows, grain)
-    assert tele["laned"] == []
-    reasons = {b["uf"]: b["reason"]
-               for b in tele["conservation_blocked"][UNIT]["blocked"]}
-    assert reasons == {"UF-004": "plurality_i16_rail"}
+    assert [row["unit"] for row in tele["laned"]] == [UNIT]
+    assert next(u for u in ufs if u.id == "UF-004").product_feature_id \
+        == "billing"
+    assert tele["rungs"][UNIT].get("r3-plurality") == 1
 
 
 # ── 7. synthesized route-only UFs ────────────────────────────────────────

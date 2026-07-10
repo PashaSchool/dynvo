@@ -187,20 +187,33 @@ class TargetGrainIndex:
     re-home) and the late-mint excavator consult THIS object, so the
     vote target and the minted target cannot diverge by construction.
 
-    ``grain_of_file``: most specific non-shell, non-barred anchor whose
-    subtree contains the file (exact-file beats prefix; longer prefix
-    beats shorter; ties break on canonical_id) — an anchor with a
-    minted PF answers that PF; an unminted ROUTE-sourced anchor answers
-    a ``new`` excavation target; anything else answers ``None`` (the
-    consumer rung may still resolve the file). Anchors inside the
-    candidate unit / instrument dirs never answer (lane is never a
-    target — B20 law).
+    ``grain_of_file`` answers, in order of SPECIFICITY (longest matched
+    prefix wins; exact-file anchors beat any prefix):
+
+      * a PF-BACKED anchor whose subtree contains the file → that PF
+        (``t.$team-url+`` / ``settings+`` / ``admin+`` keep their own
+        journeys — the existing product grain outranks a NEW group at
+        equal-or-deeper specificity);
+      * else, a file under a ROUTES ROOT (roots derived from the
+        routes_index file population via the spine's
+        ``_route_root_end`` — dialect-blind) → the NEW route-GROUP
+        target at the top-level group dir (``embed+``,
+        ``_authenticated+``, ``_recipient+``, ``(marketing)`` …) — the
+        ratified excavation grain: one author route group = one
+        candidate PF, so sibling page votes POOL instead of
+        fragmenting into per-page anchors (the design's 17/25
+        NEW-target risk, observed live on the documenso offline sim);
+      * else ``None`` (the consumer rung may still resolve the file).
+
+    Anchors/groups inside the candidate unit / instrument dirs never
+    answer (lane is never a target — B20 law).
     """
 
     def __init__(
         self,
         anchors: Iterable[Any],
         product_features: Iterable[Any],
+        routes_index: Iterable[Mapping[str, Any]] | None = None,
         excluded_units: Iterable[str] = (),
         candidate_pf_keys: Iterable[str] = (),
     ) -> None:
@@ -218,20 +231,79 @@ class TargetGrainIndex:
                 pf_by_anchor.setdefault(str(aid), str(key))
         self._pf_by_anchor = pf_by_anchor
         self.pf_keys = frozenset(pf_keys)
+        # Only PF-BACKED anchors participate in matching — the NEW grain
+        # is the route-GROUP channel below, never a per-page anchor.
         self._anchors: list[Any] = []
         for a in sorted(anchors, key=lambda x: x.canonical_id):
             if getattr(a, "shell", False) or getattr(a, "barred", None):
+                continue
+            if a.canonical_id not in pf_by_anchor:
                 continue
             units = list(getattr(a, "prefixes", ()) or ()) + sorted(
                 getattr(a, "files", ()) or ())
             if units and all(self._in_excluded(u) for u in units):
                 continue  # anchor lives wholly inside a lane unit
             self._anchors.append(a)
+        # Routes roots + ALLOWED group prefixes from the routes_index
+        # file population — PRODUCT-scoped entries only (W2a surface
+        # taxonomy rides on the entries): a docs/marketing/legal route
+        # group is never a journey re-home target (design Q3 —
+        # cross-lane journeys are the gate's reason to exist, not a
+        # grain source).
+        from faultline.pipeline_v2.spine_anchors import _route_root_end
+        roots: set[str] = set()
+        route_files: list[str] = []
+        for e in (routes_index or []):
+            if not isinstance(e, Mapping):
+                continue
+            scope = e.get("surface_scope")
+            if scope not in (None, "", "product"):
+                continue
+            f = str(e.get("file") or "")
+            segs = [s for s in f.replace("\\", "/").split("/") if s]
+            end = _route_root_end(segs)
+            if end is not None and end < len(segs):
+                roots.add("/".join(segs[:end]))
+                route_files.append(f)
+        self._roots = sorted(roots, key=len, reverse=True)
+        self._display: dict[str, str] = {}
         self._memo: dict[str, GrainTarget | None] = {}
+        # Group prefixes are ALLOWED only where a product-scoped route
+        # file actually lives (a foreign app sharing the same root
+        # shape never becomes a target by prefix accident).
+        self._allowed_groups: set[str] = set()
+        for f in route_files:
+            g = self._route_group_of(f, check_allowed=False)
+            if g is not None:
+                self._allowed_groups.add(g[0])
 
     def _in_excluded(self, path: str) -> bool:
         return any(path == u or path.startswith(u + "/")
                    for u in self._excluded)
+
+    def _route_group_of(
+        self, path: str, check_allowed: bool = True,
+    ) -> tuple[str, str, int] | None:
+        """``(canonical_id, display, specificity)`` of the route-GROUP
+        target containing *path*, or ``None`` (not under a routes root
+        / not an allowed product-scoped group)."""
+        for root in self._roots:
+            if not path.startswith(root + "/"):
+                continue
+            rest = path[len(root) + 1:].split("/")
+            seg1 = rest[0]
+            if len(rest) == 1:
+                # Leaf file directly at the root (central routers /
+                # flat-route dialects): the stem's head atom keys the
+                # group.
+                seg1 = seg1.rsplit(".", 1)[0]  # strip extension
+                seg1 = seg1.split(".", 1)[0] or seg1
+            prefix = f"{root}/{seg1}"
+            cid = f"route:{prefix}"
+            if check_allowed and cid not in self._allowed_groups:
+                return None
+            return (cid, _group_display(seg1), len(prefix))
+        return None
 
     def grain_of_file(self, path: str) -> GrainTarget | None:
         if path in self._memo:
@@ -256,36 +328,81 @@ class TargetGrainIndex:
                     continue
             if spec > best_spec:
                 best, best_spec = a, spec
+        group = self._route_group_of(path)
         out: GrainTarget | None = None
-        if best is not None:
+        if best is not None and (group is None or best_spec >= group[2]):
             pf_key = self._pf_by_anchor.get(best.canonical_id)
             if pf_key is not None and pf_key not in self._cand_keys:
                 out = GrainTarget("pf", pf_key,
                                   display=getattr(best, "display", "") or "")
-            elif pf_key is None and "route" in (
-                    getattr(best, "sources", None) or {best.source}):
-                # Unminted route-group anchor → excavation target.
-                out = GrainTarget("new", best.canonical_id,
-                                  display=getattr(best, "display", "") or "")
+        elif group is not None:
+            cid, display, _spec = group
+            self._display.setdefault(cid, display)
+            pf_key = self._pf_by_anchor.get(cid)
+            if pf_key is not None:
+                # A PF already sits at EXACTLY this grain — never mint a
+                # twin; the group answers that PF.
+                if pf_key not in self._cand_keys:
+                    out = GrainTarget("pf", pf_key, display=display)
+            else:
+                out = GrainTarget("new", cid, display=display)
         self._memo[path] = out
         return out
 
-    def anchor_of(self, canonical_id: str) -> Any:
-        for a in self._anchors:
-            if a.canonical_id == canonical_id:
-                return a
-        return None
+    def display_of(self, canonical_id: str) -> str:
+        return self._display.get(
+            canonical_id,
+            _group_display(canonical_id.rsplit("/", 1)[-1]))
+
+    def group_cid_of(self, path: str) -> str | None:
+        """The route-GROUP cid containing *path* (allowed groups only)
+        — the carve predicate: virtual flat-route groups can't be
+        matched by a plain prefix test."""
+        g = self._route_group_of(path)
+        return g[0] if g is not None else None
+
+
+def _group_display(seg: str) -> str:
+    """Route-group dir segment → display label (``_recipient+`` →
+    ``Recipient``, ``(marketing)`` → ``Marketing``, ``embed+`` →
+    ``Embed``, ``o.$orgUrl.settings`` → ``O``-head atom class)."""
+    raw = seg.strip()
+    if raw.startswith("(") and raw.endswith(")"):
+        raw = raw[1:-1]
+    raw = raw.lstrip("_").rstrip("+")
+    raw = raw.split(".", 1)[0]  # flat-route dot-chains key the head atom
+    words = re.split(
+        r"[-_\s]+", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "-", raw).strip())
+    return " ".join(
+        w if (w.isupper() and len(w) > 1) else w.capitalize()
+        for w in words if w
+    ) or (raw or seg)
 
 
 def _norm_route_segs(pattern: str) -> tuple[str, ...]:
-    """URL pattern → comparable segments (every dialect's params → *)."""
+    """Route pattern OR live URL → comparable atoms.
+
+    Dialect-blind: ``/``-segments are further split on ``.``
+    (flat-route dot-chains); URL-invisible atoms drop (leading-``_``
+    pathless layouts / ``_index`` markers, ``(group)`` dirs); the
+    flat-route ``+`` dir suffix strips; params of every dialect → ``*``
+    — so the file-flavored ``/_recipient+/sign.$token`` and the live
+    URL ``/sign/:param`` normalize to the same ``("sign", "*")``."""
     from faultline.pipeline_v2.spine_anchors import _DYNAMIC_RE
 
     out: list[str] = []
     for seg in str(pattern or "").split("/"):
-        if not seg:
-            continue
-        out.append("*" if _DYNAMIC_RE.match(seg) else seg.lower())
+        for atom in seg.split("."):
+            atom = atom.strip()
+            if not atom:
+                continue
+            if atom.startswith("(") and atom.endswith(")"):
+                continue
+            if atom.endswith("+"):
+                atom = atom[:-1]
+            if not atom or atom.startswith("_"):
+                continue
+            out.append("*" if _DYNAMIC_RE.match(atom) else atom.lower())
     return tuple(out)
 
 
@@ -314,24 +431,30 @@ class RouteUrlResolver:
         self._entries.sort()
 
     def grain_of_route(self, url: str) -> GrainTarget | None:
+        """Best entry by (exact-atom matches, run length, closest
+        length) — EXACT atom equality outranks wildcard alignment, so a
+        literal ``/sign/:param`` pattern always beats a fully-dynamic
+        catch-all whose leading param happens to align (the documenso
+        ``[__htmltopdf]`` trap, offline sim 2026-07-10)."""
         want = _norm_route_segs(url)
         if not want:
             return None
         best_file: str | None = None
-        best_score = 0
+        best_score: tuple[int, int, int] = (0, 0, 0)
         for segs, f in self._entries:
-            if segs == want:
-                run = len(want) + 1_000  # exact match dominates
-            else:
-                run = 0
-                for a, b in zip(segs, want):
-                    if a == b or a == "*" or b == "*":
-                        run += 1
-                    else:
-                        break
-            if run > best_score:
-                best_score, best_file = run, f
-        if best_file is None or best_score == 0:
+            exacts = run = 0
+            for a, b in zip(segs, want):
+                if a == b and a != "*":
+                    exacts += 1
+                    run += 1
+                elif a == b or a == "*" or b == "*":
+                    run += 1
+                else:
+                    break
+            score = (exacts, run, -abs(len(segs) - len(want)))
+            if run and score > best_score:
+                best_score, best_file = score, f
+        if best_file is None:
             return None
         return self._grain.grain_of_file(best_file)
 
@@ -674,8 +797,8 @@ def _grain_key(t: GrainTarget) -> str:
 
 
 class _FileResolver:
-    """Ladder over ONE candidate: lane → owned → route grain → consumer
-    seed. Memoised; every rung deterministic."""
+    """Ladder over ONE candidate: lane → lane-neutral → owned → route
+    grain → consumer seed. Memoised; every rung deterministic."""
 
     def __init__(
         self,
@@ -685,6 +808,7 @@ class _FileResolver:
         grain: TargetGrainIndex,
         consumers: ConsumerIndex | None,
         lane_pf_keys: frozenset[str] = frozenset(),
+        neutral_files: frozenset[str] = frozenset(),
     ) -> None:
         self.unit = unit.strip("/")
         self.cand = cand_pf_key
@@ -692,18 +816,26 @@ class _FileResolver:
         self.grain = grain
         self.consumers = consumers
         self.lane_keys = lane_pf_keys
+        #: Files owned by a pfid=None LANE-RESIDENT dev — already
+        #: adjudicated non-product mass (B21 lane-neutral doctrine):
+        #: neutral ground, never a vote, never a seed, excluded from
+        #: the r1 denominator exactly like candidate-lane mass.
+        self.neutral = neutral_files
         self._direct: dict[str, GrainTarget | None] = {}
-        self._seed: dict[str, tuple[GrainTarget | None, str]] = {}
+        self._seed: dict[str, tuple[GrainTarget | None, str, Counter]] = {}
 
     def in_lane(self, path: str) -> bool:
         return path == self.unit or path.startswith(self.unit + "/")
 
+    def is_neutral(self, path: str) -> bool:
+        return path in self.neutral
+
     def direct(self, path: str) -> GrainTarget | None:
-        """Rungs 1-3 of the ladder (no consumer walk)."""
+        """Owned + route-grain rungs of the ladder (no consumer walk)."""
         if path in self._direct:
             return self._direct[path]
         out: GrainTarget | None = None
-        if not self.in_lane(path):
+        if not self.in_lane(path) and not self.is_neutral(path):
             own = self.owner.get(path)
             if (own is not None and own != self.cand
                     and own not in self.lane_keys
@@ -714,14 +846,21 @@ class _FileResolver:
         self._direct[path] = out
         return out
 
-    def seed(self, path: str) -> tuple[GrainTarget | None, str]:
+    def seed(self, path: str) -> tuple[GrainTarget | None, str, Counter]:
         """r2 consumer completion for one non-voting seed file —
-        winner-take-all strict majority over its consumer votes."""
+        winner-take-all strict majority over its consumer votes. The
+        raw vote distribution rides along for the r3 pooled-plurality
+        rung (a strict-less seed abstains at r2 but its distribution
+        still informs the last-resort pool)."""
         if path in self._seed:
             return self._seed[path]
-        out: tuple[GrainTarget | None, str]
+        out: tuple[GrainTarget | None, str, Counter]
+        if self.is_neutral(path):
+            out = (None, "lane_neutral", Counter())
+            self._seed[path] = out
+            return out
         if self.consumers is None:
-            out = (None, "no_consumer_index")
+            out = (None, "no_consumer_index", Counter())
             self._seed[path] = out
             return out
         votes: Counter = Counter()
@@ -731,7 +870,7 @@ class _FileResolver:
                 t = self.direct(c)
                 if t is not None:
                     votes[_grain_key(t)] += 1
-                elif (not self.in_lane(c)
+                elif (not self.in_lane(c) and not self.is_neutral(c)
                       and len(self.consumers.importers_of(c))
                       <= self.consumers.cutoff):
                     pool.append(c)
@@ -743,7 +882,7 @@ class _FileResolver:
         else:
             if len(self.consumers.importers_of(path)) \
                     > self.consumers.cutoff:
-                out = (None, "hub")
+                out = (None, "hub", Counter())
                 self._seed[path] = out
                 return out
             frontier = [path]
@@ -759,21 +898,22 @@ class _FileResolver:
                         if t is not None:
                             votes[_grain_key(t)] += 1
                         elif (not self.in_lane(imp)
+                              and not self.is_neutral(imp)
                               and len(self.consumers.importers_of(imp))
                               <= self.consumers.cutoff):
                             nxt.append(imp)
                 frontier = nxt
         total = sum(votes.values())
         if not total:
-            out = (None, "no_consumers")
+            out = (None, "no_consumers", votes)
         else:
             ranked = _tie_sorted(votes)
             top_key, ct = ranked[0]
             if ct * 2 > total:
                 kind, _, key = str(top_key).partition(":")
-                out = (GrainTarget(kind, key), f"{ct}/{total}")
+                out = (GrainTarget(kind, key), f"{ct}/{total}", votes)
             else:
-                out = (None, "split")
+                out = (None, "split", votes)
         self._seed[path] = out
         return out
 
@@ -835,35 +975,57 @@ def resolve_user_flow(
         res.reason = "zero_product_votes"  # no spans, no routes
         return res
 
-    # r1 — direct owned+route votes over non-lane span mass.
+    # r1 — strict majority over the journey's NON-LANE span mass: the
+    # denominator keeps the still-unresolved seed mass, so a sliver of
+    # direct votes can never outvote a large unknown (the Phase-1
+    # UF-051 "15-line route sliver" trap / the sim's 1%-coverage docs
+    # exhibit). Candidate-lane files and lane-NEUTRAL files (owned by
+    # platform-lane residents — already-adjudicated non-product mass)
+    # leave the denominator, exactly the validator's B21 convention.
     direct_votes: Counter = Counter()
     seeds: list[tuple[str, int]] = []
+    nonlane_mass = 0
     for p in sorted(mass):
         m = mass[p]
+        if resolver.in_lane(p) or resolver.is_neutral(p):
+            continue
+        nonlane_mass += m
         t = resolver.direct(p)
         if t is not None:
             direct_votes[_grain_key(t)] += m
         else:
             seeds.append((p, m))
-    voting = sum(direct_votes.values())
-    if voting:
+    # lane files still consumer-complete at r2 (their consumers are the
+    # product surface the transport serves) — they are seeds, just
+    # excluded from the r1 denominator.
+    for p in sorted(mass):
+        if resolver.in_lane(p):
+            seeds.append((p, mass[p]))
+    seeds.sort()
+    if direct_votes and nonlane_mass:
         ranked = _tie_sorted(direct_votes)
         top_key, ct = ranked[0]
-        if ct * 2 > voting:
+        if ct * 2 > nonlane_mass:
             kind, _, key = str(top_key).partition(":")
             res.rung, res.target = "r1-strict", GrainTarget(kind, key)
-            res.voting_mass = voting
-            res.coverage = voting / res.total_mass
+            res.voting_mass = sum(direct_votes.values())
+            res.coverage = res.voting_mass / res.total_mass
             res.thin_coverage = res.coverage < _THIN_COVERAGE
             res.top2 = [(str(k), c) for k, c in ranked[:2]]
             return res
 
-    # r2 — consumer completion: each seed re-homes winner-take-all.
+    # r2 — consumer completion: each seed re-homes winner-take-all onto
+    # its strict consumer majority (abstains never pollute); verdict =
+    # strict majority of the completed VOTING mass (the Phase-1 q2c
+    # ruler; coverage telemetry keeps thin verdicts visible).
     pooled = Counter(direct_votes)
+    seed_dists: list[tuple[int, Counter]] = []
     for p, m in seeds:
-        t, _why = resolver.seed(p)
+        t, _why, dist = resolver.seed(p)
         if t is not None:
             pooled[_grain_key(t)] += m
+        elif dist:
+            seed_dists.append((m, dist))
     voting = sum(pooled.values())
     res.voting_mass = voting
     res.coverage = (voting / res.total_mass) if res.total_mass else 0.0
@@ -876,15 +1038,31 @@ def resolve_user_flow(
             kind, _, key = str(top_key).partition(":")
             res.rung, res.target = "r2-consumer", GrainTarget(kind, key)
             return res
-        # r3 — plurality last resort: top1 must STRICTLY beat top2 (a
-        # 50/50 tie never re-homes); the caller adds the I16 rail.
-        if plurality_ok and (len(ranked) < 2 or ct > ranked[1][1]):
-            kind, _, key = str(top_key).partition(":")
+    if not voting and not seed_dists:
+        res.reason = "zero_product_votes"
+        return res
+
+    # r3 — pooled-plurality last resort: abstaining seeds contribute
+    # their FULL consumer-vote distributions (mass-weighted, exact
+    # rational arithmetic — no float ties), and the top target must
+    # STRICTLY beat the runner-up (an exactly-50/50 journey never
+    # re-homes — design §8.2). The caller still runs the I16 rail.
+    if plurality_ok:
+        from fractions import Fraction
+        pooled_r3: dict[str, Fraction] = defaultdict(lambda: Fraction(0))
+        for k, c in pooled.items():
+            pooled_r3[str(k)] += Fraction(c)
+        for m, dist in seed_dists:
+            tot = sum(dist.values())
+            for k, c in dist.items():
+                pooled_r3[str(k)] += Fraction(m) * Fraction(c, tot)
+        ranked3 = sorted(pooled_r3.items(), key=lambda kv: (-kv[1], kv[0]))
+        res.top2 = [(k, int(v)) for k, v in ranked3[:2]]
+        if ranked3 and (len(ranked3) < 2 or ranked3[0][1] > ranked3[1][1]):
+            kind, _, key = ranked3[0][0].partition(":")
             res.rung, res.target = "r3-plurality", GrainTarget(kind, key)
             return res
-        res.reason = "split"
-        return res
-    res.reason = "zero_product_votes"
+    res.reason = "split"
     return res
 
 
@@ -896,31 +1074,145 @@ def _owned_of(f: Any) -> list[str]:
     return owned_paths_of(f)
 
 
-def _build_owner_map(devs: list[Any]) -> dict[str, str | None]:
-    """file → owning dev's ``product_feature_id`` (LIVE state — this
-    stage runs before the emission path_index refresh, so the 6.8 index
-    is stale for post-6.8 dev moves; the dev ledger is the truth).
-    First claimant in name-sorted dev order wins (deterministic)."""
+def _build_owner_map(
+    devs: list[Any],
+) -> tuple[dict[str, str | None], frozenset[str]]:
+    """``(file → owning dev's product_feature_id, lane-neutral files)``.
+
+    LIVE state — this stage runs before the emission path_index
+    refresh, so the 6.8 index is stale for post-6.8 dev moves; the dev
+    ledger is the truth. First claimant in name-sorted dev order wins
+    (deterministic). A file whose owner is a ``pfid=None`` dev (a
+    platform-lane resident: shells, instruments, no-anchor residue) is
+    LANE-NEUTRAL — already-adjudicated non-product mass that must
+    neither vote nor become a NEW-target grain source (B21)."""
     owner: dict[str, str | None] = {}
     for f in sorted(devs, key=lambda x: str(_attr(x, "name") or "")):
         pfid = _attr(f, "product_feature_id")
         for p in _owned_of(f):
             owner.setdefault(p, pfid)
-    return owner
+    neutral = frozenset(p for p, o in owner.items() if o is None)
+    return owner, neutral
 
 
-def _i16_new_row(
+def _carve_chunk(src: Any, cid: str, files: list[str]) -> Any:
+    """8.9.x-style chunk dev for a carved group grain (mirrors
+    ``lane_excavation._make_excav_dev`` with the handoff marker;
+    content-derived uuid — uuid4 would churn byte-identity)."""
+    import hashlib
+
+    name = f"{str(_attr(src, 'name'))}-{_HANDOFF_MARKER}"
+    uuid = hashlib.sha256(
+        f"transport-carve-v1|{_attr(src, 'uuid') or _attr(src, 'name')}|"
+        f"{cid}|{name}".encode("utf-8")).hexdigest()[:32]
+    if hasattr(src, "model_copy"):
+        from faultline.models.types import MemberFile
+        members = [
+            MemberFile(
+                path=p, role="anchor", confidence=1.0, primary=True,
+                evidence=f"{_HANDOFF_MARKER} carve of '{src.name}'",
+            )
+            for p in sorted(files)
+        ]
+        return src.model_copy(deep=True, update={
+            "name": name,
+            "display_name": name,
+            "paths": sorted(files),
+            "member_files": members,
+            "description": (
+                f"{_HANDOFF_MARKER} carve '{cid}' of '{src.name}'"),
+            "uuid": uuid,
+            "split_from": getattr(src, "uuid", None),
+            "previous_names": [], "merged_from": [],
+            "total_commits": 0, "bug_fixes": 0, "bug_fix_ratio": 0.0,
+            "flows": [], "shared_participants": [],
+            "shared_attributions": [], "symbol_attributions": [],
+            "hotspot_files": [], "participants": [],
+            "history": None, "shared_reason": None,
+        })
+
+    class _Chunk:  # test/sim stubs (no pydantic surface)
+        pass
+
+    ch = _Chunk()
+    ch.layer = "developer"
+    ch.name = name
+    ch.display_name = name
+    ch.uuid = uuid
+    ch.paths = sorted(files)
+    ch.member_files = [
+        {"path": p, "role": "anchor", "confidence": 1.0, "primary": True,
+         "evidence": f"{_HANDOFF_MARKER} carve of '{_attr(src, 'name')}'"}
+        for p in sorted(files)
+    ]
+    ch.flows = []
+    ch.product_feature_id = None
+    ch.shared_reason = None
+    ch.anchor_id = None
+    for k in ("authors", "total_commits", "bug_fixes", "coverage_pct",
+              "last_modified", "health_score"):
+        setattr(ch, k, _attr(src, k))
+    ch.authors = list(_attr(src, "authors") or [])
+    ch.total_commits = 0
+    ch.bug_fixes = 0
+    return ch
+
+
+def _move_carved_flows(
+    src: Any, chunk: Any, files: set[str],
+    edges_by_flow_id: Mapping[str, list[Any]],
+) -> int:
+    """Move the source dev's flows whose ENTRY file was carved; restamp
+    the bipartite identity fields + edges (lane_excavation's
+    ``_move_flows`` contract, prefix-free: the carve set is explicit)."""
+    moved = 0
+    keep: list[Any] = []
+    for fl in (_attr(src, "flows") or []):
+        ep = str(_attr(fl, "entry_point_file") or "")
+        if not ep or ep not in files:
+            keep.append(fl)
+            continue
+        old_id = _attr(fl, "id")
+        chunk.flows.append(fl)
+        fl.primary_feature = _attr(chunk, "name")
+        new_id = f"{_attr(chunk, 'name')}::{_attr(fl, 'name')}"
+        fl.id = new_id
+        for e in edges_by_flow_id.get(str(old_id or ""), []):
+            if _attr(e, "type") == "primary":
+                e.feature = _attr(chunk, "name")
+            e.flow_id = new_id
+        moved += 1
+    src.flows = keep
+    return moved
+
+
+def _strip_carved_files(src: Any, files: set[str]) -> None:
+    """Drop carved files from the source's ``paths``/``member_files``
+    (mirrors ``lane_excavation._remove_files_from_shell``)."""
+    src.paths = [p for p in (_attr(src, "paths") or []) if p not in files]
+    kept = []
+    for m in (_attr(src, "member_files") or []):
+        p = m.get("path") if isinstance(m, dict) else getattr(m, "path", None)
+        if p not in files:
+            kept.append(m)
+    src.member_files = kept
+
+
+def _i16_flagged(
     uf: Any,
-    target_key: str,
+    home_key: str,
     flow_by_uuid: Mapping[str, Any],
-    planned_owner: Mapping[str, str | None],
+    owner: Mapping[str, str | None],
     lane_files: "_FileResolver",
 ) -> bool:
-    """The plurality rail: would this re-home be a NEW I16 row under the
-    entry-owner ruler projected over the POST-handoff owner map?
-    Lane-neutral (B21): lane-resident / unowned entries never count."""
-    dist: Counter = Counter()
-    chk = 0
+    """The validator's I16 entry-owner ruler over one owner-map view:
+    majority-foreign journey vs *home_key* (> 0.5 — an exactly-half
+    split does not fire). Lane-neutral (B21): candidate-lane /
+    lane-resident / unowned entries never count. Used twice by the
+    plurality rail — pre-state (current map, dissolving home) vs
+    post-state (planned map, plurality target): only a clean→flagged
+    transition is a NEW row."""
+    chk = mis = 0
     for fid in (_attr(uf, "member_flow_ids") or []):
         fl = flow_by_uuid.get(fid)
         ep = _attr(fl, "entry_point_file") if fl is not None else None
@@ -928,15 +1220,13 @@ def _i16_new_row(
             continue
         if lane_files.in_lane(str(ep)):
             continue
-        own = planned_owner.get(str(ep))
+        own = owner.get(str(ep))
         if own is None:
             continue
         chk += 1
-        dist[str(own)] += 1
-    if not chk:
-        return False
-    mis = sum(c for o, c in dist.items() if o != target_key)
-    return mis * 2 > chk  # majority-foreign to the NEW home = new I16 row
+        if str(own) != home_key:
+            mis += 1
+    return bool(chk) and mis * 2 > chk
 
 
 def run_transport_handoff(
@@ -949,6 +1239,7 @@ def run_transport_handoff(
     transport_candidates: Mapping[str, str],
     extractor_signals: dict[str, list[Any]] | None = None,
     instrument_dirs: Iterable[str] = (),
+    feature_flow_edges: list[Any] | None = None,
     grain_index: TargetGrainIndex | None = None,
     consumer_index_factory: Any = None,
 ) -> dict[str, Any]:
@@ -990,7 +1281,7 @@ def run_transport_handoff(
             if u and str(u) not in flow_by_uuid:
                 flow_by_uuid[str(u)] = fl
 
-    owner_map = _build_owner_map(devs)
+    owner_map, neutral_files = _build_owner_map(devs)
 
     # Candidate unit → its minted PF (anchor identity: ``ws:<unit>``).
     pf_by_key = { (str(_attr(pf, "id") or _attr(pf, "name"))): pf
@@ -1016,6 +1307,7 @@ def run_transport_handoff(
             devs, routes_index, ctx, extractor_signals, frozenset())
         grain_index = TargetGrainIndex(
             anchors, product_features,
+            routes_index=routes_index,
             excluded_units=set(transport_candidates)
             | {str(d) for d in instrument_dirs},
             candidate_pf_keys=set(cand_pf.values()),
@@ -1048,7 +1340,8 @@ def run_transport_handoff(
         # target (B20 law: lane/None are never re-home targets).
         resolver = _FileResolver(
             unit, cand_key, owner_map, grain_index, consumers,
-            lane_pf_keys=frozenset(cand_pf.values()))
+            lane_pf_keys=frozenset(cand_pf.values()),
+            neutral_files=neutral_files)
 
         # ── plan: UF votes ────────────────────────────────────────────
         resolutions = [
@@ -1072,7 +1365,7 @@ def run_transport_handoff(
                     continue
                 t = resolver.direct(p)
                 if t is None:
-                    t, _why = resolver.seed(p)
+                    t, _why, _dist = resolver.seed(p)
                 if t is not None:
                     votes[_grain_key(t)] += 1
             total = sum(votes.values())
@@ -1093,7 +1386,25 @@ def run_transport_handoff(
             t.key for t in dev_plan.values()
             if t is not None and t.kind == "new"}
         mintable_new = sorted(uf_new_demand)
-        undevved = sorted(uf_new_demand - dev_targets_new)
+        # A demanded NEW target no WHOLE dev re-homes to can still mint
+        # from a CARVE (lane_excavation's 8.9.x discipline): candidate
+        # devs' own files inside the group grain become a chunk dev
+        # (the documenso ``share`` dev straddling t.$teamUrl+ and
+        # _share+). Preview here (no mutation before the gate).
+        carve_preview: dict[str, list[tuple[str, list[str]]]] = {}
+        for cid in sorted(uf_new_demand - dev_targets_new):
+            plan: list[tuple[str, list[str]]] = []
+            for f in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
+                files = sorted(
+                    p for p in _owned_of(f)
+                    if not resolver.in_lane(p)
+                    and grain_index.group_cid_of(p) == cid)
+                if files:
+                    plan.append((str(_attr(f, "name")), files))
+            if plan:
+                carve_preview[cid] = plan
+        undevved = sorted(
+            uf_new_demand - dev_targets_new - set(carve_preview))
 
         # ── plan: plurality I16 rail over the PLANNED owner map ───────
         planned_owner = dict(owner_map)
@@ -1109,8 +1420,15 @@ def run_transport_handoff(
                 continue
             uf = next(u for u in homed
                       if str(_attr(u, "id") or "") == r.uf_id)
-            if _i16_new_row(uf, r.target.key, flow_by_uuid, planned_owner,
-                            resolver):
+            # ZERO **NEW** I16 rows (the measured rail): a journey that
+            # is ALREADY majority-foreign today (pre-flagged under the
+            # CURRENT owner map vs its dissolving home) does not gain a
+            # row by moving — only a clean→flagged transition refuses.
+            pre_flagged = _i16_flagged(
+                uf, cand_key, flow_by_uuid, owner_map, resolver)
+            post_flagged = _i16_flagged(
+                uf, r.target.key, flow_by_uuid, planned_owner, resolver)
+            if post_flagged and not pre_flagged:
                 r.rung, r.target = None, None
                 r.reason = "plurality_i16_rail"
 
@@ -1150,11 +1468,31 @@ def run_transport_handoff(
             t = dev_plan[str(_attr(f, "name"))]
             if t is not None and t.kind == "new" and t.key in uf_new_demand:
                 contrib_by_new[t.key].append(f)
+        # Carve chunks for demanded targets without a whole-dev
+        # contributor (previewed above; the gate passed, so every plan
+        # is non-empty). 8.9.x discipline: the chunk takes ONLY the
+        # source dev's own group files; a carve that would EMPTY the
+        # source moves the whole dev instead.
+        dev_by_name = {str(_attr(f, "name")): f for f in cand_devs}
+        edges_by_flow_id: dict[str, list[Any]] = defaultdict(list)
+        for e in (feature_flow_edges or []):
+            edges_by_flow_id[_attr(e, "flow_id")].append(e)
+        for cid in sorted(carve_preview):
+            for dev_name, files in carve_preview[cid]:
+                src = dev_by_name[dev_name]
+                owned_all = _owned_of(src)
+                if len(files) >= len(owned_all):
+                    dev_plan[dev_name] = GrainTarget("new", cid)
+                    contrib_by_new[cid].append(src)
+                    continue
+                chunk = _carve_chunk(src, cid, files)
+                _move_carved_flows(src, chunk, set(files), edges_by_flow_id)
+                _strip_carved_files(src, set(files))
+                developer_features.append(chunk)
+                contrib_by_new[cid].append(chunk)
+                tele["devs_carved"] = tele.get("devs_carved", 0) + 1
         for cid in mintable_new:
-            a = grain_index.anchor_of(cid)
-            display = (getattr(a, "display", "") or
-                       cid.rsplit("/", 1)[-1]) if a is not None else \
-                cid.rsplit("/", 1)[-1]
+            display = grain_index.display_of(cid)
             slug = _slug(display) or _slug(cid.rsplit(":", 1)[-1])
             if slug in used_slugs:
                 slug = _slug(f"{display} ({cid.rsplit('/', 1)[-1]})")
@@ -1180,6 +1518,14 @@ def run_transport_handoff(
             pf_by_key[slug] = pf
             minted_key[cid] = slug
             tele["pfs_minted"] += 1
+            # Carved chunks are not in the dev-move loop below — stamp
+            # every contributor here (whole devs get the identical
+            # stamp again there; idempotent).
+            for c in contrib:
+                c.product_feature_id = slug
+                c.anchor_id = f"fold:{_HANDOFF_MARKER}->{cid}"
+                if _attr(c, "shared_reason"):
+                    c.shared_reason = None
 
         def _final_key(t: GrainTarget) -> str:
             return t.key if t.kind == "pf" else minted_key[t.key]
