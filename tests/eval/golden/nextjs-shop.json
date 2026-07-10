@@ -39,10 +39,10 @@
     }
   ],
   "flows": [
-    "cart-flow",
-    "post-api-checkout-flow",
-    "pricing-flow",
-    "products-flow"
+    "create-checkout-flow",
+    "view-cart-flow",
+    "view-pricing-flow",
+    "view-products-flow"
   ],
   "stack": "next-app-router"
 }
