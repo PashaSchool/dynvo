@@ -188,8 +188,6 @@ ENV_OUTPUT_FLAGS = (
     # (cal.com ``app-store/_utils``) never mints a PF; its devs fold to
     # the enclosing package / hub core. Reshapes product_features[] +
     # developer_features[].product_feature_id on affected repos.
-    # NOTE: registered WITHOUT a KEY_SCHEMA_VERSION bump — reconciled at
-    # merge by the coordinator (single bump per merge train).
     "FAULTLINE_HUB_PLUMBING_CHILD",
     # B27 (2026-07-10) — package-manifest PF display names: a package-dir-
     # anchored PF (hub:-vendor / ws:) takes its display from the package's
@@ -199,6 +197,12 @@ ENV_OUTPUT_FLAGS = (
     # product_features[].display_name (+ the UF display templates derived
     # from it).
     "FAULTLINE_PF_MANIFEST_NAME",
+    # B30 (2026-07-10) — deterministic verb+resource flow naming: route-slug
+    # path-echo flow names (``api-account-passkeys-flow``) are renamed to
+    # verb+resource (``manage-account-passkeys-flow``) at the very end of the
+    # finalize phase. Reshapes flows[].name/display_name/short_label (the
+    # operator-visible name channel). Default ON.
+    "FAULTLINE_FLOW_NAME_V2",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -220,7 +224,8 @@ ENV_OUTPUT_FLAGS = (
 #: default flip changes what "unset" means, so cached entries keyed under
 #: unset must not be served across it (B4 precedent).
 #: v17 (B26+B27): added FAULTLINE_HUB_PLUMBING_CHILD + FAULTLINE_PF_MANIFEST_NAME.
-KEY_SCHEMA_VERSION = 17
+#: v18 (B30): added FAULTLINE_FLOW_NAME_V2.
+KEY_SCHEMA_VERSION = 18
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

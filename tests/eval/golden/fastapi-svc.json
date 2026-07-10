@@ -23,12 +23,12 @@
     }
   ],
   "flows": [
-    "get-health-flow",
-    "get-orders-flow",
-    "get-users-flow",
-    "get-users-user-id-flow",
-    "post-orders-flow",
-    "post-users-flow"
+    "browse-orders-flow",
+    "browse-users-flow",
+    "create-orders-flow",
+    "create-users-flow",
+    "view-health-flow",
+    "view-user-by-user-id-flow"
   ],
   "stack": "fastapi"
 }

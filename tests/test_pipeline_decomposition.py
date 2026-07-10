@@ -208,6 +208,12 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # shared (loc_shared). Additive fields only; $0/deterministic,
     # FAULTLINE_FLOW_LOC=0 off. Runs right after uf_loc.
     (7, "flow_loc"),
+    # B30 (2026-07-10) — deterministic verb+resource flow naming: renames
+    # route-slug / file-echo flow names on the name channel only
+    # (flows[].name + display_name/short_label mirrors; ids/uuids
+    # untouched). $0/deterministic, FAULTLINE_FLOW_NAME_V2=0 off. Runs
+    # LAST, immediately before Stage 7 output.
+    (7, "flow_name_v2"),
 ]
 
 
