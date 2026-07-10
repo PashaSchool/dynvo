@@ -44,7 +44,9 @@ def test_flags_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(LAZY_IMPORT_EDGES_ENV, raising=False)
     monkeypatch.delenv(DISPATCH_REGISTRY_ENV, raising=False)
     assert lazy_import_edges_enabled() is True
-    assert dispatch_registry_enabled() is True
+    # dispatch flip REVERTED 2026-07-10 (supabase 328 hollow mints) — OFF
+    # until the B34-b rails merge with a keyed supabase proof.
+    assert dispatch_registry_enabled() is False
     monkeypatch.setenv(LAZY_IMPORT_EDGES_ENV, "0")
     monkeypatch.setenv(DISPATCH_REGISTRY_ENV, "0")
     assert lazy_import_edges_enabled() is False

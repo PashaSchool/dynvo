@@ -96,10 +96,12 @@ _TS_MAP_DYNAMIC_RE = re.compile(
 
 
 def dispatch_registry_enabled() -> bool:
-    """Default ON since the 2026-07-10 keyed Soc0 OFF/ON A/B (markers 3->1,
-    +8 registry-bounded mints, validator 8->7, gauntlet CLEAR both sides).
-    ``=0`` restores the pre-B34 board byte-identically."""
-    return os.environ.get(DISPATCH_REGISTRY_ENV, "1").strip() in {
+    """Default OFF — the 2026-07-10 ON-flip was REVERTED same day: the first
+    keyed supabase run under ON minted 328 hollow UI-demo widget flows from
+    docs-MDX registries (obstacle-course hollow-rows FAIL). Re-flip only
+    after the B34-b rails (UI micro-component skip + app-dir qualifier)
+    merge with a keyed supabase proof. ``=1`` enables."""
+    return os.environ.get(DISPATCH_REGISTRY_ENV, "0").strip() in {
         "1", "true", "True",
     }
 

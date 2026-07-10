@@ -251,7 +251,9 @@ ENV_OUTPUT_FLAGS = (
 #: what "unset" means, so cached entries keyed under unset must not be served
 #: across it (B4/B24 precedent).
 #: v22 (B25): added FAULTLINE_JOURNEY_LATTICE_B25.
-KEY_SCHEMA_VERSION = 22
+#: v23 (B34 dispatch revert): FAULTLINE_DISPATCH_REGISTRY_FLOWS default ON -> OFF
+#: (supabase 328 hollow UI-demo mints; re-flip after B34-b rails + keyed proof).
+KEY_SCHEMA_VERSION = 23
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
