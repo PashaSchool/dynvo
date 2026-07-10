@@ -223,3 +223,26 @@ info_page_segments:
   - about-us
   - imprint
   - faq
+
+# B28 (2026-07-10) — dev-artifact corroboration tokens. NEVER a firing
+# condition on their own (mechanisms-over-vocabularies doctrine): the P-D
+# hub-fixture prong fires on STRUCTURE (hub-child ws-package whose only
+# importers are uniform hub barrels — no real product consumer) and these
+# tokens only corroborate it, REQUIRED inside integration hubs because
+# structure alone cannot separate a test fixture from a barrel-dispatched
+# real integration (cal.com zoomvideo counterfactual; integrations = own
+# PF is a binding operator law). `playground` deliberately absent (product
+# admin page — cal.com; measured out on the Lane-C claim table).
+dev_artifact_tokens:
+  - mock
+  - mocks
+  - demo
+  - demos
+  - example
+  - examples
+  - sample
+  - samples
+  - fixture
+  - fixtures
+  - template
+  - templates

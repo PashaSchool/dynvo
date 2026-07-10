@@ -282,6 +282,48 @@ def _is_config_channel_file(path: str) -> bool:
     return bool(_MARKER_CONFIG_RE.match(base) or _MARKER_RC_RE.match(base))
 
 
+#: B28 S1g — a line that makes a module RUNTIME code: any import that is
+#: not ``import type``, any export that is not a type-position export
+#: (``export type`` / ``export interface`` / ``export declare``),
+#: CommonJS surface, or a require call. Conservative direction: a mixed
+#: ``import {type A, B}`` disqualifies (never lane on a maybe).
+_TYPE_RUNTIME_RE = re.compile(
+    r"^\s*(?:"
+    r"import\s+(?!type\b)"
+    r"|export\s+(?!type\b|interface\b|declare\b)"
+    r"|module\.exports\b"
+    r"|exports\.[A-Za-z_$]"
+    r"|require\s*\("
+    r")"
+)
+
+_COMMENT_LINE_RE = re.compile(r"^\s*(?://|/\*|\*)")
+
+
+def _is_type_only_source(text: str) -> bool:
+    """True when every import/export in *text* is type-position (the
+    openapi-typescript / generated-types shape: ``import type`` +
+    ``export type`` / ``export interface`` only). Comment-leading lines
+    are skipped; any runtime-shaped line disqualifies."""
+    for line in text.splitlines():
+        if _COMMENT_LINE_RE.match(line):
+            continue
+        if _TYPE_RUNTIME_RE.match(line):
+            return False
+    return True
+
+
+def _nonproduct_scope_enabled() -> bool:
+    """B28 master flag (canonical constant lives in surface_taxonomy —
+    one flag gates S1g + the P-D mark here AND the emission-side
+    consumption). Default ON; ``FAULTLINE_NONPRODUCT_SCOPE=0`` off."""
+    from faultline.pipeline_v2.surface_taxonomy import (
+        nonproduct_scope_enabled,
+    )
+
+    return nonproduct_scope_enabled()
+
+
 def detect_technology_instruments(
     repo_path: Path,
     tracked_files: Iterable[str],
@@ -540,6 +582,13 @@ def detect_technology_instruments(
                     src_loc += _BODY_LOC_FLOOR
         base = u.rsplit("/", 1)[-1]
         man_suffix = str(man.get("name") or "").split("/")[-1]
+        # B28 S1g facts — runtime dependency count + TS manifest entry (a
+        # zero-runtime-dep package whose entry is TypeScript is the
+        # generated-types shape; the type-only body check runs lazily).
+        entry_ts = ""
+        entry_spec = str(man.get("main") or man.get("types") or "")
+        if entry_spec.endswith((".ts", ".tsx", ".mts", ".cts")):
+            entry_ts = u + "/" + entry_spec.lstrip("./")
         return {
             "files": len(fs), "src": n_src, "src_loc": src_loc,
             "declared": declared,
@@ -555,9 +604,37 @@ def detect_technology_instruments(
             "raw_base": base.lower(),
             "bin": bool(man.get("bin")),
             "private": man.get("private"),
+            "runtime_deps": len(man.get("dependencies") or {}),
+            "entry_ts": entry_ts,
         }
 
     facts = {u: _facts(u) for u in units if files_by_unit.get(u)}
+
+    # B28 S1g — lazy type-only body check (each candidate unit's sources
+    # read at most once; only zero-runtime-dep TS-entry units reach it).
+    _types_only_cache: dict[str, bool] = {}
+
+    def _types_only_unit(u: str) -> bool:
+        cached = _types_only_cache.get(u)
+        if cached is not None:
+            return cached
+        rels = list(src_by_unit.get(u, []))
+        entry = facts[u]["entry_ts"]
+        if entry and entry not in rels and entry in tracked_set:
+            rels.append(entry)
+        verdict = bool(rels)
+        for rel in rels:
+            try:
+                text = (repo_path / rel).read_text(
+                    encoding="utf-8", errors="ignore")
+            except OSError:
+                verdict = False
+                break
+            if not _is_type_only_source(text):
+                verdict = False
+                break
+        _types_only_cache[u] = verdict
+        return verdict
 
     hub_list = [str(h).strip("/") for h in hub_dirs if h]
 
@@ -579,6 +656,7 @@ def detect_technology_instruments(
     instruments: dict[str, str] = {}
     config_lane = config_lane_enabled()  # B1 kill-switch (S1c relaxation)
     transport_lane = transport_lane_enabled()  # B19 (design-review, def OFF)
+    nonproduct_scope = _nonproduct_scope_enabled()  # B28 (S1g + P-D mark)
 
     def _dou(u: str) -> set[str]:
         return {t for t in out_units.get(u, ()) if t not in instruments}
@@ -647,6 +725,18 @@ def detect_technology_instruments(
                 sig = "S1e-thin-wrapper"
             elif (f["name_keys"] & ui_keys) and inf >= 5 and inu >= 2:
                 sig = "S1f-design-system"
+            elif (nonproduct_scope and f["runtime_deps"] == 0
+                  and f["entry_ts"] and _types_only_unit(u)):
+                # B28 S1g — types-only package: the manifest declares ZERO
+                # runtime dependencies and a TypeScript entry, and every
+                # import/export in the unit's sources is type-position
+                # (supabase packages/api-types: openapi-typescript codegen,
+                # index.ts of pure `import type`/`export interface`). A
+                # zero-dep generated-types package defeats S1a-e (no dep
+                # evidence) and S2 (no name-dep/infra-noun corroboration)
+                # — manifest + source structure ARE the mechanism here, no
+                # name vocabulary involved.
+                sig = "S1g-types-only"
             elif inf >= 5 and inu >= 3 and (
                     len(dou) <= 1
                     # B19 transport prong (design-review, default OFF): a
@@ -696,6 +786,80 @@ def detect_technology_instruments(
                     transport_candidates[u] = instruments.pop(u)
             if transport_candidates:
                 tele["transport_candidates"] = transport_candidates
+
+    # B28 P-D — hub-fixture MARK (mark-only, the B22 candidate-marking
+    # shape: no instrument dir, no lane at 6.86 — the unit mints normally
+    # and the EMISSION taxonomy consumes the mark behind the R1/R2 rails,
+    # so its journeys ride into the lane with it). A hub-child ws-pkg
+    # whose only importers are uniform hub BARRELS (a consumer importing
+    # a strict majority of ALL siblings dispatches the family, it does
+    # not choose this unit — cal.com ``apps.*.generated.ts``) has no real
+    # product consumer; inside an integration hub structure alone cannot
+    # separate a test fixture from a barrel-dispatched real integration
+    # (the zoomvideo counterfactual), so the dev-artifact TOKEN
+    # (YAML data, ``dev_artifact_tokens``) is REQUIRED corroboration per
+    # the mechanisms-doctrine (integrations = own PF is a binding law —
+    # never lane a real integration on structure alone).
+    if nonproduct_scope:
+        try:
+            from faultline.pipeline_v2.surface_taxonomy import (
+                load_patterns as _load_scope_patterns,
+            )
+            _da_tokens = frozenset(
+                str(t).lower()
+                for t in (_load_scope_patterns().get("dev_artifact_tokens")
+                          or [])
+            )
+        except Exception:  # noqa: BLE001 — patterns are best-effort data
+            _da_tokens = frozenset()
+        fixture_units: dict[str, str] = {}
+        if _da_tokens:
+            kids_by_parent: dict[str, list[str]] = defaultdict(list)
+            for u in units:
+                if units[u] != "ws-pkg" or "/" not in u:
+                    continue
+                parent = u.rsplit("/", 1)[0]
+                if parent in units:  # the hub itself is a ws unit
+                    kids_by_parent[parent].append(u)
+            taken = set(instruments) | set(
+                tele.get("transport_candidates") or {})
+            for parent, kids in sorted(kids_by_parent.items()):
+                if len(kids) < 3:  # hub bar (the 3-cluster class)
+                    continue
+                root_pref = parent + "/"
+                for k in sorted(kids):
+                    if k in taken:
+                        continue
+                    # "no visible product consumer": the hub's own
+                    # ROOT-LEVEL dispatch files are the hub's machinery,
+                    # never consumers (cal.com's generated
+                    # ``apps.*.generated.ts`` AND the category-scoped
+                    # ``payment.services.generated.ts`` all live directly
+                    # at the hub root); dynamic dispatch
+                    # (``import("./x/api")`` object literals) yields ZERO
+                    # import specs, so zero-importer children are the
+                    # same structural fact. Anything else — an outside
+                    # file or a sibling package — is a REAL consumer.
+                    imps = in_files.get(k, set())
+                    if any(not (imp.startswith(root_pref)
+                                and "/" not in imp[len(root_pref):])
+                           for imp in imps):
+                        continue  # a real consumer exists
+                    toks = {
+                        t for t in re.split(
+                            r"[^a-z0-9]+", k.rsplit("/", 1)[-1].lower())
+                        if t
+                    }
+                    man_name = str(
+                        (unit_manifest.get(k) or {}).get("name") or "")
+                    toks |= {
+                        t for t in re.split(r"[^a-z0-9]+", man_name.lower())
+                        if t
+                    }
+                    if toks & _da_tokens:
+                        fixture_units[k] = "P-D:hub-fixture-barrel-only"
+        if fixture_units:
+            tele["dev_artifact_units"] = dict(sorted(fixture_units.items()))
 
     # satellite fdirs
     satellites: dict[str, str] = {}
