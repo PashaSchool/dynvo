@@ -78,6 +78,8 @@ from faultline.pipeline_v2.spine_anchors import (
     SOURCE_RANK,
     SpineAnchor,
     build_spine_anchors,
+    hub_child_is_plumbing,
+    hub_plumbing_child_enabled,
     load_spine_vocab,
     normalize_anchor_key,
     owned_paths_of,
@@ -171,6 +173,22 @@ _SHARED_REASON_CROSS_UNIT = "cross_unit_isolation"
 #: real-code 0-flow connectors (tracecat google 286 / microsoft 557,
 #: Soc0 sentinelone 1,258) stay minted.
 _HUB_HUSK_LOC_FLOOR = 150
+
+#: B26 — bar reason for a hub child whose segment normalizes into the
+#: plumbing/stop vocabulary (cal.com ``app-store/_utils`` shape): the
+#: family's shared plumbing may not mint even with flow evidence; its
+#: winners take the ordinary fold_hub_parent path.
+_BAR_HUB_PLUMBING_CHILD = "hub_plumbing_child"
+
+
+def _hub_child_segment(anchor: SpineAnchor) -> str:
+    """The child-naming terminal segment of a hub-vendor anchor's
+    canonical id (``hub:packages/app-store/_utils`` → ``_utils``)."""
+    cid = anchor.canonical_id or ""
+    if ":" not in cid:
+        return ""
+    tail = cid.split(":", 1)[1].rstrip("/")
+    return tail.rsplit("/", 1)[-1] if tail else ""
 
 #: W3.2 I9 fix — the lane carve-out fires ONLY for the app-shell /
 #: shared-package class the law's own ruler (validator I9) exempts.
@@ -538,6 +556,7 @@ def _mint_bar(
     repo_root: Path,
     loc_cache: dict[str, int],
     instrument_dirs: frozenset[str] = frozenset(),
+    plumbing_keys: frozenset[str] = frozenset(),
 ) -> str | None:
     """``None`` when the anchor may mint, else the bar reason."""
     if not winners:
@@ -554,6 +573,19 @@ def _mint_bar(
     if anchor.sources == frozenset({"svc"}):
         return "service_dir_only"
     if anchor.source == "hub-vendor":
+        # B26 backstop — a hub child whose segment NORMALIZES into the
+        # plumbing/stop vocabulary (and names no vendor) is the family's
+        # shared plumbing: it may not mint EVEN WITH flow evidence (a
+        # helper dir is always somebody's call-chain entry, so the flow
+        # bar can never stop this class). Its winners take the existing
+        # fold_hub_parent path to the enclosing package / hub core. The
+        # spine filter (Fix A) already blocks the dir-per-vendor shape;
+        # this rung covers every other path an anchor can reach the bar
+        # (file-per-vendor token sets, cross-family merges).
+        if (plumbing_keys and hub_plumbing_child_enabled()
+                and hub_child_is_plumbing(
+                    _hub_child_segment(anchor), plumbing_keys)):
+            return _BAR_HUB_PLUMBING_CHILD
         if _anchor_flow_evidence(anchor, winners, flow_entries):
             return None
         if anchor.hub_parent_generic:
@@ -674,6 +706,11 @@ def run_anchored_mint(
 
     vocab = load_spine_vocab()
     code_exts = tuple(vocab.get("code_extensions") or [])
+    # B26 — the authored plumbing/stop vocabulary union for the
+    # hub_plumbing_child mint-bar backstop (data, not code).
+    plumbing_keys = frozenset(
+        vocab.get("hub_plumbing_segments") or []
+    ) | frozenset(vocab.get("structural_stoplist") or [])
 
     tele: dict[str, Any] = {
         "enabled": True, "applied": False,
@@ -784,7 +821,7 @@ def run_anchored_mint(
         bar_by_anchor[cid] = _mint_bar(
             a, winners_by_anchor[cid], flow_entries, repo_has_pages,
             code_exts, mint_repo_root, loc_cache,
-            instrument_dirs=instrument_dirs)
+            instrument_dirs=instrument_dirs, plumbing_keys=plumbing_keys)
     # Hub cores mint only when ≥ 1 sibling vendor minted (amendment §2:
     # a core exists relative to its children).
     minted_vendor_hubs = {
@@ -981,7 +1018,8 @@ def run_anchored_mint(
             return None
         bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts,
                         mint_repo_root, loc_cache,
-                        instrument_dirs=instrument_dirs)
+                        instrument_dirs=instrument_dirs,
+                        plumbing_keys=plumbing_keys)
         if bar is not None:
             return None
         mintable.add(best)
@@ -1208,8 +1246,13 @@ def run_anchored_mint(
         # HUSK FOLD (W3.1 D4): a vendor-husk child folds under its hub
         # core / enclosing package as a dev-child — the fb3 amendment
         # rule ("flowful OR >= 150 owned LOC, else fold into the parent
-        # integrations PF").
-        if (bar_by_anchor.get(w.canonical_id) == "hub_husk_child"
+        # integrations PF"). B26: a plumbing-named child
+        # (hub_plumbing_child) takes the same hub-parent path — its
+        # flowful devs usually resolve one rung earlier via the entry
+        # fold (entries sit in the enclosing package's subtree); this
+        # rung catches the flowless / entry-miss residue.
+        if (bar_by_anchor.get(w.canonical_id)
+                in {"hub_husk_child", _BAR_HUB_PLUMBING_CHILD}
                 and parent is not None):
             assignment[f.name] = (parent, f"fold:hub-parent->{w.canonical_id}")
             tele["fold_hub_parent"] = tele.get("fold_hub_parent", 0) + 1

@@ -180,6 +180,17 @@ ENV_OUTPUT_FLAGS = (
     # + product_features[] + developer_features[] carve chunks. Default
     # OFF.
     "FAULTLINE_MEGA_PF_NAV_REHOME",
+    # B26 (2026-07-10) — hub plumbing child: the dir-per-vendor child
+    # filter tests the segment against the plumbing/stop vocabularies
+    # NORMALIZED (underscore-stripped, singularized; vendor-beats-
+    # plumbing guard), and the 6.86 mint bar backstops with
+    # ``hub_plumbing_child`` — a shared-helper dir inside a connector hub
+    # (cal.com ``app-store/_utils``) never mints a PF; its devs fold to
+    # the enclosing package / hub core. Reshapes product_features[] +
+    # developer_features[].product_feature_id on affected repos.
+    # NOTE: registered WITHOUT a KEY_SCHEMA_VERSION bump — reconciled at
+    # merge by the coordinator (single bump per merge train).
+    "FAULTLINE_HUB_PLUMBING_CHILD",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

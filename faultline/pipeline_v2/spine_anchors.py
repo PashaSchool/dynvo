@@ -81,6 +81,8 @@ __all__ = [
     "SpineAnchor",
     "SOURCE_RANK",
     "build_spine_anchors",
+    "hub_child_is_plumbing",
+    "hub_plumbing_child_enabled",
     "normalize_anchor_key",
     "owned_paths_of",
     "load_spine_vocab",
@@ -156,6 +158,57 @@ def _stem(filename: str) -> str:
     base = filename.rsplit("/", 1)[-1]
     dot = base.rfind(".")
     return base[:dot] if dot > 0 else base
+
+
+# ── B26 — normalized plumbing test for hub-vendor children ───────────────
+#
+# The dir-per-vendor child filter compared the RAW segment against the
+# plumbing/stop vocabularies, so an underscore-private shared-helper dir
+# slipped past its own vocabulary entry (cal.com ``app-store/_utils`` →
+# ``"_utils" not in {"utils", …}``) and minted a PF-bearing hub child; the
+# 6.86 flow bar then passed legitimately (a helper dir is ALWAYS somebody's
+# call-chain entry). ``normalize_anchor_key("_utils") == "util"`` — the
+# vocabulary was right, its application was broken. Wave-14 census: 2
+# minted analogs (cal.com ``_utils`` 45 consumer PFs / ``_components`` 9)
+# + 1 near-miss (``_pages``, saved only by the 150-LOC husk floor).
+
+_HUB_PLUMBING_CHILD_ENV = "FAULTLINE_HUB_PLUMBING_CHILD"
+
+
+def hub_plumbing_child_enabled() -> bool:
+    """B26 — default ON; ``FAULTLINE_HUB_PLUMBING_CHILD=0`` restores the
+    raw-segment compare (and the mint-bar backstop) byte-identically."""
+    raw = os.environ.get(_HUB_PLUMBING_CHILD_ENV, "1") or "1"
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def hub_child_is_plumbing(
+    segment: str,
+    plumbing_keys: frozenset[str] | set[str],
+) -> bool:
+    """Does a hub CHILD segment name shared plumbing once NORMALIZED?
+
+    ``plumbing_keys`` = the union of the authored ``hub_plumbing_segments``
+    + ``structural_stoplist`` vocabularies (data, not code). Two rules:
+
+      * vendor-beats-plumbing — a segment that names exactly one vendor
+        (``vendor_of_segment``) is NEVER plumbing, shielding a real vendor
+        whose name collides with an infra noun (the 8.9.7 stem-rule
+        precedence);
+      * otherwise the segment matches when ``normalize_anchor_key`` maps
+        it into the vocabulary (underscore-stripped, token-split,
+        singularized: ``_utils``→``util``, ``_components``→``component``,
+        ``_pages``→``page``).
+
+    Raw-segment membership is the caller's existing (flag-independent)
+    check — this helper adds only the normalized rung.
+    """
+    if not segment:
+        return False
+    if vendor_of_segment(segment) is not None:
+        return False
+    key = normalize_anchor_key(segment)
+    return bool(key) and key in plumbing_keys
 
 
 def owned_paths_of(f: Any) -> list[str]:
@@ -1051,6 +1104,15 @@ def _build_hub_anchors(
                 is_dir = any(p != f"{d}/{child}" for p in child_paths)
                 low = child.lower()
                 if not is_dir or low in plumbing or low in stop:
+                    continue
+                # B26 — the same vocabularies, NORMALIZED (underscore-
+                # stripped, singularized): ``_utils``/``_components``/
+                # ``_pages`` are the family's shared plumbing, never a
+                # vendor child; their files stay with the enclosing
+                # package / hub-core claim. Vendor-named children are
+                # shielded (vendor-beats-plumbing).
+                if (hub_plumbing_child_enabled()
+                        and hub_child_is_plumbing(child, plumbing | stop)):
                     continue
                 if not any(_is_code(p) for p in child_paths):
                     continue
