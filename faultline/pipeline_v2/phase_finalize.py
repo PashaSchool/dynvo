@@ -1228,6 +1228,26 @@ def run_finalize_phase(
                         feature=None,
                     )
 
+    # ── Stage 6.88 — sibling-anchor capability unification (B16 Part 2) ──
+    # Collapse co-identity sibling route PFs (Soc0 investigation /
+    # investigations-page / investigation-flow -> ONE) BEFORE 6.97 so the
+    # merged body is loc-stamped / role-lane'd / path_index'd / I23-read as one
+    # PF. Anchored path only; kill-switch FAULTLINE_PF_SIBLING_UNIFY=0.
+    if anchored_mint_applied:
+        from faultline.pipeline_v2.stage_6_88_sibling_unify import (
+            sibling_unify_enabled,
+            unify_sibling_anchors,
+        )
+        if sibling_unify_enabled():
+            try:
+                su_tele = unify_sibling_anchors(
+                    user_flows, features, product_features)
+                if su_tele.get("merged_away"):
+                    scan_meta["sibling_unify"] = su_tele
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"sibling-unify failed ({exc}); PFs left separate")
+
     # ── W3.2 D9 — system journeys survive the keyed rewrite (BOTH paths) ──
     # wave31: 6.8b stamped system routes on 6/10 repos yet output carried
     # ZERO system-category UFs — the 6.7d rewrite rebuilds user_flows[]

@@ -59,9 +59,11 @@ __all__ = [
     "NAMING_CONTRACT_ENV",
     "HUMANIZE_ROUTE_NAMES_ENV",
     "PF_NAME_LAW_ENV",
+    "UF_DEVGRAIN_NAME_ENV",
     "naming_contract_enabled",
     "humanize_route_names_enabled",
     "pf_name_law_enabled",
+    "uf_devgrain_name_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -112,6 +114,11 @@ UF_NAME_LAWS_ENV = "FAULTLINE_UF_NAME_LAWS"
 #: pre-B16 PF display names byte-identically (a route-dir leak like
 #: 'policy-page' keeps its "Policy Page" display).
 PF_NAME_LAW_ENV = "FAULTLINE_PF_NAME_LAW"
+
+#: B16 Part-1b — UF-level dev-grain suffix law kill-switch (default ON). ``=0``
+#: restores UserFlow.name to the pre-Part-1b output byte-identically (independent
+#: of the merged PF law so each has its own clean kill-switch).
+UF_DEVGRAIN_NAME_ENV = "FAULTLINE_UF_DEVGRAIN_NAME"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
@@ -174,6 +181,16 @@ def pf_name_law_enabled() -> bool:
     ``FAULTLINE_PF_NAME_LAW=0`` restores the pre-B16 PF displays
     byte-identically."""
     return os.environ.get(PF_NAME_LAW_ENV, "1").strip().lower() not in {
+        "0", "false",
+    }
+
+
+def uf_devgrain_name_enabled() -> bool:
+    """B16 Part-1b — strip a dev-grain suffix from ``UserFlow.name`` ("View
+    detections page" -> "View detections") when the journey's home PF anchor
+    is a route:*-page leak. Default ON; ``FAULTLINE_UF_DEVGRAIN_NAME=0``
+    restores the pre-Part-1b UF names byte-identically."""
+    return os.environ.get(UF_DEVGRAIN_NAME_ENV, "1").strip().lower() not in {
         "0", "false",
     }
 
@@ -666,6 +683,39 @@ def _apply_pf_devgrain_law(
         return chosen, False
     tele["pf_devgrain_stripped"] = tele.get("pf_devgrain_stripped", 0) + 1
     return stripped, True
+
+
+def _strip_uf_devgrain_suffix(
+    name: str, home_anchor: str, vocab: Mapping[str, Any],
+) -> str | None:
+    """B16 Part-1b — the dev-grain-suffix-stripped UF name, or ``None``.
+
+    Mirrors the PF law for ``UserFlow.name``: strip the TRAILING dev-grain
+    word W (page/screen/view/flow) from a journey name ("View detections
+    page" -> "View detections") ONLY when the journey's HOME PF anchor's
+    terminal route dir ends ``-W`` — i.e. the token is the same route-dir
+    leak the PF carried. Guard (the "Publish page" anti-case): the strip
+    must leave a verb+object phrase (>= 2 words), so a 2-word "Publish page"
+    (whose home is a page-builder PF, not ``route:*-page``, and which would
+    strip to a bare verb) is never mutilated — anchor-form AND arity gated."""
+    terminal = _anchor_terminal_segment(home_anchor)
+    if not terminal:
+        return None
+    tl = terminal.lower()
+    tok = next(
+        (w for w in sorted(_PF_DEVGRAIN_SUFFIX_TOKENS) if tl.endswith("-" + w)),
+        None,
+    )
+    if tok is None:
+        return None
+    words = (name or "").split()
+    if len(words) < 3 or words[-1].lower() != tok:
+        return None   # need verb + object + devgrain (>=3) -> leaves >=2
+    stripped = " ".join(words[:-1]).strip()
+    if display_law_violations(stripped, vocab):
+        return None
+    polished = polish_display_casing(stripped, vocab)
+    return polished if polished.strip().lower() != (name or "").strip().lower() else None
 
 
 # ── Nav-label channel (authored labels; product_strings nav pairs) ──────
@@ -1266,6 +1316,8 @@ def run_naming_contract(
     if pf_name_law_enabled():
         tele["pf_devgrain_stripped"] = 0
         tele["pf_devgrain_collision"] = 0
+    if uf_devgrain_name_enabled():
+        tele["uf_devgrain_stripped"] = 0   # B16 Part-1b
 
     def _law_fix(law: str) -> None:
         tele["laws_fixed"][law] = tele["laws_fixed"].get(law, 0) + 1
@@ -1446,6 +1498,17 @@ def run_naming_contract(
                 break
         if chosen is None:
             chosen = polish_display_casing(current, vocab)
+
+        # ── B16 Part-1b: UF dev-grain suffix law (mirror the PF law) ──
+        # "View detections page" -> "View detections" when the home PF anchor
+        # is a route:*-page leak. Display channel (uf.name) only.
+        if uf_devgrain_name_enabled() and pf is not None:
+            uf_stripped = _strip_uf_devgrain_suffix(
+                chosen, str(getattr(pf, "anchor_id", None) or ""), vocab)
+            if uf_stripped:
+                chosen = uf_stripped
+                tele["uf_devgrain_stripped"] = (
+                    tele.get("uf_devgrain_stripped", 0) + 1)
 
         if chosen != current:
             for law in violations:

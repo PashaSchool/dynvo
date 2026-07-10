@@ -133,6 +133,14 @@ ENV_OUTPUT_FLAGS = (
     # ('policy-page' -> 'Policy Page') is stripped to the capability
     # ('Policy') at the display channel. Reshapes product_features[].display_name.
     "FAULTLINE_PF_NAME_LAW",
+    # B16 Part 1b (2026-07-10) — UF-level dev-grain suffix law: strips
+    # "View detections page" -> "View detections". Reshapes user_flows[].name.
+    "FAULTLINE_UF_DEVGRAIN_NAME",
+    # B16 Part 2 (2026-07-10) — sibling-anchor unification: co-identity sibling
+    # route PFs (investigation / investigations-page / investigation-flow)
+    # collapse to one. Reshapes product_features[] + developer/user-flow
+    # product_feature_id links.
+    "FAULTLINE_PF_SIBLING_UNIFY",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
@@ -143,7 +151,8 @@ ENV_OUTPUT_FLAGS = (
 #: v6 (B15): added FAULTLINE_SHARED_LEAF_CONSISTENCY.
 #: v7 (B15b): added FAULTLINE_DATA_LEAF.
 #: v8 (B16): added FAULTLINE_PF_NAME_LAW.
-KEY_SCHEMA_VERSION = 8
+#: v9 (B16 Part 2): added FAULTLINE_PF_SIBLING_UNIFY.
+KEY_SCHEMA_VERSION = 9
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
