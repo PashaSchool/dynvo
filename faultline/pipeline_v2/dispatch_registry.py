@@ -522,11 +522,8 @@ def mint_dispatch_seeds(
         symbol = t.symbol
         if not symbol and sig is not None and sig.exports:
             symbol = sig.exports[0]
-        if not symbol:
-            tele["skipped_no_anchor"] += 1
-            continue
         entry_line: int | None = None
-        if sig is not None:
+        if symbol and sig is not None:
             start = next(
                 (r.start_line for r in sig.symbol_ranges
                  if r.name == symbol),
@@ -534,6 +531,15 @@ def mint_dispatch_seeds(
             )
             if start is not None:
                 entry_line = resolve_handler_line(sig, symbol, start)
+        if not symbol or entry_line is None:
+            # No (symbol, line) anchor -> downstream span stamping has
+            # nothing to ground on and the mint WOULD be a hollow row
+            # (loc 0/0 -- the keyed-supabase gauntlet FAIL class). The
+            # residual exhibits are junk anyway (re-exported `dayjs`,
+            # `cn` utils, private py wrappers whose range the extractor
+            # cannot see). No anchor, no flow.
+            tele["skipped_no_anchor"] += 1
+            continue
 
         if _seed_core(t) != core:
             tele["qualified_by_registry_key"] += 1
