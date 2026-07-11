@@ -632,8 +632,11 @@ def reground_backstop_uf_names(
         polish_display_casing,
     )
 
+    from faultline.pipeline_v2.flow_name_v2 import uf_name_hygiene_enabled
+
     v = vocab if vocab is not None else load_naming_vocab()
     rungs_on = name_evidence_rungs_enabled()
+    hygiene_on = uf_name_hygiene_enabled()
     # Noun-ish leading tokens that are NOT journey verbs — a member-flow name
     # led by one of these ("api-user-subscribe") is not a verb-led journey
     # label; keep the template. Data-driven (vocab), not a hardcoded blocklist.
@@ -683,6 +686,12 @@ def reground_backstop_uf_names(
             if fl is None:
                 continue
             verb, obj = _split_member(_member_flow_label(fl))
+            # B46 — a UF label derived from a member flow name must not inherit
+            # its Stage-5.5 ordinal ('fetch-…-action-3-flow' -> obj '[…, 3]' ->
+            # 'Browse available model action 3'). Drop a trailing pure-digit
+            # token; the flow name itself keeps the ordinal (legal slug).
+            if hygiene_on and obj and obj[-1].isdigit():
+                obj = obj[:-1]
             if not verb.isalpha() or verb in noun_lead or not obj:
                 continue  # no clean verb-led member evidence
             cur_tokens = {t for t in _KEBAB_SPLIT.split(current.lower()) if t}

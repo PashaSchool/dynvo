@@ -278,6 +278,16 @@ ENV_OUTPUT_FLAGS = (
     # WITHOUT a KEY_SCHEMA bump — the off default is byte-identical; a later
     # default-flip commit would bump KEY_SCHEMA.
     "FAULTLINE_NAME_EVIDENCE_RUNGS",
+    # B46 (2026-07-11) — UF-name hygiene: kills three garbage-name sources —
+    # the doubled route/file-stem token concat ('settings accounts settings
+    # accounts', root in flow_name_v2._resource_tokens), the bare pluralized
+    # dir-stem leaf on an ungrounded 'other'-intent slot ('onboardings' ->
+    # 'Manage onboarding'), and an inherited Stage-5.5 ordinal on a UF label
+    # ('… action 3'). off (default) = byte-identical; ON reshapes flow.name
+    # (concat root) + user_flows[].name (garbage rows only). Appended WITHOUT a
+    # KEY_SCHEMA bump — off is byte-identical; a later default-flip commit
+    # would bump KEY_SCHEMA.
+    "FAULTLINE_UF_NAME_HYGIENE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

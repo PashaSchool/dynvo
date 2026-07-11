@@ -27,6 +27,8 @@ import re
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any, Iterable
 
+from faultline.pipeline_v2.flow_name_v2 import uf_name_hygiene_enabled
+
 if TYPE_CHECKING:
     from faultline.models.types import Feature, Flow, UserFlow
 
@@ -397,6 +399,28 @@ def _singular(word: str) -> str:
     if word.endswith("s"):
         return word[:-1]
     return word
+
+
+def _singularize_phrase(label: str) -> str:
+    """Singularize the trailing word of a display phrase ("onboardings" ->
+    "onboarding", "account settings" -> "account setting"). B46 helper for the
+    manage-X rewrite of an ungrounded bare-plural leaf."""
+    parts = label.split()
+    if parts:
+        parts[-1] = _singular(parts[-1])
+    return " ".join(parts)
+
+
+_ORDINAL_TAIL_RE = re.compile(r"-\d+$")
+
+
+def _strip_inherited_ordinal(resource: str) -> str:
+    """B46 — strip a trailing Stage-5.5 ordinal token ('-3') a UF label
+    inherited from a member flow name ('…-action-3-flow' -> resource
+    '…-action-3'). Flow-level ordinal names are a legal last-resort slug and
+    are left untouched — only the UF label derived FROM them is cleaned."""
+    stripped = _ORDINAL_TAIL_RE.sub("", resource)
+    return stripped or resource
 
 
 def _split_name(name: str) -> tuple[str, str]:
@@ -785,6 +809,8 @@ def _slot_consistent_label(
 
     # 2. Noun span of the primary flow's OWN name (same-flow slot).
     _, resource = _split_name(primary.get("name") or "")
+    if uf_name_hygiene_enabled():
+        resource = _strip_inherited_ordinal(resource)  # B46 — drop '…-3' tail
     if resource and resource != "item":
         return _pluralise(resource.replace("-", " ")), True
 
@@ -1319,6 +1345,18 @@ def cluster_user_flows(
             slot_label, slot_grounded = _slot_consistent_label(
                 members, product_strings,
             )
+            # B46 — an UNGROUNDED 'other'-intent slot renders the bare template
+            # "{r}" as a naked pluralized dir stem ('onboardings', 'admins').
+            # Front it with the manage-X naming rule against the SINGULAR stem
+            # ("Manage onboarding") so the row is a legible journey; confidence
+            # stays low (still honest — the evidence is only a dir name).
+            # Grounded slots and every other intent are byte-identical. Flag OFF
+            # ⇒ unchanged.
+            uf_name = NAME_TMPL[intent].format(r=slot_label)
+            if (uf_name_hygiene_enabled() and intent == "other"
+                    and not slot_grounded):
+                uf_name = NAME_TMPL["manage"].format(
+                    r=_singularize_phrase(slot_label))
             # System UFs carry the dominant member trigger as their sub-type.
             uf_trigger: str | None = None
             if section_category == "system":
@@ -1329,7 +1367,7 @@ def cluster_user_flows(
                     uf_trigger = Counter(trigs).most_common(1)[0][0]
             user_flows.append({
                 "id": uf_id,
-                "name": NAME_TMPL[intent].format(r=slot_label),
+                "name": uf_name,
                 "name_confidence": "high" if slot_grounded else "low",
                 "domain": domain,
                 "product_feature_id": pfid,

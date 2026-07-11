@@ -191,6 +191,23 @@ _ORDINAL_TAIL_RE = re.compile(r"-\d+$")
 #: knob — route handlers are small; this only caps pathological files).
 _MAX_SNIFF_BYTES = 1_000_000
 
+#: B46 UF-name hygiene kill-switch (default OFF; the canonical reader — Stage
+#: 6.7 + synth_quality import it). ``=1`` collapses the doubled route/file-stem
+#: token run at the flow-name root (a component file that camel-restates its
+#: directory — ``settings/accounts/SettingsAccounts`` -> 'settings accounts
+#: settings accounts') and arms the UF-level bare-plural + inherited-ordinal
+#: fixes. OFF ⇒ byte-identical to pre-B46 flow + UF names.
+UF_NAME_HYGIENE_ENV = "FAULTLINE_UF_NAME_HYGIENE"
+
+
+def uf_name_hygiene_enabled() -> bool:
+    """B46 — kill garbage UF names (doubled concat / bare pluralized leaf /
+    inherited Stage-5.5 ordinal). Default OFF; ``FAULTLINE_UF_NAME_HYGIENE=1``
+    arms the root + UF-level fixes. OFF ⇒ flow/UF names byte-identical."""
+    return os.environ.get(UF_NAME_HYGIENE_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
 
 # ── small pure helpers ──────────────────────────────────────────────────
 
@@ -515,6 +532,26 @@ def _resource_tokens(pattern: str, entry_file: str) -> list[str]:
         s = _slugify(seg)
         if not s or (out and s == out[-1]):
             continue
+        # B46 — a component file-stem that camel-restates its directory path
+        # (``settings/accounts/SettingsAccounts`` -> the last segment slugs to
+        # 'settings-accounts', an ADJACENT DUPLICATE of the dir tokens already
+        # accumulated) produces the doubled 'settings accounts settings
+        # accounts' garbage. Drop only the leading sub-tokens of a camel-split
+        # segment that duplicate the accumulated tail — a partial or
+        # non-adjacent repeat (legit 'teams/TeamMembers' -> teams != team) is
+        # left intact. Root of the twenty 'account settingsaccounts' UF concat.
+        if uf_name_hygiene_enabled() and "-" in s:
+            sub = s.split("-")
+            flat_tail = [p for tok in out for p in tok.split("-")]
+            k = 0
+            for cand in range(min(len(sub), len(flat_tail)), 0, -1):
+                if flat_tail[-cand:] == sub[:cand]:
+                    k = cand
+                    break
+            sub = sub[k:]
+            if not sub:
+                continue
+            s = "-".join(sub)
         out.append(s)
         static_flags.append(True)
     if not any(static_flags):
