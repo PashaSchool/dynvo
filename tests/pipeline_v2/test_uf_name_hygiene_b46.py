@@ -32,6 +32,7 @@ from faultline.pipeline_v2.flow_name_v2 import (
     uf_name_hygiene_enabled,
 )
 from faultline.pipeline_v2.stage_6_7_user_flows import (
+    _collapse_glued_echo,
     _slot_consistent_label,
     cluster_user_flows,
 )
@@ -242,3 +243,95 @@ def test_synth_single_member_ordinal_on_stripped(monkeypatch) -> None:
                                [SimpleNamespace(id="widgets", name="widgets",
                                                 display_name="Widgets")], {})
     assert ufs[0].name == "Configure webhook endpoints"
+
+
+# ── source 1b (iteration 2, live twenty wave) — GLUED seed on the UF side ──
+#
+# The live ON-scan proved a SECOND independent producer: Stage 6.7 derives UF
+# labels BEFORE flow_name_v2 renames flows, so the label reads the Stage-3
+# PLAIN-slug seed name 'settings-accounts-settingsaccounts-flow' (flow id
+# settings::settings-accounts-settingsaccounts-flow) — the stem glues with NO
+# camel split, _split_name eats 'settings' as the verb, and path-2 renders
+# 'account settingsaccounts' (twenty UF-003, survives the flow-level fix).
+
+_TWENTY_SEED = "settings-accounts-settingsaccounts-flow"
+
+
+def test_glued_echo_collapse_exact_live_seed() -> None:
+    assert _collapse_glued_echo(_TWENTY_SEED) == "settings-accounts-flow"
+    # glued stem + real leaf: prefix strips, the leaf survives.
+    assert _collapse_glued_echo(
+        "settings-accounts-settingsaccountsemails-flow"
+    ) == "settings-accounts-emails-flow"
+
+
+def test_glued_echo_anticases_untouched() -> None:
+    # partial restatement is NOT an exact concat — never collapses.
+    assert _collapse_glued_echo("teams-teammembers-flow") == (
+        "teams-teammembers-flow")
+    # live T3 anti-case: a ONE-token character prefix is linguistic, not
+    # structural — 'auth-authorize' must NOT strip to 'orize' (a proper-prefix
+    # match requires the duplicated run to span >=2 preceding tokens; a single
+    # preceding token counts only on EXACT equality).
+    assert _collapse_glued_echo("auth-authorize-flow") == "auth-authorize-flow"
+    assert _collapse_glued_echo("view-auth-authorize-flow") == (
+        "view-auth-authorize-flow")
+    # exact single-token dup (pure restatement) still collapses.
+    assert _collapse_glued_echo("settings-settings-flow") == "settings-flow"
+    # genuine 2-token glue with empty remainder (live 'found notfounds' row).
+    assert _collapse_glued_echo("not-found-notfound-flow") == "not-found-flow"
+    # non-adjacent repeat (intervening token) — never collapses.
+    assert _collapse_glued_echo(
+        "settings-accounts-stories-settingsaccounts-stories-flow"
+    ) == "settings-accounts-stories-settingsaccounts-stories-flow"
+    # clean names pass through byte-identically.
+    assert _collapse_glued_echo("view-settings-accounts-flow") == (
+        "view-settings-accounts-flow")
+    assert _collapse_glued_echo("create-detector-flow") == (
+        "create-detector-flow")
+
+
+def _twenty_uf_side_members() -> list[dict]:
+    # the exact live shape: the primary member still wears its Stage-3 seed
+    # name at UF-derivation time (multiple paths make it primary).
+    return [{
+        "name": _TWENTY_SEED,
+        "entry_point_file": _TWENTY_ENTRY,
+        "paths": [_TWENTY_ENTRY, "packages/twenty-front/src/x.ts",
+                  "packages/twenty-front/src/y.ts"],
+    }]
+
+
+def test_uf_side_glued_label_off_reproduces_live_garbage(monkeypatch) -> None:
+    monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "0")
+    label, grounded = _slot_consistent_label(_twenty_uf_side_members())
+    assert (label, grounded) == ("account settingsaccounts", True)
+
+
+def test_uf_side_glued_label_on_clean(monkeypatch) -> None:
+    monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "1")
+    label, grounded = _slot_consistent_label(_twenty_uf_side_members())
+    assert (label, grounded) == ("accounts", True)
+    # the member flow's own (seed) name is untouched — flow_name_v2 owns the
+    # flow-level rename later in the pipeline.
+    members = _twenty_uf_side_members()
+    _slot_consistent_label(members)
+    assert members[0]["name"] == _TWENTY_SEED
+
+
+def test_uf_side_glued_end_to_end_cluster(monkeypatch) -> None:
+    # full Stage-6.7 cluster pass over the live seed shape: OFF mints the
+    # garbage UF name, ON mints the clean grounded label.
+    scene = {
+        "flows": [_uf_flow(_TWENTY_SEED, "a", _TWENTY_ENTRY,
+                           [_TWENTY_ENTRY])],
+        "developer_features": [],
+    }
+    monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "0")
+    off = cluster_user_flows(scene)["user_flows"][0]
+    assert off["name"] == "account settingsaccounts"
+
+    monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "1")
+    on = cluster_user_flows(scene)["user_flows"][0]
+    assert on["name"] == "accounts"
+    assert on["name_confidence"] == off["name_confidence"]  # confidence-neutral

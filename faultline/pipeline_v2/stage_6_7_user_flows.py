@@ -423,6 +423,54 @@ def _strip_inherited_ordinal(resource: str) -> str:
     return stripped or resource
 
 
+def _collapse_glued_echo(name: str) -> str:
+    """B46 (iteration 2, live twenty evidence) — collapse a GLUED path-echo
+    token inside a Stage-3 seed flow name before UF-label derivation.
+
+    The Stage-3 seeder slugs a route with NO camel split, so a component
+    file-stem that restates its directory path glues into ONE token:
+    ``/settings/accounts/SettingsAccounts`` ->
+    ``settings-accounts-settingsaccounts(-flow)``. Stage 6.7 derives UF labels
+    BEFORE ``flow_name_v2`` renames flows (phase_finalize order: rollup :749,
+    rename :2825), so the glued token leaks into the UF label:
+    ``_split_name`` eats 'settings' as the verb and path-2 renders
+    'account settingsaccounts' (the twenty exhibit) — the flow-level B46 root
+    fix works on the camel-SPLIT form and cannot see a boundary inside the
+    glued token. Same mechanical rule at no-separator granularity: when a
+    token's leading characters exactly equal the concatenation of a contiguous
+    run of tokens immediately before it, drop that duplication (drop the whole
+    token when nothing remains). No vocabulary; exact string match only — a
+    partial restatement ('teams-teammembers') never matches, and a PROPER
+    prefix must span >=2 preceding tokens: a single preceding token counts
+    only on EXACT equality (pure dup), because a one-token character prefix is
+    linguistic, not structural ('auth-authorize' must NOT strip to 'orize' —
+    live twenty T3 anti-case).
+    """
+    had_flow = (name or "").endswith("-flow")
+    core = re.sub(r"-flow$", "", name or "")
+    toks = [t for t in core.split("-") if t]
+    out: list[str] = []
+    for t in toks:
+        rem = t
+        for j in range(len(out)):  # j ascending ⇒ longest preceding run first
+            prefix = "".join(out[j:])
+            if prefix == rem:
+                rem = ""
+                break
+            if (len(out) - j >= 2 and len(prefix) < len(rem)
+                    and rem.startswith(prefix)):
+                rem = rem[len(prefix):]
+                break
+        if rem:
+            out.append(rem)
+    if not out:
+        return name
+    collapsed = "-".join(out)
+    if collapsed == core:
+        return name
+    return collapsed + ("-flow" if had_flow else "")
+
+
 def _split_name(name: str) -> tuple[str, str]:
     """``create-detector-flow`` → ``(verb, resource)``; resource = noun span."""
     base = re.sub(r"-flow$", "", name)
@@ -808,7 +856,15 @@ def _slot_consistent_label(
                     return label, True
 
     # 2. Noun span of the primary flow's OWN name (same-flow slot).
-    _, resource = _split_name(primary.get("name") or "")
+    primary_name = primary.get("name") or ""
+    if uf_name_hygiene_enabled():
+        # B46 iter-2 — the primary may still wear its Stage-3 PLAIN-slug seed
+        # name (UF labels derive before flow_name_v2 renames flows): collapse a
+        # glued dir-restating stem ('settings-accounts-settingsaccounts-flow')
+        # before the noun span is read, else the glued token leaks into the
+        # label ('account settingsaccounts').
+        primary_name = _collapse_glued_echo(primary_name)
+    _, resource = _split_name(primary_name)
     if uf_name_hygiene_enabled():
         resource = _strip_inherited_ordinal(resource)  # B46 — drop '…-3' tail
     if resource and resource != "item":
