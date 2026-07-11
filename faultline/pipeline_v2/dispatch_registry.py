@@ -90,6 +90,29 @@ _TS_RETURN_IDENT_RE = re.compile(
 )
 #: Object-literal registry entry with a lazy component:
 #: ``key: … import('<literal>')`` (quoted or bare key).
+#: B37-s1 — then-member navigator entry (supabase Integrations landing):
+#: ``dynamic(() => import('spec').then((mod) => mod.Symbol))``. Whole-text
+#: scan (the real sites wrap across lines); bounded gap between the
+#: import literal and the member access.
+_TS_THEN_MEMBER_RE = re.compile(
+    r"import\(\s*['\"]([^'\"]+)['\"]\s*\)[\s\S]{0,40}?"
+    r"\.then\(\s*\(?(\w+)\)?\s*=>\s*\2\.(\w+)",
+)
+#: B37-s3 — block-execute string dispatch guard (typebot):
+#: ``if ("chatwoot" in clientSideAction)``.
+_TS_IF_IN_RE = re.compile(r"^\s*if\s*\(\s*['\"]([\w-]+)['\"]\s+in\s+\w")
+#: A call to an imported executor within an arm body:
+#: ``return executeChatwoot(...)`` / ``await executeX(...)``.
+_TS_ARM_CALL_RE = re.compile(
+    r"^\s*(?:return\s+|await\s+)?([A-Za-z_$][\w$]*)\(",
+)
+#: B37-s2 — default-import config registry (midday app-store):
+#: ``import xApp from "./x/config-client"`` collected into a literal.
+_TS_DEFAULT_IMPORT_RE = re.compile(
+    r"^\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+['\"](\.[^'\"]+)['\"]",
+)
+_TS_BARE_ELEMENT_RE = re.compile(r"^\s*([A-Za-z_$][\w$]*)\s*,?\s*$")
+
 _TS_MAP_DYNAMIC_RE = re.compile(
     r"^\s*['\"]?([\w$-]+)['\"]?\s*:\s*.*?\bimport\(\s*['\"]([^'\"]+)['\"]",
 )
@@ -226,7 +249,12 @@ def detect_ts_registries(
             text = p.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if "switch" not in text and "import(" not in text:
+        # Pass-scoped prefilter: b1/b2/b3 need switch/dynamic-import
+        # grammar; b4 needs the '"key" in x' guard; b5 needs relative
+        # default imports. Skip only files that can host NONE of them.
+        if ("switch" not in text and "import(" not in text
+                and '" in ' not in text and "' in " not in text
+                and "import " not in text):
             continue
         lines = text.splitlines()
 
@@ -283,12 +311,109 @@ def detect_ts_registries(
                         registry_file=rel, key=key, symbol="",
                         target_file=target,
                     ))
+
+        # (b3, B37-s1) then-member navigator entries — whole-text scan
+        # (the supabase Integrations landing wraps these across lines):
+        # import('spec').then((mod) => mod.Symbol). The member IS the
+        # exported symbol — anchors + names like any symbol-ful target.
+        then_hits = _TS_THEN_MEMBER_RE.findall(text)
+        if len(then_hits) >= 2:
+            for spec, _param, member in then_hits:
+                nk = _ts_norm(spec)
+                target = ts_index.get(nk) if nk else None
+                if target and target != rel:
+                    out.append(RegistryTarget(
+                        registry_file=rel, key="", symbol=member,
+                        target_file=target,
+                    ))
+
+        # (b4, B37-s3) block-execute string dispatch — typebot shape:
+        # if ("chatwoot" in action) { return executeChatwoot(...) }.
+        # Arms must call a STATICALLY IMPORTED executor (flavor D — the
+        # registry declares the block set even though imports are static).
+        arm_key: str | None = None
+        arm_gap = 0
+        if_in_arms: list[tuple[str, str, str]] = []
+        for line in lines:
+            km = _TS_IF_IN_RE.match(line)
+            if km:
+                arm_key = km.group(1)
+                arm_gap = 0
+                continue
+            if arm_key is not None:
+                arm_gap += 1
+                cm = _TS_ARM_CALL_RE.match(line)
+                if cm and cm.group(1) in ident_spec:
+                    if_in_arms.append(
+                        (arm_key, cm.group(1), ident_spec[cm.group(1)]),
+                    )
+                    arm_key = None
+                elif arm_gap >= 4:
+                    arm_key = None
+        if len(if_in_arms) >= 2:
+            for key, ident, spec in if_in_arms:
+                nk = _ts_norm(spec)
+                target = ts_index.get(nk) if nk else None
+                if target and target != rel:
+                    out.append(RegistryTarget(
+                        registry_file=rel, key=key, symbol=ident,
+                        target_file=target,
+                    ))
+
+        # (b5, B37-s2) default-import config registry — midday app-store
+        # shape: >=2 sibling default imports whose idents are later
+        # enumerated as bare literal elements (the exported apps array).
+        def_imports: dict[str, str] = {}
+        for line in lines:
+            m = _TS_DEFAULT_IMPORT_RE.match(line)
+            if m:
+                def_imports[m.group(1)] = m.group(2)
+        if len(def_imports) >= 2:
+            enumerated: list[str] = []
+            for line in lines:
+                m = _TS_BARE_ELEMENT_RE.match(line)
+                if m and m.group(1) in def_imports \
+                        and m.group(1) not in enumerated:
+                    enumerated.append(m.group(1))
+            if len(enumerated) >= 2:
+                for ident in enumerated:
+                    spec = def_imports[ident]
+                    nk = _ts_norm(spec)
+                    target = ts_index.get(nk) if nk else None
+                    if target and target != rel:
+                        # KEY = the entry's own dir segment
+                        # ('./quick-books/config-client' -> quick-books).
+                        segs = [x for x in spec.split("/")
+                                if x not in (".", "..", "")]
+                        key = segs[0] if segs else ""
+                        out.append(RegistryTarget(
+                            registry_file=rel, key=key, symbol="",
+                            target_file=target,
+                        ))
     return sorted(set(out), key=lambda t: (
         t.registry_file, t.target_file, t.symbol, t.key,
     ))
 
 
 # ── seed minting + B34-b registry rails ─────────────────────────────────
+
+_TAXONOMY = None
+
+
+def _surface_scope(path: str) -> str | None:
+    """W2a surface-taxonomy path scope (cached default-lexicon instance).
+    ``None`` = no signal (conservative: minting proceeds)."""
+    global _TAXONOMY
+    if _TAXONOMY is None:
+        from faultline.pipeline_v2.surface_taxonomy import (
+            SurfaceScopeClassifier,
+        )
+        _TAXONOMY = SurfaceScopeClassifier()
+    try:
+        return _TAXONOMY.classify_path(path)
+    except Exception:  # noqa: BLE001 — guard must never break a mint pass
+        return None
+
 
 #: UI component extensions — rail 1 applies only to JSX component files.
 _UI_EXT = (".tsx", ".jsx")
@@ -487,6 +612,7 @@ def mint_dispatch_seeds(
         "skipped_no_owner": 0,
         "skipped_unnameable": 0,
         "skipped_no_anchor": 0,
+        "skipped_non_product_surface": 0,
         "skipped_ui_component_kind": 0,
         "qualified_by_registry_key": 0,
         "ordinal_fallback": 0,
@@ -505,6 +631,18 @@ def mint_dispatch_seeds(
         owner = owner_of.get(t.target_file)
         if owner is None:
             tele["skipped_no_owner"] += 1
+            continue
+        # B37 rework — docs/artifact surface guard (keyed-supabase
+        # over-fire: apps/docs content-model registries minted
+        # run-config-flow / run-*-model-flow product rows). Reuse the
+        # W2a surface-taxonomy path classifier (mechanism, not a new
+        # vocabulary): a target OR registry living on a non-product
+        # surface (docs/marketing/dev_tooling/...) never mints.
+        scope_t = _surface_scope(t.target_file)
+        scope_r = _surface_scope(t.registry_file)
+        if (scope_t and scope_t not in ("product", "shell")) or \
+                (scope_r and scope_r not in ("product", "shell")):
+            tele["skipped_non_product_surface"] += 1
             continue
         core = rail_cores.get(t.target_file, "")
         if not core:
