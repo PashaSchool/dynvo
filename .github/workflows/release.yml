@@ -46,8 +46,10 @@ jobs:
     # the `[skip ci]` marker in that commit message).
     if: ${{ !contains(github.event.head_commit.message, 'chore(release)') }}
     outputs:
-      engine: ${{ github.event_name == 'workflow_dispatch' && inputs.force_engine && 'true' || steps.filter.outputs.engine }}
-      mcp: ${{ github.event_name == 'workflow_dispatch' && inputs.force_mcp && 'true' || steps.filter.outputs.mcp }}
+      # On dispatch the inputs are AUTHORITATIVE (false must stay false —
+      # paths-filter has no meaningful base on manual runs).
+      engine: ${{ github.event_name == 'workflow_dispatch' && (inputs.force_engine && 'true' || 'false') || steps.filter.outputs.engine }}
+      mcp: ${{ github.event_name == 'workflow_dispatch' && (inputs.force_mcp && 'true' || 'false') || steps.filter.outputs.mcp }}
     steps:
       - uses: actions/checkout@v4
 
