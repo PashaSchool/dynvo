@@ -227,3 +227,46 @@ code_extensions:
   - .cs
   - .vue
   - .svelte
+
+# B33 (2026-07-11) — journey-step / plumbing devgrain-leaf tokens for the
+# route/fdir mint gate (faultline/pipeline_v2/stage_6_86_anchored_mint.py
+# ``_mint_bar``). A route:/fdir:-anchored leaf whose normalized key names a
+# plumbing screen or a journey STEP (a welcome screen, an onboarding step, an
+# access-denied page) is journey-grain by construction — never a standalone
+# product capability — so it folds via the existing _parent_fold rail instead
+# of minting a flowless devgrain PF. CORROBORATION ONLY (never kills alone):
+# the gate fires solely when the candidate carries NO nav (IA) declaration
+# (``nav_confirmed`` false) AND the board's nav parse is readable; a
+# nav-declared leaf (kan/midday Onboarding, novu Error) is product by the
+# author's word and is NEVER gated. Closed set (B30 discipline) — no fuzzy /
+# substring matching; the leaf's ``-page``/``-screen``/``-view`` surface
+# suffix is stripped once (b8c domain-family precedent) before matching.
+# SEPARATE from structural_stoplist / hub_plumbing_segments: those bar
+# unconditionally, these bar only without nav confirmation.
+journey_step_leaf_tokens:
+  # Exact normalized-leaf membership (plumbing screens + journey steps).
+  exact:
+    - access-denied
+    - callback
+    - error
+    - getting-started
+    - loading
+    - logout
+    - maintenance
+    - not-found
+    - onboarding
+    - redirect
+    - signout
+    - unauthorized
+    - usecase-select
+    - welcome
+  # First ``-``-token match (redirect-* compounds, e.g.
+  # redirect-to-legacy-studio-auth).
+  prefix:
+    - redirect
+  # Last ``-``-token match (*-callback / *-onboarding / *-redirect compounds,
+  # e.g. oauth-callback, aws-marketplace-onboarding, enter-redirect).
+  suffix:
+    - callback
+    - onboarding
+    - redirect
