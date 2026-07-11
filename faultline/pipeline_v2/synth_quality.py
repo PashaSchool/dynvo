@@ -1558,7 +1558,12 @@ def run_synth_quality(
     # markers (now with final, board-unique display names) and, in full mode,
     # remove those marker rows from user_flows[]. off => never runs => the
     # coverage_gaps key is absent and user_flows is byte-identical to pre-B45.
-    coverage_gaps: list[Any] = []
+    # KEY-PRESENCE CONTRACT: consumers detect the gap-channel world by the
+    # key's presence ("coverage_gaps" in scan — the warden gap-channel-leak
+    # class + the flowless-silent gap exemption key off it), so dual/full
+    # carry a LIST — possibly EMPTY (a zero-gap board still declares the
+    # channel) — while off carries None (key absent, byte-identity).
+    coverage_gaps: list[Any] | None = None
     if gap_mode != "off":
         coverage_gaps = emit_coverage_gaps(
             user_flows, product_features, developer_features, scan_meta,
@@ -1574,8 +1579,10 @@ def run_synth_quality(
         "surface_coords_attached": coords_tele.get("attached", 0),
         "markers_suppressed_no_coords": suppress_tele.get("suppressed", 0),
         "recall_rows_renamed": recall_tele.get("renamed", 0),
-        # B45 — the built gap objects, threaded to the Stage-7 result. Empty
-        # list in off mode (the caller then attaches nothing → key absent).
+        # B45 — the built gap objects, threaded to the Stage-7 result. None
+        # in off mode (key absent from the output); a list — possibly
+        # empty — in dual/full (key ALWAYS present: the channel-presence
+        # contract).
         "coverage_gaps": coverage_gaps,
     }
     sq = scan_meta.setdefault("synth_quality", {})

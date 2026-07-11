@@ -144,8 +144,12 @@ def _scene() -> tuple[list[dict], list, list, list]:
     return ufs, [], pfs, devs
 
 
-def _run(mode: str) -> tuple[list[dict], dict, list]:
-    """Run the full synth-quality pass at ``mode`` on a fresh scene."""
+def _run(mode: str) -> tuple[list[dict], dict, Any]:
+    """Run the full synth-quality pass at ``mode`` on a fresh scene.
+
+    The third element is the tele ``coverage_gaps`` value: ``None`` in off
+    (key absent from output), a list — possibly empty — in dual/full (the
+    key-presence contract)."""
     import os
     os.environ[COVERAGE_GAP_CHANNEL_ENV] = mode
     ufs, flows, pfs, devs = copy.deepcopy(_scene())
@@ -173,9 +177,10 @@ def test_mode_helper(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_off_byte_identical(monkeypatch: pytest.MonkeyPatch) -> None:
     off_ufs, off_meta, off_gaps = _run("off")
     dual_ufs, _dual_meta, _dual_gaps = _run("dual")
-    # off emits no gaps and leaves the marker rows exactly as dual leaves them
-    # (dual keeps the rows) — so the user_flows[] layer is identical.
-    assert off_gaps == []
+    # off emits no gaps (None — the key stays ABSENT from the output, unlike
+    # dual/full's always-present list) and leaves the marker rows exactly as
+    # dual leaves them (dual keeps the rows) — user_flows[] is identical.
+    assert off_gaps is None
     assert [u["name"] for u in off_ufs] == [u["name"] for u in dual_ufs]
     assert len(off_ufs) == 6  # nothing removed
     # off adds NO gap-channel telemetry (byte-identity of scan_meta.synth_quality)
@@ -194,6 +199,45 @@ def test_off_featuremap_key_absent() -> None:
     fm2 = FeatureMap(repo_path="/x", analyzed_at=datetime.datetime.now(),
                      total_commits=0, date_range_days=1, coverage_gaps=[g])
     assert "coverage_gaps" in fm2.model_dump()
+
+
+# ── key-presence contract: dual/full ALWAYS carry the key, [] when empty ─────
+
+
+@pytest.mark.parametrize("mode", ["dual", "full"])
+def test_zero_gap_board_key_present(mode: str) -> None:
+    """The keyless-papermark probe class: a board with ZERO member-less
+    markers must still declare the gap channel — the pass returns an EMPTY
+    LIST (never None) in dual/full, so the output carries
+    ``"coverage_gaps": []``. Consumers (warden gap-channel-leak class,
+    flowless-silent gap exemption) detect the world by KEY PRESENCE."""
+    os.environ[COVERAGE_GAP_CHANNEL_ENV] = mode
+    # No member-less markers at all — organic + member-ful recall only.
+    ufs = [_organic("UF-1", "Manage widgets", "pf-real"),
+           _memberful_recall("UF-2", "Browse widgets", "pf-real")]
+    pfs = [_ns(name="pf-real", display_name="Real Feature", member_files=[])]
+    devs = [_ns(name="d", product_feature_id="pf-real", flows=[_ns(uuid="f")])]
+    meta: dict[str, Any] = {}
+    tele = run_synth_quality(ufs, [], pfs, meta, developer_features=devs)
+    gaps = tele["coverage_gaps"]
+    assert gaps == [] and gaps is not None  # empty LIST, never None
+    # The channel is declared in telemetry too (converted=0, emitted=0).
+    sq = meta["synth_quality"]
+    assert sq["gap_channel_mode"] == mode
+    assert sq["gaps_emitted"] == 0
+    assert sq["marker_rows_converted"] == 0
+    # And the FeatureMap dump carries the key as [] (present), unlike off.
+    fm = FeatureMap(repo_path="/x", analyzed_at=datetime.datetime.now(),
+                    total_commits=0, date_range_days=1, coverage_gaps=gaps)
+    assert fm.model_dump()["coverage_gaps"] == []
+
+
+def test_off_tele_gaps_is_none() -> None:
+    """off returns None in the tele (the finalize caller then attaches
+    nothing → key absent), NOT an empty list — the None/[] distinction IS
+    the key-presence contract."""
+    _ufs, _meta, gaps = _run("off")
+    assert gaps is None
 
 
 # ── dual: rows AND gaps, 1:1 bijection ───────────────────────────────────────
@@ -307,7 +351,7 @@ def test_memberful_recall_untouched(mode: str) -> None:
     assert len(recall) == 1  # never removed, never a gap
     assert recall[0]["name"] == "Browse widgets"
     assert recall[0]["member_count"] == 2
-    assert all(g.synthesis_reason != "route_group_recall" for g in gaps)
+    assert all(g.synthesis_reason != "route_group_recall" for g in gaps or [])
 
 
 # ── kind mapping per mint site (unit — _gap_kind) ────────────────────────────

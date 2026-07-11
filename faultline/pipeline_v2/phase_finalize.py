@@ -2637,10 +2637,12 @@ def run_finalize_phase(
                 developer_features=features,
             )
             _gaps = _sq_tele.get("coverage_gaps")
-            # Only surface the array when the channel actually emitted gaps —
-            # an empty list from a marker-less board (or off mode) leaves the
-            # top-level key absent (byte-identity).
-            if _gaps:
+            # KEY-PRESENCE contract: the pass returns None in off mode (key
+            # absent — byte-identity) and a LIST — possibly EMPTY — in
+            # dual/full. A zero-gap board still ships "coverage_gaps": [] so
+            # consumers ("coverage_gaps" in scan — warden gap-channel-leak
+            # class, flowless-silent gap exemption) can detect the channel.
+            if _gaps is not None:
                 coverage_gaps = list(_gaps)
         except Exception as exc:  # noqa: BLE001 — quality pass never breaks a scan
             scan_meta.setdefault("warnings", []).append(

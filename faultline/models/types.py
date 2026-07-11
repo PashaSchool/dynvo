@@ -1255,7 +1255,9 @@ class CoverageGap(BaseModel):
     predicate) — one gap per surviving marker (a strict bijection with the
     old rows). Emitted ONLY under ``FAULTLINE_COVERAGE_GAP_CHANNEL`` ∈
     {dual, full}; the ``off`` default never mints a gap and the top-level
-    ``coverage_gaps`` key is then ENTIRELY ABSENT (byte-identity law).
+    ``coverage_gaps`` key is then ENTIRELY ABSENT (byte-identity law). In
+    dual/full the key is ALWAYS present — ``[]`` on a zero-gap board — so
+    consumers can detect the channel by key presence.
     """
 
     #: ``GAP-<sha1(pf|kind|label)[:10]>`` — content-derived + rescan-stable
@@ -1407,7 +1409,11 @@ class FeatureMap(BaseModel):
     # mistaken for a journey. ``None`` (and the key ENTIRELY OMITTED from the
     # dump — see the serializer) unless ``FAULTLINE_COVERAGE_GAP_CHANNEL`` is
     # dual/full, so the default ``off`` path serializes byte-identically to
-    # pre-B45 engines (kill-switch / byte-identity law).
+    # pre-B45 engines (kill-switch / byte-identity law). KEY-PRESENCE
+    # contract: in dual/full the pipeline passes a LIST — possibly EMPTY
+    # (``"coverage_gaps": []`` on a zero-gap board) — because consumers
+    # detect the gap-channel world by the key's presence ("coverage_gaps"
+    # in scan: warden gap-channel-leak class, flowless-silent gap exemption).
     coverage_gaps: list[CoverageGap] | None = None
 
     @model_serializer(mode="wrap")
