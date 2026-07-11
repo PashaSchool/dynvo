@@ -269,6 +269,25 @@ ENV_OUTPUT_FLAGS = (
     # KEY_SCHEMA bump — the off default is byte-identical; the later
     # default-flip commit bumps KEY_SCHEMA (v16/v21/v25 precedent).
     "FAULTLINE_COVERAGE_GAP_CHANNEL",
+    # B40 (2026-07-11) — provenance-graded name_confidence + name_evidence[]
+    # audit trail. Arms the nav / registry / structural-route rungs in Law C
+    # and the singular-folded multi-member agreement in synth_quality; stamps
+    # UserFlow.name_evidence. off (default) = byte-identical (name_confidence
+    # rubric unchanged, name_evidence key absent). ON may raise name_confidence
+    # and adds name_evidence[] — UF NAMES stay byte-stable either way. Appended
+    # WITHOUT a KEY_SCHEMA bump — the off default is byte-identical; a later
+    # default-flip commit would bump KEY_SCHEMA.
+    "FAULTLINE_NAME_EVIDENCE_RUNGS",
+    # B46 (2026-07-11) — UF-name hygiene: kills three garbage-name sources —
+    # the doubled route/file-stem token concat ('settings accounts settings
+    # accounts', root in flow_name_v2._resource_tokens), the bare pluralized
+    # dir-stem leaf on an ungrounded 'other'-intent slot ('onboardings' ->
+    # 'Manage onboarding'), and an inherited Stage-5.5 ordinal on a UF label
+    # ('… action 3'). off (default) = byte-identical; ON reshapes flow.name
+    # (concat root) + user_flows[].name (garbage rows only). Appended WITHOUT a
+    # KEY_SCHEMA bump — off is byte-identical; a later default-flip commit
+    # would bump KEY_SCHEMA.
+    "FAULTLINE_UF_NAME_HYGIENE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

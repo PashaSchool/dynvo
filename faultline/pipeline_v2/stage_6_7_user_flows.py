@@ -27,6 +27,8 @@ import re
 from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any, Iterable
 
+from faultline.pipeline_v2.flow_name_v2 import uf_name_hygiene_enabled
+
 if TYPE_CHECKING:
     from faultline.models.types import Feature, Flow, UserFlow
 
@@ -397,6 +399,76 @@ def _singular(word: str) -> str:
     if word.endswith("s"):
         return word[:-1]
     return word
+
+
+def _singularize_phrase(label: str) -> str:
+    """Singularize the trailing word of a display phrase ("onboardings" ->
+    "onboarding", "account settings" -> "account setting"). B46 helper for the
+    manage-X rewrite of an ungrounded bare-plural leaf."""
+    parts = label.split()
+    if parts:
+        parts[-1] = _singular(parts[-1])
+    return " ".join(parts)
+
+
+_ORDINAL_TAIL_RE = re.compile(r"-\d+$")
+
+
+def _strip_inherited_ordinal(resource: str) -> str:
+    """B46 — strip a trailing Stage-5.5 ordinal token ('-3') a UF label
+    inherited from a member flow name ('…-action-3-flow' -> resource
+    '…-action-3'). Flow-level ordinal names are a legal last-resort slug and
+    are left untouched — only the UF label derived FROM them is cleaned."""
+    stripped = _ORDINAL_TAIL_RE.sub("", resource)
+    return stripped or resource
+
+
+def _collapse_glued_echo(name: str) -> str:
+    """B46 (iteration 2, live twenty evidence) — collapse a GLUED path-echo
+    token inside a Stage-3 seed flow name before UF-label derivation.
+
+    The Stage-3 seeder slugs a route with NO camel split, so a component
+    file-stem that restates its directory path glues into ONE token:
+    ``/settings/accounts/SettingsAccounts`` ->
+    ``settings-accounts-settingsaccounts(-flow)``. Stage 6.7 derives UF labels
+    BEFORE ``flow_name_v2`` renames flows (phase_finalize order: rollup :749,
+    rename :2825), so the glued token leaks into the UF label:
+    ``_split_name`` eats 'settings' as the verb and path-2 renders
+    'account settingsaccounts' (the twenty exhibit) — the flow-level B46 root
+    fix works on the camel-SPLIT form and cannot see a boundary inside the
+    glued token. Same mechanical rule at no-separator granularity: when a
+    token's leading characters exactly equal the concatenation of a contiguous
+    run of tokens immediately before it, drop that duplication (drop the whole
+    token when nothing remains). No vocabulary; exact string match only — a
+    partial restatement ('teams-teammembers') never matches, and a PROPER
+    prefix must span >=2 preceding tokens: a single preceding token counts
+    only on EXACT equality (pure dup), because a one-token character prefix is
+    linguistic, not structural ('auth-authorize' must NOT strip to 'orize' —
+    live twenty T3 anti-case).
+    """
+    had_flow = (name or "").endswith("-flow")
+    core = re.sub(r"-flow$", "", name or "")
+    toks = [t for t in core.split("-") if t]
+    out: list[str] = []
+    for t in toks:
+        rem = t
+        for j in range(len(out)):  # j ascending ⇒ longest preceding run first
+            prefix = "".join(out[j:])
+            if prefix == rem:
+                rem = ""
+                break
+            if (len(out) - j >= 2 and len(prefix) < len(rem)
+                    and rem.startswith(prefix)):
+                rem = rem[len(prefix):]
+                break
+        if rem:
+            out.append(rem)
+    if not out:
+        return name
+    collapsed = "-".join(out)
+    if collapsed == core:
+        return name
+    return collapsed + ("-flow" if had_flow else "")
 
 
 def _split_name(name: str) -> tuple[str, str]:
@@ -784,7 +856,17 @@ def _slot_consistent_label(
                     return label, True
 
     # 2. Noun span of the primary flow's OWN name (same-flow slot).
-    _, resource = _split_name(primary.get("name") or "")
+    primary_name = primary.get("name") or ""
+    if uf_name_hygiene_enabled():
+        # B46 iter-2 — the primary may still wear its Stage-3 PLAIN-slug seed
+        # name (UF labels derive before flow_name_v2 renames flows): collapse a
+        # glued dir-restating stem ('settings-accounts-settingsaccounts-flow')
+        # before the noun span is read, else the glued token leaks into the
+        # label ('account settingsaccounts').
+        primary_name = _collapse_glued_echo(primary_name)
+    _, resource = _split_name(primary_name)
+    if uf_name_hygiene_enabled():
+        resource = _strip_inherited_ordinal(resource)  # B46 — drop '…-3' tail
     if resource and resource != "item":
         return _pluralise(resource.replace("-", " ")), True
 
@@ -1319,6 +1401,18 @@ def cluster_user_flows(
             slot_label, slot_grounded = _slot_consistent_label(
                 members, product_strings,
             )
+            # B46 — an UNGROUNDED 'other'-intent slot renders the bare template
+            # "{r}" as a naked pluralized dir stem ('onboardings', 'admins').
+            # Front it with the manage-X naming rule against the SINGULAR stem
+            # ("Manage onboarding") so the row is a legible journey; confidence
+            # stays low (still honest — the evidence is only a dir name).
+            # Grounded slots and every other intent are byte-identical. Flag OFF
+            # ⇒ unchanged.
+            uf_name = NAME_TMPL[intent].format(r=slot_label)
+            if (uf_name_hygiene_enabled() and intent == "other"
+                    and not slot_grounded):
+                uf_name = NAME_TMPL["manage"].format(
+                    r=_singularize_phrase(slot_label))
             # System UFs carry the dominant member trigger as their sub-type.
             uf_trigger: str | None = None
             if section_category == "system":
@@ -1329,7 +1423,7 @@ def cluster_user_flows(
                     uf_trigger = Counter(trigs).most_common(1)[0][0]
             user_flows.append({
                 "id": uf_id,
-                "name": NAME_TMPL[intent].format(r=slot_label),
+                "name": uf_name,
                 "name_confidence": "high" if slot_grounded else "low",
                 "domain": domain,
                 "product_feature_id": pfid,

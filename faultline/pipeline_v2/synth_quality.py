@@ -520,11 +520,19 @@ def _derive_multi_member_name(
     pf_display: str,
     current: str,
     verb_class: dict[str, str],
+    *,
+    stem_agreement: bool = False,
 ) -> tuple[str | None, bool]:
     """Verdict for a backstop with ≥2 members. Returns ``(candidate, strong)``
     where ``candidate`` is the un-polished display (or ``None`` to keep the
     template) and ``strong`` marks a ≥2-member resource+action agreement
-    (drives the low→medium confidence bump). Pure; no side effects."""
+    (drives the low→medium confidence bump). Pure; no side effects.
+
+    B40 (``stem_agreement``, FAULTLINE_NAME_EVIDENCE_RUNGS): fold ``_stem``
+    singularization into the member-object concurrence so a plural/singular
+    mismatch (``onboarding`` vs ``onboardings``) stops degrading the agreement
+    signal — a resource stem shared by ≥2 members widens ``strong`` (confidence
+    ONLY). The returned CANDIDATE is byte-identical regardless of the flag."""
     from collections import Counter
 
     if not _template_shaped(current, pf_display):
@@ -532,8 +540,11 @@ def _derive_multi_member_name(
 
     classes: list[str] = []
     crud: set[str] = set()
+    obj_stems: list[set[str]] = []
     for lbl in members:
-        verb, _obj = _split_member(lbl)
+        verb, obj = _split_member(lbl)
+        if stem_agreement and obj:
+            obj_stems.append({_stem(t) for t in obj})
         if not verb:
             continue
         cls = verb_class.get(verb)
@@ -545,6 +556,16 @@ def _derive_multi_member_name(
     n = len(members)
     if n < 2:
         return None, False
+
+    # B40 — singular-folded object concurrence: a resource stem shared by ≥2
+    # members is a genuine agreement rung (name-neutral; widens ``strong`` only).
+    obj_concur = False
+    if stem_agreement and len(obj_stems) >= 2:
+        stem_counts: dict[str, int] = {}
+        for s in obj_stems:
+            for t in s:
+                stem_counts[t] = stem_counts.get(t, 0) + 1
+        obj_concur = any(c >= 2 for c in stem_counts.values())
 
     counts = Counter(classes)
     dom_cls, dom_n = counts.most_common(1)[0] if counts else (None, 0)
@@ -570,7 +591,7 @@ def _derive_multi_member_name(
         if not re.fullmatch(r"[a-z0-9-]+", resource or ""):
             return None, False  # resource carries route/param junk — unsafe
         res_phrase = re.sub(r"[-_]+", " ", resource).strip()
-        return f"{verb_disp} {res_phrase}", crud_span
+        return f"{verb_disp} {res_phrase}", (crud_span or obj_concur)
 
     # resource == PF display from here (template resource retained).
     cur_verb = (current.split() or [""])[0].lower()
@@ -579,7 +600,7 @@ def _derive_multi_member_name(
         return f"Manage {_resource_lc(pf_display)}", True
     # VERB-CORRECT: a single class dominates but differs from the template.
     if dominant and verb_class.get(cur_verb) != dominant:
-        return f"{dominant.capitalize()} {_resource_lc(pf_display)}", False
+        return f"{dominant.capitalize()} {_resource_lc(pf_display)}", obj_concur
     return None, False
 
 
@@ -607,10 +628,15 @@ def reground_backstop_uf_names(
     from faultline.pipeline_v2.naming_contract import (
         display_law_violations,
         load_naming_vocab,
+        name_evidence_rungs_enabled,
         polish_display_casing,
     )
 
+    from faultline.pipeline_v2.flow_name_v2 import uf_name_hygiene_enabled
+
     v = vocab if vocab is not None else load_naming_vocab()
+    rungs_on = name_evidence_rungs_enabled()
+    hygiene_on = uf_name_hygiene_enabled()
     # Noun-ish leading tokens that are NOT journey verbs — a member-flow name
     # led by one of these ("api-user-subscribe") is not a verb-led journey
     # label; keep the template. Data-driven (vocab), not a hardcoded blocklist.
@@ -660,6 +686,12 @@ def reground_backstop_uf_names(
             if fl is None:
                 continue
             verb, obj = _split_member(_member_flow_label(fl))
+            # B46 — a UF label derived from a member flow name must not inherit
+            # its Stage-5.5 ordinal ('fetch-…-action-3-flow' -> obj '[…, 3]' ->
+            # 'Browse available model action 3'). Drop a trailing pure-digit
+            # token; the flow name itself keeps the ordinal (legal slug).
+            if hygiene_on and obj and obj[-1].isdigit():
+                obj = obj[:-1]
             if not verb.isalpha() or verb in noun_lead or not obj:
                 continue  # no clean verb-led member evidence
             cur_tokens = {t for t in _KEBAB_SPLIT.split(current.lower()) if t}
@@ -676,7 +708,8 @@ def reground_backstop_uf_names(
             ]
             raw, strong = _derive_multi_member_name(
                 members, str(_get(uf, "resource", "") or ""),
-                pf_display, current, verb_class)
+                pf_display, current, verb_class,
+                stem_agreement=rungs_on)
             if raw is not None:
                 candidate = polish_display_casing(raw, v)
 
@@ -707,6 +740,12 @@ def reground_backstop_uf_names(
             _set(uf, "name_confidence", "medium")
             rec["confidence"] = "medium"
             confidence_raised += 1
+            # B40 — a ≥2-member resource+action agreement is the fired rung.
+            # Stamp the audit trail (replacing Law C's low ``missing:*`` list,
+            # which no longer applies now that the lift fired). Flag-gated: OFF
+            # leaves name_evidence untouched (byte-identical, still None).
+            if rungs_on:
+                _set(uf, "name_evidence", ["member-agreement"])
         renames.append(rec)
 
     if renames:
