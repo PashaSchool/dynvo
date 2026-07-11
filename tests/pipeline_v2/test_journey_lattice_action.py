@@ -130,6 +130,10 @@ def _cases_scene() -> tuple[list[UserFlow], list[Feature], list[Feature],
 # ── Vocab + flag plumbing ────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(
+    not (_REPO_ROOT / "eval").exists(),
+    reason="eval/ is local/private-only (scrubbed 2026-07-11)",
+)
 def test_vocab_drift_guard_packaged_equals_eval_copy() -> None:
     packaged = (
         _REPO_ROOT / "faultline" / "pipeline_v2" / "data"

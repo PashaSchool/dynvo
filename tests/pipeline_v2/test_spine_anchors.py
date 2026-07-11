@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from faultline.models.types import Feature, MemberFile
 from faultline.pipeline_v2.spine_anchors import (
     SpineAnchor,
@@ -546,6 +548,10 @@ def test_feature_dir_and_service_dir_sources():
 # ── Vocab drift guard (house pattern) ────────────────────────────────────
 
 
+@pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[2] / "eval").exists(),
+    reason="eval/ is local/private-only (scrubbed 2026-07-11)",
+)
 def test_vocab_yaml_authoring_copy_is_byte_identical():
     packaged = (
         Path(__file__).resolve().parents[2]

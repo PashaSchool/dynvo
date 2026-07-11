@@ -397,6 +397,10 @@ def test_expected_verticals_present() -> None:
     }
 
 
+@pytest.mark.skipif(
+    not (_REPO_ROOT / "eval").exists(),
+    reason="eval/ is local/private-only (scrubbed 2026-07-11)",
+)
 def test_product_verticals_yaml_matches_eval_authoring_copy() -> None:
     """House drift guard: packaged copy == eval/ authoring copy."""
     authoring = (_REPO_ROOT / "eval" / "product-verticals.yaml").read_text(

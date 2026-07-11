@@ -395,6 +395,10 @@ def test_facet_role_serialization_roundtrip() -> None:
 # ── data drift guard (house pattern: eval/ authoring == packaged copy) ─────
 
 
+@pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[2] / "eval").exists(),
+    reason="eval/ is local/private-only (scrubbed 2026-07-11)",
+)
 def test_concern_facets_yaml_matches_eval_authoring_copy() -> None:
     from faultline.pipeline_v2.data import load_data_text
 

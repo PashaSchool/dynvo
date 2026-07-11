@@ -82,7 +82,17 @@ def test_no_eval_sibling_dependence(stack: str, monkeypatch, tmp_path) -> None:
 
 # ── Drift guard: in-package data must be byte-identical to eval/ authoring ──
 
+# eval/ is local/private-only (gitignored; scrubbed from history 2026-07-11):
+# worktrees and fresh public clones don't have it — the drift guards below
+# can only run where the authoring copies exist. Everything above stays
+# hermetic (packaged data only) and runs everywhere.
+_requires_eval = pytest.mark.skipif(
+    not (_REPO_ROOT / "eval").exists(),
+    reason="eval/ is local/private-only (scrubbed 2026-07-11)",
+)
 
+
+@_requires_eval
 @pytest.mark.parametrize("stack", _STACK_NAMES)
 def test_stack_yaml_matches_eval_authoring_copy(stack: str) -> None:
     """The packaged stack YAML is byte-identical to repo-root eval/stacks/.
@@ -101,6 +111,7 @@ def test_stack_yaml_matches_eval_authoring_copy(stack: str) -> None:
     )
 
 
+@_requires_eval
 def test_dependency_anchors_matches_eval_authoring_copy() -> None:
     authoring = _EVAL_DEP_ANCHORS.read_text(encoding="utf-8")
     load_data_text.cache_clear()

@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
-from eval.structural_audit import (
+from pathlib import Path
+
+import pytest
+
+# eval/ is local/private-only (gitignored; scrubbed from history 2026-07-11):
+# worktrees and fresh public clones don't have it — skip the whole module
+# BEFORE the import below, which would otherwise error at collection.
+if not (Path(__file__).resolve().parents[1] / "eval").exists():
+    pytest.skip(
+        "eval/ is local/private-only (scrubbed 2026-07-11)",
+        allow_module_level=True,
+    )
+
+from eval.structural_audit import (  # noqa: E402 — guarded by the skip above
     _gini,
     _is_container_name,
     _is_platform_feature,
