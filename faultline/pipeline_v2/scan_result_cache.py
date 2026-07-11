@@ -235,6 +235,13 @@ ENV_OUTPUT_FLAGS = (
     # midday 1 / typebot 1). Default OFF. Appended WITHOUT a KEY_SCHEMA
     # bump per wave convention — reconciled at merge.
     "FAULTLINE_MARKER_COORDS_REQUIRED",
+    # B41 (2026-07-11) — pages-surface named-export fallback: react-router
+    # trees under src/pages with NAMED-export components get real
+    # (symbol, line) anchors instead of symbol-less hollow seeds (novu:
+    # 54% of flows hollow). Default ON; inert on Next trees (default
+    # exports always match first). Appended WITHOUT a KEY_SCHEMA bump —
+    # reconciled at merge.
+    "FAULTLINE_PAGES_NAMED_EXPORT_FALLBACK",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

@@ -239,6 +239,26 @@ def url_from_rest(rest: str) -> tuple[str, bool]:
     return "/" + "/".join(out), is_api
 
 
+#: B41 (2026-07-11, novu fresh-blood) — react-router apps keep pages in
+#: ``src/pages/*.tsx`` with NAMED exports (``export function
+#: AccessDeniedPage()``); the pages arm claimed them, found no DEFAULT
+#: export, and seeded symbol-less entries -> no (symbol, line) anchor ->
+#: 68/125 flows hollow (54% of the novu board). Fallback: the dominant
+#: PascalCase named export IS the page component (component-naming
+#: convention — a closed structural rule, not a vocabulary). Default ON;
+#: =0 restores the empty-symbol behaviour byte-identically. On Next
+#: trees pages MUST default-export, so the fallback never fires there.
+NAMED_EXPORT_FALLBACK_ENV = "FAULTLINE_PAGES_NAMED_EXPORT_FALLBACK"
+
+
+def named_export_fallback_enabled() -> bool:
+    """Default ON; ``FAULTLINE_PAGES_NAMED_EXPORT_FALLBACK=0`` disables."""
+    import os
+    return os.environ.get(NAMED_EXPORT_FALLBACK_ENV, "1").strip() not in {
+        "0", "false", "False",
+    }
+
+
 def default_export_symbol(repo_root, rel_path: str) -> str:  # noqa: ANN001
     """Best-effort default-export component name (else ``""``)."""
     text = read_text(repo_root / rel_path)
@@ -253,6 +273,16 @@ def default_export_symbol(repo_root, rel_path: str) -> str:  # noqa: ANN001
     m = re.search(r"export\s+default\s+([A-Za-z_$][\w$]*)\s*;?", text)
     if m and m.group(1) not in ("function", "async", "class"):
         return m.group(1)
+    if named_export_fallback_enabled():
+        # B41 — dominant PascalCase NAMED export (source order).
+        m = re.search(
+            r"export\s+(?:async\s+)?function\s+([A-Z][\w$]*)", text,
+        )
+        if m:
+            return m.group(1)
+        m = re.search(r"export\s+const\s+([A-Z][\w$]*)\s*[:=]", text)
+        if m:
+            return m.group(1)
     return ""
 
 
