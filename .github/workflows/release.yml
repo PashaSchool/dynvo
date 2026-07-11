@@ -15,6 +15,19 @@ name: Release
 on:
   push:
     branches: [main]
+  # Manual release: force a package through even when the triggering diff
+  # doesn't touch its paths (e.g. engine changes landed in a run that was
+  # superseded before staging).
+  workflow_dispatch:
+    inputs:
+      force_engine:
+        description: "Release the engine (dynvo) regardless of path filter"
+        type: boolean
+        default: false
+      force_mcp:
+        description: "Release faultlines-mcp regardless of path filter"
+        type: boolean
+        default: false
 
 # Serialize releases so two quick merges can't race on the version bump /
 # push-back to main.
@@ -33,8 +46,8 @@ jobs:
     # the `[skip ci]` marker in that commit message).
     if: ${{ !contains(github.event.head_commit.message, 'chore(release)') }}
     outputs:
-      engine: ${{ steps.filter.outputs.engine }}
-      mcp: ${{ steps.filter.outputs.mcp }}
+      engine: ${{ github.event_name == 'workflow_dispatch' && inputs.force_engine && 'true' || steps.filter.outputs.engine }}
+      mcp: ${{ github.event_name == 'workflow_dispatch' && inputs.force_mcp && 'true' || steps.filter.outputs.mcp }}
     steps:
       - uses: actions/checkout@v4
 
