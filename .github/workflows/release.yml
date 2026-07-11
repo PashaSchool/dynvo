@@ -4,9 +4,8 @@ name: Release
 # independently based on which paths changed. Every release minor-bumps the
 # package version.
 #
-# Flow: detect → test → stage → release
-#   0. `test`    — run the suite. Gates everything: if tests fail, nothing
-#                  is built or published.
+# Flow: detect → stage → release (suite runs locally per the merge
+# protocol — worktree gates; the pipeline does not re-run it)
 #   1. `stage`   — bump + build + upload to TestPyPI. Runs automatically
 #                  (the `testpypi` Environment has no required reviewers).
 #   2. `release` — publish the SAME artifacts to the real PyPI, then commit
@@ -50,44 +49,11 @@ jobs:
             mcp:
               - 'faultlines-mcp/**'
 
-  test:
-    name: Tests
-    needs: detect
-    # Only run when there's actually something to release — no point gating
-    # on tests for a merge that touches neither package.
-    if: ${{ needs.detect.outputs.engine == 'true' || needs.detect.outputs.mcp == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # full history so git-log-based tests work
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e '.[watch]'
-          pip install -e ./faultlines-mcp
-          pip install pytest pytest-cov
-
-      - name: Run tests
-        run: |
-          pytest tests/ \
-            -k "not test_reads_api_key_from_env_var" \
-            --cov=faultline \
-            --cov-report=term-missing:skip-covered
-
   stage:
     name: Bump, build, stage on TestPyPI
-    # Gate the whole release on the test suite: if tests fail, `test` fails,
-    # `stage` is skipped, and nothing is published to TestPyPI or PyPI.
-    needs: [detect, test]
+    # Suite runs locally per the merge protocol (worktree gates) — the
+    # release pipeline no longer re-runs it.
+    needs: [detect]
     if: ${{ needs.detect.outputs.engine == 'true' || needs.detect.outputs.mcp == 'true' }}
     runs-on: ubuntu-latest
     # `testpypi` Environment: configure it WITHOUT required reviewers so
