@@ -47,6 +47,7 @@ no-op, output byte-identical to pre-B4 main). Output-affecting -> registered in
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from typing import Any
@@ -797,17 +798,20 @@ def honest_coverage_markers(
 #: with zero evidence (wave15 breach: cal.com 20 e2e rows wearing authored
 #: labels — 'Can delete user account' — all homed to PF `trpc`; midday
 #: GoCardless UF-078; typebot Pixel UF-103). The attach pass's honesty
-#: gates are correct — SHIPPING the bare row is the bug. Default OFF.
+#: gates are correct — SHIPPING the bare row is the bug. Default ON since the
+#: 2026-07-11 keyed cal.com proof (flipped at merge; A3 docstring fix — this
+#: block previously read "Default OFF", stale after the flip).
 #: Registered in ``scan_result_cache.ENV_OUTPUT_FLAGS``.
 MARKER_COORDS_REQUIRED_ENV = "FAULTLINE_MARKER_COORDS_REQUIRED"
 
 
 def marker_coords_required() -> bool:
-    """Default ON since the 2026-07-11 keyed cal.com proof (markers 21->1,
-    all 20 suppressions recorded in
-    ``scan_meta.synth_quality.suppressed_markers`` — the board hides
-    evidence-less gap rows, the machine record keeps the gap counted).
-    ``=0`` restores the rows."""
+    """Default ON — an UNSET env resolves to ``"1"`` (ON) since the
+    2026-07-11 keyed cal.com proof (markers 21->1, all 20 suppressions
+    recorded in ``scan_meta.synth_quality.suppressed_markers`` — the board
+    hides evidence-less gap rows, the machine record keeps the gap counted).
+    Only ``"1"``/``"true"``/``"True"`` are ON; any other value restores the
+    rows."""
     return os.environ.get(MARKER_COORDS_REQUIRED_ENV, "1").strip() in {
         "1", "true", "True",
     }
@@ -821,6 +825,83 @@ def _is_member_less_marker(uf: Any) -> bool:
     if (_get(uf, "member_count", 0) or 0) != 0:
         return False
     return not (_get(uf, "member_flow_ids", None) or [])
+
+
+# ── B45 — coverage_gaps[] gap channel ────────────────────────────────────────
+#
+# The member-less I8-cover markers (``_is_member_less_marker`` — the loc-worthy
+# / owned-cover / system-route / e2e-orphan seeds ``honest_coverage_markers``
+# types) used to ship as hollow ``user_flows[]`` rows wearing an ``Uncovered:
+# <PF> routes`` name (or a preserved e2e authored label), indistinguishable
+# from real journeys on the board / MCP / PR comments. B45 segregates them into
+# a dedicated top-level ``coverage_gaps[]`` array so a gap can never be mistaken
+# for a journey. One typed gap per SURVIVING marker (a strict bijection with the
+# old rows; the B38-suppressed markers are counted in the shared
+# ``suppressed_markers`` ledger — the no-silent-gap law).
+#
+# Three modes (``FAULTLINE_COVERAGE_GAP_CHANNEL``): off (default) is
+# byte-identical to pre-B45; dual emits gaps AND keeps the marker rows (a
+# bijection instrument — one scan, two worlds); full emits gaps and REMOVES the
+# marker rows from ``user_flows[]``. Member-FUL recall rows (route_group_recall,
+# the member-ful 6.7d backstop) are NEVER markers and are never touched.
+
+#: B45 gap-channel kill-switch. Registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+COVERAGE_GAP_CHANNEL_ENV = "FAULTLINE_COVERAGE_GAP_CHANNEL"
+
+
+def coverage_gap_channel_mode() -> str:
+    """B45 — the gap-channel mode ∈ {``"off"``, ``"dual"``, ``"full"``}.
+
+    ``off`` (default: unset / ``""`` / ``"0"`` / ``"off"``) = byte-identical to
+    pre-B45 (no gaps, ``coverage_gaps`` key absent). ``dual`` emits gaps AND
+    keeps the member-less marker rows in ``user_flows[]``. ``full`` emits gaps
+    and REMOVES the marker rows. Any UNRECOGNISED value falls back to ``off``
+    (fail-safe to byte-identity)."""
+    raw = os.environ.get(COVERAGE_GAP_CHANNEL_ENV, "").strip().lower()
+    return raw if raw in {"dual", "full"} else "off"
+
+
+def _flowful_pf_set(developer_features: list[Any] | None) -> set[str]:
+    """PF keys that OWN ≥1 flow at Stage 6.98 — mirrors the 6.7d ``flowful``
+    set (``pf_flows`` non-empty, built from ``dev.flows``). Used to split the
+    two BYTE-IDENTICAL 6.7d backstop seeds: a loc-worthy seed's PF is FLOWLESS
+    (absent here → ``loc_worthy``), an owned-cover seed's PF is FLOWFUL
+    (present → ``owned_cover``)."""
+    out: set[str] = set()
+    for dev in developer_features or []:
+        pfid = _get(dev, "product_feature_id", None)
+        if pfid and (_get(dev, "flows", None) or []):
+            out.add(str(pfid))
+    return out
+
+
+def _gap_kind(uf: Any, flowful_pfs: set[str]) -> str:
+    """Map a member-less marker to its gap ``kind`` from (mint-site, reason).
+
+    e2e is unambiguous by reason. The three ``system_flow_recall`` producers
+    share one reason string, so the discriminators are the row's own
+    attributes:
+
+      * the route-group site (``stage_6_7.resynthesize_system_ufs``) is the
+        ONLY one that stamps a ``trigger`` (and non-empty ``routes``) → the
+        honest superset ``system_route``;
+      * the two 6.7d backstop arms emit BYTE-IDENTICAL rows (both
+        ``category="system"``, ``ui_tier="no-ui"``, ``routes=[]``,
+        ``trigger=None``) — the ONLY difference is upstream PF flow-fulness
+        (loc-worthy fires for a FLOWLESS PF, owned-cover for a FLOWFUL one),
+        reconstructed via :func:`_flowful_pf_set`. Absent that positive
+        flowful signal (or an unknown/lane PF) the honest default is
+        ``loc_worthy`` — "journey-worthy surface with no attachable flow".
+    """
+    if _get(uf, "synthesis_reason", None) == E2E_RECALL_REASON:
+        return "e2e_orphan"
+    if _get(uf, "trigger", None) or (_get(uf, "routes", None) or []):
+        return "system_route"
+    pfid = _get(uf, "product_feature_id", None)
+    if pfid and str(pfid) in flowful_pfs:
+        return "owned_cover"
+    return "loc_worthy"
 
 
 def _clear_candidates(uf: Any) -> None:
@@ -1302,6 +1383,127 @@ def distinct_recall_row_names(
     return tele
 
 
+def _snapshot_authored_labels(user_flows: list[Any]) -> dict[str, str]:
+    """B45 — capture each surviving member-less marker's RAW authored label
+    (``authored_label`` carrier) BEFORE ``distinct_recall_row_names`` clears
+    it, keyed by the row's ``id``. Only e2e-orphan markers carry one; the
+    system kinds map to an empty snapshot entry (absent)."""
+    out: dict[str, str] = {}
+    for uf in user_flows:
+        if not _is_member_less_marker(uf):
+            continue
+        al = _get(uf, "authored_label", None)
+        if al:
+            out[str(_get(uf, "id", "") or "")] = str(al)
+    return out
+
+
+def emit_coverage_gaps(
+    user_flows: list[Any],
+    product_features: list[Any],
+    developer_features: list[Any] | None,
+    scan_meta: dict[str, Any],
+    authored_by_id: dict[str, str],
+    mode: str,
+) -> list[Any]:
+    """B45 — build the typed ``coverage_gaps[]`` from the SURVIVING member-less
+    markers (post demote / suppress / rename), ONE gap per marker (a strict
+    bijection with the old rows). In ``full`` mode the gap's marker row is then
+    REMOVED from ``user_flows[]`` (converted to a gap — I8 reformulation: a
+    typed gap is valid PF cover, so this is NOT a coverage loss); in ``dual``
+    the rows stay (bijection instrument). Returns the (ref-integrity-filtered,
+    deterministically-ordered) gap list. Off mode never reaches here.
+
+    ``label`` is the marker's FINAL display name (board-unique by the B31
+    recall-row naming pass, so ``(pf, kind, label)`` — and thus the content
+    hash id — is unique per board). ``authored_label`` carries the RAW
+    maintainer label for e2e markers (the B23 carve). ``surface_files`` /
+    ``loc`` reuse the marker's already-attached B38 spans (mirrors 6.97b), so
+    a gap without spans cannot exist (those markers were B38-suppressed).
+    """
+    from faultline.models.types import CoverageGap, FlowLineRange
+    from faultline.pipeline_v2.emission_integrity import (
+        enforce_gap_ref_integrity,
+    )
+    from faultline.pipeline_v2.stage_6_97b_uf_loc import union_span_len
+
+    flowful = _flowful_pf_set(developer_features)
+    # Deterministic input order: markers in user_flows order (already stable).
+    markers = [uf for uf in user_flows if _is_member_less_marker(uf)]
+
+    pairs: list[tuple[Any, Any]] = []  # (marker_row, gap)
+    for uf in markers:
+        pfid = _get(uf, "product_feature_id", None)
+        pf = str(pfid) if pfid else ""
+        kind = _gap_kind(uf, flowful)
+        label = str(_get(uf, "name", "") or "")
+        gid = "GAP-" + hashlib.sha1(
+            f"{pf}|{kind}|{label}".encode("utf-8")).hexdigest()[:10]
+        spans: list[Any] = []
+        loc_by_file: dict[str, list[tuple[int, int]]] = {}
+        for rec in (_get(uf, "surface_files", None) or []):
+            p = _get(rec, "path", None)
+            s = _get(rec, "start_line", None)
+            e = _get(rec, "end_line", None)
+            if p is not None and s is not None and e is not None:
+                spans.append(FlowLineRange(
+                    path=str(p), start_line=int(s), end_line=int(e)))
+                loc_by_file.setdefault(str(p), []).append((int(s), int(e)))
+        # Surface LOC — per-file UNION of the spans (mirrors Stage 6.97b
+        # ``_uf_surface_loc`` exactly; computed here so it is dict/object
+        # -agnostic and does not depend on 6.97b having stamped the marker).
+        loc = sum(union_span_len(loc_by_file[p]) for p in sorted(loc_by_file))
+        gap = CoverageGap(
+            id=gid,
+            product_feature_id=(pf or None),
+            kind=kind,  # type: ignore[arg-type]
+            label=label,
+            authored_label=authored_by_id.get(str(_get(uf, "id", "") or "")),
+            routes=[str(r) for r in (_get(uf, "routes", None) or []) if r],
+            surface_files=spans,
+            loc=loc,
+            synthesis_reason=_get(uf, "synthesis_reason", None),
+        )
+        pairs.append((uf, gap))
+
+    # Ref-integrity — drop a gap whose home PF matches no emitted PF (defensive;
+    # markers inherit an already-I12-reconciled ref, so this fires only when a
+    # PF vanished between reconciliation and emission). Its marker then stays a
+    # row (never silently removed in full mode) — no silent gap loss.
+    gaps = [g for _, g in pairs]
+    kept_gaps, ref_tele = enforce_gap_ref_integrity(gaps, product_features)
+    kept_gap_ids = {id(g) for g in kept_gaps}
+    surviving_markers = [uf for uf, g in pairs if id(g) in kept_gap_ids]
+
+    # Deterministic ordering: (product_feature_id, id). Python's stable sort
+    # preserves the marker input order for any (pf, id) tie.
+    kept_gaps.sort(key=lambda g: (
+        str(_get(g, "product_feature_id", "") or ""),
+        str(_get(g, "id", "") or ""),
+    ))
+
+    converted = 0
+    if mode == "full" and surviving_markers:
+        rm = {id(uf) for uf in surviving_markers}
+        user_flows[:] = [uf for uf in user_flows if id(uf) not in rm]
+        converted = len(surviving_markers)
+
+    sq = scan_meta.setdefault("synth_quality", {})
+    sq["gap_channel_mode"] = mode
+    sq["gaps_emitted"] = len(kept_gaps)
+    # The B38 suppressor already ran; its count is the gaps that could not be
+    # emitted (no evidence) — surfaced here so the bijection is auditable:
+    # gaps_emitted + gaps_suppressed_no_coords == surviving member-less markers.
+    sq["gaps_suppressed_no_coords"] = int(
+        sq.get("markers_suppressed_no_coords", 0) or 0)
+    sq["marker_rows_converted"] = converted
+    if ref_tele.get("orphans_dropped"):
+        # Additive — only when a gap was actually dropped, so clean boards
+        # carry no extra key.
+        sq["gap_channel_ref_integrity"] = ref_tele
+    return kept_gaps
+
+
 def run_synth_quality(
     user_flows: list[Any],
     flows: list[Any],
@@ -1340,12 +1542,32 @@ def run_synth_quality(
         user_flows, flows, product_features, developer_features, scan_meta)
     # B38 — zero-coordinate markers must not ship as display rows.
     suppress_tele = suppress_no_coords_markers(user_flows, scan_meta)
+    # B45 — snapshot each surviving marker's RAW authored label BEFORE B31
+    # renames + clears the carrier (only when the gap channel is armed, so the
+    # off path stays byte-identical — no read, no snapshot, no side effects).
+    gap_mode = coverage_gap_channel_mode()
+    authored_snapshot = (
+        _snapshot_authored_labels(user_flows) if gap_mode != "off" else {})
     # B31 — distinct display names for synthesized recall rows. Runs LAST
     # (this module is the final display writer of the scan): every naming
     # channel above — contract, personas, reground, marker typing — has
     # spoken, so any surviving collision is final unless resolved here.
     recall_tele = distinct_recall_row_names(
         user_flows, product_features, scan_meta, vocab=vocab)
+    # B45 — the gap channel: build coverage_gaps[] from the SURVIVING member-less
+    # markers (now with final, board-unique display names) and, in full mode,
+    # remove those marker rows from user_flows[]. off => never runs => the
+    # coverage_gaps key is absent and user_flows is byte-identical to pre-B45.
+    # KEY-PRESENCE CONTRACT: consumers detect the gap-channel world by the
+    # key's presence ("coverage_gaps" in scan — the warden gap-channel-leak
+    # class + the flowless-silent gap exemption key off it), so dual/full
+    # carry a LIST — possibly EMPTY (a zero-gap board still declares the
+    # channel) — while off carries None (key absent, byte-identity).
+    coverage_gaps: list[Any] | None = None
+    if gap_mode != "off":
+        coverage_gaps = emit_coverage_gaps(
+            user_flows, product_features, developer_features, scan_meta,
+            authored_snapshot, gap_mode)
     tele = {
         "enabled": True,
         "backstop_renamed": name_tele["renamed"],
@@ -1357,6 +1579,11 @@ def run_synth_quality(
         "surface_coords_attached": coords_tele.get("attached", 0),
         "markers_suppressed_no_coords": suppress_tele.get("suppressed", 0),
         "recall_rows_renamed": recall_tele.get("renamed", 0),
+        # B45 — the built gap objects, threaded to the Stage-7 result. None
+        # in off mode (key absent from the output); a list — possibly
+        # empty — in dual/full (key ALWAYS present: the channel-presence
+        # contract).
+        "coverage_gaps": coverage_gaps,
     }
     sq = scan_meta.setdefault("synth_quality", {})
     sq.update({
@@ -1377,6 +1604,7 @@ __all__ = [
     "BACKSTOP_OWNED_COVER_ENV",
     "MARKER_SURFACE_COORDS_ENV",
     "RECALL_ROW_NAMES_ENV",
+    "COVERAGE_GAP_CHANNEL_ENV",
     "SYSTEM_RECALL_REASON",
     "BACKSTOP_REASON",
     "E2E_RECALL_REASON",
@@ -1387,6 +1615,8 @@ __all__ = [
     "backstop_owned_cover_enabled",
     "marker_surface_coords_enabled",
     "recall_row_names_enabled",
+    "coverage_gap_channel_mode",
+    "emit_coverage_gaps",
     "demote_system_flow_seeds",
     "demote_ui_chrome_ufs",
     "reground_backstop_uf_names",

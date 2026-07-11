@@ -148,6 +148,7 @@ def build_feature_map(
     monorepo: dict[str, Any] | None = None,
     non_product_surfaces: list[dict[str, Any]] | None = None,
     platform_infrastructure: list[dict[str, Any]] | None = None,
+    coverage_gaps: list[Any] | None = None,
 ) -> FeatureMap:
     """Assemble the final :class:`FeatureMap`.
 
@@ -210,6 +211,12 @@ def build_feature_map(
             list(platform_infrastructure)
             if platform_infrastructure is not None else None
         ),
+        # B45 — None (top-level coverage_gaps key omitted) unless the gap
+        # channel (FAULTLINE_COVERAGE_GAP_CHANNEL dual/full) emitted gaps, so
+        # the off default serializes byte-identically to pre-B45 engines.
+        coverage_gaps=(
+            list(coverage_gaps) if coverage_gaps is not None else None
+        ),
     )
 
 
@@ -236,6 +243,7 @@ def stage_7_output(
     monorepo: dict[str, Any] | None = None,
     non_product_surfaces: list[dict[str, Any]] | None = None,
     platform_infrastructure: list[dict[str, Any]] | None = None,
+    coverage_gaps: list[Any] | None = None,
 ) -> Path:
     """Build the :class:`FeatureMap`, persist it, and return the path.
 
@@ -265,6 +273,7 @@ def stage_7_output(
         monorepo=monorepo,
         non_product_surfaces=non_product_surfaces,
         platform_infrastructure=platform_infrastructure,
+        coverage_gaps=coverage_gaps,
     )
 
     # Snapshot Stage 7's input for replay before we hand off to the writer.
