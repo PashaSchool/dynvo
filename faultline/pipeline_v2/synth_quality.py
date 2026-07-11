@@ -792,6 +792,24 @@ def honest_coverage_markers(
 # ── B23 — real code coordinates for member-less coverage markers ─────────────
 
 
+#: B38 (2026-07-11) — marker coordinate integrity: a member-less coverage
+#: marker that ends the surface-attach pass with ZERO spans is a gap claim
+#: with zero evidence (wave15 breach: cal.com 20 e2e rows wearing authored
+#: labels — 'Can delete user account' — all homed to PF `trpc`; midday
+#: GoCardless UF-078; typebot Pixel UF-103). The attach pass's honesty
+#: gates are correct — SHIPPING the bare row is the bug. Default OFF.
+#: Registered in ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+MARKER_COORDS_REQUIRED_ENV = "FAULTLINE_MARKER_COORDS_REQUIRED"
+
+
+def marker_coords_required() -> bool:
+    """Default OFF; ``FAULTLINE_MARKER_COORDS_REQUIRED=1`` suppresses
+    zero-coordinate marker rows (B38)."""
+    return os.environ.get(MARKER_COORDS_REQUIRED_ENV, "").strip() in {
+        "1", "true", "True",
+    }
+
+
 def _is_member_less_marker(uf: Any) -> bool:
     """The SAME structural predicate ``honest_coverage_markers`` uses: a
     synthesized UF with zero member flows (any synthesis reason)."""
@@ -952,6 +970,49 @@ def attach_marker_surface_coords(
         # markers, so marker-less scans stay byte-identical under flag ON.
         scan_meta.setdefault("synth_quality", {})["surface_coords"] = dict(tele)
     return tele
+
+
+def suppress_no_coords_markers(
+    user_flows: list[Any],
+    scan_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """B38 — drop member-less coverage markers that carry ZERO coordinates.
+
+    Runs AFTER :func:`attach_marker_surface_coords`: any member-less marker
+    still without ``surface_files`` is a display row claiming a gap with no
+    evidence — the wave15 operator breach (cal.com 20 authored-label e2e
+    rows, midday GoCardless, typebot Pixel). Per the B38 spec the honest
+    treatment is suppression + telemetry (the `residual_claimed` class in
+    particular means the code IS covered — under sibling PFs — so the
+    "Uncovered" claim is wrong, not just bare).
+
+    Discovery is BY FLAG/STRUCTURE, never by name prefix — the warden
+    lesson: 20 of the 22 wave15 breaches wore authored e2e labels, not
+    'Uncovered:'. In-place ``user_flows[:]`` mutation (demote precedent).
+    Kill-switch: default OFF; returns zeros without the flag.
+    """
+    if not marker_coords_required():
+        return {"enabled": False, "suppressed": 0}
+    kept: list[Any] = []
+    dropped: list[dict[str, Any]] = []
+    for uf in user_flows:
+        if _is_member_less_marker(uf) and not _get(uf, "surface_files", None):
+            # FULL machine record — the no-silent-gap law: the board hides
+            # the evidence-less row, scan_meta keeps the gap counted.
+            dropped.append({
+                "id": str(_get(uf, "id", "") or ""),
+                "name": str(_get(uf, "name", "") or ""),
+                "pf": str(_get(uf, "product_feature_id", "") or ""),
+                "reason": "no_resolvable_coords",
+            })
+            continue
+        kept.append(uf)
+    if dropped:
+        user_flows[:] = kept
+        block = scan_meta.setdefault("synth_quality", {})
+        block["markers_suppressed_no_coords"] = len(dropped)
+        block["suppressed_markers"] = dropped  # complete, never truncated
+    return {"enabled": True, "suppressed": len(dropped)}
 
 
 # ── B31 — distinct display names for synthesized recall rows ─────────────────
@@ -1274,6 +1335,8 @@ def run_synth_quality(
     # ledger exists exactly where the marker flag exists.
     coords_tele = attach_marker_surface_coords(
         user_flows, flows, product_features, developer_features, scan_meta)
+    # B38 — zero-coordinate markers must not ship as display rows.
+    suppress_tele = suppress_no_coords_markers(user_flows, scan_meta)
     # B31 — distinct display names for synthesized recall rows. Runs LAST
     # (this module is the final display writer of the scan): every naming
     # channel above — contract, personas, reground, marker typing — has
@@ -1289,6 +1352,7 @@ def run_synth_quality(
         "ui_chrome_demoted": chrome_tele["demoted"],
         "coverage_markers": marker_tele["marked"],
         "surface_coords_attached": coords_tele.get("attached", 0),
+        "markers_suppressed_no_coords": suppress_tele.get("suppressed", 0),
         "recall_rows_renamed": recall_tele.get("renamed", 0),
     }
     sq = scan_meta.setdefault("synth_quality", {})

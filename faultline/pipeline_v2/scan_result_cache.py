@@ -229,6 +229,12 @@ ENV_OUTPUT_FLAGS = (
     # layer on keyed scans (keyless is unreachable — no verifier, no
     # reverts).
     "FAULTLINE_JOURNEY_LATTICE_B25",
+    # B38 (2026-07-11) — marker coordinate integrity: member-less coverage
+    # markers with zero attached surface spans are suppressed from
+    # user_flows[] (gap claims with no evidence; wave15 breach cal.com 20 /
+    # midday 1 / typebot 1). Default OFF. Appended WITHOUT a KEY_SCHEMA
+    # bump per wave convention — reconciled at merge.
+    "FAULTLINE_MARKER_COORDS_REQUIRED",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
