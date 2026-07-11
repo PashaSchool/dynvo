@@ -248,6 +248,15 @@ ENV_OUTPUT_FLAGS = (
     # (supabase keyless 91) get real anchors. Default ON. Appended
     # WITHOUT a KEY_SCHEMA bump — reconciled at merge.
     "FAULTLINE_PAGES_ANCHOR_FALLBACK",
+    # B33 (2026-07-11) — route/fdir devgrain-leaf mint gate: a route:/fdir:
+    # anchor whose leaf normalizes to a plumbing/journey-step token (welcome,
+    # getting-started, access-denied, redirect-*, *-callback, *-onboarding)
+    # folds instead of minting a flowless devgrain PF, UNLESS nav-confirmed;
+    # board-wide abstain when the nav parse is unreadable. Reshapes
+    # product_features[] + developer_features[].product_feature_id on affected
+    # repos. Default OFF. Appended WITHOUT a KEY_SCHEMA bump — reconciled at
+    # merge (the later default-ON flip commit bumps KEY_SCHEMA).
+    "FAULTLINE_FDIR_DEVGRAIN_GATE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
