@@ -2,7 +2,7 @@
 
 Anti-cases: markers WITH spans stay; organic UFs never touched; discovery
 is by structure (synthesized + mc=0), never by the 'Uncovered:' name
-prefix (the cal.com authored-label lesson); default OFF is byte-inert.
+prefix (the cal.com authored-label lesson); default ON since the keyed cal.com proof; =0 byte-inert.
 """
 
 from __future__ import annotations
@@ -34,13 +34,17 @@ def _organic(uid: str, name: str):
     }
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default flipped ON at merge (2026-07-11 keyed cal.com proof);
+    # =0 remains the kill-switch restoring the rows.
     monkeypatch.delenv(MARKER_COORDS_REQUIRED_ENV, raising=False)
+    assert marker_coords_required() is True
+    monkeypatch.setenv(MARKER_COORDS_REQUIRED_ENV, "0")
     assert marker_coords_required() is False
     ufs = [_marker("UF-1", "Uncovered: X routes")]
     tele = suppress_no_coords_markers(ufs, {})
     assert tele == {"enabled": False, "suppressed": 0}
-    assert len(ufs) == 1  # byte-inert
+    assert len(ufs) == 1  # byte-inert under =0
 
 
 def test_zero_span_marker_dropped(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -803,9 +803,12 @@ MARKER_COORDS_REQUIRED_ENV = "FAULTLINE_MARKER_COORDS_REQUIRED"
 
 
 def marker_coords_required() -> bool:
-    """Default OFF; ``FAULTLINE_MARKER_COORDS_REQUIRED=1`` suppresses
-    zero-coordinate marker rows (B38)."""
-    return os.environ.get(MARKER_COORDS_REQUIRED_ENV, "").strip() in {
+    """Default ON since the 2026-07-11 keyed cal.com proof (markers 21->1,
+    all 20 suppressions recorded in
+    ``scan_meta.synth_quality.suppressed_markers`` — the board hides
+    evidence-less gap rows, the machine record keeps the gap counted).
+    ``=0`` restores the rows."""
+    return os.environ.get(MARKER_COORDS_REQUIRED_ENV, "1").strip() in {
         "1", "true", "True",
     }
 

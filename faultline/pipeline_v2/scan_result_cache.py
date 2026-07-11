@@ -268,7 +268,8 @@ ENV_OUTPUT_FLAGS = (
 #: v24 (B28): added FAULTLINE_NONPRODUCT_SCOPE + FAULTLINE_DOCS_REANCHOR.
 #: v25 (B34-b re-flip): FAULTLINE_DISPATCH_REGISTRY_FLOWS default OFF -> ON
 #: (rails merged; hollow=0 proof on keyed supabase + Soc0).
-KEY_SCHEMA_VERSION = 25
+#: v26 (B38): added FAULTLINE_MARKER_COORDS_REQUIRED + default flip ON at merge.
+KEY_SCHEMA_VERSION = 26
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
