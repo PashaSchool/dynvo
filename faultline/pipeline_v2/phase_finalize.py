@@ -1740,6 +1740,52 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Stage 6.987 — devgrain-leaf PF demote (B33 v2) ─────────────────
+    # A route:/fdir:-anchored PF whose leaf names a plumbing screen /
+    # journey step (closed YAML set), is NOT nav-declared, and whose
+    # FINAL journey profile is micro (<=2 UFs, every member_count <=3)
+    # demotes: PF row removed, its synthesized micro-UFs drop, devs
+    # re-point to the nearest surviving ancestor PF (else stay L1).
+    # Runs AFTER the journey layer is final (6.7*/lattice/e2e/6.985/
+    # 6.986) so a rich journey set always vetoes the demote
+    # (conservation by construction — the twenty Onboarding lesson),
+    # and BEFORE the 6.97 LOC prefetch / marker backstops / emission
+    # integrity so no marker is synthesized for a demoted PF. Empty
+    # nav_keys ⇒ board-wide honest abstain. Deterministic, $0 LLM;
+    # default OFF.
+    from faultline.pipeline_v2.devgrain_demote import (
+        fdir_devgrain_gate_enabled,
+        run_devgrain_demote,
+    )
+    if (fdir_devgrain_gate_enabled() and anchored_mint_applied
+            and not uf_suppressed):
+        with StageLogger(run_dir, 6, "devgrain_demote") as log_dg:
+            try:
+                dg_tele = run_devgrain_demote(
+                    features, product_features, user_flows,
+                    nav_keys=frozenset(_nav_keys),
+                )
+                scan_meta["devgrain_demote"] = dg_tele
+                log_dg.info(
+                    "devgrain_demote: eligible=%d demoted=%d abstained=%d "
+                    "nav_skipped=%d board_abstain=%s" % (
+                        dg_tele.get("eligible", 0),
+                        len(dg_tele.get("demoted", [])),
+                        len(dg_tele.get("abstained", [])),
+                        len(dg_tele.get("nav_declared_skipped", [])),
+                        dg_tele.get("journey_step_leaf_abstained", False),
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"devgrain demote failed ({exc}); PFs left untouched"
+                )
+                log_dg.info(
+                    f"devgrain_demote: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Perf wave 2 (R5b) — 6.97 LOC prefetch overlaps the 6.95→6.96 chain ──
     # DAG verified at this base: Stage 6.97 feature-LOC reads only
     # {feature/PF paths + member_files + the checked-out tree,

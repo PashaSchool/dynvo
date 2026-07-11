@@ -248,12 +248,15 @@ ENV_OUTPUT_FLAGS = (
     # (supabase keyless 91) get real anchors. Default ON. Appended
     # WITHOUT a KEY_SCHEMA bump — reconciled at merge.
     "FAULTLINE_PAGES_ANCHOR_FALLBACK",
-    # B33 (2026-07-11) — route/fdir devgrain-leaf mint gate: a route:/fdir:
-    # anchor whose leaf normalizes to a plumbing/journey-step token (welcome,
-    # getting-started, access-denied, redirect-*, *-callback, *-onboarding)
-    # folds instead of minting a flowless devgrain PF, UNLESS nav-confirmed;
-    # board-wide abstain when the nav parse is unreadable. Reshapes
-    # product_features[] + developer_features[].product_feature_id on affected
+    # B33 v2 (2026-07-11) — post-UF devgrain-leaf demote (Stage 6.987): a
+    # route:/fdir:-anchored PF whose leaf normalizes to a plumbing/
+    # journey-step token (welcome, getting-started, access-denied,
+    # redirect-*, *-callback, *-onboarding), is NOT nav-declared, and whose
+    # final journey profile is micro (<=2 UFs, member_count <=3) demotes —
+    # PF row removed, micro-UFs dropped, devs re-pointed to the nearest
+    # surviving ancestor. Rich journey sets veto (conservation); board-wide
+    # abstain when the nav parse is unreadable. Reshapes product_features[]
+    # + user_flows[] + developer_features[].product_feature_id on affected
     # repos. Default OFF. Appended WITHOUT a KEY_SCHEMA bump — reconciled at
     # merge (the later default-ON flip commit bumps KEY_SCHEMA).
     "FAULTLINE_FDIR_DEVGRAIN_GATE",

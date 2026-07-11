@@ -92,12 +92,8 @@ __all__ = [
     "ANCHORED_MINT_ENV",
     "MINT_DOMAIN_FOLD_ENV",
     "FOLD_CROSSAPP_GUARD_ENV",
-    "FDIR_DEVGRAIN_GATE_ENV",
     "mint_domain_fold_enabled",
     "fold_crossapp_guard_enabled",
-    "fdir_devgrain_gate_enabled",
-    "journey_step_leaf_tokens",
-    "is_journey_step_leaf",
     "anchored_mint_enabled",
     "run_anchored_mint",
     "build_platform_infrastructure_lane",
@@ -136,28 +132,6 @@ MINT_DOMAIN_FOLD_ENV = "FAULTLINE_MINT_DOMAIN_FOLD_V2"
 #: Kill-switch: ``FAULTLINE_FOLD_CROSSAPP_GUARD=0`` restores the unguarded
 #: walk byte-identically.
 FOLD_CROSSAPP_GUARD_ENV = "FAULTLINE_FOLD_CROSSAPP_GUARD"
-
-#: B33 (2026-07-11) — route/fdir devgrain-leaf mint gate. A ``route:``/
-#: ``fdir:``-anchored candidate whose normalized leaf names a plumbing screen
-#: or a journey STEP (welcome, getting-started, access-denied, redirect-*,
-#: *-callback, *-onboarding …) is journey-grain by construction — never a
-#: standalone product capability — so it folds via the existing
-#: ``_parent_fold`` rail instead of minting a flowless devgrain PF (live
-#: exhibits: papermark ``Welcome``, cal.com ``Getting Started``, novu
-#: ``Access Denied`` + ``Redirect To Legacy Studio Auth``). CORROBORATION
-#: ONLY: the token set never kills alone — the gate fires solely when the
-#: candidate carries NO nav (IA) declaration (``nav_confirmed`` false); a
-#: nav-declared leaf (kan/midday ``Onboarding``, novu ``Error``) is product
-#: by the author's word and is NEVER gated. Board-wide abstain when the
-#: board's nav parse is unreadable (empty ``nav_keys`` — Vue/keyless edge).
-#: Default OFF until a separate topology-breadth flip commit.
-FDIR_DEVGRAIN_GATE_ENV = "FAULTLINE_FDIR_DEVGRAIN_GATE"
-
-#: Surface suffixes stripped ONCE from a leaf to recover its journey/plumbing
-#: token (b8c ``_domain_family`` precedent: ``access-denied-page`` →
-#: ``access-denied``). ``-page`` is the common route-surface token; the RN /
-#: legacy ``-screen`` / ``-view`` cover the rest.
-_DEVGRAIN_LEAF_SUFFIXES = ("-page", "-screen", "-view")
 
 #: θ — the majority threshold (calibration §F: U-cap is monotonically
 #: decreasing in θ; 0.5 is the conservation-law dual of §4.5).
@@ -275,51 +249,6 @@ def fold_crossapp_guard_enabled() -> bool:
     return os.environ.get(FOLD_CROSSAPP_GUARD_ENV, "1").strip().lower() not in {
         "0", "false",
     }
-
-
-def fdir_devgrain_gate_enabled() -> bool:
-    """B33 — default OFF; ``FAULTLINE_FDIR_DEVGRAIN_GATE=1`` enables the
-    route/fdir journey-step/plumbing devgrain-leaf mint gate. OFF (byte-
-    identical to pre-B33) until the topology-breadth default-ON flip commit."""
-    return os.environ.get(FDIR_DEVGRAIN_GATE_ENV, "0").strip().lower() not in {
-        "0", "false", "no", "off", "",
-    }
-
-
-def journey_step_leaf_tokens(vocab: dict[str, Any]) -> dict[str, frozenset[str]]:
-    """The B33 closed devgrain-token set (data — ``spine-anchor-vocab.yaml``,
-    NOT hardcoded Python): ``exact`` leaf membership, ``prefix`` first-token
-    matches, ``suffix`` last-token matches. Returned as frozensets so every
-    match is a membership test — the matcher iterates NOTHING (the recorded
-    set-iteration nondeterminism class stays out of this rail)."""
-    block = vocab.get("journey_step_leaf_tokens") or {}
-    return {
-        "exact": frozenset(block.get("exact") or ()),
-        "prefix": frozenset(block.get("prefix") or ()),
-        "suffix": frozenset(block.get("suffix") or ()),
-    }
-
-
-def is_journey_step_leaf(key: str, tokens: dict[str, frozenset[str]]) -> bool:
-    """``True`` when a normalized anchor *key* names a plumbing screen or a
-    journey step. Strip ONE trailing surface suffix (``-page``/``-screen``/
-    ``-view``), then match: exact-set membership, OR first ``-``-token in
-    ``prefix`` (``redirect-*``), OR last ``-``-token in ``suffix``
-    (``*-callback``/``*-onboarding``/``*-redirect``). Closed-set discipline
-    (B30) — no fuzzy or substring matching."""
-    if not key:
-        return False
-    stem = key
-    for suf in _DEVGRAIN_LEAF_SUFFIXES:
-        if stem.endswith(suf) and len(stem) > len(suf):
-            stem = stem[: -len(suf)]
-            break
-    if stem in tokens["exact"]:
-        return True
-    parts = stem.split("-")
-    if parts[0] in tokens["prefix"]:
-        return True
-    return parts[-1] in tokens["suffix"]
 
 
 def _workspace_unit_roots(ctx: Any) -> tuple[str, ...]:
@@ -628,8 +557,6 @@ def _mint_bar(
     loc_cache: dict[str, int],
     instrument_dirs: frozenset[str] = frozenset(),
     plumbing_keys: frozenset[str] = frozenset(),
-    devgrain_tokens: dict[str, frozenset[str]] | None = None,
-    nav_readable: bool = False,
 ) -> str | None:
     """``None`` when the anchor may mint, else the bar reason."""
     if not winners:
@@ -645,20 +572,6 @@ def _mint_bar(
         return "technology_instrument"
     if anchor.sources == frozenset({"svc"}):
         return "service_dir_only"
-    # B33 — route/fdir journey-step / plumbing devgrain-leaf gate (default
-    # OFF). A route:/fdir: leaf named for a plumbing screen or a journey step
-    # (welcome, getting-started, access-denied, redirect-*, *-callback …) is
-    # journey-grain, never a standalone capability; barring it here routes
-    # its devs onto the existing _parent_fold rail (no new fold machinery).
-    # Corroboration only: fires solely WITHOUT nav confirmation, and only when
-    # the board's nav parse is readable (empty nav_keys ⇒ board-wide abstain
-    # upstream, so nav_readable is False and the prong never fires).
-    if (nav_readable and devgrain_tokens is not None
-            and fdir_devgrain_gate_enabled()
-            and (anchor.sources & {"route", "fdir"})
-            and not anchor.nav_confirmed
-            and is_journey_step_leaf(anchor.key, devgrain_tokens)):
-        return "journey_step_leaf"
     if anchor.source == "hub-vendor":
         # B26 backstop — a hub child whose segment NORMALIZES into the
         # plumbing/stop vocabulary (and names no vendor) is the family's
@@ -798,12 +711,6 @@ def run_anchored_mint(
     plumbing_keys = frozenset(
         vocab.get("hub_plumbing_segments") or []
     ) | frozenset(vocab.get("structural_stoplist") or [])
-    # B33 — journey-step/plumbing devgrain-leaf tokens (data, not code) for
-    # the route/fdir mint gate. Board-wide nav readability: an EMPTY nav_keys
-    # frozenset means the nav-exemption signal is unreadable (Vue/keyless
-    # boards) — the gate abstains board-wide (honest abstain, telemetry only).
-    devgrain_tokens = journey_step_leaf_tokens(vocab)
-    nav_readable = bool(nav_keys)
 
     tele: dict[str, Any] = {
         "enabled": True, "applied": False,
@@ -816,11 +723,6 @@ def run_anchored_mint(
         "pf_minted": 0, "bar_decisions": [],
         "churn_devs": 0, "hub_families": [],
     }
-    # B33 — honest board-wide abstain: the gate is enabled but the board's
-    # nav parse is unreadable, so the nav-exemption signal cannot be trusted
-    # and the prong fires on nothing (per-anchor bars ride ``bar_decisions``).
-    if fdir_devgrain_gate_enabled() and not nav_readable:
-        tele["journey_step_leaf_abstained"] = True
 
     devs = [
         f for f in developer_features
@@ -919,8 +821,7 @@ def run_anchored_mint(
         bar_by_anchor[cid] = _mint_bar(
             a, winners_by_anchor[cid], flow_entries, repo_has_pages,
             code_exts, mint_repo_root, loc_cache,
-            instrument_dirs=instrument_dirs, plumbing_keys=plumbing_keys,
-            devgrain_tokens=devgrain_tokens, nav_readable=nav_readable)
+            instrument_dirs=instrument_dirs, plumbing_keys=plumbing_keys)
     # Hub cores mint only when ≥ 1 sibling vendor minted (amendment §2:
     # a core exists relative to its children).
     minted_vendor_hubs = {
@@ -1118,9 +1019,7 @@ def run_anchored_mint(
         bar = _mint_bar(a, [f], flow_entries, repo_has_pages, code_exts,
                         mint_repo_root, loc_cache,
                         instrument_dirs=instrument_dirs,
-                        plumbing_keys=plumbing_keys,
-                        devgrain_tokens=devgrain_tokens,
-                        nav_readable=nav_readable)
+                        plumbing_keys=plumbing_keys)
         if bar is not None:
             return None
         mintable.add(best)
