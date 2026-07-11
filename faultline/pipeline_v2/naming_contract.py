@@ -172,11 +172,31 @@ def uf_name_laws_enabled() -> bool:
     }
 
 
+#: B40 name-evidence rungs kill-switch (default OFF). ``=1`` arms the
+#: provenance ladder (nav / registry / structural-route corroboration +
+#: singular-folded multi-member agreement) in Law C + synth_quality and stamps
+#: ``UserFlow.name_evidence``. When OFF the confidence rubric AND the serialized
+#: output are byte-identical to pre-B40 (only name_confidence/name_evidence may
+#: ever differ under ON — UF NAMES are byte-stable either way).
+NAME_EVIDENCE_RUNGS_ENV = "FAULTLINE_NAME_EVIDENCE_RUNGS"
+
+
 def humanize_route_names_enabled() -> bool:
     """Default ON; ``FAULTLINE_HUMANIZE_ROUTE_NAMES=0`` restores the pre-B2
     anchor humanization (byte-identical route display names)."""
     return os.environ.get(HUMANIZE_ROUTE_NAMES_ENV, "1").strip().lower() not in {
         "0", "false",
+    }
+
+
+def name_evidence_rungs_enabled() -> bool:
+    """B40 provenance-graded confidence + ``name_evidence`` audit trail.
+    Default OFF; ``FAULTLINE_NAME_EVIDENCE_RUNGS=1`` arms the nav / registry /
+    structural-route rungs (Law C) and the singular-folded member-agreement
+    widening (synth_quality). OFF ⇒ name_confidence rubric + serialized output
+    byte-identical to pre-B40 (``name_evidence`` stays ``None`` everywhere)."""
+    return os.environ.get(NAME_EVIDENCE_RUNGS_ENV, "0").strip().lower() in {
+        "1", "true",
     }
 
 
@@ -1187,6 +1207,8 @@ def _apply_uf_name_laws(
     *,
     authored_ids: set[str],
     keeper_on: bool,
+    nav_labels: Mapping[str, str] | None = None,
+    flow_origin_by_id: Mapping[str, str] | None = None,
 ) -> None:
     """B9 — three deterministic UF display laws over FINAL members/names, run
     AFTER the labeler so labeler-introduced collisions/over-claims are caught.
@@ -1309,15 +1331,40 @@ def _apply_uf_name_laws(
                     break
 
     # ── Law C — evidence-derived name_confidence (one rubric, all sources) ──
+    # B40 (provenance rungs, FAULTLINE_NAME_EVIDENCE_RUNGS): the base rubric is
+    # unchanged; when the flag is ON two extra grounding rungs may fire — a
+    # nav-label token match (resource-grounding) and an all-dispatch-member
+    # registry provenance (verb-grounding for Run/act leads) — and EVERY arm
+    # stamps ``name_evidence`` (fired rungs, or ``missing:*`` for a low). The
+    # flag NEVER changes a UF NAME; with it OFF the confidence values and the
+    # serialized output are byte-identical to pre-B40 (name_evidence stays None).
+    rungs_on = name_evidence_rungs_enabled()
+    _nav = nav_labels or {}
+    _origin = flow_origin_by_id or {}
     tele["confidence_before"] = _conf_hist(user_flows)
+
+    def _sing(t: str) -> str:
+        return t[:-1] if (t.endswith("s") and len(t) > 3) else t
+
+    def _toks(text: str) -> set[str]:
+        return {_sing(t) for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t}
+
     for uf in ordered:
         uid = str(getattr(uf, "id", "") or "")
         names = _members(uf)
         if not names:
             uf.name_confidence = "low"
+            # A member-less row can never uplift (the rubric floor) — its low
+            # is honest: there is no member evidence to ground a name.
+            if rungs_on:
+                uf.name_evidence = ["missing:members"]
             continue
         if uid in narrowed:
             uf.name_confidence = "low"
+            # Law B narrowed an unsupported write claim → the claimed verb had
+            # no member evidence; low is honest.
+            if rungs_on:
+                uf.name_evidence = ["missing:verb"]
             continue
         mfams = _mfams(names)
         lead = _name_lead_family(str(getattr(uf, "name", "") or ""), idx)
@@ -1325,25 +1372,62 @@ def _apply_uf_name_laws(
         # resource-grounded: the name's resource phrase overlaps the PF display
         # (member-grounded) or a member flow name — singular/plural-robust so
         # "webhook" grounds against "webhooks".
-        def _sing(t: str) -> str:
-            return t[:-1] if (t.endswith("s") and len(t) > 3) else t
-
-        def _toks(text: str) -> set[str]:
-            return {_sing(t) for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t}
-
         res_toks = _toks(_res(uf))
         member_toks = set().union(*(_toks(n) for n in names)) if names else set()
-        res_grounded = bool(res_toks & member_toks) or bool(res_toks & _toks(_pfd(uf)))
+        base_res = bool(res_toks & member_toks) or bool(res_toks & _toks(_pfd(uf)))
         # A specific verb must be performed by a member; a generic lead
         # (Manage/Overview — not in any CRUD family) is grounded by any member
         # action (it abstracts, it does not over-claim a specific verb).
-        verb_grounded = (lead in mfams) or (lead is None and len(mfams) >= 1)
+        base_verb = (lead in mfams) or (lead is None and len(mfams) >= 1)
+
+        # ── B40 rungs (flag-gated corroboration — NEVER a name change) ──
+        # nav rung: the author's own nav label for this UF's PF shares a token
+        # with the UF name (INGEST doctrine — author's vocabulary) ⇒ the
+        # resource is grounded even when the code-derived resource missed it.
+        name_toks = _toks(str(getattr(uf, "name", "") or ""))
+        nav_label = _nav.get(str(getattr(uf, "product_feature_id", None) or ""))
+        nav_hit = bool(rungs_on and nav_label and (_toks(nav_label) & name_toks))
+        # registry rung: every member flow is a maintainer-declared dispatch
+        # mint (B34 — the author's own key + exported symbol). That provenance
+        # is verb-grounding for a Run/act-family lead (the 'Run X' template).
+        member_ids = [str(m) for m in (getattr(uf, "member_flow_ids", None) or [])]
+        registry_all = bool(
+            rungs_on and member_ids
+            and all(_origin.get(m) == "dispatch" for m in member_ids)
+        )
+        registry_hit = bool(registry_all and lead == "act")
+
+        res_grounded = base_res or nav_hit
+        verb_grounded = base_verb or registry_hit
+
         if res_grounded and verb_grounded and uid not in qualified:
             uf.name_confidence = "high"
+            if rungs_on:
+                fired: list[str] = []
+                if base_res and base_verb:
+                    fired.append("structural-route")
+                if nav_hit:
+                    fired.append("nav")
+                if registry_hit:
+                    fired.append("registry")
+                uf.name_evidence = fired or ["structural-route"]
         elif res_grounded:
             uf.name_confidence = "medium"
+            if rungs_on:
+                fired = []
+                if base_res:
+                    fired.append("resource")
+                if nav_hit:
+                    fired.append("nav")
+                fired.append("missing:verb")
+                uf.name_evidence = fired
         else:
             uf.name_confidence = "low"
+            if rungs_on:
+                miss = ["missing:resource"]
+                if not verb_grounded:
+                    miss.append("missing:verb")
+                uf.name_evidence = miss
     tele["confidence_after"] = _conf_hist(user_flows)
 
 
@@ -1418,11 +1502,25 @@ def run_naming_contract(
         return list(_authored_map.get(str(getattr(uf, "id", "") or ""), ()) or ())
 
     # Flow display names by member id (verb evidence for UF templates).
+    # B40 — ``flow_origin_by_id`` tags each flow's provenance for Law C's
+    # registry rung: a dispatch-registry mint (dispatch_registry.py) carries a
+    # ``description`` that begins ``"dispatch registry "`` (the maintainer's own
+    # declared key + exported symbol). Keyed by the same id forms as the name
+    # map so ``member_flow_ids`` resolve identically.
     flow_name_by_id: dict[str, str] = {}
+    flow_origin_by_id: dict[str, str] = {}
     for fl in flows or ():
+        _origin_tag = (
+            "dispatch"
+            if str(getattr(fl, "description", "") or "").startswith(
+                "dispatch registry ")
+            else ""
+        )
         for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
             if key:
                 flow_name_by_id.setdefault(str(key), str(getattr(fl, "name", "") or ""))
+                if _origin_tag:
+                    flow_origin_by_id.setdefault(str(key), _origin_tag)
 
     nav_labels = nav_labels_for_pfs(
         product_features, product_strings, routes_index)
@@ -1819,6 +1917,8 @@ def run_naming_contract(
             user_flows, pf_by_slug, vocab, flow_name_by_id, tele,
             authored_ids={str(k) for k in _authored_map.keys()},
             keeper_on=keeper_on,
+            nav_labels=nav_labels,
+            flow_origin_by_id=flow_origin_by_id,
         )
 
     tele["labeler_pending"] = len(pending)

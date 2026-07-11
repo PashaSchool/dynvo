@@ -269,6 +269,15 @@ ENV_OUTPUT_FLAGS = (
     # KEY_SCHEMA bump — the off default is byte-identical; the later
     # default-flip commit bumps KEY_SCHEMA (v16/v21/v25 precedent).
     "FAULTLINE_COVERAGE_GAP_CHANNEL",
+    # B40 (2026-07-11) — provenance-graded name_confidence + name_evidence[]
+    # audit trail. Arms the nav / registry / structural-route rungs in Law C
+    # and the singular-folded multi-member agreement in synth_quality; stamps
+    # UserFlow.name_evidence. off (default) = byte-identical (name_confidence
+    # rubric unchanged, name_evidence key absent). ON may raise name_confidence
+    # and adds name_evidence[] — UF NAMES stay byte-stable either way. Appended
+    # WITHOUT a KEY_SCHEMA bump — the off default is byte-identical; a later
+    # default-flip commit would bump KEY_SCHEMA.
+    "FAULTLINE_NAME_EVIDENCE_RUNGS",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

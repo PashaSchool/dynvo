@@ -1099,6 +1099,21 @@ class UserFlow(BaseModel):
     # "low" (landing viewer, dashboard ``parseNameConfidence``) read
     # "medium" as confident. Defaults to "high" for old-JSON rehydration.
     name_confidence: Literal["high", "medium", "low"] = "high"
+    # B40 (2026-07-11) — provenance audit trail for ``name_confidence``. The
+    # ordered list of evidence RUNGS the naming rubric (naming_contract Law C +
+    # synth_quality's multi-member agreement) actually fired for this journey's
+    # name — e.g. ``["structural-route"]`` (member-flow resource+verb theorem),
+    # ``["nav"]`` (author's nav label corroborated the resource),
+    # ``["registry"]`` (all members are maintainer-declared dispatch mints),
+    # ``["member-agreement"]`` (>=2 members concur on resource+action). A LOW
+    # row instead lists the rungs that were MISSING (prefixed ``missing:``,
+    # e.g. ``["missing:resource", "missing:verb"]`` / ``["missing:members"]``)
+    # so every residual low is self-explaining. Confidence is a statement of
+    # evidence: an uplift is stamped ONLY when its rung genuinely fired.
+    # ``None`` (and OMITTED from the serialized JSON — see
+    # ``_omit_none_identity``) unless ``FAULTLINE_NAME_EVIDENCE_RUNGS`` is on,
+    # keeping default output byte-identical to engines that predate the field.
+    name_evidence: list[str] | None = None
     # Phase 3 dual-evidence (2026-07): {"code": [paths], "anchors": [{text,source,
     # locator}], "confidence": 0-1} — code + product-source corroboration, attached
     # deterministically by dual_evidence.py. Additive/optional; None when not computed.
@@ -1222,6 +1237,11 @@ class UserFlow(BaseModel):
             # default-False dump is byte-identical to pre-B13 output.
             if data.get("is_coverage_marker") is False:
                 data.pop("is_coverage_marker", None)
+            # B40 — the name-evidence audit trail is stamped only under
+            # FAULTLINE_NAME_EVIDENCE_RUNGS; a None dump is byte-identical to
+            # pre-B40 output (same contract as the identity/backstop tags).
+            if data.get("name_evidence") is None:
+                data.pop("name_evidence", None)
             # B23 — surface coordinates exist only on markers whose trigger
             # surface honestly resolved under FAULTLINE_MARKER_SURFACE_COORDS;
             # a None dump is byte-identical to pre-B23 output. The candidate
