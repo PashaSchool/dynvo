@@ -57,3 +57,22 @@ def test_kill_switch_restores_empty(
     _write(tmp_path, "src/pages/b.tsx",
            "export function SomePage() { return null; }\n")
     assert default_export_symbol(tmp_path, "src/pages/b.tsx") == ""
+
+
+def test_wrapped_default_export_unwraps(tmp_path: Path) -> None:
+    # B43: supabase studio shape — export default withAuth(Page).
+    _write(tmp_path, "src/pages/authorize.tsx",
+           "const APIAuthorizationPage = () => null;\n"
+           "export default withAuth(APIAuthorizationPage)\n")
+    assert default_export_symbol(
+        tmp_path, "src/pages/authorize.tsx",
+    ) == "APIAuthorizationPage"
+
+
+def test_plain_default_ident_still_wins(tmp_path: Path) -> None:
+    _write(tmp_path, "src/pages/promo.tsx",
+           "const AWSReInvent2025 = () => null;\n"
+           "export default AWSReInvent2025\n")
+    assert default_export_symbol(
+        tmp_path, "src/pages/promo.tsx",
+    ) == "AWSReInvent2025"

@@ -242,6 +242,12 @@ ENV_OUTPUT_FLAGS = (
     # exports always match first). Appended WITHOUT a KEY_SCHEMA bump —
     # reconciled at merge.
     "FAULTLINE_PAGES_NAMED_EXPORT_FALLBACK",
+    # B43 (2026-07-11) — routed-seed anchor completeness: HOC default
+    # exports unwrap to the page component; range-less symbols anchor at
+    # the extractor 'default' range, else line 1 — hollow page seeds
+    # (supabase keyless 91) get real anchors. Default ON. Appended
+    # WITHOUT a KEY_SCHEMA bump — reconciled at merge.
+    "FAULTLINE_PAGES_ANCHOR_FALLBACK",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

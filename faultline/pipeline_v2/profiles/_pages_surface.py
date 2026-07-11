@@ -270,6 +270,16 @@ def default_export_symbol(repo_root, rel_path: str) -> str:  # noqa: ANN001
     )
     if m:
         return m.group(1)
+    # B43 — wrapped default export (supabase studio shape):
+    # ``export default withAuth(APIAuthorizationPage)`` — the CALL
+    # argument is the page component (the wrapper name has no range);
+    # mirrors the stage-3 ``resolve_handler_line`` wrapped-handler law.
+    m = re.search(
+        r"export\s+default\s+[A-Za-z_$][\w$]*\(\s*([A-Za-z_$][\w$]*)",
+        text,
+    )
+    if m:
+        return m.group(1)
     m = re.search(r"export\s+default\s+([A-Za-z_$][\w$]*)\s*;?", text)
     if m and m.group(1) not in ("function", "async", "class"):
         return m.group(1)
