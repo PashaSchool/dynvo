@@ -1236,6 +1236,67 @@ class UserFlow(BaseModel):
         return data
 
 
+class CoverageGap(BaseModel):
+    """B45 (2026-07-11) — a typed coverage-gap admission.
+
+    A member-LESS I8-cover seed (``synthesized=True`` + ``member_count=0``:
+    the loc-worthy / owned-cover / system-route / e2e-orphan placeholders
+    the recall layer mints so a journey-worthy product feature is never
+    "фіча без юзер-фловів", validator I8) is NOT a user journey — it is a
+    *gap claim*. Historically these lived inside ``user_flows[]`` wearing an
+    ``Uncovered: <PF> routes`` name (or a preserved e2e authored label),
+    mimicking real journeys on the board, in MCP, and in PR comments. B45
+    segregates them into this dedicated top-level channel so a gap can never
+    be mistaken for a journey.
+
+    Built deterministically at Stage 6.98 by
+    ``synth_quality.emit_coverage_gaps`` from the SAME member-less marker
+    rows ``honest_coverage_markers`` types (identical ``_is_member_less_marker``
+    predicate) — one gap per surviving marker (a strict bijection with the
+    old rows). Emitted ONLY under ``FAULTLINE_COVERAGE_GAP_CHANNEL`` ∈
+    {dual, full}; the ``off`` default never mints a gap and the top-level
+    ``coverage_gaps`` key is then ENTIRELY ABSENT (byte-identity law).
+    """
+
+    #: ``GAP-<sha1(pf|kind|label)[:10]>`` — content-derived + rescan-stable
+    #: (no ``Date.now`` / randomness), so the same board state re-mints the
+    #: same id across scans.
+    id: str
+    #: The home product-feature key (``uf.product_feature_id``). ``None``
+    #: only for a lane/unowned marker; ref-integrity (``emission_integrity``)
+    #: drops a gap whose key matches no emitted PF.
+    product_feature_id: str | None = None
+    #: Derived from (mint-site, ``synthesis_reason``) — see ``_gap_kind``.
+    kind: Literal["system_route", "e2e_orphan", "loc_worthy", "owned_cover"]
+    #: The gap's human label — the row's FINAL display name (board-unique by
+    #: the B31 recall-row naming pass): ``Uncovered: <PF display> routes`` for
+    #: the system kinds, the maintainer's playwright label for ``e2e_orphan``.
+    label: str
+    #: The maintainer's ORIGINAL authored label (``e2e_orphan`` only; the B23
+    #: carve). ``None`` for the system kinds. Omitted from dumps when ``None``.
+    authored_label: str | None = None
+    #: The seed's routes (as minted). Empty for the 6.7d backstop arms.
+    routes: list[str] = []
+    #: The uncovered trigger surface as whole-file ``(path, 1, loc)`` spans —
+    #: the SAME B38-gated spans the marker carried (a gap without spans is
+    #: never emitted; it is recorded in ``scan_meta.synth_quality.suppressed_markers``).
+    surface_files: list[FlowLineRange] = []
+    #: Surface LOC — per-file UNION of ``surface_files`` (mirrors Stage 6.97b).
+    loc: int = 0
+    #: The originating seed's ``synthesis_reason`` — traceability to the old
+    #: recall-row world (``system_flow_recall`` / ``e2e_journey_recall``).
+    synthesis_reason: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_none_authored(self, handler: Any) -> Any:
+        """Drop ``authored_label`` from dumps when ``None`` (the system
+        kinds) — the codebase omit-when-default convention."""
+        data = handler(self)
+        if isinstance(data, dict) and data.get("authored_label") is None:
+            data.pop("authored_label", None)
+        return data
+
+
 class FeatureMap(BaseModel):
     # On-disk schema version. Default 0 = "pre-versioning scan" so any
     # JSON produced before this field existed rehydrates as 0, which is
@@ -1340,12 +1401,25 @@ class FeatureMap(BaseModel):
     # predate the lane and on FAULTLINE_SPINE_ANCHORED_MINT=0 scans, so
     # the A/B=0 output stays byte-identical to pre-W2b engines.
     platform_infrastructure: list[dict[str, Any]] | None = None
+    # B45 (2026-07-11) — typed coverage-gap channel. The member-less I8-cover
+    # markers that used to ship as hollow ``user_flows[]`` rows are emitted
+    # here instead (kind + label + surface spans), so a gap can never be
+    # mistaken for a journey. ``None`` (and the key ENTIRELY OMITTED from the
+    # dump — see the serializer) unless ``FAULTLINE_COVERAGE_GAP_CHANNEL`` is
+    # dual/full, so the default ``off`` path serializes byte-identically to
+    # pre-B45 engines (kill-switch / byte-identity law).
+    coverage_gaps: list[CoverageGap] | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_lane_fields(self, handler: Any) -> Any:
         data = handler(self)
-        if isinstance(data, dict) and data.get("platform_infrastructure") is None:
-            data.pop("platform_infrastructure", None)
+        if isinstance(data, dict):
+            if data.get("platform_infrastructure") is None:
+                data.pop("platform_infrastructure", None)
+            # B45 — the gap channel is off by default: a None dump drops the
+            # key entirely so the off path is byte-identical to pre-B45.
+            if data.get("coverage_gaps") is None:
+                data.pop("coverage_gaps", None)
         return data
 
     @model_validator(mode="after")

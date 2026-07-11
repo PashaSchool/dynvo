@@ -260,6 +260,15 @@ ENV_OUTPUT_FLAGS = (
     # repos. Default OFF. Appended WITHOUT a KEY_SCHEMA bump — reconciled at
     # merge (the later default-ON flip commit bumps KEY_SCHEMA).
     "FAULTLINE_FDIR_DEVGRAIN_GATE",
+    # B45 (2026-07-11) — coverage_gaps[] gap channel: member-less I8-cover
+    # markers leave user_flows[] for a dedicated top-level ``coverage_gaps``
+    # array. off (default) = byte-identical (key absent); dual = gaps emitted
+    # AND the marker rows stay (bijection instrument); full = the marker rows
+    # are REMOVED from user_flows[] and only gaps ship. Reshapes user_flows[]
+    # (full) + adds the coverage_gaps[] key (dual/full). Appended WITHOUT a
+    # KEY_SCHEMA bump — the off default is byte-identical; the later
+    # default-flip commit bumps KEY_SCHEMA (v16/v21/v25 precedent).
+    "FAULTLINE_COVERAGE_GAP_CHANNEL",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

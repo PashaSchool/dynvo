@@ -2623,15 +2623,25 @@ def run_finalize_phase(
         run_synth_quality,
         synth_quality_enabled,
     )
+    # B45 — the typed coverage-gap channel. None (key absent from the result)
+    # unless FAULTLINE_COVERAGE_GAP_CHANNEL is dual/full, keeping the off path
+    # byte-identical to pre-B45. Threaded into the Stage-7 result below.
+    coverage_gaps: list[Any] | None = None
     if synth_quality_enabled():
         try:
-            run_synth_quality(
+            _sq_tele = run_synth_quality(
                 user_flows,
                 list(bipartite.flows),
                 product_features,
                 scan_meta,
                 developer_features=features,
             )
+            _gaps = _sq_tele.get("coverage_gaps")
+            # Only surface the array when the channel actually emitted gaps —
+            # an empty list from a marker-less board (or off mode) leaves the
+            # top-level key absent (byte-identity).
+            if _gaps:
+                coverage_gaps = list(_gaps)
         except Exception as exc:  # noqa: BLE001 — quality pass never breaks a scan
             scan_meta.setdefault("warnings", []).append(
                 f"synth-quality pass failed ({exc}); journeys unchanged"
@@ -2881,6 +2891,8 @@ def run_finalize_phase(
             monorepo=monorepo_view,
             non_product_surfaces=non_product_surfaces,
             platform_infrastructure=platform_infrastructure,
+            # B45 — None (key omitted) unless the gap channel emitted gaps.
+            coverage_gaps=coverage_gaps,
         )
         log7.info(f"wrote feature map to {out}", feature=None)
 

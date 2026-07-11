@@ -576,6 +576,54 @@ def _rewrite_flow_backpointers(
             result.flow_backpointers_rewritten += 1
 
 
+def enforce_gap_ref_integrity(
+    coverage_gaps: list[Any],
+    product_features: list["Feature"],
+) -> tuple[list[Any], dict[str, Any]]:
+    """B45 — I12 round-trip for the ``coverage_gaps[]`` channel.
+
+    Every emitted ``gap.product_feature_id`` must be an emitted PF key (the
+    same contract Pass 2 enforces for ``user_flows[]``). A gap whose ref is
+    not a direct key is first canonical-relinked against the PF key-set; a
+    still-orphan gap is DROPPED (never nulled — an anonymous gap claim is
+    meaningless) and recorded in the returned telemetry.
+
+    Runs at Stage 6.98, AFTER the gaps are built (they inherit each marker's
+    already-reconciled ``product_feature_id``, so this is a defensive guard —
+    it fires only when a gap's home PF vanished between reconciliation and
+    emission). Returns ``(kept_gaps, telemetry)``; never mutates the PF list.
+    """
+    pf_keys = {_pf_key(pf) for pf in product_features if _pf_key(pf)}
+    canon_to_key: dict[str, str] = {}
+    for key in pf_keys:
+        canon_to_key.setdefault(canonical_slug(key), key)
+
+    kept: list[Any] = []
+    dropped: list[dict[str, Any]] = []
+    relinked = 0
+    for gap in coverage_gaps:
+        ref = getattr(gap, "product_feature_id", None)
+        if ref and ref in pf_keys:
+            kept.append(gap)
+            continue
+        relink = canon_to_key.get(canonical_slug(ref)) if ref else None
+        if relink is not None:
+            gap.product_feature_id = relink
+            relinked += 1
+            kept.append(gap)
+            continue
+        dropped.append({
+            "id": str(getattr(gap, "id", "") or ""),
+            "label": str(getattr(gap, "label", "") or ""),
+            "product_feature_id": ref,
+            "reason": "orphan_pf_ref",
+        })
+    tele: dict[str, Any] = {"orphans_dropped": len(dropped), "relinked": relinked}
+    if dropped:
+        tele["dropped"] = dropped  # complete record — the no-silent-drop law
+    return kept, tele
+
+
 def enforce_emission_integrity(
     features: list["Feature"],
     product_features: list["Feature"],
@@ -622,5 +670,6 @@ __all__ = [
     "anchored_husk_drop_enabled",
     "canonical_slug",
     "enforce_emission_integrity",
+    "enforce_gap_ref_integrity",
     "EmissionIntegrityResult",
 ]
