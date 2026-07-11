@@ -397,6 +397,24 @@ def detect_ts_registries(
 
 # ── seed minting + B34-b registry rails ─────────────────────────────────
 
+_TAXONOMY = None
+
+
+def _surface_scope(path: str) -> str | None:
+    """W2a surface-taxonomy path scope (cached default-lexicon instance).
+    ``None`` = no signal (conservative: minting proceeds)."""
+    global _TAXONOMY
+    if _TAXONOMY is None:
+        from faultline.pipeline_v2.surface_taxonomy import (
+            SurfaceScopeClassifier,
+        )
+        _TAXONOMY = SurfaceScopeClassifier()
+    try:
+        return _TAXONOMY.classify_path(path)
+    except Exception:  # noqa: BLE001 — guard must never break a mint pass
+        return None
+
+
 #: UI component extensions — rail 1 applies only to JSX component files.
 _UI_EXT = (".tsx", ".jsx")
 
@@ -594,6 +612,7 @@ def mint_dispatch_seeds(
         "skipped_no_owner": 0,
         "skipped_unnameable": 0,
         "skipped_no_anchor": 0,
+        "skipped_non_product_surface": 0,
         "skipped_ui_component_kind": 0,
         "qualified_by_registry_key": 0,
         "ordinal_fallback": 0,
@@ -612,6 +631,18 @@ def mint_dispatch_seeds(
         owner = owner_of.get(t.target_file)
         if owner is None:
             tele["skipped_no_owner"] += 1
+            continue
+        # B37 rework — docs/artifact surface guard (keyed-supabase
+        # over-fire: apps/docs content-model registries minted
+        # run-config-flow / run-*-model-flow product rows). Reuse the
+        # W2a surface-taxonomy path classifier (mechanism, not a new
+        # vocabulary): a target OR registry living on a non-product
+        # surface (docs/marketing/dev_tooling/...) never mints.
+        scope_t = _surface_scope(t.target_file)
+        scope_r = _surface_scope(t.registry_file)
+        if (scope_t and scope_t not in ("product", "shell")) or \
+                (scope_r and scope_r not in ("product", "shell")):
+            tele["skipped_non_product_surface"] += 1
             continue
         core = rail_cores.get(t.target_file, "")
         if not core:
