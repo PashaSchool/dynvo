@@ -895,6 +895,19 @@ def _call_haiku(
 # ── Profile-driven flow seeding (P4 framework-awareness) ───────────────────
 
 
+#: B43 (2026-07-11) — pages/routed-seed anchor completeness. Default ON;
+#: =0 restores line-less seeds byte-identically. Registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+PAGES_ANCHOR_FALLBACK_ENV = "FAULTLINE_PAGES_ANCHOR_FALLBACK"
+
+
+def _pages_anchor_fallback_enabled() -> bool:
+    import os
+    return os.environ.get(PAGES_ANCHOR_FALLBACK_ENV, "1").strip() not in {
+        "0", "false", "False",
+    }
+
+
 def _slug_flow_name(kind: str, route: str, symbol: str, path: str) -> str:
     """Deterministic kebab ``*-flow`` name for a profile FlowEntry.
 
@@ -985,6 +998,26 @@ def _profile_flows_by_feature(
                 )
                 if start is not None:
                     entry_line = resolve_handler_line(sig, entry.symbol, start)
+                elif _pages_anchor_fallback_enabled():
+                    # B43 — anchor completeness: a routed entry whose
+                    # symbol has no extractor range still IS the file's
+                    # surface. Fallback chain: the extractor's synthetic
+                    # 'default' range (export-default statement), else
+                    # line 1 (whole-file entry) — a seed without a line
+                    # anchors NO spans and ships hollow (the supabase
+                    # keyless-91 class: HOC pages + range-less marketing
+                    # pages).
+                    start = next(
+                        (r.start_line for r in sig.symbol_ranges
+                         if r.name == "default"),
+                        None,
+                    )
+                    entry_line = start if start is not None else 1
+        if entry_line is None and entry.route \
+                and _pages_anchor_fallback_enabled():
+            # Routed entry with no signature at all — the file itself is
+            # the surface; anchor at line 1 rather than shipping hollow.
+            entry_line = 1
 
         out.setdefault(owner, []).append(
             FlowSpec(
