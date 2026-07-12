@@ -204,41 +204,73 @@ class ReactRouterFrameworkProfile:
     def detects(self, ctx: "ScanContext") -> float:
         """Confidence this is a React-Router-framework / Remix repo.
 
-        Framework-mode fingerprints only (graded by signal strength):
+        Framework-mode fingerprints only, graded by SCOPE so a frontend
+        sub-app never steals a monorepo's root from a flow-generating
+        backend:
 
-          * 0.9 — a tracked ``react-router.config.*`` file (framework mode
-                  is declared unambiguously) AND an ``app/routes/`` tree.
-          * 0.9 — an ``@react-router/*`` / ``@remix-run/*`` dependency AND
-                  an ``app/routes/`` tree.
-          * 0.6 + 0.35·fraction — monorepo whose workspaces carry a
-                  ``react-router`` / ``remix`` tag.
+          * **Whole-repo monorepo scope** (``ctx.workspaces`` present) —
+            ``0.6 + 0.35·fraction`` of workspaces that ARE
+            react-router-framework, capped 0.95 (mirrors
+            NextAppRouterProfile). This is the B44-v2 guard: a repo whose
+            ROOT is a backend (plane: django serving ``apps/api`` via the
+            residue) with a few react-router sub-apps yields a MODERATE
+            score — react-router-fw wins those sub-apps as UNITS but the
+            backend keeps the root, so its residue flows survive. A flat
+            0.9 here (the v1 bug) flipped plane's root django →
+            react-router-fw and vaporised 384 apps/api flows.
+          * **Unit / single-package scope** (``ctx.workspaces`` empty —
+            the per-unit selector passes a workspace-less scoped ctx) —
+            0.9 on a ``react-router.config.*`` file OR ``@react-router/*``
+            / ``@remix-run/*`` dep together with an ``app/routes/`` tree.
+            The scope IS the app, so strong local evidence wins it.
           * 0.0 — otherwise (never wins; classic ``react-router-dom``
-                  LIBRARY SPAs are owned by NextPagesReactProfile).
+            LIBRARY SPAs are owned by NextPagesReactProfile).
         """
-        tracked = [posix(f) for f in ctx.tracked_files]
-        has_routes_tree = any(_routes_rest(f) is not None for f in tracked)
-
-        if has_routes_tree:
-            has_config = any(
-                posix(f).rsplit("/", 1)[-1].startswith("react-router.config.")
-                for f in tracked
-            )
-            if has_config or self._has_fw_dep(ctx):
-                return 0.9
-
         wss = ctx.workspaces or []
-        if wss:
-            tagged = sum(
-                1 for ws in wss if (ws.stack or "").lower() in _FW_STACK_TAGS
-            )
-            if tagged:
-                return min(0.6 + 0.35 * (tagged / len(wss)), 0.95)
+        tracked = [posix(f) for f in ctx.tracked_files]
 
+        if wss:
+            rr = sum(1 for ws in wss if self._ws_is_react_router_fw(ctx, ws, tracked))
+            if rr:
+                return min(0.6 + 0.35 * (rr / len(wss)), 0.95)
+            return 0.0
+
+        # Unit scope (workspaces=None) or single-package repo.
+        if not any(_routes_rest(f) is not None for f in tracked):
+            return 0.0
+        has_config = any(
+            posix(f).rsplit("/", 1)[-1].startswith("react-router.config.")
+            for f in tracked
+        )
+        if has_config or self._has_fw_dep(ctx, tracked):
+            return 0.9
         return 0.0
 
-    def _has_fw_dep(self, ctx: "ScanContext") -> bool:
+    def _ws_is_react_router_fw(
+        self, ctx: "ScanContext", ws: "Workspace", tracked: list[str],
+    ) -> bool:
+        """A workspace is react-router-framework iff its subtree has an
+        ``app/routes/`` tree AND (a ``react-router.config.*`` file OR an
+        ``@react-router/*`` / ``@remix-run/*`` dep), or the auditor tagged
+        it ``react-router`` / ``remix``."""
+        if (ws.stack or "").lower() in _FW_STACK_TAGS:
+            return True
+        if not ws.path:
+            return False
+        prefix = ws.path.rstrip("/") + "/"
+        ws_files = [f for f in tracked if f.startswith(prefix)]
+        if not any(_routes_rest(f) is not None for f in ws_files):
+            return False
+        if any(
+            f.rsplit("/", 1)[-1].startswith("react-router.config.")
+            for f in ws_files
+        ):
+            return True
+        return self._has_fw_dep(ctx, ws_files)
+
+    def _has_fw_dep(self, ctx: "ScanContext", tracked: list[str]) -> bool:
         reads = 0
-        for f in sorted(posix(x) for x in ctx.tracked_files):
+        for f in sorted(tracked):
             if f.rsplit("/", 1)[-1] != "package.json" or _is_excluded_path(f):
                 continue
             if reads >= _MAX_MANIFEST_READS:

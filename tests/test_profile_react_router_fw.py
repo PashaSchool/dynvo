@@ -35,7 +35,7 @@ from faultline.pipeline_v2.profiles.next_pages_react import (
 from faultline.pipeline_v2.profiles.react_router_fw import (
     ReactRouterFrameworkProfile,
 )
-from faultline.pipeline_v2.stage_0_intake import ScanContext
+from faultline.pipeline_v2.stage_0_intake import ScanContext, Workspace
 
 
 # ── fixture helpers ──────────────────────────────────────────────────────────
@@ -125,6 +125,50 @@ def test_anticase_library_spa_not_claimed(tmp_path: Path) -> None:
         ),
     })
     assert ReactRouterFrameworkProfile().detects(ctx) == 0.0
+
+
+def test_monorepo_fraction_does_not_steal_backend_root(tmp_path: Path) -> None:
+    """B44-v2 REGRESSION GUARD (the plane defect): on a WHOLE-REPO monorepo
+    scope (``ctx.workspaces`` present), react-router-fw scores the moderate
+    workspace-FRACTION grade, NOT a flat 0.9 — so a backend-dominant repo
+    (a django root serving its API via the residue) with a few
+    react-router sub-apps keeps its root and its residue flows.
+
+    A flat 0.9 here flipped plane's root django → react-router-fw and
+    vaporised 384 apps/api flows.
+    """
+    files = {
+        "apps/web/package.json": _PKG_FW,
+        "apps/web/react-router.config.ts": _RR_CONFIG,
+        "apps/web/app/routes/dashboard.tsx": _ROUTE_PAGE,
+        "apps/api/manage.py": "# django\n",
+        "packages/ui/index.ts": "export const x = 1;\n",
+        "packages/lib/index.ts": "export const y = 1;\n",
+    }
+    tracked = _write(tmp_path, files)
+    ctx = ScanContext(
+        repo_path=tmp_path, stack="js-generic", monorepo=True,
+        workspaces=[
+            Workspace(name="web", path="apps/web", stack="react-router"),
+            Workspace(name="api", path="apps/api", stack="django"),
+            Workspace(name="ui", path="packages/ui", stack=None),
+            Workspace(name="lib", path="packages/lib", stack=None),
+        ],
+        tracked_files=tracked, commits=[],
+    )
+    score = ReactRouterFrameworkProfile().detects(ctx)
+    # 1 of 4 workspaces is react-router ⇒ 0.6 + 0.35*0.25 = 0.6875 — a
+    # moderate grade a real backend profile can outscore, NOT a flat 0.9.
+    assert score == pytest.approx(0.6 + 0.35 * 0.25)
+    assert score < 0.9
+    # The unit-scoped apps/web view (no workspaces) still wins 0.9.
+    unit = ScanContext(
+        repo_path=tmp_path, stack="react-router", monorepo=False,
+        workspaces=None,
+        tracked_files=[f for f in tracked if f.startswith("apps/web/")],
+        commits=[],
+    )
+    assert ReactRouterFrameworkProfile().detects(unit) == pytest.approx(0.9)
 
 
 def test_anticase_next_app_router_not_claimed(tmp_path: Path) -> None:
