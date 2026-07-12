@@ -289,6 +289,17 @@ ENV_OUTPUT_FLAGS = (
     # user_flows[].name (garbage rows only). =0 restores the pre-B46 flow/UF
     # names byte-identically.
     "FAULTLINE_UF_NAME_HYGIENE",
+    # B37-ph2 (2026-07-12) — dispatch-mint homing: a predominantly-dispatch
+    # user flow re-homes to the PF whose anchor subtree OWNS the mint's
+    # target file (the anchor-chain walk, not the dev-of-first-attribution),
+    # BEFORE the W5.1 backstop + synth_quality gap arbitration; the same
+    # target-owner machinery homes a demoted PF's FLOWFUL devs in the Stage
+    # 6.987 devgrain I9 rider (flowful → owner, never the platform lane).
+    # Reshapes user_flows[].product_feature_id (+ developer_features[].
+    # product_feature_id under the devgrain gate). Default OFF. Appended
+    # WITHOUT a KEY_SCHEMA bump — reconciled at merge (the later default-ON
+    # flip commit bumps KEY_SCHEMA).
+    "FAULTLINE_DISPATCH_HOMING_B37P2",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

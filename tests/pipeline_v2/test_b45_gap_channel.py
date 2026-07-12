@@ -460,6 +460,74 @@ def test_a3_connectors_arbitration_determinism() -> None:
     assert names_b == ["Manage connectors"]
 
 
+# ── B37-ph2: the Connectors HOMING case (dispatch mint → owner) ──────────────
+
+
+def test_a3_connectors_homing_determinism(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B37-ph2 extension of the Connectors family: the homing PASS itself (not
+    a hand-built re-pointed state) produces the arbitration outcome, and it is
+    a function of board STATE, not synthesis order.
+
+    A dispatch mint targeting a file UNDER the Connectors anchor re-homes its
+    member-ful UF into Connectors → the member-less marker demotes → NO gap.
+    A mint targeting elsewhere leaves Connectors starved → its marker → a gap.
+    Both directions identical across independent runs."""
+    from faultline.pipeline_v2.dispatch_homing import home_dispatch_mints
+
+    os.environ[COVERAGE_GAP_CHANNEL_ENV] = "full"
+    monkeypatch.setenv("FAULTLINE_DISPATCH_HOMING_B37P2", "1")
+
+    def _scene(target: str) -> tuple[list[Any], list[Any], list[Any]]:
+        # A dispatch mint on an (unowned) dev, homed via its UF to pf-other.
+        mint = _ns(uuid="m1", name="run-callback-flow", entry_point_file=target,
+                   description="dispatch registry apps/api/registry.ts ['cb']")
+        devs = [_ns(name="d", product_feature_id="pf-other", flows=[mint])]
+        pfs = [
+            _ns(name="pf-connectors", display_name="Connectors", id=None,
+                anchor_id="fdir:apps/api/connectors", member_files=[]),
+            _ns(name="pf-other", display_name="Other", id=None,
+                anchor_id="fdir:apps/web/other", member_files=[]),
+        ]
+        # member-ful dispatch UF (attribute-settable — the real UserFlow type)
+        # + a member-less loc-worthy marker on the (starved) Connectors PF
+        # + a keeper journey on pf-other (so the move is not orphan-blocked).
+        ufs = [
+            _ns(id="UF-1", name="run-callback-flow", synthesized=False,
+                member_count=1, member_flow_ids=["m1"],
+                product_feature_id="pf-other"),
+            _ns(id="UF-0", name="Manage other", synthesized=False,
+                member_count=2, member_flow_ids=["k1", "k2"],
+                product_feature_id="pf-other"),
+            _ns(**_marker("UF-2", "Connectors", "system_flow_recall",
+                          "pf-connectors", resource="connectors")),
+        ]
+        return ufs, devs, pfs
+
+    def run(target: str) -> tuple[str | None, list[str]]:
+        ufs, devs, pfs = copy.deepcopy(_scene(target))
+        home_dispatch_mints(ufs, devs, pfs)
+        gaps = run_synth_quality(
+            ufs, [], pfs, {}, developer_features=devs)["coverage_gaps"]
+        conn_gaps = [g.id for g in gaps if g.product_feature_id == "pf-connectors"]
+        homed_uf = next(
+            (u for u in ufs if getattr(u, "member_count", 0)), None)
+        return (homed_uf.product_feature_id if homed_uf else None), conn_gaps
+
+    # Direction 1 — mint targets a file under the Connectors anchor: the UF
+    # re-homes into Connectors, the marker demotes, no gap. Deterministic.
+    home1, gaps1 = run("apps/api/connectors/callback.ts")
+    home1b, gaps1b = run("apps/api/connectors/callback.ts")
+    assert home1 == home1b == "pf-connectors"
+    assert gaps1 == gaps1b == []  # Connectors covered ⇒ its marker demoted
+
+    # Direction 2 — mint targets elsewhere: Connectors stays starved and keeps
+    # its coverage gap. Deterministic, and the UF is NOT hijacked into Connectors.
+    home2, gaps2 = run("apps/web/other/handler.ts")
+    home2b, gaps2b = run("apps/web/other/handler.ts")
+    assert home2 == home2b == "pf-other"  # no-op: mint already owns pf-other
+    assert gaps2 == gaps2b and len(gaps2) == 1
+
+
 # ── ref-integrity: orphan gaps dropped with telemetry ────────────────────────
 
 

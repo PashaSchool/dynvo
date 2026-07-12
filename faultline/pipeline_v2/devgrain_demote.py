@@ -53,7 +53,7 @@ topology-breadth flip commit; OFF is byte-identical to pre-B33.
 from __future__ import annotations
 
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, Any
 
 from faultline.pipeline_v2.spine_anchors import (
@@ -262,6 +262,53 @@ def run_devgrain_demote(
         if pfid:
             devs_by_pf[str(pfid)].append(f)
 
+    # ── B37-ph2 I9 rider (gated on FAULTLINE_DISPATCH_HOMING_B37P2) ─────
+    # A demoted PF's FLOWFUL devs must NOT fall to the platform_infrastructure
+    # lane (I9 law: lane = flowless plumbing only). When no ancestor PF
+    # exists, home the flowful dev by the SAME target-owner machinery as the
+    # dispatch-mint homing pass — the PF whose anchor subtree owns a strict
+    # majority of the dev's flow entry files. Flowless devs keep the natural
+    # path (ancestor → lane). OFF ⇒ _owner_resolve is None ⇒ every dev takes
+    # the pre-B37-ph2 branch (byte-identical).
+    from faultline.pipeline_v2.dispatch_homing import (
+        build_anchor_owner_resolver,
+        dispatch_homing_enabled,
+    )
+    _i9_on = dispatch_homing_enabled()
+    if _i9_on:
+        # B37-ph2 I9 rider counters — added ONLY under the homing flag so the
+        # devgrain telemetry stays byte-identical to pre-B37-ph2 when OFF.
+        tele["devs_i9_homed"] = 0
+        tele["devs_flowful_unowned"] = 0
+    _surviving_pfs = [
+        pf for pf in product_features
+        if str(getattr(pf, "name", "") or "") not in demote_keys
+        and str(getattr(pf, "name", "") or "").strip().lower()
+        not in ("platform", "shared-platform")
+    ]
+    _surviving_keys = {str(getattr(pf, "name", "") or "") for pf in _surviving_pfs}
+    _owner_resolve = (
+        build_anchor_owner_resolver(_surviving_pfs) if _i9_on else None)
+
+    def _flowful_owner_key(dev: "Feature") -> str | None:
+        """The surviving PF whose anchor subtree owns a STRICT MAJORITY of
+        the dev's flow entry files (dispatch-homing target-owner machinery)."""
+        if _owner_resolve is None:
+            return None
+        owners = [
+            k for k in (
+                _owner_resolve(getattr(fl, "entry_point_file", None))
+                for fl in (getattr(dev, "flows", None) or [])
+            ) if k
+        ]
+        if not owners:
+            return None
+        top, ct = sorted(
+            Counter(owners).items(), key=lambda kv: (-kv[1], kv[0]))[0]
+        if ct * 2 <= len(owners) or top not in _surviving_keys:
+            return None
+        return top
+
     # Phase 2 — apply (sorted; the husk-post-uf-fold mechanics).
     dropped_uf_ids: set[int] = set()
     for pf in sorted(demote, key=lambda p: str(getattr(p, "name", "") or "")):
@@ -285,13 +332,33 @@ def run_devgrain_demote(
                     m.shared_reason = None
                 tele["devs_repointed"] += 1
             else:
-                # No minting ancestor — L1/unowned, exactly as a
-                # never-minted anchor's devs would be (natural demotion,
-                # never a silent deletion; the devs keep their files).
-                m.product_feature_id = None
-                m.anchor_id = None
-                m.shared_reason = _SHARED_REASON_BAR
-                tele["devs_unowned"] += 1
+                owner_key = (
+                    _flowful_owner_key(m)
+                    if (_i9_on and getattr(m, "flows", None)) else None)
+                if owner_key is not None:
+                    # I9 rider — a flowful demoted dev homes to its
+                    # target-owner PF (never the platform lane; lane =
+                    # flowless plumbing only).
+                    m.product_feature_id = owner_key
+                    m.anchor_id = f"fold:devgrain-i9->{aid}"
+                    if getattr(m, "shared_reason", None):
+                        m.shared_reason = None
+                    tele["devs_i9_homed"] += 1
+                elif _i9_on and getattr(m, "flows", None):
+                    # Flowful but no owner PF — keep L1/unowned but OUT of the
+                    # lane (I9: a flowful dev is never a lane resident).
+                    m.product_feature_id = None
+                    m.anchor_id = None
+                    m.shared_reason = None
+                    tele["devs_flowful_unowned"] += 1
+                else:
+                    # No minting ancestor — L1/unowned, exactly as a
+                    # never-minted anchor's devs would be (natural demotion,
+                    # never a silent deletion; the devs keep their files).
+                    m.product_feature_id = None
+                    m.anchor_id = None
+                    m.shared_reason = _SHARED_REASON_BAR
+                    tele["devs_unowned"] += 1
         if target is not None:
             # paths + member_files union onto the target (dedup, stable
             # order) — the fold_unreferenced_vendor_husks mechanics.
