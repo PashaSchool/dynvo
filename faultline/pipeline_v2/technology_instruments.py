@@ -834,13 +834,19 @@ def detect_technology_instruments(
             nav_pfx = tuple(sorted(str(p).strip("/") for p in nav_prefixes if p))
 
             def _nav_confirmed(u: str) -> bool:
-                # S3 (nav): a unit covered by — or covering — a nav-declared
-                # anchor prefix is the author's product area. Vacuous for
-                # ws: anchors (nav confirms route/fdir anchors), kept as a
-                # defensive guard + for future fdir candidates.
+                # S3 (nav): the unit is blocked when IT or an ANCESTOR is a
+                # nav-declared anchor prefix — the author's own IA places the
+                # unit inside a product area. A nav match on a DEEP DESCENDANT
+                # subtree does NOT block (cal.com forensic, 2026-07-12): a
+                # transport package's router dirs are named after the nav
+                # features they serve by construction (packages/trpc/server/
+                # routers/viewer/apiKeys ↔ the 'api-keys' nav cluster), so
+                # every transport would self-veto on its own attribution
+                # echo. Domain cores with nav-echoing internals stay
+                # protected by the dou>1 guard regardless (packages/lib:
+                # nav-echo AND dou=5 — two independent rails).
                 return any(
-                    u == p or u.startswith(p + "/") or p.startswith(u + "/")
-                    for p in nav_pfx
+                    u == p or u.startswith(p + "/") for p in nav_pfx
                 )
 
             b48: dict[str, str] = {}

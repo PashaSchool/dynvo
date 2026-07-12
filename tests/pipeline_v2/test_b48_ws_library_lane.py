@@ -254,12 +254,23 @@ def test_published_cli_survives(tmp_path: Path, monkeypatch):
 
 
 def test_nav_confirmed_survives(tmp_path: Path, monkeypatch):
-    """S3 (nav): a library covered by a nav-declared anchor prefix is the
-    author's product area — never a lane."""
+    """S3 (nav): a library that IS a nav-declared anchor prefix (or sits
+    inside one) is the author's product area — never a lane."""
     monkeypatch.setenv(ENV, "1")
     tele = _detect(tmp_path, _library_repo(tmp_path),
                    nav_prefixes=["packages/widgetkit"])
     assert "packages/widgetkit" not in (tele.get("transport_candidates") or {})
+
+
+def test_nav_descendant_echo_does_not_block(tmp_path: Path, monkeypatch):
+    """A nav-confirmed anchor DEEP INSIDE the unit is the attribution echo
+    (cal.com packages/trpc router dirs named after the nav features they
+    serve) — it must NOT self-veto the lane (forensic 2026-07-12)."""
+    monkeypatch.setenv(ENV, "1")
+    tele = _detect(tmp_path, _library_repo(tmp_path),
+                   nav_prefixes=["packages/widgetkit/src"])
+    tc = tele.get("transport_candidates") or {}
+    assert tc.get("packages/widgetkit") == "B48:library"
 
 
 def test_nested_family_survives(tmp_path: Path, monkeypatch):
