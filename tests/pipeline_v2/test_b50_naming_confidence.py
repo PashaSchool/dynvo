@@ -140,7 +140,9 @@ class TestSeg1DisplayString:
         ("Ingest ingest", "Ingest"),
         ("View views", "View"),
         ("Send send test email", "Send test email"),
-        ("Browse & filter API case case ids", "Browse & filter API case ids"),
+        # '&' preserved; dup 'case' collapses and the trailing standalone
+        # 'ids' addressing token drops (Seg2 composes into _degrime_words).
+        ("Browse & filter API case case ids", "Browse & filter API case"),
         ("Teams (Team)", "Teams"),
     ])
     def test_display(self, text, expected):
@@ -167,8 +169,8 @@ class TestSeg1ResourcePhrase:
 
     def test_flag_on_deglues(self, monkeypatch):
         monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
-        assert nc._resource_phrase("API case case ids", _vocab()) == (
-            "API case ids")
+        # dup 'case' collapses; trailing standalone 'ids' drops (Seg2).
+        assert nc._resource_phrase("API case case ids", _vocab()) == "API case"
 
     def test_flag_off_byte_identical(self):
         # Default OFF ⇒ the resource phrase is unchanged (the doubled 'case'
@@ -264,3 +266,275 @@ class TestSeg1IdentityUntouched:
         assert uf.resource == before_res
         assert uf.product_feature_id == before_pfid
         assert uf.member_flow_ids == before_members
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Segment 2 — raw-param display law
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestSeg2DeparamWord:
+    """Glyph-less ``<noun><addr-suffix>`` slug reduces to its noun core.
+
+    Suffixes come from the FROZEN unambiguous subset {id, ids, url, uuid,
+    guid, slug, pk} — NEVER the full vocab route_addressing_suffixes
+    (executor ruling on the B46 lesson: linguistic ≠ structural)."""
+
+    @pytest.mark.parametrize("word,core", [
+        ("teamurl", "team"),        # from $teamUrl
+        ("boardid", "board"),       # from boardId
+        ("chatid", "chat"),
+        ("chatids", "chat"),
+        ("documentids", "document"),
+        ("cardids", "card"),
+        ("boardids", "board"),
+        ("workflowids", "workflow"),
+        ("teamid", "team"),
+        ("linkid", "link"),
+        ("dashboardids", "dashboard"),
+        ("runids", "run"),
+    ])
+    def test_deparam(self, word, core):
+        assert nc._deparam_word(word) == core
+
+    def test_pure_addressing_token_untouched(self):
+        assert nc._deparam_word("url") == "url"
+        assert nc._deparam_word("id") == "id"
+
+    @pytest.mark.parametrize("word", [
+        # SACRED anti-cases (executor ruling): vocab addressing suffixes
+        # like 'name'/'code'/'key' are real word-endings — the glyph-less
+        # glued rule must NEVER truncate a linguistic compound.
+        "username",     # NOT 'user' ('name' is vocab-only, not frozen subset)
+        "filename",     # NOT 'file'
+        "barcode",      # NOT 'bar'
+        "webhook",      # ends in 'hook' — not a suffix at all
+        "handle",       # product noun — 'handle' removed from frozen subset
+        "handles",
+    ])
+    def test_linguistic_compounds_survive(self, word):
+        assert nc._deparam_word(word) == word
+
+
+class TestSeg2DeparamDisplay:
+
+    @pytest.mark.parametrize("text,expected", [
+        ("teamurl documents", "team documents"),        # $teamUrl leak
+        ("boardid card cardids", "board card"),          # boardId + glued echo
+        ("boardids", "board"),
+        ("dashboard dashboardids", "dashboard"),
+        ("Browse & filter API AI chat chatids", "Browse & filter API AI chat"),
+        ("Manage API case id", "Manage API case"),       # standalone id drop
+    ])
+    def test_deparam_display(self, text, expected):
+        assert nc._deparam_display(text) == expected
+
+    def test_crm_names_untouched(self):
+        # twenty CRM objects — no addressing suffix, no drop.
+        assert nc._deparam_display("Companies") == "Companies"
+        assert nc._deparam_display("People") == "People"
+
+    def test_linguistic_compounds_untouched_in_display(self):
+        # Executor anti-cases at display level — byte-identical.
+        assert nc._deparam_display("Manage usernames") == "Manage usernames"
+        assert nc._deparam_display(
+            "Developer story webhook settings") == (
+            "Developer story webhook settings")
+        assert nc._deparam_display("Manage handles") == "Manage handles"
+
+
+class TestSeg2CollisionSafePlan:
+    """degrime_rename_plan — the pure two-phase collision-safe rename plan
+    (kan forensics: a degrime rename must NEVER create a display dup)."""
+
+    def test_kan_pair_both_skip(self):
+        # Two rows mapping to the SAME target — skip BOTH (keep originals).
+        plan = nc.degrime_rename_plan(
+            {"UF-001": "boardids", "UF-012": "boardslugs"},
+            {"UF-001": "Manage boards", "UF-012": "Manage boards"},
+        )
+        assert plan == set()
+
+    def test_unique_target_applies(self):
+        plan = nc.degrime_rename_plan(
+            {"UF-001": "boardids", "UF-012": "Manage cards"},
+            {"UF-001": "board"},
+        )
+        assert plan == {"UF-001"}
+
+    def test_target_taken_by_existing_row_skips(self):
+        # Target already worn by ANOTHER row's current name — skip.
+        plan = nc.degrime_rename_plan(
+            {"U1": "boardids", "U2": "board"},
+            {"U1": "board"},
+        )
+        assert plan == set()
+
+    def test_determinism_input_order_independent(self):
+        cur_a = {"U1": "boardids", "U2": "boardslugs", "U3": "chat chatids"}
+        prop_a = {"U1": "Manage boards", "U2": "Manage boards", "U3": "chat"}
+        # Same maps, reversed insertion order.
+        cur_b = dict(reversed(list(cur_a.items())))
+        prop_b = dict(reversed(list(prop_a.items())))
+        assert nc.degrime_rename_plan(cur_a, prop_a) == \
+            nc.degrime_rename_plan(cur_b, prop_b) == {"U3"}
+        # Idempotent — same verdict on a second run.
+        assert nc.degrime_rename_plan(cur_a, prop_a) == {"U3"}
+
+
+class TestSeg2CollisionSafeIntegration:
+    """The kan defect end-to-end: degrime must never create a UF name dup."""
+
+    def _kan_pair(self):
+        pf = _pf("boards", "Boards", anchor_id="route:boards")
+        uf1 = _uf("UF-001", "boardids", "boards", resource="boardid",
+                  members=["f1"])
+        uf2 = _uf("UF-012", "boardslugs", "boards", resource="boardslug",
+                  members=["f2"])
+        flows = [_FL("f1", "update-boardid-flow"),
+                 _FL("f2", "update-boardslug-flow")]
+        return pf, uf1, uf2, flows
+
+    def test_kan_pair_names_unchanged_no_dup(self, monkeypatch):
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        pf, uf1, uf2, flows = self._kan_pair()
+        tele = nc.run_naming_contract([pf], [uf1, uf2], flows, keeper_on=False)
+        # Both deparam targets collide ('board') — BOTH keep their honest
+        # old grime; distinct rows; uf-dup-names stays 0.
+        assert uf1.name == "boardids"
+        assert uf2.name == "boardslugs"
+        assert uf1.name.lower() != uf2.name.lower()
+        assert tele.get("uf_degrime_collision_skipped", 0) >= 2
+
+    def test_non_colliding_sibling_still_degrimes(self, monkeypatch):
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        pf = _pf("boards", "Boards", anchor_id="route:boards")
+        uf1 = _uf("UF-001", "boardids", "boards", resource="boardid",
+                  members=["f1"])
+        uf2 = _uf("UF-012", "Manage cards", "boards", resource="card",
+                  members=["f2"])
+        flows = [_FL("f1", "update-boardid-flow"),
+                 _FL("f2", "update-card-flow")]
+        tele = nc.run_naming_contract([pf], [uf1, uf2], flows, keeper_on=False)
+        # Unique target — the deparam applies normally.
+        assert uf1.name == "board"
+        assert uf2.name == "Manage cards"
+        assert tele.get("uf_name_degrimed", 0) == 1
+
+    def test_determinism_input_order(self, monkeypatch):
+        # Same board, UF list order reversed ⇒ identical final names.
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        pf, uf1, uf2, flows = self._kan_pair()
+        nc.run_naming_contract([pf], [uf1, uf2], flows, keeper_on=False)
+        fwd = {uf1.id: uf1.name, uf2.id: uf2.name}
+        pf_b, uf1_b, uf2_b, flows_b = self._kan_pair()
+        nc.run_naming_contract(
+            [pf_b], [uf2_b, uf1_b], flows_b, keeper_on=False)
+        rev = {uf1_b.id: uf1_b.name, uf2_b.id: uf2_b.name}
+        assert fwd == rev
+
+
+class TestSeg2MintCollisionSafe:
+    """Mint-side (_slot_consistent_label) degrime is param-driven so the
+    cluster_user_flows caller can two-phase it (the kan root: 'boardid' and
+    'boardslug' both deparam to 'board' pre-pluralise ⇒ identical labels)."""
+
+    def _members(self, primary_name: str):
+        return [{
+            "name": primary_name,
+            "entry_point_file": "app/boards/route.ts",
+            "paths": ["app/boards/route.ts"],
+        }]
+
+    def test_degrime_false_is_pre_b50(self):
+        from faultline.pipeline_v2.stage_6_7_user_flows import (
+            _slot_consistent_label,
+        )
+        label, grounded = _slot_consistent_label(
+            self._members("manage-boardid-flow"))
+        assert (label, grounded) == ("boardids", True)
+
+    def test_degrime_true_deparams_label(self):
+        from faultline.pipeline_v2.stage_6_7_user_flows import (
+            _slot_consistent_label,
+        )
+        label, grounded = _slot_consistent_label(
+            self._members("manage-boardid-flow"), degrime=True)
+        assert (label, grounded) == ("boards", True)
+        # The kan twin resource maps to the SAME degrimed label — proof the
+        # caller MUST collision-gate (both would mint 'Manage boards').
+        label2, _g2 = _slot_consistent_label(
+            self._members("manage-boardslug-flow"), degrime=True)
+        assert label2 == "boards"
+
+    def test_degrime_env_alone_does_not_change_function(self, monkeypatch):
+        # The env flag no longer reaches inside the function — only the
+        # caller's paired degrime=True call does (two-phase contract).
+        from faultline.pipeline_v2.stage_6_7_user_flows import (
+            _slot_consistent_label,
+        )
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        label, _g = _slot_consistent_label(
+            self._members("manage-boardid-flow"))
+        assert label == "boardids"
+
+
+class TestSeg2PurePFParam:
+    """SACRED: '/p/$url' PF resolves to a member domain noun, never 'P'."""
+
+    def test_url_pf_resolves_member_noun(self, monkeypatch):
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        paths = [
+            "apps/remix/app/routes/(profile)/PublicProfilePage.tsx",
+            "apps/remix/app/routes/(profile)/profile-card.tsx",
+        ]
+        pf = _pf("p.$url", "URL", anchor_id="route:p-url", paths=paths)
+        cands = nc.build_pf_candidates(pf, _vocab())
+        assert cands[0] == "Profile"
+        assert "P" not in cands            # never the route letter
+        assert "URL" != cands[0]
+
+    def test_url_pf_selected_via_full_run(self, monkeypatch):
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        paths = ["apps/remix/app/routes/(profile)/PublicProfilePage.tsx"]
+        pf = _pf("p.$url", "URL", anchor_id="route:p-url", paths=paths)
+        nc.run_naming_contract([pf], [], [], keeper_on=False)
+        assert pf.display_name == "Profile"
+
+    def test_flag_off_keeps_url(self):
+        paths = ["apps/remix/app/routes/(profile)/PublicProfilePage.tsx"]
+        pf = _pf("p.$url", "URL", anchor_id="route:p-url", paths=paths)
+        nc.run_naming_contract([pf], [], [], keeper_on=False)
+        assert pf.display_name == "URL"     # pre-B50 byte-identical
+
+
+class TestSeg2UFIntegration:
+
+    def test_teamurl_leak_cleaned(self, monkeypatch):
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        pf = _pf("documents", "Documents", anchor_id="route:documents")
+        uf = _uf("UF-1", "teamurl documents", "documents",
+                 resource="teamurl-document-f-folderid", members=["f1"])
+        nc.run_naming_contract(
+            [pf], [uf], [_FL("f1", "browse-documents-flow")], keeper_on=False)
+        assert uf.name == "team documents"
+        assert "teamurl" not in uf.name
+
+    def test_flag_off_keeps_teamurl(self):
+        pf = _pf("documents", "Documents", anchor_id="route:documents")
+        uf = _uf("UF-1", "teamurl documents", "documents",
+                 resource="teamurl-document-f-folderid", members=["f1"])
+        nc.run_naming_contract(
+            [pf], [uf], [_FL("f1", "browse-documents-flow")], keeper_on=False)
+        assert uf.name == "teamurl documents"   # pre-B50 byte-identical
+
+    def test_identity_untouched(self, monkeypatch):
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        pf = _pf("documents", "Documents", anchor_id="route:documents")
+        uf = _uf("UF-1", "teamurl documents", "documents",
+                 resource="teamurl-document-f-folderid", members=["f1"])
+        before = (uf.resource, uf.product_feature_id, list(uf.member_flow_ids))
+        nc.run_naming_contract(
+            [pf], [uf], [_FL("f1", "browse-documents-flow")], keeper_on=False)
+        assert (uf.resource, uf.product_feature_id,
+                list(uf.member_flow_ids)) == before
