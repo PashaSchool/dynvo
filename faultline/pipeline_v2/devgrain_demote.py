@@ -46,8 +46,9 @@ emission_integrity — so no marker is ever synthesized for a demoted PF
 and every downstream integrity rail sees the demoted state.
 
 Deterministic, $0 LLM, scale-invariant. Flag
-``FAULTLINE_FDIR_DEVGRAIN_GATE`` — default OFF until the
-topology-breadth flip commit; OFF is byte-identical to pre-B33.
+``FAULTLINE_FDIR_DEVGRAIN_GATE`` — default ON since the 2026-07-12 flip
+(KEY_SCHEMA v28, coupled with the B37-ph2 homing rider); ``=0`` is
+byte-identical to pre-B33.
 """
 
 from __future__ import annotations
@@ -93,10 +94,12 @@ _SHARED_REASON_BAR = "sub_mint_bar_surface"
 
 
 def fdir_devgrain_gate_enabled() -> bool:
-    """B33 — default OFF; ``FAULTLINE_FDIR_DEVGRAIN_GATE=1`` enables the
-    post-UF devgrain-leaf demote pass. OFF (byte-identical to pre-B33)
-    until the topology-breadth default-ON flip commit."""
-    return os.environ.get(FDIR_DEVGRAIN_GATE_ENV, "0").strip().lower() not in {
+    """B33 — default ON since the 2026-07-12 flip (KEY_SCHEMA v28; keyed
+    papermark proof: Welcome demoted, I9=0 via the B37-ph2 homing rider,
+    platform lane 43->42). ``FAULTLINE_FDIR_DEVGRAIN_GATE=0`` restores the
+    pre-B33 board byte-identically — explicit off stays a valid kill-switch
+    forever."""
+    return os.environ.get(FDIR_DEVGRAIN_GATE_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 
