@@ -822,6 +822,8 @@ def _primary_member(members: list[dict]) -> dict:
 def _slot_consistent_label(
     members: list[dict],
     product_strings: Any | None = None,
+    *,
+    degrime: bool = False,
 ) -> tuple[str, bool]:
     """Resource label for the UF name, taken from ONE member flow.
 
@@ -836,6 +838,13 @@ def _slot_consistent_label(
       2. the noun span of the primary flow's own name (which Stage 3
          derived from that flow's route path + handler);
       3. last resort: the anchor file's basename stem.
+
+    ``degrime`` (B50) — de-grime path 2's resource tokens (echo dedup +
+    glyph-less deparam) BEFORE the pluraliser. Param-driven, NOT env-read:
+    the caller computes BOTH labels and applies the degrimed one
+    collision-safely over the assembled board (kan forensics — two distinct
+    resources 'boardid'/'boardslug' both deparam to 'board' and would mint
+    identical UF names). Default False ⇒ pre-B50 byte-identical.
 
     Returns ``(label, grounded)`` — ``grounded`` is False only on the
     basename last-resort with no product-string vocabulary, which the
@@ -868,7 +877,21 @@ def _slot_consistent_label(
     if uf_name_hygiene_enabled():
         resource = _strip_inherited_ordinal(resource)  # B46 — drop '…-3' tail
     if resource and resource != "item":
-        return _pluralise(resource.replace("-", " ")), True
+        label = resource.replace("-", " ")
+        # B50 Seg1-2 — de-grime the resource at the mint joiner (before the
+        # pluraliser) so an echoed/param slug ('case case', 'boardid') never
+        # seeds a UF label. Display-only: uf.resource / cluster keys are
+        # untouched. Applied ONLY on the caller's degrime=True paired call
+        # (collision-safe two-phase); default ⇒ byte-identical.
+        if degrime:
+            from faultline.pipeline_v2.naming_contract import (  # noqa: PLC0415
+                _degrime_resource_words,
+                load_naming_vocab,
+            )
+            degrimed = " ".join(
+                _degrime_resource_words(label.split(), load_naming_vocab()))
+            label = degrimed or label
+        return _pluralise(label), True
 
     # 3. Anchor basename stem (weak — flagged low-confidence).
     if anchor:
@@ -1346,6 +1369,17 @@ def cluster_user_flows(
         clusters[key].append(f)
         cluster_resources[key][resource] += 1
 
+    # B50 — mint-side degrime is COLLISION-SAFE two-phase (kan forensics:
+    # resources 'boardid'/'boardslug' both deparam to 'board' and would mint
+    # identical 'Manage boards' rows). Rows always mint with the pre-B50
+    # label; the degrimed target is recorded here and applied after FULL
+    # assembly only where it collides with nothing. Flag OFF ⇒ empty map.
+    from faultline.pipeline_v2.naming_contract import (  # noqa: PLC0415
+        uf_name_degrime_enabled as _b50_degrime_enabled,
+    )
+    _mint_degrime_on = _b50_degrime_enabled()
+    _mint_degrime_targets: dict[str, str] = {}
+
     # Stage C-post — collapse singleton other-intent clusters into the
     # largest domain sibling so we don't emit one UF per unmapped verb.
     clusters = _merge_singleton_noise(clusters, cluster_resources)
@@ -1413,6 +1447,20 @@ def cluster_user_flows(
                     and not slot_grounded):
                 uf_name = NAME_TMPL["manage"].format(
                     r=_singularize_phrase(slot_label))
+            # B50 — paired degrimed label (echo dedup + glyph-less deparam)
+            # for the SAME slot; mirrored through the hygiene branch. The
+            # row still mints with uf_name (pre-B50); the degrimed name is
+            # only a TARGET, applied collision-safely after assembly.
+            if _mint_degrime_on:
+                _dlabel, _dgrounded = _slot_consistent_label(
+                    members, product_strings, degrime=True)
+                _dname = NAME_TMPL[intent].format(r=_dlabel)
+                if (uf_name_hygiene_enabled() and intent == "other"
+                        and not _dgrounded):
+                    _dname = NAME_TMPL["manage"].format(
+                        r=_singularize_phrase(_dlabel))
+                if _dname != uf_name:
+                    _mint_degrime_targets[uf_id] = _dname
             # System UFs carry the dominant member trigger as their sub-type.
             uf_trigger: str | None = None
             if section_category == "system":
@@ -1479,6 +1527,23 @@ def cluster_user_flows(
                 "synthesized": True,
                 "synthesis_reason": SYSTEM_RECALL_REASON,
             })
+
+    # B50 — apply the degrimed mint labels collision-safely over the FULLY
+    # assembled board: targets first, then only non-colliding renames (two
+    # rows deparaming to the same name BOTH keep their pre-B50 labels — the
+    # kan 'boardids'/'boardslugs' pair stays distinct). Deterministic pure
+    # plan; display-only ('name' key). Flag OFF ⇒ empty map ⇒ byte-identical.
+    if _mint_degrime_targets:
+        from faultline.pipeline_v2.naming_contract import (  # noqa: PLC0415
+            degrime_rename_plan,
+        )
+        _allowed = degrime_rename_plan(
+            {str(r["id"]): str(r["name"]) for r in user_flows},
+            _mint_degrime_targets,
+        )
+        for _row in user_flows:
+            if str(_row["id"]) in _allowed:
+                _row["name"] = _mint_degrime_targets[str(_row["id"])]
     return {
         "user_flows": user_flows,
         "flow_to_uf": flow_to_uf,

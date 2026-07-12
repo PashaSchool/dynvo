@@ -48,6 +48,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
@@ -66,13 +67,18 @@ __all__ = [
     "HUMANIZE_ROUTE_NAMES_ENV",
     "PF_NAME_LAW_ENV",
     "UF_DEVGRAIN_NAME_ENV",
+    "UF_NAME_DEGRIME_ENV",
+    "UF_RESOURCE_RUNG_ENV",
     "naming_contract_enabled",
     "humanize_route_names_enabled",
     "pf_name_law_enabled",
     "uf_devgrain_name_enabled",
+    "uf_name_degrime_enabled",
+    "uf_resource_rung_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
+    "degrime_rename_plan",
     "build_pf_candidates",
     "build_uf_candidates",
     "hub_composition_display",
@@ -125,6 +131,27 @@ PF_NAME_LAW_ENV = "FAULTLINE_PF_NAME_LAW"
 #: restores UserFlow.name to the pre-Part-1b output byte-identically (independent
 #: of the merged PF law so each has its own clean kill-switch).
 UF_DEVGRAIN_NAME_ENV = "FAULTLINE_UF_DEVGRAIN_NAME"
+
+#: B50 Seg1-2 — UF/PF display de-grime kill-switch (default **OFF**). At the
+#: display JOINER it kills adjacent-token echoes ('Ingest ingest', 'View
+#: views', 'case case ids', 'chat chatids' — Seg1) and glyph-less route-param
+#: leaks ('teamurl documents', PF 'URL' — Seg2) in ``UserFlow.name`` /
+#: ``Feature.display_name``. Display channel ONLY — identity / membership /
+#: ``product_feature_id`` / paths / cluster keys / the ``resource`` field /
+#: lineage are untouched. ``=1``/``true`` opts in; unset ⇒ display
+#: byte-identical to pre-B50.
+UF_NAME_DEGRIME_ENV = "FAULTLINE_UF_NAME_DEGRIME"
+
+#: B50 Seg3 — earned resource-grounding rung kill-switch (default **OFF**).
+#: A low UF carrying ``missing:resource`` (verb IS grounded) earns
+#: resource-grounding ONLY from a REAL evidence rung (member-file domain
+#: noun / param-free route segment / mapped test-file noun), each stamping a
+#: distinct ``name_evidence`` entry ('resource:member-noun' …). The Law-C
+#: rubric bar is UNCHANGED — this ADDS OR-sources to ``res_grounded``, never
+#: lowers a threshold, never invents ``missing:verb`` grounding.
+#: ``CONFIDENCE`` channel only. Unset ⇒ confidence + serialized output
+#: byte-identical.
+UF_RESOURCE_RUNG_ENV = "FAULTLINE_UF_RESOURCE_RUNG"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
@@ -222,6 +249,331 @@ def uf_devgrain_name_enabled() -> bool:
     return os.environ.get(UF_DEVGRAIN_NAME_ENV, "1").strip().lower() not in {
         "0", "false",
     }
+
+
+def uf_name_degrime_enabled() -> bool:
+    """B50 Seg1-2 display de-grime. Default **OFF**;
+    ``FAULTLINE_UF_NAME_DEGRIME=1`` arms the adjacent-echo discriminator +
+    glyph-less deparam at the display JOINER. Unset ⇒ byte-identical."""
+    return os.environ.get(UF_NAME_DEGRIME_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
+
+def uf_resource_rung_enabled() -> bool:
+    """B50 Seg3 earned resource rung. Default **OFF**;
+    ``FAULTLINE_UF_RESOURCE_RUNG=1`` arms the member-noun / route / test
+    grounding rungs in Law C (adds OR-sources to ``res_grounded``, bar
+    unchanged). Unset ⇒ confidence + serialized output byte-identical."""
+    return os.environ.get(UF_RESOURCE_RUNG_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
+
+# ── B50 display de-grime (Seg1 echo discriminator; Seg2 raw-param) ──────
+#
+# Structural, vocabulary-free token surgery applied at the display JOINER
+# (never a post-filter over arbitrary finished strings): the same
+# singular-fold + explicit-glued-suffix rule the B46 discriminator uses,
+# lifted to work on already-split display tokens. Seg1 removes adjacent
+# echoes; Seg2 (extended below) additionally reduces glyph-less route-param
+# slugs to their noun core and drops standalone addressing identifiers.
+
+
+def _degrime_sing(t: str) -> str:
+    """Singular-fold one token (mirrors the B46 ``sing``): drop a trailing
+    's' only when >3 chars remain, so 'views'->'view' but 'ids'->'ids'."""
+    return t[:-1] if (t.endswith("s") and len(t) > 3) else t
+
+
+#: Explicit glued tail-echo suffixes (B46 law: EXACT singular-folded
+#: equality OR one of these glued suffixes — NEVER a partial char prefix,
+#: so 'auth-authorize' is safe).
+_DEGRIME_ECHO_SUFFIXES = ("id", "ids", "uuid", "s")
+
+
+def _deglue_echo_tokens(tokens: list[str]) -> list[str]:
+    """Drop an adjacent echo token: (a) a singular-folded duplicate of the
+    previous token (core >=3 chars), or (b) the previous token glued with an
+    explicit id/ids/uuid/s addressing suffix ('chat'+'ids'='chatids').
+
+    NEVER strips a partial character prefix — 'auth authorize' /
+    'auth authorizes' both survive (B46 SACRED anti-case)."""
+    out: list[str] = []
+    for t in tokens:
+        if out:
+            prev = out[-1]
+            pl, tl = prev.lower(), t.lower()
+            ps, ts = _degrime_sing(pl), _degrime_sing(tl)
+            # (a) adjacent noun dup, singular-folded, core >= 3.
+            if ts == ps and len(ps) >= 3:
+                continue
+            # (b) glued tail-echo: t == prev(+sing) + explicit suffix.
+            if len(pl) >= 3 and any(
+                tl == base + suf
+                for base in (pl, ps)
+                for suf in _DEGRIME_ECHO_SUFFIXES
+            ):
+                continue
+        out.append(t)
+    return out
+
+
+#: Seg2 — FROZEN unambiguous identifier tokens (executor ruling, B46 lesson:
+#: linguistic ≠ structural). Used for BOTH the glyph-less glued deparam
+#: ('teamurl'→'team', 'boardid'→'board') and the standalone addressing drop
+#: ('case id'→'case'). Deliberately NARROWER than the vocab's
+#: ``route_addressing_suffixes`` (which the GLYPHED ``_param_noun`` path
+#: keeps using unchanged): vocab suffixes like 'name'/'code'/'key'/'ref'/
+#: 'hash'/'handle' are real word-endings — gluing on them is meaningful-word
+#: loss ('username'→'user', 'barcode'→'bar').
+_STANDALONE_ADDR = frozenset({
+    "id", "ids", "url", "uuid", "guid", "slug", "pk",
+})
+
+
+def _drop_standalone_addr(words: list[str]) -> list[str]:
+    """Seg2 — drop a standalone pure-addressing token ('id', 'ids', 'url', …)
+    that FOLLOWS a non-addressing noun ('case id' -> 'case'); a leading or
+    solitary addressing token is kept (it is handled by the pure-param
+    display replacement, not silently deleted)."""
+    out: list[str] = []
+    for w in words:
+        wl = w.lower()
+        if out and wl in _STANDALONE_ADDR and out[-1].lower() not in _STANDALONE_ADDR:
+            continue
+        out.append(w)
+    return out
+
+
+def _degrime_words(words: list[str]) -> list[str]:
+    """Casing-preserving DROP-only de-grime of a display-word list: Seg1
+    adjacent-echo removal + Seg2 standalone addressing-token drop. No
+    mutation (glyph-less deparam lives in :func:`_deparam_word`), so the
+    result is always a subsequence of the input — span-mapping in
+    :func:`_degrime_display` stays valid."""
+    return _drop_standalone_addr(_deglue_echo_tokens(words))
+
+
+_DEGRIME_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _degrime_display(text: str) -> str:
+    """DROP-only de-grime over a finished display string, preserving every
+    non-word separator (spaces, '&', '—', parens) of the surviving words.
+
+    Used at the two producer seams that emit a joined string — the journey
+    TEMPLATE ('Ingest ingest'->'Ingest') and the current-name echo
+    discriminator. Only removes word tokens the de-grime rule marks as
+    echoes; it never mutates a surviving token (mutation lives in the
+    token-level renderer :func:`_resource_phrase`)."""
+    matches = list(_DEGRIME_WORD_RE.finditer(text or ""))
+    if len(matches) < 2:
+        return text
+    low = [m.group(0).lower() for m in matches]
+    kept = _degrime_words(low)
+    if kept == low:
+        return text
+    keptq = list(kept)
+    drop_spans: list[tuple[int, int]] = []
+    for m in matches:
+        wl = m.group(0).lower()
+        if keptq and wl == keptq[0]:
+            keptq.pop(0)
+        else:
+            drop_spans.append((m.start(), m.end()))
+    if not drop_spans:
+        return text
+    res: list[str] = []
+    last = 0
+    for s, e in drop_spans:
+        res.append(text[last:s])
+        last = e
+    res.append(text[last:])
+    out = "".join(res)
+    out = re.sub(r"\(\s*\)", "", out)          # empty parens after a drop
+    out = re.sub(r"\s+([)\]])", r"\1", out)     # space before a close bracket
+    out = re.sub(r"\s{2,}", " ", out).strip(" -–—&")
+    return out or text
+
+
+def _qualifier_echoes_base(base: str, qual: str) -> bool:
+    """True when EVERY singular-folded token of a candidate qualifier is
+    already present (singular-folded) in the base display — the tautological
+    '(Team)' on 'Teams', '(link)' on 'Manage links', '(Settings)' on 'Manage
+    settings' class. A distinguishing qualifier ('(file)', '(API keys)')
+    shares no folded token and is kept."""
+    b = {_degrime_sing(t) for t in re.split(r"[^a-z0-9]+", (base or "").lower()) if t}
+    q = [_degrime_sing(t) for t in re.split(r"[^a-z0-9]+", (qual or "").lower()) if t]
+    return bool(q) and all(t in b for t in q)
+
+
+def _deparam_word(word: str) -> str:
+    """Seg2 — a glyph-less route-param slug ``<noun><addr-suffix>`` (the
+    ``$teamUrl`` → 'teamurl', ``boardId`` → 'boardid' class that bypassed
+    ``_param_noun`` because it carried no ``$``/``:`` glyph) reduces to its
+    noun core: 'teamurl'->'team', 'boardid'->'board', 'chatids'->'chat'.
+
+    Suffix source is the FROZEN :data:`_STANDALONE_ADDR` subset — NEVER the
+    full vocab ``route_addressing_suffixes`` (executor ruling: 'username'/
+    'filename'/'barcode' must survive; the glyphed ``_param_noun`` path keeps
+    the full vocab set as today). A pure-addressing token ('url', 'id',
+    'ids') is left as-is (the standalone-drop / pure-param replacement
+    handle it). Requires a noun core of >=3 chars that is not itself
+    pure-addressing, so nothing meaningful is truncated."""
+    wl = word.lower()
+    if wl in _STANDALONE_ADDR:
+        return word
+    best: str | None = None
+    for suf in _STANDALONE_ADDR:
+        for tail in (suf, suf + "s"):
+            if wl.endswith(tail) and len(wl) > len(tail):
+                core = wl[: -len(tail)]
+                if len(core) >= 3 and core not in _STANDALONE_ADDR:
+                    # Longest matching suffix wins (prefer 'ids' over 'id').
+                    if best is None or (len(wl) - len(core)) > (len(wl) - len(best)):
+                        best = core
+    return best if best is not None else word
+
+
+def _degrime_resource_words(
+    words: list[str], vocab: Mapping[str, Any],
+) -> list[str]:
+    """Full de-grime of a rendered resource phrase token stream: Seg2
+    glyph-less deparam (mutate ``<noun><addr>`` → core) composed with Seg1
+    adjacent-echo removal + standalone addressing drop. 'teamurl document'
+    -> 'team document'; 'case caseid' -> 'case case' -> 'case'.
+
+    ``vocab`` is accepted for signature stability with the Seg1-committed
+    mint-side caller (``_slot_consistent_label``); the deparam subset is
+    FROZEN (executor ruling), so vocab is not consulted here."""
+    del vocab  # frozen subset; see _deparam_word
+    deparamed = [_deparam_word(w) for w in words]
+    return _degrime_words(deparamed)
+
+
+def _deparam_display(text: str) -> str:
+    """Seg2 raw-param DISPLAY LAW over a finished display string: mutate each
+    glyph-less param slug to its noun core, drop standalone addressing
+    identifiers, collapse the resulting adjacent echoes — preserving every
+    non-word separator ('&', '—', parens). 'teamurl documents' -> 'team
+    documents'; 'boardid card cardids' -> 'board card'."""
+    matches = list(_DEGRIME_WORD_RE.finditer(text or ""))
+    if not matches:
+        return text
+    mutated = [_deparam_word(m.group(0)) for m in matches]
+    keep = [True] * len(mutated)
+    prev_low: str | None = None
+    for i, w in enumerate(mutated):
+        wl = w.lower()
+        if prev_low is not None:
+            # standalone addressing token after a noun → drop.
+            if wl in _STANDALONE_ADDR and prev_low not in _STANDALONE_ADDR:
+                keep[i] = False
+                continue
+            ps, ts = _degrime_sing(prev_low), _degrime_sing(wl)
+            dup = ts == ps and len(ps) >= 3
+            glued = len(prev_low) >= 3 and any(
+                wl == base + suf
+                for base in (prev_low, ps)
+                for suf in _DEGRIME_ECHO_SUFFIXES
+            )
+            if dup or glued:
+                keep[i] = False
+                continue
+        prev_low = wl
+    if all(keep) and mutated == [m.group(0) for m in matches]:
+        return text
+    out: list[str] = []
+    last = 0
+    for i, m in enumerate(matches):
+        sep = text[last:m.start()]
+        if keep[i]:
+            out.append(sep)
+            out.append(mutated[i])
+        elif sep.strip():
+            out.append(sep)     # keep a punctuation separator ('&'), drop bare spaces
+        last = m.end()
+    out.append(text[last:])
+    res = "".join(out)
+    res = re.sub(r"\(\s*\)", "", res)
+    res = re.sub(r"\s+([)\]])", r"\1", res)
+    res = re.sub(r"\s{2,}", " ", res).strip(" -–—&")
+    return res or text
+
+
+def _is_pure_param_display(display: str) -> bool:
+    """True when a display is nothing but addressing identifiers ('URL',
+    'ID', 'Slug') — it names no domain object and must be replaced."""
+    toks = [t for t in re.split(r"[^a-z0-9]+", (display or "").lower()) if t]
+    return bool(toks) and all(t in _STANDALONE_ADDR for t in toks)
+
+
+def _resolve_param_display(
+    anchor_id: str,
+    nav_label: str | None,
+    paths: Iterable[str],
+    vocab: Mapping[str, Any],
+) -> str | None:
+    """Seg2 — resolve a domain noun for a display that would be a pure param
+    ('/p/$url' PF → 'URL'). Ladder: (a) the anchor segment WITHOUT the param,
+    (b) the nav-cluster label, (c) the member-file dominant domain noun via
+    :func:`domain_noun.extract_domain_noun`. NEVER the route letter 'p' /
+    another pure param — each rung is rejected unless it names something."""
+    # (a) anchor segment without the param.
+    base, _qual = humanize_anchor_display(anchor_id, vocab)
+    if (base and not _is_pure_param_display(base)
+            and len(base.replace(" ", "")) > 1
+            and not display_law_violations(base, vocab)):
+        return base
+    # (b) nav-cluster label.
+    if nav_label:
+        nl = polish_display_casing(nav_label, vocab)
+        if (nl and not _is_pure_param_display(nl)
+                and not display_law_violations(nl, vocab)):
+            return nl
+    # (c) member-file / member-component dominant domain noun.
+    try:
+        from faultline.pipeline_v2.domain_noun import extract_domain_noun
+        dn = extract_domain_noun(list(paths), "")
+    except Exception:  # noqa: BLE001 — optional structural resolver
+        dn = None
+    if dn and dn.label and not _is_pure_param_display(dn.label):
+        cand = polish_display_casing(dn.label, vocab)
+        if cand and not display_law_violations(cand, vocab):
+            return cand
+    return None
+
+
+def degrime_rename_plan(
+    current_names: Mapping[str, str],
+    proposals: Mapping[str, str],
+) -> set[str]:
+    """B50 collision-safe rename plan (kan forensics; B16 precedent:
+    "strip … collision-safe"). Compute targets FIRST over all rows, then
+    apply only non-colliding renames.
+
+    A proposed rename is REJECTED (row keeps its original name) when its
+    case-folded target (a) already exists as ANOTHER row's current name —
+    conservative: even when that row is itself being renamed away — or
+    (b) is the target of TWO OR MORE proposals (skip BOTH; the kan
+    'boardids'/'boardslugs' → 'Manage boards' ×2 class stays as honest
+    distinct grime rather than a flag-created display collision).
+
+    Pure function of the two maps ⇒ deterministic and independent of
+    iteration / application / input order. Returns the uids whose rename
+    may be applied."""
+    cnt = Counter((n or "").strip().lower() for n in current_names.values())
+    tcnt = Counter((v or "").strip().lower() for v in proposals.values())
+    applied: set[str] = set()
+    for uid in sorted(proposals):
+        tgt = (proposals[uid] or "").strip().lower()
+        cur = (current_names.get(uid) or "").strip().lower()
+        exists_other = cnt.get(tgt, 0) - (1 if tgt == cur else 0) > 0
+        if exists_other or tcnt[tgt] >= 2:
+            continue
+        applied.add(uid)
+    return applied
 
 
 # ── Route-template humanization (B2 — router-family aware) ──────────────
@@ -911,6 +1263,14 @@ def build_pf_candidates(
 
     if nav_label:
         _add(polish_display_casing(nav_label, vocab))
+    # B50 Seg2 — a PF display that would BE a pure route param ('/p/$url' ->
+    # 'URL') names no domain object: resolve a domain noun from the anchor
+    # (minus the param) / nav-cluster / member-file dominant domain noun and
+    # lead with it. Never the route letter 'p'. Flag OFF ⇒ byte-identical.
+    if uf_name_degrime_enabled() and _is_pure_param_display(
+            polish_display_casing(current, vocab)):
+        _add(_resolve_param_display(
+            anchor_id, nav_label, getattr(pf, "paths", None) or [], vocab))
     pkg_display, _pkg_src = _package_manifest_display(
         anchor_id, vocab, repo_root, current)
     if pkg_display:
@@ -996,6 +1356,13 @@ def _resource_phrase(pf_display: str, vocab: Mapping[str, Any]) -> str:
             words.append(w.upper())
         else:
             words.append(w.lower())
+    words = [x for x in words if x]
+    # B50 — the canonical resource renderer is the JOINER for every UF-name
+    # template + Law-A/C resource phrase; de-grime its token stream so an
+    # echoed ('case case ids') or param-glued resource never composes into a
+    # display. Flag OFF ⇒ byte-identical.
+    if uf_name_degrime_enabled():
+        words = _degrime_resource_words(words, v)
     return " ".join(x for x in words if x)
 
 
@@ -1061,6 +1428,12 @@ def build_uf_candidates(
         template_name = tmpl.replace(
             "{r}", _resource_phrase(pf_display or current, vocab))
 
+    # B50 Seg1 — a template whose verb duplicates the leading resource token
+    # ('Ingest ingest', 'View views', 'Send send test email') collapses at
+    # the joiner. Flag OFF ⇒ byte-identical.
+    if uf_name_degrime_enabled():
+        template_name = _degrime_display(template_name)
+
     out: list[str] = []
 
     def _add(c: str | None) -> None:
@@ -1074,6 +1447,13 @@ def build_uf_candidates(
     polished_current = polish_display_casing(current, vocab)
     current_clean = not display_law_violations(
         polished_current, vocab, pf_display=pf_display)
+    # B50 Seg1 — an adjacent-echo current name ('Manage API case case ids')
+    # passes the display laws yet must yield to the now-clean template: mark
+    # it UNCLEAN so the template leads and the echo is re-derived away.
+    if uf_name_degrime_enabled() and current_clean and (
+        _degrime_display(polished_current) != polished_current
+    ):
+        current_clean = False
     if (synthesized or twin) or not current_clean:
         _add(template_name)
         _add(polished_current)
@@ -1212,6 +1592,7 @@ def _apply_uf_name_laws(
     keeper_on: bool,
     nav_labels: Mapping[str, str] | None = None,
     flow_origin_by_id: Mapping[str, str] | None = None,
+    flow_by_id: Mapping[str, Any] | None = None,
 ) -> None:
     """B9 — three deterministic UF display laws over FINAL members/names, run
     AFTER the labeler so labeler-introduced collisions/over-claims are caught.
@@ -1279,6 +1660,13 @@ def _apply_uf_name_laws(
     # ── Law A — UF-vs-UF display uniqueness (never a numeric suffix) ──
     # step 1: undo the labeler's lossy collapse — a colliding lattice action
     # child reverts to its deterministic "<Family> <resource>" name.
+    # B50 (degrime ON only): the re-derived cand carries a DEGRIMED resource
+    # phrase, so it can newly collide with a third row — apply step-1 renames
+    # collision-safely (targets computed first, then only non-colliding
+    # renames land; skip-both on duplicate targets). Flag OFF ⇒ the original
+    # immediate-apply path, byte-identical.
+    _lawa_two_phase = uf_name_degrime_enabled()
+    _lawa_proposals: dict[str, str] = {}
     groups: dict[str, list[Any]] = defaultdict(list)
     for uf in ordered:
         groups[_folded(uf)].append(uf)
@@ -1295,7 +1683,16 @@ def _apply_uf_name_laws(
                 f"{_ACTION_FAMILY_WORD[fam]} {_res(uf)}".strip(), vocab)
             if (cand and cand.strip().lower() != _folded(uf)
                     and not display_law_violations(cand, vocab, pf_display=_pfd(uf) or None)):
-                uf.name = cand
+                if _lawa_two_phase:
+                    _lawa_proposals[str(getattr(uf, "id", "") or "")] = cand
+                else:
+                    uf.name = cand
+    if _lawa_proposals:
+        _cur = {str(getattr(u, "id", "") or ""): str(getattr(u, "name", "") or "")
+                for u in ordered}
+        _by_id = {str(getattr(u, "id", "") or ""): u for u in ordered}
+        for _uid in sorted(degrime_rename_plan(_cur, _lawa_proposals)):
+            _by_id[_uid].name = _lawa_proposals[_uid]
     # step 2: qualify any residual collision from distinguishing evidence.
     taken: dict[str, str] = {}
     for uf in ordered:
@@ -1323,6 +1720,11 @@ def _apply_uf_name_laws(
             if fam:
                 quals.append(_ACTION_FAMILY_WORD[fam].lower())
             for q in quals:
+                # B50 Seg1 — never append a qualifier that merely restates a
+                # word already in the base ('Teams (Team)', 'Manage links
+                # (link)', 'Manage settings (Settings)', 'Manage tRPC (tRPC)').
+                if uf_name_degrime_enabled() and _qualifier_echoes_base(base, q):
+                    continue
                 cand = polish_display_casing(f"{base} ({q})", vocab)
                 fld = cand.strip().lower()
                 if (fld not in taken
@@ -1341,6 +1743,40 @@ def _apply_uf_name_laws(
     # stamps ``name_evidence`` (fired rungs, or ``missing:*`` for a low). The
     # flag NEVER changes a UF NAME; with it OFF the confidence values and the
     # serialized output are byte-identical to pre-B40 (name_evidence stays None).
+    # ── B50 Seg2: raw-param display law over the FINAL UF name (mutate a
+    # glyph-less route-param slug to its noun core, drop standalone
+    # addressing tokens) — applied before Law C so confidence is scored on
+    # the clean name. DISPLAY-ONLY; protected (authored/pinned) journeys are
+    # never re-worded. COLLISION-SAFE (kan forensics): targets are computed
+    # first over sorted UFs, then only non-colliding renames apply — two
+    # rows deparaming to the same name ('boardids'/'boardslugs' → 'board')
+    # BOTH keep their original names. Flag OFF ⇒ byte-identical.
+    if uf_name_degrime_enabled():
+        dep_proposals: dict[str, str] = {}
+        for uf in ordered:
+            if _uf_protected(uf, authored_ids, keeper_on):
+                continue
+            cur = str(getattr(uf, "name", "") or "")
+            deparamed = _deparam_display(cur)
+            if (deparamed and deparamed != cur
+                    and not display_law_violations(
+                        deparamed, vocab, pf_display=_pfd(uf) or None)):
+                dep_proposals[str(getattr(uf, "id", "") or "")] = deparamed
+        if dep_proposals:
+            cur_names = {
+                str(getattr(u, "id", "") or ""): str(getattr(u, "name", "") or "")
+                for u in ordered
+            }
+            allowed = degrime_rename_plan(cur_names, dep_proposals)
+            by_id = {str(getattr(u, "id", "") or ""): u for u in ordered}
+            for uid in sorted(allowed):
+                by_id[uid].name = dep_proposals[uid]
+                tele["uf_name_degrimed"] = tele.get("uf_name_degrimed", 0) + 1
+            skipped = len(dep_proposals) - len(allowed)
+            if skipped:
+                tele["uf_degrime_collision_skipped"] = (
+                    tele.get("uf_degrime_collision_skipped", 0) + skipped)
+
     rungs_on = name_evidence_rungs_enabled()
     _nav = nav_labels or {}
     _origin = flow_origin_by_id or {}
@@ -1351,6 +1787,56 @@ def _apply_uf_name_laws(
 
     def _toks(text: str) -> set[str]:
         return {_sing(t) for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t}
+
+    # ── B50 Seg3 — earned resource rung (FAULTLINE_UF_RESOURCE_RUNG) ──
+    # A low ``missing:resource`` UF (verb grounded, resource not) earns
+    # resource-grounding ONLY from a REAL evidence rung. Bar UNCHANGED — these
+    # are extra OR-sources to ``res_grounded``, never a lowered threshold. Flag
+    # OFF ⇒ every hit below is False ⇒ res_grounded / confidence / name_evidence
+    # byte-identical.
+    rung_on = uf_resource_rung_enabled()
+    _flow_by_id = flow_by_id or {}
+    _extract_domain_noun = None
+    if rung_on:
+        try:
+            from faultline.pipeline_v2.domain_noun import extract_domain_noun
+            _extract_domain_noun = extract_domain_noun
+        except Exception:  # noqa: BLE001 — optional structural resolver
+            _extract_domain_noun = None
+        tele["resource_rung_fired"] = {"member-noun": 0, "route": 0, "test": 0}
+
+    def _member_paths(u: Any) -> list[str]:
+        """Union of the member flows' entry_point_file + paths."""
+        out: set[str] = set()
+        for m in (getattr(u, "member_flow_ids", None) or []):
+            fl = _flow_by_id.get(str(m))
+            if fl is None:
+                continue
+            for p in (getattr(fl, "paths", None) or []):
+                if p:
+                    out.add(str(p))
+            ep = getattr(fl, "entry_point_file", None)
+            if ep:
+                out.add(str(ep))
+        return sorted(out)
+
+    def _member_test_nouns(u: Any) -> set[str]:
+        """Singular-folded nouns from a member flow's MAPPED test files (B36 —
+        flow_test_mapper only maps a test whose member-overlap already holds)."""
+        nouns: set[str] = set()
+        for m in (getattr(u, "member_flow_ids", None) or []):
+            fl = _flow_by_id.get(str(m))
+            if fl is None:
+                continue
+            for tf in (getattr(fl, "test_files", None) or []):
+                base = str(tf).rsplit("/", 1)[-1]
+                stem = re.split(
+                    r"\.(?:test|spec|e2e|stories|cy)\b", base, maxsplit=1,
+                    flags=re.IGNORECASE)[0]
+                if "." in stem:
+                    stem = stem.rsplit(".", 1)[0]
+                nouns |= _toks(re.sub(r"[-_.]+", " ", stem))
+        return nouns
 
     for uf in ordered:
         uid = str(getattr(uf, "id", "") or "")
@@ -1400,8 +1886,48 @@ def _apply_uf_name_laws(
         )
         registry_hit = bool(registry_all and lead == "act")
 
-        res_grounded = base_res or nav_hit
+        # ── B50 Seg3 rungs (flag-gated; each grounds RESOURCE only) ──
+        # (a) member-file domain noun, (b) param-free route segment, (c) mapped
+        # test-file noun — each overlapping the UF name or its resource phrase.
+        member_noun_hit = route_hit = test_hit = False
+        if rung_on:
+            mpaths = _member_paths(uf)
+            if mpaths:
+                if _extract_domain_noun is not None:
+                    dn = _extract_domain_noun(mpaths, "")
+                    if dn is not None:
+                        dn_toks = _toks(dn.label) | {_sing(dn.token)}
+                        member_noun_hit = bool(
+                            dn_toks & name_toks) or bool(dn_toks & res_toks)
+                route_toks: set[str] = set()
+                for p in mpaths:
+                    for seg in _route_meaningful_segments(p, vocab):
+                        route_toks |= _toks(seg)
+                route_hit = bool(
+                    route_toks & name_toks) or bool(route_toks & res_toks)
+            tnouns = _member_test_nouns(uf)
+            test_hit = bool(tnouns & name_toks) or bool(tnouns & res_toks)
+            # Telemetry — count each NEW grounding (the low the rung uplifts).
+            if not base_res and not nav_hit:
+                if member_noun_hit:
+                    tele["resource_rung_fired"]["member-noun"] += 1
+                if route_hit:
+                    tele["resource_rung_fired"]["route"] += 1
+                if test_hit:
+                    tele["resource_rung_fired"]["test"] += 1
+
+        res_grounded = base_res or nav_hit or member_noun_hit or route_hit or test_hit
         verb_grounded = base_verb or registry_hit
+
+        def _rung_fired() -> list[str]:
+            r: list[str] = []
+            if member_noun_hit:
+                r.append("resource:member-noun")
+            if route_hit:
+                r.append("resource:route")
+            if test_hit:
+                r.append("resource:test")
+            return r
 
         if res_grounded and verb_grounded and uid not in qualified:
             uf.name_confidence = "high"
@@ -1413,6 +1939,7 @@ def _apply_uf_name_laws(
                     fired.append("nav")
                 if registry_hit:
                     fired.append("registry")
+                fired.extend(_rung_fired())
                 uf.name_evidence = fired or ["structural-route"]
         elif res_grounded:
             uf.name_confidence = "medium"
@@ -1422,6 +1949,7 @@ def _apply_uf_name_laws(
                     fired.append("resource")
                 if nav_hit:
                     fired.append("nav")
+                fired.extend(_rung_fired())
                 fired.append("missing:verb")
                 uf.name_evidence = fired
         else:
@@ -1512,6 +2040,9 @@ def run_naming_contract(
     # map so ``member_flow_ids`` resolve identically.
     flow_name_by_id: dict[str, str] = {}
     flow_origin_by_id: dict[str, str] = {}
+    # B50 Seg3 — flow OBJECTS by member id (paths / entry_point_file /
+    # test_files feed the earned resource rung). Keyed by the same id forms.
+    flow_by_id: dict[str, Any] = {}
     for fl in flows or ():
         _origin_tag = (
             "dispatch"
@@ -1522,6 +2053,7 @@ def run_naming_contract(
         for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
             if key:
                 flow_name_by_id.setdefault(str(key), str(getattr(fl, "name", "") or ""))
+                flow_by_id.setdefault(str(key), fl)
                 if _origin_tag:
                     flow_origin_by_id.setdefault(str(key), _origin_tag)
 
@@ -1636,6 +2168,19 @@ def run_naming_contract(
             if stripped_law:
                 chosen, pinned = new_chosen, False
 
+        # ── B50 Seg2: raw-param display law (a glyph-less route-param token
+        # never appears in a PF display: 'teamurl documents' -> 'team
+        # documents'). Runs last so it also cleans a stale pin. Flag OFF ⇒
+        # byte-identical.
+        if uf_name_degrime_enabled():
+            deparamed = _deparam_display(chosen)
+            if (deparamed and deparamed != chosen
+                    and not display_law_violations(deparamed, vocab)
+                    and deparamed.strip().lower() not in taken):
+                chosen, pinned = deparamed, False
+                tele["pf_display_degrimed"] = (
+                    tele.get("pf_display_degrimed", 0) + 1)
+
         taken[chosen.strip().lower()] = slug
         if pinned:
             tele["pf_pinned"] += 1
@@ -1674,6 +2219,12 @@ def run_naming_contract(
             ))
 
     # ── Pass 2: user flows (pins respected; twins/synths templated) ──
+    # B50 (degrime ON only) — a template adoption caused SOLELY by the
+    # Seg1 echo discriminator (law-clean current name, marked unclean by
+    # _degrime_display) is DEFERRED and applied collision-safely after the
+    # pass: targets first, then only non-colliding renames land (a template
+    # already worn by a sibling never duplicates). Flag OFF ⇒ byte-identical.
+    degrime_p2_proposals: dict[str, str] = {}
     for uf in user_flows:
         pf = pf_by_slug.get(str(getattr(uf, "product_feature_id", None) or ""))
         pf_display = (
@@ -1706,6 +2257,19 @@ def run_naming_contract(
                 break
         if chosen is None:
             chosen = polish_display_casing(current, vocab)
+
+        # B50 — pure degrime-induced adoption (no law violation, organic
+        # journey, no authored label, current only unclean via the echo
+        # mark): defer the template; keep the pre-B50 choice (the law-clean
+        # polished current) for this pass.
+        polished_cur = polish_display_casing(current, vocab)
+        if (uf_name_degrime_enabled() and not violations
+                and not getattr(uf, "synthesized", False)
+                and not _authored_for(uf)
+                and chosen != polished_cur
+                and _degrime_display(polished_cur) != polished_cur):
+            degrime_p2_proposals[str(getattr(uf, "id", "") or "")] = chosen
+            chosen = polished_cur
 
         # ── B16 Part-1b: UF dev-grain suffix law (mirror the PF law) ──
         # "View detections page" -> "View detections" when the home PF anchor
@@ -1748,6 +2312,26 @@ def run_naming_contract(
                 obj=uf,
                 pf_display=pf_display or None,
             ))
+
+    # B50 — apply the deferred degrime template adoptions collision-safely
+    # (targets computed over the final Pass-2 names; two rows proposing the
+    # same template BOTH keep their names; a template already worn by any
+    # row never duplicates). Runs before the labeler so Pass 3 sees final
+    # names. Flag OFF ⇒ degrime_p2_proposals is empty ⇒ byte-identical.
+    if degrime_p2_proposals:
+        _p2_cur = {
+            str(getattr(u, "id", "") or ""): str(getattr(u, "name", "") or "")
+            for u in user_flows
+        }
+        _p2_by_id = {str(getattr(u, "id", "") or ""): u for u in user_flows}
+        _p2_allowed = degrime_rename_plan(_p2_cur, degrime_p2_proposals)
+        for _uid in sorted(_p2_allowed):
+            _p2_by_id[_uid].name = degrime_p2_proposals[_uid]
+            tele["uf_renamed"] += 1
+        _p2_skipped = len(degrime_p2_proposals) - len(_p2_allowed)
+        if _p2_skipped:
+            tele["uf_degrime_collision_skipped"] = (
+                tele.get("uf_degrime_collision_skipped", 0) + _p2_skipped)
 
     # ── Pass 3: PM Labeler (keyed persona seam — Wave 3 §4.7) ────────
     # The persona returns VALIDATED picks; this stage stays the single
@@ -1922,6 +2506,7 @@ def run_naming_contract(
             keeper_on=keeper_on,
             nav_labels=nav_labels,
             flow_origin_by_id=flow_origin_by_id,
+            flow_by_id=flow_by_id,
         )
 
     tele["labeler_pending"] = len(pending)
