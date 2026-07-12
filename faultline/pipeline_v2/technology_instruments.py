@@ -125,9 +125,11 @@ __all__ = [
     "TECH_INSTRUMENTS_ENV",
     "CONFIG_LANE_ENV",
     "TRANSPORT_LANE_ENV",
+    "WS_LIBRARY_LANE_ENV",
     "tech_instruments_enabled",
     "config_lane_enabled",
     "transport_lane_enabled",
+    "ws_library_lane_enabled",
     "detect_technology_instruments",
 ]
 
@@ -135,6 +137,8 @@ TECH_INSTRUMENTS_ENV = "FAULTLINE_TECH_INSTRUMENTS"
 #: B19 transport-package lane (design-review, default OFF). See
 #: :func:`transport_lane_enabled`.
 TRANSPORT_LANE_ENV = "FAULTLINE_TECH_TRANSPORT_LANE"
+#: B48 ws-library lane (default OFF). See :func:`ws_library_lane_enabled`.
+WS_LIBRARY_LANE_ENV = "FAULTLINE_WS_LIBRARY_LANE"
 #: B1 kill-switch — the config-channel relaxation of S1c (below). Default
 #: ON; ``FAULTLINE_CONFIG_LANE=0`` keeps the strict ``inf == 0`` guard so
 #: output is byte-identical to pre-B1 main.
@@ -223,6 +227,25 @@ def transport_lane_enabled() -> bool:
     docstring). ``FAULTLINE_TECH_TRANSPORT_LANE=1`` opts in for that coupled
     work. OFF is byte-identical to pre-B19."""
     return os.environ.get(TRANSPORT_LANE_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
+
+def ws_library_lane_enabled() -> bool:
+    """B48 — corroboration-free ws-package library / name-dep transport lane.
+
+    Default **OFF**. The existing S2 prong already lanes a broadly-imported
+    zero-surface ws-package that imports ≤1 in-repo unit, BUT only when its
+    name matches a dependency token or an infra noun. Compound-named
+    (``twenty-ui`` → ``twentyui``) and generically-named (``shared``,
+    ``dal``, ``framework``) libraries carry no such vocabulary and mint as
+    fake product tiles. ON drops the name-vocab requirement — the HARD S3
+    (no route/page surface via the route veto; not nav-confirmed) plus the
+    import-direction library shape (or the B19 name-dep transport signature)
+    are the mechanism. Candidates ride the B19/B22 transport-handoff channel
+    for journey conservation (never mint-time laning). ``=1``/``true`` opts
+    in; OFF is byte-identical to pre-B48."""
+    return os.environ.get(WS_LIBRARY_LANE_ENV, "0").strip().lower() in {
         "1", "true",
     }
 
@@ -331,6 +354,7 @@ def detect_technology_instruments(
     fdir_units: Iterable[str] = (),
     hub_dirs: Iterable[str] = (),
     source_cache: Any | None = None,
+    nav_prefixes: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Classify workspace units; returns telemetry + the instrument dirs.
 
@@ -786,6 +810,86 @@ def detect_technology_instruments(
                     transport_candidates[u] = instruments.pop(u)
             if transport_candidates:
                 tele["transport_candidates"] = transport_candidates
+
+    # B48 — ws-library / name-dep transport lane (default OFF). The
+    # existing S2 prong lanes a broadly-imported zero-surface package that
+    # imports <=1 in-repo unit ONLY when its name matches a dep token or an
+    # infra noun; compound-named (``twenty-ui``) and generically-named
+    # (``shared``/``dal``/``framework``) libraries carry no such vocabulary
+    # and mint fake product tiles. This post-round fixed-point pass drops
+    # the name-vocab requirement, compensated by the HARD S3 (no route/page
+    # surface — the ``route_surface`` veto — AND not nav-confirmed). It
+    # emits into the SAME ``transport_candidates`` channel B22's Stage 6.985
+    # handoff consumes, so a laned package's journeys re-home first
+    # (all-or-nothing conservation; never mint-time laning — the I9 law).
+    # Every anti-case (route-anchored surfaces, integrations, domain cores,
+    # published CLIs, nested SDK families) is already protected by the
+    # vetoes + the dou>1 / import-breadth guards below. Byte-identical to
+    # pre-B48 when OFF (the pass is skipped).
+    if ws_library_lane_enabled():
+        from faultline.pipeline_v2.transport_handoff import (
+            transport_handoff_enabled,
+        )
+        if transport_handoff_enabled():
+            nav_pfx = tuple(sorted(str(p).strip("/") for p in nav_prefixes if p))
+
+            def _nav_confirmed(u: str) -> bool:
+                # S3 (nav): the unit is blocked when IT or an ANCESTOR is a
+                # nav-declared anchor prefix — the author's own IA places the
+                # unit inside a product area. A nav match on a DEEP DESCENDANT
+                # subtree does NOT block (cal.com forensic, 2026-07-12): a
+                # transport package's router dirs are named after the nav
+                # features they serve by construction (packages/trpc/server/
+                # routers/viewer/apiKeys ↔ the 'api-keys' nav cluster), so
+                # every transport would self-veto on its own attribution
+                # echo. Domain cores with nav-echoing internals stay
+                # protected by the dou>1 guard regardless (packages/lib:
+                # nav-echo AND dou=5 — two independent rails).
+                return any(
+                    u == p or u.startswith(p + "/") for p in nav_pfx
+                )
+
+            b48: dict[str, str] = {}
+
+            def _b48_dou(u: str) -> set[str]:
+                return {t for t in out_units.get(u, ())
+                        if t not in instruments and t not in b48}
+
+            changed = True
+            while changed:
+                changed = False
+                for u in sorted(facts):
+                    if (u in instruments or u in b48
+                            or units.get(u) != "ws-pkg"):
+                        continue
+                    if _vetoes(u):  # route_surface / published_cli /
+                        continue    # nested_family / hosts_hub_family / …
+                    if _nav_confirmed(u):  # S3 nav
+                        continue
+                    fx = facts[u]
+                    inf = len(in_files.get(u, ()))
+                    inu = len(in_units.get(u, ()))
+                    if inf < 5 or inu < 3:  # import-breadth (same as S2)
+                        continue
+                    sig: str | None = None
+                    if fx["name_keys"] & repo_ext_tokens:
+                        # S1 name-dep transport: NAMED after its own external
+                        # dependency family (waives the dou fan-out guard —
+                        # a transport re-routes domain by construction).
+                        sig = "B48:name-dep"
+                    elif len(_b48_dou(u)) <= 1:
+                        # S2 library: imports <=1 non-instrument in-repo unit
+                        # (fixed point over instruments + B48 candidates).
+                        sig = "B48:library"
+                    if sig:
+                        b48[u] = sig
+                        changed = True
+            if b48:
+                tc = dict(tele.get("transport_candidates") or {})
+                for u, sig in b48.items():
+                    tc.setdefault(u, sig)
+                tele["transport_candidates"] = dict(sorted(tc.items()))
+                tele["b48_library_candidates"] = dict(sorted(b48.items()))
 
     # B28 P-D — hub-fixture MARK (mark-only, the B22 candidate-marking
     # shape: no instrument dir, no lane at 6.86 — the unit mints normally

@@ -761,6 +761,12 @@ def run_anchored_mint(
             p for a in anchors if "fdir" in a.sources for p in a.prefixes
         })
         hub_dirs = sorted({a.hub_dir for a in anchors if a.hub_dir})
+        # B48 S3 (nav) — the author's nav-declared anchor subtrees; a
+        # candidate covered by one is a product area, never a lane.
+        nav_prefixes = sorted({
+            p for a in anchors if getattr(a, "nav_confirmed", False)
+            for p in a.prefixes
+        })
         try:
             # R4 — hand the detector the ctx-shared source cache (it has
             # no ctx of its own; ``None`` → it constructs locally).
@@ -775,6 +781,7 @@ def run_anchored_mint(
                 hub_dirs=hub_dirs,
                 source_cache=_shared_src(
                     ctx, Path(getattr(ctx, "repo_path", "."))),
+                nav_prefixes=nav_prefixes,
             )
             instrument_dirs = frozenset(ti_tele.get("dirs") or [])
             tele["technology_instruments"] = ti_tele

@@ -343,6 +343,19 @@ ENV_OUTPUT_FLAGS = (
     # ``src/``-only resolution + route-less anchors byte-identically. No
     # KEY_SCHEMA bump.
     "FAULTLINE_ROUTER_ALIAS_RESOLVE",
+    # B48 (2026-07-12) — ws-library / name-dep transport lane: a
+    # broadly-imported zero-surface (no route/page, not nav-confirmed)
+    # ws-package that imports <=1 in-repo unit (S2 library) OR is named
+    # after its own external dependency family (S1 name-dep transport)
+    # lanes as a technology instrument — the corroboration-free extension
+    # of the S2 prong (compound/generic names: twenty-ui, novu dal/
+    # framework, documenso/cal.com trpc). Rides the B19/B22
+    # transport-handoff channel for journey conservation (never mint-time
+    # laning). Reshapes product_features[] (laned rows leave) +
+    # user_flows[].product_feature_id (re-homed journeys) + the platform
+    # lane when candidates exist. Default OFF; =0/unset byte-identical.
+    # No KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_WS_LIBRARY_LANE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
