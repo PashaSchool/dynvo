@@ -2599,6 +2599,31 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Stage 6.985d — B37-ph2 dispatch-mint homing ($0, default OFF) ──
+    # Re-home each predominantly-dispatch user flow to the PF that OWNS the
+    # mint's target file (path_index dev→PF first, anchor-chain fallback —
+    # NOT the dev-of-first-attribution). Runs AFTER the final path_index
+    # refresh + the flowless-PF backstops so it reads the same owner i16
+    # will (no ping-pong) and a source the move leaves flowless never spawns
+    # a NEW marker (the backstop already passed while it was covered); runs
+    # BEFORE synth_quality so the target PF's marker demotes (its gap
+    # dissolves — cal.com Cal Video). Mutates ONLY user_flows[].
+    # product_feature_id. Kill-switch FAULTLINE_DISPATCH_HOMING_B37P2=0.
+    from faultline.pipeline_v2.dispatch_homing import (
+        dispatch_homing_enabled,
+        home_dispatch_mints,
+    )
+    if dispatch_homing_enabled():
+        try:
+            dh_tele = home_dispatch_mints(
+                user_flows, features, product_features,
+                path_index=lineage_result.path_index)
+            if dh_tele.get("rehomed"):
+                scan_meta["dispatch_homing"] = dh_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"dispatch-homing failed ({exc}); UF homes left as-is")
+
     # ── B4 synthesized-journey quality (Stage 6.98) ────────────────────
     # Runs AFTER the naming contract (so demoted seeds/regrounded backstops
     # carry their final display names) and BEFORE the lane + Stage-7 write.
