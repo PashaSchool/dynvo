@@ -306,6 +306,16 @@ ENV_OUTPUT_FLAGS = (
     # proof I9=0 + keyless byte-identical no-op supabase/midday; KEY_SCHEMA
     # v28). =0 restores the pre-B37-ph2 homes byte-identically.
     "FAULTLINE_DISPATCH_HOMING_B37P2",
+    # B47 Arm B (2026-07-12) — keyless journey recall: attaches route-matched
+    # LIVE flows as members to a groundable e2e orphan journey, graduating it
+    # from a member-less coverage_gaps[] marker to a real member-ful journey
+    # (name = authored_label; name_confidence low→medium on route grounding).
+    # Honest-gap law: an orphan with no covering flow stays member-less.
+    # Default OFF; when ON reshapes user_flows[] (member_flow_ids/member_count
+    # /name_confidence on e2e_journey_recall rows) + removes those rows from
+    # coverage_gaps[]. =0/unset restores byte-identical output. No KEY_SCHEMA
+    # bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_KEYLESS_JOURNEY_RECALL",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

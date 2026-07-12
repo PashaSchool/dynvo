@@ -318,9 +318,11 @@ def test_determinism_two_runs_identical(tmp_path):
 from faultline.pipeline_v2.e2e_truth import (  # noqa: E402
     E2E_ORPHAN_REASON,
     E2E_ORPHAN_UF_ENV,
+    KEYLESS_JOURNEY_RECALL_ENV,
     clean_route_pattern,
     _is_negative_journey,
     _journey_label,
+    keyless_journey_recall_enabled,
     matched_authored_names,
     orphan_uf_enabled,
     synthesize_orphan_journeys,
@@ -408,6 +410,96 @@ def test_orphan_synthesis_mints_grouped_pf_bound_uf():
     assert uf.routes == ["/t/:param/documents"]   # evidence
     assert len(titles) == 2                        # both bulk tests grouped
     assert res["tele"]["minted"] == 1
+
+
+def _flow(name, entry, paths=None, uuid=""):
+    return SimpleNamespace(name=name, uuid=uuid, entry_point_file=entry,
+                           paths=paths or [entry], shared_paths=[])
+
+
+def _bulk_payload():
+    return {
+        "orphan_journeys": [
+            _orphan("[BULK_ACTIONS]: can select multiple documents",
+                    ["/t/:param/documents"]),
+        ],
+        "uf_e2e_evidence": {}, "matched": [],
+    }
+
+
+def _bulk_setup():
+    dev = _devf("documents-route", [_DOCS_ROUTE], "documents")
+    routes_index = [{"pattern": "/_authenticated+/t.$teamUrl+/documents._index",
+                     "file": _DOCS_ROUTE}]
+    return dev, routes_index
+
+
+# -- B47 Arm B: keyless journey recall (member-ful orphan graduation) --------
+
+
+def test_keyless_journey_recall_flag_default_off(monkeypatch):
+    monkeypatch.delenv(KEYLESS_JOURNEY_RECALL_ENV, raising=False)
+    assert not keyless_journey_recall_enabled()
+    monkeypatch.setenv(KEYLESS_JOURNEY_RECALL_ENV, "1")
+    assert keyless_journey_recall_enabled()
+    monkeypatch.setenv(KEYLESS_JOURNEY_RECALL_ENV, "0")
+    assert not keyless_journey_recall_enabled()
+
+
+def test_orphan_graduates_member_ful_when_flow_covers_route(monkeypatch):
+    # A LIVE flow whose entry_point_file IS the orphan's resolved route file:
+    # the orphan graduates from a member-less gap to a real member-ful journey
+    # (route-grounded → confidence low→medium), keeping the authored reason.
+    monkeypatch.setenv(KEYLESS_JOURNEY_RECALL_ENV, "1")
+    dev, routes_index = _bulk_setup()
+    covering = _flow("browse-documents-flow", _DOCS_ROUTE, uuid="u-docs")
+    res = synthesize_orphan_journeys(
+        _bulk_payload(), [_pf("documents")], [dev], routes_index, [],
+        flows=[covering],
+    )
+    uf, _titles = res["minted"][0]
+    assert uf.member_flow_ids == ["u-docs"]           # route-matched member
+    assert uf.member_count == 1
+    assert uf.name_confidence == "medium"             # route grounding lifts
+    assert uf.synthesis_reason == E2E_ORPHAN_REASON   # traceability preserved
+    assert uf.synthesized is True
+    assert res["tele"]["member_ful"] == 1
+    assert res["tele"]["members_total"] == 1
+
+
+def test_orphan_stays_honest_gap_when_no_flow_covers(monkeypatch):
+    # ANTI-CASE (the sacred one): a flow that does NOT touch the resolved route
+    # file must NEVER be attached — inventing a member would fabricate a
+    # journey with no route/entry evidence. The orphan stays a member-less gap.
+    monkeypatch.setenv(KEYLESS_JOURNEY_RECALL_ENV, "1")
+    dev, routes_index = _bulk_setup()
+    unrelated = _flow("billing-flow", "apps/remix/app/routes/settings.billing.tsx",
+                      uuid="u-bill")
+    res = synthesize_orphan_journeys(
+        _bulk_payload(), [_pf("documents")], [dev], routes_index, [],
+        flows=[unrelated],
+    )
+    uf, _titles = res["minted"][0]
+    assert uf.member_flow_ids == []                   # honest gap — no evidence
+    assert uf.member_count == 0
+    assert uf.name_confidence == "low"
+    assert res["tele"]["member_ful"] == 0
+
+
+def test_orphan_member_attach_off_byte_identical(monkeypatch):
+    # Flag OFF (default): even a covering flow is ignored — output byte-identical
+    # to the pre-B47 member-less recall seed.
+    monkeypatch.delenv(KEYLESS_JOURNEY_RECALL_ENV, raising=False)
+    dev, routes_index = _bulk_setup()
+    covering = _flow("browse-documents-flow", _DOCS_ROUTE, uuid="u-docs")
+    res = synthesize_orphan_journeys(
+        _bulk_payload(), [_pf("documents")], [dev], routes_index, [],
+        flows=[covering],
+    )
+    uf, _titles = res["minted"][0]
+    assert uf.member_flow_ids == []
+    assert uf.member_count == 0
+    assert uf.name_confidence == "low"
 
 
 def test_orphan_negative_paths_filtered_not_minted():

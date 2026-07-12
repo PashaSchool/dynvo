@@ -52,7 +52,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from faultline.pipeline_v2.spine_anchors import (
     _pattern_key_chain,
@@ -831,6 +831,61 @@ def orphan_uf_enabled() -> bool:
     }
 
 
+#: B47 Arm B (2026-07-12) — keyless journey recall: attach EXISTING flows as
+#: members to a groundable orphan journey whose resolved route-handler files
+#: are covered by those flows (``entry_point_file``/``paths`` overlap — the
+#: ``route_group_recall`` member-selection pattern). A maintainer-authored
+#: playwright journey + route-evidence to a LIVE flow is the strongest recall
+#: signal in the system (INGEST doctrine): the orphan graduates from a
+#: member-LESS ``coverage_gaps[]`` marker to a real, member-ful journey named
+#: by its ``authored_label``. HONEST-GAP LAW: when NO flow covers the resolved
+#: files the orphan stays member-less (an honest gap — resolution incomplete),
+#: never an invented browse-journey. Default OFF; registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS`` (append-only, no KEY_SCHEMA bump).
+KEYLESS_JOURNEY_RECALL_ENV = "FAULTLINE_KEYLESS_JOURNEY_RECALL"
+
+#: Same member cap as the 6.7d backstop / route_group_recall — thin by
+#: construction (a journey cites its route-entry flows, not the whole surface).
+_ORPHAN_MEMBER_CAP = 8
+
+
+def keyless_journey_recall_enabled() -> bool:
+    """Default OFF; ``FAULTLINE_KEYLESS_JOURNEY_RECALL=1`` attaches route-matched
+    existing flows as members to groundable orphan journeys (B47 Arm B). OFF
+    keeps output byte-identical (orphans stay member-less recall seeds)."""
+    return os.environ.get(KEYLESS_JOURNEY_RECALL_ENV, "0").strip().lower() in {
+        "1", "true", "on", "yes",
+    }
+
+
+def _orphan_route_members(
+    files: set[str], flows: list[Any] | None,
+) -> list[str]:
+    """Member ids (``uuid``-else-``name``) of flows whose entry/span covers any
+    of *files* (the orphan's resolved route-handler files). Deterministic:
+    entry-inside ranks before span-crossing, then lexicographic member id;
+    capped at :data:`_ORPHAN_MEMBER_CAP`. Empty ⇒ honest gap (no live flow)."""
+    if not files or not flows:
+        return []
+    ranked: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for fl in flows:
+        mid = str(_uf_get(fl, "uuid", "") or _uf_get(fl, "name", "") or "")
+        if not mid or mid in seen:
+            continue
+        ep = str(_uf_get(fl, "entry_point_file", "") or "")
+        span = {str(p) for p in (_uf_get(fl, "paths", None) or [])}
+        for sp in (_uf_get(fl, "shared_paths", None) or []):
+            p = _uf_get(sp, "path", None) if isinstance(sp, dict) else sp
+            if p:
+                span.add(str(p))
+        if ep in files or (span & files):
+            seen.add(mid)
+            ranked.append((0 if ep in files else 1, mid))
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    return [mid for _, mid in ranked[:_ORPHAN_MEMBER_CAP]]
+
+
 # Negative / error-path journeys — the maintainer scripts these to assert a
 # GUARD (auth denial, validation error, hierarchy invariant), not a product
 # capability. Not UF-grade (e2emerge flagged the "verify role hierarchy
@@ -983,6 +1038,7 @@ def synthesize_orphan_journeys(
     developer_features: list[Any],
     routes_index: list[dict[str, Any]] | None,
     user_flows: list[Any],
+    flows: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Mint tagged, PF-bound ``UserFlow`` rows from groundable orphan
     journeys. Deterministic, $0 LLM, additive.
@@ -1013,6 +1069,13 @@ def synthesize_orphan_journeys(
     }
     if not orphans:
         return {"minted": [], "tele": tele}
+
+    recall_on = keyless_journey_recall_enabled()
+    # B47 Arm B — member-ful graduation counters. Kept LOCAL (not seeded into
+    # ``tele``) so an OFF scan's telemetry is byte-identical to pre-B47; the
+    # keys are stamped into ``tele`` only under the flag, at the end.
+    member_ful = 0
+    members_total = 0
 
     vocab = load_spine_vocab()
     version_re = re.compile(vocab.get("version_segment_pattern") or r"^v\d+$")
@@ -1125,6 +1188,19 @@ def synthesize_orphan_journeys(
         name = _label_to_name(g["label"])
         intent = _journey_intent(" ".join(g["titles"][:6]) + " " + name)
         routes = sorted(g["urls"])
+        # B47 Arm B — attach live flows whose entry/span covers the resolved
+        # route-handler files, graduating the orphan from a member-LESS gap
+        # marker to a real journey. HONEST-GAP LAW: no covering flow ⇒ empty
+        # members ⇒ the orphan stays a gap (resolution incomplete). Route
+        # grounding lifts the name confidence low→medium (Law C-compatible).
+        member_ids = (
+            _orphan_route_members(g["files"], flows) if recall_on else []
+        )
+        name_conf: Literal["low", "medium"] = (
+            "medium" if member_ids else "low")
+        if member_ids:
+            member_ful += 1
+            members_total += len(member_ids)
         uf = UserFlow(
             id="UF-000",                 # provisional — caller renumbers
             name=name,
@@ -1132,12 +1208,12 @@ def synthesize_orphan_journeys(
             domain=None,
             product_feature_id=pfk,
             intent=intent,
-            member_flow_ids=[],
-            member_count=0,
+            member_flow_ids=member_ids,
+            member_count=len(member_ids),
             routes=routes,
             refined=True,                # 6.7b already ran; skip re-refine
             category="interactive",      # playwright drives a browser
-            name_confidence="low",
+            name_confidence=name_conf,
             binding_confidence="low",
             synthesized=True,
             synthesis_reason=E2E_ORPHAN_REASON,
@@ -1161,6 +1237,11 @@ def synthesize_orphan_journeys(
             tele["minted_names"].append(f"{name} → {pfk}")
 
     tele["minted"] = len(minted)
+    # B47 Arm B — stamp graduation counters ONLY under the flag so an OFF scan's
+    # ``e2e_orphan_uf`` telemetry stays byte-identical to pre-B47.
+    if recall_on:
+        tele["member_ful"] = member_ful
+        tele["members_total"] = members_total
     return {"minted": minted, "tele": tele}
 
 
