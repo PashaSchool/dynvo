@@ -262,31 +262,32 @@ ENV_OUTPUT_FLAGS = (
     "FAULTLINE_FDIR_DEVGRAIN_GATE",
     # B45 (2026-07-11) — coverage_gaps[] gap channel: member-less I8-cover
     # markers leave user_flows[] for a dedicated top-level ``coverage_gaps``
-    # array. off (default) = byte-identical (key absent); dual = gaps emitted
-    # AND the marker rows stay (bijection instrument); full = the marker rows
-    # are REMOVED from user_flows[] and only gaps ship. Reshapes user_flows[]
-    # (full) + adds the coverage_gaps[] key (dual/full). Appended WITHOUT a
-    # KEY_SCHEMA bump — the off default is byte-identical; the later
-    # default-flip commit bumps KEY_SCHEMA (v16/v21/v25 precedent).
+    # array. Default FULL (flipped 2026-07-12 after the keyed proof on
+    # papermark + cal.com; KEY_SCHEMA v27): unset = gaps emitted and the
+    # marker rows REMOVED from user_flows[]; dual = gaps emitted AND the
+    # marker rows stay (bijection instrument); explicit off ("off"/"0"/
+    # "false") restores the pre-B45 byte-identical output (key absent).
+    # Reshapes user_flows[] (full) + adds the coverage_gaps[] key (dual/full).
     "FAULTLINE_COVERAGE_GAP_CHANNEL",
     # B40 (2026-07-11) — provenance-graded name_confidence + name_evidence[]
     # audit trail. Arms the nav / registry / structural-route rungs in Law C
     # and the singular-folded multi-member agreement in synth_quality; stamps
-    # UserFlow.name_evidence. off (default) = byte-identical (name_confidence
-    # rubric unchanged, name_evidence key absent). ON may raise name_confidence
-    # and adds name_evidence[] — UF NAMES stay byte-stable either way. Appended
-    # WITHOUT a KEY_SCHEMA bump — the off default is byte-identical; a later
-    # default-flip commit would bump KEY_SCHEMA.
+    # UserFlow.name_evidence. Default ON (flipped 2026-07-12 after the keyed
+    # proof on papermark + cal.com; KEY_SCHEMA v27): may raise name_confidence
+    # and adds name_evidence[] — UF NAMES stay byte-stable either way. =0
+    # restores the pre-B40 rubric + serialized output byte-identically
+    # (name_evidence key absent).
     "FAULTLINE_NAME_EVIDENCE_RUNGS",
-    # B46 (2026-07-11) — UF-name hygiene: kills three garbage-name sources —
+    # B46 (2026-07-11) — UF-name hygiene: kills the garbage-name sources —
     # the doubled route/file-stem token concat ('settings accounts settings
-    # accounts', root in flow_name_v2._resource_tokens), the bare pluralized
-    # dir-stem leaf on an ungrounded 'other'-intent slot ('onboardings' ->
-    # 'Manage onboarding'), and an inherited Stage-5.5 ordinal on a UF label
-    # ('… action 3'). off (default) = byte-identical; ON reshapes flow.name
-    # (concat root) + user_flows[].name (garbage rows only). Appended WITHOUT a
-    # KEY_SCHEMA bump — off is byte-identical; a later default-flip commit
-    # would bump KEY_SCHEMA.
+    # accounts', root in flow_name_v2._resource_tokens), the GLUED plain-slug
+    # seed echo on the UF-label side, the bare pluralized dir-stem leaf on an
+    # ungrounded 'other'-intent slot ('onboardings' -> 'Manage onboarding'),
+    # and an inherited Stage-5.5 ordinal on a UF label ('… action 3').
+    # Default ON (flipped 2026-07-12 after the keyed proof on papermark +
+    # cal.com; KEY_SCHEMA v27): reshapes flow.name (concat root) +
+    # user_flows[].name (garbage rows only). =0 restores the pre-B46 flow/UF
+    # names byte-identically.
     "FAULTLINE_UF_NAME_HYGIENE",
 )
 
@@ -322,7 +323,12 @@ ENV_OUTPUT_FLAGS = (
 #: v25 (B34-b re-flip): FAULTLINE_DISPATCH_REGISTRY_FLOWS default OFF -> ON
 #: (rails merged; hollow=0 proof on keyed supabase + Soc0).
 #: v26 (B38): added FAULTLINE_MARKER_COORDS_REQUIRED + default flip ON at merge.
-KEY_SCHEMA_VERSION = 26
+#: v27 (B45+B40+B46 flip): FAULTLINE_COVERAGE_GAP_CHANNEL default off -> full,
+#: FAULTLINE_NAME_EVIDENCE_RUNGS default OFF -> ON, FAULTLINE_UF_NAME_HYGIENE
+#: default OFF -> ON — default flips change what "unset" means, so cached
+#: entries keyed under unset must not be served across them (v16/v21/v25
+#: precedent). Keyed proof: papermark + cal.com green (2026-07-12).
+KEY_SCHEMA_VERSION = 27
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

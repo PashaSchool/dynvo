@@ -162,13 +162,29 @@ def _run(mode: str) -> tuple[list[dict], dict, Any]:
 
 
 def test_mode_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default FULL since the 2026-07-12 flip (KEY_SCHEMA v27): unset / "" /
+    # unrecognised read "full"; explicit off ("off"/"0"/"false") is still a
+    # valid kill-switch value; dual unchanged.
     monkeypatch.delenv(COVERAGE_GAP_CHANNEL_ENV, raising=False)
-    assert coverage_gap_channel_mode() == "off"
-    for v, exp in [("", "off"), ("0", "off"), ("off", "off"), ("OFF", "off"),
-                   ("dual", "dual"), ("DUAL", "dual"), ("full", "full"),
-                   ("garbage", "off"), ("1", "off")]:
+    assert coverage_gap_channel_mode() == "full"
+    for v, exp in [("", "full"), ("0", "off"), ("off", "off"), ("OFF", "off"),
+                   ("false", "off"), ("dual", "dual"), ("DUAL", "dual"),
+                   ("full", "full"), ("garbage", "full"), ("1", "full")]:
         monkeypatch.setenv(COVERAGE_GAP_CHANNEL_ENV, v)
         assert coverage_gap_channel_mode() == exp, v
+
+
+def test_unset_equals_explicit_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch (post-flip): UNSET behaves byte-identically to an
+    explicit ``full`` on the synthetic scene."""
+    full_ufs, full_meta, full_gaps = _run("full")
+    monkeypatch.delenv(COVERAGE_GAP_CHANNEL_ENV, raising=False)
+    ufs, flows, pfs, devs = copy.deepcopy(_scene())
+    meta: dict[str, Any] = {}
+    tele = run_synth_quality(ufs, flows, pfs, meta, developer_features=devs)
+    assert ufs == full_ufs
+    assert meta == full_meta
+    assert tele["coverage_gaps"] == full_gaps
 
 
 # ── off = byte-identical ─────────────────────────────────────────────────────

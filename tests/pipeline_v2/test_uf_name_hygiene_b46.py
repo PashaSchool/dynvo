@@ -50,11 +50,37 @@ _TWENTY_PATTERN = "/settings/accounts/SettingsAccounts"
 
 # ── flag plumbing ────────────────────────────────────────────────────────
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default ON since the 2026-07-12 flip (KEY_SCHEMA v27); =0 is the
+    # explicit kill-switch.
     monkeypatch.delenv(UF_NAME_HYGIENE_ENV, raising=False)
-    assert uf_name_hygiene_enabled() is False
+    assert uf_name_hygiene_enabled() is True
     monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "1")
     assert uf_name_hygiene_enabled() is True
+    monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "0")
+    assert uf_name_hygiene_enabled() is False
+    monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "false")
+    assert uf_name_hygiene_enabled() is False
+
+
+def test_unset_equals_explicit_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch (post-flip): UNSET behaves identically to an
+    explicit ``1`` on the synthetic scenes (flow root + UF label sites)."""
+    def _snapshot() -> tuple:
+        toks = _resource_tokens(_TWENTY_PATTERN, _TWENTY_ENTRY)
+        label = _slot_consistent_label(_twenty_uf_side_members())
+        scene = {
+            "flows": [_uf_flow(_TWENTY_SEED, "a", _TWENTY_ENTRY,
+                               [_TWENTY_ENTRY])],
+            "developer_features": [],
+        }
+        uf = cluster_user_flows(scene)["user_flows"][0]
+        return toks, label, uf["name"], uf["name_confidence"]
+
+    monkeypatch.setenv(UF_NAME_HYGIENE_ENV, "1")
+    explicit = _snapshot()
+    monkeypatch.delenv(UF_NAME_HYGIENE_ENV, raising=False)
+    assert _snapshot() == explicit
 
 
 # ── source 1 — concat root fix ────────────────────────────────────────────

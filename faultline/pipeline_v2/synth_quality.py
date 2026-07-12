@@ -878,11 +878,13 @@ def _is_member_less_marker(uf: Any) -> bool:
 # old rows; the B38-suppressed markers are counted in the shared
 # ``suppressed_markers`` ledger — the no-silent-gap law).
 #
-# Three modes (``FAULTLINE_COVERAGE_GAP_CHANNEL``): off (default) is
-# byte-identical to pre-B45; dual emits gaps AND keeps the marker rows (a
-# bijection instrument — one scan, two worlds); full emits gaps and REMOVES the
-# marker rows from ``user_flows[]``. Member-FUL recall rows (route_group_recall,
-# the member-ful 6.7d backstop) are NEVER markers and are never touched.
+# Three modes (``FAULTLINE_COVERAGE_GAP_CHANNEL``): full (default — flipped
+# 2026-07-12 after the keyed proof on papermark + cal.com; KEY_SCHEMA v27)
+# emits gaps and REMOVES the marker rows from ``user_flows[]``; dual emits gaps
+# AND keeps the marker rows (a bijection instrument — one scan, two worlds);
+# explicit off restores the pre-B45 byte-identical output. Member-FUL recall
+# rows (route_group_recall, the member-ful 6.7d backstop) are NEVER markers and
+# are never touched.
 
 #: B45 gap-channel kill-switch. Registered in
 #: ``scan_result_cache.ENV_OUTPUT_FLAGS``.
@@ -892,13 +894,17 @@ COVERAGE_GAP_CHANNEL_ENV = "FAULTLINE_COVERAGE_GAP_CHANNEL"
 def coverage_gap_channel_mode() -> str:
     """B45 — the gap-channel mode ∈ {``"off"``, ``"dual"``, ``"full"``}.
 
-    ``off`` (default: unset / ``""`` / ``"0"`` / ``"off"``) = byte-identical to
-    pre-B45 (no gaps, ``coverage_gaps`` key absent). ``dual`` emits gaps AND
-    keeps the member-less marker rows in ``user_flows[]``. ``full`` emits gaps
-    and REMOVES the marker rows. Any UNRECOGNISED value falls back to ``off``
-    (fail-safe to byte-identity)."""
+    ``full`` (default — flipped 2026-07-12 after the keyed proof on papermark
+    + cal.com; KEY_SCHEMA v27): unset / ``""`` / any unrecognised value emits
+    ``coverage_gaps[]`` and REMOVES the member-less marker rows from
+    ``user_flows[]``. Explicit ``off`` (also ``"0"`` / ``"false"``) restores
+    the pre-B45 byte-identical output (no gaps, ``coverage_gaps`` key absent).
+    ``dual`` (unchanged) emits gaps AND keeps the marker rows (the bijection
+    instrument)."""
     raw = os.environ.get(COVERAGE_GAP_CHANNEL_ENV, "").strip().lower()
-    return raw if raw in {"dual", "full"} else "off"
+    if raw in {"off", "0", "false"}:
+        return "off"
+    return "dual" if raw == "dual" else "full"
 
 
 def _flowful_pf_set(developer_features: list[Any] | None) -> set[str]:

@@ -507,7 +507,14 @@ def test_is_layer2_noop_decision() -> None:
 
 def test_e2e_orphan_uf_synthesis_wired(tmp_path, monkeypatch):
     """A repo with an e2e spec navigating an uncovered route surface mints a
-    tagged, PF-bound, member-less e2e_journey_recall UserFlow end-to-end."""
+    tagged, PF-bound, member-less e2e_journey_recall UserFlow end-to-end.
+
+    Pinned to the pre-B45 row semantics: since the 2026-07-12 gap-channel
+    default flip (unset = full) member-less recall mints ship as
+    coverage_gaps[] instead of user_flows[] rows — this test's subject is the
+    MINT wiring, so it sets the channel off explicitly to keep asserting the
+    row form."""
+    monkeypatch.setenv("FAULTLINE_COVERAGE_GAP_CHANNEL", "off")
     fake_home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
     _patch_llm_stages(monkeypatch)
