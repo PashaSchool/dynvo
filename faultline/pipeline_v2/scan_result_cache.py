@@ -356,6 +356,14 @@ ENV_OUTPUT_FLAGS = (
     # lane when candidates exist. Default OFF; =0/unset byte-identical.
     # No KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
     "FAULTLINE_WS_LIBRARY_LANE",
+    # B50 Seg1-2 (2026-07-12) — UF/PF display de-grime: kills adjacent-token
+    # echoes ('Ingest ingest', 'case case ids', 'chat chatids') and glyph-less
+    # route-param leaks ('teamurl documents', PF 'URL') at the display JOINER.
+    # DISPLAY-ONLY (uf.name / pf.display_name); identity / membership /
+    # product_feature_id / paths / cluster keys / the resource field / lineage
+    # untouched. Default OFF; =0/unset ⇒ serialized output byte-identical. No
+    # KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_UF_NAME_DEGRIME",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

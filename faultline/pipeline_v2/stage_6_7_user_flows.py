@@ -868,7 +868,21 @@ def _slot_consistent_label(
     if uf_name_hygiene_enabled():
         resource = _strip_inherited_ordinal(resource)  # B46 — drop '…-3' tail
     if resource and resource != "item":
-        return _pluralise(resource.replace("-", " ")), True
+        label = resource.replace("-", " ")
+        # B50 Seg1 — de-grime the resource at the mint joiner (before the
+        # pluraliser) so an echoed slug ('case case') never seeds a UF label.
+        # Display-only: uf.resource / cluster keys are untouched. Flag OFF ⇒
+        # byte-identical.
+        from faultline.pipeline_v2.naming_contract import (  # noqa: PLC0415
+            _degrime_resource_words,
+            load_naming_vocab,
+            uf_name_degrime_enabled,
+        )
+        if uf_name_degrime_enabled():
+            degrimed = " ".join(
+                _degrime_resource_words(label.split(), load_naming_vocab()))
+            label = degrimed or label
+        return _pluralise(label), True
 
     # 3. Anchor basename stem (weak — flagged low-confidence).
     if anchor:

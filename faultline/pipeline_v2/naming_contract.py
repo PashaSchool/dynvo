@@ -66,10 +66,12 @@ __all__ = [
     "HUMANIZE_ROUTE_NAMES_ENV",
     "PF_NAME_LAW_ENV",
     "UF_DEVGRAIN_NAME_ENV",
+    "UF_NAME_DEGRIME_ENV",
     "naming_contract_enabled",
     "humanize_route_names_enabled",
     "pf_name_law_enabled",
     "uf_devgrain_name_enabled",
+    "uf_name_degrime_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -125,6 +127,16 @@ PF_NAME_LAW_ENV = "FAULTLINE_PF_NAME_LAW"
 #: restores UserFlow.name to the pre-Part-1b output byte-identically (independent
 #: of the merged PF law so each has its own clean kill-switch).
 UF_DEVGRAIN_NAME_ENV = "FAULTLINE_UF_DEVGRAIN_NAME"
+
+#: B50 Seg1-2 — UF/PF display de-grime kill-switch (default **OFF**). At the
+#: display JOINER it kills adjacent-token echoes ('Ingest ingest', 'View
+#: views', 'case case ids', 'chat chatids' — Seg1) and glyph-less route-param
+#: leaks ('teamurl documents', PF 'URL' — Seg2) in ``UserFlow.name`` /
+#: ``Feature.display_name``. Display channel ONLY — identity / membership /
+#: ``product_feature_id`` / paths / cluster keys / the ``resource`` field /
+#: lineage are untouched. ``=1``/``true`` opts in; unset ⇒ display
+#: byte-identical to pre-B50.
+UF_NAME_DEGRIME_ENV = "FAULTLINE_UF_NAME_DEGRIME"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
@@ -222,6 +234,134 @@ def uf_devgrain_name_enabled() -> bool:
     return os.environ.get(UF_DEVGRAIN_NAME_ENV, "1").strip().lower() not in {
         "0", "false",
     }
+
+
+def uf_name_degrime_enabled() -> bool:
+    """B50 Seg1-2 display de-grime. Default **OFF**;
+    ``FAULTLINE_UF_NAME_DEGRIME=1`` arms the adjacent-echo discriminator +
+    glyph-less deparam at the display JOINER. Unset ⇒ byte-identical."""
+    return os.environ.get(UF_NAME_DEGRIME_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
+
+# ── B50 display de-grime (Seg1 echo discriminator; Seg2 raw-param) ──────
+#
+# Structural, vocabulary-free token surgery applied at the display JOINER
+# (never a post-filter over arbitrary finished strings): the same
+# singular-fold + explicit-glued-suffix rule the B46 discriminator uses,
+# lifted to work on already-split display tokens. Seg1 removes adjacent
+# echoes; Seg2 (extended below) additionally reduces glyph-less route-param
+# slugs to their noun core and drops standalone addressing identifiers.
+
+
+def _degrime_sing(t: str) -> str:
+    """Singular-fold one token (mirrors the B46 ``sing``): drop a trailing
+    's' only when >3 chars remain, so 'views'->'view' but 'ids'->'ids'."""
+    return t[:-1] if (t.endswith("s") and len(t) > 3) else t
+
+
+#: Explicit glued tail-echo suffixes (B46 law: EXACT singular-folded
+#: equality OR one of these glued suffixes — NEVER a partial char prefix,
+#: so 'auth-authorize' is safe).
+_DEGRIME_ECHO_SUFFIXES = ("id", "ids", "uuid", "s")
+
+
+def _deglue_echo_tokens(tokens: list[str]) -> list[str]:
+    """Drop an adjacent echo token: (a) a singular-folded duplicate of the
+    previous token (core >=3 chars), or (b) the previous token glued with an
+    explicit id/ids/uuid/s addressing suffix ('chat'+'ids'='chatids').
+
+    NEVER strips a partial character prefix — 'auth authorize' /
+    'auth authorizes' both survive (B46 SACRED anti-case)."""
+    out: list[str] = []
+    for t in tokens:
+        if out:
+            prev = out[-1]
+            pl, tl = prev.lower(), t.lower()
+            ps, ts = _degrime_sing(pl), _degrime_sing(tl)
+            # (a) adjacent noun dup, singular-folded, core >= 3.
+            if ts == ps and len(ps) >= 3:
+                continue
+            # (b) glued tail-echo: t == prev(+sing) + explicit suffix.
+            if len(pl) >= 3 and any(
+                tl == base + suf
+                for base in (pl, ps)
+                for suf in _DEGRIME_ECHO_SUFFIXES
+            ):
+                continue
+        out.append(t)
+    return out
+
+
+def _degrime_words(words: list[str]) -> list[str]:
+    """Casing-preserving de-grime of a display-word list (Seg1: adjacent
+    echo removal). Seg2 extends this with glyph-less deparam + standalone
+    addressing drop."""
+    return _deglue_echo_tokens(words)
+
+
+_DEGRIME_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _degrime_display(text: str) -> str:
+    """DROP-only de-grime over a finished display string, preserving every
+    non-word separator (spaces, '&', '—', parens) of the surviving words.
+
+    Used at the two producer seams that emit a joined string — the journey
+    TEMPLATE ('Ingest ingest'->'Ingest') and the current-name echo
+    discriminator. Only removes word tokens the de-grime rule marks as
+    echoes; it never mutates a surviving token (mutation lives in the
+    token-level renderer :func:`_resource_phrase`)."""
+    matches = list(_DEGRIME_WORD_RE.finditer(text or ""))
+    if len(matches) < 2:
+        return text
+    low = [m.group(0).lower() for m in matches]
+    kept = _degrime_words(low)
+    if kept == low:
+        return text
+    keptq = list(kept)
+    drop_spans: list[tuple[int, int]] = []
+    for m in matches:
+        wl = m.group(0).lower()
+        if keptq and wl == keptq[0]:
+            keptq.pop(0)
+        else:
+            drop_spans.append((m.start(), m.end()))
+    if not drop_spans:
+        return text
+    res: list[str] = []
+    last = 0
+    for s, e in drop_spans:
+        res.append(text[last:s])
+        last = e
+    res.append(text[last:])
+    out = "".join(res)
+    out = re.sub(r"\(\s*\)", "", out)          # empty parens after a drop
+    out = re.sub(r"\s+([)\]])", r"\1", out)     # space before a close bracket
+    out = re.sub(r"\s{2,}", " ", out).strip(" -–—&")
+    return out or text
+
+
+def _qualifier_echoes_base(base: str, qual: str) -> bool:
+    """True when EVERY singular-folded token of a candidate qualifier is
+    already present (singular-folded) in the base display — the tautological
+    '(Team)' on 'Teams', '(link)' on 'Manage links', '(Settings)' on 'Manage
+    settings' class. A distinguishing qualifier ('(file)', '(API keys)')
+    shares no folded token and is kept."""
+    b = {_degrime_sing(t) for t in re.split(r"[^a-z0-9]+", (base or "").lower()) if t}
+    q = [_degrime_sing(t) for t in re.split(r"[^a-z0-9]+", (qual or "").lower()) if t]
+    return bool(q) and all(t in b for t in q)
+
+
+def _degrime_resource_words(
+    words: list[str], vocab: Mapping[str, Any],
+) -> list[str]:
+    """De-grime the token stream of a rendered resource phrase (Seg1:
+    adjacent echo removal). Seg2 extends this to reduce a glyph-less
+    ``<noun><addr-suffix>`` slug to its noun core and drop a standalone
+    addressing identifier, using ``vocab['route_addressing_suffixes']``."""
+    return _degrime_words(words)
 
 
 # ── Route-template humanization (B2 — router-family aware) ──────────────
@@ -996,6 +1136,13 @@ def _resource_phrase(pf_display: str, vocab: Mapping[str, Any]) -> str:
             words.append(w.upper())
         else:
             words.append(w.lower())
+    words = [x for x in words if x]
+    # B50 — the canonical resource renderer is the JOINER for every UF-name
+    # template + Law-A/C resource phrase; de-grime its token stream so an
+    # echoed ('case case ids') or param-glued resource never composes into a
+    # display. Flag OFF ⇒ byte-identical.
+    if uf_name_degrime_enabled():
+        words = _degrime_resource_words(words, v)
     return " ".join(x for x in words if x)
 
 
@@ -1061,6 +1208,12 @@ def build_uf_candidates(
         template_name = tmpl.replace(
             "{r}", _resource_phrase(pf_display or current, vocab))
 
+    # B50 Seg1 — a template whose verb duplicates the leading resource token
+    # ('Ingest ingest', 'View views', 'Send send test email') collapses at
+    # the joiner. Flag OFF ⇒ byte-identical.
+    if uf_name_degrime_enabled():
+        template_name = _degrime_display(template_name)
+
     out: list[str] = []
 
     def _add(c: str | None) -> None:
@@ -1074,6 +1227,13 @@ def build_uf_candidates(
     polished_current = polish_display_casing(current, vocab)
     current_clean = not display_law_violations(
         polished_current, vocab, pf_display=pf_display)
+    # B50 Seg1 — an adjacent-echo current name ('Manage API case case ids')
+    # passes the display laws yet must yield to the now-clean template: mark
+    # it UNCLEAN so the template leads and the echo is re-derived away.
+    if uf_name_degrime_enabled() and current_clean and (
+        _degrime_display(polished_current) != polished_current
+    ):
+        current_clean = False
     if (synthesized or twin) or not current_clean:
         _add(template_name)
         _add(polished_current)
@@ -1323,6 +1483,11 @@ def _apply_uf_name_laws(
             if fam:
                 quals.append(_ACTION_FAMILY_WORD[fam].lower())
             for q in quals:
+                # B50 Seg1 — never append a qualifier that merely restates a
+                # word already in the base ('Teams (Team)', 'Manage links
+                # (link)', 'Manage settings (Settings)', 'Manage tRPC (tRPC)').
+                if uf_name_degrime_enabled() and _qualifier_echoes_base(base, q):
+                    continue
                 cand = polish_display_casing(f"{base} ({q})", vocab)
                 fld = cand.strip().lower()
                 if (fld not in taken
