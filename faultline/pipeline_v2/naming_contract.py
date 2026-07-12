@@ -172,12 +172,13 @@ def uf_name_laws_enabled() -> bool:
     }
 
 
-#: B40 name-evidence rungs kill-switch (default OFF). ``=1`` arms the
+#: B40 name-evidence rungs kill-switch (default ON — flipped 2026-07-12 after
+#: the keyed proof on papermark + cal.com; KEY_SCHEMA v27). Arms the
 #: provenance ladder (nav / registry / structural-route corroboration +
 #: singular-folded multi-member agreement) in Law C + synth_quality and stamps
-#: ``UserFlow.name_evidence``. When OFF the confidence rubric AND the serialized
-#: output are byte-identical to pre-B40 (only name_confidence/name_evidence may
-#: ever differ under ON — UF NAMES are byte-stable either way).
+#: ``UserFlow.name_evidence``. ``=0`` restores the pre-B40 confidence rubric
+#: AND serialized output byte-identically (only name_confidence/name_evidence
+#: may ever differ under ON — UF NAMES are byte-stable either way).
 NAME_EVIDENCE_RUNGS_ENV = "FAULTLINE_NAME_EVIDENCE_RUNGS"
 
 
@@ -191,12 +192,14 @@ def humanize_route_names_enabled() -> bool:
 
 def name_evidence_rungs_enabled() -> bool:
     """B40 provenance-graded confidence + ``name_evidence`` audit trail.
-    Default OFF; ``FAULTLINE_NAME_EVIDENCE_RUNGS=1`` arms the nav / registry /
-    structural-route rungs (Law C) and the singular-folded member-agreement
-    widening (synth_quality). OFF ⇒ name_confidence rubric + serialized output
-    byte-identical to pre-B40 (``name_evidence`` stays ``None`` everywhere)."""
-    return os.environ.get(NAME_EVIDENCE_RUNGS_ENV, "0").strip().lower() in {
-        "1", "true",
+    Default ON (flipped 2026-07-12 after the keyed proof on papermark +
+    cal.com; KEY_SCHEMA v27): unset arms the nav / registry / structural-route
+    rungs (Law C) and the singular-folded member-agreement widening
+    (synth_quality). ``FAULTLINE_NAME_EVIDENCE_RUNGS=0`` restores the pre-B40
+    rubric + serialized output byte-identically (``name_evidence`` stays
+    ``None`` everywhere)."""
+    return os.environ.get(NAME_EVIDENCE_RUNGS_ENV, "1").strip().lower() not in {
+        "0", "false",
     }
 
 

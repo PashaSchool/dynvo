@@ -59,13 +59,34 @@ def _apply(ufs, pfs, flow_names, *, nav=None, origin=None, authored=frozenset())
 
 # ── flag plumbing ────────────────────────────────────────────────────────
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default ON since the 2026-07-12 flip (KEY_SCHEMA v27); =0 is the
+    # explicit kill-switch.
     monkeypatch.delenv(NAME_EVIDENCE_RUNGS_ENV, raising=False)
-    assert name_evidence_rungs_enabled() is False
+    assert name_evidence_rungs_enabled() is True
     monkeypatch.setenv(NAME_EVIDENCE_RUNGS_ENV, "1")
     assert name_evidence_rungs_enabled() is True
     monkeypatch.setenv(NAME_EVIDENCE_RUNGS_ENV, "0")
     assert name_evidence_rungs_enabled() is False
+    monkeypatch.setenv(NAME_EVIDENCE_RUNGS_ENV, "false")
+    assert name_evidence_rungs_enabled() is False
+
+
+def test_unset_equals_explicit_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch (post-flip): UNSET behaves identically to an
+    explicit ``1`` on the synthetic scenes (names, confidence, evidence)."""
+    def _snapshot() -> list[tuple[str, str, list[str] | None]]:
+        ufs, pfs, fn = _nav_scene()
+        _apply(ufs, pfs, fn, nav={"acct": "Accounts"})
+        ufs2, pfs2, fn2 = _registry_scene()
+        _apply(ufs2, pfs2, fn2, origin={"m1": "dispatch"})
+        return [(u.name, u.name_confidence, u.name_evidence)
+                for u in ufs + ufs2]
+
+    monkeypatch.setenv(NAME_EVIDENCE_RUNGS_ENV, "1")
+    explicit = _snapshot()
+    monkeypatch.delenv(NAME_EVIDENCE_RUNGS_ENV, raising=False)
+    assert _snapshot() == explicit
 
 
 # ── nav rung — resource grounding from the author's nav label ─────────────

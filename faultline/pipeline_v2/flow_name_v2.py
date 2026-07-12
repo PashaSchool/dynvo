@@ -191,21 +191,25 @@ _ORDINAL_TAIL_RE = re.compile(r"-\d+$")
 #: knob — route handlers are small; this only caps pathological files).
 _MAX_SNIFF_BYTES = 1_000_000
 
-#: B46 UF-name hygiene kill-switch (default OFF; the canonical reader — Stage
-#: 6.7 + synth_quality import it). ``=1`` collapses the doubled route/file-stem
+#: B46 UF-name hygiene kill-switch (default ON — flipped 2026-07-12 after the
+#: keyed proof on papermark + cal.com; KEY_SCHEMA v27. The canonical reader —
+#: Stage 6.7 + synth_quality import it). Collapses the doubled route/file-stem
 #: token run at the flow-name root (a component file that camel-restates its
 #: directory — ``settings/accounts/SettingsAccounts`` -> 'settings accounts
-#: settings accounts') and arms the UF-level bare-plural + inherited-ordinal
-#: fixes. OFF ⇒ byte-identical to pre-B46 flow + UF names.
+#: settings accounts'), the GLUED plain-slug seed echo on the UF-label side,
+#: and arms the UF-level bare-plural + inherited-ordinal fixes. ``=0``
+#: restores the pre-B46 flow + UF names byte-identically.
 UF_NAME_HYGIENE_ENV = "FAULTLINE_UF_NAME_HYGIENE"
 
 
 def uf_name_hygiene_enabled() -> bool:
-    """B46 — kill garbage UF names (doubled concat / bare pluralized leaf /
-    inherited Stage-5.5 ordinal). Default OFF; ``FAULTLINE_UF_NAME_HYGIENE=1``
-    arms the root + UF-level fixes. OFF ⇒ flow/UF names byte-identical."""
-    return os.environ.get(UF_NAME_HYGIENE_ENV, "0").strip().lower() in {
-        "1", "true",
+    """B46 — kill garbage UF names (doubled concat / glued seed echo / bare
+    pluralized leaf / inherited Stage-5.5 ordinal). Default ON (flipped
+    2026-07-12 after the keyed proof on papermark + cal.com; KEY_SCHEMA v27);
+    ``FAULTLINE_UF_NAME_HYGIENE=0`` restores the pre-B46 flow/UF names
+    byte-identically."""
+    return os.environ.get(UF_NAME_HYGIENE_ENV, "1").strip().lower() not in {
+        "0", "false",
     }
 
 
