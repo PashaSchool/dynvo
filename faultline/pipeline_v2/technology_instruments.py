@@ -860,13 +860,13 @@ def detect_technology_instruments(
                         continue    # nested_family / hosts_hub_family / …
                     if _nav_confirmed(u):  # S3 nav
                         continue
-                    f = facts[u]
+                    fx = facts[u]
                     inf = len(in_files.get(u, ()))
                     inu = len(in_units.get(u, ()))
                     if inf < 5 or inu < 3:  # import-breadth (same as S2)
                         continue
                     sig: str | None = None
-                    if f["name_keys"] & repo_ext_tokens:
+                    if fx["name_keys"] & repo_ext_tokens:
                         # S1 name-dep transport: NAMED after its own external
                         # dependency family (waives the dou fan-out guard —
                         # a transport re-routes domain by construction).
