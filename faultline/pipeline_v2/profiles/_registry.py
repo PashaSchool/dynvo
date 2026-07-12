@@ -75,6 +75,22 @@ def _load_default_profiles() -> list[FrameworkProfile]:
     _try("faultline.pipeline_v2.profiles.next_pages_react",
          "NextPagesReactProfile")
 
+    # B44 — React-Router-framework / Remix profile. Registered ONLY when
+    # FAULTLINE_REACT_ROUTER_FW_PROFILE is set (the env read is inline —
+    # importing the profile module for its flag helper would trip the G2
+    # cross-profile import lint; the string-based ``_try`` is the sanctioned
+    # registration path). With the flag off a react-router-framework unit
+    # keeps falling to the DefaultProfile, so selection + every downstream
+    # board is byte-identical (regression guard). Code-gated here rather
+    # than via a pyproject entry-point precisely because an unconditional
+    # entry-point would bypass the flag.
+    import os
+    if os.environ.get("FAULTLINE_REACT_ROUTER_FW_PROFILE", "0").strip() not in {
+        "", "0", "false", "False",
+    }:
+        _try("faultline.pipeline_v2.profiles.react_router_fw",
+             "ReactRouterFrameworkProfile")
+
     return out
 
 

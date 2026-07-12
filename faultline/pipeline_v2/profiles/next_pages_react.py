@@ -75,6 +75,8 @@ structural caps are justified inline.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
@@ -292,40 +294,8 @@ def _import_map(text: str) -> dict[str, str]:
     return out
 
 
-def _resolve_spec(
-    spec: str, from_file: str, tracked_set: frozenset[str],
-) -> str | None:
-    """Resolve a module specifier to a tracked source file.
-
-    Relative specifiers resolve against the importing file's directory;
-    the ``@/`` and ``~/`` aliases resolve against the package's ``src/``
-    root (the Vite/CRA/Next jsconfig convention). Bare package imports
-    return ``None`` (external dependency, not a page).
-    """
-    segs, _fname = _segments(from_file)
-    base: list[str]
-    if spec.startswith("."):
-        base = list(segs)
-        parts = spec.split("/")
-        for part in parts:
-            if part in ("", "."):
-                continue
-            if part == "..":
-                if base:
-                    base.pop()
-            else:
-                base.append(part)
-    elif spec.startswith(("@/", "~/")):
-        # Walk up to the nearest ``src`` segment of the importing file.
-        if "src" not in segs:
-            return None
-        src_idx = len(segs) - 1 - segs[::-1].index("src")
-        base = segs[: src_idx + 1] + [
-            p for p in spec[2:].split("/") if p and p != "."
-        ]
-    else:
-        return None
-    stem = "/".join(base)
+def _try_stem(stem: str, tracked_set: frozenset[str]) -> str | None:
+    """First tracked file for ``stem`` — direct then ``/index`` — or None."""
     for ext in _JS_EXTS:
         if f"{stem}{ext}" in tracked_set:
             return f"{stem}{ext}"
@@ -333,6 +303,162 @@ def _resolve_spec(
         if f"{stem}/index{ext}" in tracked_set:
             return f"{stem}/index{ext}"
     return None
+
+
+def _resolve_spec(
+    spec: str,
+    from_file: str,
+    tracked_set: frozenset[str],
+    alias_map: dict[str, tuple[str, ...]] | None = None,
+) -> str | None:
+    """Resolve a module specifier to a tracked source file.
+
+    Relative specifiers resolve against the importing file's directory;
+    the ``@/`` and ``~/`` aliases resolve against the package's ``src/``
+    root (the Vite/CRA/Next jsconfig convention). Bare package imports
+    return ``None`` (external dependency, not a page).
+
+    B44 — ``alias_map`` (``{prefix: (root_dir, ...)}``, from the repo's
+    tsconfig ``paths``, threaded only when
+    ``FAULTLINE_ROUTER_ALIAS_RESOLVE`` is set) generalises the alias
+    resolution: a Vite SPA that maps ``~/`` → ``app/`` (outline) or ``@/``
+    → any non-``src`` root resolves against its DECLARED root. When
+    ``alias_map`` is ``None`` (flag off) the function is byte-identical to
+    the pre-B44 ``src/``-only behaviour.
+    """
+    segs, _fname = _segments(from_file)
+    if spec.startswith("."):
+        base = list(segs)
+        for part in spec.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if base:
+                    base.pop()
+            else:
+                base.append(part)
+        return _try_stem("/".join(base), tracked_set)
+
+    # B44 — declared tsconfig aliases (longest-prefix wins so ``@shared/``
+    # beats a bare ``@/``). Only consulted when the flag threaded a map.
+    if alias_map:
+        for prefix in sorted(alias_map, key=len, reverse=True):
+            if not spec.startswith(prefix):
+                continue
+            rest = [p for p in spec[len(prefix):].split("/") if p and p != "."]
+            for root in alias_map[prefix]:
+                root_segs = [p for p in root.split("/") if p]
+                hit = _try_stem("/".join(root_segs + rest), tracked_set)
+                if hit is not None:
+                    return hit
+            # Known alias but nothing resolved under any declared root —
+            # fall through to the legacy ``src`` heuristic below.
+            break
+
+    if spec.startswith(("@/", "~/")):
+        # Legacy heuristic: walk up to the nearest ``src`` segment.
+        if "src" not in segs:
+            return None
+        src_idx = len(segs) - 1 - segs[::-1].index("src")
+        base = segs[: src_idx + 1] + [
+            p for p in spec[2:].split("/") if p and p != "."
+        ]
+        return _try_stem("/".join(base), tracked_set)
+    return None
+
+
+#: B44 flag — react-router-SPA alias resolution + route emission. Default
+#: OFF ⇒ ``@/``/``~/`` resolve only against ``src/`` and SPA anchors carry
+#: no ``routes`` (byte-identical). Registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS``.
+ROUTER_ALIAS_RESOLVE_ENV = "FAULTLINE_ROUTER_ALIAS_RESOLVE"
+
+
+def router_alias_resolve_enabled() -> bool:
+    """``True`` when ``FAULTLINE_ROUTER_ALIAS_RESOLVE`` is set truthy."""
+    return os.environ.get(ROUTER_ALIAS_RESOLVE_ENV, "0").strip() not in {
+        "", "0", "false", "False",
+    }
+
+
+def _read_jsonc(path) -> object | None:  # noqa: ANN001 — Path
+    """Tolerant JSON-with-comments read (tsconfig files carry ``//`` +
+    ``/* */`` comments and trailing commas). Returns ``None`` on failure."""
+    text = read_text(path)
+    if not text:
+        return None
+    # Strip block + line comments, then trailing commas — enough for the
+    # ``compilerOptions.paths`` subset we read (never executes JS).
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"(^|[^:])//[^\n]*", r"\1", text)
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _norm_dir(*parts: str) -> str:
+    """Join path fragments into a clean POSIX dir prefix (``""`` = root).
+
+    Drops ``.``/``./`` and empty segments; the result has NO trailing
+    slash and NO leading slash so it composes with ``"/".join(...)``.
+    """
+    out: list[str] = []
+    for frag in parts:
+        for seg in frag.replace("\\", "/").split("/"):
+            if seg in ("", "."):
+                continue
+            out.append(seg)
+    return "/".join(out)
+
+
+def _build_alias_map(ctx: "ScanContext") -> dict[str, tuple[str, ...]]:
+    """``{alias_prefix: (root_dir, ...)}`` from tracked tsconfig ``paths``.
+
+    ``{"~/*": ["./app/*"]}`` in ``tsconfig.json`` → ``{"~/": ("app",)}``.
+    Roots are resolved relative to the tsconfig's own directory + its
+    ``baseUrl`` (so a monorepo ``apps/web/tsconfig.json`` ``@/`` → ``src/``
+    yields ``apps/web/src``). Only wildcard (``prefix/*`` → ``root/*``)
+    aliases are read; several tsconfigs merge (multiple roots per prefix,
+    tried in declared order). Bounded read; deterministic (sorted files).
+    """
+    out: dict[str, set[str]] = {}
+    reads = 0
+    for f in sorted(posix(x) for x in ctx.tracked_files):
+        if f.rsplit("/", 1)[-1] != "tsconfig.json" or _is_excluded_path(f):
+            continue
+        if reads >= _MAX_MANIFEST_READS:
+            break
+        doc = _read_jsonc(ctx.repo_path / f)
+        reads += 1
+        if not isinstance(doc, dict):
+            continue
+        co = doc.get("compilerOptions")
+        if not isinstance(co, dict):
+            continue
+        paths = co.get("paths")
+        if not isinstance(paths, dict):
+            continue
+        raw_base = co.get("baseUrl")
+        base_url = raw_base if isinstance(raw_base, str) else "."
+        cfg_dir = f.rsplit("/", 1)[0] if "/" in f else ""
+        for alias, targets in paths.items():
+            if (
+                not isinstance(alias, str)
+                or not alias.endswith("*")
+                or not isinstance(targets, list)
+            ):
+                continue
+            prefix = alias[:-1]  # keep e.g. "~/", "@/", "@shared/"
+            if not prefix:
+                continue
+            for t in targets:
+                if not isinstance(t, str) or not t.endswith("*"):
+                    continue
+                root = _norm_dir(cfg_dir, base_url, t[:-1])
+                out.setdefault(prefix, set()).add(root)
+    return {k: tuple(sorted(v)) for k, v in out.items()}
 
 
 def _route_slug(path_literal: str) -> str:
@@ -366,11 +492,18 @@ class _RouterIndex:
             and not _is_excluded_path(f)
             and not _is_test_path(f)
         ]
+        # B44 — declared-alias resolution + route emission (flag-gated).
+        # ``alias_map is None`` (flag off) ⇒ ``_resolve_spec`` keeps its
+        # ``src/``-only behaviour and no route tuples are recorded, so the
+        # index is byte-identical to pre-B44.
+        self._alias_on = router_alias_resolve_enabled()
+        alias_map = _build_alias_map(ctx) if self._alias_on else None
 
         self.entries: list[FlowEntry] = []
         self.router_files: set[str] = set()
         buckets: dict[str, set[str]] = defaultdict(set)
         owned: dict[str, str] = {}
+        route_tuples: dict[str, set[tuple[str, str, str]]] = defaultdict(set)
         seen: set[tuple[str, str, str]] = set()
 
         reads = 0
@@ -386,7 +519,7 @@ class _RouterIndex:
 
             for path_literal, ident in self._route_pairs(text):
                 resolved = self._resolve_ident(
-                    ident, imports, rel, tracked_set,
+                    ident, imports, rel, tracked_set, alias_map,
                 ) if ident else None
                 slug = _route_slug(path_literal)
                 if not slug and resolved is not None:
@@ -408,12 +541,21 @@ class _RouterIndex:
                 if resolved is not None:
                     buckets[slug].add(resolved)
                     owned.setdefault(resolved, slug)
+                    if self._alias_on:
+                        route_tuples[slug].add((route, "PAGE", resolved))
 
         self.buckets: dict[str, tuple[str, ...]] = {
             slug: tuple(sorted(paths))
             for slug, paths in sorted(buckets.items())
         }
         self.owned: dict[str, str] = owned
+        # B44 — slug → sorted route tuples for ``routes_index`` (empty when
+        # the flag is off, so ``ReactRouterSpaExtractor`` emits route-less
+        # anchors byte-identically).
+        self.route_tuples_by_slug: dict[str, tuple[tuple[str, str, str], ...]] = {
+            slug: tuple(sorted(tuples))
+            for slug, tuples in sorted(route_tuples.items())
+        }
 
     @staticmethod
     def _route_pairs(text: str) -> list[tuple[str, str]]:
@@ -478,6 +620,7 @@ class _RouterIndex:
         imports: dict[str, str],
         rel: str,
         tracked_set: frozenset[str],
+        alias_map: dict[str, tuple[str, ...]] | None = None,
     ) -> str | None:
         """Resolve the mounted component to a tracked file.
 
@@ -487,13 +630,14 @@ class _RouterIndex:
         try ``AddAdmin`` before ``Lazy``). Resolution through the
         file's own imports is the filter — an ident that is not
         imported (a prop name like ``Page``) resolves to nothing and is
-        skipped.
+        skipped. ``alias_map`` (B44) threads the tsconfig alias roots when
+        the flag is on; ``None`` keeps the pre-B44 ``src/``-only path.
         """
         for ident in reversed(idents.split()):
             spec = imports.get(ident)
             if not spec:
                 continue
-            resolved = _resolve_spec(spec, rel, tracked_set)
+            resolved = _resolve_spec(spec, rel, tracked_set, alias_map)
             if resolved is not None:
                 return resolved
         return None
@@ -573,6 +717,10 @@ class ReactRouterSpaExtractor:
         for slug, paths in index.buckets.items():
             if not slug or not paths:
                 continue
+            # B44 — carry the branch's route tuples so ``build_routes_index``
+            # populates ``routes_index`` for react-router SPAs (empty when
+            # the alias flag is off ⇒ route-less anchor, byte-identical).
+            routes = index.route_tuples_by_slug.get(slug, ())
             out.append(AnchorCandidate(
                 name=slug,
                 paths=paths,
@@ -582,6 +730,7 @@ class ReactRouterSpaExtractor:
                     f"react-router branch '/{slug}' mounts "
                     f"{len(paths)} component file(s)"
                 ),
+                routes=routes,
             ))
         return out
 

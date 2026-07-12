@@ -316,6 +316,33 @@ ENV_OUTPUT_FLAGS = (
     # coverage_gaps[]. =0/unset restores byte-identical output. No KEY_SCHEMA
     # bump (flip is a separate later commit per flip-protocol).
     "FAULTLINE_KEYLESS_JOURNEY_RECALL",
+    # B44 (2026-07-12) — Stage-3 keyless surface blind spot, part 1: a
+    # React-Router-framework / Remix workspace (``react-router.config.*`` +
+    # ``app/routes/**``, the Remix successor stack) is route-EXTRACTED
+    # (routes_index populated) but wins the DefaultProfile, which emits no
+    # ``flow_entries`` — so its live routes never seed keyless flows
+    # (documenso apps/remix: 121 routes, 0 flows). Registers a deterministic
+    # ``react-router-fw`` profile that seeds one flow per ``app/routes/**``
+    # entry (default-export symbol → real (file,line) anchor, B41/B43 chain).
+    # Default OFF; when ON a react-router-framework unit re-homes from
+    # ``default`` to ``react-router-fw`` (composite name gains the arm) and
+    # its route files seed flows (feeds the B47 arm-B e2e-orphan bridge).
+    # =0/unset leaves the profile unregistered → byte-identical. No
+    # KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_REACT_ROUTER_FW_PROFILE",
+    # B44 (2026-07-12) — Stage-3 keyless surface blind spot, part 2: the
+    # react-router-SPA extractor resolves ``@/`` / ``~/`` import aliases only
+    # against a hard-coded ``src/`` root, so a Vite SPA that maps ``~/`` →
+    # ``app/`` (tsconfig ``paths`` / vite ``resolve.alias``) resolves NO
+    # mounted page components → 0 route buckets → empty board (outline:
+    # ``~/*`` → ``./app/*``, react-router in ``app/routes/*``, 0 PF/UF/flows).
+    # When ON the SPA index reads the workspace's real alias map from
+    # ``tsconfig.json`` ``compilerOptions.paths`` and resolves aliases against
+    # their true roots, AND the SPA extractor stamps ``AnchorCandidate.routes``
+    # so its branches populate ``routes_index``. =0/unset restores the
+    # ``src/``-only resolution + route-less anchors byte-identically. No
+    # KEY_SCHEMA bump.
+    "FAULTLINE_ROUTER_ALIAS_RESOLVE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
