@@ -1570,6 +1570,7 @@ def run_finalize_phase(
                 _synth = synthesize_orphan_journeys(
                     e2e_payload, product_features, features,
                     lineage_result.routes_index, user_flows,
+                    flows=list(bipartite.flows),
                 )
                 minted = _synth["minted"]
                 if minted:
