@@ -93,13 +93,40 @@ def run(devs, pfs, ufs, nav=_NAV):
 # ── Flag helper ──────────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default ON since the 2026-07-12 flip (KEY_SCHEMA v28) — unset reads
+    # enabled; explicit off values stay a valid kill-switch forever.
     monkeypatch.delenv(FDIR_DEVGRAIN_GATE_ENV, raising=False)
-    assert not fdir_devgrain_gate_enabled()
+    assert fdir_devgrain_gate_enabled()
     monkeypatch.setenv(FDIR_DEVGRAIN_GATE_ENV, "1")
     assert fdir_devgrain_gate_enabled()
-    monkeypatch.setenv(FDIR_DEVGRAIN_GATE_ENV, "0")
-    assert not fdir_devgrain_gate_enabled()
+    for off in ("0", "false", "no", "off", ""):
+        monkeypatch.setenv(FDIR_DEVGRAIN_GATE_ENV, off)
+        assert not fdir_devgrain_gate_enabled(), off
+
+
+def test_inverted_kill_switch_unset_equals_explicit_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flip law: UNSET must behave byte-identically to an explicit ``=1`` —
+    same demote decisions, same telemetry, same board mutation."""
+    def scene():
+        pfs = [pf("welcome", "route:app/welcome")]
+        ufs = [uf("welcome-j", "welcome", 1)]
+        d = dev("welcome-dev", ["app/welcome/index.tsx"], "welcome")
+        return [d], pfs, ufs
+
+    monkeypatch.delenv(FDIR_DEVGRAIN_GATE_ENV, raising=False)
+    devs_u, pfs_u, ufs_u = scene()
+    tele_u = run(devs_u, pfs_u, ufs_u)
+    monkeypatch.setenv(FDIR_DEVGRAIN_GATE_ENV, "1")
+    devs_e, pfs_e, ufs_e = scene()
+    tele_e = run(devs_e, pfs_e, ufs_e)
+    assert tele_u == tele_e
+    assert tele_u["enabled"] is True and tele_u["demoted"]  # it ACTED
+    assert [p.name for p in pfs_u] == [p.name for p in pfs_e] == []
+    assert [u.name for u in ufs_u] == [u.name for u in ufs_e] == []
+    assert devs_u[0].product_feature_id == devs_e[0].product_feature_id
 
 
 # ── The 4 ripe exhibits demote (flag ON, nav readable, not declared) ──────
@@ -231,17 +258,14 @@ def test_board_abstain_when_nav_unreadable(
     assert len(pfs) == 1 and len(ufs) == 1
 
 
-# ── Kill-switch: flag unset/0 → pure no-op ───────────────────────────────
+# ── Kill-switch: explicit off → pure no-op (post-flip: unset = ON) ───────
 
 
-@pytest.mark.parametrize("flag", [None, "0"])
+@pytest.mark.parametrize("flag", ["0", "false", "off"])
 def test_kill_switch_no_op(
-    monkeypatch: pytest.MonkeyPatch, flag: str | None,
+    monkeypatch: pytest.MonkeyPatch, flag: str,
 ) -> None:
-    if flag is None:
-        monkeypatch.delenv(FDIR_DEVGRAIN_GATE_ENV, raising=False)
-    else:
-        monkeypatch.setenv(FDIR_DEVGRAIN_GATE_ENV, flag)
+    monkeypatch.setenv(FDIR_DEVGRAIN_GATE_ENV, flag)
     pfs = [pf("welcome", "route:app/welcome")]
     ufs = [uf("welcome-j", "welcome", 1)]
     d = dev("welcome-dev", ["app/welcome/index.tsx"], "welcome")

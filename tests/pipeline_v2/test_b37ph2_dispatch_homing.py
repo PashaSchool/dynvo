@@ -64,15 +64,45 @@ def _uf(name: str, pfid: str | None, member_ids: list[str]) -> types.SimpleNames
 # ── flag ─────────────────────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default ON since the 2026-07-12 flip (KEY_SCHEMA v28, coupled with
+    # the B33 devgrain gate) — unset reads enabled; explicit off values
+    # stay a valid kill-switch forever.
     monkeypatch.delenv(DISPATCH_HOMING_ENV, raising=False)
-    assert dispatch_homing_enabled() is False
+    assert dispatch_homing_enabled() is True
     for v in ("0", "false", "off", "no", ""):
         monkeypatch.setenv(DISPATCH_HOMING_ENV, v)
         assert dispatch_homing_enabled() is False
     for v in ("1", "true", "on", "yes"):
         monkeypatch.setenv(DISPATCH_HOMING_ENV, v)
         assert dispatch_homing_enabled() is True
+
+
+def test_inverted_kill_switch_unset_equals_explicit_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flip law: UNSET must behave byte-identically to an explicit ``=1``
+    on the devgrain I9 rider (the flag's only internal read — the homing
+    pass itself is call-site-gated in phase_finalize)."""
+    monkeypatch.setenv(FDIR_DEVGRAIN_GATE_ENV, "1")
+
+    def scene():
+        pfs, ufs, _survivors = _devgrain_scene()
+        d = _dev("welcome-dev", "welcome", [_ns(
+            entry_point_file="apps/web/modules/account/welcome/Welcome.tsx")])
+        return d, pfs, ufs
+
+    monkeypatch.delenv(DISPATCH_HOMING_ENV, raising=False)
+    d_u, pfs_u, ufs_u = scene()
+    tele_u = run_devgrain_demote([d_u], pfs_u, ufs_u,
+                                 nav_keys=frozenset({"dashboard"}))
+    monkeypatch.setenv(DISPATCH_HOMING_ENV, "1")
+    d_e, pfs_e, ufs_e = scene()
+    tele_e = run_devgrain_demote([d_e], pfs_e, ufs_e,
+                                 nav_keys=frozenset({"dashboard"}))
+    assert tele_u == tele_e
+    assert tele_u["devs_i9_homed"] == 1  # the rider ACTED in both worlds
+    assert d_u.product_feature_id == d_e.product_feature_id == "account"
 
 
 # ── resolver: the anchor-chain walk ──────────────────────────────────────────

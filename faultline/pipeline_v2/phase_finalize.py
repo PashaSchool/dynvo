@@ -1752,7 +1752,7 @@ def run_finalize_phase(
     # and BEFORE the 6.97 LOC prefetch / marker backstops / emission
     # integrity so no marker is synthesized for a demoted PF. Empty
     # nav_keys ⇒ board-wide honest abstain. Deterministic, $0 LLM;
-    # default OFF.
+    # default ON since the 2026-07-12 flip (KEY_SCHEMA v28).
     from faultline.pipeline_v2.devgrain_demote import (
         fdir_devgrain_gate_enabled,
         run_devgrain_demote,
@@ -2599,7 +2599,7 @@ def run_finalize_phase(
                     feature=None,
                 )
 
-    # ── Stage 6.985d — B37-ph2 dispatch-mint homing ($0, default OFF) ──
+    # ── Stage 6.985d — B37-ph2 dispatch-mint homing ($0, default ON) ───
     # Re-home each predominantly-dispatch user flow to the PF that OWNS the
     # mint's target file (path_index dev→PF first, anchor-chain fallback —
     # NOT the dev-of-first-attribution). Runs AFTER the final path_index

@@ -52,8 +52,9 @@ The shared resolver :func:`build_anchor_owner_resolver` is reused by the
 Stage 6.987 devgrain-demote I9 rider (flowful demoted devs home by the
 same target-owner machinery instead of the platform_infrastructure lane).
 
-Flag ``FAULTLINE_DISPATCH_HOMING_B37P2`` — default OFF (byte-identical to
-pre-B37-ph2); ENV_OUTPUT_FLAGS append, no KEY_SCHEMA bump.
+Flag ``FAULTLINE_DISPATCH_HOMING_B37P2`` — default ON since the
+2026-07-12 flip (KEY_SCHEMA v28, coupled with the B33 devgrain gate);
+``=0`` is byte-identical to pre-B37-ph2.
 """
 
 from __future__ import annotations
@@ -78,10 +79,14 @@ DISPATCH_DESC_PREFIX = "dispatch registry "
 
 
 def dispatch_homing_enabled() -> bool:
-    """B37-ph2 — default OFF; ``FAULTLINE_DISPATCH_HOMING_B37P2=1`` enables
-    the target-owner homing pass + the devgrain I9 rider. OFF is
-    byte-identical to pre-B37-ph2."""
-    return os.environ.get(DISPATCH_HOMING_ENV, "0").strip().lower() not in {
+    """B37-ph2 — default ON since the 2026-07-12 flip (KEY_SCHEMA v28,
+    coupled with the B33 devgrain gate: 6.987's flowful demoted devs home
+    via this machinery — without it the demote re-creates I9). Keyed
+    papermark proof: I9=0, lane 43->42; keyless byte-identical no-op
+    elsewhere. ``FAULTLINE_DISPATCH_HOMING_B37P2=0`` restores the
+    pre-B37-ph2 homes byte-identically — explicit off stays a valid
+    kill-switch forever."""
+    return os.environ.get(DISPATCH_HOMING_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

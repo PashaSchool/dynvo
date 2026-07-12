@@ -257,8 +257,11 @@ ENV_OUTPUT_FLAGS = (
     # surviving ancestor. Rich journey sets veto (conservation); board-wide
     # abstain when the nav parse is unreadable. Reshapes product_features[]
     # + user_flows[] + developer_features[].product_feature_id on affected
-    # repos. Default OFF. Appended WITHOUT a KEY_SCHEMA bump — reconciled at
-    # merge (the later default-ON flip commit bumps KEY_SCHEMA).
+    # repos. Default ON (flipped 2026-07-12 after the keyed proof on
+    # papermark — Welcome demoted, I9=0 via the B37-ph2 homing rider,
+    # platform lane 43->42; KEY_SCHEMA v28, coupled with
+    # FAULTLINE_DISPATCH_HOMING_B37P2 — without the rider the demote
+    # re-creates I9). =0 restores the pre-B33 board byte-identically.
     "FAULTLINE_FDIR_DEVGRAIN_GATE",
     # B45 (2026-07-11) — coverage_gaps[] gap channel: member-less I8-cover
     # markers leave user_flows[] for a dedicated top-level ``coverage_gaps``
@@ -290,15 +293,18 @@ ENV_OUTPUT_FLAGS = (
     # names byte-identically.
     "FAULTLINE_UF_NAME_HYGIENE",
     # B37-ph2 (2026-07-12) — dispatch-mint homing: a predominantly-dispatch
-    # user flow re-homes to the PF whose anchor subtree OWNS the mint's
-    # target file (the anchor-chain walk, not the dev-of-first-attribution),
-    # BEFORE the W5.1 backstop + synth_quality gap arbitration; the same
-    # target-owner machinery homes a demoted PF's FLOWFUL devs in the Stage
-    # 6.987 devgrain I9 rider (flowful → owner, never the platform lane).
-    # Reshapes user_flows[].product_feature_id (+ developer_features[].
-    # product_feature_id under the devgrain gate). Default OFF. Appended
-    # WITHOUT a KEY_SCHEMA bump — reconciled at merge (the later default-ON
-    # flip commit bumps KEY_SCHEMA).
+    # user flow re-homes to the PF that OWNS the mint's target file
+    # (path_index dev→PF first — the i16 ruler — anchor-chain fallback for
+    # unowned targets; never the dev-of-first-attribution), AFTER the final
+    # path_index refresh + flowless-PF backstops and BEFORE the
+    # synth_quality gap arbitration; the same target-owner machinery homes
+    # a demoted PF's FLOWFUL devs in the Stage 6.987 devgrain I9 rider
+    # (flowful → owner, never the platform lane). Reshapes
+    # user_flows[].product_feature_id (+ developer_features[].
+    # product_feature_id under the devgrain gate). Default ON (flipped
+    # 2026-07-12, coupled with FAULTLINE_FDIR_DEVGRAIN_GATE; keyed papermark
+    # proof I9=0 + keyless byte-identical no-op supabase/midday; KEY_SCHEMA
+    # v28). =0 restores the pre-B37-ph2 homes byte-identically.
     "FAULTLINE_DISPATCH_HOMING_B37P2",
 )
 
@@ -339,7 +345,14 @@ ENV_OUTPUT_FLAGS = (
 #: default OFF -> ON — default flips change what "unset" means, so cached
 #: entries keyed under unset must not be served across them (v16/v21/v25
 #: precedent). Keyed proof: papermark + cal.com green (2026-07-12).
-KEY_SCHEMA_VERSION = 27
+#: v28 (B33+B37-ph2 flip): FAULTLINE_FDIR_DEVGRAIN_GATE default OFF -> ON +
+#: FAULTLINE_DISPATCH_HOMING_B37P2 default OFF -> ON — COUPLED: B33's 6.987
+#: demote is only I9-safe with the homing rider (flowful demoted devs home
+#: to their target-owner PF instead of the platform lane). Default flips
+#: change what "unset" means, so cached entries keyed under unset must not
+#: be served across them (v16/v21/v25/v27 precedent). Keyed proof:
+#: papermark green (Welcome demoted, I9=0, lane 43->42, 2026-07-12).
+KEY_SCHEMA_VERSION = 28
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
