@@ -538,3 +538,119 @@ class TestSeg2UFIntegration:
             [pf], [uf], [_FL("f1", "browse-documents-flow")], keeper_on=False)
         assert (uf.resource, uf.product_feature_id,
                 list(uf.member_flow_ids)) == before
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Segment 3 — earned resource rung
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestSeg3ResourceRung:
+
+    def _run(self, ufs, flows, pfs, *, rung: bool, monkeypatch):
+        if rung:
+            monkeypatch.setenv("FAULTLINE_UF_RESOURCE_RUNG", "1")
+        return nc.run_naming_contract(pfs, ufs, flows, keeper_on=False)
+
+    def test_member_noun_and_route_rung_uplift(self, monkeypatch):
+        # bare-verb low: resource missing, but the member's route file names
+        # the domain — earns a rung, moves off low, keeps 'missing:verb'.
+        pf = _pf("ingest-pf", "Ingest", anchor_id="route:ingest")
+        uf = _uf("UF-1", "Ingest", "ingest-pf", resource="item",
+                 members=["f1"])
+        flows = [_FL("f1", "ingest-events-flow",
+                     paths=["app/api/ingest/route.ts"],
+                     entry_point_file="app/api/ingest/route.ts")]
+        tele = self._run([uf], flows, [pf], rung=True, monkeypatch=monkeypatch)
+        assert uf.name_confidence == "medium"
+        assert "resource:member-noun" in (uf.name_evidence or [])
+        assert "missing:verb" in (uf.name_evidence or [])       # never invented
+        assert "missing:resource" not in (uf.name_evidence or [])
+        assert tele["resource_rung_fired"]["member-noun"] >= 1
+
+    def test_route_rung_reaches_high_when_verb_grounded(self, monkeypatch):
+        # verb grounded by a member; resource grounded ONLY by the route rung.
+        pf = _pf("gadgets", "Gadgets", anchor_id="route:gadgets")
+        uf = _uf("UF-1", "Browse widgets", "gadgets", resource="widgets",
+                 members=["f1"])
+        flows = [_FL("f1", "list-things-flow",
+                     paths=["app/routes/widgets/edit.ts"],
+                     entry_point_file="app/routes/widgets/edit.ts")]
+        self._run([uf], flows, [pf], rung=True, monkeypatch=monkeypatch)
+        assert uf.name_confidence == "high"
+        assert "resource:route" in (uf.name_evidence or [])
+
+    def test_test_file_rung(self, monkeypatch):
+        # a mapped test file's noun grounds the resource (B36).
+        pf = _pf("gadgets", "Gadgets", anchor_id="route:gadgets")
+        uf = _uf("UF-1", "Browse widgets", "gadgets", resource="widgets",
+                 members=["f1"])
+        flows = [_FL("f1", "list-things-flow",
+                     test_files=["tests/widget.spec.ts"])]
+        tele = self._run([uf], flows, [pf], rung=True, monkeypatch=monkeypatch)
+        assert "resource:test" in (uf.name_evidence or [])
+        assert tele["resource_rung_fired"]["test"] >= 1
+
+    def test_honest_low_stays_low(self, monkeypatch):
+        # no member-noun / route / test overlap ⇒ the low is honest.
+        pf = _pf("gadgets", "Gadgets", anchor_id="route:gadgets")
+        uf = _uf("UF-1", "Browse widgets", "gadgets", resource="widgets",
+                 members=["f1"])
+        flows = [_FL("f1", "list-things-flow",
+                     paths=["app/routes/unrelated/edit.ts"])]
+        self._run([uf], flows, [pf], rung=True, monkeypatch=monkeypatch)
+        assert uf.name_confidence == "low"
+        assert "missing:resource" in (uf.name_evidence or [])
+
+
+class TestSeg3KillSwitch:
+    """Flag OFF ⇒ confidence + evidence byte-identical; no telemetry key."""
+
+    def _fixture(self):
+        pf = _pf("ingest-pf", "Ingest", anchor_id="route:ingest")
+        uf = _uf("UF-1", "Ingest", "ingest-pf", resource="item",
+                 members=["f1"])
+        flows = [_FL("f1", "ingest-events-flow",
+                     paths=["app/api/ingest/route.ts"],
+                     entry_point_file="app/api/ingest/route.ts")]
+        return pf, uf, flows
+
+    def test_flag_off_no_uplift(self):
+        pf, uf, flows = self._fixture()
+        tele = nc.run_naming_contract([pf], [uf], flows, keeper_on=False)
+        assert uf.name_confidence == "low"
+        assert "missing:resource" in (uf.name_evidence or [])
+        assert "resource_rung_fired" not in tele      # scan_meta byte-identical
+
+    def test_identity_and_name_untouched(self, monkeypatch):
+        # Baseline (rung OFF) name — the contract's own template rename …
+        pf0, uf0, flows0 = self._fixture()
+        nc.run_naming_contract([pf0], [uf0], flows0, keeper_on=False)
+        baseline_name = uf0.name
+        # … must be IDENTICAL with the rung ON (Seg3 is CONFIDENCE-only).
+        monkeypatch.setenv("FAULTLINE_UF_RESOURCE_RUNG", "1")
+        pf, uf, flows = self._fixture()
+        before = (uf.resource, uf.product_feature_id, list(uf.member_flow_ids))
+        nc.run_naming_contract([pf], [uf], flows, keeper_on=False)
+        assert uf.name == baseline_name
+        assert (uf.resource, uf.product_feature_id,
+                list(uf.member_flow_ids)) == before
+
+
+class TestSeg3ProtectedUntouched:
+    """documenso authored playwright journeys — B23-carve — never re-scored
+    into a false high by a rung; their authored identity is preserved."""
+
+    def test_authored_journey_name_preserved(self, monkeypatch):
+        monkeypatch.setenv("FAULTLINE_UF_RESOURCE_RUNG", "1")
+        monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
+        pf = _pf("signing", "Signing", anchor_id="route:signing")
+        uf = _uf("UF-A", "Complete document signing ceremony", "signing",
+                 resource="item", members=["f1"])
+        flows = [_FL("f1", "sign-document-flow",
+                     paths=["app/routes/signing/sign.ts"])]
+        authored = {"UF-A": ["Complete document signing ceremony"]}
+        nc.run_naming_contract(
+            [pf], [uf], flows, keeper_on=False, uf_authored_names=authored)
+        # The maintainer-authored label is never re-worded by the laws.
+        assert uf.name == "Complete document signing ceremony"

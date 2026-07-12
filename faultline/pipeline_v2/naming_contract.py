@@ -68,11 +68,13 @@ __all__ = [
     "PF_NAME_LAW_ENV",
     "UF_DEVGRAIN_NAME_ENV",
     "UF_NAME_DEGRIME_ENV",
+    "UF_RESOURCE_RUNG_ENV",
     "naming_contract_enabled",
     "humanize_route_names_enabled",
     "pf_name_law_enabled",
     "uf_devgrain_name_enabled",
     "uf_name_degrime_enabled",
+    "uf_resource_rung_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -139,6 +141,17 @@ UF_DEVGRAIN_NAME_ENV = "FAULTLINE_UF_DEVGRAIN_NAME"
 #: lineage are untouched. ``=1``/``true`` opts in; unset ⇒ display
 #: byte-identical to pre-B50.
 UF_NAME_DEGRIME_ENV = "FAULTLINE_UF_NAME_DEGRIME"
+
+#: B50 Seg3 — earned resource-grounding rung kill-switch (default **OFF**).
+#: A low UF carrying ``missing:resource`` (verb IS grounded) earns
+#: resource-grounding ONLY from a REAL evidence rung (member-file domain
+#: noun / param-free route segment / mapped test-file noun), each stamping a
+#: distinct ``name_evidence`` entry ('resource:member-noun' …). The Law-C
+#: rubric bar is UNCHANGED — this ADDS OR-sources to ``res_grounded``, never
+#: lowers a threshold, never invents ``missing:verb`` grounding.
+#: ``CONFIDENCE`` channel only. Unset ⇒ confidence + serialized output
+#: byte-identical.
+UF_RESOURCE_RUNG_ENV = "FAULTLINE_UF_RESOURCE_RUNG"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
@@ -243,6 +256,16 @@ def uf_name_degrime_enabled() -> bool:
     ``FAULTLINE_UF_NAME_DEGRIME=1`` arms the adjacent-echo discriminator +
     glyph-less deparam at the display JOINER. Unset ⇒ byte-identical."""
     return os.environ.get(UF_NAME_DEGRIME_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
+
+def uf_resource_rung_enabled() -> bool:
+    """B50 Seg3 earned resource rung. Default **OFF**;
+    ``FAULTLINE_UF_RESOURCE_RUNG=1`` arms the member-noun / route / test
+    grounding rungs in Law C (adds OR-sources to ``res_grounded``, bar
+    unchanged). Unset ⇒ confidence + serialized output byte-identical."""
+    return os.environ.get(UF_RESOURCE_RUNG_ENV, "0").strip().lower() in {
         "1", "true",
     }
 
@@ -1569,6 +1592,7 @@ def _apply_uf_name_laws(
     keeper_on: bool,
     nav_labels: Mapping[str, str] | None = None,
     flow_origin_by_id: Mapping[str, str] | None = None,
+    flow_by_id: Mapping[str, Any] | None = None,
 ) -> None:
     """B9 — three deterministic UF display laws over FINAL members/names, run
     AFTER the labeler so labeler-introduced collisions/over-claims are caught.
@@ -1764,6 +1788,56 @@ def _apply_uf_name_laws(
     def _toks(text: str) -> set[str]:
         return {_sing(t) for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t}
 
+    # ── B50 Seg3 — earned resource rung (FAULTLINE_UF_RESOURCE_RUNG) ──
+    # A low ``missing:resource`` UF (verb grounded, resource not) earns
+    # resource-grounding ONLY from a REAL evidence rung. Bar UNCHANGED — these
+    # are extra OR-sources to ``res_grounded``, never a lowered threshold. Flag
+    # OFF ⇒ every hit below is False ⇒ res_grounded / confidence / name_evidence
+    # byte-identical.
+    rung_on = uf_resource_rung_enabled()
+    _flow_by_id = flow_by_id or {}
+    _extract_domain_noun = None
+    if rung_on:
+        try:
+            from faultline.pipeline_v2.domain_noun import extract_domain_noun
+            _extract_domain_noun = extract_domain_noun
+        except Exception:  # noqa: BLE001 — optional structural resolver
+            _extract_domain_noun = None
+        tele["resource_rung_fired"] = {"member-noun": 0, "route": 0, "test": 0}
+
+    def _member_paths(u: Any) -> list[str]:
+        """Union of the member flows' entry_point_file + paths."""
+        out: set[str] = set()
+        for m in (getattr(u, "member_flow_ids", None) or []):
+            fl = _flow_by_id.get(str(m))
+            if fl is None:
+                continue
+            for p in (getattr(fl, "paths", None) or []):
+                if p:
+                    out.add(str(p))
+            ep = getattr(fl, "entry_point_file", None)
+            if ep:
+                out.add(str(ep))
+        return sorted(out)
+
+    def _member_test_nouns(u: Any) -> set[str]:
+        """Singular-folded nouns from a member flow's MAPPED test files (B36 —
+        flow_test_mapper only maps a test whose member-overlap already holds)."""
+        nouns: set[str] = set()
+        for m in (getattr(u, "member_flow_ids", None) or []):
+            fl = _flow_by_id.get(str(m))
+            if fl is None:
+                continue
+            for tf in (getattr(fl, "test_files", None) or []):
+                base = str(tf).rsplit("/", 1)[-1]
+                stem = re.split(
+                    r"\.(?:test|spec|e2e|stories|cy)\b", base, maxsplit=1,
+                    flags=re.IGNORECASE)[0]
+                if "." in stem:
+                    stem = stem.rsplit(".", 1)[0]
+                nouns |= _toks(re.sub(r"[-_.]+", " ", stem))
+        return nouns
+
     for uf in ordered:
         uid = str(getattr(uf, "id", "") or "")
         names = _members(uf)
@@ -1812,8 +1886,48 @@ def _apply_uf_name_laws(
         )
         registry_hit = bool(registry_all and lead == "act")
 
-        res_grounded = base_res or nav_hit
+        # ── B50 Seg3 rungs (flag-gated; each grounds RESOURCE only) ──
+        # (a) member-file domain noun, (b) param-free route segment, (c) mapped
+        # test-file noun — each overlapping the UF name or its resource phrase.
+        member_noun_hit = route_hit = test_hit = False
+        if rung_on:
+            mpaths = _member_paths(uf)
+            if mpaths:
+                if _extract_domain_noun is not None:
+                    dn = _extract_domain_noun(mpaths, "")
+                    if dn is not None:
+                        dn_toks = _toks(dn.label) | {_sing(dn.token)}
+                        member_noun_hit = bool(
+                            dn_toks & name_toks) or bool(dn_toks & res_toks)
+                route_toks: set[str] = set()
+                for p in mpaths:
+                    for seg in _route_meaningful_segments(p, vocab):
+                        route_toks |= _toks(seg)
+                route_hit = bool(
+                    route_toks & name_toks) or bool(route_toks & res_toks)
+            tnouns = _member_test_nouns(uf)
+            test_hit = bool(tnouns & name_toks) or bool(tnouns & res_toks)
+            # Telemetry — count each NEW grounding (the low the rung uplifts).
+            if not base_res and not nav_hit:
+                if member_noun_hit:
+                    tele["resource_rung_fired"]["member-noun"] += 1
+                if route_hit:
+                    tele["resource_rung_fired"]["route"] += 1
+                if test_hit:
+                    tele["resource_rung_fired"]["test"] += 1
+
+        res_grounded = base_res or nav_hit or member_noun_hit or route_hit or test_hit
         verb_grounded = base_verb or registry_hit
+
+        def _rung_fired() -> list[str]:
+            r: list[str] = []
+            if member_noun_hit:
+                r.append("resource:member-noun")
+            if route_hit:
+                r.append("resource:route")
+            if test_hit:
+                r.append("resource:test")
+            return r
 
         if res_grounded and verb_grounded and uid not in qualified:
             uf.name_confidence = "high"
@@ -1825,6 +1939,7 @@ def _apply_uf_name_laws(
                     fired.append("nav")
                 if registry_hit:
                     fired.append("registry")
+                fired.extend(_rung_fired())
                 uf.name_evidence = fired or ["structural-route"]
         elif res_grounded:
             uf.name_confidence = "medium"
@@ -1834,6 +1949,7 @@ def _apply_uf_name_laws(
                     fired.append("resource")
                 if nav_hit:
                     fired.append("nav")
+                fired.extend(_rung_fired())
                 fired.append("missing:verb")
                 uf.name_evidence = fired
         else:
@@ -1924,6 +2040,9 @@ def run_naming_contract(
     # map so ``member_flow_ids`` resolve identically.
     flow_name_by_id: dict[str, str] = {}
     flow_origin_by_id: dict[str, str] = {}
+    # B50 Seg3 — flow OBJECTS by member id (paths / entry_point_file /
+    # test_files feed the earned resource rung). Keyed by the same id forms.
+    flow_by_id: dict[str, Any] = {}
     for fl in flows or ():
         _origin_tag = (
             "dispatch"
@@ -1934,6 +2053,7 @@ def run_naming_contract(
         for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
             if key:
                 flow_name_by_id.setdefault(str(key), str(getattr(fl, "name", "") or ""))
+                flow_by_id.setdefault(str(key), fl)
                 if _origin_tag:
                     flow_origin_by_id.setdefault(str(key), _origin_tag)
 
@@ -2386,6 +2506,7 @@ def run_naming_contract(
             keeper_on=keeper_on,
             nav_labels=nav_labels,
             flow_origin_by_id=flow_origin_by_id,
+            flow_by_id=flow_by_id,
         )
 
     tele["labeler_pending"] = len(pending)

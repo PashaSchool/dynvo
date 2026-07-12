@@ -364,6 +364,15 @@ ENV_OUTPUT_FLAGS = (
     # untouched. Default OFF; =0/unset ⇒ serialized output byte-identical. No
     # KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
     "FAULTLINE_UF_NAME_DEGRIME",
+    # B50 Seg3 (2026-07-12) — earned resource rung: a low UF carrying
+    # missing:resource (verb grounded) earns resource-grounding ONLY from a
+    # real evidence rung (member-file domain noun / param-free route segment /
+    # mapped test-file noun), each stamping a distinct name_evidence entry.
+    # Adds OR-sources to Law C's res_grounded (bar UNCHANGED, no lowered
+    # threshold, never invents missing:verb grounding). CONFIDENCE channel
+    # only. Default OFF; =0/unset ⇒ confidence + serialized output
+    # byte-identical. No KEY_SCHEMA bump (flip is a separate later commit).
+    "FAULTLINE_UF_RESOURCE_RUNG",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
