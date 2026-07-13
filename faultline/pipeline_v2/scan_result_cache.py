@@ -156,6 +156,15 @@ ENV_OUTPUT_FLAGS = (
     # annexation). Reshapes developer_features[].product_feature_id +
     # path_index ownership + the platform_infrastructure lane.
     "FAULTLINE_FOLD_CROSSAPP_GUARD",
+    # B58 (2026-07-13) — container-anchor annexation guard: Seg A fences the
+    # mint's entry/span/walk rescue rungs by the target's CANONICAL unit (a
+    # unit-coherent flowful dev never force-binds across a workspace unit —
+    # plane Issue i18n 125K, cal.com Bookings/apps/api/v2); Seg B bars
+    # dev-artifact-UNIT anchors from minting (novu playground Notifications).
+    # Reshapes product_features[] + developer_features[].product_feature_id +
+    # the platform_infrastructure lane. Appended WITHOUT a KEY_SCHEMA bump —
+    # reconciled at merge.
+    "FAULTLINE_ANNEXATION_GUARD",
     # B22 (2026-07-10) — transport-lane journey-conservation handoff (Stage
     # 6.985): the transport prong marks candidates at 6.86 and the handoff
     # re-homes their journeys/devs post-journey-layer before laning the PF

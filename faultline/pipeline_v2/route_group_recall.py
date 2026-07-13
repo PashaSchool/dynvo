@@ -149,6 +149,22 @@ def seed_route_group_journeys(
                 nonprod_pf_keys.add(key)
 
     # 1. product route groups (I24 grouping).
+    # B58 v3 — dev-artifact top-level dirs never count as PRODUCT route
+    # groups (novu ``playground/nextjs/src/pages/api`` appeared as an I24
+    # hole once the annexation guard barred playground PFs — the routes
+    # of a sample app are not product recall debt). TOP-LEVEL grain only:
+    # a product page under apps/web/**/playground/ keeps counting.
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        annexation_guard_enabled as _b58_on,
+    )
+    _art_tokens: frozenset[str] = frozenset()
+    if _b58_on():
+        from faultline.pipeline_v2.spine_anchors import load_spine_vocab
+        _art_tokens = frozenset(
+            str(t).strip().lower()
+            for t in (load_spine_vocab().get("unit_root_artifact_tokens")
+                      or ())
+            if str(t).strip())
     groups: dict[str, dict[str, Any]] = {}
     for r in routes_index:
         if not isinstance(r, dict):
@@ -157,6 +173,10 @@ def seed_route_group_journeys(
             continue
         f = str(r.get("file") or "")
         if not f:
+            continue
+        if _art_tokens and f.split("/", 1)[0].lower() in _art_tokens:
+            tele["skipped_dev_artifact"] = (
+                tele.get("skipped_dev_artifact", 0) + 1)
             continue
         g = _group_dir(f)
         e = groups.setdefault(g, {"n": 0, "files": set(), "patterns": []})

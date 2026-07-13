@@ -270,3 +270,27 @@ journey_step_leaf_tokens:
     - callback
     - onboarding
     - redirect
+
+# B58 Seg B (2026-07-13) — dev-artifact WORKSPACE-UNIT tokens. Fires ONLY
+# at unit-ROOT grain (the segments of the workspace unit's root path, or
+# the top-level dir for evidence outside every unit) inside the
+# FAULTLINE_ANNEXATION_GUARD mint bar: a whole APP the maintainer parks
+# under playground/ / examples/ (novu pnpm-workspace.yaml declares
+# 'playground/*' — "# playground apps") is a dev artifact, never a product
+# surface. Deliberately DISTINCT from dev_artifact_tokens
+# (surface-scope-patterns.yaml): that list is page/path-grain corroboration
+# where `playground` is measured OUT (cal.com ships a REAL product admin
+# page named playground — Lane-C claim table). At unit-root grain the
+# cal.com counterfactual cannot fire (its unit root is apps/web), so
+# playground is safely IN here. Scope per the B58 operator mandate:
+# playground/examples/demo/sample only (docs/mocks/fixtures stay with the
+# B28 structural prongs).
+unit_root_artifact_tokens:
+  - playground
+  - playgrounds
+  - example
+  - examples
+  - demo
+  - demos
+  - sample
+  - samples
