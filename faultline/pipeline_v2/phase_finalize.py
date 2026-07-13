@@ -1644,6 +1644,7 @@ def run_finalize_phase(
                     ctx, _transport_candidates,
                     extractor_signals=stage1_out,
                     feature_flow_edges=list(bipartite.edges),
+                    nav_keys=frozenset(_nav_keys),
                 )
                 scan_meta["transport_handoff"] = th_tele
                 log_th.info(
