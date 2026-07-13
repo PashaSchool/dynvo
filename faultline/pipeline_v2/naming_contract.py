@@ -88,6 +88,7 @@ __all__ = [
     "nav_labels_for_pfs",
     "nav_label_sets_for_pfs",
     "run_naming_contract",
+    "rescore_uf_confidence",
 ]
 
 NAMING_CONTRACT_ENV = "FAULTLINE_NAMING_CONTRACT"
@@ -1744,6 +1745,7 @@ def _apply_uf_name_laws(
     nav_label_sets: Mapping[str, list[str]] | None = None,
     routes_index: Iterable[Mapping[str, Any]] | None = None,
     repo_root: Any = None,
+    adjudicated_sources: Mapping[str, Iterable[str]] | None = None,
 ) -> None:
     """B9 — three deterministic UF display laws over FINAL members/names, run
     AFTER the labeler so labeler-introduced collisions/over-claims are caught.
@@ -1997,6 +1999,11 @@ def _apply_uf_name_laws(
     # serialized output byte-identical.
     v2_on = uf_rung_sources_v2_enabled()
     _nav_sets: Mapping[str, list[str]] = nav_label_sets or {}
+    # B57 Seg2 — adjudicated rung evidence (Stage 6.7e): per-UF VERIFIED
+    # citation rungs act as extra resource OR-sources at the SAME bar.
+    # Confidence is only ever written HERE — the adjudicator hands Law C
+    # its verified evidence and Law C judges. Absent map ⇒ byte-identical.
+    _adjudicated: Mapping[str, Iterable[str]] = adjudicated_sources or {}
     _v2_repo: Any = None
     _v2_read_cache: dict[str, str] = {}
     _method_fams_by_file: dict[str, set[str]] = {}
@@ -2223,9 +2230,14 @@ def _apply_uf_name_laws(
                 if ta_verb_hit:
                     _v2_tele["test-assert"] += 1
 
+        # ── B57 Seg2 — adjudicated rungs (verified citations; resource) ──
+        adj_rungs = (sorted(set(str(a) for a in _adjudicated.get(uid, ())))
+                     if _adjudicated else [])
+        adj_hit = bool(adj_rungs)
+
         res_grounded = (base_res or nav_hit or member_noun_hit or route_hit
                         or test_hit or nav_cluster_hit or i18n_hit
-                        or ta_res_hit)
+                        or ta_res_hit or adj_hit)
         verb_grounded = base_verb or registry_hit or route_verb_hit or ta_verb_hit
 
         def _rung_fired() -> list[str]:
@@ -2242,6 +2254,7 @@ def _apply_uf_name_laws(
                 r.append("resource:i18n-key")
             if ta_res_hit:
                 r.append("resource:test-assert")
+            r.extend(f"adjudicated:{a}" for a in adj_rungs)
             return r
 
         if res_grounded and verb_grounded and uid not in qualified:
@@ -2279,6 +2292,32 @@ def _apply_uf_name_laws(
                     miss.append("missing:verb")
                 uf.name_evidence = miss
     tele["confidence_after"] = _conf_hist(user_flows)
+
+
+def _uf_flow_maps(
+    flows: Iterable[Any],
+) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
+    """``(flow_name_by_id, flow_origin_by_id, flow_by_id)`` — the member-id
+    lookup maps Law C consumes, keyed by BOTH uuid and name id-forms so
+    ``member_flow_ids`` resolve identically everywhere (run_naming_contract
+    + the B57 Seg2 ``rescore_uf_confidence`` seam share this builder)."""
+    flow_name_by_id: dict[str, str] = {}
+    flow_origin_by_id: dict[str, str] = {}
+    flow_by_id: dict[str, Any] = {}
+    for fl in flows or ():
+        _origin_tag = (
+            "dispatch"
+            if str(getattr(fl, "description", "") or "").startswith(
+                "dispatch registry ")
+            else ""
+        )
+        for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
+            if key:
+                flow_name_by_id.setdefault(str(key), str(getattr(fl, "name", "") or ""))
+                flow_by_id.setdefault(str(key), fl)
+                if _origin_tag:
+                    flow_origin_by_id.setdefault(str(key), _origin_tag)
+    return flow_name_by_id, flow_origin_by_id, flow_by_id
 
 
 def run_naming_contract(
@@ -2357,24 +2396,7 @@ def run_naming_contract(
     # ``description`` that begins ``"dispatch registry "`` (the maintainer's own
     # declared key + exported symbol). Keyed by the same id forms as the name
     # map so ``member_flow_ids`` resolve identically.
-    flow_name_by_id: dict[str, str] = {}
-    flow_origin_by_id: dict[str, str] = {}
-    # B50 Seg3 — flow OBJECTS by member id (paths / entry_point_file /
-    # test_files feed the earned resource rung). Keyed by the same id forms.
-    flow_by_id: dict[str, Any] = {}
-    for fl in flows or ():
-        _origin_tag = (
-            "dispatch"
-            if str(getattr(fl, "description", "") or "").startswith(
-                "dispatch registry ")
-            else ""
-        )
-        for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
-            if key:
-                flow_name_by_id.setdefault(str(key), str(getattr(fl, "name", "") or ""))
-                flow_by_id.setdefault(str(key), fl)
-                if _origin_tag:
-                    flow_origin_by_id.setdefault(str(key), _origin_tag)
+    flow_name_by_id, flow_origin_by_id, flow_by_id = _uf_flow_maps(flows)
 
     # B57 Seg1 — materialize once (three consumers may iterate) and build
     # the ALL-voted-labels view only when the rung flag is armed (OFF ⇒
@@ -2842,4 +2864,59 @@ def run_naming_contract(
         )
 
     tele["labeler_pending"] = len(pending)
+    return tele
+
+
+def rescore_uf_confidence(
+    product_features: list[Any],
+    user_flows: list[Any],
+    flows: Iterable[Any] = (),
+    *,
+    product_strings: Any = None,
+    routes_index: Iterable[Mapping[str, Any]] | None = None,
+    uf_authored_names: Mapping[str, Iterable[str]] | None = None,
+    keeper_on: bool = True,
+    repo_root: Any = None,
+    adjudicated_sources: Mapping[str, Iterable[str]] | None = None,
+) -> dict[str, Any]:
+    """B57 Seg2 — the Law C RE-SCORE seam for the Stage 6.7e adjudicator.
+
+    Re-applies the UF name laws (the same ``_apply_uf_name_laws`` body the
+    contract runs, over the CURRENT rows) with the adjudicator's VERIFIED
+    citation rungs threaded as extra resource OR-sources
+    (``adjudicated_sources``: ``{uf_id: [rung, ...]}`` — each stamps an
+    ``adjudicated:<rung>`` evidence tag). The bar is UNCHANGED; confidence
+    and evidence are only ever written by Law C — the adjudicator itself
+    NEVER touches ``name_confidence``. Idempotent over an unchanged board
+    (laws A/B are stable fixed points); no-ops (telemetry-only) when the
+    naming contract or the UF name laws are switched off."""
+    tele: dict[str, Any] = {}
+    if not (naming_contract_enabled() and uf_name_laws_enabled()):
+        tele["skipped"] = "naming-laws-off"
+        return tele
+    vocab = load_naming_vocab()
+    flow_name_by_id, flow_origin_by_id, flow_by_id = _uf_flow_maps(flows)
+    routes_index = list(routes_index) if routes_index is not None else None
+    nav_labels = nav_labels_for_pfs(
+        product_features, product_strings, routes_index)
+    nav_label_sets = (
+        nav_label_sets_for_pfs(product_features, product_strings, routes_index)
+        if uf_rung_sources_v2_enabled() else {}
+    )
+    pf_by_slug = {
+        str(getattr(pf, "name", "") or ""): pf for pf in product_features
+    }
+    _authored: Mapping[str, Iterable[str]] = uf_authored_names or {}
+    _apply_uf_name_laws(
+        user_flows, pf_by_slug, vocab, flow_name_by_id, tele,
+        authored_ids={str(k) for k in _authored.keys()},
+        keeper_on=keeper_on,
+        nav_labels=nav_labels,
+        flow_origin_by_id=flow_origin_by_id,
+        flow_by_id=flow_by_id,
+        nav_label_sets=nav_label_sets,
+        routes_index=routes_index,
+        repo_root=repo_root,
+        adjudicated_sources=adjudicated_sources,
+    )
     return tele

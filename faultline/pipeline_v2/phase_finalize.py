@@ -2654,6 +2654,43 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Stage 6.7e — B57 Seg2 journey-evidence adjudicator (keyed-only) ─
+    # Runs immediately AFTER the naming contract (selection needs Law C v1
+    # name_confidence) and BEFORE synth_quality/emit_coverage_gaps so an
+    # adjudicated demote lands as a typed coverage_gaps[] entry in THIS
+    # scan. Keyless (no client) ⇒ hard no-op before any mutation and NO
+    # scan_meta key — the byte-identity law. Confidence is re-scored only
+    # through Law C (rescore_uf_confidence); the stage itself never writes
+    # name_confidence. Kill-switch FAULTLINE_STAGE_6_7E_ADJUDICATOR
+    # (default OFF).
+    from faultline.pipeline_v2.stage_6_7e_adjudicator import (
+        adjudicator_6_7e_enabled,
+        run_stage_6_7e,
+    )
+    adjudicated_gaps: list[Any] = []
+    if adjudicator_6_7e_enabled():
+        try:
+            adj_tele, adjudicated_gaps = run_stage_6_7e(
+                user_flows,
+                list(bipartite.flows),
+                product_features,
+                repo_root=ctx.repo_path,
+                product_strings=product_strings,
+                routes_index=lineage_result.routes_index,
+                uf_authored_names=_e2e_authored_names,
+                keeper_on=keeper_enabled(),
+                model_id=model_id,
+                cost_tracker=tracker,
+                cache=getattr(ctx, "cache_backend", None),
+                llm_health=llm_health,
+            )
+            if adj_tele.get("ran"):
+                scan_meta["adjudicator_6_7e"] = adj_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            adjudicated_gaps = []
+            scan_meta.setdefault("warnings", []).append(
+                f"stage-6.7e adjudicator failed ({exc}); journeys unchanged")
+
     # ── Stage 6.985d — B37-ph2 dispatch-mint homing ($0, default ON) ───
     # Re-home each predominantly-dispatch user flow to the PF that OWNS the
     # mint's target file (path_index dev→PF first, anchor-chain fallback —
@@ -2728,6 +2765,19 @@ def run_finalize_phase(
             scan_meta.setdefault("warnings", []).append(
                 f"synth-quality pass failed ({exc}); journeys unchanged"
             )
+
+    # B57 Seg2 — adjudicated demote gaps join the typed channel. The stage
+    # gates demotes on the gap channel being ACTIVE, so a non-empty list
+    # here implies dual/full mode; merging AFTER emit keeps the B45
+    # bijection telemetry intact, and the union re-sorts to the emit order
+    # ((product_feature_id, id) — deterministic). Even if the synth-quality
+    # pass faulted, the demoted rows' gaps still ship (no silent drop).
+    if adjudicated_gaps:
+        coverage_gaps = list(coverage_gaps or []) + list(adjudicated_gaps)
+        coverage_gaps.sort(key=lambda g: (
+            str(getattr(g, "product_feature_id", "") or ""),
+            str(getattr(g, "id", "") or ""),
+        ))
 
     # ── platform_infrastructure[] lane (Wave 2b, operator amendment) ───
     # The anchored path's residual surface: one row per lane resident
