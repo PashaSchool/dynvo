@@ -138,6 +138,23 @@ class TestI18nKeyExtractor:
         text = "format('billing'); at('overview'); getFmt('x')"
         assert nc._i18n_keys_from_text(text) == []
 
+    def test_vue_dollar_t_matches(self):
+        # Vue canonical reference forms (hoppscotch-class corpora):
+        # template interpolation + options-API `this.$t`.
+        text = (
+            "{{ $t('request.duration') }}\n"
+            'this.$t("workspace.new_collection")\n'
+        )
+        assert nc._i18n_keys_from_text(text) == [
+            "request.duration", "workspace.new_collection",
+        ]
+
+    def test_dollar_t_word_tail_and_value_rejected(self):
+        # foo$t( is an identifier tail, not a Vue i18n reference …
+        assert nc._i18n_keys_from_text("foo$t('billing')") == []
+        # … and a space-broken $t VALUE is still structurally rejected.
+        assert nc._i18n_keys_from_text('$t("Billing Overview Page")') == []
+
     def test_plain_locale_json_values_never_match(self):
         # A locale catalog carries VALUES ('"title": "Billing Overview"')
         # — none of the reference patterns fire on it.

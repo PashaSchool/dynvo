@@ -1303,12 +1303,14 @@ def nav_label_sets_for_pfs(
 # cap) — the caps only bound work, they are not tuned to any repo.
 
 #: i18n-KEY reference patterns in member SOURCE files: ``t('key')`` /
-#: ``t("key")``, ``i18nKey="key"`` (JSX ``{'key'}`` form included), and
-#: ``getTranslation('key')``. The KEY (group 1) is the evidence — the
-#: identifier the author wrote in CODE. The lookbehind on ``t(`` keeps
-#: word-tails out (``format(`` / ``at(`` never match; ``i18n.t(`` does).
+#: ``t("key")`` (Vue ``$t('key')`` included — the hoppscotch-class
+#: canonical reference form), ``i18nKey="key"`` (JSX ``{'key'}`` form
+#: included), and ``getTranslation('key')``. The KEY (group 1) is the
+#: evidence — the identifier the author wrote in CODE. The lookbehind on
+#: ``$?t(`` keeps word-tails out (``format(`` / ``at(`` / ``foo$t(``
+#: never match; ``i18n.t(`` / ``this.$t(`` / ``{{ $t( }}`` do).
 _I18N_KEY_REFS = (
-    re.compile(r"(?<![\w$])t\(\s*['\"]([^'\"\n]+)['\"]"),
+    re.compile(r"(?<![\w$])\$?t\(\s*['\"]([^'\"\n]+)['\"]"),
     re.compile(r"i18nKey\s*=\s*\{?\s*['\"]([^'\"\n]+)['\"]"),
     re.compile(r"getTranslation\(\s*['\"]([^'\"\n]+)['\"]"),
 )
