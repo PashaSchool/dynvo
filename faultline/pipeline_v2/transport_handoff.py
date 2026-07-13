@@ -101,17 +101,22 @@ from typing import Any, Iterable, Mapping
 __all__ = [
     "TRANSPORT_HANDOFF_ENV",
     "TRANSPORT_HANDOFF_PLURALITY_ENV",
+    "TRANSPORT_NAMESPACE_ECHO_ENV",
     "transport_handoff_enabled",
     "transport_plurality_enabled",
+    "transport_namespace_echo_enabled",
     "hub_cutoff",
     "GrainTarget",
     "TargetGrainIndex",
+    "NamespaceEcho",
     "resolve_user_flow",
     "run_transport_handoff",
 ]
 
 TRANSPORT_HANDOFF_ENV = "FAULTLINE_TRANSPORT_LANE_HANDOFF"
 TRANSPORT_HANDOFF_PLURALITY_ENV = "FAULTLINE_TRANSPORT_HANDOFF_PLURALITY"
+#: B49 r2.6 namespace-echo rung — default OFF.
+TRANSPORT_NAMESPACE_ECHO_ENV = "FAULTLINE_TRANSPORT_NAMESPACE_ECHO"
 
 #: Provenance marker stamped on re-homed / minted rows (I22
 #: explainability + idempotence).
@@ -149,6 +154,21 @@ def transport_plurality_enabled() -> bool:
     return os.environ.get(
         TRANSPORT_HANDOFF_PLURALITY_ENV, "1",
     ).strip().lower() not in {"0", "false"}
+
+
+def transport_namespace_echo_enabled() -> bool:
+    """B49 r2.6 rung — default OFF. When ON, an in-lane tRPC router seed
+    that abstains at r2 (typed-proxy consumption leaves it with no
+    product consumers) votes its span mass for the EXISTING product PF
+    whose anchor-identity its namespace token echoes — the SAME
+    normalized keys the S3-nav echo uses (``normalize_anchor_key``).
+    Re-homes ONLY onto existing PFs (never mints); a token matching >1
+    PF (ambiguous) or 0 PFs (generic/no-surface) abstains — the
+    all-or-nothing conservation judge is untouched, r2.6 only adds
+    votes for otherwise-abstaining seeds."""
+    return os.environ.get(
+        TRANSPORT_NAMESPACE_ECHO_ENV, "0",
+    ).strip().lower() in {"1", "true"}
 
 
 def _strict_conservation() -> bool:
@@ -908,6 +928,117 @@ def _grain_key(t: GrainTarget) -> str:
     return f"{t.kind}:{t.key}"
 
 
+#: tRPC router-directory suffix (documenso shape: ``team-router/``).
+_ROUTER_DIR_SUFFIX = "-router"
+
+
+def _ns_tokens(path: str) -> list[str]:
+    """Namespace tokens of a tRPC router seed (B49 r2.6). Two structural
+    tRPC file-organisation conventions — both code-grounded, NO
+    vocabulary:
+
+      * ``.../routers/<ns...>/file`` — the DIRECTORY chain after the
+        last ``routers`` segment (cal.com; create-t3
+        ``server/api/routers/``). The filename is a procedure, not a
+        namespace, so it is dropped — UNLESS the router is a bare
+        ``routers/<file>`` with no namespace directory, in which case
+        the filename stem is the namespace.
+      * ``.../<name>-router/file`` — the ``<name>`` stem of any
+        ``-router``-suffixed directory segment (documenso).
+
+    Transparent grouping tokens (``viewer``/``publicViewer``/``apps``)
+    and structural stems (``index``/``_app``) are NOT filtered here —
+    they simply fail the exact PF-identity match downstream (there is no
+    product PF named ``viewer``), so the mechanism needs no stop-list."""
+    segs = [s for s in path.strip("/").split("/") if s]
+    if len(segs) < 2:
+        return []
+    dir_segs = segs[:-1]
+    fname = segs[-1]
+    stem = fname[: fname.rfind(".")] if "." in fname else fname
+    toks: list[str] = []
+    if "routers" in dir_segs:
+        i = len(dir_segs) - 1 - dir_segs[::-1].index("routers")
+        after = dir_segs[i + 1:]
+        toks.extend(after or [stem])
+    for d in dir_segs:
+        if d.endswith(_ROUTER_DIR_SUFFIX) and len(d) > len(_ROUTER_DIR_SUFFIX):
+            toks.append(d[: -len(_ROUTER_DIR_SUFFIX)])
+    return toks
+
+
+@dataclass
+class NamespaceEcho:
+    """B49 r2.6 — maps a tRPC router-namespace token to an EXISTING
+    product PF via the shared ``normalize_anchor_key`` (the SAME
+    normalization the S3-nav echo uses: ``apiKeys`` and the nav segment
+    ``api-keys`` both normalise to ``api-key``, and the ``API Keys`` PF's
+    anchor-identity is that same ``api-key``). Discipline:
+
+      * ONLY existing, non-candidate PFs are match targets — never mints.
+      * FULL normalized match (dict lookup, never substring); a generic
+        token (``utils``/``viewer``) has no product PF so it abstains.
+      * A seed whose tokens collectively hit >1 distinct PF is AMBIGUOUS
+        → abstain (never guess).
+      * ``nav_keys`` corroboration is recorded in telemetry but does NOT
+        gate the target: the deterministic nav collector keys on the
+        FIRST href segment only (``/settings/developer/api-keys`` →
+        ``setting``), so a deep surface like ``api-keys`` need not appear
+        in ``nav_keys`` — the authoritative target is the PF
+        anchor-identity (side a)."""
+
+    pf_by_key: dict[str, frozenset[str]]
+    nav_keys: frozenset[str] = frozenset()
+    #: telemetry — seed path → matched pf key (the r2.6 move map).
+    matched: dict[str, str] = field(default_factory=dict)
+    nav_corroborated: int = 0
+
+    @classmethod
+    def build(
+        cls,
+        product_features: Iterable[Any],
+        excluded_pf_keys: frozenset[str],
+        nav_keys: frozenset[str] = frozenset(),
+    ) -> "NamespaceEcho":
+        from faultline.pipeline_v2.mega_pf_nav_rehome import _core_identity
+        acc: dict[str, set[str]] = defaultdict(set)
+        for pf in product_features:
+            key = str(_attr(pf, "id") or _attr(pf, "name") or "")
+            if not key or key in excluded_pf_keys:
+                continue
+            for k in _core_identity(pf):
+                if k:
+                    acc[k].add(key)
+        return cls(
+            pf_by_key={k: frozenset(v) for k, v in acc.items()},
+            nav_keys=nav_keys,
+        )
+
+    def target_for(self, path: str) -> GrainTarget | None:
+        from faultline.pipeline_v2.spine_anchors import normalize_anchor_key
+        toks = _ns_tokens(path)
+        if not toks:
+            return None
+        hits: set[str] = set()
+        nav_hit = False
+        for tok in toks:
+            k = normalize_anchor_key(tok)
+            if not k:
+                continue
+            pfs = self.pf_by_key.get(k)
+            if pfs:
+                hits |= set(pfs)
+            if k in self.nav_keys:
+                nav_hit = True
+        if len(hits) != 1:
+            return None  # 0 → generic/no-surface; >1 → ambiguous
+        pf_key = next(iter(hits))
+        self.matched[path] = pf_key
+        if nav_hit:
+            self.nav_corroborated += 1
+        return GrainTarget("pf", pf_key)
+
+
 class _FileResolver:
     """Ladder over ONE candidate: lane → lane-neutral → owned → route
     grain → consumer seed. Memoised; every rung deterministic."""
@@ -921,6 +1052,7 @@ class _FileResolver:
         consumers: ConsumerIndex | None,
         lane_pf_keys: frozenset[str] = frozenset(),
         neutral_files: frozenset[str] = frozenset(),
+        ns_echo: NamespaceEcho | None = None,
     ) -> None:
         self.unit = unit.strip("/")
         self.cand = cand_pf_key
@@ -928,6 +1060,9 @@ class _FileResolver:
         self.grain = grain
         self.consumers = consumers
         self.lane_keys = lane_pf_keys
+        #: B49 r2.6 namespace-echo (None when the flag is OFF → the rung
+        #: is inert and the ladder is byte-identical to r1→r2→r3).
+        self.ns_echo = ns_echo
         #: Files owned by a pfid=None LANE-RESIDENT dev — already
         #: adjudicated non-product mass (B21 lane-neutral doctrine):
         #: neutral ground, never a vote, never a seed, excluded from
@@ -1149,12 +1284,16 @@ def resolve_user_flow(
     # ruler; coverage telemetry keeps thin verdicts visible).
     pooled = Counter(direct_votes)
     seed_dists: list[tuple[int, Counter]] = []
+    abstain_seeds: list[tuple[str, int]] = []
     for p, m in seeds:
         t, _why, dist = resolver.seed(p)
         if t is not None:
             pooled[_grain_key(t)] += m
-        elif dist:
-            seed_dists.append((m, dist))
+        else:
+            if dist:
+                seed_dists.append((m, dist))
+            if resolver.in_lane(p):
+                abstain_seeds.append((p, m))
     voting = sum(pooled.values())
     res.voting_mass = voting
     res.coverage = (voting / res.total_mass) if res.total_mass else 0.0
@@ -1167,6 +1306,39 @@ def resolve_user_flow(
             kind, _, key = str(top_key).partition(":")
             res.rung, res.target = "r2-consumer", GrainTarget(kind, key)
             return res
+
+    # r2.6 — namespace echo (B49, flag-gated via ``resolver.ns_echo``):
+    # the IN-LANE tRPC router seeds that abstained at r2 (typed-proxy
+    # consumption leaves them with no product consumers) vote their span
+    # mass for the EXISTING product PF their namespace token echoes.
+    # Runs on a COPY of the pool: it either RESOLVES via a strict
+    # majority (a clean new rung) or leaves the ladder untouched for r3
+    # — it never guesses and never perturbs the plurality pool. Order is
+    # preserved: r1 and r2 already had their say above; when the flag is
+    # OFF (``ns_echo is None``) the whole block is inert.
+    if resolver.ns_echo is not None and abstain_seeds:
+        aug = Counter(pooled)
+        ns_mass = 0
+        for p, m in abstain_seeds:
+            t = resolver.ns_echo.target_for(p)
+            if t is not None:
+                aug[_grain_key(t)] += m
+                ns_mass += m
+        if ns_mass:
+            voting_aug = sum(aug.values())
+            ranked = _tie_sorted(aug)
+            top_key, ct = ranked[0]
+            if ct * 2 > voting_aug:
+                kind, _, key = str(top_key).partition(":")
+                res.rung, res.target = (
+                    "r2.6-namespace", GrainTarget(kind, key))
+                res.voting_mass = voting_aug
+                res.coverage = (voting_aug / res.total_mass) \
+                    if res.total_mass else 0.0
+                res.thin_coverage = res.coverage < _THIN_COVERAGE
+                res.top2 = [(str(k), c) for k, c in ranked[:2]]
+                return res
+
     if not voting and not seed_dists:
         res.reason = "zero_product_votes"
         return res
@@ -1373,6 +1545,7 @@ def run_transport_handoff(
     feature_flow_edges: list[Any] | None = None,
     grain_index: TargetGrainIndex | None = None,
     consumer_index_factory: Any = None,
+    nav_keys: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Stage 6.985 entrypoint — see module docstring.
 
@@ -1431,6 +1604,18 @@ def run_transport_handoff(
     if not cand_pf:
         return tele
 
+    # B49 r2.6 — the namespace-echo oracle (flag-gated, default OFF):
+    # built once from the EXISTING non-candidate PFs' anchor-identities,
+    # shared across candidates. None → the rung is inert (byte-identical
+    # to the r1→r2→r3 ladder).
+    echo: NamespaceEcho | None = None
+    if transport_namespace_echo_enabled():
+        echo = NamespaceEcho.build(
+            product_features,
+            excluded_pf_keys=frozenset(cand_pf.values()),
+            nav_keys=nav_keys,
+        )
+
     # THE grain oracle (condition 4) — built once, shared by vote+mint.
     if grain_index is None:
         from faultline.pipeline_v2.spine_anchors import build_spine_anchors
@@ -1472,7 +1657,7 @@ def run_transport_handoff(
         resolver = _FileResolver(
             unit, cand_key, owner_map, grain_index, consumers,
             lane_pf_keys=frozenset(cand_pf.values()),
-            neutral_files=neutral_files)
+            neutral_files=neutral_files, ns_echo=echo)
 
         # ── plan: UF votes ────────────────────────────────────────────
         resolutions = [
@@ -1805,6 +1990,14 @@ def run_transport_handoff(
             "minted": dict(sorted(minted_key.items())),
         })
         tele["rungs"][unit] = dict(sorted(rung_counter.items()))
+
+    if echo is not None:
+        tele["namespace_echo"] = {
+            "enabled": True,
+            "seeds_matched": len(echo.matched),
+            "nav_corroborated": echo.nav_corroborated,
+            "moves": dict(sorted(echo.matched.items())),
+        }
 
     # ── hard conservation invariant (the doctrine, structurally) ────────
     violations = _conservation_violations(

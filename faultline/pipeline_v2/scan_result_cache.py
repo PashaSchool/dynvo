@@ -373,6 +373,19 @@ ENV_OUTPUT_FLAGS = (
     # only. Default OFF; =0/unset ⇒ confidence + serialized output
     # byte-identical. No KEY_SCHEMA bump (flip is a separate later commit).
     "FAULTLINE_UF_RESOURCE_RUNG",
+    # B49 (2026-07-12) — transport namespace-echo (r2.6 rung): an in-lane
+    # tRPC router seed that abstains at r2 (typed-proxy consumption → no
+    # product consumers → zero_product_votes) votes its span mass for the
+    # EXISTING product PF whose anchor-identity its namespace token echoes
+    # (``normalize_anchor_key`` — the same normalization as the S3-nav
+    # echo: ``apiKeys`` → ``api-key`` → the ``API Keys`` PF). Unique match
+    # only; ambiguous / generic (``viewer``/``utils``) abstains; NEVER
+    # mints (re-homes onto existing PFs only, conservation judge
+    # untouched). Reshapes user_flows[].product_feature_id + which
+    # transport candidates clear the all-or-nothing gate to lane. Default
+    # OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a separate
+    # later commit per flip-protocol).
+    "FAULTLINE_TRANSPORT_NAMESPACE_ECHO",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
