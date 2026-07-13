@@ -2245,6 +2245,10 @@ def run_finalize_phase(
                 scan_meta["feature_loc"] = loc_telemetry
                 if loc_telemetry.get("loc_accounting"):
                     scan_meta["loc_accounting"] = loc_telemetry["loc_accounting"]
+                # B59 — artifact-ink lane aggregate (absent when the flag is
+                # OFF, so default scan_meta is byte-identical to main).
+                if loc_telemetry.get("artifact_ink"):
+                    scan_meta["artifact_ink"] = loc_telemetry["artifact_ink"]
                 log697.info(
                     "feature_loc: %d/%d dev features with loc>0 "
                     "(%d zero-loc-with-paths), %d files counted"

@@ -1,0 +1,38 @@
+# B59 artifact-ink conventions — STRUCTURAL file-class detector (no feature names).
+# Path-SEGMENT anchored, lowercased match. Doubt -> not artifact.
+#
+# SINGLE SOURCE OF TRUTH for the file-class tokens the artifact-ink drain
+# (faultline/pipeline_v2/artifact_ink.py) reclassifies OUT of product-feature
+# `loc` into a separate `artifact_ink` counter. Every token here is a UNIVERSAL
+# ecosystem convention (locale caches, codegen output trees, test-data /
+# fixtures, dev seeders) — never a repo name and never a feature name; the
+# classifier is purely structural (path segments + a config-basename blocklist).
+#
+# Runtime copy is the source of truth (loaded via importlib.resources); the
+# authoring copy lives at repo-root eval/ (drift-guarded, skipped where eval/
+# is absent — worktrees + fresh clones don't ship it).
+schema_version: 1
+
+config_blocklist_basenames:   # never artifact even under a locale/gen dir (SACRED)
+  - package.json
+  - components.json
+  - manifest.json
+  - project.json
+  - turbo.json
+  - nx.json
+  - lerna.json
+config_blocklist_patterns:    # basename glob
+  - "tsconfig*.json"
+  - "*.config.json"
+locale:
+  extensions: [".po", ".pot"]
+  json_under_segments: ["/locales/", "/messages/", "/translations/", "/lang/"]
+generated:
+  dir_segments: ["/__generated__/", "/generated/", "/generated-metadata/"]
+  filename_globs: ["*.generated.*"]
+  content_markers: ["@generated", "code generated"]   # first ~2KB, DO NOT EDIT banner
+testing:
+  dir_segments: ["/__mocks__/", "/__fixtures__/", "/mocks/"]
+  path_prefixes: ["/testing/mock"]
+seed:
+  dir_segments: ["/seeds/", "/dev-seeder/", "/seed-data/"]

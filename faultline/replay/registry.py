@@ -1553,6 +1553,9 @@ def _run_feature_loc(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
             scan_meta["feature_loc"] = loc_telemetry
             if loc_telemetry.get("loc_accounting"):
                 scan_meta["loc_accounting"] = loc_telemetry["loc_accounting"]
+            # B59 — artifact-ink lane aggregate (absent when the flag is OFF).
+            if loc_telemetry.get("artifact_ink"):
+                scan_meta["artifact_ink"] = loc_telemetry["artifact_ink"]
             write_stage_artifact(
                 ctx.repo_path, stage_index=6, stage_name="feature_loc",
                 payload=loc_telemetry,

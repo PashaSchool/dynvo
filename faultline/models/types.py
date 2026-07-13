@@ -979,6 +979,18 @@ class Feature(BaseModel):
     # from dumps when unset (old scans / dev features serialize unchanged).
     loc_flow: int | None = None
     loc_flow_shared: int | None = None
+    # B59 (2026-07-13) — artifact-ink accounting drain (Stage 6.97, product +
+    # developer features). The OWNED line count of this feature's non-authorial
+    # "ink" member files — locale catalogs (``.po`` / locale JSON), machine-
+    # generated schemas (``__generated__/`` / ``*.generated.*``), test DATA
+    # (``__mocks__/`` / fixtures), dev seeders — reclassified OUT of ``loc`` so
+    # ``loc`` reads as an HONEST product-code size (twenty-front locale cache is
+    # not a feature size). ACCOUNTING ONLY: the files stay members (path_index /
+    # line coordinates / flows / user_flows untouched); ``loc + artifact_ink_loc``
+    # equals the pre-drain owned total (conservation). ``None`` (omitted from
+    # dumps) on scans that predate the field and on FAULTLINE_ARTIFACT_INK_LANE=0
+    # scans — so the default output is byte-identical to the pre-B59 engine.
+    artifact_ink_loc: int | None = None
     # Product-Spine §4.2 (Wave 2a, 2026-07-06) — product-surface taxonomy
     # tag: ``product | marketing | docs | legal | system | dev_tooling |
     # shell`` (see ``pipeline_v2.surface_taxonomy``). Stamped on every
@@ -1018,6 +1030,7 @@ class Feature(BaseModel):
         data = handler(self)
         if isinstance(data, dict):
             for key in ("role", "loc_flow", "loc_flow_shared",
+                        "artifact_ink_loc",
                         "surface_scope", "shared_reason", "anchor_id"):
                 if data.get(key) is None:
                     data.pop(key, None)
