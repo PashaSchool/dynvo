@@ -266,3 +266,115 @@ def test_non_coherent_dev_never_fenced(monkeypatch) -> None:
     e_off = _run(False)
     assert e_on.product_feature_id == e_off.product_feature_id
     assert e_on.anchor_id == e_off.anchor_id
+
+
+# ── Seg B — dev-artifact-unit mint bar (novu playground shape) ───────────
+
+
+_PLAYGROUND_WORKSPACES = [ws("apps/web"), ws("apps/dashboard"),
+                          ws("playground/nextjs")]
+
+
+def _playground_fixture() -> tuple[list[Feature], list[dict]]:
+    routes = [
+        {"pattern": "/notifications", "method": "PAGE",
+         "file": "playground/nextjs/src/pages/notifications.tsx"},
+        {"pattern": "/workflows", "method": "PAGE",
+         "file": "apps/dashboard/src/pages/workflows.tsx"},
+    ]
+    notif = dev(
+        "notifications",
+        ["playground/nextjs/src/pages/notifications.tsx",
+         "playground/nextjs/src/pages/notif-detail.tsx"],
+        flows=[flow("view-notifications-flow",
+                    "playground/nextjs/src/pages/notifications.tsx")])
+    workflows = dev(
+        "workflows",
+        ["apps/dashboard/src/pages/workflows.tsx"],
+        flows=[flow("manage-workflows-flow",
+                    "apps/dashboard/src/pages/workflows.tsx")])
+    return [notif, workflows], routes
+
+
+def test_off_playground_anchor_mints(monkeypatch) -> None:
+    """OFF reproduces the novu hole: the playground example app mints a
+    product PF."""
+    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    devs, routes = _playground_fixture()
+    notif, workflows = devs
+    pfs, tele = run_anchored_mint(devs, routes,
+                                  ctx_of(_PLAYGROUND_WORKSPACES))
+    assert notif.product_feature_id is not None
+    assert notif.product_feature_id != workflows.product_feature_id
+    assert "mint_bar_dev_artifact_unit" not in tele
+
+
+def test_on_playground_anchor_never_mints(monkeypatch) -> None:
+    """ON: the playground-unit anchor is barred (dev_artifact_unit);
+    the example-app dev lanes with its unit instead of minting a fake
+    product tile — the novu Notifications 52% exhibit dissolves."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    devs, routes = _playground_fixture()
+    notif, workflows = devs
+    pfs, tele = run_anchored_mint(devs, routes,
+                                  ctx_of(_PLAYGROUND_WORKSPACES))
+    assert workflows.product_feature_id is not None, (
+        "the REAL product surface must keep minting")
+    assert tele.get("mint_bar_dev_artifact_unit", 0) >= 1
+    assert (notif.product_feature_id is None
+            or notif.product_feature_id == workflows.product_feature_id), (
+        "B58 Seg B REGRESSION: the playground anchor still minted its "
+        "own PF — got {!r}".format(notif.product_feature_id))
+    for pf in pfs:
+        assert "playground" not in (pf.anchor_id or ""), (
+            "a playground-unit anchor minted: {!r}".format(pf.anchor_id))
+
+
+def test_on_product_page_named_playground_still_mints(monkeypatch) -> None:
+    """The cal.com counterfactual (Lane-C 'measured out' verdict): a
+    REAL product admin page named ``playground`` inside apps/web is a
+    route LEAF — unit-root grain cannot fire; the page keeps minting."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    routes = [
+        {"pattern": "/settings/admin/playground", "method": "PAGE",
+         "file": "apps/web/src/pages/settings/admin/playground.tsx"},
+    ]
+    page = dev(
+        "playground",
+        ["apps/web/src/pages/settings/admin/playground.tsx",
+         "apps/web/src/pages/settings/admin/playground-run.tsx"],
+        flows=[flow("run-playground-flow",
+                    "apps/web/src/pages/settings/admin/playground.tsx")])
+    pfs, tele = run_anchored_mint([page], routes, ctx_of(_WORKSPACES))
+    assert page.product_feature_id is not None, (
+        "B58 Seg B REGRESSION: a product page merely NAMED playground "
+        "was barred — the Lane-C carve-out is broken")
+    assert tele.get("mint_bar_dev_artifact_unit", 0) == 0
+
+
+def test_no_workspace_units_top_level_artifact_dir_barred(
+        monkeypatch) -> None:
+    """A non-workspace repo with a TOP-LEVEL examples/ dir: the
+    top-level-dir grain fires (examples app ≠ product); a src/ page
+    named examples-gallery does not."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    routes = [
+        {"pattern": "/gallery", "method": "PAGE",
+         "file": "examples/webapp/pages/gallery.tsx"},
+        {"pattern": "/home", "method": "PAGE",
+         "file": "src/pages/home.tsx"},
+    ]
+    gallery = dev(
+        "gallery",
+        ["examples/webapp/pages/gallery.tsx"],
+        flows=[flow("view-gallery-flow",
+                    "examples/webapp/pages/gallery.tsx")])
+    home = dev(
+        "home", ["src/pages/home.tsx"],
+        flows=[flow("view-home-flow", "src/pages/home.tsx")])
+    pfs, tele = run_anchored_mint([gallery, home], routes, ctx_of(None))
+    assert home.product_feature_id is not None
+    assert tele.get("mint_bar_dev_artifact_unit", 0) >= 1
+    for pf in pfs:
+        assert not (pf.anchor_id or "").startswith("route:examples"), (
+            "top-level examples/ anchor minted: {!r}".format(pf.anchor_id))

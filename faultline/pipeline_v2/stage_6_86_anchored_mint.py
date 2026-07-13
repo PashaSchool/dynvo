@@ -325,6 +325,34 @@ def _unit_of(path: str, unit_roots: tuple[str, ...]) -> str | None:
     return None
 
 
+def _artifact_unit_anchor(
+    a: SpineAnchor,
+    unit_roots: tuple[str, ...],
+    tokens: frozenset[str],
+) -> bool:
+    """B58 Seg B — ``True`` when EVERY evidence unit of *a* sits inside a
+    dev-artifact workspace unit: a unit whose ROOT path carries a segment
+    from ``unit_root_artifact_tokens`` (novu ``playground/nextjs`` — the
+    repo's own pnpm-workspace.yaml declares the playground apps). The
+    token test runs at UNIT-ROOT grain only — for evidence outside every
+    unit, only the TOP-LEVEL dir counts — so a product page merely NAMED
+    ``playground`` (cal.com admin page, a route leaf inside apps/web)
+    can never fire. All-or-nothing over the evidence: one non-artifact
+    evidence unit vetoes the bar (conservative — never bar a mixed
+    surface)."""
+    if not tokens:
+        return False
+    evs = list(a.prefixes) + sorted(a.files)
+    if not evs:
+        return False
+    for ev in evs:
+        u = _unit_of(str(ev), unit_roots)
+        scope = u if u is not None else str(ev).split("/", 1)[0]
+        if not any(seg in tokens for seg in scope.lower().split("/")):
+            return False
+    return True
+
+
 #: The surface token stripped to recover a route anchor's DOMAIN family. Only
 #: ``-page`` appears as a surface-PF suffix in practice (``webhooks-page``,
 #: ``settings-page``); the api-side domain anchors (``webhook``, ``setting``)
@@ -866,6 +894,10 @@ def run_anchored_mint(
     # dev-artifact-unit bar). Empty tuple on single-unit repos.
     _ws_unit_roots: tuple[str, ...] = _workspace_unit_roots(ctx)
     _annex_on: bool = annexation_guard_enabled()
+    _art_tokens: frozenset[str] = frozenset(
+        str(t).strip().lower()
+        for t in (vocab.get("unit_root_artifact_tokens") or ())
+        if str(t).strip()) if _annex_on else frozenset()
     bar_by_anchor: dict[str, str | None] = {}
     for cid in sorted(winners_by_anchor):
         a = anchor_by_id[cid]
@@ -885,6 +917,20 @@ def run_anchored_mint(
         if a.source == "hub-core" and bar_by_anchor[cid] is None:
             if a.hub_dir not in minted_vendor_hubs:
                 bar_by_anchor[cid] = "hub_core_without_children"
+    # B58 Seg B — dev-artifact-unit mint bar: an anchor wholly inside a
+    # workspace unit whose unit-ROOT path carries an artifact segment
+    # (playground/examples/demo/sample — data:
+    # spine-anchor-vocab.yaml:unit_root_artifact_tokens) never mints.
+    # The novu route:playground/nextjs/... Notifications exhibit; the
+    # cal.com product PAGE named `playground` (route leaf inside
+    # apps/web) is structurally out of reach (unit-root grain).
+    if _annex_on:
+        for cid in sorted(bar_by_anchor):
+            if bar_by_anchor[cid] is None and _artifact_unit_anchor(
+                    anchor_by_id[cid], _ws_unit_roots, _art_tokens):
+                bar_by_anchor[cid] = "dev_artifact_unit"
+                tele["mint_bar_dev_artifact_unit"] = (
+                    tele.get("mint_bar_dev_artifact_unit", 0) + 1)
     for cid in sorted(bar_by_anchor):
         if bar_by_anchor[cid] and len(tele["bar_decisions"]) < 50:
             tele["bar_decisions"].append(
@@ -1080,6 +1126,15 @@ def run_anchored_mint(
                         instrument_dirs=instrument_dirs,
                         plumbing_keys=plumbing_keys)
         if bar is not None:
+            return None
+        # B58 Seg B — the on-demand mint honours the dev-artifact-unit
+        # bar (the Seg B pass runs over anchors with WINNERS; an anchor
+        # first reached here would otherwise mint through the bypass —
+        # the novu playground Notifications door).
+        if _annex_on and _artifact_unit_anchor(a, _ws_unit_roots,
+                                               _art_tokens):
+            tele["mint_bar_dev_artifact_unit"] = (
+                tele.get("mint_bar_dev_artifact_unit", 0) + 1)
             return None
         mintable.add(best)
         bar_by_anchor[best] = None
