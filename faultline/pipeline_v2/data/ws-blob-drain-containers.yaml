@@ -1,0 +1,54 @@
+# B53 — ws-app blob domain-drain container conventions (Seg A).
+#
+# SINGLE SOURCE OF TRUTH for the domain-dir container segments the
+# ws-blob domain drain (faultline/pipeline_v2/ws_blob_domain_drain.py)
+# scans for inside a ws-package blob. A `<...>/<container>/<domain>/`
+# subtree is the author's own capability declaration inside a package
+# (twenty-front `src/modules/object-record/`, twenty-server
+# `src/engine/core-modules/messaging/`) — the SAME class of ecosystem
+# structural convention as the route conventions in
+# stack-pattern-library, NOT a domain-name dictionary.
+#
+# Matching is on the SEGMENT NAME anywhere inside the package-relative
+# path (a container may appear at any depth: `<pkg>/src/modules/` or
+# `<pkg>/src/engine/core-modules/`). The segment immediately AFTER the
+# container is the domain dir; the drain matches that domain name
+# against EXISTING product features (never a name vocabulary — a domain
+# with no product PF stays in the blob). Every token here is a UNIVERSAL
+# framework/monorepo convention — never a repo name.
+#
+# Note: `pages` overlaps the structural stoplist (it is a Next.js route
+# convention). It is a container-convention signal here ONLY: the drain
+# still requires the 2nd-level domain dir to full-normalized-match an
+# existing PF, so a route dir that never matches an existing PF (or that
+# is already product-homed, not blob-owned) is never drained.
+
+# Runtime copy is the source of truth (loaded via importlib.resources);
+# authoring copy lives at repo-root eval/ (drift-guarded, skipped where
+# eval/ is absent).
+schema_version: 1
+
+# Feature/module domain containers: `<container>/<domain>/**`.
+domain_dir_containers:
+  - modules
+  - core-modules
+  - features
+  - scenes
+  - pages
+
+# Generic 2nd-level dirs that are app-shell content, NEVER a domain PF —
+# they stay in the blob (they ARE the real app-shell). Compared after
+# `normalize_anchor_key` (singularized), so both `component` and
+# `components` match. Kept in sync with the B49/B51 matcher's generic
+# abstain set.
+generic_domain_tokens:
+  - component
+  - util
+  - lib
+  - shared
+  - common
+  - type
+  - ui
+  - hook
+  - constant
+  - state

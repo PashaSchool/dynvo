@@ -422,6 +422,18 @@ ENV_OUTPUT_FLAGS = (
     # platform_infrastructure[]. Default OFF; =0/unset byte-identical. No
     # KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
     "FAULTLINE_FLOWFUL_TRANSPORT_LANE",
+    # B53 (2026-07-13) — ws-app blob domain drain. Seg A re-attributes a
+    # ws-blob donor's internal domain-dir members (``<pkg>/<container>/
+    # <domain>/**``) onto the EXISTING PF whose identity the domain name
+    # echoes (same NamespaceEcho matcher; NO mints), moving them at the dev
+    # level so Stage 6.97 owned-LOC + the path_index rebuild + Stage 6.99
+    # I16 journey re-home follow for free. Seg B lanes dev-artifact ws-
+    # packages (docs-content / devDependency-only tooling / scaffolder) off
+    # the product layer via the dev_artifact_units channel. ONE flag gates
+    # BOTH segments. Reshapes product_features[] membership/LOC +
+    # user_flows[].product_feature_id. Default OFF; =0/unset byte-identical.
+    # No KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_WS_BLOB_DOMAIN_DRAIN",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

@@ -345,13 +345,76 @@ def _drop_anchored_husks(
         return not (getattr(feat, "loc", None)
                     or getattr(feat, "loc_flow", None))
 
+    # B53 v5 — the husk test judges ORGANIC mass at FILE grain. The
+    # Stage-6.885b drain moves member files at the dev level, so a
+    # foldproof husk (typebot Popup: the OFF board lanes it via THIS
+    # rule, loc=0) could come back flag-ON wearing drain-contributed LOC.
+    # A carve-dev-identity subtraction (v4) is NOT enough: on the real
+    # board the drained files' 6.97 ``_primary`` went to an ORGANIC
+    # sibling dev of the target (typebot dev 'popup': 12 paths beat the
+    # carve's 2 on dircount ⇒ organic dev loc=203, carve loc=0) — drain
+    # mass wearing an organic dev's clothes. The provenance therefore
+    # lives at the FILE, not the dev: ``drain_paths`` = the union of
+    # carve-dev path lists (structured ``fold:b53_domain_drain->`` anchor
+    # marker), and a row/dev is ORGANICALLY zero-owned iff its owned loc
+    # is fully explained by the drained files it lists (per-file ``loc``
+    # stamps are provenance-level — the same count on every claimant —
+    # so the credit is owner-independent). loc_flow prong semantics
+    # unchanged. A husk verdict then runs the UNCHANGED machinery below —
+    # flowless shell devs (organic AND carve alike) unbind to the
+    # platform lane carrying the drained files (zero-loss, I22-visible;
+    # the lane row's LOC vs the OFF board's 0 is the accepted honest
+    # delta). Boards with no drain marks: ``drain_paths`` is empty, the
+    # credit is 0, and the test reduces to ``_zero_owned`` verbatim
+    # (flag-OFF ⇒ byte-identical trivially).
+    from faultline.pipeline_v2.ws_blob_domain_drain import is_drain_carve_dev
+
+    drain_paths: set[str] = set()
+    for f in features:
+        if getattr(f, "layer", "developer") != "developer":
+            continue
+        if is_drain_carve_dev(f):
+            drain_paths.update(
+                str(p) for p in (getattr(f, "paths", None) or []) if p)
+
+    if drain_paths:
+        # path → provenance-level per-file loc (6.97 member stamps; the
+        # SAME value on every claimant, so any feature's stamp serves).
+        drain_file_loc: dict[str, int] = {}
+        for f in list(features) + list(product_features):
+            for mf in (getattr(f, "member_files", None) or []):
+                p = (mf.get("path") if isinstance(mf, dict)
+                     else getattr(mf, "path", None))
+                if p is None or str(p) not in drain_paths:
+                    continue
+                floc = (mf.get("loc") if isinstance(mf, dict)
+                        else getattr(mf, "loc", None))
+                if floc:
+                    drain_file_loc.setdefault(str(p), int(floc))
+
+        def _organic_zero(feat: "Feature") -> bool:
+            """ORGANIC zero-owned: no owned-loc-contributing file outside
+            ``drain_paths`` — owned loc ≤ the drained-file credit of the
+            paths the feature lists (owner-independent)."""
+            if getattr(feat, "loc_flow", None):
+                return False
+            credit = sum(
+                drain_file_loc.get(str(p), 0)
+                for p in (getattr(feat, "paths", None) or [])
+                if str(p) in drain_paths
+            )
+            return (getattr(feat, "loc", None) or 0) <= credit
+    else:
+        _organic_zero = _zero_owned
+
     candidates: list["Feature"] = []
     for pf in product_features:
         if _is_platform_bucket(pf) or not getattr(pf, "anchor_id", None):
             continue
-        if not _zero_owned(pf) or (getattr(pf, "flows", None) or []):
+        if not _organic_zero(pf) or (getattr(pf, "flows", None) or []):
             continue
-        if any(not _zero_owned(d) for d in devs_by_pf.get(_pf_key(pf), [])):
+        if any(not _organic_zero(d)
+               for d in devs_by_pf.get(_pf_key(pf), [])):
             continue
         candidates.append(pf)
     if not candidates:

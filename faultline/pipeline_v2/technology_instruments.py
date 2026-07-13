@@ -965,6 +965,115 @@ def detect_technology_instruments(
         if fixture_units:
             tele["dev_artifact_units"] = dict(sorted(fixture_units.items()))
 
+    # ── B53 Seg B — dev-artifact ws-packages off the product layer ──────
+    # THREE structural (manifest/content, NOT name) signals, gated by the
+    # SINGLE B53 flag, routed into the SAME ``dev_artifact_units`` channel
+    # the B28 P-D marks use (mark-only: the unit mints normally and its
+    # journeys ride into the lane at EMISSION — never mint-time laning, the
+    # I9 conservation law). SACRED product anti-cases survive by
+    # construction: ``twenty-zapier`` (integration = own PF) and
+    # ``twenty-sdk`` (published SDK) carry no docs/devdep/scaffolder shape;
+    # ``twenty-website`` is a Next app protected by the ``route_surface``
+    # veto (marketing-vs-product discrimination deferred — see Deviations).
+    # OFF (default) → this pass is skipped → byte-identical to pre-B53.
+    try:
+        from faultline.pipeline_v2.ws_blob_domain_drain import (
+            ws_blob_domain_drain_enabled as _b53_enabled,
+        )
+        _b53_on = _b53_enabled()
+    except Exception:  # noqa: BLE001 — flag helper is best-effort
+        _b53_on = False
+    if _b53_on:
+        _DOC_SUFFIXES = (".md", ".mdx", ".markdown", ".mdoc")
+        b53_units: dict[str, str] = {}
+        _taken = (set(instruments)
+                  | set(tele.get("transport_candidates") or {})
+                  | set(tele.get("dev_artifact_units") or {}))
+        for u in sorted(units):
+            if units.get(u) != "ws-pkg" or u not in facts or u in _taken:
+                continue
+            _veto = _vetoes(u)
+            if _veto == "route_surface":
+                continue  # Next app / route surface — product (website)
+            fs = files_by_unit.get(u, [])
+            man = unit_manifest.get(u) or {}
+            _own_manifest = u + "/package.json"
+            _name = str(man.get("name") or "")
+            # Cross-manifest consumption of this unit's name (both dep
+            # channels; the unit's own manifest excluded).
+            _as_dev = _as_runtime = False
+            if _name:
+                for _rel, _doc in manifests.items():
+                    if _rel == _own_manifest:
+                        continue
+                    if _name in (_doc.get("devDependencies") or {}):
+                        _as_dev = True
+                    if _name in (_doc.get("dependencies") or {}):
+                        _as_runtime = True
+            _sig: str | None = None
+            # A published CLI is a real artifact — only the scaffolder
+            # prong's template evidence overrides that veto (v2).
+            _cli_vetoed = _veto == "published_cli"
+            # (1) docs-content: ≥80% of tracked files are markdown docs
+            # (twenty-docs: localized .mdx). Content, not name. (A PURE
+            # markdown package is already S1c config-only — the _taken
+            # guard above avoids double-marking; this prong covers the
+            # docs-SITE shape with a few theme sources.)
+            if not _cli_vetoed and fs:
+                docs = sum(1 for f in fs if f.lower().endswith(_DOC_SUFFIXES))
+                if docs / len(fs) >= 0.80:
+                    _sig = "B53:docs-content"
+            # (2) devDependency-only tooling: the package name is declared
+            # as a devDependency somewhere and NEVER as a runtime
+            # dependency, with ZERO in-repo runtime import edges
+            # (the classic lint-rules shape).
+            if (_sig is None and not _cli_vetoed and _name
+                    and _as_dev and not _as_runtime
+                    and in_edges.get(u, 0) == 0):
+                _sig = "B53:devdep-only"
+            # (2b) private-unconsumed tooling (v2 — twenty-oxlint-rules is
+            # dep-declared NOWHERE: the root manifest lists it only under
+            # ``workspaces``, so prong (2) can never fire): private:true
+            # AND zero in-repo consumers across BOTH channels (no import
+            # edges AND not declared in any other manifest's
+            # dependencies/devDependencies) AND its own manifest declares
+            # zero runtime dependencies AND no bin. Structural — manifest
+            # facts only, no names.
+            if (_sig is None and not _cli_vetoed
+                    and man.get("private") is True
+                    and not man.get("bin")
+                    and not (man.get("dependencies") or {})
+                    and not _as_dev and not _as_runtime
+                    and in_edges.get(u, 0) == 0):
+                _sig = "B53:private-unconsumed"
+            # (3) scaffolder (v2): bin-entry + a template/templates dir at
+            # ANY depth within the unit + zero INBOUND in-repo runtime
+            # imports (nobody imports a scaffolder; its OUTBOUND deps are
+            # irrelevant — scaffolders embed the SDK by nature). Detected
+            # over the raw tracked population, NOT ``files_by_unit``: a
+            # template payload often embeds its own package.json, which
+            # makes the template dir a nested ws-unit that steals the
+            # files from this unit's file list (the create-twenty-app rig
+            # miss). Template evidence overrides published_cli for THIS
+            # signal only.
+            if _sig is None and man.get("bin") and in_edges.get(u, 0) == 0:
+                _pref = u + "/"
+                for f in tracked:
+                    if not f.startswith(_pref):
+                        continue
+                    segs = f[len(_pref):].split("/")[:-1]
+                    if any(s in ("template", "templates") for s in segs):
+                        _sig = "B53:scaffolder"
+                        break
+            if _sig:
+                b53_units[u] = _sig
+        if b53_units:
+            merged = dict(tele.get("dev_artifact_units") or {})
+            for _u, _s in b53_units.items():
+                merged.setdefault(_u, _s)
+            tele["dev_artifact_units"] = dict(sorted(merged.items()))
+            tele["b53_dev_artifact"] = dict(sorted(b53_units.items()))
+
     # satellite fdirs
     satellites: dict[str, str] = {}
     for u in sorted(units):
