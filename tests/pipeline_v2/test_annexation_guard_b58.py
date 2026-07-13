@@ -1,0 +1,268 @@
+"""B58 — container-anchor annexation guard (FAULTLINE_ANNEXATION_GUARD).
+
+Forensics (fresh keyed boards, 2026-07-13): a legit SMALL anchor core
+annexes a HUGE foreign mass through the mint's rescue rungs —
+
+  * plane ``Issue`` (svc anchor, 2,140 own LOC) ended up 174,254 LOC /
+    53% of the board: the flowful ``i18n`` ws-package dev (125,566 LOC,
+    552 files, ALL inside packages/i18n) walk-folded into it because the
+    same-key MERGE made the host's evidence multi-unit ⇒ the B22a
+    unit-unanimity test returned ``None`` ⇒ never foreign;
+  * cal.com ``Bookings`` annexed apps/api/v2 (45K, 825 files) through
+    the ENTRY rung, which B22a never wrapped;
+  * novu ``Notifications`` is anchored at route:playground/nextjs/… —
+    an example app the repo's own pnpm-workspace.yaml parks under
+    ``playground/*`` ("# playground apps").
+
+Seg A: with the guard armed, a unit-coherent flowful dev is never
+force-bound (entry / span / walk) onto a target whose CANONICAL unit is
+a different workspace unit — it lanes with its own unit (B22a's honest
+refusal, ``cross_unit_isolation``).
+
+Seg B: an anchor wholly inside a dev-artifact-rooted workspace unit
+(unit-ROOT segments ∩ unit_root_artifact_tokens) never mints
+(``dev_artifact_unit``). Unit-root grain: a product PAGE named
+``playground`` inside apps/web (cal.com admin page) can never fire.
+
+Default OFF: every test asserts the OFF world reproduces the annexation
+byte-for-byte in behaviour (tele counters absent, dev annexed).
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+from faultline.models.types import Feature, Flow, MemberFile
+from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+    _SHARED_REASON_CROSS_UNIT,
+    build_platform_infrastructure_lane,
+    run_anchored_mint,
+)
+
+_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def flow(name: str, entry: str, paths: list[str] | None = None) -> Flow:
+    return Flow(
+        name=name, entry_point_file=entry, paths=paths or [entry],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_NOW, health_score=100.0,
+    )
+
+
+def dev(name: str, paths: list[str], flows: list[Flow] | None = None,
+        **kw) -> Feature:
+    return Feature(
+        name=name,
+        paths=list(paths),
+        member_files=[
+            MemberFile(path=p, role="anchor", confidence=1.0, primary=True)
+            for p in paths
+        ],
+        flows=flows or [],
+        product_feature_id="old-pf",
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_NOW, health_score=100.0, **kw,
+    )
+
+
+def ws(path: str) -> SimpleNamespace:
+    return SimpleNamespace(name=path.rsplit("/", 1)[-1], path=path, files=[])
+
+
+def ctx_of(workspaces=None, tracked=None, repo_path=".") -> SimpleNamespace:
+    return SimpleNamespace(
+        workspaces=workspaces, tracked_files=tracked or [],
+        repo_path=Path(repo_path), monorepo=bool(workspaces),
+    )
+
+
+_WORKSPACES = [ws("apps/web"), ws("packages/lib"), ws("packages/common")]
+
+
+def _plane_fixture() -> tuple[list[Feature], list[dict]]:
+    """The plane ``Issue`` shape: the ``board`` capability has dir-style
+    page routes in TWO units (apps/web + packages/lib) — the same-KEY
+    merge unions their evidence into ONE anchor whose evidence is
+    multi-unit ⇒ the B22a unit-unanimity test yields ``None`` ⇒ the host
+    is never foreign to anyone. Its canonical id keeps the head's
+    embedded path (rung 1 of the B58 canonical-unit ladder).
+    ``dash`` is a small same-unit sibling (2 files)."""
+    routes = [
+        {"pattern": "/board", "method": "PAGE",
+         "file": "apps/web/src/pages/board/index.tsx"},
+        {"pattern": "/board", "method": "PAGE",
+         "file": "packages/lib/src/pages/board/panel.tsx"},
+        {"pattern": "/dash", "method": "PAGE",
+         "file": "apps/web/src/pages/dash.tsx"},
+    ]
+    board = dev(
+        "board",
+        ["apps/web/src/pages/board/index.tsx",
+         "apps/web/src/pages/board/detail.tsx",
+         "apps/web/src/pages/board/filters.tsx",
+         "packages/lib/src/pages/board/panel.tsx"],
+        flows=[flow("view-board-flow",
+                    "apps/web/src/pages/board/index.tsx")])
+    dash = dev(
+        "dash",
+        ["apps/web/src/pages/dash.tsx", "apps/web/src/pages/dash-two.tsx"],
+        flows=[flow("view-dash-flow", "apps/web/src/pages/dash.tsx")])
+    return [board, dash], routes
+
+
+def _victim_i18n() -> Feature:
+    """The plane ``i18n`` shape: a flowful dev wholly inside
+    packages/common — a unit whose own ws anchor cannot mint (its base
+    key is structural, the ws:packages/i18n instrument-bar analogue).
+    Its flows live inside its own package (translation loading), so
+    span votes resolve nowhere and the walk decides upstairs."""
+    paths = [f"packages/common/src/locales/l{i}.ts" for i in range(6)]
+    return dev("i18n", paths,
+               flows=[flow("load-translations-flow", paths[0],
+                           paths=paths[:3])])
+
+
+# ── Seg A (a) — the multi-unit-host walk hole ────────────────────────────
+
+
+def test_off_multi_unit_host_annexes_cross_unit_dev(monkeypatch) -> None:
+    """OFF reproduces the plane hole EXACTLY: the host's merged
+    evidence spans apps/web + packages/lib ⇒ B22a's unit-unanimity is
+    ``None`` ⇒ the host is never foreign ⇒ the packages/i18n dev is
+    annexed at root plurality. This test IS the diagnosis."""
+    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    devs, routes = _plane_fixture()
+    board, dash = devs
+    victim = _victim_i18n()
+    all_devs = devs + [victim]
+    pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+    assert board.product_feature_id is not None
+    assert victim.product_feature_id == board.product_feature_id, (
+        "the OFF world must reproduce the pre-B58 annexation (the "
+        "multi-unit host escapes B22a) — got {!r}".format(
+            victim.product_feature_id))
+    assert "annex_guard_span_blocked" not in tele
+    assert "annex_guard_entry_blocked" not in tele
+    assert "mint_bar_dev_artifact_unit" not in tele
+
+
+def test_on_multi_unit_host_fenced_dev_lanes(monkeypatch) -> None:
+    """ON closes the hole: the host's CANONICAL unit (route surface in
+    apps/web) is foreign to the packages/i18n dev; every walk target is
+    foreign ⇒ the dev lanes with its own unit (cross_unit_isolation) —
+    the 125K i18n mass never lands on the Issue analogue."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    devs, routes = _plane_fixture()
+    board, dash = devs
+    victim = _victim_i18n()
+    all_devs = devs + [victim]
+    pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+    assert board.product_feature_id is not None
+    assert victim.product_feature_id is None, (
+        "B58 Seg A REGRESSION: the multi-unit host annexed the "
+        "unit-coherent cross-unit dev — landed on {!r}".format(
+            victim.product_feature_id))
+    assert victim.shared_reason == _SHARED_REASON_CROSS_UNIT
+    assert tele.get("fold_walk_crossunit_laned", 0) == 1
+    assert tele.get("law_flowful_in_lane", 0) == 0
+    lane = build_platform_infrastructure_lane(all_devs)
+    assert "i18n" in [r["name"] for r in lane]
+
+
+# ── Seg A (b) — the entry rung fence (cal.com apps/api/v2 shape) ─────────
+
+
+def _victim_api_v2() -> Feature:
+    """The cal.com ``api-v2`` shape: a flowful dev wholly inside
+    packages/common whose flow ENTERS through the host's page in
+    apps/web — the un-guarded entry rung annexes it wholesale."""
+    paths = [f"packages/common/src/api/e{i}.ts" for i in range(4)]
+    return dev("api-v2", paths,
+               flows=[flow("serve-api-flow", "apps/web/src/pages/dash.tsx",
+                           paths=["apps/web/src/pages/dash.tsx"])])
+
+
+def test_off_entry_rung_annexes_cross_unit_dev(monkeypatch) -> None:
+    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    devs, routes = _plane_fixture()
+    board, dash = devs
+    victim = _victim_api_v2()
+    all_devs = devs + [victim]
+    pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+    assert victim.product_feature_id == dash.product_feature_id, (
+        "OFF must reproduce the cal.com entry-rung annexation")
+    assert (victim.anchor_id or "").startswith("fold:entry->")
+
+
+def test_on_entry_rung_fenced(monkeypatch) -> None:
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    devs, routes = _plane_fixture()
+    board, dash = devs
+    victim = _victim_api_v2()
+    all_devs = devs + [victim]
+    pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+    assert victim.product_feature_id != dash.product_feature_id, (
+        "B58 Seg A REGRESSION: entry rung still annexes across units")
+    assert tele.get("annex_guard_entry_blocked", 0) >= 1
+    # the dev lanes (its own unit mints nothing; every target foreign)
+    assert victim.product_feature_id is None
+    assert victim.shared_reason == _SHARED_REASON_CROSS_UNIT
+
+
+# ── Seg A (c) — SACRED anti-cases: same-unit mass NEVER touched ──────────
+
+
+def test_same_unit_dense_module_untouched_on_and_off(monkeypatch) -> None:
+    """The twenty object-record / Soc0 network-security law: a flowful
+    dev whose own-subtree mass lives in the SAME unit as its host binds
+    identically ON and OFF — the guard keys on FOREIGN cross-unit mass
+    only, never on density."""
+    def _run(on: bool):
+        if on:
+            monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+        else:
+            monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+        devs, routes = _plane_fixture()
+        board, dash = devs
+        paths = [f"apps/web/src/records/obj{i}.ts" for i in range(12)]
+        dense = dev("object-record", paths,
+                    flows=[flow("manage-record-flow", paths[0],
+                                paths=paths[:4])])
+        all_devs = devs + [dense]
+        pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+        return dense, tele
+
+    d_on, tele_on = _run(True)
+    d_off, tele_off = _run(False)
+    assert d_on.product_feature_id is not None
+    assert d_on.product_feature_id == d_off.product_feature_id
+    assert d_on.anchor_id == d_off.anchor_id
+    assert tele_on.get("annex_guard_entry_blocked", 0) == 0
+    assert tele_on.get("annex_guard_span_blocked", 0) == 0
+
+
+def test_non_coherent_dev_never_fenced(monkeypatch) -> None:
+    """A dev whose own files SPAN units (the documenso embed shape) is
+    not unit-coherent — B58 never fences it; the B22a rehome law keeps
+    ruling it (identical ON and OFF)."""
+    def _run(on: bool):
+        if on:
+            monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+        else:
+            monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+        devs, routes = _plane_fixture()
+        paths = ["apps/web/src/embed/frame.ts",
+                 "packages/lib/src/embed-kit.ts"]
+        embed = dev("embed", paths,
+                    flows=[flow("embed-flow", paths[0], paths=list(paths))])
+        all_devs = devs + [embed]
+        pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+        return embed
+
+    e_on = _run(True)
+    e_off = _run(False)
+    assert e_on.product_feature_id == e_off.product_feature_id
+    assert e_on.anchor_id == e_off.anchor_id

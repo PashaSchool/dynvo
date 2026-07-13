@@ -92,8 +92,10 @@ __all__ = [
     "ANCHORED_MINT_ENV",
     "MINT_DOMAIN_FOLD_ENV",
     "FOLD_CROSSAPP_GUARD_ENV",
+    "ANNEXATION_GUARD_ENV",
     "mint_domain_fold_enabled",
     "fold_crossapp_guard_enabled",
+    "annexation_guard_enabled",
     "anchored_mint_enabled",
     "run_anchored_mint",
     "build_platform_infrastructure_lane",
@@ -132,6 +134,33 @@ MINT_DOMAIN_FOLD_ENV = "FAULTLINE_MINT_DOMAIN_FOLD_V2"
 #: Kill-switch: ``FAULTLINE_FOLD_CROSSAPP_GUARD=0`` restores the unguarded
 #: walk byte-identically.
 FOLD_CROSSAPP_GUARD_ENV = "FAULTLINE_FOLD_CROSSAPP_GUARD"
+
+#: B58 (2026-07-13) — container-anchor annexation guard. Two closed holes
+#: over B22a (plane ``Issue`` 174K/53% board, novu ``Notifications``
+#: 120K/52%, cal.com ``Bookings``+apps/api/v2 — keyed forensics):
+#:
+#: * Seg A — the B22a guard judged a host FOREIGN by unit-UNANIMITY over
+#:   its full evidence union (``prefixes + files``); a same-key MERGE
+#:   (plane: svc:issue + issue-named dirs in packages/types/constants)
+#:   makes a central host multi-unit ⇒ ``None`` ⇒ never foreign ⇒ it may
+#:   annex every cross-unit flowful dev (the i18n 125K exhibit). The
+#:   guard now derives the host's unit from its CANONICAL identity (the
+#:   anchor-id-embedded path, then route-file unanimity, then evidence
+#:   unanimity) and covers the ENTRY and SPAN rescue rungs, which B22a
+#:   never wrapped (the cal.com fold:entry->ws:apps/api/v2 exhibit). A
+#:   unit-coherent flowful dev is never force-bound across a workspace
+#:   boundary — it lanes with its own unit (B22a's honest refusal).
+#: * Seg B — an anchor wholly inside a workspace unit whose unit-ROOT
+#:   path carries a dev-artifact segment (``playground/*`` — the novu
+#:   example apps the repo's own pnpm-workspace.yaml declares) never
+#:   mints (bar ``dev_artifact_unit``). Unit-root grain only: cal.com's
+#:   product admin PAGE named ``playground`` (a route leaf inside
+#:   apps/web) can never fire — the Lane-C "measured out" verdict on
+#:   page-grain tokens is preserved. Tokens live in
+#:   ``spine-anchor-vocab.yaml:unit_root_artifact_tokens`` (data).
+#:
+#: Default OFF; ``FAULTLINE_ANNEXATION_GUARD=1`` arms both segments.
+ANNEXATION_GUARD_ENV = "FAULTLINE_ANNEXATION_GUARD"
 
 #: θ — the majority threshold (calibration §F: U-cap is monotonically
 #: decreasing in θ; 0.5 is the conservation-law dual of §4.5).
@@ -248,6 +277,16 @@ def fold_crossapp_guard_enabled() -> bool:
     for A/B."""
     return os.environ.get(FOLD_CROSSAPP_GUARD_ENV, "1").strip().lower() not in {
         "0", "false",
+    }
+
+
+def annexation_guard_enabled() -> bool:
+    """B58 — default OFF; ``FAULTLINE_ANNEXATION_GUARD=1`` arms the
+    container-anchor annexation guard (Seg A canonical-unit fencing on
+    the entry/span/walk rescue rungs + Seg B dev-artifact-unit mint
+    bar). OFF is byte-identical to the pre-B58 pipeline."""
+    return os.environ.get(ANNEXATION_GUARD_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
     }
 
 
@@ -822,6 +861,11 @@ def run_anchored_mint(
     anchor_by_id = {a.canonical_id: a for a in anchors}
     mint_repo_root = Path(getattr(ctx, "repo_path", "."))
     loc_cache: dict[str, int] = {}
+    # Workspace-unit roots, computed ONCE — consumed by the B22a walk
+    # guard below and by the B58 annexation guard (Seg A fencing + Seg B
+    # dev-artifact-unit bar). Empty tuple on single-unit repos.
+    _ws_unit_roots: tuple[str, ...] = _workspace_unit_roots(ctx)
+    _annex_on: bool = annexation_guard_enabled()
     bar_by_anchor: dict[str, str | None] = {}
     for cid in sorted(winners_by_anchor):
         a = anchor_by_id[cid]
@@ -1018,6 +1062,14 @@ def run_anchored_mint(
         best = tied[0]
         if votes[best] * 2 <= len(entries):
             return None
+        # B58 Seg A — L1 is an entry-shaped rung the B22a guard never
+        # wrapped: a unit-coherent dev never entry-mints across a
+        # workspace unit (the ladder falls through to span/walk, which
+        # lane it honestly when every target is foreign).
+        if _annex_foreign(f, best):
+            tele["annex_guard_entry_blocked"] = (
+                tele.get("annex_guard_entry_blocked", 0) + 1)
+            return None
         if best in mintable:
             return best
         a = anchor_by_id[best]
@@ -1080,7 +1132,7 @@ def run_anchored_mint(
     # Unit roots from the repo's own manifests; empty tuple ⇒ guard inert
     # (single-unit repos, or kill-switch FAULTLINE_FOLD_CROSSAPP_GUARD=0).
     _fold_guard_units: tuple[str, ...] = (
-        _workspace_unit_roots(ctx) if fold_crossapp_guard_enabled() else ())
+        _ws_unit_roots if fold_crossapp_guard_enabled() else ())
     _anchor_unit_cache: dict[str, str | None] = {}
 
     def _anchor_unit(cid: str) -> str | None:
@@ -1105,6 +1157,67 @@ def run_anchored_mint(
                     unit = next(iter(units))
             _anchor_unit_cache[cid] = unit
         return _anchor_unit_cache[cid]
+
+    # ── B58 Seg A — canonical anchor unit + all-rung fencing ─────────
+    _canon_unit_cache: dict[str, str | None] = {}
+
+    def _canonical_anchor_unit(cid: str) -> str | None:
+        """The workspace unit of the anchor's CANONICAL identity — not
+        its post-merge evidence union. Rungs, most-canonical first:
+
+        1. the anchor-id-embedded path (``svc:apps/web/core/services/
+           issue`` → apps/web; ws:/fdir:/pypkg:/hub:/route:<prefix> all
+           embed their own subtree) — a same-key merge widens evidence
+           but never rewrites the head's id;
+        2. unit UNANIMITY over the anchor's OWN route surface files
+           (page + api) — a key-only route anchor (``route:space``) is
+           identified by where its routes live;
+        3. the B22a evidence-unanimity fallback (``_anchor_unit``).
+
+        ``None`` ⇒ genuinely cross-unit — never called foreign."""
+        if cid not in _canon_unit_cache:
+            unit: str | None = None
+            a = anchor_by_id.get(cid)
+            if a is not None:
+                tail = cid.split(":", 1)[1] if ":" in cid else cid
+                if "/" in tail:
+                    unit = _unit_of(tail, _ws_unit_roots)
+                if unit is None:
+                    surface = sorted(a.page_route_files | a.api_route_files)
+                    units = {
+                        u for p in surface
+                        if (u := _unit_of(str(p), _ws_unit_roots)) is not None
+                    }
+                    if len(units) == 1:
+                        unit = next(iter(units))
+                if unit is None:
+                    unit = _anchor_unit(cid)
+            _canon_unit_cache[cid] = unit
+        return _canon_unit_cache[cid]
+
+    def _dev_home_unit(f: "Feature") -> str | None:
+        """The single workspace unit holding the dev's own files, or
+        ``None`` when they span units / sit outside every unit (a
+        non-coherent dev is never fenced — B22a semantics)."""
+        owned = owned_by_dev.get(f.name) or []
+        units = {
+            u for p in owned
+            if (u := _unit_of(p, _ws_unit_roots)) is not None
+        }
+        return next(iter(units)) if len(units) == 1 else None
+
+    def _annex_foreign(f: "Feature", target_cid: str) -> bool:
+        """B58 Seg A predicate — ``True`` when force-binding *f* onto
+        *target_cid* would cross a workspace-unit boundary: the dev is
+        unit-coherent AND the target's canonical unit is a DIFFERENT
+        unit. Either side unresolved ⇒ never foreign (conservative)."""
+        if not (_annex_on and _ws_unit_roots):
+            return False
+        home = _dev_home_unit(f)
+        if home is None:
+            return False
+        tgt = _canonical_anchor_unit(target_cid)
+        return tgt is not None and tgt != home
 
     def _ancestor_walk(f: "Feature") -> tuple[str | None, bool]:
         """W2b.1 law rung L3 — nearest-ancestor plurality: walk UP from
@@ -1160,16 +1273,23 @@ def run_anchored_mint(
                     return None
                 level = level.rsplit("/", 1)[0] if "/" in level else ""
 
-        if not _fold_guard_units:
+        # B58 Seg A: with the annexation guard armed the walk fences by
+        # the target's CANONICAL unit (closing the multi-unit-evidence
+        # host hole) and stays armed even when the B22a flag alone is
+        # kill-switched. OFF ⇒ byte-identical B22a behaviour.
+        guard_units = _fold_guard_units or (
+            _ws_unit_roots if _annex_on else ())
+        if not guard_units:
             return _walk(frozenset()), False
         dev_units = frozenset(
             u for p in owned
-            if (u := _unit_of(p, _fold_guard_units)) is not None)
+            if (u := _unit_of(p, guard_units)) is not None)
         if not dev_units:
             return _walk(frozenset()), False
+        unit_fn = _canonical_anchor_unit if _annex_on else _anchor_unit
         foreign = frozenset(
             cid for cid in set(assigned_file_cid.values())
-            if (au := _anchor_unit(cid)) is not None and au not in dev_units)
+            if (au := unit_fn(cid)) is not None and au not in dev_units)
         if not foreign:
             return _walk(frozenset()), False
         guarded = _walk(foreign)
@@ -1211,6 +1331,13 @@ def run_anchored_mint(
                     break
             if not accepted:
                 ef = _entry_fold(f)
+                # B58 Seg A — the entry rung was never B22a-guarded (the
+                # cal.com fold:entry->ws:apps/api/v2 annexation): a
+                # unit-coherent dev never entry-folds across a unit.
+                if ef is not None and _annex_foreign(f, ef):
+                    tele["annex_guard_entry_blocked"] = (
+                        tele.get("annex_guard_entry_blocked", 0) + 1)
+                    ef = None
                 if ef is not None:
                     assignment[f.name] = (ef, "fold:entry->none")
                     tele["fold_entry"] = tele.get("fold_entry", 0) + 1
@@ -1236,6 +1363,11 @@ def run_anchored_mint(
             tele["fold_parent"] += 1
             continue
         ef = _entry_fold(f)
+        # B58 Seg A — entry-rung fence (see the none-winner site above).
+        if ef is not None and _annex_foreign(f, ef):
+            tele["annex_guard_entry_blocked"] = (
+                tele.get("annex_guard_entry_blocked", 0) + 1)
+            ef = None
         if ef is not None:
             assignment[f.name] = (ef, f"fold:entry->{w.canonical_id}")
             tele["fold_entry"] = tele.get("fold_entry", 0) + 1
@@ -1426,6 +1558,14 @@ def run_anchored_mint(
         if flowful and mintable:
             src = w.canonical_id if w is not None else "none"
             target = _span_vote(f)
+            # B58 Seg A — the span rung was never B22a-guarded (novu
+            # fold:span->ws:packages/js): a unit-coherent dev never
+            # span-binds across a workspace unit; it falls through to
+            # the guarded walk (and lanes when every target is foreign).
+            if target is not None and _annex_foreign(f, target):
+                tele["annex_guard_span_blocked"] = (
+                    tele.get("annex_guard_span_blocked", 0) + 1)
+                target = None
             if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
                 tele.setdefault("fold_debug", []).append({
                     "dev": f.name, "rung": "span", "target": target,
