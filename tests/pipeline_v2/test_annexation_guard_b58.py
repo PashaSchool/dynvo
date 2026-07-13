@@ -554,3 +554,43 @@ def test_rollup_adapter_carries_lane_reason(monkeypatch) -> None:
     flows_off, feats_off = _mk()
     ufs_off, tele_off = run_user_flow_rollup(flows_off, feats_off)
     assert len(ufs_off) >= len(ufs_on)
+
+
+def test_uf_rollup_skips_artifact_entry_flows(monkeypatch) -> None:
+    """v5 (novu residual): a flow OWNED by a real SDK dev but ENTERING
+    through a playground page never seeds — the entry surface decides;
+    a product page whose repo-path merely CONTAINS 'playground' deeper
+    than top-level still seeds (cal.com carve-out)."""
+    from faultline.pipeline_v2.stage_6_7_user_flows import cluster_user_flows
+
+    def _scan():
+        return {
+            "flows": [
+                {"name": "view-hooks-flow", "primary_feature": "sdk",
+                 "entry_point_file":
+                     "playground/nextjs/src/pages/hooks/index.tsx",
+                 "paths": ["playground/nextjs/src/pages/hooks/index.tsx"]},
+                {"name": "run-playground-flow", "primary_feature": "admin",
+                 "entry_point_file":
+                     "apps/web/src/pages/settings/admin/playground.tsx",
+                 "paths":
+                     ["apps/web/src/pages/settings/admin/playground.tsx"]},
+            ],
+            "developer_features": [
+                {"name": "sdk", "product_feature_id": "sdk",
+                 "shared_reason": None},
+                {"name": "admin", "product_feature_id": "admin",
+                 "shared_reason": None},
+            ],
+        }
+
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    on = cluster_user_flows(_scan())
+    assert on["uf_filtered_dev_artifact"] == 1, on
+    names = [u["name"] for u in on["user_flows"]]
+    assert not any("hook" in n.lower() for n in names), names
+    assert any("playground" in n.lower() for n in names), names
+
+    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    off = cluster_user_flows(_scan())
+    assert off["uf_filtered_dev_artifact"] == 0

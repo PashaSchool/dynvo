@@ -1268,13 +1268,32 @@ def cluster_user_flows(
         annexation_guard_enabled as _b58_on,
     )
     _b58_guard = _b58_on()
+    _b58_tokens: frozenset[str] = frozenset()
+    if _b58_guard:
+        from faultline.pipeline_v2.spine_anchors import load_spine_vocab
+        _b58_tokens = frozenset(
+            str(t).strip().lower()
+            for t in (load_spine_vocab().get("unit_root_artifact_tokens")
+                      or ())
+            if str(t).strip())
 
     def _artifact_laned_flow(fl: dict) -> bool:
+        """Two prongs (v5): (1) the owning dev was mint-laned as
+        ``dev_artifact_unit``; (2) the flow's ENTRY file sits under an
+        artifact TOP-LEVEL dir — a journey entering through a sample-app
+        page is a sample journey whoever owns the code (novu residual:
+        'Manage item' flows entering playground pages while owned by the
+        real SDK devs packages/js / packages/nextjs). Top-level grain
+        keeps the cal.com apps/web/**/playground page seeding."""
         if not _b58_guard:
             return False
         dev = df_by_name.get(fl.get("primary_feature")) or {}
-        return (dev.get("product_feature_id") is None
-                and (dev.get("shared_reason") or "") == "dev_artifact_unit")
+        if (dev.get("product_feature_id") is None
+                and (dev.get("shared_reason") or "") == "dev_artifact_unit"):
+            return True
+        ep = fl.get("entry_point_file") or (
+            (fl.get("paths") or [None])[0] or "")
+        return str(ep).split("/", 1)[0].lower() in _b58_tokens
     plugin_collapsed = 0
     # Product-Spine §4.4 pre-pass — flows per (hub, vendor): a vendor child
     # with RECURRING flows earns its own journey space (vendor-qualified
