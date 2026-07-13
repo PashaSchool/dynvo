@@ -1236,6 +1236,49 @@ def run_finalize_phase(
                         feature=None,
                     )
 
+    # ── Stage 6.885b — ws-app blob domain-dir member drain (B53 Seg A) ──
+    # Re-attribute a ws-blob donor's internal domain-dir members
+    # (``<pkg>/<container>/<domain>/**``) onto the EXISTING PF whose identity
+    # the domain name echoes (same NamespaceEcho matcher). Runs HERE — after
+    # the PF set + anchored stamps + the journey layer settle, and BEFORE
+    # Stage 6.97 LOC (so owned-LOC reflects the drain) AND before the
+    # path_index rebuild + Stage 6.99 I16 re-home (which carries the drained
+    # journeys onto their real PF via path_index → dev → pfid; NO new journey
+    # mover, B52 law). NO mints; the package tile survives (B42 territory).
+    # Kill-switch FAULTLINE_WS_BLOB_DOMAIN_DRAIN=0 (default) → byte-identical.
+    if anchored_mint_applied and not uf_suppressed:
+        from faultline.pipeline_v2.ws_blob_domain_drain import (
+            run_ws_blob_domain_drain,
+            ws_blob_domain_drain_enabled,
+        )
+        if ws_blob_domain_drain_enabled():
+            with StageLogger(run_dir, 6, "ws_blob_drain") as log_wbd:
+                try:
+                    wbd_tele = run_ws_blob_domain_drain(
+                        features, product_features, user_flows,
+                        list(bipartite.flows), ctx,
+                    )
+                    if wbd_tele.get("files_moved"):
+                        scan_meta["ws_blob_drain"] = wbd_tele
+                    log_wbd.info(
+                        "ws_blob_drain: donors=%d dirs=%d files=%d loc=%d "
+                        "ufs(proj)=%d skip(gen=%d ambig=%d)" % (
+                            len(wbd_tele.get("donors", [])),
+                            len(wbd_tele.get("matched_dirs", {})),
+                            wbd_tele.get("files_moved", 0),
+                            wbd_tele.get("loc_moved", 0),
+                            wbd_tele.get("ufs_rehomed", 0),
+                            wbd_tele.get("skipped_generic", 0),
+                            wbd_tele.get("skipped_ambig", 0),
+                        ),
+                        feature=None,
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_wbd.info(
+                        f"ws_blob_drain: FAILED ({exc}) — blob left as-is",
+                        feature=None,
+                    )
+
     # ── Stage 6.88 — sibling-anchor capability unification (B16 Part 2) ──
     # Collapse co-identity sibling route PFs (Soc0 investigation /
     # investigations-page / investigation-flow -> ONE) BEFORE 6.97 so the
