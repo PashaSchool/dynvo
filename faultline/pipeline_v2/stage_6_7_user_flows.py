@@ -1256,7 +1256,25 @@ def cluster_user_flows(
     # settings page. The interactive clustering path below stays unchanged.
     sys_clusters: dict[tuple, list] = defaultdict(list)
     sys_cluster_resources: dict[tuple, Counter] = defaultdict(Counter)
-    excluded = {"ui_primitive": 0, "infra_domain": 0}
+    excluded = {"ui_primitive": 0, "infra_domain": 0, "dev_artifact": 0}
+    # B58 v3 — dev-artifact seeding guard (mirrors the Fix 2
+    # ``technology_instrument`` guard in resynthesize_system_ufs): a flow
+    # whose owning dev the mint laned as ``dev_artifact_unit`` (sample /
+    # playground app code) never SEEDS a journey. The flow itself stays in
+    # flows[] (Layer 1 untouched — same contract as Filters A/C). Without
+    # it the barred playground PFs' journeys re-homed onto the nearest
+    # real PF (novu agent-toolkit 20/59 UFs = B24 resurrection).
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        annexation_guard_enabled as _b58_on,
+    )
+    _b58_guard = _b58_on()
+
+    def _artifact_laned_flow(fl: dict) -> bool:
+        if not _b58_guard:
+            return False
+        dev = df_by_name.get(fl.get("primary_feature")) or {}
+        return (dev.get("product_feature_id") is None
+                and (dev.get("shared_reason") or "") == "dev_artifact_unit")
     plugin_collapsed = 0
     # Product-Spine §4.4 pre-pass — flows per (hub, vendor): a vendor child
     # with RECURRING flows earns its own journey space (vendor-qualified
@@ -1272,6 +1290,12 @@ def cluster_user_flows(
 
     hub_clustered = 0
     for idx, f in enumerate(uniq):
+        # B58 v3 — dev-artifact flows never seed (checked FIRST: a
+        # playground flow must not escape via the hub / plugin / system
+        # routing branches below either).
+        if _artifact_laned_flow(f):
+            excluded["dev_artifact"] += 1
+            continue
         domain = domain_of[idx]
         anchor = f.get("entry_point_file") or (
             (f.get("paths") or [None])[0] or "")
@@ -1553,6 +1577,7 @@ def cluster_user_flows(
         "dedup_dropped": len(flows) - len(uniq),
         "uf_filtered_ui_primitive": excluded["ui_primitive"],
         "uf_filtered_infra_domain": excluded["infra_domain"],
+        "uf_filtered_dev_artifact": excluded["dev_artifact"],
         "uf_plugin_collapsed": plugin_collapsed,
         "uf_plugin_roots": sorted(plugin_roots),
         "uf_hub_clustered": hub_clustered,

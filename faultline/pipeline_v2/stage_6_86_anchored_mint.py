@@ -192,6 +192,16 @@ _SHARED_REASON_INFRA_FANIN = "shared_infra_fanin"
 #: (the unit's shell is already a lane resident) instead of riding a foreign
 #: PF; counted as ``fold_walk_crossunit_laned``, never as a law breach.
 _SHARED_REASON_CROSS_UNIT = "cross_unit_isolation"
+#: B58 v3 — a flowful dev laned by the annexation guard whose OWN home
+#: unit is a dev-artifact unit (playground/examples/demo/sample): a
+#: DISTINCT lane reason so downstream layers can tell "sample-app code"
+#: from the generic B22a cross-unit refusal. The keyless novu warden
+#: run proved why: artifact devs laned as ``cross_unit_isolation`` kept
+#: seeding journeys, which re-homed onto the nearest real PF
+#: (agent-toolkit 20/59 UFs = B24 resurrection + a B31 dup-group). The
+#: UF rollup keys its seeding guard on THIS reason (same vocabulary as
+#: the ``dev_artifact_unit`` mint bar).
+_SHARED_REASON_DEV_ARTIFACT = "dev_artifact_unit"
 
 #: W3.1 D4 — vendor-husk floor: a hub child with NO flow evidence must
 #: own at least this many LOC of code to mint (else it folds under the
@@ -1660,7 +1670,16 @@ def run_anchored_mint(
                 # refusal, not an assignment-less degenerate scan.
                 tele["fold_walk_crossunit_laned"] = (
                     tele.get("fold_walk_crossunit_laned", 0) + 1)
-                infra[f.name] = _SHARED_REASON_CROSS_UNIT
+                # B58 v3 — an artifact-homed dev lanes under its own
+                # DISTINCT reason (the UF rollup's seeding guard keys on
+                # it; generic B22a refusals keep the legacy reason).
+                _home = _dev_home_unit(f) if _annex_on else None
+                if (_home is not None and _art_tokens and any(
+                        seg in _art_tokens
+                        for seg in _home.lower().split("/"))):
+                    infra[f.name] = _SHARED_REASON_DEV_ARTIFACT
+                else:
+                    infra[f.name] = _SHARED_REASON_CROSS_UNIT
                 continue
         if flowful:
             # Reachable ONLY on degenerate scans (zero mintable anchors,

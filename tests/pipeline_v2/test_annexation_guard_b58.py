@@ -421,3 +421,97 @@ def test_no_workspace_units_top_level_artifact_dir_barred(
     for pf in pfs:
         assert not (pf.anchor_id or "").startswith("route:examples"), (
             "top-level examples/ anchor minted: {!r}".format(pf.anchor_id))
+
+
+# ── Seg B v3 — journey-layer dissolution (warden RESURRECTION fix) ───────
+
+
+def test_artifact_laned_dev_gets_distinct_reason(monkeypatch) -> None:
+    """v3: a playground dev laned by the walk guard carries
+    ``dev_artifact_unit`` (not the generic B22a reason) — the UF
+    rollup's seeding guard keys on it."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    devs, routes = _playground_fixture()
+    notif, workflows = devs
+    pfs, tele = run_anchored_mint(devs, routes,
+                                  ctx_of(_PLAYGROUND_WORKSPACES))
+    assert notif.product_feature_id is None
+    assert notif.shared_reason == "dev_artifact_unit", (
+        "v3 REGRESSION: artifact-homed laned dev carries {!r}".format(
+            notif.shared_reason))
+
+
+def test_generic_cross_unit_dev_keeps_legacy_reason(monkeypatch) -> None:
+    """v3 anti-case: a NON-artifact cross-unit dev (packages/common)
+    keeps ``cross_unit_isolation`` — the distinct reason is scoped to
+    artifact homes only."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    devs, routes = _plane_fixture()
+    victim = _victim_i18n()
+    all_devs = devs + [victim]
+    pfs, tele = run_anchored_mint(all_devs, routes, ctx_of(_WORKSPACES))
+    assert victim.product_feature_id is None
+    assert victim.shared_reason == _SHARED_REASON_CROSS_UNIT
+
+
+def test_uf_rollup_skips_dev_artifact_flows(monkeypatch) -> None:
+    """v3 core: flows owned by a ``dev_artifact_unit``-laned dev never
+    seed a journey (the novu agent-toolkit B24-resurrection door);
+    flows of real devs still do. Flag OFF: both seed (pre-B58 world)."""
+    from faultline.pipeline_v2.stage_6_7_user_flows import cluster_user_flows
+
+    def _scan():
+        return {
+            "flows": [
+                {"name": "view-billing-flow", "primary_feature": "billing",
+                 "entry_point_file": "apps/web/src/pages/billing.tsx",
+                 "paths": ["apps/web/src/pages/billing.tsx"]},
+                {"name": "render-bells-flow", "primary_feature": "bells",
+                 "entry_point_file":
+                     "playground/nextjs/src/pages/bells.tsx",
+                 "paths": ["playground/nextjs/src/pages/bells.tsx"]},
+            ],
+            "developer_features": [
+                {"name": "billing", "product_feature_id": "billing",
+                 "shared_reason": None},
+                {"name": "bells", "product_feature_id": None,
+                 "shared_reason": "dev_artifact_unit"},
+            ],
+        }
+
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    on = cluster_user_flows(_scan())
+    on_names = [u["name"] for u in on["user_flows"]]
+    assert on["uf_filtered_dev_artifact"] == 1, on
+    assert not any("bell" in n.lower() for n in on_names), on_names
+    assert any("billing" in n.lower() for n in on_names), on_names
+
+    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    off = cluster_user_flows(_scan())
+    assert off["uf_filtered_dev_artifact"] == 0
+    assert len(off["user_flows"]) >= len(on["user_flows"])
+
+
+def test_route_group_recall_skips_artifact_toplevel(monkeypatch) -> None:
+    """v3: playground/* route rows are not PRODUCT route groups (the
+    novu I24 hole); apps/web/**/playground pages keep counting."""
+    from faultline.pipeline_v2.route_group_recall import (
+        seed_route_group_journeys,
+    )
+    routes = [
+        {"file": "playground/nextjs/src/pages/api/a.ts", "pattern": "/a"},
+        {"file": "playground/nextjs/src/pages/api/b.ts", "pattern": "/b"},
+        {"file": "apps/web/src/pages/settings/admin/playground/run.tsx",
+         "pattern": "/settings/admin/playground/run"},
+        {"file": "apps/web/src/pages/settings/admin/playground/edit.tsx",
+         "pattern": "/settings/admin/playground/edit"},
+    ]
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    tele_on = seed_route_group_journeys([], [], [], [], list(routes))
+    assert tele_on.get("skipped_dev_artifact", 0) == 2, tele_on
+    assert tele_on["groups"] == 1, tele_on  # only the apps/web group
+
+    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    tele_off = seed_route_group_journeys([], [], [], [], list(routes))
+    assert tele_off.get("skipped_dev_artifact", 0) == 0
+    assert tele_off["groups"] == 2, tele_off
