@@ -1,0 +1,58 @@
+# B56 — product-word whitelist for the full-name display law
+# (FAULTLINE_PF_FULLNAME_LAW). A CLOSED, deliberately-short spare list of
+# short tokens that ARE legitimate product words / house-style acronyms and
+# must therefore NEVER be treated as an unexpanded abbreviation by the
+# shape detector in fullname_expand.py.
+#
+# This is a SPARE-LIST, not a tuning knob (rule-no-magic-tuning): entries
+# are added only when a token is a genuine, recognised product word that the
+# cheap shape prongs (len<=3, or 4-char zero-vowel) would otherwise flag.
+# It never carries repo-specific names, vendor names, or full expansions.
+#
+# Mechanism, not vocabulary: expansion evidence still comes from the repo
+# (code identifiers, i18n KEY names, JSX labels, manifest, route segments).
+# The whitelist ONLY suppresses the shape flag for words that name themselves.
+#
+# Casing is irrelevant — the loader lower-cases both sides.
+
+product_words:
+  # generic app-surface nouns
+  - api
+  - app
+  - ai
+  - ui
+  - ux
+  # channel / domain nouns
+  - sms
+  - crm
+  - seo
+  # document / file-format words that read as words in a product surface
+  - pdf
+  - url
+  - csv
+  - svg
+  - png
+  - json
+  - xml
+  - css
+  - html
+  # developer-surface house words
+  - cli
+  - sdk
+  - id
+  - io
+  - os
+  - db
+  - ip
+  - tv
+  - faq
+  - rss
+  - qr
+  # security/identity house words that are surfaced verbatim as product tiles
+  - jwt
+  - otp
+  - mfa
+  - kyc
+  # B27 spare-law: "auth" is a first-class product word (Auth tile), never an
+  # abbreviation to expand — carried forward from the B27 manifest-display era.
+  - auth

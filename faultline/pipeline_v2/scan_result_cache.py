@@ -434,6 +434,18 @@ ENV_OUTPUT_FLAGS = (
     # user_flows[].product_feature_id. Default OFF; =0/unset byte-identical.
     # No KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
     "FAULTLINE_WS_BLOB_DOMAIN_DRAIN",
+    # B56 (2026-07-13) — full-name display law for abbreviations: a shape-
+    # flagged abbreviation display tile ('Pbac', 'Sso', 'Ooo', 'I18n', 'Wp')
+    # takes its repo-grounded full form ('Single Sign-On (SSO)', 'Out of
+    # Office (OOO)') from an ALLOWED source (code identifiers, i18n KEY names,
+    # JSX labels, package manifest, route segments — NEVER locale values, NEVER
+    # comments/README); shape-flagged-but-no-evidence keeps its display and is
+    # honest debt (missing:expansion, measured not invented). UF names inherit
+    # the same expansion. DISPLAY CHANNEL ONLY (product_features[].display_name
+    # + user_flows[].name); no identity field moves. Default OFF; =0/unset is
+    # byte-identical. No KEY_SCHEMA bump (flip is a separate later commit per
+    # flip-protocol).
+    "FAULTLINE_PF_FULLNAME_LAW",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
