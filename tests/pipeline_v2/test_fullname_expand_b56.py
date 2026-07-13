@@ -80,9 +80,11 @@ def law_on(monkeypatch: pytest.MonkeyPatch) -> None:
 def _fresh_caches() -> Any:
     load_fullname_whitelist.cache_clear()
     fe._brand_casing.cache_clear()
+    fe._workspace_package_dirs.cache_clear()
     yield
     load_fullname_whitelist.cache_clear()
     fe._brand_casing.cache_clear()
+    fe._workspace_package_dirs.cache_clear()
 
 
 # ── the SHAPE detector (P1-P4) + legit-word spare ────────────────────────
@@ -309,6 +311,110 @@ def test_never_crashes_on_missing_repo() -> None:
     assert expand_abbreviation("Sso", _PF(), None) == (None, "missing:expansion")
     assert expand_abbreviation("Sso", _PF(), "/no/such/dir/xyz") == (
         None, "missing:expansion")
+
+
+# ── real-exhibit defect fixes (coordinator probe, 2026-07-13) ────────────
+
+
+@pytest.mark.parametrize("doc_rel", [
+    "packages/embeds/wordpress/README.md",
+    "docs/overview.mdx",
+    "trunk/README.txt",
+    "docs/guide.rst",
+    "docs/guide.adoc",
+])
+def test_prose_doc_member_is_never_a_source(
+    tmp_path: Path, law_on: None, doc_rel: str,
+) -> None:
+    """Defect 1 (typebot Wp README leak): a README / prose-doc member spelling
+    the full form must NOT expand — README grounding is a hard-rule FORBIDDEN
+    source; the format gate skips the file wholesale ⇒ missing:expansion."""
+    rel = _write(tmp_path, doc_rel,
+                 "# WordPress\nThe WordPress plugin. wordPressEmbedLibrary\n")
+    pf = _PF(rels=[rel])
+    full, src = expand_abbreviation("Wp", pf, tmp_path)
+    assert full is None
+    assert src == "missing:expansion"
+
+
+@pytest.mark.parametrize("pkg_dir,pkg_name,token", [
+    ("packages/ee", "@documenso/ee", "Ee"),
+    ("packages/js", "@typebot.io/js", "Js"),
+])
+def test_slug_package_name_is_not_vendor_identity(
+    tmp_path: Path, law_on: None, pkg_dir: str, pkg_name: str, token: str,
+) -> None:
+    """Defect 2 (documenso Ee / typebot Js): a package.json name that is just
+    the dir slug again (B27 authored test) establishes NO vendor identity —
+    the token falls through to evidence search and lands honest debt."""
+    _pkg_json(tmp_path, pkg_dir, {"name": pkg_name})
+    pf = _PF(anchor_id=f"ws:{pkg_dir}")
+    res = apply_fullname_expansion(token, pf, tmp_path)
+    assert res.source == "missing:expansion"  # NOT "vendor"
+    assert res.display is None
+
+
+def test_wp_brand_cased_route_segment(tmp_path: Path, law_on: None) -> None:
+    """Defect 3 (typebot Wp): the only legal source is the glued lowercase
+    'wordpress' dir/route segment; brand_casing (corroboration YAML) reveals
+    its word structure (WordPress → [Word, Press] → 'wp') and renders the
+    brand verbatim."""
+    _pkg_json(tmp_path, "packages/embeds/wordpress",
+              {"name": "@typebot.io/wordpress"})  # slug name — NOT evidence
+    pf = _PF(anchor_id="ws:packages/embeds/wordpress")
+    res = apply_fullname_expansion("Wp", pf, tmp_path)
+    assert res.display == "WordPress (WP)"
+    assert res.source == "route"
+
+
+def test_workspace_same_name_package_manifest(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Defect 4 (cal.com I18n): a route-anchored PF whose token names a
+    workspace package (root package.json workspaces globs) reads THAT
+    package's manifest as an additional manifest source."""
+    _write(tmp_path, "package.json",
+           json.dumps({"name": "root", "workspaces": ["packages/*"]}))
+    _pkg_json(tmp_path, "packages/i18n", {
+        "name": "@calcom/i18n",
+        "description":
+            "Internationalization (i18n) utilities and translations",
+    })
+    pf = _PF(anchor_id="route:apps/web/pages/api/trpc/i18n")
+    res = apply_fullname_expansion("I18n", pf, tmp_path)
+    assert res.display == "Internationalization (I18N)"
+    assert res.source.startswith("manifest:packages/i18n/package.json")
+
+
+def test_workspace_same_name_package_pnpm(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Defect 4 variant: pnpm-workspace.yaml packages globs work the same."""
+    _write(tmp_path, "pnpm-workspace.yaml",
+           "packages:\n  - 'packages/*'\n")
+    _pkg_json(tmp_path, "packages/i18n", {
+        "name": "@x/i18n",
+        "description": "Internationalization (i18n) helpers",
+    })
+    pf = _PF(anchor_id="route:apps/web/api/i18n")
+    res = apply_fullname_expansion("I18n", pf, tmp_path)
+    assert res.display == "Internationalization (I18N)"
+    assert res.source.startswith("manifest:packages/i18n/package.json")
+
+
+def test_no_workspaces_config_no_package_lookup(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Defect 4 anti-unit: without a workspaces config the same-name package
+    is NEVER read (no path guessing — config-grounded only)."""
+    _pkg_json(tmp_path, "packages/i18n", {
+        "name": "@x/i18n",
+        "description": "Internationalization (i18n) helpers",
+    })
+    pf = _PF(anchor_id="route:apps/web/api/i18n")
+    res = apply_fullname_expansion("I18n", pf, tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
 
 
 # ── integration: run_naming_contract (the DISPLAY channel + identity) ────

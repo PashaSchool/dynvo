@@ -54,8 +54,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping, NamedTuple
 
+import yaml
+
 from faultline.pipeline_v2.data import load_yaml
-from faultline.pipeline_v2.manifest_display import package_dir_of_anchor
+from faultline.pipeline_v2.manifest_display import (
+    _authored_slug_name,
+    package_dir_of_anchor,
+)
 
 __all__ = [
     "FULLNAME_LAW_ENV",
@@ -136,6 +141,17 @@ _JSON_KEY_RE = re.compile(r"""["']([A-Za-z_][A-Za-z0-9_.\-]*)["']\s*:""")
 #: out-of-repo). Only its KEY names are allowed evidence.
 _LOCALE_MARKERS = ("/locales/", "/locale/", "/i18n/", "/lang/", "/langs/",
                    "/translations/", "/messages/", "/intl/")
+
+#: Prose-document formats — README / docs / description files. A FORBIDDEN
+#: grounding source (project hard rule: no README grounding — maintainer prose
+#: is marketing, not structure). A mechanical FORMAT gate, not a name list:
+#: any member file in a prose format is skipped wholesale.
+_PROSE_DOC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".adoc", ".txt"})
+
+#: Workspace-package discovery work bound (fix-4 mechanism): one-level glob
+#: expansion of the root workspaces config never returns more than this many
+#: dirs (a work bound, not a tuning knob).
+_MAX_WS_PACKAGE_DIRS = 512
 
 
 class ExpansionResult(NamedTuple):
@@ -407,15 +423,29 @@ def _match_from_words(
     otherwise the matched word-prefix is title-cased and joined (identifiers,
     keys, routes)."""
     tok = (token or "").lower()
-    words = _word_tokens(cand)
-    if not words:
+    raw_words = _word_tokens(cand)
+    if not raw_words:
         return None
+    words = raw_words
+    brand_form: str | None = None
+    # A single GLUED word may BE a known brand whose canonical casing reveals
+    # its word structure (naming-vocab ``brand_casing`` — the corroboration
+    # YAML, not a new dictionary): ``wordpress`` → "WordPress" →
+    # ``[Word, Press]`` → initials "wp". The display is the brand verbatim.
+    if len(raw_words) == 1:
+        b = _brand_casing().get(raw_words[0].lower())
+        if b:
+            bwords = _word_tokens(b)
+            if len(bwords) >= 2:
+                brand_form, words = b, bwords
     initials = ""
     for k, w in enumerate(words, 1):
         initials += w[0].lower()
         if initials == tok:
             matched = words[:k]
-            if brand and k == len(words):
+            if brand_form is not None and k == len(words):
+                disp = brand_form
+            elif brand and brand_form is None and k == len(words):
                 disp = _verbatim_brand(cand.strip())
             else:
                 disp = _titlecase_phrase(" ".join(matched))
@@ -425,7 +455,7 @@ def _match_from_words(
                           _PRIO[source])
         if len(initials) > len(tok):
             break
-    if len(words) == 1 and _numeric_contract(cand) == tok:
+    if len(raw_words) == 1 and _numeric_contract(cand) == tok:
         disp = _verbatim_brand(cand.strip()) if brand else _titlecase_phrase(cand)
         if disp and len(disp) <= _MAX_FULL_CHARS:
             return _Match(_norm(disp), disp, f"{source}:{cite_body}",
@@ -475,6 +505,11 @@ def _gloss_matches(
 
 
 def _evidence_from_file(root: Path, rel: str, token: str) -> list[_Match]:
+    # Prose-doc FORMAT gate: README / docs files are a forbidden grounding
+    # source (their free text regex-reads as "identifiers"/"labels" — the
+    # typebot wordpress README leak). Skipped wholesale.
+    if Path(rel).suffix.lower() in _PROSE_DOC_SUFFIXES:
+        return []
     path = _resolve(root, rel)
     if path is None:
         return []
@@ -526,13 +561,24 @@ def _evidence_from_file(root: Path, rel: str, token: str) -> list[_Match]:
 
 
 def _manifest_strings(root: Path, pkg_dir: str) -> list[tuple[str, str, str]]:
-    """``(value, field, cite)`` for the anchor package's declared name /
-    displayName / description (allowed manifest source — NOT locale values)."""
+    """``(value, field, cite)`` AUTHORED manifest strings of a package dir
+    (allowed manifest source — NOT locale values).
+
+    ``config.json`` ``name`` is the app-store display convention — authored by
+    definition (the B27 rung-1 precedent: it is read verbatim). A
+    ``package.json`` ``name`` passes the B27 AUTHORED test
+    (:func:`manifest_display._authored_slug_name`): a scope-stripped name equal
+    to the package's own dir slug is the PATH again, not an authored word —
+    ``@documenso/ee`` in ``packages/ee`` / ``@typebot.io/js`` establish
+    NOTHING (neither vendor identity nor expansion evidence).
+    ``displayName`` is display by definition; ``description`` strings are
+    carried for gloss matching only."""
     dir_path = _resolve(root, pkg_dir)
     if dir_path is None or not dir_path.is_dir():
         return []
     out: list[tuple[str, str, str]] = []
-    for base in ("config.json", "package.json"):
+    for base, authored_test in (("config.json", False),
+                                ("package.json", True)):
         p = dir_path / base
         text = _read_text(p)
         if text is None:
@@ -543,12 +589,20 @@ def _manifest_strings(root: Path, pkg_dir: str) -> list[tuple[str, str, str]]:
             continue
         if not isinstance(doc, dict):
             continue
-        for field in ("name", "displayName", "description"):
+        cite = f"{pkg_dir}/{base}"
+        raw_name = doc.get("name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            if authored_test:
+                bare = _authored_slug_name(raw_name, pkg_dir)
+            else:
+                bare = (raw_name.rpartition("/")[2].strip()
+                        or raw_name.strip())
+            if bare:
+                out.append((bare, "name", cite))
+        for field in ("displayName", "description"):
             val = doc.get(field)
             if isinstance(val, str) and val.strip():
-                bare = val.rpartition("/")[2].strip()  # strip @scope/
-                out.append((bare or val.strip(), field,
-                            f"{pkg_dir}/{base}"))
+                out.append((val.strip(), field, cite))
     return out
 
 
@@ -564,14 +618,92 @@ def _evidence_from_manifest(root: Path, pkg_dir: str, token: str) -> list[_Match
     return out
 
 
+@lru_cache(maxsize=64)
+def _workspace_package_dirs(root_str: str) -> tuple[str, ...]:
+    """Repo-relative workspace package dirs, resolved from ROOT CONFIG only
+    (root ``package.json`` ``workspaces`` + ``pnpm-workspace.yaml``
+    ``packages`` — allowed config sources; no repo-specific paths, no
+    dictionaries). Terminal-star patterns (``packages/*``) get a BOUNDED
+    one-level expansion; literal patterns are taken as-is; negations and
+    complex globs are skipped. Best-effort: missing / malformed configs ⇒
+    ``()``. Deterministic (sorted children)."""
+    root = Path(root_str)
+    patterns: list[str] = []
+    text = _read_text(root / "package.json")
+    if text is not None:
+        try:
+            doc: Any = json.loads(text)
+        except (ValueError, RecursionError):
+            doc = None
+        if isinstance(doc, dict):
+            ws = doc.get("workspaces")
+            if isinstance(ws, dict):
+                ws = ws.get("packages")
+            if isinstance(ws, list):
+                patterns.extend(str(p) for p in ws if isinstance(p, str))
+    text = _read_text(root / "pnpm-workspace.yaml")
+    if text is not None:
+        try:
+            pnpm = yaml.safe_load(text)
+        except yaml.YAMLError:
+            pnpm = None
+        if isinstance(pnpm, dict) and isinstance(pnpm.get("packages"), list):
+            patterns.extend(
+                str(p) for p in pnpm["packages"] if isinstance(p, str))
+    out: list[str] = []
+    seen: set[str] = set()
+    for pat in patterns:
+        pat = pat.strip().strip("/")
+        if not pat or pat.startswith("!"):
+            continue  # negations exclude; they never add
+        head, _, star = pat.rpartition("/")
+        if star in ("*", "**"):
+            base = _resolve(root, head) if head else root
+            if base is None or not base.is_dir():
+                continue
+            try:
+                children = sorted(
+                    p.name for p in base.iterdir() if p.is_dir())
+            except OSError:
+                continue
+            rels = [f"{head}/{c}" if head else c for c in children]
+        elif "*" in pat:
+            continue  # non-terminal / complex glob — out of the bounded law
+        else:
+            rels = [pat]
+        for rel in rels:
+            if rel not in seen:
+                seen.add(rel)
+                out.append(rel)
+            if len(out) >= _MAX_WS_PACKAGE_DIRS:
+                return tuple(out)
+    return tuple(out)
+
+
+def _same_name_workspace_dirs(root: Path, token: str) -> list[str]:
+    """Workspace package dirs whose TERMINAL dir name IS the token
+    (case-insensitive) — the package named after the abbreviation is the
+    natural home of its declared meaning (cal.com ``packages/i18n`` for the
+    route-anchored ``I18n`` tile)."""
+    tok = (token or "").strip().lower()
+    if not tok:
+        return []
+    return [d for d in _workspace_package_dirs(str(root))
+            if d.rpartition("/")[2].lower() == tok]
+
+
 def _evidence_from_routes(pf: Any, token: str) -> list[_Match]:
-    """Full-form route/dir segments (spec §2d). Anchor-id path segments."""
+    """Full-form route/dir segments (spec §2d). Anchor-id path segments.
+    Single glued segments still qualify via the numeric law
+    (``internationalization`` → i18n) or brand-cased word structure
+    (``wordpress`` → WordPress → wp); the token can never expand ITSELF
+    (its own initials/contraction never reproduce it)."""
     out: list[_Match] = []
     anchor = str(getattr(pf, "anchor_id", None) or "")
     _, _, path = anchor.partition(":")
     for seg in path.split("/"):
         seg = seg.strip()
-        if not seg or len(_word_tokens(seg)) < 2:
+        if not seg or seg.lower() == (token or "").lower():
             continue
         mm = _match_from_words(seg, token, "route", seg, brand=False)
         if mm is not None:
@@ -604,7 +736,10 @@ def _anchor_pkg_dir(pf: Any) -> str | None:
 def _is_vendor_token(token: str, pf: Any, repo_root: Any) -> bool:
     """Vendor gate (§5): the lead token IS the anchor package's OWN declared
     name (a vendor product — Dub, Groq, Dify). Vendor identity wins; never an
-    abbreviation candidate. Mechanism (the package's own manifest), no list."""
+    abbreviation candidate. Mechanism (the package's own manifest), no list.
+    ``_manifest_strings`` already applied the B27 authored test, so a bare
+    package slug (``@documenso/ee``) can never establish vendor identity;
+    only NAME fields count (a description is prose, not an identity)."""
     root = _safe_root(repo_root)
     pkg_dir = _anchor_pkg_dir(pf)
     if root is None or not pkg_dir:
@@ -612,8 +747,8 @@ def _is_vendor_token(token: str, pf: Any, repo_root: Any) -> bool:
     tok = _norm(token)
     if not tok:
         return False
-    for value, _field, _cite in _manifest_strings(root, pkg_dir):
-        if _norm(value) == tok:
+    for value, field, _cite in _manifest_strings(root, pkg_dir):
+        if field in ("name", "displayName") and _norm(value) == tok:
             return True
     return False
 
@@ -630,12 +765,19 @@ def expand_abbreviation(
     del vocab  # brand casing is read directly; kept for signature symmetry
     root = _safe_root(repo_root)
     matches: list[_Match] = []
+    pkg_dir: str | None = None
     if root is not None:
         for rel in sorted(_member_paths(pf))[:_MAX_MEMBER_FILES]:
             matches.extend(_evidence_from_file(root, rel, token))
         pkg_dir = _anchor_pkg_dir(pf)
         if pkg_dir:
             matches.extend(_evidence_from_manifest(root, pkg_dir, token))
+        # Same-name workspace package (config-grounded): a route-anchored PF
+        # named "I18n" finds packages/i18n via the root workspaces globs and
+        # reads THAT package's manifest as an additional manifest source.
+        for ws_dir in _same_name_workspace_dirs(root, token):
+            if ws_dir != pkg_dir:
+                matches.extend(_evidence_from_manifest(root, ws_dir, token))
     matches.extend(_evidence_from_routes(pf, token))
 
     best: dict[str, _Match] = {}
@@ -649,7 +791,11 @@ def expand_abbreviation(
         return (None, "ambiguous")
     only = next(iter(sorted(best)))
     winner = best[only]
-    return (winner.display, winner.cite)
+    # Brand render-polish: when the winning phrase IS a known brand modulo
+    # spacing/casing ("Word Press" reconstructed from a WordPress identifier),
+    # render the canonical brand form — corroboration YAML, display only.
+    brand = _brand_casing().get(winner.norm)
+    return (brand or winner.display, winner.cite)
 
 
 def apply_fullname_expansion(
