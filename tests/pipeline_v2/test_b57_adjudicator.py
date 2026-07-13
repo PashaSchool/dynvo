@@ -676,3 +676,269 @@ class TestCacheReplay:
         # Replay produced the SAME board state ($0).
         assert _state(ufs2) == _state(ufs)
         assert adj._CACHE_VERSION == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# b57-seg2-iter — rename humanization / member_symbols / verb channel
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestIterRenameHumanization:
+    """A cited identifier/slug is EVIDENCE, not a display — the target is
+    humanized deterministically before the B50 chain (the papermark
+    ON-board raw-slug bug)."""
+
+    def _board(self, tmp_path):
+        app = tmp_path / "app"
+        app.mkdir(parents=True, exist_ok=True)
+        (app / "account.tsx").write_text(
+            "const t1 = t('confirm-email-change');\n", encoding="utf-8")
+        pfs = [_pf("account", "Account")]
+        ufs = [_uf("UF-1", "Manage confirm email change", "account",
+                   resource="email", members=["f1"], conf="low")]
+        flows = [_FL("f1", "list-things-flow", paths=["app/account.tsx"])]
+        return pfs, ufs, flows
+
+    def test_slug_target_renders_human_display(self, tmp_path):
+        pfs, ufs, flows = self._board(tmp_path)
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rename",
+            "citations": [{"file": "app/account.tsx",
+                           "exact_string": "confirm-email-change",
+                           "rung": "member-noun"}],
+            "target": "confirm-email-change",
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rename"] == 1
+        # Never the raw slug — the deterministic humanization + polish.
+        assert ufs[0].name == "Confirm email change"
+
+    def test_humanization_never_smuggles_uncited_words(self, tmp_path):
+        # The subset law still judges the RAW cited tokens.
+        pfs, ufs, flows = self._board(tmp_path)
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rename",
+            "citations": [{"file": "app/account.tsx",
+                           "exact_string": "confirm-email-change",
+                           "rung": "member-noun"}],
+            "target": "confirm-email-change wizard",
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rename"] == 0
+        assert tele["rejected_reasons"].get("rename-uncited-tokens") == 1
+
+
+class TestIterMemberSymbols:
+    """The papermark citation famine — declared symbol names become
+    citable REAL strings in the evidence package (rung member-noun; the
+    verifier is UNCHANGED)."""
+
+    def _board(self, tmp_path):
+        app = tmp_path / "app"
+        app.mkdir(parents=True, exist_ok=True)
+        (app / "board.ts").write_text(
+            "export async function createWidgetBoard(input: In) {}\n"
+            "const renderBoardRow = (r: Row) => r.id;\n"
+            "function helperThing(x) { return x; }\n", encoding="utf-8")
+        pfs = [_pf("gadgets", "Gadgets")]
+        ufs = [_uf("UF-1", "Browse boards", "gadgets", resource="boards",
+                   members=["f1"], conf="low")]
+        flows = [_FL("f1", "list-things-flow", paths=["app/board.ts"])]
+        return pfs, ufs, flows
+
+    def test_package_carries_member_symbols(self, tmp_path):
+        pfs, ufs, flows = self._board(tmp_path)
+        from faultline.pipeline_v2.naming_contract import _uf_flow_maps
+        _, _, flow_by_id = _uf_flow_maps(flows)
+        pkgs = adj.build_evidence_packages(
+            ufs, ufs, flow_by_id, {}, tmp_path, {})
+        syms = pkgs[0]["member_symbols"]
+        assert syms == [{"file": "app/board.ts", "symbols": sorted([
+            "createWidgetBoard", "renderBoardRow", "helperThing"])}]
+
+    def test_symbol_citation_verifies_and_uplifts(self, tmp_path):
+        pfs, ufs, flows = self._board(tmp_path)
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/board.ts",
+                           "exact_string": "createWidgetBoard",
+                           "rung": "member-noun"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 1
+        assert "adjudicated:member-noun" in (ufs[0].name_evidence or [])
+
+    def test_extractor_takes_no_garbage(self):
+        text = (
+            "import { a } from 'b';\n"
+            "if (x) { return foo; }\n"
+            "  const inner = () => {};\n"          # indented — not top-level
+            "const x = () => {};\n"                 # 1-char name — skipped
+            "export const API_ROUTES = buildRoutes();\n"
+            "export default async function handleSubmit(req) {}\n"
+        )
+        assert adj._symbols_from_text(text) == [
+            "API_ROUTES", "handleSubmit"]
+
+    def test_extractor_python_and_caps(self):
+        text = "\n".join(
+            [f"def handler_{chr(97 + i)}(x):\n    pass" for i in range(12)])
+        syms = adj._symbols_from_text(text)
+        assert len(syms) == adj._MAX_SYMBOLS_PER_FILE
+        assert syms[0] == "handler_a"               # document order kept
+
+
+class TestIterVerbChannel:
+    """b57-seg2-iter — the verb channel: the VERIFIER maps citation →
+    verb family (Seg1 frozen method map / the engine's one action-family
+    vocabulary) and requires agreement with the UF name's lead verb."""
+
+    def _route_board(self, tmp_path, method_body: str):
+        app = tmp_path / "app" / "api" / "widgets"
+        app.mkdir(parents=True, exist_ok=True)
+        (app / "route.ts").write_text(method_body, encoding="utf-8")
+        pfs = [_pf("stuff", "Stuff")]
+        # resource grounded by the member name ('widget'); verb NOT
+        # (lead delete vs member family act — no Law B narrowing).
+        ufs = [_uf("UF-1", "Delete widgets", "stuff", resource="widgets",
+                   members=["f1"], conf="medium")]
+        flows = [_FL("f1", "run-widget-flow",
+                     paths=["app/api/widgets/route.ts"])]
+        return pfs, ufs, flows
+
+    def test_get_route_never_grounds_delete_lead(self, tmp_path):
+        # Anti-case (а): the string 'GET' genuinely exists in the member
+        # file — the FAMILY law rejects it, not the grep.
+        pfs, ufs, flows = self._route_board(
+            tmp_path, "export async function GET(req) {}\n")
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/api/widgets/route.ts",
+                           "exact_string": "GET",
+                           "rung": "verb-route-method"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 0
+        assert tele["rejected_reasons"].get("verb-family-mismatch") == 1
+        assert ufs[0].name_confidence == "medium"    # honest residue
+
+    def test_delete_method_grounds_delete_lead(self, tmp_path):
+        pfs, ufs, flows = self._route_board(
+            tmp_path, "export async function DELETE(req) {}\n")
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/api/widgets/route.ts",
+                           "exact_string": "DELETE",
+                           "rung": "verb-route-method"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 1
+        assert ufs[0].name_confidence == "high"
+        assert "adjudicated:verb-route-method" in (ufs[0].name_evidence or [])
+
+    def test_locale_value_verb_citation_structural_reject(self, tmp_path):
+        # Anti-case (б): a space-broken human phrase can never be a
+        # verb-i18n-key — even though it exists in the file verbatim.
+        pfs, ufs, flows = self._route_board(
+            tmp_path, 'const copy = "Delete The Widget Now";\n')
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/api/widgets/route.ts",
+                           "exact_string": "Delete The Widget Now",
+                           "rung": "verb-i18n-key"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 0
+        assert tele["rejected_reasons"].get("citation-i18n-value") == 1
+
+    def test_non_verb_symbol_rejected(self, tmp_path):
+        # Anti-case (в): WebhookForm is a noun symbol — no verb family.
+        pfs, ufs, flows = self._route_board(
+            tmp_path, "export class WebhookForm {}\n")
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/api/widgets/route.ts",
+                           "exact_string": "WebhookForm",
+                           "rung": "verb-symbol"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 0
+        assert tele["rejected_reasons"].get("verb-citation-not-verb") == 1
+
+    def test_imperative_symbol_grounds_create_lead(self, tmp_path):
+        # Anti-case (г): createBooking grounds 'Create booking'.
+        app = tmp_path / "app"
+        app.mkdir(parents=True, exist_ok=True)
+        (app / "booking.ts").write_text(
+            "export async function createBooking(input) {}\n",
+            encoding="utf-8")
+        pfs = [_pf("bookings", "Bookings")]
+        ufs = [_uf("UF-1", "Create booking", "bookings", resource="booking",
+                   members=["f1"], conf="medium")]
+        flows = [_FL("f1", "run-booking-flow", paths=["app/booking.ts"])]
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/booking.ts",
+                           "exact_string": "createBooking",
+                           "rung": "verb-symbol"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 1
+        assert ufs[0].name_confidence == "high"
+        assert "adjudicated:verb-symbol" in (ufs[0].name_evidence or [])
+
+    def test_bdd_assertion_grounds_create_lead(self, tmp_path):
+        # Anti-case (д): 'should create team' from a MAPPED test file.
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir(parents=True, exist_ok=True)
+        (tests_dir / "team.spec.ts").write_text(
+            "it('should create team', async () => {});\n", encoding="utf-8")
+        pfs = [_pf("teams", "Teams")]
+        ufs = [_uf("UF-1", "Create team", "teams", resource="team",
+                   members=["f1"], conf="medium")]
+        flows = [_FL("f1", "run-team-flow",
+                     test_files=["tests/team.spec.ts"])]
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "tests/team.spec.ts",
+                           "exact_string": "should create team",
+                           "rung": "verb-test-assert"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 1
+        assert ufs[0].name_confidence == "high"
+        assert "adjudicated:verb-test-assert" in (ufs[0].name_evidence or [])
+
+    def test_verb_test_assert_requires_mapped_test_file(self, tmp_path):
+        # The assertion string lives in a MEMBER SOURCE file — the
+        # verb-test-assert rung demands a mapped TEST file.
+        app = tmp_path / "app"
+        app.mkdir(parents=True, exist_ok=True)
+        (app / "team.ts").write_text(
+            "const label = 'should create team';\n", encoding="utf-8")
+        pfs = [_pf("teams", "Teams")]
+        ufs = [_uf("UF-1", "Create team", "teams", resource="team",
+                   members=["f1"], conf="medium")]
+        flows = [_FL("f1", "run-team-flow", paths=["app/team.ts"])]
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/team.ts",
+                           "exact_string": "should create team",
+                           "rung": "verb-test-assert"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 0
+        assert tele["rejected_reasons"].get("verb-citation-not-test") == 1
+
+    def test_verb_i18n_key_grounds(self, tmp_path):
+        pfs, ufs, flows = self._route_board(
+            tmp_path, "const k = t('delete_widget');\n")
+        payload = _verdicts_payload([{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/api/widgets/route.ts",
+                           "exact_string": "delete_widget",
+                           "rung": "verb-i18n-key"}],
+        }])
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
+        assert tele["verdicts"]["rung_evidence"] == 1
+        assert "adjudicated:verb-i18n-key" in (ufs[0].name_evidence or [])

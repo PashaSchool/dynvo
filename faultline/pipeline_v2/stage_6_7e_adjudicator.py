@@ -17,10 +17,12 @@ Mechanism (one Sonnet batch chain, keyed scans only):
      candidates — shared member sets without a PF are distinct authored
      intents, the cal.com forensics law).
   2. EVIDENCE PACKAGE per UF (strict JSON, sorted): name, member files
-     (+spans), routes, the owning PF's nav-cluster labels, i18n KEYS of
-     member files (KEY names only — translated VALUES are a FORBIDDEN
-     source, operator rule 2026-07-13), same-PF neighbors with member-set
-     relations. NO README (law).
+     (+spans), declared member SYMBOLS (b57-seg2-iter — citable real
+     strings for repos without i18n), routes, the owning PF's
+     nav-cluster labels, i18n KEYS of member files (KEY names only —
+     translated VALUES are a FORBIDDEN source, operator rule
+     2026-07-13), same-PF neighbors with member-set relations. NO
+     README (law).
   3. LLM (Sonnet, batch; injectable client — no client ⇒ hard no-op
      BEFORE any mutation): strict JSON verdicts ∈ {rung_evidence,
      rename, merge, demote} with citations [{file, exact_string, rung}].
@@ -33,7 +35,10 @@ Mechanism (one Sonnet batch chain, keyed scans only):
      whole.
   5. APPLY — rung_evidence: verified rungs feed a Law C RE-SCORE
      (``naming_contract.rescore_uf_confidence``; ``adjudicated:*``
-     evidence tags; bar unchanged). rename: from cited strings only,
+     evidence tags; bar unchanged) on TWO channels — resource, and
+     (b57-seg2-iter) verb, where the verifier itself family-matches the
+     cited verb against the UF's lead. rename: from cited strings only
+     (humanized deterministically — a slug never ships as a display),
      through the B50 degrime + collision-safe chain; authored rows are
      structurally rename-forbidden. merge: identical / strict-subset
      member sets on the SAME non-None PF only; survivor = superset (equal
@@ -69,10 +74,14 @@ from faultline.llm.model_gateway import resolve_model as gateway_model
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.naming_contract import (
     _CAMEL_BOUNDARY_RE,
+    _HTTP_METHOD_VERB_FAMILIES,
     _I18N_IDENT_RE,
     _RUNG_SOURCE_MAX_FILE_BYTES,
     _RUNG_SOURCE_MAX_FILES,
+    _action_family_index,
+    _degrime_sing,
     _i18n_keys_from_text,
+    _name_lead_family,
     _uf_flow_maps,
     degrime_rename_plan,
     display_law_violations,
@@ -116,12 +125,75 @@ _MAX_I18N_KEYS = 24
 _MAX_NEIGHBORS = 8
 _MAX_CITATION_LEN = 200
 _MAX_OUTPUT_TOKENS = 8000
+_MAX_SYMBOLS_PER_FILE = 8
+_MAX_SYMBOLS_PER_UF = 64
+
+#: b57-seg2-iter — member-file SYMBOL names for the evidence package
+#: (the papermark citation famine: 39/44 rejects were citation-not-found
+#: because paths+spans alone give the model nothing citable in repos
+#: without i18n). The patterns mirror the engine's TS/JS regex-AST
+#: convention (``analyzer/ast_extractor.py`` ``_RE_NAMED_EXPORT`` /
+#: ``_RE_DEFAULT_EXPORT`` / ``_RE_LOCAL_FUNC_DECL`` /
+#: ``_RE_LOCAL_ARROW_DECL`` + the python def/class forms). Every match
+#: group is identifier-shaped by construction (``\w+``) and a REAL
+#: substring of the file — so a symbol citation greps under the
+#: UNCHANGED verifier (rung ``member-noun``, already in the vocabulary).
+_SYMBOL_RES = (
+    re.compile(r"export\s+default\s+(?:async\s+)?(?:function|class)\s+(\w+)"),
+    re.compile(
+        r"export\s+(?:async\s+)?"
+        r"(?:function\s*\*?\s*|class\s+|const\s+|let\s+|var\s+)(\w+)"),
+    re.compile(r"^(?:async\s+)?function\s*\*?\s*(\w+)\s*[(<]", re.MULTILINE),
+    re.compile(
+        r"^(?:const|let|var)\s+(\w+)\s*=\s*"
+        r"(?:async\s+)?(?:function\b|\([^)]*\)\s*(?::[^=]+)?=>"
+        r"|[A-Za-z_$][\w$]*\s*=>)",
+        re.MULTILINE),
+    re.compile(r"^\s*(?:async\s+)?def\s+([a-zA-Z]\w*)", re.MULTILINE),
+    re.compile(r"^\s*class\s+(\w+)", re.MULTILINE),
+)
+
+
+def _symbols_from_text(text: str) -> list[str]:
+    """Deterministic symbol NAMES declared in one member source file —
+    document order, deduped, capped at :data:`_MAX_SYMBOLS_PER_FILE`.
+    Identifier-shaped by regex construction (never punctuation / keyword
+    garbage); one-character names are skipped (not evidence)."""
+    hits: list[tuple[int, str]] = []
+    for rx in _SYMBOL_RES:
+        for m in rx.finditer(text):
+            hits.append((m.start(1), m.group(1)))
+    out: list[str] = []
+    seen: set[str] = set()
+    for _pos, name in sorted(hits):
+        if len(name) < 2 or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+        if len(out) >= _MAX_SYMBOLS_PER_FILE:
+            break
+    return out
 
 #: Citation rungs the verifier accepts. ``nav`` is deliberately absent:
 #: nav labels live in nav-component files that are NOT the UF's member
 #: files, so a nav citation can never pass law (a) — nav grounding stays
 #: the Seg1 deterministic channel.
-_CITATION_RUNGS = frozenset({"i18n-key", "route", "member-noun", "test-assert"})
+#:
+#: b57-seg2-iter — the VERB channel (Fable-lead ruling lifts the v1
+#: resource-only defer): verb citations are legal ONLY from code
+#: artifacts of verb nature — imperative symbol names (createBooking),
+#: a route's declared HTTP method (the Seg1 frozen method→family map,
+#: applied by the VERIFIER), B36 test-assertion labels ('should create
+#: …') from MAPPED test files, and verb-form i18n KEYS (submit_form).
+#: The rungs are SEPARATE from the resource rungs so the verifier can
+#: apply the verb laws (family agreement with the UF's lead verb).
+_RESOURCE_CITATION_RUNGS = frozenset({
+    "i18n-key", "route", "member-noun", "test-assert",
+})
+_VERB_CITATION_RUNGS = frozenset({
+    "verb-symbol", "verb-route-method", "verb-test-assert", "verb-i18n-key",
+})
+_CITATION_RUNGS = _RESOURCE_CITATION_RUNGS | _VERB_CITATION_RUNGS
 
 _VERDICTS = frozenset({"rung_evidence", "rename", "merge", "demote"})
 
@@ -165,7 +237,10 @@ evidence or duplicate a neighbor. For EACH user flow in the input you may
 return AT MOST ONE verdict:
 
   * "rung_evidence" — you found a string in a MEMBER FILE (or a mapped
-    member test file) that grounds the journey's resource. Cite it.
+    member test file) that grounds the journey's RESOURCE (rungs:
+    i18n-key, route, member-noun, test-assert) and/or its LEAD VERB
+    (rungs: verb-symbol, verb-route-method, verb-test-assert,
+    verb-i18n-key). Cite each string.
   * "rename" — the current name misrepresents the evidence; propose a
     name derived ONLY from cited identifier strings (code identifiers,
     i18n KEY names, route segments). Never invent words.
@@ -176,14 +251,25 @@ return AT MOST ONE verdict:
     it should become a typed coverage gap.
 
 Rules (violations are rejected by a deterministic verifier):
+  * Citations MUST be VERBATIM copies of strings from the supplied
+    evidence fields (i18n_keys / member_symbols / routes / test
+    assertions / member-file identifiers). An invented, paraphrased, or
+    re-cased string WILL be rejected by the verifier and the whole
+    verdict burns — cite only what you can see.
   * Every citation = {"file", "exact_string", "rung"} where "file" is one
-    of the flow's listed member_files/test_files, "exact_string" occurs
-    VERBATIM in that file, and "rung" is one of: i18n-key, route,
-    member-noun, test-assert.
+    of the flow's listed member_files/test_files and "exact_string"
+    occurs VERBATIM in that file.
   * i18n evidence: cite the KEY (identifier, no spaces) — NEVER a
     translated value or any human sentence.
-  * rename: also set "target" to the proposed display name; every word
-    must come from your cited strings.
+  * VERB evidence must carry the verb itself: an imperative symbol from
+    member_symbols (createBooking → verb-symbol), a route HTTP method
+    (DELETE → verb-route-method), a test assertion label ('should
+    create team' → verb-test-assert, test files only), or a verb-form
+    i18n key (submit_form → verb-i18n-key). The verb's family must
+    match the journey name's lead verb — a GET route can never ground
+    'Delete X'.
+  * rename: also set "target" to the proposed HUMAN display name (words
+    separated by spaces); every word must come from your cited strings.
   * Omit flows that need no action. No prose, no markdown.
 
 Return STRICT JSON only:
@@ -395,6 +481,19 @@ def build_evidence_packages(
                 if k not in seen_keys:
                     seen_keys.add(k)
                     keys.append(k)
+        # b57-seg2-iter — declared symbol names per member file: citable
+        # REAL strings for repos with no i18n (the papermark famine).
+        member_symbols: list[dict[str, Any]] = []
+        sym_total = 0
+        for p in mfiles[:_RUNG_SOURCE_MAX_FILES]:
+            if sym_total >= _MAX_SYMBOLS_PER_UF:
+                break
+            fsyms = _symbols_from_text(_read_capped(repo_root, p, read_cache))
+            if not fsyms:
+                continue
+            fsyms = fsyms[:_MAX_SYMBOLS_PER_UF - sym_total]
+            sym_total += len(fsyms)
+            member_symbols.append({"file": p, "symbols": sorted(fsyms)})
         pfid = str(getattr(uf, "product_feature_id", None) or "")
         neigh: list[dict[str, Any]] = []
         for other in neighbors_by_pf.get(pfid, []):
@@ -421,6 +520,7 @@ def build_evidence_packages(
             "routes": [str(r) for r in (getattr(uf, "routes", None) or []) if r],
             "nav_cluster_labels": list(nav_label_sets.get(pfid, ()))[:8],
             "i18n_keys": keys[:_MAX_I18N_KEYS],
+            "member_symbols": member_symbols,
             "neighbors": neigh[:_MAX_NEIGHBORS],
         })
     return pkgs
@@ -550,6 +650,43 @@ def _batch_verdicts(
 # ── Deterministic citation verifier (the heart of the cycle) ─────────────
 
 
+def _fold_read_family(fam: str) -> str:
+    """browse/view/read collapse to 'read' for family agreement — the
+    split is an id-marker display heuristic, not an evidence line (the
+    Seg1 route-method/test-assert composition law)."""
+    return "read" if fam in ("browse", "view", "read") else fam
+
+
+def _citation_verb_families(
+    rung: str, s: str, idx: Mapping[str, Any],
+) -> set[str] | None:
+    """The verb famil(ies) a verb-rung citation carries — the VERIFIER'S
+    mapping, never the model's: HTTP methods fold via the Seg1 frozen
+    ``_HTTP_METHOD_VERB_FAMILIES`` map; identifiers / assertion labels
+    fold their LEAD verb via the engine's ONE action-family vocabulary
+    (``journey-action-families.yaml`` — the same verb→family folding Law
+    C uses; no new synonyms are invented here). ``None`` = the citation
+    carries no verb (a non-verb symbol like ``WebhookForm``)."""
+    if rung == "verb-route-method":
+        for tok in re.split(r"[^A-Za-z]+", s):
+            fams = _HTTP_METHOD_VERB_FAMILIES.get(tok.upper())
+            if fams:
+                return set(fams)
+        return None
+    toks = [t for t in re.split(
+        r"[^a-z0-9]+", _CAMEL_BOUNDARY_RE.sub(" ", s).lower()) if t]
+    # Imperative naming puts the verb FIRST (symbol / i18n key); a BDD
+    # assertion label may prefix one auxiliary ('should create …') — so
+    # test-assert scans the first TWO tokens, everything else only the
+    # lead. Never a deep-sentence verb ('billing page that creates').
+    window = toks[:2] if rung == "verb-test-assert" else toks[:1]
+    for t in window:
+        fam = idx["verb2fam"].get(t) or idx["verb2fam"].get(_degrime_sing(t))
+        if fam:
+            return {str(fam)}
+    return None
+
+
 def verify_citations(
     uf: Any,
     citations: list[Any],
@@ -564,12 +701,23 @@ def verify_citations(
           test file) — a foreign-file citation is rejected;
       (b) ``exact_string`` occurs VERBATIM in that file (fake ⇒ reject);
       (c) ``rung`` ∈ the citation-rung vocabulary;
-      (d) ``rung == "i18n-key"`` ⇒ identifier-shaped (the Seg1
-          discriminator) — a locale VALUE (spaces / human copy) is a
-          STRUCTURAL reject.
+      (d) i18n rungs (``i18n-key`` / ``verb-i18n-key``) ⇒
+          identifier-shaped (the Seg1 discriminator) — a locale VALUE
+          (spaces / human copy) is a STRUCTURAL reject;
+      (e) VERB rungs (b57-seg2-iter): ``verb-symbol`` must be an
+          identifier; ``verb-test-assert`` must cite a MAPPED member
+          TEST file; the citation must CARRY a verb (else
+          ``verb-citation-not-verb``) whose family — via the verifier's
+          own mapping (Seg1 method map / the engine's one action-family
+          vocabulary) — matches the UF name's lead-verb family (else
+          ``verb-family-mismatch``; a GET route never grounds a
+          'Delete X' lead).
     """
-    allowed = _member_file_set(uf, flow_by_id) | _member_test_file_set(
-        uf, flow_by_id)
+    members = _member_file_set(uf, flow_by_id)
+    tests = _member_test_file_set(uf, flow_by_id)
+    allowed = members | tests
+    idx = _action_family_index(load_naming_vocab())
+    lead = _name_lead_family(str(getattr(uf, "name", "") or ""), idx)
     for c in citations:
         if not isinstance(c, dict):
             return False, "citation-shape"
@@ -582,11 +730,23 @@ def verify_citations(
             return False, "citation-rung"
         if f not in allowed:
             return False, "citation-foreign-file"
-        if rung == "i18n-key" and not _I18N_IDENT_RE.fullmatch(s):
+        if rung in ("i18n-key", "verb-i18n-key") \
+                and not _I18N_IDENT_RE.fullmatch(s):
             return False, "citation-i18n-value"
+        if rung == "verb-symbol" and not re.fullmatch(r"[\w$]+", s):
+            return False, "verb-citation-shape"
+        if rung == "verb-test-assert" and f not in tests:
+            return False, "verb-citation-not-test"
         text = _read_capped(repo_root, f, read_cache)
         if not text or s not in text:
             return False, "citation-not-found"
+        if rung in _VERB_CITATION_RUNGS:
+            fams = _citation_verb_families(rung, s, idx)
+            if not fams:
+                return False, "verb-citation-not-verb"
+            if lead is None or _fold_read_family(lead) not in {
+                    _fold_read_family(fm) for fm in fams}:
+                return False, "verb-family-mismatch"
     return True, ""
 
 
@@ -761,8 +921,14 @@ def _apply_rename(
     """Rename law: the new display derives ONLY from cited strings —
     every citation must be whitespace-free (a locale VALUE citation is a
     structural reject) and every target word must come from citation
-    tokens. The candidate then rides the FULL B50 chain: degrime →
-    casing polish → display laws → collision-safe rename plan."""
+    tokens (the subset law judges the RAW cited tokens). The target is
+    then HUMANIZED deterministically (b57-seg2-iter — a cited
+    identifier/slug is EVIDENCE, not a display: ``[-_./]`` glyphs split
+    into words, whitespace collapses, the lead word sentence-cases, so
+    ``confirm-email-change`` renders ``Confirm email change`` instead of
+    shipping a raw slug onto the board — the papermark ON-board bug) and
+    rides the FULL B50 chain: degrime → casing polish → display laws →
+    collision-safe rename plan."""
     from faultline.pipeline_v2.naming_contract import _degrime_display
 
     cited: set[str] = set()
@@ -783,8 +949,14 @@ def _apply_rename(
         _reject(tele, "rename-uncited-tokens")
         return False
 
-    cand = polish_display_casing(
-        _degrime_display(" ".join(proposal.split())), vocab)
+    # Deterministic humanization BEFORE the B50 collision plan. The
+    # token-subset law above already judged the raw proposal, and the
+    # split introduces no new word (``_norm_toks`` splits on the same
+    # glyph family) — humanization cannot smuggle uncited vocabulary.
+    human = " ".join(re.sub(r"[-_./]+", " ", proposal).split())
+    if human and human[0].islower():
+        human = human[0].upper() + human[1:]
+    cand = polish_display_casing(_degrime_display(human), vocab)
     if not cand or display_law_violations(
             cand, vocab, pf_display=pf_display or None):
         _reject(tele, "rename-display-law")
@@ -927,7 +1099,11 @@ def run_stage_6_7e(
     }
     gap_mode = (coverage_gap_channel_mode()
                 if synth_quality_enabled() else "off")
-    adjudicated_sources: dict[str, list[str]] = {}
+    # b57-seg2-iter — TWO-CHANNEL adjudicated evidence: verified citation
+    # rungs feed Law C as extra OR-sources on their own channel —
+    # ``{uf_id: {"resource": [rungs], "verb": [rungs]}}`` (resource-only
+    # in v1; the verb channel is the Fable-lead iteration ruling).
+    adjudicated_sources: dict[str, dict[str, list[str]]] = {}
     seen_uids: set[str] = set()
     ordered = sorted(
         (v for v in verdicts if isinstance(v, dict)),
@@ -1021,10 +1197,12 @@ def run_stage_6_7e(
                 str(c.get("rung") or "") for c in citations
                 if isinstance(c, dict)
             })
-            adjudicated_sources.setdefault(uid, [])
+            entry = adjudicated_sources.setdefault(
+                uid, {"resource": [], "verb": []})
             for r in rungs:
-                if r not in adjudicated_sources[uid]:
-                    adjudicated_sources[uid].append(r)
+                channel = "verb" if r in _VERB_CITATION_RUNGS else "resource"
+                if r not in entry[channel]:
+                    entry[channel].append(r)
             tele["verdicts"]["rung_evidence"] += 1
             seen_uids.add(uid)
             _keep_citations(uid, "rung_evidence", citations)

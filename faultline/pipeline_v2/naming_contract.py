@@ -1745,7 +1745,7 @@ def _apply_uf_name_laws(
     nav_label_sets: Mapping[str, list[str]] | None = None,
     routes_index: Iterable[Mapping[str, Any]] | None = None,
     repo_root: Any = None,
-    adjudicated_sources: Mapping[str, Iterable[str]] | None = None,
+    adjudicated_sources: Mapping[str, Mapping[str, Iterable[str]]] | None = None,
 ) -> None:
     """B9 — three deterministic UF display laws over FINAL members/names, run
     AFTER the labeler so labeler-introduced collisions/over-claims are caught.
@@ -2000,10 +2000,13 @@ def _apply_uf_name_laws(
     v2_on = uf_rung_sources_v2_enabled()
     _nav_sets: Mapping[str, list[str]] = nav_label_sets or {}
     # B57 Seg2 — adjudicated rung evidence (Stage 6.7e): per-UF VERIFIED
-    # citation rungs act as extra resource OR-sources at the SAME bar.
-    # Confidence is only ever written HERE — the adjudicator hands Law C
-    # its verified evidence and Law C judges. Absent map ⇒ byte-identical.
-    _adjudicated: Mapping[str, Iterable[str]] = adjudicated_sources or {}
+    # citation rungs act as extra OR-sources at the SAME bar, per channel
+    # (``{uf_id: {"resource": [rungs], "verb": [rungs]}}`` — the verb
+    # channel is the b57-seg2-iter ruling). Confidence is only ever
+    # written HERE — the adjudicator hands Law C its verified evidence
+    # and Law C judges. Absent map ⇒ byte-identical.
+    _adjudicated: Mapping[str, Mapping[str, Iterable[str]]] = (
+        adjudicated_sources or {})
     _v2_repo: Any = None
     _v2_read_cache: dict[str, str] = {}
     _method_fams_by_file: dict[str, set[str]] = {}
@@ -2230,15 +2233,24 @@ def _apply_uf_name_laws(
                 if ta_verb_hit:
                     _v2_tele["test-assert"] += 1
 
-        # ── B57 Seg2 — adjudicated rungs (verified citations; resource) ──
-        adj_rungs = (sorted(set(str(a) for a in _adjudicated.get(uid, ())))
-                     if _adjudicated else [])
-        adj_hit = bool(adj_rungs)
+        # ── B57 Seg2 — adjudicated rungs (verified citations; TWO
+        # channels since b57-seg2-iter: resource + verb — each verb
+        # citation was family-matched against this UF's lead verb by the
+        # adjudicator's deterministic verifier before reaching the map) ──
+        _adj_entry: Mapping[str, Iterable[str]] = (
+            (_adjudicated.get(uid) or {}) if _adjudicated else {})
+        adj_res_rungs = sorted(
+            {str(a) for a in (_adj_entry.get("resource") or ())})
+        adj_verb_rungs = sorted(
+            {str(a) for a in (_adj_entry.get("verb") or ())})
+        adj_hit = bool(adj_res_rungs)
+        adj_verb_hit = bool(adj_verb_rungs)
 
         res_grounded = (base_res or nav_hit or member_noun_hit or route_hit
                         or test_hit or nav_cluster_hit or i18n_hit
                         or ta_res_hit or adj_hit)
-        verb_grounded = base_verb or registry_hit or route_verb_hit or ta_verb_hit
+        verb_grounded = (base_verb or registry_hit or route_verb_hit
+                         or ta_verb_hit or adj_verb_hit)
 
         def _rung_fired() -> list[str]:
             r: list[str] = []
@@ -2254,7 +2266,7 @@ def _apply_uf_name_laws(
                 r.append("resource:i18n-key")
             if ta_res_hit:
                 r.append("resource:test-assert")
-            r.extend(f"adjudicated:{a}" for a in adj_rungs)
+            r.extend(f"adjudicated:{a}" for a in adj_res_rungs)
             return r
 
         if res_grounded and verb_grounded and uid not in qualified:
@@ -2272,6 +2284,7 @@ def _apply_uf_name_laws(
                     fired.append("verb:route-method")
                 if ta_verb_hit:
                     fired.append("verb:test-assert")
+                fired.extend(f"adjudicated:{a}" for a in adj_verb_rungs)
                 uf.name_evidence = fired or ["structural-route"]
         elif res_grounded:
             uf.name_confidence = "medium"
@@ -2877,19 +2890,22 @@ def rescore_uf_confidence(
     uf_authored_names: Mapping[str, Iterable[str]] | None = None,
     keeper_on: bool = True,
     repo_root: Any = None,
-    adjudicated_sources: Mapping[str, Iterable[str]] | None = None,
+    adjudicated_sources: Mapping[str, Mapping[str, Iterable[str]]] | None = None,
 ) -> dict[str, Any]:
     """B57 Seg2 — the Law C RE-SCORE seam for the Stage 6.7e adjudicator.
 
     Re-applies the UF name laws (the same ``_apply_uf_name_laws`` body the
     contract runs, over the CURRENT rows) with the adjudicator's VERIFIED
-    citation rungs threaded as extra resource OR-sources
-    (``adjudicated_sources``: ``{uf_id: [rung, ...]}`` — each stamps an
-    ``adjudicated:<rung>`` evidence tag). The bar is UNCHANGED; confidence
-    and evidence are only ever written by Law C — the adjudicator itself
-    NEVER touches ``name_confidence``. Idempotent over an unchanged board
-    (laws A/B are stable fixed points); no-ops (telemetry-only) when the
-    naming contract or the UF name laws are switched off."""
+    citation rungs threaded as extra OR-sources per channel
+    (``adjudicated_sources``: ``{uf_id: {"resource": [rung, ...],
+    "verb": [rung, ...]}}`` — each stamps an ``adjudicated:<rung>``
+    evidence tag; the verb channel is the b57-seg2-iter ruling, its
+    citations family-matched by the adjudicator's verifier). The bar is
+    UNCHANGED; confidence and evidence are only ever written by Law C —
+    the adjudicator itself NEVER touches ``name_confidence``. Idempotent
+    over an unchanged board (laws A/B are stable fixed points); no-ops
+    (telemetry-only) when the naming contract or the UF name laws are
+    switched off."""
     tele: dict[str, Any] = {}
     if not (naming_contract_enabled() and uf_name_laws_enabled()):
         tele["skipped"] = "naming-laws-off"
