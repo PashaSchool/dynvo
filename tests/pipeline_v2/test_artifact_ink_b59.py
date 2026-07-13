@@ -227,3 +227,41 @@ def test_idempotent_determinism(tmp_path, monkeypatch):
     t2 = apply_feature_loc([dev], [pf], root)   # second run: same inputs
     assert (pf.loc, pf.artifact_ink_loc) == (loc1, ink1) == (10, 90)
     assert t1["artifact_ink"] == t2["artifact_ink"]
+
+
+# ── (6) phantom-immunity — the first gate-race collateral (twenty) ─────────
+# emission_integrity dropped the pure-artifact dev "locales" (10,017 LOC of
+# .po, sole owner -> loc=0 after the drain) as a phantom, costing 65
+# path_index coordinate entries. artifact_ink_loc>0 is an accounting
+# channel: reclassified ink is NOT absent code.
+
+
+def test_pure_artifact_dev_is_not_phantom():
+    from faultline.pipeline_v2.emission_integrity import _is_phantom
+
+    drained = _feature("locales", ["emails/locales/en.po"])
+    drained.loc = 0
+    drained.loc_shared = 0
+    drained.artifact_ink_loc = 10017
+    assert not _is_phantom(drained)
+
+
+def test_true_phantom_still_drops():
+    from faultline.pipeline_v2.emission_integrity import _is_phantom
+
+    empty = _feature("ghost", ["."])
+    empty.loc = 0
+    empty.loc_shared = 0
+    empty.artifact_ink_loc = None       # flag-OFF world / no ink
+    assert _is_phantom(empty)
+
+
+def test_pure_artifact_pf_is_not_phantom():
+    from faultline.pipeline_v2.emission_integrity import _is_phantom
+
+    pf = _feature("i18n", ["packages/i18n/locales/ar/common.json"],
+                  layer="product")
+    pf.loc = 0
+    pf.loc_shared = 0
+    pf.artifact_ink_loc = 173442
+    assert not _is_phantom(pf)

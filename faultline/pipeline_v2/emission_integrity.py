@@ -147,8 +147,19 @@ def _is_anchor_or_platform(feat: "Feature") -> bool:
 
 def _feature_zero_loc(feat: "Feature") -> bool:
     """True when a feature has no owned loc, no shared loc and no flows —
-    i.e. contributes zero code by every accounting channel."""
+    i.e. contributes zero code by every accounting channel.
+
+    B59 (2026-07-13): ``artifact_ink_loc`` is such a channel too. A feature
+    whose owned lines were RECLASSIFIED as artifact ink (locale catalogs,
+    generated schemas, test data, seeds — twenty's ``locales`` dev is 10,017
+    LOC of pure ``.po``) is NOT content-less: the lines exist and its
+    members/coordinates must survive (accounting drains display LOC, never
+    membership — dropping it here cost 65 ``path_index`` entries on the
+    first B59 gate race). Flag-OFF scans always carry ``None`` here, so the
+    predicate is byte-identical to the pre-B59 engine when the lane is off."""
     if getattr(feat, "loc", None) or getattr(feat, "loc_shared", None):
+        return False
+    if getattr(feat, "artifact_ink_loc", None):
         return False
     if getattr(feat, "flows", None):
         return False
