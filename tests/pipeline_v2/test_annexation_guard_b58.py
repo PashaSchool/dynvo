@@ -515,3 +515,42 @@ def test_route_group_recall_skips_artifact_toplevel(monkeypatch) -> None:
     tele_off = seed_route_group_journeys([], [], [], [], list(routes))
     assert tele_off.get("skipped_dev_artifact", 0) == 0
     assert tele_off["groups"] == 2, tele_off
+
+
+def test_rollup_adapter_carries_lane_reason(monkeypatch) -> None:
+    """v4 regression (the v3 no-op): run_user_flow_rollup's dev snapshot
+    MUST carry shared_reason — v3's guard read None for every dev and
+    novu agent-toolkit kept its 20 playground journeys. Adapter-level
+    test with typed objects (the core-only test missed this)."""
+    from faultline.pipeline_v2.stage_6_7_user_flows import (
+        run_user_flow_rollup,
+    )
+
+    def _mk():
+        billing_fl = flow("view-billing-flow",
+                          "apps/web/src/pages/billing.tsx")
+        bells_fl = flow("render-bells-flow",
+                        "playground/nextjs/src/pages/bells.tsx")
+        billing = dev("billing", ["apps/web/src/pages/billing.tsx"],
+                      flows=[billing_fl])
+        billing.product_feature_id = "billing"
+        bells = dev("bells", ["playground/nextjs/src/pages/bells.tsx"],
+                    flows=[bells_fl])
+        bells.product_feature_id = None
+        bells.shared_reason = "dev_artifact_unit"
+        # primary_feature stamps (bipartite store contract)
+        billing_fl.primary_feature = "billing"
+        bells_fl.primary_feature = "bells"
+        return [billing_fl, bells_fl], [billing, bells]
+
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    flows_on, feats_on = _mk()
+    ufs_on, tele_on = run_user_flow_rollup(flows_on, feats_on)
+    names_on = [u.name for u in ufs_on]
+    assert not any("bell" in n.lower() for n in names_on), names_on
+    assert any("billing" in n.lower() for n in names_on), names_on
+
+    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    flows_off, feats_off = _mk()
+    ufs_off, tele_off = run_user_flow_rollup(flows_off, feats_off)
+    assert len(ufs_off) >= len(ufs_on)

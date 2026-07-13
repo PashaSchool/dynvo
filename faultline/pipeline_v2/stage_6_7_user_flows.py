@@ -1609,7 +1609,13 @@ def run_user_flow_rollup(
         "developer_features": [
             {"name": f.name, "product_feature_id": f.product_feature_id,
              "paths": list(f.paths),  # paths → Stage 6.7d job-file synthesis
-             "role": getattr(f, "role", None)}  # facet marker (spine §4.1)
+             "role": getattr(f, "role", None),  # facet marker (spine §4.1)
+             # B58 v4 — the dev-artifact seeding guard keys on the
+             # mint's lane reason; v3 died exactly here: the snapshot
+             # dropped the field, so the guard read None for every dev
+             # (novu agent-toolkit kept its 20 playground UFs — the
+             # adapter-vs-core unit-test gap).
+             "shared_reason": getattr(f, "shared_reason", None)}
             for f in features
         ],
     }
