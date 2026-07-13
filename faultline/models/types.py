@@ -1307,7 +1307,14 @@ class CoverageGap(BaseModel):
     #: drops a gap whose key matches no emitted PF.
     product_feature_id: str | None = None
     #: Derived from (mint-site, ``synthesis_reason``) — see ``_gap_kind``.
-    kind: Literal["system_route", "e2e_orphan", "loc_worthy", "owned_cover"]
+    #: ``adjudicated_noise`` (B57 Seg2) is minted ONLY by the Stage 6.7e
+    #: adjudicator's verified demote verdicts (a journey row honestly
+    #: re-typed as a gap claim — never a silent drop; the row's label /
+    #: routes / surface evidence ride along).
+    kind: Literal[
+        "system_route", "e2e_orphan", "loc_worthy", "owned_cover",
+        "adjudicated_noise",
+    ]
     #: The gap's human label — the row's FINAL display name (board-unique by
     #: the B31 recall-row naming pass): ``Uncovered: <PF display> routes`` for
     #: the system kinds, the maintainer's playwright label for ``e2e_orphan``.

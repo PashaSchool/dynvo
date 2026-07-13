@@ -446,6 +446,37 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. No KEY_SCHEMA bump (flip is a separate later commit per
     # flip-protocol).
     "FAULTLINE_PF_FULLNAME_LAW",
+    # B57 Seg1 (2026-07-13) — Law C rung-source expansion: four additional
+    # deterministic evidence sources for the existing resource/verb rungs —
+    # (a) nav-cluster (ALL authored nav labels voted onto the owning PF),
+    # (b) i18n KEYS referenced in member source files (keys only; translated
+    # VALUES are a forbidden source — operator rule 2026-07-13), (c) member
+    # routes' declared HTTP method → verb family, (d) assertion labels inside
+    # MAPPED member test files. Same Law C bar — extra OR-sources, each with
+    # a provenance tag in name_evidence. Reshapes user_flows[].
+    # name_confidence / name_evidence only (UF NAMES byte-stable — B40 law).
+    # Default OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a
+    # separate later commit per flip-protocol).
+    "FAULTLINE_UF_RUNG_SOURCES_V2",
+    # B57 Seg2 (2026-07-13) — Stage 6.7e journey-evidence adjudicator
+    # (keyed-only; Sonnet batch): selects non-high UFs + same-PF dup
+    # candidates after Law C v1, collects a deterministic evidence package
+    # (member files+spans, routes, nav-cluster labels, i18n KEYS — never
+    # translated VALUES, neighbors), and applies ONLY deterministically
+    # VERIFIED verdicts — rung_evidence (Law C re-score via
+    # rescore_uf_confidence; adjudicated:* tags), rename (cited
+    # identifier-shaped strings only; B50 degrime + collision-safe chain),
+    # merge (identical / strict-subset member sets on the SAME non-None PF;
+    # union + lineage), demote (row → typed coverage_gaps[]
+    # kind="adjudicated_noise"; never a silent drop). Fake / foreign-file /
+    # locale-VALUE citations are rejected. Keyless (no client) ⇒ hard no-op
+    # byte-identity. Reshapes user_flows[] (confidence/evidence/names/
+    # membership) + coverage_gaps[] on keyed scans. The model env keys
+    # alongside (raw value) per the persona-model precedent. Default OFF;
+    # =0/unset byte-identical. No KEY_SCHEMA bump (flip is a separate later
+    # commit per flip-protocol).
+    "FAULTLINE_STAGE_6_7E_ADJUDICATOR",
+    "FAULTLINE_STAGE_6_7E_MODEL",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

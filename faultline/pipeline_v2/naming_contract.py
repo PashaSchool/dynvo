@@ -73,12 +73,14 @@ __all__ = [
     "UF_DEVGRAIN_NAME_ENV",
     "UF_NAME_DEGRIME_ENV",
     "UF_RESOURCE_RUNG_ENV",
+    "UF_RUNG_SOURCES_V2_ENV",
     "naming_contract_enabled",
     "humanize_route_names_enabled",
     "pf_name_law_enabled",
     "uf_devgrain_name_enabled",
     "uf_name_degrime_enabled",
     "uf_resource_rung_enabled",
+    "uf_rung_sources_v2_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -88,7 +90,11 @@ __all__ = [
     "hub_composition_display",
     "humanize_anchor_display",
     "nav_labels_for_pfs",
+    "nav_label_sets_for_pfs",
+    "route_verb_indexes",
+    "member_verb_composition",
     "run_naming_contract",
+    "rescore_uf_confidence",
 ]
 
 NAMING_CONTRACT_ENV = "FAULTLINE_NAMING_CONTRACT"
@@ -156,6 +162,31 @@ UF_NAME_DEGRIME_ENV = "FAULTLINE_UF_NAME_DEGRIME"
 #: ``CONFIDENCE`` channel only. Unset ⇒ confidence + serialized output
 #: byte-identical.
 UF_RESOURCE_RUNG_ENV = "FAULTLINE_UF_RESOURCE_RUNG"
+
+#: B57 Seg1 — deterministic rung-source expansion kill-switch (default
+#: **OFF**). Four ADDITIONAL evidence sources for Law C's existing
+#: resource/verb rungs, each a telemetered provenance-tagged OR-source
+#: (the B50 Seg3 precedent — bar UNCHANGED, never a lowered threshold):
+#:   (a) nav-cluster — ALL authored nav labels voted onto the UF's owning
+#:       PF (not just the one top-voted label) may ground the resource;
+#:   (b) i18n-key — i18n KEYS referenced in member SOURCE files
+#:       (``t('billing_overview')`` / ``i18nKey=`` / ``getTranslation(``)
+#:       ground the resource. KEYS ONLY: a key is identifier-shaped (no
+#:       spaces); translated VALUES are a FORBIDDEN source (operator rule
+#:       2026-07-13 — translations may live outside the repo; not
+#:       structural truth), so anything space-broken is skipped and the
+#:       ``product_strings`` VALUE channel is never consulted;
+#:   (c) route-method — a member route's declared HTTP method grounds a
+#:       matching verb-family lead (GET→browse/view, POST→create,
+#:       PUT/PATCH→update, DELETE→delete — structural HTTP semantics,
+#:       module-level frozen, not a repo vocabulary);
+#:   (d) test-assert — assertion labels inside MAPPED member test files
+#:       (``flow.test_files``, B36 member-overlap already holds) ground
+#:       resource (non-verb token overlap) and/or verb (lead-verb family
+#:       agreement).
+#: CONFIDENCE/EVIDENCE channel only — UF NAMES are byte-stable either way
+#: (the B40 law). Unset ⇒ confidence + serialized output byte-identical.
+UF_RUNG_SOURCES_V2_ENV = "FAULTLINE_UF_RUNG_SOURCES_V2"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
@@ -270,6 +301,17 @@ def uf_resource_rung_enabled() -> bool:
     grounding rungs in Law C (adds OR-sources to ``res_grounded``, bar
     unchanged). Unset ⇒ confidence + serialized output byte-identical."""
     return os.environ.get(UF_RESOURCE_RUNG_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
+
+def uf_rung_sources_v2_enabled() -> bool:
+    """B57 Seg1 rung-source expansion. Default **OFF**;
+    ``FAULTLINE_UF_RUNG_SOURCES_V2=1`` arms the nav-cluster / i18n-key /
+    route-method / test-assert grounding rungs in Law C (adds OR-sources
+    to ``res_grounded`` / ``verb_grounded``, bar unchanged). Unset ⇒
+    confidence + serialized output byte-identical."""
+    return os.environ.get(UF_RUNG_SOURCES_V2_ENV, "0").strip().lower() in {
         "1", "true",
     }
 
@@ -1173,16 +1215,19 @@ def _strip_uf_devgrain_suffix(
 # ── Nav-label channel (authored labels; product_strings nav pairs) ──────
 
 
-def nav_labels_for_pfs(
+def _nav_label_votes(
     product_features: Iterable[Any],
     product_strings: Any,
     routes_index: Iterable[Mapping[str, Any]] | None,
-) -> dict[str, str]:
-    """``{pf_slug: authored nav label}`` — a nav pair (label, href) votes
-    for the PF that owns the route FILE its normalized href resolves to.
-    One deterministic label per PF: most votes → shortest → alpha.
-    Empty on scans without a product-string index (keyless suppressed
-    paths) — the channel is optional by construction."""
+) -> dict[str, dict[str, int]]:
+    """``{pf_slug: {authored nav label: votes}}`` — a nav pair (label,
+    href) votes for the PF that owns the route FILE its normalized href
+    resolves to. Shared vote machinery for :func:`nav_labels_for_pfs`
+    (one top label per PF — the B40 nav rung) and
+    :func:`nav_label_sets_for_pfs` (ALL voted labels per PF — the B57
+    nav-cluster rung). Empty on scans without a product-string index
+    (keyless suppressed paths) — the channel is optional by
+    construction."""
     pairs_by_file: Mapping[str, list[tuple[str, str | None]]] = (
         getattr(product_strings, "nav_pairs_by_file", None) or {}
     )
@@ -1240,7 +1285,17 @@ def nav_labels_for_pfs(
                 continue
             votes.setdefault(owner_slug, {})
             votes[owner_slug][lab] = votes[owner_slug].get(lab, 0) + 1
+    return votes
 
+
+def nav_labels_for_pfs(
+    product_features: Iterable[Any],
+    product_strings: Any,
+    routes_index: Iterable[Mapping[str, Any]] | None,
+) -> dict[str, str]:
+    """``{pf_slug: authored nav label}`` — one deterministic label per
+    PF: most votes → shortest → alpha (see :func:`_nav_label_votes`)."""
+    votes = _nav_label_votes(product_features, product_strings, routes_index)
     out: dict[str, str] = {}
     for slug, labs in votes.items():
         best = sorted(
@@ -1248,6 +1303,169 @@ def nav_labels_for_pfs(
         )[0][0]
         out[slug] = best
     return out
+
+
+def nav_label_sets_for_pfs(
+    product_features: Iterable[Any],
+    product_strings: Any,
+    routes_index: Iterable[Mapping[str, Any]] | None,
+) -> dict[str, list[str]]:
+    """B57 Seg1 (a) — ``{pf_slug: ALL voted authored nav labels}``,
+    sorted for determinism. The existing B40 nav rung consumes only the
+    one top-voted label per PF (:func:`nav_labels_for_pfs`); the
+    nav-cluster rung lets EVERY label the authors voted onto the PF
+    ground a UF resource — same votes, same guards (shell filter, length
+    bounds), wider read. New function beside the old one — the B40
+    channel is untouched."""
+    votes = _nav_label_votes(product_features, product_strings, routes_index)
+    return {slug: sorted(labs) for slug, labs in sorted(votes.items())}
+
+
+# ── B57 Seg1 rung-source extractors (flag-gated; Law C consumers) ───────
+#
+# Pure text→evidence extractors for the FAULTLINE_UF_RUNG_SOURCES_V2
+# rungs. Deterministic, $0, NO README, no LLM. File reads are bounded
+# (size cap mirrors product_strings._MAX_FILE_BYTES; per-UF file-count
+# cap) — the caps only bound work, they are not tuned to any repo.
+
+#: i18n-KEY reference patterns in member SOURCE files: ``t('key')`` /
+#: ``t("key")`` (Vue ``$t('key')`` included — the hoppscotch-class
+#: canonical reference form), ``i18nKey="key"`` (JSX ``{'key'}`` form
+#: included), and ``getTranslation('key')``. The KEY (group 1) is the
+#: evidence — the identifier the author wrote in CODE. The lookbehind on
+#: ``$?t(`` keeps word-tails out (``format(`` / ``at(`` / ``foo$t(``
+#: never match; ``i18n.t(`` / ``this.$t(`` / ``{{ $t( }}`` do).
+_I18N_KEY_REFS = (
+    re.compile(r"(?<![\w$])\$?t\(\s*['\"]([^'\"\n]+)['\"]"),
+    re.compile(r"i18nKey\s*=\s*\{?\s*['\"]([^'\"\n]+)['\"]"),
+    re.compile(r"getTranslation\(\s*['\"]([^'\"\n]+)['\"]"),
+)
+
+#: Structural i18n-KEY discriminator: identifier-shaped — word chars plus
+#: the namespace glyphs ``. : $ -`` and NO whitespace. Anything
+#: space-broken is human copy (a translated VALUE — the FORBIDDEN
+#: source), never a key.
+_I18N_IDENT_RE = re.compile(r"[\w.:$\-]+\Z")
+
+#: camelCase boundary for key tokenization (``profileTitle`` → profile
+#: title); composes with the ``[._:$-]`` namespace split.
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+#: Test-assertion label patterns: ``it('…')`` / ``test('…')`` /
+#: ``describe('…')`` (modifier chains ``it.only(`` / ``describe.skip(``
+#: included; ' " ` quotes) + python ``def test_*`` names.
+_TEST_LABEL_RE = re.compile(
+    r"\b(?:it|test|describe)(?:\.\w+)*\(\s*['\"`]([^'\"`\n]+)['\"`]")
+_PY_TEST_DEF_RE = re.compile(r"^\s*def\s+test_(\w+)", re.MULTILINE)
+
+#: HTTP method → verb family (B57 Seg1 (c)). STRUCTURAL semantics of the
+#: HTTP verb itself (RFC 9110 method → CRUD family), not a repo
+#: vocabulary — module-level frozen. Filesystem "PAGE" pseudo-methods
+#: deliberately absent from the METHOD map — a page route declares no
+#: author action verb; its READ nature feeds the b57-iter2 composition
+#: rung via :data:`_PAGE_VERB_FAMILIES` instead.
+_HTTP_METHOD_VERB_FAMILIES: Mapping[str, frozenset[str]] = {
+    "GET": frozenset({"browse", "view"}),
+    "POST": frozenset({"create"}),
+    "PUT": frozenset({"update"}),
+    "PATCH": frozenset({"update"}),
+    "DELETE": frozenset({"delete"}),
+}
+
+#: b57-iter2 — a PAGE surface (filesystem-routed page / page-kind flow
+#: entry) is a READ surface: navigating to it views/browses, it mutates
+#: nothing. Structural navigation semantics, not a repo vocabulary.
+_PAGE_VERB_FAMILIES = frozenset({"browse", "view"})
+
+#: Flow-entry kinds that mark a page/navigation-class flow. ``Flow`` has
+#: no dedicated kind field — Stage 3 stamps ``description = entry.route
+#: or entry.kind``, so a NON-routed page entry carries its kind here
+#: (routed pages are covered by the routes_index ``PAGE`` rows instead).
+_PAGE_FLOW_KINDS = frozenset({"page"})
+
+
+def route_verb_indexes(
+    routes_index: Iterable[Mapping[str, Any]] | None,
+) -> tuple[dict[str, set[str]], set[str]]:
+    """``(method_families_by_file, page_files)`` — the per-file verb-fact
+    indexes of ``routes_index``: declared HTTP methods fold to verb
+    families via :data:`_HTTP_METHOD_VERB_FAMILIES`; filesystem ``PAGE``
+    rows collect into a page-surface file set. Shared by Law C's B57
+    Seg1 rungs and the Stage 6.7e adjudicator (one builder, no dup)."""
+    method_fams: dict[str, set[str]] = {}
+    page_files: set[str] = set()
+    for r in (routes_index or ()):
+        rf = str(r.get("file") or "")
+        if not rf:
+            continue
+        meth = str(r.get("method") or "").strip().upper()
+        fams = _HTTP_METHOD_VERB_FAMILIES.get(meth)
+        if fams:
+            method_fams.setdefault(rf, set()).update(fams)
+        elif meth == "PAGE":
+            page_files.add(rf)
+    return method_fams, page_files
+
+
+def member_verb_composition(
+    uf: Any,
+    flow_by_id: Mapping[str, Any],
+    method_fams_by_file: Mapping[str, set[str]],
+    page_files: set[str] | frozenset[str],
+) -> set[str]:
+    """b57-iter2 — the verb families a journey's MEMBER COMPOSITION
+    implies (scan facts, $0): (a) member routes' declared HTTP methods
+    (via :func:`route_verb_indexes`), (b) page-surface members — a PAGE
+    route file or a page-kind flow entry — imply the read families. An
+    EMPTY result means the composition asserts NOTHING about verbs (no
+    facts — no claim; the honest ``missing:verb`` stays)."""
+    fams: set[str] = set()
+    for m in (getattr(uf, "member_flow_ids", None) or []):
+        fl = flow_by_id.get(str(m))
+        if fl is None:
+            continue
+        paths = {str(p) for p in (getattr(fl, "paths", None) or []) if p}
+        ep = getattr(fl, "entry_point_file", None)
+        if ep:
+            paths.add(str(ep))
+        for p in sorted(paths):
+            fams |= method_fams_by_file.get(p, set())
+            if p in page_files:
+                fams |= _PAGE_VERB_FAMILIES
+        if str(getattr(fl, "description", "") or "") in _PAGE_FLOW_KINDS:
+            fams |= _PAGE_VERB_FAMILIES
+    return fams
+
+
+#: Work bounds for the file-reading rungs (i18n-key / test-assert). Size
+#: cap mirrors ``product_strings._MAX_FILE_BYTES``; the per-UF file cap
+#: bounds pathological member fan-outs. Bounds-of-work only.
+_RUNG_SOURCE_MAX_FILE_BYTES = 256 * 1024
+_RUNG_SOURCE_MAX_FILES = 32
+
+
+def _i18n_keys_from_text(text: str) -> list[str]:
+    """Identifier-shaped i18n KEYS referenced in one source file, in
+    document order. VALUES (anything with whitespace) are structurally
+    rejected — the operator rule 2026-07-13: translations may live
+    outside the repo; only the key names are code-ground truth."""
+    out: list[str] = []
+    for rx in _I18N_KEY_REFS:
+        for m in rx.finditer(text):
+            key = m.group(1).strip()
+            if key and _I18N_IDENT_RE.fullmatch(key):
+                out.append(key)
+    return out
+
+
+def _test_assertion_labels(text: str) -> list[str]:
+    """Assertion labels authored inside one MAPPED test file, in document
+    order: JS/TS ``it/test/describe('…')`` strings + python ``def
+    test_*`` names (underscores → spaces so both tokenize alike)."""
+    labels = [m.group(1) for m in _TEST_LABEL_RE.finditer(text)]
+    labels.extend(
+        m.group(1).replace("_", " ") for m in _PY_TEST_DEF_RE.finditer(text))
+    return labels
 
 
 # ── Candidate builders ──────────────────────────────────────────────────
@@ -1616,6 +1834,10 @@ def _apply_uf_name_laws(
     nav_labels: Mapping[str, str] | None = None,
     flow_origin_by_id: Mapping[str, str] | None = None,
     flow_by_id: Mapping[str, Any] | None = None,
+    nav_label_sets: Mapping[str, list[str]] | None = None,
+    routes_index: Iterable[Mapping[str, Any]] | None = None,
+    repo_root: Any = None,
+    adjudicated_sources: Mapping[str, Mapping[str, Iterable[str]]] | None = None,
 ) -> None:
     """B9 — three deterministic UF display laws over FINAL members/names, run
     AFTER the labeler so labeler-introduced collisions/over-claims are caught.
@@ -1861,6 +2083,98 @@ def _apply_uf_name_laws(
                 nouns |= _toks(re.sub(r"[-_.]+", " ", stem))
         return nouns
 
+    # ── B57 Seg1 — rung-source expansion (FAULTLINE_UF_RUNG_SOURCES_V2) ──
+    # Four extra OR-sources for the SAME Law C bar (B50 Seg3 precedent):
+    # nav-cluster / i18n-key ground the resource, route-method grounds the
+    # verb, test-assert grounds either. Flag OFF ⇒ every hit below is
+    # False and no telemetry key is added ⇒ confidence / name_evidence /
+    # serialized output byte-identical.
+    v2_on = uf_rung_sources_v2_enabled()
+    _nav_sets: Mapping[str, list[str]] = nav_label_sets or {}
+    # B57 Seg2 — adjudicated rung evidence (Stage 6.7e): per-UF VERIFIED
+    # citation rungs act as extra OR-sources at the SAME bar, per channel
+    # (``{uf_id: {"resource": [rungs], "verb": [rungs]}}`` — the verb
+    # channel is the b57-seg2-iter ruling). Confidence is only ever
+    # written HERE — the adjudicator hands Law C its verified evidence
+    # and Law C judges. Absent map ⇒ byte-identical.
+    _adjudicated: Mapping[str, Mapping[str, Iterable[str]]] = (
+        adjudicated_sources or {})
+    _v2_repo: Any = None
+    _v2_read_cache: dict[str, str] = {}
+    _method_fams_by_file: dict[str, set[str]] = {}
+    _page_files: set[str] = set()
+    if v2_on:
+        tele["rung_sources_v2_fired"] = {
+            "nav-cluster": 0, "i18n-key": 0, "route-verb": 0,
+            "test-assert": 0, "verb-composition": 0,
+        }
+        _method_fams_by_file, _page_files = route_verb_indexes(routes_index)
+        if repo_root is not None:
+            try:
+                from pathlib import Path
+                _v2_repo = Path(str(repo_root))
+            except (TypeError, ValueError):  # pragma: no cover — defensive
+                _v2_repo = None
+
+    def _v2_read(rel: str) -> str:
+        """Capped, cached member-file read (bounds-of-work only)."""
+        if rel in _v2_read_cache:
+            return _v2_read_cache[rel]
+        text = ""
+        if _v2_repo is not None:
+            try:
+                fp = _v2_repo / rel
+                if (fp.is_file()
+                        and fp.stat().st_size <= _RUNG_SOURCE_MAX_FILE_BYTES):
+                    text = fp.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                text = ""
+        _v2_read_cache[rel] = text
+        return text
+
+    def _member_test_files(u: Any) -> list[str]:
+        """MAPPED test files of the member flows (``flow.test_files`` —
+        flow_test_mapper already guarantees member-overlap; the rung never
+        reads an unmapped test file)."""
+        files: set[str] = set()
+        for m in (getattr(u, "member_flow_ids", None) or []):
+            fl = _flow_by_id.get(str(m))
+            if fl is None:
+                continue
+            files.update(str(tf) for tf in (getattr(fl, "test_files", None) or []) if tf)
+        return sorted(files)
+
+    def _is_verb_tok(t: str) -> bool:
+        return t in idx["verb2fam"] or _sing(t) in idx["verb2fam"]
+
+    def _grounds_resource(src_toks: set[str], res_toks: set[str],
+                          name_toks: set[str]) -> bool:
+        """Resource-grounding overlap for prose/identifier sources: a
+        resource-phrase token always grounds; a NAME token grounds only
+        when it is not an action verb (a verb echo — 'manages'/'delete_'
+        — must never stand in for resource evidence; the verb channel
+        judges verbs)."""
+        if src_toks & res_toks:
+            return True
+        return bool({t for t in src_toks if not _is_verb_tok(t)} & name_toks)
+
+    def _fold_read(fam: str | None) -> str | None:
+        """browse/view collapse to 'read' for family agreement — the
+        split is an id-marker display heuristic, not an evidence line."""
+        return "read" if fam in ("browse", "view") else fam
+
+    def _label_lead_family(label: str) -> str | None:
+        """Leading-verb family of an assertion label, singular-folded so
+        prose thirds ('creates …', 'renders …') resolve like base verbs."""
+        toks_l = [t for t in re.split(r"[^a-z0-9]+", label.lower()) if t]
+        if not toks_l:
+            return None
+        fam = (idx["verb2fam"].get(toks_l[0])
+               or idx["verb2fam"].get(_sing(toks_l[0])))
+        if fam == "read":
+            return "view" if (idx["id_markers"] & set(toks_l)) else "browse"
+        return fam
+
     for uf in ordered:
         uid = str(getattr(uf, "id", "") or "")
         names = _members(uf)
@@ -1939,8 +2253,109 @@ def _apply_uf_name_laws(
                 if test_hit:
                     tele["resource_rung_fired"]["test"] += 1
 
-        res_grounded = base_res or nav_hit or member_noun_hit or route_hit or test_hit
-        verb_grounded = base_verb or registry_hit
+        # ── B57 Seg1 rungs (flag-gated; SAME bar, extra OR-sources) ──
+        nav_cluster_hit = i18n_hit = route_verb_hit = False
+        ta_res_hit = ta_verb_hit = verb_composition_hit = False
+        if v2_on:
+            _res_pre = (base_res or nav_hit or member_noun_hit or route_hit
+                        or test_hit)
+            _verb_pre = base_verb or registry_hit
+            # (a) nav-cluster — ANY authored label the nav voted onto the
+            # owning PF (not just the one top-voted B40 label) may ground
+            # the resource. Labels arrive pre-sorted (determinism).
+            for lab in _nav_sets.get(
+                    str(getattr(uf, "product_feature_id", None) or ""), ()):
+                if _grounds_resource(_toks(lab), res_toks, name_toks):
+                    nav_cluster_hit = True
+                    break
+            # (c) route-method — a member route's declared HTTP method
+            # grounds a matching verb-family lead (GET never grounds a
+            # 'Delete X' lead — families must agree). Index-only, no IO.
+            if lead is not None and _method_fams_by_file:
+                for p in _member_paths(uf):
+                    if lead in _method_fams_by_file.get(p, ()):
+                        route_verb_hit = True
+                        break
+            # (e) structural:verb-composition (b57-iter2) — the verb
+            # families the member COMPOSITION implies (member routes'
+            # HTTP methods + page-surface members → read families; the
+            # cal.com ceiling: UI-composite journeys whose verb exists
+            # nowhere in code as a citable string). A lead whose family
+            # the composition implies is verb-grounded; a mutation lead
+            # over a read-only composition is NOT (family must be
+            # PRESENT — mixed GET+POST grounds only browse/view/create).
+            # Index-only, no IO. Empty composition asserts nothing.
+            if lead is not None and (_method_fams_by_file or _page_files
+                                     or _flow_by_id):
+                verb_composition_hit = lead in member_verb_composition(
+                    uf, _flow_by_id, _method_fams_by_file, _page_files)
+            # (b) i18n-key — KEYS referenced in member SOURCE files.
+            # Bounded IO, non-high candidates only: read ONLY when the
+            # resource is still ungrounded by every cheaper source.
+            if not _res_pre and not nav_cluster_hit:
+                ktoks: set[str] = set()
+                for p in _member_paths(uf)[:_RUNG_SOURCE_MAX_FILES]:
+                    for key in _i18n_keys_from_text(_v2_read(p)):
+                        ktoks |= _toks(
+                            _CAMEL_BOUNDARY_RE.sub(" ", key))
+                i18n_hit = _grounds_resource(ktoks, res_toks, name_toks)
+            # (d) test-assert — assertion labels inside MAPPED member
+            # test files (flow.test_files only — the B36 member-overlap
+            # mapping; an unmapped test file is never read). Bounded IO,
+            # read only when a channel is still ungrounded.
+            _need_res = not (_res_pre or nav_cluster_hit or i18n_hit)
+            _need_verb = not (_verb_pre or route_verb_hit
+                              or verb_composition_hit)
+            if _need_res or _need_verb:
+                for tf in _member_test_files(uf)[:_RUNG_SOURCE_MAX_FILES]:
+                    for label in _test_assertion_labels(_v2_read(tf)):
+                        if _need_res and not ta_res_hit and _grounds_resource(
+                                _toks(label), res_toks, name_toks):
+                            ta_res_hit = True
+                        if (_need_verb and not ta_verb_hit and lead is not None
+                                and _fold_read(_label_lead_family(label))
+                                == _fold_read(lead)):
+                            ta_verb_hit = True
+                    if ((ta_res_hit or not _need_res)
+                            and (ta_verb_hit or not _need_verb)):
+                        break
+            # Telemetry — count each NEW grounding (the row the rung
+            # uplifts); test-assert counts each channel it newly grounds.
+            _v2_tele = tele["rung_sources_v2_fired"]
+            if not _res_pre:
+                if nav_cluster_hit:
+                    _v2_tele["nav-cluster"] += 1
+                if i18n_hit:
+                    _v2_tele["i18n-key"] += 1
+                if ta_res_hit:
+                    _v2_tele["test-assert"] += 1
+            if not _verb_pre:
+                if route_verb_hit:
+                    _v2_tele["route-verb"] += 1
+                if ta_verb_hit:
+                    _v2_tele["test-assert"] += 1
+                if verb_composition_hit:
+                    _v2_tele["verb-composition"] += 1
+
+        # ── B57 Seg2 — adjudicated rungs (verified citations; TWO
+        # channels since b57-seg2-iter: resource + verb — each verb
+        # citation was family-matched against this UF's lead verb by the
+        # adjudicator's deterministic verifier before reaching the map) ──
+        _adj_entry: Mapping[str, Iterable[str]] = (
+            (_adjudicated.get(uid) or {}) if _adjudicated else {})
+        adj_res_rungs = sorted(
+            {str(a) for a in (_adj_entry.get("resource") or ())})
+        adj_verb_rungs = sorted(
+            {str(a) for a in (_adj_entry.get("verb") or ())})
+        adj_hit = bool(adj_res_rungs)
+        adj_verb_hit = bool(adj_verb_rungs)
+
+        res_grounded = (base_res or nav_hit or member_noun_hit or route_hit
+                        or test_hit or nav_cluster_hit or i18n_hit
+                        or ta_res_hit or adj_hit)
+        verb_grounded = (base_verb or registry_hit or route_verb_hit
+                         or ta_verb_hit or verb_composition_hit
+                         or adj_verb_hit)
 
         def _rung_fired() -> list[str]:
             r: list[str] = []
@@ -1950,6 +2365,13 @@ def _apply_uf_name_laws(
                 r.append("resource:route")
             if test_hit:
                 r.append("resource:test")
+            if nav_cluster_hit:
+                r.append("resource:nav-cluster")
+            if i18n_hit:
+                r.append("resource:i18n-key")
+            if ta_res_hit:
+                r.append("resource:test-assert")
+            r.extend(f"adjudicated:{a}" for a in adj_res_rungs)
             return r
 
         if res_grounded and verb_grounded and uid not in qualified:
@@ -1963,6 +2385,13 @@ def _apply_uf_name_laws(
                 if registry_hit:
                     fired.append("registry")
                 fired.extend(_rung_fired())
+                if route_verb_hit:
+                    fired.append("verb:route-method")
+                if ta_verb_hit:
+                    fired.append("verb:test-assert")
+                if verb_composition_hit:
+                    fired.append("structural:verb-composition")
+                fired.extend(f"adjudicated:{a}" for a in adj_verb_rungs)
                 uf.name_evidence = fired or ["structural-route"]
         elif res_grounded:
             uf.name_confidence = "medium"
@@ -1983,6 +2412,32 @@ def _apply_uf_name_laws(
                     miss.append("missing:verb")
                 uf.name_evidence = miss
     tele["confidence_after"] = _conf_hist(user_flows)
+
+
+def _uf_flow_maps(
+    flows: Iterable[Any],
+) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
+    """``(flow_name_by_id, flow_origin_by_id, flow_by_id)`` — the member-id
+    lookup maps Law C consumes, keyed by BOTH uuid and name id-forms so
+    ``member_flow_ids`` resolve identically everywhere (run_naming_contract
+    + the B57 Seg2 ``rescore_uf_confidence`` seam share this builder)."""
+    flow_name_by_id: dict[str, str] = {}
+    flow_origin_by_id: dict[str, str] = {}
+    flow_by_id: dict[str, Any] = {}
+    for fl in flows or ():
+        _origin_tag = (
+            "dispatch"
+            if str(getattr(fl, "description", "") or "").startswith(
+                "dispatch registry ")
+            else ""
+        )
+        for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
+            if key:
+                flow_name_by_id.setdefault(str(key), str(getattr(fl, "name", "") or ""))
+                flow_by_id.setdefault(str(key), fl)
+                if _origin_tag:
+                    flow_origin_by_id.setdefault(str(key), _origin_tag)
+    return flow_name_by_id, flow_origin_by_id, flow_by_id
 
 
 def run_naming_contract(
@@ -2073,27 +2528,18 @@ def run_naming_contract(
     # ``description`` that begins ``"dispatch registry "`` (the maintainer's own
     # declared key + exported symbol). Keyed by the same id forms as the name
     # map so ``member_flow_ids`` resolve identically.
-    flow_name_by_id: dict[str, str] = {}
-    flow_origin_by_id: dict[str, str] = {}
-    # B50 Seg3 — flow OBJECTS by member id (paths / entry_point_file /
-    # test_files feed the earned resource rung). Keyed by the same id forms.
-    flow_by_id: dict[str, Any] = {}
-    for fl in flows or ():
-        _origin_tag = (
-            "dispatch"
-            if str(getattr(fl, "description", "") or "").startswith(
-                "dispatch registry ")
-            else ""
-        )
-        for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
-            if key:
-                flow_name_by_id.setdefault(str(key), str(getattr(fl, "name", "") or ""))
-                flow_by_id.setdefault(str(key), fl)
-                if _origin_tag:
-                    flow_origin_by_id.setdefault(str(key), _origin_tag)
+    flow_name_by_id, flow_origin_by_id, flow_by_id = _uf_flow_maps(flows)
 
+    # B57 Seg1 — materialize once (three consumers may iterate) and build
+    # the ALL-voted-labels view only when the rung flag is armed (OFF ⇒
+    # zero extra work, byte-identical emission).
+    routes_index = list(routes_index) if routes_index is not None else None
     nav_labels = nav_labels_for_pfs(
         product_features, product_strings, routes_index)
+    nav_label_sets = (
+        nav_label_sets_for_pfs(product_features, product_strings, routes_index)
+        if uf_rung_sources_v2_enabled() else {}
+    )
     prev_by_anchor, prev_by_slug = (
         _prev_pf_displays(prev_scan) if (keeper_on and prev_scan) else ({}, {})
     )
@@ -2560,6 +3006,11 @@ def run_naming_contract(
             nav_labels=nav_labels,
             flow_origin_by_id=flow_origin_by_id,
             flow_by_id=flow_by_id,
+            # B57 Seg1 — rung-source collectors (inert dict/None when the
+            # FAULTLINE_UF_RUNG_SOURCES_V2 flag is OFF).
+            nav_label_sets=nav_label_sets,
+            routes_index=routes_index,
+            repo_root=repo_root,
         )
 
     # ── B56 final pass: UF names inherit the PF abbreviation expansions ──
@@ -2577,4 +3028,62 @@ def run_naming_contract(
                 tele["uf_fullname_inherited"] += 1
 
     tele["labeler_pending"] = len(pending)
+    return tele
+
+
+def rescore_uf_confidence(
+    product_features: list[Any],
+    user_flows: list[Any],
+    flows: Iterable[Any] = (),
+    *,
+    product_strings: Any = None,
+    routes_index: Iterable[Mapping[str, Any]] | None = None,
+    uf_authored_names: Mapping[str, Iterable[str]] | None = None,
+    keeper_on: bool = True,
+    repo_root: Any = None,
+    adjudicated_sources: Mapping[str, Mapping[str, Iterable[str]]] | None = None,
+) -> dict[str, Any]:
+    """B57 Seg2 — the Law C RE-SCORE seam for the Stage 6.7e adjudicator.
+
+    Re-applies the UF name laws (the same ``_apply_uf_name_laws`` body the
+    contract runs, over the CURRENT rows) with the adjudicator's VERIFIED
+    citation rungs threaded as extra OR-sources per channel
+    (``adjudicated_sources``: ``{uf_id: {"resource": [rung, ...],
+    "verb": [rung, ...]}}`` — each stamps an ``adjudicated:<rung>``
+    evidence tag; the verb channel is the b57-seg2-iter ruling, its
+    citations family-matched by the adjudicator's verifier). The bar is
+    UNCHANGED; confidence and evidence are only ever written by Law C —
+    the adjudicator itself NEVER touches ``name_confidence``. Idempotent
+    over an unchanged board (laws A/B are stable fixed points); no-ops
+    (telemetry-only) when the naming contract or the UF name laws are
+    switched off."""
+    tele: dict[str, Any] = {}
+    if not (naming_contract_enabled() and uf_name_laws_enabled()):
+        tele["skipped"] = "naming-laws-off"
+        return tele
+    vocab = load_naming_vocab()
+    flow_name_by_id, flow_origin_by_id, flow_by_id = _uf_flow_maps(flows)
+    routes_index = list(routes_index) if routes_index is not None else None
+    nav_labels = nav_labels_for_pfs(
+        product_features, product_strings, routes_index)
+    nav_label_sets = (
+        nav_label_sets_for_pfs(product_features, product_strings, routes_index)
+        if uf_rung_sources_v2_enabled() else {}
+    )
+    pf_by_slug = {
+        str(getattr(pf, "name", "") or ""): pf for pf in product_features
+    }
+    _authored: Mapping[str, Iterable[str]] = uf_authored_names or {}
+    _apply_uf_name_laws(
+        user_flows, pf_by_slug, vocab, flow_name_by_id, tele,
+        authored_ids={str(k) for k in _authored.keys()},
+        keeper_on=keeper_on,
+        nav_labels=nav_labels,
+        flow_origin_by_id=flow_origin_by_id,
+        flow_by_id=flow_by_id,
+        nav_label_sets=nav_label_sets,
+        routes_index=routes_index,
+        repo_root=repo_root,
+        adjudicated_sources=adjudicated_sources,
+    )
     return tele

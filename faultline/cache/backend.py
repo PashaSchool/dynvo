@@ -128,6 +128,16 @@ class CacheKind(str, Enum):
     # input → same answer): a deterministic short-circuit, not per-repo
     # memory (rule-cold-scan safe).
     LLM_PERSONA = "llm-persona"
+    # Stage 6.7e journey-evidence adjudicator (B57 Seg2): one entry per
+    # verdict batch, keyed on {cache version, canonical model, system
+    # prompt, canonical batch payload} — the payload embeds each UF's
+    # (sorted member set + name + neighbor sets + evidence), so the key is
+    # content-derived. The cached value is the PARSED verdicts array —
+    # replayed through the SAME deterministic citation verifier + apply
+    # code as a live call, so an unchanged repo re-scans byte-identical at
+    # $0. Content-keyed (same input → same answer): a deterministic
+    # short-circuit, not per-repo memory (rule-cold-scan safe).
+    LLM_ADJUDICATOR = "llm-adjudicator"
     # Stage 6.55 page-interior parse (W4, Product-Spine §4.6): one entry
     # per PAGE FILE, keyed on sha256(parser version + tree-sitter grammar
     # versions + file bytes). The cached value is the serialised interior
