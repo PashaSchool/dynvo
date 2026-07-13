@@ -2312,11 +2312,14 @@ def run_transport_handoff(
                     for rec in pulled:
                         rd["matched"].pop(rec, None)
 
+            def _lanes(f: Any) -> bool:
+                t = dev_plan.get(str(_attr(f, "name")))
+                return t is None or t.kind != "pf"
+
             laned_planned = [
                 f for f in sorted(cand_devs,
                                   key=lambda x: str(_attr(x, "name")))
-                if (dev_plan.get(str(_attr(f, "name"))) is None
-                    or dev_plan[str(_attr(f, "name"))].kind != "pf")
+                if _lanes(f)
             ]
             unresolved = [r for r in resolutions if r.target is None]
             if unresolved and not laned_planned:
@@ -2355,13 +2358,13 @@ def run_transport_handoff(
             # ── apply (B52 partial: re-home the resolved, lane the
             # intrinsic — nothing is ever dropped) ─────────────────────
             rehomed_before = tele["ufs_rehomed"]
-            rung_counter: Counter = Counter()
+            lane_rungs: Counter = Counter()
             lane_ufs: list[Any] = []
             for u in sorted(homed, key=lambda x: str(_attr(x, "id") or "")):
                 r = res_by_id[str(_attr(u, "id") or "")]
                 if r.target is not None:  # kind == "pf" by construction
                     u.product_feature_id = r.target.key
-                    rung_counter[r.rung or "?"] += 1
+                    lane_rungs[r.rung or "?"] += 1
                     tele["ufs_rehomed"] += 1
                     if len(tele["moves"]) < 60:
                         tele["moves"].append({
@@ -2413,21 +2416,21 @@ def run_transport_handoff(
                     key=lambda f: (-len(_attr(f, "flows") or []),
                                    str(_attr(f, "name"))))[0], "uuid") or "")
             for u in lane_ufs:
-                votes: Counter = Counter()
+                lane_votes: Counter = Counter()
                 for mid in (_attr(u, "member_flow_ids") or []):
                     owner_uuid = flow_owner.get(str(mid))
                     if owner_uuid:
-                        votes[owner_uuid] += 1
+                        lane_votes[owner_uuid] += 1
                 anchor = anchor_default
-                if votes:
-                    ranked = _tie_sorted(votes)
+                if lane_votes:
+                    ranked = _tie_sorted(lane_votes)
                     top_uuid, ct = ranked[0]
-                    if ct * 2 > sum(votes.values()):
+                    if ct * 2 > sum(lane_votes.values()):
                         anchor = str(top_uuid)
                 u.product_feature_id = None
                 u.lane_ref = anchor
                 u.surface_scope = "platform_infrastructure"
-                rung_counter["lane"] += 1
+                lane_rungs["lane"] += 1
 
             # the candidate PF row leaves the product layer (→ lane).
             product_features[:] = [
@@ -2438,7 +2441,7 @@ def run_transport_handoff(
             pf_by_key.pop(cand_key, None)
             tele["laned"].append({
                 "unit": unit, "pf": cand_key, "ufs": len(homed),
-                "rungs": dict(sorted(rung_counter.items())),
+                "rungs": dict(sorted(lane_rungs.items())),
                 "minted": {},
                 # non-empty ONLY (documenso-keyless SACRED: a flowless
                 # candidate's laned row is byte-identical to the legacy
@@ -2447,7 +2450,7 @@ def run_transport_handoff(
                 **({"lane_flows": len(lane_flow_ids)}
                    if lane_flow_ids else {}),
             })
-            tele["rungs"][unit] = dict(sorted(rung_counter.items()))
+            tele["rungs"][unit] = dict(sorted(lane_rungs.items()))
             if unit in (tele.get("router_decomp") or {}):
                 rd = tele["router_decomp"][unit]
                 rd["journeys_moved"] = tele["ufs_rehomed"] - rehomed_before
