@@ -513,6 +513,107 @@ def test_v2_idempotent_second_run(tmp_path):
     assert tele2["files_moved"] == 0
 
 
+# ── Seg A v3 — PF-survival invariance (typebot 'popup' class) ───────────────
+#
+# Wave forensics (2026-07-13): typebot flag-ON emitted a 'popup' PF (0
+# flows / 203 LOC) that does NOT exist on the OFF board — the v2 drain ran
+# BEFORE the W4.2 post-UF vendor-husk fold and fattened a foldable husk,
+# sparing a PF row. v3 relocates the drain AFTER the fold so its target
+# set equals the OFF-emission survivor set by construction.
+
+
+def _popup_world():
+    """A donor blob + a FOLDABLE husk PF ('popup': hub-vendor child under
+    integrations/, flowless, journey-uncited) + a legit surviving receiver
+    (object-record). The fold must kill popup; the drain (running AFTER,
+    v3 order) must then leave popup's domain-dir files in the blob while
+    still draining the legit receiver's dir."""
+    popup_file = f"{PKG}/src/modules/popup/Popup.tsx"
+    blob_dev = _dev(
+        "twenty-front-blob",
+        [OR1, popup_file, SHELL2],
+        pfid="twenty-front",
+    )
+    popup_dev = _dev("popup-embed",
+                     [f"{PKG}/src/integrations/popup/embed.ts"],
+                     pfid="popup")
+    or_dev = _dev("object-record-owner", [OR_ANCHOR], pfid="object-record")
+
+    front_pf = _pf("twenty-front", [OR1, popup_file, SHELL2],
+                   "ws:twenty-front")
+    popup_pf = _pf("popup", [f"{PKG}/src/integrations/popup/embed.ts"],
+                   f"hub:{PKG}/src/integrations/popup")
+    or_pf = _pf("object-record", [OR_ANCHOR], "route:/object-record")
+
+    devs = [blob_dev, popup_dev, or_dev]
+    pfs = [front_pf, popup_pf, or_pf]
+    ufs = []  # popup journey-uncited (the fold's ruler)
+    return devs, pfs, ufs, popup_file
+
+
+def test_v3_foldable_husk_stays_dropped_under_flag_on():
+    """The popup class: a PF the husk-fold drops must STAY dropped when
+    the drain runs (v3 order: fold first) — the drain never sees it, never
+    fattens it, its domain-dir files stay in the blob."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        fold_unreferenced_vendor_husks,
+    )
+
+    devs, pfs, ufs, popup_file = _popup_world()
+    hf = fold_unreferenced_vendor_husks(devs, pfs, ufs)
+    assert any(f["pf"] == "popup" for f in hf["folded"])
+    assert "popup" not in {p.name for p in pfs}      # fold killed the row
+
+    tele = run_ws_blob_domain_drain(devs, pfs, ufs, [], _Ctx())
+    # popup never resurrects: no match, no carve dev, files stay in blob.
+    assert "popup" not in {p.name for p in pfs}
+    assert all("popup" not in d for d in _dirs_pf(tele))
+    assert not any("popup" in str(d.name) for d in devs
+                   if WBD._DRAIN_MARKER in str(d.name))
+    blob = next(d for d in devs if d.name == "twenty-front-blob")
+    assert popup_file in blob.paths
+    # the legit receiver still drains (object-record exists OFF).
+    assert _dirs_pf(tele) == {
+        f"{PKG}/src/modules/object-record": "object-record"}
+
+
+def test_v3_pf_nameset_invariance_off_vs_on():
+    """Flag-ON emission PF name-set == flag-OFF name-set on a board with a
+    foldable husk + a matched domain dir pointing at it — the drain only
+    re-attributes members, it never changes which PFs survive."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        fold_unreferenced_vendor_husks,
+    )
+
+    # OFF path: fold only.
+    devs_off, pfs_off, ufs_off, _ = _popup_world()
+    fold_unreferenced_vendor_husks(devs_off, pfs_off, ufs_off)
+    names_off = {p.name for p in pfs_off}
+
+    # ON path: fold, THEN drain (the v3 order).
+    devs_on, pfs_on, ufs_on, _ = _popup_world()
+    fold_unreferenced_vendor_husks(devs_on, pfs_on, ufs_on)
+    tele = run_ws_blob_domain_drain(devs_on, pfs_on, ufs_on, [], _Ctx())
+    names_on = {p.name for p in pfs_on}
+
+    assert names_on == names_off                     # survival invariance
+    assert tele["files_moved"] >= 1                  # …while ink still moved
+
+
+def test_v3_drain_wired_after_husk_fold_in_finalize():
+    """Source-order guard: the Stage 6.885b drain call sits AFTER the W4.2
+    husk-fold call and BEFORE the journey-lattice block in phase_finalize
+    (the v3 relocation — PF-survival invariance by construction)."""
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parents[2]
+           / "faultline" / "pipeline_v2" / "phase_finalize.py"
+           ).read_text(encoding="utf-8")
+    i_fold = src.index("fold_unreferenced_vendor_husks(")
+    i_drain = src.index("run_ws_blob_domain_drain(")
+    i_lattice = src.index("journey lattice (Product-Spine W5)")
+    assert i_fold < i_drain < i_lattice
+
+
 # ── Seg B — dev-artifact ws-packages off the product layer ───────────────────
 
 import json  # noqa: E402
