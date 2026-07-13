@@ -404,6 +404,24 @@ ENV_OUTPUT_FLAGS = (
     # journeys). Default OFF; =0/unset byte-identical. No KEY_SCHEMA bump
     # (flip is a separate later commit per flip-protocol).
     "FAULTLINE_TRANSPORT_ROUTER_DECOMP",
+    # B52 (2026-07-13) — flow-bearing transport lane (Option A; the operator
+    # 'трпц A' mandate: the trpc tile disappears ENTIRELY). The ONE cycle
+    # switch (it also drives the B51 decomposition pass, in drain-then-lane
+    # mode + the (c) `api/trpc/<domain>/` handler grain): a ws-anchored
+    # transport candidate ALWAYS leaves product_features[]. Matched groups
+    # re-home onto EXISTING PFs WITH their journeys (r1 over the post-drain
+    # state; a receiver that would end journey-less pulls its carve back —
+    # the B51 I8 exhibit's structural fix); the flowful RESIDUE lanes (the
+    # validator I9 ws:-anchor exemption, engine-aligned); transport-
+    # intrinsic journeys stay in user_flows[] with product_feature_id=None
+    # + lane_ref=<lane-row uuid> + surface_scope='platform_infrastructure',
+    # and the lane row carries flow_ids[] + journeys[] (additive, non-empty
+    # only). Conservation: Σflows == product-homed + lane flow_ids, ΣUF ==
+    # product-homed + lane_ref rows — nothing dropped, nothing minted.
+    # Reshapes product_features[] / developer_features[] / user_flows[] /
+    # platform_infrastructure[]. Default OFF; =0/unset byte-identical. No
+    # KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_FLOWFUL_TRANSPORT_LANE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

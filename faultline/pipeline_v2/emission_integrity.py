@@ -212,8 +212,18 @@ class EmissionIntegrityResult:
     anchored_husk_ufs_rehomed: int = 0
     anchored_husk_seed_ufs_dropped: int = 0
     anchored_husks_kept_journey: list[str] = field(default_factory=list)
+    # B52 — stale transport-lane back-references repaired (lane_ref not
+    # matching any pfid=None dev uuid). 0 on every pre-B52 / flag-OFF
+    # scan; the key is EMITTED ONLY when non-zero (byte-identity).
+    lane_refs_cleared: int = 0
 
     def as_dict(self) -> dict[str, Any]:
+        out = self._base_dict()
+        if self.lane_refs_cleared:
+            out["lane_refs_cleared"] = self.lane_refs_cleared
+        return out
+
+    def _base_dict(self) -> dict[str, Any]:
         return {
             "phantom_features_dropped": list(self.phantom_features_dropped),
             "phantom_product_features_dropped": list(
@@ -537,6 +547,47 @@ def _reconcile_uf_pf_refs(
             result.uf_pf_refs_nulled += 1
 
 
+def _lane_ref_integrity(
+    features: list["Feature"],
+    user_flows: list["UserFlow"],
+    result: EmissionIntegrityResult,
+) -> None:
+    """B52 — ``product_feature_id=None`` is LEGAL iff ``lane_ref`` is a
+    LIVE lane resident (a pfid=None dev's uuid — the exact value the
+    lane row will carry). A stale/dangling ``lane_ref`` (its dev was
+    dropped or re-homed after Stage 6.985) is cleared together with the
+    lane scope, so the journey falls through to ``assign_terminal_homes``
+    instead of shipping a dangling reference. Same repair for a
+    ``lane_ref`` on a PRODUCT-homed journey (a later stage re-homed it —
+    the back-reference is dead). No-op (byte-identical) when no UF
+    carries ``lane_ref`` — every pre-B52 / flag-OFF scan."""
+    refs_present = any(
+        getattr(uf, "lane_ref", None) for uf in user_flows
+    )
+    if not refs_present:
+        return
+    lane_uuids = {
+        str(getattr(f, "uuid", "") or "")
+        for f in features
+        if getattr(f, "layer", "developer") == "developer"
+        and getattr(f, "product_feature_id", None) is None
+        and getattr(f, "uuid", None)
+    }
+    for uf in user_flows:
+        ref = getattr(uf, "lane_ref", None)
+        if not ref:
+            continue
+        if getattr(uf, "product_feature_id", None) is not None:
+            uf.lane_ref = None  # product-homed — the back-ref is dead
+            result.lane_refs_cleared += 1
+        elif str(ref) not in lane_uuids:
+            uf.lane_ref = None
+            if getattr(uf, "surface_scope", None) == \
+                    "platform_infrastructure":
+                uf.surface_scope = None
+            result.lane_refs_cleared += 1
+
+
 def _flow_key(flow: "Flow") -> str:
     """Stable flow identity — uuid when present, else name. Mirrors
     ``stage_6_7_user_flows._flow_key`` and the ``user_flow_id`` stamp."""
@@ -660,6 +711,7 @@ def enforce_emission_integrity(
     )
     features, product_features = _drop_phantoms(features, product_features, result)
     _reconcile_uf_pf_refs(product_features, user_flows, result)
+    _lane_ref_integrity(features, user_flows, result)
     _rewrite_flow_backpointers(user_flows, flows, result)
     return features, product_features, result
 

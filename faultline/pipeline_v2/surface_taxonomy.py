@@ -788,6 +788,15 @@ def _tag_user_flows(
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for uf in user_flows:
+        # B52 — a transport-lane journey (lane_ref set) already carries
+        # its authoritative scope ('platform_infrastructure', stamped by
+        # Stage 6.985); the member-vote classifier must not overwrite
+        # it. lane_ref exists only under FAULTLINE_FLOWFUL_TRANSPORT_LANE
+        # → OFF scans are byte-identical (counts included).
+        if _get(uf, "lane_ref"):
+            sc0 = str(_get(uf, "surface_scope") or "platform_infrastructure")
+            counts[sc0] = counts.get(sc0, 0) + 1
+            continue
         votes: list[str | None] = []
         for mid in _get(uf, "member_flow_ids") or []:
             fl = flow_by_id.get(str(mid))
