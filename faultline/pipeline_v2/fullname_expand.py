@@ -43,6 +43,36 @@ unchanged and reports ``missing:expansion`` — measured, never invented. In
 particular ``Pbac``'s full form lives ONLY in a JSDoc comment in cal.com, and
 COMMENTS ARE NOT A SOURCE here (comment text is stripped before any scan), so
 ``Pbac`` is ``missing:expansion``, not auto-expanded.
+
+False-expansion filters (round-3 census class: a coincidental initials
+collision is WORSE than missing — it invents meaning). Four MECHANICAL
+filters, no dictionaries:
+
+* **F1 SELF-ECHO** — a candidate expansion in which ANY word equals the token
+  is rejected (``edrDateRanges`` → "Edr Date Ranges" for EDR).
+* **F2 LITERAL-INITIALS OFF** — plain string literals / JSX text participate
+  ONLY via the explicit author gloss ``"Full Phrase (ABBR)"``; their word
+  initials are never matched ("Missing code parameter" ≠ MCP's meaning).
+* **F3 PLAIN-WORD GUARD** — every word of a candidate expansion must read as
+  a plain word (or minor glue); ``extract_dv_rows`` → "Extract Dv Rows" dies
+  on the non-word "Dv".
+* **F4 TOKEN-HOME GUARD** — identifier-initials evidence counts only when the
+  citing file carries the token as a whole path segment (``packages/sso/``),
+  the entire basename stem, or an UPPERCASE-BOUNDED acronym in the basename
+  (``PrismaOOORepository``); a coincidental interface in a foreign module
+  (``PlatformActorMetadata`` in ``audit-log-types.ts`` for PAM) or a
+  lowercase kebab fragment (``pg-meta-column-privileges.ts`` for PG) is not
+  the token's meaning.
+
+INTERPLAY (do not "simplify" these into fewer filters): the census false
+cases ``extract_dv_rows`` (services/edr/) and ``"Missing code parameter"``
+(features/mcp/) DO sit inside their token's home — F4 alone passes them; F3
+and F2 respectively are what kill them. Conversely F4 is the only filter that
+kills a plain-worded coincidence outside the home (PAM). Gloss / manifest /
+numeric / route+brand sources are exempt from F4 (self-evident author intent)
+but still pass F1 + F3. And do NOT add a ">= 2 distinct identifiers" rule:
+cal.com's Ooo has exactly ONE identifier root in its citing file and is a
+TRUE expansion.
 """
 
 from __future__ import annotations
@@ -133,8 +163,6 @@ _PRIO: dict[str, int] = {
 }
 
 _IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
-_STRING_LIT_RE = re.compile(r"""(["'`])((?:\\.|(?!\1).)*)\1""")
-_JSX_TEXT_RE = re.compile(r">([^<>{}]+)<")
 _JSON_KEY_RE = re.compile(r"""["']([A-Za-z_][A-Za-z0-9_.\-]*)["']\s*:""")
 #: Path markers that make a file a LOCALE file: its string VALUES are a
 #: FORBIDDEN source (operator rule 2026-07-13 — translations may be external /
@@ -279,6 +307,56 @@ def _is_plain_word(token: str, whitelist: Iterable[str]) -> bool:
     if not any(c in _VOWELS for c in low):
         return False
     return not _looks_unpronounceable(low)
+
+
+def _expansion_words_ok(disp: str, token: str) -> bool:
+    """F1 + F3 over one candidate expansion phrase (see module docstring).
+
+    F1 SELF-ECHO: any word equal to the token (case-insensitive) means the
+    "expansion" restates the abbreviation instead of explaining it
+    ("Edr Date Ranges" / "Successfully Ssh Host" / "Sse Subscription Error").
+    F3 PLAIN-WORD GUARD: every word must read as a plain word (or minor glue)
+    — a non-word fragment ("Dv") marks a coincidental identifier, not a
+    meaning. Applied to EVERY source's candidates."""
+    tok = (token or "").strip().lower()
+    wl = load_fullname_whitelist()
+    for raw in re.split(r"[^A-Za-z0-9]+", disp or ""):
+        if not raw:
+            continue
+        low = raw.lower()
+        if low == tok:
+            return False  # F1 — self-echo
+        if low in _MINOR_WORDS:
+            continue
+        if not _is_plain_word(raw, wl):
+            return False  # F3 — non-word fragment
+    return True
+
+
+def _token_home(rel: str, token: str) -> bool:
+    """F4 — is this file the token's HOME? True when the repo-relative path
+    carries the token as a WHOLE directory segment (``packages/sso/…``,
+    ``…/features/ooo/…``), as the ENTIRE basename stem (``mcp.py``), or as an
+    UPPERCASE-BOUNDED acronym inside the basename (``PrismaOOORepository.ts``
+    — the author wrote the token AS an acronym). A lowercase kebab fragment
+    is NOT a home: ``pg-meta-column-privileges.ts`` does not home "pg"
+    (the census residual — a coincidental ``privilegeGrant`` zod object must
+    not become "Privilege Grant (PG)"). Identifier-initials evidence found
+    outside the home is a coincidence, not the token's meaning."""
+    tok = (token or "").strip().lower()
+    if not tok:
+        return False
+    parts = [p for p in (rel or "").replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    if any(seg.lower() == tok for seg in parts[:-1]):
+        return True
+    stem = parts[-1].rsplit(".", 1)[0]
+    if stem.lower() == tok:
+        return True
+    return re.search(
+        rf"(?<![A-Z0-9]){re.escape(tok.upper())}(?![a-z0-9])", stem,
+    ) is not None
 
 
 # ── word splitting + acronym maths ──────────────────────────────────────
@@ -451,13 +529,16 @@ def _match_from_words(
                 disp = _titlecase_phrase(" ".join(matched))
             if not disp or len(disp) > _MAX_FULL_CHARS:
                 return None
+            if not _expansion_words_ok(disp, tok):
+                return None  # F1 self-echo / F3 non-word fragment
             return _Match(_norm(disp), disp, f"{source}:{cite_body}",
                           _PRIO[source])
         if len(initials) > len(tok):
             break
     if len(raw_words) == 1 and _numeric_contract(cand) == tok:
         disp = _verbatim_brand(cand.strip()) if brand else _titlecase_phrase(cand)
-        if disp and len(disp) <= _MAX_FULL_CHARS:
+        if (disp and len(disp) <= _MAX_FULL_CHARS
+                and _expansion_words_ok(disp, tok)):
             return _Match(_norm(disp), disp, f"{source}:{cite_body}",
                           _PRIO[source])
     return None
@@ -498,7 +579,8 @@ def _gloss_matches(
             if not _plausible_gloss(phrase, token):
                 continue
             disp = _titlecase_phrase(phrase)
-            if disp and len(disp) <= _MAX_FULL_CHARS:
+            if (disp and len(disp) <= _MAX_FULL_CHARS
+                    and _expansion_words_ok(disp, token)):
                 out.append(_Match(_norm(disp), disp,
                                   f"{source}:{rel}:{lineno}", _PRIO[source]))
     return out
@@ -528,35 +610,25 @@ def _evidence_from_file(root: Path, rel: str, token: str) -> list[_Match]:
                     out.append(mm)
         return out
     code = _strip_comments(text)
-    # (a) code identifiers (multi-word).
-    for lineno, line in enumerate(code.splitlines(), 1):
-        for m in _IDENT_RE.finditer(line):
-            ident = m.group(0)
-            if len(_word_tokens(ident)) >= 2:
-                mm = _match_from_words(
-                    ident, token, "identifier", f"{rel}:{lineno}", brand=False)
-                if mm is not None:
-                    out.append(mm)
-    # (b) JSX labels / string literals — explicit gloss + literal-phrase
-    #     initials. Grouped with i18n keys as author-intent surface text.
+    # (a) code identifiers (multi-word) — F4 TOKEN-HOME gated: identifier
+    #     initials only carry meaning inside the token's own module (whole
+    #     path segment or basename word); elsewhere they are coincidences
+    #     (PlatformActorMetadata in audit-log-types.ts is not PAM).
+    if _token_home(rel, token):
+        for lineno, line in enumerate(code.splitlines(), 1):
+            for m in _IDENT_RE.finditer(line):
+                ident = m.group(0)
+                if len(_word_tokens(ident)) >= 2:
+                    mm = _match_from_words(
+                        ident, token, "identifier", f"{rel}:{lineno}",
+                        brand=False)
+                    if mm is not None:
+                        out.append(mm)
+    # (b) F2 — plain string literals / JSX text participate ONLY via the
+    #     explicit author gloss ``"Full Phrase (ABBR)"``. Their word initials
+    #     are NEVER matched (an error message "Missing code parameter" is not
+    #     MCP's meaning; a toast "Successfully ssh host…" is not SSH's).
     out.extend(_gloss_matches(code, token, "i18n-key", rel))
-    for lineno, line in enumerate(code.splitlines(), 1):
-        for m in _STRING_LIT_RE.finditer(line):
-            lit = m.group(2).strip()
-            if not lit or " " not in lit:
-                continue
-            if len(_word_tokens(lit)) >= 2:
-                mm = _match_from_words(
-                    lit, token, "i18n-key", f"{rel}:{lineno}", brand=False)
-                if mm is not None:
-                    out.append(mm)
-        for m in _JSX_TEXT_RE.finditer(line):
-            txt = m.group(1).strip()
-            if txt and " " in txt and len(_word_tokens(txt)) >= 2:
-                mm = _match_from_words(
-                    txt, token, "i18n-key", f"{rel}:{lineno}", brand=False)
-                if mm is not None:
-                    out.append(mm)
     return out
 
 

@@ -175,8 +175,9 @@ def test_sso_from_jsx_label_gloss(tmp_path: Path, law_on: None) -> None:
 
 def test_sso_from_identifier_reconstruction(tmp_path: Path) -> None:
     # Identifier reconstruction yields the un-hyphenated form (honest: the
-    # hyphen is not derivable from a camelCase identifier).
-    rel = _write(tmp_path, "auth/saml.ts", "const singleSignOnServices = 1;")
+    # hyphen is not derivable from a camelCase identifier). The citing file
+    # sits in the token's home dir (F4).
+    rel = _write(tmp_path, "sso/saml.ts", "const singleSignOnServices = 1;")
     pf = _PF(rels=[rel])
     full, _src = expand_abbreviation("Sso", pf, tmp_path)
     assert full == "Single Sign On"
@@ -260,9 +261,11 @@ def test_vendor_qualifier_tail_untouched(tmp_path: Path, law_on: None) -> None:
 
 
 def test_ambiguous_two_distinct_expansions(tmp_path: Path, law_on: None) -> None:
-    _write(tmp_path, "a.ts", "class AppleBananaCherry {}")
-    _write(tmp_path, "b.ts", "class AlphaBravoCharlie {}")
-    pf = _PF(rels=["a.ts", "b.ts"])
+    # Both citing files live in the token's home dir (F4), yet yield two
+    # DISTINCT plain-worded expansions ⇒ ambiguous, do not expand.
+    _write(tmp_path, "abc/a.ts", "class AppleBananaCherry {}")
+    _write(tmp_path, "abc/b.ts", "class AlphaBravoCharlie {}")
+    pf = _PF(rels=["abc/a.ts", "abc/b.ts"])
     res = apply_fullname_expansion("Abc", pf, tmp_path)
     assert res.display is None
     assert res.source == "ambiguous"
@@ -417,6 +420,134 @@ def test_no_workspaces_config_no_package_lookup(
     assert res.source == "missing:expansion"
 
 
+# ── round-3 false-expansion filters F1-F4 (full-census false cases) ──────
+
+
+def test_f1_self_echo_expansion_rejected(tmp_path: Path, law_on: None) -> None:
+    """Census false #1 (Soc0 'EDR Detections' -> 'Edr Date Ranges (EDR)'):
+    even in the token's HOME dir (F4 passes) an expansion whose first word IS
+    the token ⇒ F1 rejects ⇒ honest debt."""
+    rel = _write(tmp_path, "features/edr/EdrDetectionsPage.tsx",
+                 "const edrDateRanges = getRanges();")
+    res = apply_fullname_expansion("EDR Detections", _PF(rels=[rel]), tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
+
+
+def test_f2_error_literal_initials_rejected(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Census false #5 (onyx 'MCP' -> 'Missing Code Parameter (MCP)'): an
+    error-message literal in the token's own home dir (F4 passes!) — plain
+    literals participate ONLY via the explicit gloss ⇒ F2 rejects."""
+    rel = _write(tmp_path, "server/mcp/api.py",
+                 'raise ValueError("Missing code parameter")\n')
+    res = apply_fullname_expansion("MCP", _PF(rels=[rel]), tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
+
+
+def test_f2_f1_sentence_literal_self_echo_rejected(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Census false #3 (infisical 'SSH Certificate Authority' ->
+    'Successfully Ssh Host (SSH) …'): a toast sentence literal + self-echo.
+    F2 kills the literal-initials path; F1/F3 would kill the phrase anyway."""
+    rel = _write(tmp_path, "pages/ssh/SshHostGroupModal.tsx",
+                 'toast("Successfully ssh host attached");')
+    res = apply_fullname_expansion(
+        "SSH Certificate Authority", _PF(rels=[rel]), tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
+
+
+def test_f2_f1_sse_subscription_error_rejected(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Census false #6 (twenty 'Sse DB Event' -> 'Sse Subscription Error
+    (SSE) …'): error literal + self-echo ⇒ rejected."""
+    rel = _write(
+        tmp_path, "modules/sse-db-event/useTriggerEventStreamCreation.ts",
+        'throw new Error("Sse subscription error");')
+    res = apply_fullname_expansion("Sse DB Event", _PF(rels=[rel]), tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
+
+
+def test_f3_nonword_fragment_rejected(tmp_path: Path, law_on: None) -> None:
+    """Census false #2 (Soc0 'EDR — SentinelOne' -> 'Extract Dv Rows (EDR)'):
+    the identifier sits in services/edr/ (F4 home passes!) but 'Dv' is a
+    non-word fragment ⇒ F3 rejects ⇒ honest debt."""
+    rel = _write(tmp_path, "services/edr/sentinelone.py",
+                 "def extract_dv_rows(rows):\n    return rows\n")
+    res = apply_fullname_expansion(
+        "EDR — SentinelOne", _PF(rels=[rel]), tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
+
+
+def test_f4_identifier_outside_token_home_rejected(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Census false #4 (infisical 'PAM Resource Discovery' -> 'Platform Actor
+    Metadata (PAM) …'): a real, plain-worded identifier (F1/F3 pass) in a
+    FOREIGN module — no 'pam' path segment / basename word ⇒ F4 rejects."""
+    rel = _write(tmp_path, "services/audit-log/audit-log-types.ts",
+                 "export interface PlatformActorMetadata { id: string }")
+    res = apply_fullname_expansion(
+        "PAM Resource Discovery", _PF(rels=[rel]), tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
+
+
+def test_f4_lowercase_kebab_fragment_is_not_home(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """Census residual (supabase 'Pg Meta' -> 'Privilege Grant (PG) Meta'):
+    a coincidental zod object in pg-meta-column-privileges.ts. The lowercase
+    kebab fragment 'pg' is NOT an uppercase-bounded acronym in the basename
+    and no dir is named 'pg' ⇒ not home ⇒ F4 rejects ⇒ honest debt."""
+    rel = _write(tmp_path,
+                 "packages/pg-meta/src/pg-meta-column-privileges.ts",
+                 "const privilegeGrant = z.object({ grantee: z.string() });")
+    res = apply_fullname_expansion("Pg Meta", _PF(rels=[rel]), tmp_path)
+    assert res.display is None
+    assert res.source == "missing:expansion"
+
+
+def test_f4_home_dir_identifier_survives(tmp_path: Path, law_on: None) -> None:
+    """TRUE pair for F4 (better-auth 'sso'): SingleSignOnService inside
+    packages/sso/src — whole path segment home ⇒ expands."""
+    rel = _write(tmp_path, "packages/sso/src/index.ts",
+                 "export class SingleSignOnService {}")
+    res = apply_fullname_expansion("sso", _PF(rels=[rel]), tmp_path)
+    assert res.display == "Single Sign On (SSO)"
+    assert res.source.startswith("identifier:packages/sso/src/index.ts")
+
+
+def test_f4_home_basename_identifier_survives(
+    tmp_path: Path, law_on: None,
+) -> None:
+    """TRUE pair for F4 (cal.com Ooo): ONE identifier root inside
+    PrismaOOORepository.ts — uppercase-bounded basename word is home; NO
+    '>= 2 distinct identifiers' rule exists (it would kill this)."""
+    rel = _write(tmp_path, "repositories/PrismaOOORepository.ts",
+                 "const entry = prisma.outOfOfficeEntry;")
+    res = apply_fullname_expansion("Ooo", _PF(rels=[rel]), tmp_path)
+    assert res.display == "Out of Office (OOO)"
+    assert res.source.startswith("identifier:")
+
+
+def test_gloss_in_literal_survives_f2(tmp_path: Path, law_on: None) -> None:
+    """TRUE pair for F2 (twenty Sso): the explicit author gloss inside a JSX
+    label literal still expands — F2 removes only INITIALS-matching over
+    literals, never the gloss mechanism."""
+    rel = _write(tmp_path, "auth/components/SignInUpWithSSO.tsx",
+                 '<Button label="Single sign-on (SSO)" />')
+    res = apply_fullname_expansion("Sso", _PF(rels=[rel]), tmp_path)
+    assert res.display == "Single Sign-On (SSO)"
+
+
 # ── integration: run_naming_contract (the DISPLAY channel + identity) ────
 
 
@@ -437,19 +568,19 @@ def _pf_feature(slug: str, display: str, anchor_id: str,
 def test_integration_pf_expands_display_only(
     tmp_path: Path, law_on: None,
 ) -> None:
-    _write(tmp_path, "packages/auth/saml.ts",
+    _write(tmp_path, "packages/sso/saml.ts",
            "const singleSignOnServices = 1;")
-    pf = _pf_feature("sso", "Sso", "ws:packages/auth",
-                     "packages/auth/saml.ts")
+    pf = _pf_feature("sso", "Sso", "ws:packages/sso",
+                     "packages/sso/saml.ts")
     tele = run_naming_contract([pf], [], repo_root=tmp_path)
     # DISPLAY changed …
     assert pf.display_name == "Single Sign On (SSO)"
     assert tele["pf_fullname_expanded"] == 1
     # … but EVERY identity field is untouched.
     assert pf.name == "sso"
-    assert pf.anchor_id == "ws:packages/auth"
-    assert [m.path for m in pf.member_files] == ["packages/auth/saml.ts"]
-    assert pf.paths == ["packages/auth/saml.ts"]
+    assert pf.anchor_id == "ws:packages/sso"
+    assert [m.path for m in pf.member_files] == ["packages/sso/saml.ts"]
+    assert pf.paths == ["packages/sso/saml.ts"]
 
 
 def test_integration_pbac_missing_display_unchanged(
@@ -470,10 +601,10 @@ def test_integration_pbac_missing_display_unchanged(
 def test_integration_uf_inherits_expansion(
     tmp_path: Path, law_on: None,
 ) -> None:
-    _write(tmp_path, "packages/auth/saml.ts",
+    _write(tmp_path, "packages/sso/saml.ts",
            "const singleSignOnServices = 1;")
-    pf = _pf_feature("sso", "Sso", "ws:packages/auth",
-                     "packages/auth/saml.ts")
+    pf = _pf_feature("sso", "Sso", "ws:packages/sso",
+                     "packages/sso/saml.ts")
     uf = UserFlow(id="UF-1", name="Configure Sso", intent="manage",
                   resource="sso", product_feature_id="sso")
     tele = run_naming_contract(
@@ -487,10 +618,10 @@ def test_integration_uf_inherits_expansion(
 def test_integration_flag_off_byte_identical_scan_meta(tmp_path: Path) -> None:
     # Flag OFF ⇒ no B56 telemetry keys, no display expansion (byte-identical
     # scan_meta.naming_contract vs pre-B56).
-    _write(tmp_path, "packages/auth/saml.ts",
+    _write(tmp_path, "packages/sso/saml.ts",
            "const singleSignOnServices = 1;")
-    pf = _pf_feature("sso", "Sso", "ws:packages/auth",
-                     "packages/auth/saml.ts")
+    pf = _pf_feature("sso", "Sso", "ws:packages/sso",
+                     "packages/sso/saml.ts")
     uf = UserFlow(id="UF-1", name="Configure Sso", intent="manage",
                   resource="sso", product_feature_id="sso")
     tele = run_naming_contract([pf], [uf], repo_root=tmp_path)
