@@ -965,6 +965,75 @@ def detect_technology_instruments(
         if fixture_units:
             tele["dev_artifact_units"] = dict(sorted(fixture_units.items()))
 
+    # ── B53 Seg B — dev-artifact ws-packages off the product layer ──────
+    # THREE structural (manifest/content, NOT name) signals, gated by the
+    # SINGLE B53 flag, routed into the SAME ``dev_artifact_units`` channel
+    # the B28 P-D marks use (mark-only: the unit mints normally and its
+    # journeys ride into the lane at EMISSION — never mint-time laning, the
+    # I9 conservation law). SACRED product anti-cases survive by
+    # construction: ``twenty-zapier`` (integration = own PF) and
+    # ``twenty-sdk`` (published SDK) carry no docs/devdep/scaffolder shape;
+    # ``twenty-website`` is a Next app protected by the ``route_surface``
+    # veto (marketing-vs-product discrimination deferred — see Deviations).
+    # OFF (default) → this pass is skipped → byte-identical to pre-B53.
+    try:
+        from faultline.pipeline_v2.ws_blob_domain_drain import (
+            ws_blob_domain_drain_enabled as _b53_enabled,
+        )
+        _b53_on = _b53_enabled()
+    except Exception:  # noqa: BLE001 — flag helper is best-effort
+        _b53_on = False
+    if _b53_on:
+        _DOC_SUFFIXES = (".md", ".mdx", ".markdown", ".mdoc")
+        b53_units: dict[str, str] = {}
+        _taken = (set(instruments)
+                  | set(tele.get("transport_candidates") or {})
+                  | set(tele.get("dev_artifact_units") or {}))
+        for u in sorted(units):
+            if units.get(u) != "ws-pkg" or u not in facts or u in _taken:
+                continue
+            if _vetoes(u) == "route_surface":
+                continue  # Next app / route surface — product (website)
+            fs = files_by_unit.get(u, [])
+            man = unit_manifest.get(u) or {}
+            _sig: str | None = None
+            # (1) docs-content: ≥80% of tracked files are markdown docs
+            # (twenty-docs: localized .mdx). Content, not name.
+            if fs:
+                docs = sum(1 for f in fs if f.lower().endswith(_DOC_SUFFIXES))
+                if docs / len(fs) >= 0.80:
+                    _sig = "B53:docs-content"
+            # (2) devDependency-only tooling: the package name is declared
+            # as a devDependency somewhere and NEVER as a runtime
+            # dependency, with ZERO in-repo runtime import edges
+            # (twenty-oxlint-rules).
+            if _sig is None:
+                name = str(man.get("name") or "")
+                if name:
+                    as_dev = as_runtime = False
+                    for _doc in manifests.values():
+                        if name in (_doc.get("devDependencies") or {}):
+                            as_dev = True
+                        if name in (_doc.get("dependencies") or {}):
+                            as_runtime = True
+                    if (as_dev and not as_runtime
+                            and in_edges.get(u, 0) == 0):
+                        _sig = "B53:devdep-only"
+            # (3) scaffolder: bin-entry + a template dir + zero in-repo
+            # runtime imports (a project generator, create-twenty-app).
+            if _sig is None and man.get("bin") and in_edges.get(u, 0) == 0:
+                if any("/template/" in "/" + f or "/templates/" in "/" + f
+                       for f in fs):
+                    _sig = "B53:scaffolder"
+            if _sig:
+                b53_units[u] = _sig
+        if b53_units:
+            merged = dict(tele.get("dev_artifact_units") or {})
+            for _u, _s in b53_units.items():
+                merged.setdefault(_u, _s)
+            tele["dev_artifact_units"] = dict(sorted(merged.items()))
+            tele["b53_dev_artifact"] = dict(sorted(b53_units.items()))
+
     # satellite fdirs
     satellites: dict[str, str] = {}
     for u in sorted(units):

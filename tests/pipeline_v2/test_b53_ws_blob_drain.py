@@ -360,3 +360,144 @@ def test_core_modules_container_at_depth():
     assert tele["matched_dirs"] == {
         f"{pkg}/src/engine/core-modules/messaging": "messaging"}
     assert tele["files_moved"] == 1
+
+
+# ── Seg B — dev-artifact ws-packages off the product layer ───────────────────
+
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from faultline.pipeline_v2.technology_instruments import (  # noqa: E402
+    detect_technology_instruments,
+)
+
+
+def _write(repo: Path, rel: str, text: str = "") -> str:
+    p = repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    return rel
+
+
+def _manifest(repo, rel_dir, name, *, deps=None, dev_deps=None,
+              private=None, bin_entry=None):
+    doc: dict = {"name": name}
+    if deps:
+        doc["dependencies"] = deps
+    if dev_deps:
+        doc["devDependencies"] = dev_deps
+    if private is not None:
+        doc["private"] = private
+    if bin_entry:
+        doc["bin"] = {name.split("/")[-1]: bin_entry}
+    rel = f"{rel_dir}/package.json" if rel_dir else "package.json"
+    return _write(repo, rel, json.dumps(doc))
+
+
+def _twenty_monorepo(repo: Path):
+    """A twenty-shaped monorepo: three dev-artifact packages (docs / oxlint
+    devdep / scaffolder) + three SACRED product packages (zapier integration,
+    published sdk, Next website)."""
+    tracked: list[str] = [
+        _manifest(repo, "", "twenty", private=True,
+                  dev_deps={"@twenty/oxlint-rules": "workspace:*"}),
+    ]
+    # (1) docs-content — a docs SITE: mostly .mdx with a few theme sources
+    # (so it is NOT the S1c pure-config-only shape; ≥80% markdown).
+    tracked.append(_manifest(repo, "packages/twenty-docs", "twenty-docs",
+                             private=True))
+    for i in range(18):
+        tracked.append(_write(repo, f"packages/twenty-docs/docs/page{i}.mdx",
+                              f"# Doc {i}\n"))
+    for i in range(3):
+        tracked.append(_write(
+            repo, f"packages/twenty-docs/src/theme/C{i}.tsx",
+            f"export const C{i} = () => null;\n"))
+    # (2) devDependency-only tooling — declared devDep, zero runtime imports.
+    tracked.append(_manifest(repo, "packages/twenty-oxlint-rules",
+                             "@twenty/oxlint-rules", private=True))
+    tracked.append(_write(repo, "packages/twenty-oxlint-rules/src/rule.ts",
+                          "export function rule(ctx){ return ctx.report(); }\n"))
+    tracked.append(_write(repo, "packages/twenty-oxlint-rules/src/rule2.ts",
+                          "export function rule2(ctx){ return ctx.check(); }\n"))
+    # (3) scaffolder — bin + a template dir + zero in-repo runtime imports.
+    tracked.append(_manifest(repo, "packages/create-twenty-app",
+                             "create-twenty-app", private=False,
+                             bin_entry="dist/cli.js"))
+    tracked.append(_write(repo, "packages/create-twenty-app/src/cli.ts",
+                          "export function main(){ scaffold(); }\n"))
+    tracked.append(_write(
+        repo, "packages/create-twenty-app/templates/base/index.ts", "x\n"))
+    # SACRED (a) integration = own PF — real .ts, not a devdep, no template.
+    tracked.append(_manifest(repo, "packages/twenty-zapier", "twenty-zapier",
+                             private=True,
+                             deps={"zapier-platform-core": "15.0.0"}))
+    tracked.append(_write(repo, "packages/twenty-zapier/src/index.ts",
+                          'import zapier from "zapier-platform-core";\n'))
+    # SACRED (b) published SDK — consumed as a RUNTIME dependency by web.
+    tracked.append(_manifest(repo, "packages/twenty-sdk", "twenty-sdk",
+                             private=False))
+    tracked.append(_write(repo, "packages/twenty-sdk/src/client.ts",
+                          "export class Client {}\n"))
+    tracked.append(_manifest(repo, "apps/web", "@twenty/web", private=True,
+                             deps={"twenty-sdk": "workspace:*"}))
+    tracked.append(_write(repo, "apps/web/src/app.ts",
+                          'import { Client } from "twenty-sdk";\n'))
+    # SACRED (c) Next website — has a route surface.
+    tracked.append(_manifest(repo, "packages/twenty-website", "twenty-website",
+                             private=True))
+    tracked.append(_write(repo, "packages/twenty-website/app/page.tsx",
+                          "export default function Page(){ return null; }\n"))
+    for i in range(6):
+        tracked.append(_write(
+            repo, f"packages/twenty-website/content/post{i}.mdx", "# Post\n"))
+    routes = [{"file": "packages/twenty-website/app/page.tsx",
+               "pattern": "/", "method": "PAGE"}]
+    return tracked, routes
+
+
+def _detect_b53(repo, tracked, routes):
+    return detect_technology_instruments(repo, tracked, routes)
+
+
+def test_segb_flag_off_byte_inert(tmp_path, monkeypatch):
+    monkeypatch.delenv(WBD.WS_BLOB_DRAIN_ENV, raising=False)
+    tracked, routes = _twenty_monorepo(tmp_path)
+    tele = _detect_b53(tmp_path, tracked, routes)
+    da = tele.get("dev_artifact_units") or {}
+    assert "packages/twenty-docs" not in da
+    assert "packages/twenty-oxlint-rules" not in da
+    assert "packages/create-twenty-app" not in da
+    assert "b53_dev_artifact" not in tele
+
+
+def test_segb_docs_devdep_scaffolder_laned(tmp_path, monkeypatch):
+    monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "1")
+    tracked, routes = _twenty_monorepo(tmp_path)
+    tele = _detect_b53(tmp_path, tracked, routes)
+    da = tele.get("dev_artifact_units") or {}
+    assert da.get("packages/twenty-docs") == "B53:docs-content"
+    assert da.get("packages/twenty-oxlint-rules") == "B53:devdep-only"
+    assert da.get("packages/create-twenty-app") == "B53:scaffolder"
+
+
+def test_segb_sacred_anticases_survive(tmp_path, monkeypatch):
+    monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "1")
+    tracked, routes = _twenty_monorepo(tmp_path)
+    tele = _detect_b53(tmp_path, tracked, routes)
+    da = tele.get("dev_artifact_units") or {}
+    # integration = own PF; published SDK; Next website (route veto) — product.
+    assert "packages/twenty-zapier" not in da
+    assert "packages/twenty-sdk" not in da
+    assert "packages/twenty-website" not in da
+    # the website is protected by the existing route_surface veto.
+    assert tele["vetoed"].get("packages/twenty-website") == "route_surface"
+
+
+def test_segb_website_route_veto_protects(tmp_path, monkeypatch):
+    """Even with markdown content, a package WITH a route surface is never
+    laned as docs-content (marketing-vs-product deferred)."""
+    monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "1")
+    tracked, routes = _twenty_monorepo(tmp_path)
+    tele = _detect_b53(tmp_path, tracked, routes)
+    assert "packages/twenty-website" not in (tele.get("dev_artifact_units") or {})
