@@ -614,71 +614,97 @@ def test_v3_drain_wired_after_husk_fold_in_finalize():
     assert i_fold < i_drain < i_lattice
 
 
-# ── Seg A v4 — anchored-husk test judges ORGANIC mass (typebot Popup) ───────
+# ── Seg A v5 — anchored-husk ORGANIC test at FILE grain (typebot Popup) ─────
 #
-# Probe forensics (2026-07-13): the v3 relocation did NOT clear popup —
-# the OFF-board killer is the EMISSION anchored-husk-shell rule
-# (emission_integrity Pass 1a, evaluated AFTER 6.97 stamps loc), which the
-# drain's carve mass defeated (pf.loc 0 → 203). Unreachable by placement:
-# the drain must precede 6.97 for the LOC census, the husk pass runs
-# after. v4: husk candidacy judges ORGANIC mass only — carve devs
-# (structured anchor marker) count zero; the unchanged husk machinery
-# then lanes the carve dev with its files.
+# v4's carve-dev-identity subtraction failed on the real board: the
+# drained files' 6.97 ``_primary`` went to an ORGANIC sibling dev of the
+# target (typebot dev 'popup': 12 paths beat the carve's 2 on dircount ⇒
+# organic dev loc=203, carve loc=0) — drain mass wearing an organic
+# dev's clothes. v5 keys the organic test on the FILE: drain_paths =
+# carve path union; a row/dev is organically zero iff its owned loc is
+# fully explained by the drained files it lists.
 
 
-def _mk_carve(target_pf, target_key, files, loc):
-    """A REAL carve dev via the drain's own constructor (anchor marker
-    stamped), with 6.97-style loc pre-stamped."""
-    shell = _dev("shell-donor", ["x/src/main.ts"], pfid=None)
-    carve = WBD._make_drain_dev(shell, target_pf, target_key,
-                                list(files), set())
-    carve.loc = loc
-    return carve
+def _popup_real_topology(tmp_path):
+    """The EXACT typebot shape, engine-computed: an organic 12-path dev
+    'popup' that WINS the 6.97 ``_primary`` dircount/slug contest for the
+    two drained files (vs the 2-path carve dev), ending loc=203 while the
+    carve ends loc=0; pf.loc == the drained loc; no flows anywhere."""
+    from faultline.pipeline_v2.stage_6_97_feature_loc import apply_feature_loc
+
+    d1 = _write_lines(tmp_path, "emb/js/src/features/popup/Popup.tsx", 195)
+    d2 = _write_lines(tmp_path, "emb/js/src/features/popup/types.ts", 8)
+    libs = [_write_lines(tmp_path, f"emb/js/src/lib/f{i}.ts", 5)
+            for i in range(10)]
+
+    # organic dev 'popup': 12 paths (2 drained + 10 lib files it merely
+    # lists — 'js-ctx' outcompetes it there via the slug tiebreak).
+    organic = _dev("popup", [d1, d2] + libs, pfid="popup")
+    jsctx = _dev("js-ctx", list(libs), pfid="js")
+    popup_pf = _pf("popup", [d1, d2], "hub:emb/js/src/features/popup")
+    js_pf = _pf("js", list(libs), "ws:emb/js")
+    shell = _dev("shell-donor", ["emb/js/src/main.ts"], pfid=None)
+    carve = WBD._make_drain_dev(shell, popup_pf, "popup", [d1, d2], set())
+
+    devs = [organic, jsctx, carve]
+    pfs = [popup_pf, js_pf]
+    apply_feature_loc(list(devs), pfs, tmp_path)  # THE real contest
+    return devs, pfs, {
+        "organic": organic, "carve": carve, "jsctx": jsctx,
+        "popup_pf": popup_pf, "js_pf": js_pf, "d1": d1, "d2": d2,
+    }
 
 
-def test_v4_drain_mass_cannot_resurrect_anchored_husk():
-    """The popup class end-state: PF with ZERO organic mass + drain carve
-    mass + no flows is STILL a husk — the PF row drops and the flowless
-    carve dev unbinds to the platform lane carrying the drained files."""
+def test_v5_real_topology_popup_husk_drops_and_lanes(tmp_path):
+    """The real-board popup end-state: the ORGANIC dev holds the drained
+    203 LOC (dircount win), the carve holds 0 — the PF must STILL drop
+    and BOTH shell devs unbind to the platform lane."""
     from faultline.pipeline_v2 import emission_integrity as EI
 
-    popup_pf = _pf("popup", [], f"hub:{PKG}/src/features/popup")
-    popup_pf.loc = 203        # entirely carve-contributed (organic = 0)
-    popup_pf.loc_flow = None
-    files = [f"{PKG}/src/features/popup/a.ts",
-             f"{PKG}/src/features/popup/b.ts"]
-    carve = _mk_carve(popup_pf, "popup", files, 203)
-    assert WBD.is_drain_carve_dev(carve)          # structured marker live
+    devs, pfs, w = _popup_real_topology(tmp_path)
+    # the engine reproduced the forensic numbers, not a hand-stamped sim:
+    assert w["organic"].loc == 203      # organic dev won the drained files
+    assert w["carve"].loc == 0          # carve lost the dircount contest
+    assert w["popup_pf"].loc == 203
+    assert w["js_pf"].loc == 50
 
-    features = [carve]
     result = EI.EmissionIntegrityResult()
-    out = EI._drop_anchored_husks(features, [popup_pf], [], [], result)
+    out = EI._drop_anchored_husks(devs, pfs, [], [], result)
 
     assert "popup" not in {p.name for p in out}   # PF dropped (as OFF)
     assert "popup" in result.anchored_husk_pfs_dropped
-    # the carve dev lanes with its files (zero-loss, I22-visible).
-    assert carve.product_feature_id is None
-    assert carve.shared_reason == EI.ANCHORED_HUSK_REASON
-    assert carve.paths == sorted(files)
+    # BOTH shell devs unbind to the lane (flowless; drained files ride).
+    for dev in (w["organic"], w["carve"]):
+        assert dev.product_feature_id is None
+        assert dev.shared_reason == EI.ANCHORED_HUSK_REASON
+    assert w["d1"] in w["carve"].paths and w["d2"] in w["carve"].paths
+    assert result.anchored_husk_devs_unbound == 2
+    # the neighbouring organic PF is untouched.
+    assert "js" in {p.name for p in out}
+    assert w["jsctx"].product_feature_id == "js"
 
 
-def test_v4_receiver_with_organic_mass_untouched():
-    """A receiver with organic owned LOC that ALSO took drain mass is
-    never a husk candidate — the organic test keeps every legitimate
-    receiver (all OFF-board survivors passed this same test on organic
-    mass)."""
+def test_v5_receiver_with_organic_remainder_untouched(tmp_path):
+    """A receiver whose owned loc exceeds its drained credit (organic
+    remainder > 0) is never a husk candidate — every legitimate OFF-board
+    survivor keeps its row (twenty: object-record 83.6K loc vs ~54.9K
+    drained ⇒ organic ≫ 0)."""
     from faultline.pipeline_v2 import emission_integrity as EI
+    from faultline.pipeline_v2.stage_6_97_feature_loc import apply_feature_loc
 
-    or_pf = _pf("object-record", [OR_ANCHOR], "route:/object-record")
-    or_pf.loc = 253                               # 50 organic + 203 carve
-    organic_dev = _dev("object-record-owner", [OR_ANCHOR],
-                       pfid="object-record")
-    organic_dev.loc = 50
-    carve = _mk_carve(or_pf, "object-record", [OR1, OR2], 203)
+    anchor = _write_lines(tmp_path, "pkg/src/or-anchor.ts", 50)
+    drained = _write_lines(tmp_path, "pkg/src/modules/or/big.ts", 203)
+    organic = _dev("object-record-owner", [anchor], pfid="object-record")
+    or_pf = _pf("object-record", [anchor, drained], "route:/object-record")
+    shell = _dev("shell-donor", ["pkg/src/main.ts"], pfid=None)
+    carve = WBD._make_drain_dev(shell, or_pf, "object-record",
+                                [drained], set())
+    devs = [organic, carve]
+    apply_feature_loc(list(devs), [or_pf], tmp_path)
+    assert or_pf.loc == 253                       # 50 organic + 203 drained
 
-    features = [organic_dev, carve]
     result = EI.EmissionIntegrityResult()
-    out = EI._drop_anchored_husks(features, [or_pf], [], [], result)
+    out = EI._drop_anchored_husks(devs, [or_pf], [], [], result)
 
     assert "object-record" in {p.name for p in out}
     assert carve.product_feature_id == "object-record"   # untouched
@@ -686,10 +712,10 @@ def test_v4_receiver_with_organic_mass_untouched():
     assert result.anchored_husk_pfs_dropped == []
 
 
-def test_v4_no_marks_board_behaves_as_before():
-    """No drain marks anywhere → the pass takes the original test
-    verbatim: a zero-owned anchored husk still drops, an owned PF still
-    survives (pre-v4 behaviour, byte-identical)."""
+def test_v5_no_marks_board_behaves_as_before():
+    """No drain marks anywhere → ``drain_paths`` empty → the pass takes
+    the original ``_zero_owned`` test verbatim: a zero-owned anchored husk
+    still drops, an owned PF still survives (byte-identical)."""
     from faultline.pipeline_v2 import emission_integrity as EI
 
     husk_pf = _pf("stale-husk", [], f"hub:{PKG}/src/features/stale-husk")
