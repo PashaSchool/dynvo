@@ -876,6 +876,10 @@ def run_stage_6_7e(
     tele["selected"] = len(candidates)
     if not candidates:
         return tele, gaps
+    # Defense-in-depth: the model may only speak about rows it was ASKED
+    # about — a verdict for any other uid is rejected by the verifier
+    # below ("verdict-unselected"), no matter how valid its citations.
+    selected_uids = {str(getattr(u, "id", "") or "") for u in candidates}
 
     routes_list = list(routes_index) if routes_index is not None else None
     nav_sets = nav_label_sets_for_pfs(
@@ -945,6 +949,11 @@ def run_stage_6_7e(
         uf = by_id.get(uid)
         if uf is None or uid not in _live_ids():
             _reject(tele, "verdict-unknown-uf")
+            continue
+        if uid not in selected_uids:
+            # On-board row the LLM was never asked about (selection is
+            # non-high + same-PF dup candidates) — never touched.
+            _reject(tele, "verdict-unselected")
             continue
         ok, reason = verify_citations(
             uf, citations, flow_by_id, repo_root, read_cache)

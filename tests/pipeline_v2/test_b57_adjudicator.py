@@ -170,6 +170,27 @@ class TestKeylessNoOp:
 
 class TestCitationVerifier:
 
+    def test_unselected_uid_rejected(self, tmp_path):
+        """Defense-in-depth: a verdict for an on-board row the LLM was
+        never asked about (high conf, not a dup candidate) is rejected
+        even when its citation is genuine."""
+        pfs, ufs, flows = _widget_board(tmp_path)
+        ufs.append(_uf("UF-9", "Manage gizmos", "gadgets",
+                       resource="gizmos", members=["f9"], conf="high"))
+        flows.append(_FL("f9", "gizmo-flow", paths=["app/other.tsx"],
+                         user_flow_id="UF-9"))
+        before = _state(ufs)
+        tele, gaps, _ = _run(ufs, flows, pfs, tmp_path, [_verdicts_payload([
+            {"uf_id": "UF-9", "verdict": "rung_evidence",
+             "citations": [{"file": "app/other.tsx",
+                            "exact_string": "widget_board",
+                            "rung": "i18n-key"}]},
+        ])])
+        assert tele["rejected_reasons"].get("verdict-unselected") == 1
+        assert tele["verdicts"]["rung_evidence"] == 0
+        assert _state(ufs)[1] == before[1]    # unselected row untouched
+        assert gaps == []
+
     def test_fake_citation_rejected(self, tmp_path):
         pfs, ufs, flows = _widget_board(tmp_path)
         payload = _verdicts_payload([{
@@ -306,12 +327,13 @@ class TestMerge:
     def test_overlap_not_subset_rejected(self, tmp_path):
         pfs = [_pf("gadgets", "Gadgets")]
         ufs = [
+            # low → selected via class (i); overlap pairs are never dup
+            # candidates, so a high UF-A would be unselected and the
+            # verdict would die earlier as verdict-unselected.
             _uf("UF-A", "Manage widgets", "gadgets", members=["f1", "f2"],
-                conf="high"),
+                conf="low"),
             _uf("UF-B", "Manage rows", "gadgets", members=["f2", "f3"],
                 conf="high"),
-            # low filler so the batch runs (overlap pairs are not selected
-            # as dup candidates — only identical/strict-subset are).
             _uf("UF-Z", "Browse things", "gadgets", members=["f9"],
                 conf="low"),
         ]
@@ -413,13 +435,19 @@ class TestDemote:
     def test_authored_row_never_demoted(self, tmp_path):
         pfs, ufs, flows, _ = self._noise_board(
             tmp_path, reason="e2e_journey_recall")
+        # Identical-set sibling → UF-1 is dup-SELECTED (class ii includes
+        # authored rows — the documenso e2e class); the authored guard,
+        # not the selection wall, must be what rejects the demote.
+        ufs.insert(2, _uf("UF-1B", "Widget plumbing checks", "gadgets",
+                          members=["f1"], conf="high",
+                          synthesis_reason="e2e_journey_recall"))
         payload = _verdicts_payload([{
             "uf_id": "UF-1", "verdict": "demote", "citations": [],
         }])
         tele, gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
         assert tele["verdicts"]["demote"] == 0
         assert tele["rejected_reasons"].get("demote-authored") == 1
-        assert len(ufs) == 3 and gaps == []
+        assert len(ufs) == 4 and gaps == []
 
 
 # ── rename laws ──────────────────────────────────────────────────────────
@@ -473,6 +501,11 @@ class TestRename:
     def test_authored_row_never_renamed(self, tmp_path):
         # B23 carve — the maintainer's playwright label is untouchable.
         pfs, ufs, flows = self._board(tmp_path, reason="e2e_journey_recall")
+        # Identical-set sibling → UF-1 is dup-SELECTED (class ii includes
+        # authored rows); the authored guard must reject, not selection.
+        ufs.append(_uf("UF-1B", "Widget board checks", "gadgets",
+                       members=["f1"], conf="high",
+                       synthesis_reason="e2e_journey_recall"))
         tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path,
                               [self._payload("Widget board")])
         assert tele["verdicts"]["rename"] == 0
