@@ -434,6 +434,18 @@ ENV_OUTPUT_FLAGS = (
     # user_flows[].product_feature_id. Default OFF; =0/unset byte-identical.
     # No KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
     "FAULTLINE_WS_BLOB_DOMAIN_DRAIN",
+    # B57 Seg1 (2026-07-13) — Law C rung-source expansion: four additional
+    # deterministic evidence sources for the existing resource/verb rungs —
+    # (a) nav-cluster (ALL authored nav labels voted onto the owning PF),
+    # (b) i18n KEYS referenced in member source files (keys only; translated
+    # VALUES are a forbidden source — operator rule 2026-07-13), (c) member
+    # routes' declared HTTP method → verb family, (d) assertion labels inside
+    # MAPPED member test files. Same Law C bar — extra OR-sources, each with
+    # a provenance tag in name_evidence. Reshapes user_flows[].
+    # name_confidence / name_evidence only (UF NAMES byte-stable — B40 law).
+    # Default OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a
+    # separate later commit per flip-protocol).
+    "FAULTLINE_UF_RUNG_SOURCES_V2",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
