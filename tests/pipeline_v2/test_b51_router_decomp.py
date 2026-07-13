@@ -220,14 +220,18 @@ def test_full_drain_lanes_when_all_matched(monkeypatch):
     assert tele["pfs_minted"] == 0
 
 
-# ── residue flowful ⇒ candidate keeps a reduced tile (honest abstain) ─────
+# ── residue flowful ⇒ ABSTAIN, byte-identical (all-or-nothing) ────────────
 
 
-def test_residue_flowful_keeps_reduced_tile(monkeypatch):
+def test_residue_flowful_abstains_byte_identical(monkeypatch):
+    """A candidate that does NOT fully drain (a matched sub-router + a
+    residue `[trpc].ts` handler flow — cal.com's shape) ABSTAINS entirely:
+    no carve, no telemetry, output byte-identical. A partial re-home would
+    orphan a flowful product PF with no journey (validator I8) — refuted by
+    the keyed gate — so the whole tile stays."""
     monkeypatch.setenv(TRANSPORT_ROUTER_DECOMP_ENV, "1")
     fa = Fl("f-apikeys", [(_rf("apiKeys"), 80)], ep=_rf("apiKeys"),
             name="manage-api-keys")
-    # a residue handler flow (no routers path) — cal.com's dominant shape.
     fh = Fl("f-handler", [(_handler("admin"), 1)], ep=_handler("admin"),
             name="manage-admin-by-trpc")
     ua = UF("UF-1", "Manage API keys", "trpc", members=["f-apikeys"])
@@ -235,20 +239,15 @@ def test_residue_flowful_keeps_reduced_tile(monkeypatch):
     devs, pfs, ufs, flows, grain, dev = _scene([fa, fh], [ua, uh])
     tele = _run(devs, pfs, ufs, flows, grain)
 
-    # trpc STAYS a product tile — never forced (residue is flowful).
+    # trpc STAYS a whole product tile; NOTHING moved (abstain).
     assert tele["laned"] == []
     assert any(pf.name == "trpc" for pf in pfs)
-    # the conservation gate refuses on the flowful residual dev.
-    reasons = {b["reason"]
-               for b in tele["conservation_blocked"][UNIT]["blocked"]}
-    assert "flowful_dev_would_lane" in reasons
-    # yet the matched sub-router DID re-home (reduced content): a product
-    # chunk now owns the apiKeys flow, and residue telemetry is honest.
-    rd = tele["router_decomp"][UNIT]
-    assert rd["matched"] == {"api-keys": ["apiKeys"]}
-    assert rd["residue_flows"] == 1 and rd["flows_moved"] == 1
-    chunk = next(d for d in devs if d.product_feature_id == "api-keys")
-    assert [f.uuid for f in chunk.flows] == ["f-apikeys"]
+    assert "router_decomp" not in tele            # no telemetry on abstain
+    # NO orphan chunk: the matched apiKeys flow was NOT re-homed (which
+    # would have left `api-keys` flowful-but-journeyless → I8).
+    assert not any("router-decomp" in str(d.name) for d in devs)
+    assert {f.uuid for f in dev.flows} == {"f-apikeys", "f-handler"}
+    assert ufs[0].product_feature_id == "trpc"
 
 
 # ── ambiguous token ⇒ residue ─────────────────────────────────────────────
@@ -257,7 +256,8 @@ def test_residue_flowful_keeps_reduced_tile(monkeypatch):
 def test_ambiguous_disc_is_residue(monkeypatch):
     monkeypatch.setenv(TRANSPORT_ROUTER_DECOMP_ENV, "1")
     # two product PFs share the anchor-terminal identity `billing`
-    # (`_core_identity` = {terminal, name}) → the token hits >1 PF.
+    # (`_core_identity` = {terminal, name}) → the token hits >1 PF →
+    # unmatched → residue → the candidate does not fully drain → abstain.
     extra = [PF("billing", "route:app/billing"),
              PF("billing-legacy", "route:app/legacy/billing")]
     fb = Fl("f-billing", [(_rf("billing"), 80)], ep=_rf("billing"),
@@ -267,10 +267,8 @@ def test_ambiguous_disc_is_residue(monkeypatch):
         [fb], [ub], extra_pfs=extra)
     tele = _run(devs, pfs, ufs, flows, grain)
 
-    rd = tele["router_decomp"][UNIT]
-    assert rd["matched"] == {}                       # never guessed
-    assert {u["disc"] for u in rd["unmatched"]} == {"billing"}
-    assert rd["residue_flows"] == 1 and rd["flows_moved"] == 0
+    assert "router_decomp" not in tele               # abstain, no telemetry
+    assert not any("router-decomp" in str(d.name) for d in devs)
     assert ufs[0].product_feature_id == "trpc"       # untouched
     assert any(pf.name == "trpc" for pf in pfs)
 
@@ -286,10 +284,9 @@ def test_generic_disc_is_residue(monkeypatch):
     devs, pfs, ufs, flows, grain, dev = _scene([fg], [ug])
     tele = _run(devs, pfs, ufs, flows, grain)
 
-    rd = tele["router_decomp"][UNIT]
-    assert rd["matched"] == {}
-    assert {u["disc"] for u in rd["unmatched"]} == {"helpers"}
-    assert rd["flows_moved"] == 0
+    # generic token (no product PF) → unmatched → residue → abstain.
+    assert "router_decomp" not in tele
+    assert not any("router-decomp" in str(d.name) for d in devs)
     assert any(pf.name == "trpc" for pf in pfs)
 
 
@@ -336,6 +333,33 @@ def test_flag_off_is_inert(monkeypatch):
 
 
 def test_conservation_flows_moved_not_dropped(monkeypatch):
+    """Full-drain scene: ALL flows match (residue == 0) → carve applies,
+    Σflows conserved (moved, not dropped or minted), lineage preserved."""
+    monkeypatch.setenv(TRANSPORT_ROUTER_DECOMP_ENV, "1")
+    fa = Fl("f-apikeys", [(_rf("apiKeys"), 80)], ep=_rf("apiKeys"),
+            name="manage-api-keys")
+    fe = Fl("f-events", [(_rf("eventTypes"), 80)], ep=_rf("eventTypes"),
+            name="manage-event-types")
+    ua = UF("UF-1", "Manage API keys", "trpc", members=["f-apikeys"])
+    ue = UF("UF-2", "Manage event types", "trpc", members=["f-events"])
+    devs, pfs, ufs, flows, grain, dev = _scene([fa, fe], [ua, ue])
+    before = _total_flows(devs)
+    tele = _run(devs, pfs, ufs, flows, grain)
+    after = _total_flows(devs)
+
+    # Σflows conserved (moved into chunks, none dropped or minted).
+    assert before == after == 2
+    assert len(ufs) == 2                              # ΣUF conserved
+    # lineage: the re-homed flow keeps its uuid (flow-dup LAW untouched).
+    chunk = next(d for d in devs if d.product_feature_id == "api-keys")
+    assert {f.uuid for f in chunk.flows} == {"f-apikeys"}
+    # the moved flow's id is re-stamped onto the chunk name (bipartite id).
+    assert chunk.flows[0].id.startswith(chunk.name + "::")
+
+
+def test_abstain_conserves_and_leaves_flows_in_place(monkeypatch):
+    """When the pass abstains (residue > 0) NOTHING moves: Σflows conserved
+    on the ORIGINAL dev, no chunk, no orphaned product PF."""
     monkeypatch.setenv(TRANSPORT_ROUTER_DECOMP_ENV, "1")
     fa = Fl("f-apikeys", [(_rf("apiKeys"), 80)], ep=_rf("apiKeys"),
             name="manage-api-keys")
@@ -344,19 +368,12 @@ def test_conservation_flows_moved_not_dropped(monkeypatch):
     ua = UF("UF-1", "Manage API keys", "trpc", members=["f-apikeys"])
     uh = UF("UF-H", "Admin", "trpc", members=["f-handler"])
     devs, pfs, ufs, flows, grain, dev = _scene([fa, fh], [ua, uh])
-    before = _total_flows(devs)
     tele = _run(devs, pfs, ufs, flows, grain)
-    after = _total_flows(devs)
 
-    # Σflows conserved (moved into a chunk, none dropped or minted).
-    assert before == after == 2
-    # ΣUF conserved.
-    assert len(ufs) == 2
-    # lineage: the re-homed flow keeps its uuid (flow-dup LAW untouched).
-    chunk = next(d for d in devs if d.product_feature_id == "api-keys")
-    assert {f.uuid for f in chunk.flows} == {"f-apikeys"}
-    # the moved flow's id is re-stamped onto the chunk name (bipartite id).
-    assert chunk.flows[0].id.startswith(chunk.name + "::")
+    assert _total_flows(devs) == 2                    # nothing dropped
+    assert {f.uuid for f in dev.flows} == {"f-apikeys", "f-handler"}
+    # the matched `api-keys` PF gained NO flow → no I8 orphan.
+    assert not any(d.product_feature_id == "api-keys" for d in devs)
 
 
 def test_no_new_product_feature_minted(monkeypatch):

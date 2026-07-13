@@ -1663,19 +1663,33 @@ def _router_decomp(
     PF (``NamespaceEcho`` — the r2.6 matcher, FULL normalized match, ambig
     →residue, generic→residue, NEVER mints) has its flows + routers-tree
     files carved into a product-owned chunk dev re-homed to that PF (I22
-    marker). Runs BEFORE the conservation gate; mutates in place.
+    marker), and the carved files are LIFTED out of the lane so r1 drains
+    their journeys.
 
-    Returns telemetry ``{groups, matched{pf:[disc]}, unmatched[], residue,
-    flows_moved, files_moved, lifted[]}``. ``lifted`` = the routers files
-    that left the lane (fed to the resolver so r1 drains their journeys).
-    Residue (unmatched / no-routers flows) stays on the residual dev — if
-    it is flowful the candidate keeps its (reduced) tile downstream."""
+    ALL-OR-NOTHING (B51 rework, 2026-07-13): the carve is applied ONLY when
+    the candidate FULLY drains — every flow re-homes, ``residue_flows == 0``,
+    the residual dev goes flowless and lanes cleanly downstream. A PARTIAL
+    re-home (matched flows leaving while a flowful residue holds the tile)
+    was refuted by the keyed gate: it orphans a flowful product PF that no
+    journey references (validator I8 — cal.com ``credits``) and breaks the
+    documenso keyed byte-identity SACRED anti-case (keyed documenso's trpc
+    is flow-bearing). So when ``residue_flows > 0`` the pass ABSTAINS — no
+    mutation, no telemetry, output byte-identical (the honest Option-B
+    limit: a real tRPC monolith carries ``api/trpc/*/[trpc].ts`` handler
+    flows that no sub-router grain can re-home, so it never fully drains).
+
+    Returns a PLAN telemetry dict with ``applied`` — the caller mutates
+    nothing and emits nothing when ``applied is False``."""
     tele: dict[str, Any] = {
         "unit": unit, "pf": cand_key, "groups": 0,
         "matched": {}, "unmatched": [], "residue_flows": 0,
-        "flows_moved": 0, "files_moved": 0,
+        "flows_moved": 0, "files_moved": 0, "applied": False, "lifted": [],
     }
-    lifted: set[str] = set()
+    # ── PLAN (no mutation) ──────────────────────────────────────────────
+    #: (src, pf_key, [disc], [flow], [carve file]) per matched group.
+    plan: list[tuple[Any, str, list[str], list[Any], list[str]]] = []
+    total_residue = 0
+    ngroups = 0
     for src in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
         if not (_attr(src, "flows") or []):
             continue
@@ -1688,7 +1702,7 @@ def _router_decomp(
                 residue += 1
             else:
                 groups[disc].append(fl)
-        tele["groups"] += len(groups)
+        ngroups += len(groups)
         matched: dict[str, str] = {}  # disc → target pf key
         for disc in sorted(groups):
             t = echo.target_for(f"routers/{disc}/_decomp.ts")
@@ -1697,9 +1711,7 @@ def _router_decomp(
             else:
                 tele["unmatched"].append(
                     {"disc": disc, "flows": len(groups[disc])})
-        tele["residue_flows"] += residue + sum(
-            len(v) for d, v in groups.items() if d not in matched)
-        # coalesce matched groups by target PF → one chunk per PF.
+                residue += len(groups[disc])  # unmatched → residue
         by_pf: dict[str, list[str]] = defaultdict(list)
         flows_by_pf: dict[str, list[Any]] = defaultdict(list)
         for disc in sorted(matched):
@@ -1711,22 +1723,38 @@ def _router_decomp(
                 p for fl in gflows for p in _flow_router_files(fl)
                 if p in owned and _ns_tokens(p))
             if not cfiles:
-                continue  # nothing this dev owns to carve — skip cleanly
-            chunk = _carve_chunk(src, f"pf:{pf_key}", cfiles,
-                                 marker=_ROUTER_DECOMP_MARKER)
-            name = f"{_attr(src, 'name')}-{_ROUTER_DECOMP_MARKER}-{pf_key}"
-            chunk.name = name
-            chunk.display_name = name
-            _move_group_flows(src, chunk, gflows, edges_by_flow_id)
-            _strip_carved_files(src, set(cfiles))
-            chunk.product_feature_id = pf_key
-            chunk.anchor_id = f"fold:{_ROUTER_DECOMP_MARKER}->pf:{pf_key}"
-            chunk.shared_reason = None
-            developer_features.append(chunk)
-            lifted.update(cfiles)
-            tele["flows_moved"] += len(gflows)
-            tele["files_moved"] += len(cfiles)
-            tele["matched"][pf_key] = sorted(by_pf[pf_key])
+                residue += len(gflows)  # matched but nothing to carve
+                continue
+            plan.append((src, pf_key, by_pf[pf_key], gflows, cfiles))
+            tele["matched"].setdefault(pf_key, []).extend(by_pf[pf_key])
+        total_residue += residue
+    tele["groups"] = ngroups
+    tele["residue_flows"] = total_residue
+    tele["matched"] = {k: sorted(set(v)) for k, v in tele["matched"].items()}
+
+    # ── COMMIT GATE — full drain only (residue == 0) ────────────────────
+    if total_residue != 0 or not plan:
+        # Abstain: the candidate keeps its (whole) tile; caller emits
+        # nothing → byte-identical. Honest Option-B limit.
+        tele["matched"] = {}  # nothing actually moved
+        return tele
+    lifted: set[str] = set()
+    for src, pf_key, discs, gflows, cfiles in plan:
+        chunk = _carve_chunk(src, f"pf:{pf_key}", cfiles,
+                             marker=_ROUTER_DECOMP_MARKER)
+        name = f"{_attr(src, 'name')}-{_ROUTER_DECOMP_MARKER}-{pf_key}"
+        chunk.name = name
+        chunk.display_name = name
+        _move_group_flows(src, chunk, gflows, edges_by_flow_id)
+        _strip_carved_files(src, set(cfiles))
+        chunk.product_feature_id = pf_key
+        chunk.anchor_id = f"fold:{_ROUTER_DECOMP_MARKER}->pf:{pf_key}"
+        chunk.shared_reason = None
+        developer_features.append(chunk)
+        lifted.update(cfiles)
+        tele["flows_moved"] += len(gflows)
+        tele["files_moved"] += len(cfiles)
+    tele["applied"] = True
     tele["lifted"] = sorted(lifted)
     return tele
 
@@ -1870,10 +1898,14 @@ def run_transport_handoff(
                 d_tele = _router_decomp(
                     unit, cand_key, flow_bearing, decomp_echo,
                     edges_d, developer_features)
-                # Only emitted when a flow-bearing candidate is actually
-                # decomposed → a flowless candidate (documenso trpc) leaves
-                # the telemetry (and the whole output) byte-identical to OFF.
-                tele.setdefault("router_decomp", {})[unit] = d_tele
+                # Emitted ONLY when the pass actually applied (full drain).
+                # A flowless candidate (documenso keyless trpc) OR an
+                # abstain (flowful residue — cal.com, documenso keyed) adds
+                # NO telemetry and mutates nothing → output byte-identical
+                # to OFF (the documenso SACRED anti-case holds in BOTH
+                # channels; the honest Option-B limit stays inert).
+                if d_tele.get("applied"):
+                    tele.setdefault("router_decomp", {})[unit] = d_tele
                 decomp_lifted = frozenset(d_tele.get("lifted") or [])
                 if decomp_lifted:
                     # Refresh the dev set + owner map to see the carved
