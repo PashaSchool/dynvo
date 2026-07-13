@@ -53,6 +53,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
 from faultline.pipeline_v2.data import load_yaml
+from faultline.pipeline_v2.fullname_expand import (
+    apply_fullname_expansion,
+    pf_fullname_law_enabled,
+)
 from faultline.pipeline_v2.manifest_display import (
     manifest_display_name,
     package_dir_of_anchor,
@@ -801,6 +805,25 @@ def display_law_violations(
     ):
         out.append("pf_uf_twin")
     return out
+
+
+def _inherit_fullname(name: str, fullname_map: Mapping[str, str]) -> str:
+    """B56 §5 — replace each PF abbreviation token in a UF name with its
+    ``Full Name (ABBR)`` expansion (whole word, case-insensitive, once per
+    abbreviation). Never rewrites an ``(ABBR)`` already inside parentheses, and
+    skips an abbreviation whose expansion the name already carries — so a
+    second application is a no-op. Deterministic (abbreviations sorted)."""
+    text = name
+    for abbr in sorted(fullname_map):
+        value = fullname_map[abbr]
+        if value in text:
+            continue
+        pat = re.compile(
+            rf"(?<![\w(]){re.escape(abbr)}(?![\w)])", re.IGNORECASE)
+        m = pat.search(text)
+        if m:
+            text = text[:m.start()] + value + text[m.end():]
+    return text
 
 
 # ── Anchor-id humanization (candidate source) ───────────────────────────
@@ -2023,6 +2046,18 @@ def run_naming_contract(
     if manifest_channel_on:
         tele["pf_manifest_named"] = 0
         tele["pf_wordsplit_named"] = 0
+    # B56 full-name display telemetry — added ONLY when the law is ON so a
+    # ``FAULTLINE_PF_FULLNAME_LAW=0`` scan_meta.naming_contract is
+    # byte-identical to the pre-B56 emission.
+    fullname_law_on = pf_fullname_law_enabled()
+    if fullname_law_on:
+        tele["pf_fullname_expanded"] = 0
+        tele["pf_fullname_missing"] = 0
+        tele["uf_fullname_inherited"] = 0
+    #: abbr(lower) -> composed "Full Name (ABBR)" for the LEAD token, recorded
+    #: during PF Pass 1 and replayed onto UF names (§5). Empty when the law is
+    #: OFF ⇒ the final UF pass is a no-op ⇒ byte-identical.
+    fullname_map: dict[str, str] = {}
 
     def _law_fix(law: str) -> None:
         tele["laws_fixed"][law] = tele["laws_fixed"].get(law, 0) + 1
@@ -2180,6 +2215,24 @@ def run_naming_contract(
                 chosen, pinned = deparamed, False
                 tele["pf_display_degrimed"] = (
                     tele.get("pf_display_degrimed", 0) + 1)
+
+        # ── B56: full-name display law (abbreviation → 'Full Name (ABBR)').
+        # A shape-flagged abbreviation display ('Sso', 'Pbac', 'Wp') takes its
+        # repo-grounded full form; shape-flagged-but-no-evidence is honest debt
+        # (display unchanged + missing telemetry, never invented). Runs last so
+        # it also expands a de-grimed/manifest choice. Flag OFF ⇒ no map, no
+        # keys, no change ⇒ byte-identical.
+        if fullname_law_on:
+            fn = apply_fullname_expansion(chosen, pf, repo_root, vocab)
+            if (fn.display and fn.display != chosen
+                    and not display_law_violations(fn.display, vocab)
+                    and fn.display.strip().lower() not in taken):
+                if fn.abbr and fn.composed_lead:
+                    fullname_map[fn.abbr] = fn.composed_lead
+                chosen, pinned = fn.display, False
+                tele["pf_fullname_expanded"] += 1
+            elif fn.source == "missing:expansion":
+                tele["pf_fullname_missing"] += 1
 
         taken[chosen.strip().lower()] = slug
         if pinned:
@@ -2508,6 +2561,20 @@ def run_naming_contract(
             flow_origin_by_id=flow_origin_by_id,
             flow_by_id=flow_by_id,
         )
+
+    # ── B56 final pass: UF names inherit the PF abbreviation expansions ──
+    # A journey whose name carries an expanded PF's abbreviation renders with
+    # the SAME full form (same proof). Runs after every UF name pass. Flag OFF
+    # ⇒ ``fullname_map`` is empty ⇒ no-op ⇒ byte-identical.
+    if fullname_map:
+        for uf in user_flows:
+            name = str(getattr(uf, "name", "") or "")
+            if not name:
+                continue
+            new_name = _inherit_fullname(name, fullname_map)
+            if new_name != name:
+                uf.name = new_name
+                tele["uf_fullname_inherited"] += 1
 
     tele["labeler_pending"] = len(pending)
     return tele
