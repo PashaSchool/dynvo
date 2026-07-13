@@ -51,7 +51,7 @@
     },
     {
       "file": "faultline/pipeline_v2/extractors/rust_packages.py",
-      "line": "``rust_workspace``'s Rust check \u2014 ``ctx.stack == \"rust\"``, an audited",
+      "line": "``rust_workspace``'s Rust check — ``ctx.stack == \"rust\"``, an audited",
       "pattern": "stack-literal-cmp",
       "class": "extractor-activation"
     },
@@ -144,6 +144,13 @@
       "line": "if \"trpc\" in low or _chain_contains_trpc(text, m.start()):",
       "pattern": "stack-literal-cmp-rev",
       "class": "url-ident-heuristic"
+    },
+    {
+      "class": "url-ident-heuristic",
+      "file": "faultline/pipeline_v2/transport_handoff.py",
+      "line": "if (d == \"trpc\" and i > 0 and dir_segs[i - 1] == \"api\"",
+      "pattern": "stack-literal-cmp",
+      "review": "B52 fixb52-spec Seg2(3) — operator-chosen (c)-grain: the api/trpc/<domain>/ transport-handler path lexer (_handler_ns_tokens) is detection code, same family as _ns_tokens 'routers'; generalizing to the _tenant_descend protocol set (api/rest/graphql/rpc) is a flip-window candidate, kept spec-tight here."
     }
   ]
 }

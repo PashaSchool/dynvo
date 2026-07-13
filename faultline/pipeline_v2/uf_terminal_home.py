@@ -193,6 +193,14 @@ def assign_terminal_homes(
     for uf in user_flows:
         if getattr(uf, "product_feature_id", None):
             continue
+        # B52 — a transport-lane journey (pfid=None + lane_ref) is an
+        # INTENTIONAL lane resident, not an orphan: argmax-homing it
+        # would undo the flow-bearing-lane representation (the reason
+        # pfid=None never survived emission pre-B52). lane_ref exists
+        # only under FAULTLINE_FLOWFUL_TRANSPORT_LANE → OFF scans are
+        # byte-identical.
+        if getattr(uf, "lane_ref", None):
+            continue
         tele["orphans"] += 1
         members = [
             flow_by_id[str(mid)]

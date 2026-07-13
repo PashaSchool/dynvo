@@ -1152,6 +1152,19 @@ class UserFlow(BaseModel):
     # consumers can rank/inspect weak bindings. ``None`` (omitted) for
     # bindings that passed the majority bar.
     binding_confidence: str | None = None
+    # B52 (2026-07-13) — flow-bearing transport lane (Option A): a
+    # transport-INTRINSIC journey (its member flows live on a laned
+    # transport residual dev — no product surface serves it) stays in
+    # ``user_flows[]`` with ``product_feature_id=None`` and ``lane_ref``
+    # pointing at the lane row's uuid (the laned dev's uuid — the same
+    # value ``platform_infrastructure[].uuid`` carries). Contract:
+    # ``product_feature_id=None`` is LEGAL iff ``lane_ref`` is set
+    # (emission_integrity enforces; uf_terminal_home skips these rows
+    # instead of argmax-homing them). Stamped ONLY by Stage 6.985 under
+    # ``FAULTLINE_FLOWFUL_TRANSPORT_LANE``; ``None`` (OMITTED from dumps
+    # — see the serializer) everywhere else, keeping default output
+    # byte-identical to engines that predate the field.
+    lane_ref: str | None = None
     # B3 (2026-07-08) — journey-level LOC. UNION of the OWNED line-range
     # spans across this UF's member flows (per-file merged; role="interior"
     # + shared_paths-ledger nodes excluded — mirrors the validator's
@@ -1226,6 +1239,11 @@ class UserFlow(BaseModel):
                 data.pop("surface_scope", None)
             if data.get("binding_confidence") is None:
                 data.pop("binding_confidence", None)
+            # B52 — the transport-lane back-reference exists only on
+            # lane-resident journeys under FAULTLINE_FLOWFUL_TRANSPORT_LANE;
+            # a None dump is byte-identical to pre-B52 output.
+            if data.get("lane_ref") is None:
+                data.pop("lane_ref", None)
             # B3 — journey LOC is only present when Stage 6.97b ran
             # (FAULTLINE_UF_LOC on). A computed 0 is a real value and
             # stays; only the uncomputed sentinel (None) is dropped so

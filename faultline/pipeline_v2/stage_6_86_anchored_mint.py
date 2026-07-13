@@ -1693,12 +1693,36 @@ def _attach_shared_consumers(
 
 def build_platform_infrastructure_lane(
     developer_features: list["Feature"],
+    user_flows: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Emission-time lane rows for the anchored residual: one entry PER
     resident dev (name, files, loc, reason). Zero-loss: residents stay
     in ``features[]`` (Layer-1 truth) with ``product_feature_id=None``;
-    the lane is the explainability surface (I22 reads it post-W2b)."""
+    the lane is the explainability surface (I22 reads it post-W2b).
+
+    B52 (``FAULTLINE_FLOWFUL_TRANSPORT_LANE``): a FLOW-BEARING lane row
+    (laned transport residue) additionally carries ``flow_ids[]`` (the
+    resident's flow uuids, list order) and ``journeys[]`` (``{id, name}``
+    of the ``user_flows[]`` rows whose ``lane_ref`` points at this row's
+    uuid) — ADDITIVE, emitted ONLY when the flag is ON and the list is
+    non-empty, so every existing board (including flowless documenso
+    trpc) stays byte-identical."""
     from faultline.pipeline_v2.emission_integrity import ANCHORED_HUSK_REASON
+    from faultline.pipeline_v2.transport_handoff import (
+        FLOWFUL_LANE_ANCHOR,
+        flowful_transport_lane_enabled,
+    )
+
+    flowful_lane = flowful_transport_lane_enabled()
+    journeys_by_ref: dict[str, list[dict[str, Any]]] = {}
+    if flowful_lane:
+        for uf in (user_flows or []):
+            ref = getattr(uf, "lane_ref", None)
+            if ref:
+                journeys_by_ref.setdefault(str(ref), []).append({
+                    "id": getattr(uf, "id", None),
+                    "name": getattr(uf, "name", None),
+                })
 
     rows: list[dict[str, Any]] = []
     # The three amendment reasons the MINT stamps + the W4.2 additions:
@@ -1722,7 +1746,7 @@ def build_platform_infrastructure_lane(
         # that stage's concern, never a lane resident.
         if reason not in lane_reasons:
             continue
-        rows.append({
+        row: dict[str, Any] = {
             "name": f.name,
             "display_name": getattr(f, "display_name", None) or f.name,
             "shared_reason": reason,
@@ -1731,7 +1755,23 @@ def build_platform_infrastructure_lane(
             "loc": getattr(f, "loc", None),
             "loc_shared": getattr(f, "loc_shared", None),
             "flows": len(getattr(f, "flows", None) or []),
-        })
+        }
+        if flowful_lane:
+            # B52 flow-bearing lane representation (additive; flow_ids
+            # ONLY on rows whose dev the flowful-lane branch itself
+            # laned — the provenance anchor — so a pre-existing flowful
+            # resident (documenso openpage-api) stays byte-identical
+            # under the flag, and flowless rows never change).
+            if getattr(f, "anchor_id", None) == FLOWFUL_LANE_ANCHOR:
+                fids = [str(getattr(fl, "uuid", "") or "")
+                        for fl in (getattr(f, "flows", None) or [])]
+                fids = [x for x in fids if x]
+                if fids:
+                    row["flow_ids"] = fids
+            js = journeys_by_ref.get(row["uuid"])
+            if js:
+                row["journeys"] = js
+        rows.append(row)
     rows.sort(key=lambda r: r["name"])
     return rows
 

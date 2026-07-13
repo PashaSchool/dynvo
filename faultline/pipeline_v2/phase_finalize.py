@@ -1644,6 +1644,7 @@ def run_finalize_phase(
                     ctx, _transport_candidates,
                     extractor_signals=stage1_out,
                     feature_flow_edges=list(bipartite.edges),
+                    nav_keys=frozenset(_nav_keys),
                 )
                 scan_meta["transport_handoff"] = th_tele
                 log_th.info(
@@ -2686,8 +2687,10 @@ def run_finalize_phase(
             build_platform_infrastructure_lane,
         )
         try:
+            # B52 — user_flows ride along so a flow-bearing lane row can
+            # list its lane_ref journeys (additive; OFF byte-identical).
             platform_infrastructure = build_platform_infrastructure_lane(
-                features)
+                features, user_flows=user_flows)
             scan_meta.setdefault("stage_6_86_anchored_mint", {})[
                 "platform_infrastructure_rows"
             ] = len(platform_infrastructure)

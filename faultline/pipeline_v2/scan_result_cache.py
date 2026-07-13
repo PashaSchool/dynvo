@@ -373,6 +373,55 @@ ENV_OUTPUT_FLAGS = (
     # only. Default OFF; =0/unset ⇒ confidence + serialized output
     # byte-identical. No KEY_SCHEMA bump (flip is a separate later commit).
     "FAULTLINE_UF_RESOURCE_RUNG",
+    # B49 (2026-07-12) — transport namespace-echo (r2.6 rung): an in-lane
+    # tRPC router seed that abstains at r2 (typed-proxy consumption → no
+    # product consumers → zero_product_votes) votes its span mass for the
+    # EXISTING product PF whose anchor-identity its namespace token echoes
+    # (``normalize_anchor_key`` — the same normalization as the S3-nav
+    # echo: ``apiKeys`` → ``api-key`` → the ``API Keys`` PF). Unique match
+    # only; ambiguous / generic (``viewer``/``utils``) abstains; NEVER
+    # mints (re-homes onto existing PFs only, conservation judge
+    # untouched). Reshapes user_flows[].product_feature_id + which
+    # transport candidates clear the all-or-nothing gate to lane. Default
+    # OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a separate
+    # later commit per flip-protocol).
+    "FAULTLINE_TRANSPORT_NAMESPACE_ECHO",
+    # B51 (2026-07-13) — transport router-mega decomposition: a FLOW-BEARING
+    # transport candidate (a dev whose flows I9 forbids laning — cal.com
+    # `trpc`: 66 flows) is decomposed per tRPC sub-router. Each sub-router
+    # group whose namespace token echoes an EXISTING product PF (the SAME
+    # `NamespaceEcho` matcher as r2.6: eventTypes→`event-types`,
+    # apiKeys→`api-keys`, webhook→`webhooks`) has its flows + routers-tree
+    # files carved into a product-owned chunk re-homed to that PF (I22
+    # marker), BEFORE the conservation gate; the carved files are LIFTED out
+    # of the lane so the existing r1 ladder drains their journeys (no new
+    # rung). Residue (unmatched sub-routers + non-routers `[trpc].ts`
+    # handler / middleware flows) stays flowful and keeps a REDUCED tile —
+    # an honest abstain, never forced onto a product surface. Conserves
+    # flows/journeys (moved, never dropped or minted). Reshapes
+    # developer_features[] (carved chunks) + product_features[] (a fully
+    # drained candidate lanes) + user_flows[].product_feature_id (drained
+    # journeys). Default OFF; =0/unset byte-identical. No KEY_SCHEMA bump
+    # (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_TRANSPORT_ROUTER_DECOMP",
+    # B52 (2026-07-13) — flow-bearing transport lane (Option A; the operator
+    # 'трпц A' mandate: the trpc tile disappears ENTIRELY). The ONE cycle
+    # switch (it also drives the B51 decomposition pass, in drain-then-lane
+    # mode + the (c) `api/trpc/<domain>/` handler grain): a ws-anchored
+    # transport candidate ALWAYS leaves product_features[]. Matched groups
+    # re-home onto EXISTING PFs WITH their journeys (r1 over the post-drain
+    # state; a receiver that would end journey-less pulls its carve back —
+    # the B51 I8 exhibit's structural fix); the flowful RESIDUE lanes (the
+    # validator I9 ws:-anchor exemption, engine-aligned); transport-
+    # intrinsic journeys stay in user_flows[] with product_feature_id=None
+    # + lane_ref=<lane-row uuid> + surface_scope='platform_infrastructure',
+    # and the lane row carries flow_ids[] + journeys[] (additive, non-empty
+    # only). Conservation: Σflows == product-homed + lane flow_ids, ΣUF ==
+    # product-homed + lane_ref rows — nothing dropped, nothing minted.
+    # Reshapes product_features[] / developer_features[] / user_flows[] /
+    # platform_infrastructure[]. Default OFF; =0/unset byte-identical. No
+    # KEY_SCHEMA bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_FLOWFUL_TRANSPORT_LANE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
