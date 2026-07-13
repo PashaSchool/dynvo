@@ -942,3 +942,78 @@ class TestIterVerbChannel:
         tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [payload])
         assert tele["verdicts"]["rung_evidence"] == 1
         assert "adjudicated:verb-i18n-key" in (ufs[0].name_evidence or [])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# b57-iter2 — verb-composition conflict synergy in the 6.7e selection
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestIter2ConflictSelection:
+    """A name claiming a mutation family over a NON-EMPTY read-only
+    member composition joins the selection (priority rename/demote
+    candidate) and its package carries ``verb_composition_conflict``."""
+
+    def _board(self, tmp_path, *, routes: bool):
+        pfs = [_pf("gadgets", "Gadgets")]
+        # HIGH confidence — class (i) would never select it; only the
+        # conflict synergy can.
+        ufs = [_uf("UF-1", "Delete widgets", "gadgets", resource="widgets",
+                   members=["f1"], conf="high")]
+        flows = [_FL("f1", "run-widget-flow",
+                     paths=["app/api/widgets/route.ts"])]
+        routes_index = ([{"pattern": "/api/widgets", "method": "GET",
+                          "file": "app/api/widgets/route.ts"}]
+                        if routes else [])
+        return pfs, ufs, flows, routes_index
+
+    def test_conflict_row_selected_and_flagged(self, tmp_path):
+        pfs, ufs, flows, routes = self._board(tmp_path, routes=True)
+        client = _FakeClient([_verdicts_payload([])])
+        tele, _gaps = run_stage_6_7e(
+            ufs, flows, pfs, repo_root=tmp_path, client=client,
+            routes_index=routes)
+        assert tele["selected_verb_conflict"] == 1
+        assert tele["selected"] == 1
+        # The evidence package the model saw carries the conflict flag.
+        user_payload = json.loads(client.calls[0]["messages"][0]["content"])
+        pkg = user_payload["user_flows"][0]
+        assert pkg["uf_id"] == "UF-1"
+        assert pkg["verb_composition_conflict"] is True
+
+    def test_empty_composition_never_accuses(self, tmp_path):
+        # Anti-case: no routes → no facts → no flag, and the high row is
+        # not selected at all (stage no-ops with zero candidates).
+        pfs, ufs, flows, routes = self._board(tmp_path, routes=False)
+        client = _FakeClient([_verdicts_payload([])])
+        tele, _gaps = run_stage_6_7e(
+            ufs, flows, pfs, repo_root=tmp_path, client=client,
+            routes_index=routes)
+        assert tele["selected_verb_conflict"] == 0
+        assert tele["selected"] == 0
+        assert client.calls == []                    # zero LLM spend
+
+    def test_read_lead_never_flagged(self, tmp_path):
+        # A read-verb name over a read-only composition is CONSISTENT —
+        # no conflict, no selection (row is high).
+        pfs, ufs, flows, routes = self._board(tmp_path, routes=True)
+        ufs[0].name = "Browse widgets"
+        client = _FakeClient([_verdicts_payload([])])
+        tele, _gaps = run_stage_6_7e(
+            ufs, flows, pfs, repo_root=tmp_path, client=client,
+            routes_index=routes)
+        assert tele["selected_verb_conflict"] == 0
+        assert tele["selected"] == 0
+
+    def test_unflagged_selected_row_carries_no_key(self, tmp_path):
+        # Key-presence law: a low row selected by class (i) with no
+        # conflict has NO verb_composition_conflict key in its package.
+        pfs, ufs, flows, routes = self._board(tmp_path, routes=False)
+        ufs[0].name_confidence = "low"
+        client = _FakeClient([_verdicts_payload([])])
+        tele, _gaps = run_stage_6_7e(
+            ufs, flows, pfs, repo_root=tmp_path, client=client,
+            routes_index=routes)
+        assert tele["selected"] == 1
+        user_payload = json.loads(client.calls[0]["messages"][0]["content"])
+        assert "verb_composition_conflict" not in user_payload["user_flows"][0]

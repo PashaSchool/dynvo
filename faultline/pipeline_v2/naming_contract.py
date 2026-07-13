@@ -87,6 +87,8 @@ __all__ = [
     "humanize_anchor_display",
     "nav_labels_for_pfs",
     "nav_label_sets_for_pfs",
+    "route_verb_indexes",
+    "member_verb_composition",
     "run_naming_contract",
     "rescore_uf_confidence",
 ]
@@ -1336,7 +1338,9 @@ _PY_TEST_DEF_RE = re.compile(r"^\s*def\s+test_(\w+)", re.MULTILINE)
 #: HTTP method → verb family (B57 Seg1 (c)). STRUCTURAL semantics of the
 #: HTTP verb itself (RFC 9110 method → CRUD family), not a repo
 #: vocabulary — module-level frozen. Filesystem "PAGE" pseudo-methods
-#: deliberately absent: a page route declares no author action.
+#: deliberately absent from the METHOD map — a page route declares no
+#: author action verb; its READ nature feeds the b57-iter2 composition
+#: rung via :data:`_PAGE_VERB_FAMILIES` instead.
 _HTTP_METHOD_VERB_FAMILIES: Mapping[str, frozenset[str]] = {
     "GET": frozenset({"browse", "view"}),
     "POST": frozenset({"create"}),
@@ -1344,6 +1348,71 @@ _HTTP_METHOD_VERB_FAMILIES: Mapping[str, frozenset[str]] = {
     "PATCH": frozenset({"update"}),
     "DELETE": frozenset({"delete"}),
 }
+
+#: b57-iter2 — a PAGE surface (filesystem-routed page / page-kind flow
+#: entry) is a READ surface: navigating to it views/browses, it mutates
+#: nothing. Structural navigation semantics, not a repo vocabulary.
+_PAGE_VERB_FAMILIES = frozenset({"browse", "view"})
+
+#: Flow-entry kinds that mark a page/navigation-class flow. ``Flow`` has
+#: no dedicated kind field — Stage 3 stamps ``description = entry.route
+#: or entry.kind``, so a NON-routed page entry carries its kind here
+#: (routed pages are covered by the routes_index ``PAGE`` rows instead).
+_PAGE_FLOW_KINDS = frozenset({"page"})
+
+
+def route_verb_indexes(
+    routes_index: Iterable[Mapping[str, Any]] | None,
+) -> tuple[dict[str, set[str]], set[str]]:
+    """``(method_families_by_file, page_files)`` — the per-file verb-fact
+    indexes of ``routes_index``: declared HTTP methods fold to verb
+    families via :data:`_HTTP_METHOD_VERB_FAMILIES`; filesystem ``PAGE``
+    rows collect into a page-surface file set. Shared by Law C's B57
+    Seg1 rungs and the Stage 6.7e adjudicator (one builder, no dup)."""
+    method_fams: dict[str, set[str]] = {}
+    page_files: set[str] = set()
+    for r in (routes_index or ()):
+        rf = str(r.get("file") or "")
+        if not rf:
+            continue
+        meth = str(r.get("method") or "").strip().upper()
+        fams = _HTTP_METHOD_VERB_FAMILIES.get(meth)
+        if fams:
+            method_fams.setdefault(rf, set()).update(fams)
+        elif meth == "PAGE":
+            page_files.add(rf)
+    return method_fams, page_files
+
+
+def member_verb_composition(
+    uf: Any,
+    flow_by_id: Mapping[str, Any],
+    method_fams_by_file: Mapping[str, set[str]],
+    page_files: set[str] | frozenset[str],
+) -> set[str]:
+    """b57-iter2 — the verb families a journey's MEMBER COMPOSITION
+    implies (scan facts, $0): (a) member routes' declared HTTP methods
+    (via :func:`route_verb_indexes`), (b) page-surface members — a PAGE
+    route file or a page-kind flow entry — imply the read families. An
+    EMPTY result means the composition asserts NOTHING about verbs (no
+    facts — no claim; the honest ``missing:verb`` stays)."""
+    fams: set[str] = set()
+    for m in (getattr(uf, "member_flow_ids", None) or []):
+        fl = flow_by_id.get(str(m))
+        if fl is None:
+            continue
+        paths = {str(p) for p in (getattr(fl, "paths", None) or []) if p}
+        ep = getattr(fl, "entry_point_file", None)
+        if ep:
+            paths.add(str(ep))
+        for p in sorted(paths):
+            fams |= method_fams_by_file.get(p, set())
+            if p in page_files:
+                fams |= _PAGE_VERB_FAMILIES
+        if str(getattr(fl, "description", "") or "") in _PAGE_FLOW_KINDS:
+            fams |= _PAGE_VERB_FAMILIES
+    return fams
+
 
 #: Work bounds for the file-reading rungs (i18n-key / test-assert). Size
 #: cap mirrors ``product_strings._MAX_FILE_BYTES``; the per-UF file cap
@@ -2010,17 +2079,13 @@ def _apply_uf_name_laws(
     _v2_repo: Any = None
     _v2_read_cache: dict[str, str] = {}
     _method_fams_by_file: dict[str, set[str]] = {}
+    _page_files: set[str] = set()
     if v2_on:
         tele["rung_sources_v2_fired"] = {
             "nav-cluster": 0, "i18n-key": 0, "route-verb": 0,
-            "test-assert": 0,
+            "test-assert": 0, "verb-composition": 0,
         }
-        for _route in (routes_index or ()):
-            rf = str(_route.get("file") or "")
-            fams = _HTTP_METHOD_VERB_FAMILIES.get(
-                str(_route.get("method") or "").strip().upper())
-            if rf and fams:
-                _method_fams_by_file.setdefault(rf, set()).update(fams)
+        _method_fams_by_file, _page_files = route_verb_indexes(routes_index)
         if repo_root is not None:
             try:
                 from pathlib import Path
@@ -2167,7 +2232,7 @@ def _apply_uf_name_laws(
 
         # ── B57 Seg1 rungs (flag-gated; SAME bar, extra OR-sources) ──
         nav_cluster_hit = i18n_hit = route_verb_hit = False
-        ta_res_hit = ta_verb_hit = False
+        ta_res_hit = ta_verb_hit = verb_composition_hit = False
         if v2_on:
             _res_pre = (base_res or nav_hit or member_noun_hit or route_hit
                         or test_hit)
@@ -2188,6 +2253,19 @@ def _apply_uf_name_laws(
                     if lead in _method_fams_by_file.get(p, ()):
                         route_verb_hit = True
                         break
+            # (e) structural:verb-composition (b57-iter2) — the verb
+            # families the member COMPOSITION implies (member routes'
+            # HTTP methods + page-surface members → read families; the
+            # cal.com ceiling: UI-composite journeys whose verb exists
+            # nowhere in code as a citable string). A lead whose family
+            # the composition implies is verb-grounded; a mutation lead
+            # over a read-only composition is NOT (family must be
+            # PRESENT — mixed GET+POST grounds only browse/view/create).
+            # Index-only, no IO. Empty composition asserts nothing.
+            if lead is not None and (_method_fams_by_file or _page_files
+                                     or _flow_by_id):
+                verb_composition_hit = lead in member_verb_composition(
+                    uf, _flow_by_id, _method_fams_by_file, _page_files)
             # (b) i18n-key — KEYS referenced in member SOURCE files.
             # Bounded IO, non-high candidates only: read ONLY when the
             # resource is still ungrounded by every cheaper source.
@@ -2203,7 +2281,8 @@ def _apply_uf_name_laws(
             # mapping; an unmapped test file is never read). Bounded IO,
             # read only when a channel is still ungrounded.
             _need_res = not (_res_pre or nav_cluster_hit or i18n_hit)
-            _need_verb = not (_verb_pre or route_verb_hit)
+            _need_verb = not (_verb_pre or route_verb_hit
+                              or verb_composition_hit)
             if _need_res or _need_verb:
                 for tf in _member_test_files(uf)[:_RUNG_SOURCE_MAX_FILES]:
                     for label in _test_assertion_labels(_v2_read(tf)):
@@ -2232,6 +2311,8 @@ def _apply_uf_name_laws(
                     _v2_tele["route-verb"] += 1
                 if ta_verb_hit:
                     _v2_tele["test-assert"] += 1
+                if verb_composition_hit:
+                    _v2_tele["verb-composition"] += 1
 
         # ── B57 Seg2 — adjudicated rungs (verified citations; TWO
         # channels since b57-seg2-iter: resource + verb — each verb
@@ -2250,7 +2331,8 @@ def _apply_uf_name_laws(
                         or test_hit or nav_cluster_hit or i18n_hit
                         or ta_res_hit or adj_hit)
         verb_grounded = (base_verb or registry_hit or route_verb_hit
-                         or ta_verb_hit or adj_verb_hit)
+                         or ta_verb_hit or verb_composition_hit
+                         or adj_verb_hit)
 
         def _rung_fired() -> list[str]:
             r: list[str] = []
@@ -2284,6 +2366,8 @@ def _apply_uf_name_laws(
                     fired.append("verb:route-method")
                 if ta_verb_hit:
                     fired.append("verb:test-assert")
+                if verb_composition_hit:
+                    fired.append("structural:verb-composition")
                 fired.extend(f"adjudicated:{a}" for a in adj_verb_rungs)
                 uf.name_evidence = fired or ["structural-route"]
         elif res_grounded:

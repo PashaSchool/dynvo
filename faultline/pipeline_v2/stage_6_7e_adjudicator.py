@@ -76,8 +76,10 @@ from faultline.pipeline_v2.naming_contract import (
     _CAMEL_BOUNDARY_RE,
     _HTTP_METHOD_VERB_FAMILIES,
     _I18N_IDENT_RE,
+    _READ_FAMILIES,
     _RUNG_SOURCE_MAX_FILE_BYTES,
     _RUNG_SOURCE_MAX_FILES,
+    _WRITE_FAMILIES,
     _action_family_index,
     _degrime_sing,
     _i18n_keys_from_text,
@@ -86,9 +88,11 @@ from faultline.pipeline_v2.naming_contract import (
     degrime_rename_plan,
     display_law_violations,
     load_naming_vocab,
+    member_verb_composition,
     nav_label_sets_for_pfs,
     polish_display_casing,
     rescore_uf_confidence,
+    route_verb_indexes,
 )
 
 logger = logging.getLogger(__name__)
@@ -270,6 +274,11 @@ Rules (violations are rejected by a deterministic verifier):
     'Delete X'.
   * rename: also set "target" to the proposed HUMAN display name (words
     separated by spaces); every word must come from your cited strings.
+  * A flow flagged "verb_composition_conflict": its NAME claims a
+    mutation verb while its member composition (routes/pages) is
+    read-only — the name likely lies. Prefer a rename to a read-verb
+    display built from cited strings, or a demote if it is not a real
+    journey. Never keep the mutation claim unexamined.
   * Omit flows that need no action. No prose, no markdown.
 
 Return STRICT JSON only:
@@ -445,10 +454,14 @@ def build_evidence_packages(
     nav_label_sets: Mapping[str, list[str]],
     repo_root: Any,
     read_cache: dict[str, str],
+    conflict_ids: set[str] | frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Deterministic per-UF evidence package (sorted; caps bound work).
     i18n evidence carries KEY NAMES ONLY (the Seg1 extractor — translated
-    VALUES never enter the prompt)."""
+    VALUES never enter the prompt). ``conflict_ids`` (b57-iter2) marks
+    rows whose name claims a mutation their read-only member composition
+    never performs — the package carries ``verb_composition_conflict``
+    so the model sees "the name likely lies"."""
     neighbors_by_pf: dict[str, list[Any]] = {}
     for uf in user_flows:
         pfid = getattr(uf, "product_feature_id", None)
@@ -508,7 +521,7 @@ def build_evidence_packages(
                 "relation": _set_relation(members, oset),
             })
         neigh.sort(key=lambda n: str(n["uf_id"]))
-        pkgs.append({
+        pkg: dict[str, Any] = {
             "uf_id": uid,
             "name": str(getattr(uf, "name", "") or ""),
             "name_confidence": str(getattr(uf, "name_confidence", "") or ""),
@@ -522,7 +535,11 @@ def build_evidence_packages(
             "i18n_keys": keys[:_MAX_I18N_KEYS],
             "member_symbols": member_symbols,
             "neighbors": neigh[:_MAX_NEIGHBORS],
-        })
+        }
+        if conflict_ids and uid in conflict_ids:
+            # b57-iter2 — key present ONLY on flagged rows (lean prompts).
+            pkg["verb_composition_conflict"] = True
+        pkgs.append(pkg)
     return pkgs
 
 
@@ -1051,6 +1068,44 @@ def run_stage_6_7e(
 
     candidates, sel_tele = select_candidates(user_flows, authored_ids)
     tele.update(sel_tele)
+
+    routes_list = list(routes_index) if routes_index is not None else None
+
+    # ── b57-iter2 synergy — verb-composition conflict rows join the
+    # selection: a name claiming a MUTATION family over a NON-EMPTY
+    # read-only member composition (routes/pages = scan facts) means
+    # "the name likely lies" — a priority rename/demote candidate for
+    # the model REGARDLESS of its current confidence. An EMPTY
+    # composition never flags (no facts — no accusation).
+    method_fams, page_files = route_verb_indexes(routes_list)
+    _conflict_idx = _action_family_index(load_naming_vocab())
+    conflict_ids: set[str] = set()
+    for uf in user_flows:
+        uid = str(getattr(uf, "id", "") or "")
+        if _is_marker_row(uf) or _is_authored(uf, authored_ids):
+            continue
+        if not (getattr(uf, "member_flow_ids", None) or []):
+            continue
+        _lead = _name_lead_family(
+            str(getattr(uf, "name", "") or ""), _conflict_idx)
+        if _lead not in _WRITE_FAMILIES:
+            continue
+        comp = member_verb_composition(
+            uf, flow_by_id, method_fams, page_files)
+        if comp and comp <= _READ_FAMILIES:
+            conflict_ids.add(uid)
+    if conflict_ids:
+        _have = {str(getattr(u, "id", "") or "") for u in candidates}
+        _all_by_id = {str(getattr(u, "id", "") or ""): u for u in user_flows}
+        for cid in sorted(conflict_ids - _have):
+            candidates.append(_all_by_id[cid])
+        candidates.sort(key=lambda u: str(getattr(u, "id", "") or ""))
+        if len(candidates) > _MAX_SELECTED:
+            candidates = candidates[:_MAX_SELECTED]
+    tele["selected_verb_conflict"] = sum(
+        1 for u in candidates
+        if str(getattr(u, "id", "") or "") in conflict_ids)
+
     tele["selected"] = len(candidates)
     if not candidates:
         return tele, gaps
@@ -1059,12 +1114,12 @@ def run_stage_6_7e(
     # below ("verdict-unselected"), no matter how valid its citations.
     selected_uids = {str(getattr(u, "id", "") or "") for u in candidates}
 
-    routes_list = list(routes_index) if routes_index is not None else None
     nav_sets = nav_label_sets_for_pfs(
         product_features, product_strings, routes_list)
     read_cache: dict[str, str] = {}
     pkgs = build_evidence_packages(
-        candidates, user_flows, flow_by_id, nav_sets, repo_root, read_cache)
+        candidates, user_flows, flow_by_id, nav_sets, repo_root, read_cache,
+        conflict_ids=conflict_ids)
 
     tracker = cost_tracker if cost_tracker is not None else CostTracker()
     model = resolve_adjudicator_model()

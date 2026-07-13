@@ -250,7 +250,7 @@ class TestKillSwitch:
         assert _state(ufs_on) == _state(ufs_off)
         assert tele_on["rung_sources_v2_fired"] == {
             "nav-cluster": 0, "i18n-key": 0, "route-verb": 0,
-            "test-assert": 0,
+            "test-assert": 0, "verb-composition": 0,
         }
 
     def test_off_run_twice_identical(self, tmp_path):
@@ -602,3 +602,117 @@ class TestDeterminism:
         rev = {u.id: (u.name_confidence, tuple(u.name_evidence or []))
                for u in ufs2}
         assert fwd == rev
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# b57-iter2 — structural:verb-composition rung (same FAULTLINE_UF_RUNG_
+# SOURCES_V2 flag, $0): verb families IMPLIED by the member composition.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestIter2VerbComposition:
+
+    def _uf_flows(self, name: str, member_name: str,
+                  paths: list[str] | None = None,
+                  description: str = ""):
+        uf = _uf("UF-1", name, "gadgets", resource="widgets",
+                 members=["f1"])
+        fl = _FL("f1", member_name, paths=paths or [])
+        fl.description = description
+        return uf, fl
+
+    def test_page_member_grounds_read_lead(self, monkeypatch):
+        # A PAGE route member implies the read families — 'Browse X'
+        # earns the verb from composition (the cal.com UI-composite
+        # ceiling: the verb exists nowhere in code as a citable string).
+        monkeypatch.setenv(_FLAG, "1")
+        pfs = [_pf("gadgets", "Gadgets")]
+        uf, fl = self._uf_flows("Browse widgets", "run-widget-flow",
+                                paths=["app/widgets/page.tsx"])
+        routes = [{"pattern": "/widgets", "method": "PAGE",
+                   "file": "app/widgets/page.tsx"}]
+        tele = _apply([uf], pfs, [fl], routes=routes)
+        assert uf.name_confidence == "high"
+        assert "structural:verb-composition" in (uf.name_evidence or [])
+        assert tele["rung_sources_v2_fired"]["verb-composition"] == 1
+
+    def test_mutation_lead_not_grounded_by_readonly(self, monkeypatch):
+        # Anti-case (а): GET-only composition NEVER grounds 'Delete X'.
+        monkeypatch.setenv(_FLAG, "1")
+        pfs = [_pf("gadgets", "Gadgets")]
+        uf, fl = self._uf_flows("Delete widgets", "run-widget-flow",
+                                paths=["app/api/widgets/route.ts"])
+        routes = [{"pattern": "/api/widgets", "method": "GET",
+                   "file": "app/api/widgets/route.ts"}]
+        tele = _apply([uf], pfs, [fl], routes=routes)
+        assert uf.name_confidence == "medium"        # resource only
+        assert "structural:verb-composition" not in (uf.name_evidence or [])
+        assert tele["rung_sources_v2_fired"]["verb-composition"] == 0
+
+    def test_mixed_composition_grounds_only_present_families(self,
+                                                             monkeypatch):
+        # Anti-case (б): GET+POST composition grounds create/read leads,
+        # NEVER a delete lead — only PRESENT families ground.
+        monkeypatch.setenv(_FLAG, "1")
+        pfs = [_pf("gadgets", "Gadgets")]
+        uf_d = _uf("UF-1", "Delete widgets", "gadgets", resource="widgets",
+                   members=["f1"])
+        uf_c = _uf("UF-2", "Create widgets", "gadgets", resource="widgets",
+                   members=["f2"])
+        flows = [
+            _FL("f1", "run-widget-flow",
+                paths=["app/api/widgets/route.ts"]),
+            _FL("f2", "execute-widget-flow",
+                paths=["app/api/widgets/route.ts"]),
+        ]
+        routes = [
+            {"pattern": "/api/widgets", "method": "GET",
+             "file": "app/api/widgets/route.ts"},
+            {"pattern": "/api/widgets", "method": "POST",
+             "file": "app/api/widgets/route.ts"},
+        ]
+        tele = _apply([uf_d, uf_c], pfs, flows, routes=routes)
+        assert uf_d.name_confidence == "medium"      # delete NOT present
+        assert "structural:verb-composition" not in (uf_d.name_evidence or [])
+        assert uf_c.name_confidence == "high"        # create IS present
+        assert "structural:verb-composition" in (uf_c.name_evidence or [])
+        assert tele["rung_sources_v2_fired"]["verb-composition"] == 1
+
+    def test_empty_composition_honest_missing_verb(self, monkeypatch):
+        # Anti-case (в): no routes, no page kinds — the composition
+        # asserts NOTHING; the honest missing:verb stays.
+        monkeypatch.setenv(_FLAG, "1")
+        pfs = [_pf("gadgets", "Gadgets")]
+        uf, fl = self._uf_flows("Delete widgets", "run-widget-flow",
+                                paths=["app/widgets/helper.ts"])
+        tele = _apply([uf], pfs, [fl])
+        assert uf.name_confidence == "medium"
+        assert "missing:verb" in (uf.name_evidence or [])
+        assert "structural:verb-composition" not in (uf.name_evidence or [])
+        assert tele["rung_sources_v2_fired"]["verb-composition"] == 0
+
+    def test_page_kind_flow_description_grounds(self, monkeypatch):
+        # The non-routed page channel: Flow has no kind field — Stage 3
+        # stamps description = entry.route or entry.kind, so a page-kind
+        # entry carries 'page' in description.
+        monkeypatch.setenv(_FLAG, "1")
+        pfs = [_pf("gadgets", "Gadgets")]
+        uf, fl = self._uf_flows("Browse widgets", "run-widget-flow",
+                                description="page")
+        tele = _apply([uf], pfs, [fl])
+        assert uf.name_confidence == "high"
+        assert "structural:verb-composition" in (uf.name_evidence or [])
+        assert tele["rung_sources_v2_fired"]["verb-composition"] == 1
+
+    def test_flag_off_byte_identical(self):
+        # Anti-case (г): the SAME matching fixture under OFF — no uplift,
+        # no telemetry key, name untouched.
+        pfs = [_pf("gadgets", "Gadgets")]
+        uf, fl = self._uf_flows("Browse widgets", "run-widget-flow",
+                                paths=["app/widgets/page.tsx"])
+        routes = [{"pattern": "/widgets", "method": "PAGE",
+                   "file": "app/widgets/page.tsx"}]
+        tele = _apply([uf], pfs, [fl], routes=routes)
+        assert uf.name_confidence == "medium"        # pre-iter2 verdict
+        assert "rung_sources_v2_fired" not in tele
+        assert uf.name == "Browse widgets"
