@@ -992,39 +992,79 @@ def detect_technology_instruments(
         for u in sorted(units):
             if units.get(u) != "ws-pkg" or u not in facts or u in _taken:
                 continue
-            if _vetoes(u) == "route_surface":
+            _veto = _vetoes(u)
+            if _veto == "route_surface":
                 continue  # Next app / route surface — product (website)
             fs = files_by_unit.get(u, [])
             man = unit_manifest.get(u) or {}
+            _own_manifest = u + "/package.json"
+            _name = str(man.get("name") or "")
+            # Cross-manifest consumption of this unit's name (both dep
+            # channels; the unit's own manifest excluded).
+            _as_dev = _as_runtime = False
+            if _name:
+                for _rel, _doc in manifests.items():
+                    if _rel == _own_manifest:
+                        continue
+                    if _name in (_doc.get("devDependencies") or {}):
+                        _as_dev = True
+                    if _name in (_doc.get("dependencies") or {}):
+                        _as_runtime = True
             _sig: str | None = None
+            # A published CLI is a real artifact — only the scaffolder
+            # prong's template evidence overrides that veto (v2).
+            _cli_vetoed = _veto == "published_cli"
             # (1) docs-content: ≥80% of tracked files are markdown docs
-            # (twenty-docs: localized .mdx). Content, not name.
-            if fs:
+            # (twenty-docs: localized .mdx). Content, not name. (A PURE
+            # markdown package is already S1c config-only — the _taken
+            # guard above avoids double-marking; this prong covers the
+            # docs-SITE shape with a few theme sources.)
+            if not _cli_vetoed and fs:
                 docs = sum(1 for f in fs if f.lower().endswith(_DOC_SUFFIXES))
                 if docs / len(fs) >= 0.80:
                     _sig = "B53:docs-content"
             # (2) devDependency-only tooling: the package name is declared
             # as a devDependency somewhere and NEVER as a runtime
             # dependency, with ZERO in-repo runtime import edges
-            # (twenty-oxlint-rules).
-            if _sig is None:
-                name = str(man.get("name") or "")
-                if name:
-                    as_dev = as_runtime = False
-                    for _doc in manifests.values():
-                        if name in (_doc.get("devDependencies") or {}):
-                            as_dev = True
-                        if name in (_doc.get("dependencies") or {}):
-                            as_runtime = True
-                    if (as_dev and not as_runtime
-                            and in_edges.get(u, 0) == 0):
-                        _sig = "B53:devdep-only"
-            # (3) scaffolder: bin-entry + a template dir + zero in-repo
-            # runtime imports (a project generator, create-twenty-app).
+            # (the classic lint-rules shape).
+            if (_sig is None and not _cli_vetoed and _name
+                    and _as_dev and not _as_runtime
+                    and in_edges.get(u, 0) == 0):
+                _sig = "B53:devdep-only"
+            # (2b) private-unconsumed tooling (v2 — twenty-oxlint-rules is
+            # dep-declared NOWHERE: the root manifest lists it only under
+            # ``workspaces``, so prong (2) can never fire): private:true
+            # AND zero in-repo consumers across BOTH channels (no import
+            # edges AND not declared in any other manifest's
+            # dependencies/devDependencies) AND its own manifest declares
+            # zero runtime dependencies AND no bin. Structural — manifest
+            # facts only, no names.
+            if (_sig is None and not _cli_vetoed
+                    and man.get("private") is True
+                    and not man.get("bin")
+                    and not (man.get("dependencies") or {})
+                    and not _as_dev and not _as_runtime
+                    and in_edges.get(u, 0) == 0):
+                _sig = "B53:private-unconsumed"
+            # (3) scaffolder (v2): bin-entry + a template/templates dir at
+            # ANY depth within the unit + zero INBOUND in-repo runtime
+            # imports (nobody imports a scaffolder; its OUTBOUND deps are
+            # irrelevant — scaffolders embed the SDK by nature). Detected
+            # over the raw tracked population, NOT ``files_by_unit``: a
+            # template payload often embeds its own package.json, which
+            # makes the template dir a nested ws-unit that steals the
+            # files from this unit's file list (the create-twenty-app rig
+            # miss). Template evidence overrides published_cli for THIS
+            # signal only.
             if _sig is None and man.get("bin") and in_edges.get(u, 0) == 0:
-                if any("/template/" in "/" + f or "/templates/" in "/" + f
-                       for f in fs):
-                    _sig = "B53:scaffolder"
+                _pref = u + "/"
+                for f in tracked:
+                    if not f.startswith(_pref):
+                        continue
+                    segs = f[len(_pref):].split("/")[:-1]
+                    if any(s in ("template", "templates") for s in segs):
+                        _sig = "B53:scaffolder"
+                        break
             if _sig:
                 b53_units[u] = _sig
         if b53_units:

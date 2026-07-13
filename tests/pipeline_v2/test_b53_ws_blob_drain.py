@@ -79,8 +79,14 @@ def _uf(uid, name, pfid, member_ids):
 
 
 class _Ctx:
-    def __init__(self, repo="/repo"):
+    def __init__(self, repo="/repo", tracked=None):
         self.repo_path = repo
+        self.tracked_files = list(tracked or [])
+
+
+def _dirs_pf(tele):
+    """matched_dirs projected to ``{dir: pf}`` (v2 carries per-dir stats)."""
+    return {d: v["pf"] for d, v in tele["matched_dirs"].items()}
 
 
 # domain-dir member files inside the blob package.
@@ -151,7 +157,7 @@ def test_full_match_drains_domain_dir_to_existing_pf():
     tele = run_ws_blob_domain_drain(devs, pfs, ufs, flows, _Ctx())
 
     # object-record + messaging domain dirs matched; components is generic.
-    assert tele["matched_dirs"] == {
+    assert _dirs_pf(tele) == {
         f"{PKG}/src/modules/messaging": "messaging",
         f"{PKG}/src/modules/object-record": "object-record",
     }
@@ -216,7 +222,7 @@ def test_plural_domain_dir_matches_singular_pf():
     pfs = [_pf(PKG, list(blob.paths), "ws:" + PKG),
            _pf("object-record", [OR_ANCHOR], "route:/object-record")]
     tele = run_ws_blob_domain_drain([blob, or_dev], pfs, [], [], _Ctx())
-    assert tele["matched_dirs"] == {
+    assert _dirs_pf(tele) == {
         f"{PKG}/src/modules/object-records": "object-record"}
 
 
@@ -328,7 +334,7 @@ def test_sacred_sibling_pfs_not_merged():
     tele = run_ws_blob_domain_drain(
         [blob, nav_dev, item_dev], pfs, [], [], _Ctx())
     assert len(pfs) == before  # no merge, no mint
-    assert tele["matched_dirs"] == {
+    assert _dirs_pf(tele) == {
         f"{PKG}/src/modules/navigation": "navigation"}
     assert {p.name for p in pfs} == {
         PKG, "navigation", "navigation-menu-item"}
@@ -357,9 +363,154 @@ def test_core_modules_container_at_depth():
            _pf("messaging", [f"{pkg}/src/anchors/messaging.ts"],
                "route:/messaging")]
     tele = run_ws_blob_domain_drain([blob, msg_dev], pfs, [], [], _Ctx())
-    assert tele["matched_dirs"] == {
+    assert _dirs_pf(tele) == {
         f"{pkg}/src/engine/core-modules/messaging": "messaging"}
     assert tele["files_moved"] == 1
+
+
+# ── Seg A v2 — implicit subtree drain + donor ancestor carve-out ────────────
+
+
+def _write_lines(root: Path, rel: str, n: int) -> str:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(f"line{i}" for i in range(n)) + "\n",
+                 encoding="utf-8")
+    return rel
+
+
+def _v2_world(tmp_path):
+    """Real files on disk (6.97 authority): a donor whose ONLY claim is the
+    ANCESTOR DIRECTORY ``<pkg>/src`` (the implicit-subtree shape measured on
+    twenty-front), an object-record PF owning one explicit anchor, and an
+    other-PF dev owning explicit files INSIDE the drained dir."""
+    pkg = PKG
+    t1 = _write_lines(tmp_path, f"{pkg}/src/modules/object-record/table.ts", 10)
+    t2 = _write_lines(
+        tmp_path, f"{pkg}/src/modules/object-record/hooks/use.ts", 20)
+    ext = _write_lines(
+        tmp_path, f"{pkg}/src/modules/object-record/keep/ext.ts", 5)
+    shell = _write_lines(tmp_path, f"{pkg}/src/app/shell.ts", 7)
+    anchor = _write_lines(tmp_path, f"{pkg}/src/or-anchor.ts", 3)
+    tracked = [t1, t2, ext, shell, anchor]
+
+    blob_dev = Feature(
+        name="twenty-front-blob", paths=[f"{pkg}/src"], flows=[],
+        product_feature_id="twenty-front", member_files=[],
+        authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+        last_modified=_NOW, health_score=100.0,
+    )
+    blob_dev.uuid = "u-blob"
+    or_dev = _dev("object-record-owner", [anchor], pfid="object-record")
+    or_dev.uuid = "u-or"
+    other_dev = _dev("other-owner", [ext], pfid="other-pf")
+    other_dev.uuid = "u-other"
+
+    front_pf = _pf("twenty-front", [pkg], "ws:twenty-front")
+    front_pf.uuid = "u-front-pf"
+    or_pf = _pf("object-record", [anchor], "route:/object-record")
+    other_pf = _pf("other-pf", [ext], "route:/other-pf")
+
+    devs = [blob_dev, or_dev, other_dev]
+    pfs = [front_pf, or_pf, other_pf]
+    path_index = {
+        anchor: {"feature_uuid": "u-or", "flow_uuids": []},
+        ext: {"feature_uuid": "u-other", "flow_uuids": []},
+    }
+    ctx = _Ctx(repo=str(tmp_path), tracked=tracked)
+    return devs, pfs, ctx, path_index, {
+        "t1": t1, "t2": t2, "ext": ext, "shell": shell, "anchor": anchor,
+        "blob": blob_dev, "or_dev": or_dev, "other_dev": other_dev,
+        "front_pf": front_pf, "or_pf": or_pf, "other_pf": other_pf,
+    }
+
+
+def test_v2_subtree_unattributed_files_drain(tmp_path):
+    """Files ABSENT from path_index under a matched dir move (the subtree
+    rule); a file with a NON-donor path_index entry never does."""
+    devs, pfs, ctx, pi, w = _v2_world(tmp_path)
+    tele = run_ws_blob_domain_drain(devs, pfs, [], [], ctx, path_index=pi)
+    assert tele["files_moved"] == 2                    # t1 + t2, NOT ext
+    assert tele["files_moved_unattributed"] == 2
+    assert tele["skipped_pi_foreign"] == 1             # ext (u-other entry)
+    assert tele["loc_moved"] == 30                     # 10 + 20 real lines
+    dirs = _dirs_pf(tele)
+    assert dirs == {f"{PKG}/src/modules/object-record": "object-record"}
+    # per-dir stats carried for the census report.
+    stats = tele["matched_dirs"][f"{PKG}/src/modules/object-record"]
+    assert stats["files"] == 2 and stats["loc"] == 30
+
+
+def test_v2_ancestor_carveout_shifts_6_97_loc(tmp_path):
+    """THE v1 shortfall reproduced against the REAL Stage 6.97 contest: the
+    donor's ancestor-dir claim (``<pkg>/src``) would keep winning
+    ``_primary`` via expansion; the carve-out splits it so the explicit
+    carve dev becomes the sole claimant and the LOC actually shifts."""
+    from faultline.pipeline_v2.stage_6_97_feature_loc import apply_feature_loc
+
+    devs, pfs, ctx, pi, w = _v2_world(tmp_path)
+    apply_feature_loc(list(devs), pfs, tmp_path)
+    front_before, or_before = w["front_pf"].loc, w["or_pf"].loc
+    other_before = w["other_pf"].loc
+    assert front_before == 37   # t1+t2+shell (10+20+7) via src/ expansion
+    assert or_before == 3       # anchor only (slug tiebreak vs blob dir)
+    assert other_before == 5    # explicit ext.ts
+
+    tele = run_ws_blob_domain_drain(devs, pfs, [], [], ctx, path_index=pi)
+    assert tele["files_moved"] == 2
+    # donor ancestor carve-out: src/ split into children minus the drained
+    # subtree — deterministic sorted, drained dir gone (ext.ts inside it
+    # stays with its EXPLICIT other-pf owner, not via donor coverage).
+    assert w["blob"].paths == [
+        f"{PKG}/src/app",
+        f"{PKG}/src/or-anchor.ts",
+    ]
+
+    apply_feature_loc(list(devs), pfs, tmp_path)
+    front_after, or_after = w["front_pf"].loc, w["or_pf"].loc
+    assert or_after == or_before + 30          # gained t1 + t2
+    assert front_after == front_before - 30    # lost exactly the moved mass
+    assert w["other_pf"].loc == other_before   # bystander untouched
+    # conservation of the moved mass.
+    assert front_before + or_before == front_after + or_after
+
+
+def test_v2_explicit_carve_no_theft_of_other_pf_files(tmp_path):
+    """The ``_primary``-contest anti-case: an other-PF dev with EXPLICIT
+    files inside the drained dir keeps them — the carve claims an explicit
+    file list (never a dir), so no contest ever forms."""
+    from faultline.pipeline_v2.stage_6_97_feature_loc import apply_feature_loc
+
+    devs, pfs, ctx, pi, w = _v2_world(tmp_path)
+    run_ws_blob_domain_drain(devs, pfs, [], [], ctx, path_index=pi)
+    # ext.ts never entered any carve dev / the target PF.
+    carves = [d for d in devs if WBD._DRAIN_MARKER in str(d.name)]
+    assert carves and all(w["ext"] not in d.paths for d in carves)
+    assert w["ext"] not in w["or_pf"].paths
+    assert w["ext"] in w["other_dev"].paths
+    apply_feature_loc(list(devs), pfs, tmp_path)
+    assert w["other_pf"].loc == 5              # engine authority: no theft
+
+
+def test_v2_nondonor_dev_claim_blocks_unattributed(tmp_path):
+    """A file with NO path_index entry but a live non-donor dev claim is
+    never drained (dev ledger = post-6.8 truth; keyed 8.9.6 idempotency)."""
+    devs, pfs, ctx, pi, w = _v2_world(tmp_path)
+    del pi[w["ext"]]  # no path_index entry — only the dev-ledger claim left
+    tele = run_ws_blob_domain_drain(devs, pfs, [], [], ctx, path_index=pi)
+    assert tele["files_moved"] == 2
+    assert tele["skipped_nondonor_covered"] == 1
+    assert w["ext"] in w["other_dev"].paths
+
+
+def test_v2_idempotent_second_run(tmp_path):
+    """Second run moves nothing: the carve dev's explicit claims make the
+    drained files non-donor property (the 8.9.6 idempotency shape)."""
+    devs, pfs, ctx, pi, w = _v2_world(tmp_path)
+    tele1 = run_ws_blob_domain_drain(devs, pfs, [], [], ctx, path_index=pi)
+    assert tele1["files_moved"] == 2
+    tele2 = run_ws_blob_domain_drain(devs, pfs, [], [], ctx, path_index=pi)
+    assert tele2["files_moved"] == 0
 
 
 # ── Seg B — dev-artifact ws-packages off the product layer ───────────────────
@@ -395,12 +546,15 @@ def _manifest(repo, rel_dir, name, *, deps=None, dev_deps=None,
 
 
 def _twenty_monorepo(repo: Path):
-    """A twenty-shaped monorepo: three dev-artifact packages (docs / oxlint
-    devdep / scaffolder) + three SACRED product packages (zapier integration,
+    """A twenty-shaped monorepo (v2 — REAL manifest facts from the rig
+    forensics): three dev-artifact packages (docs site / private-unconsumed
+    oxlint-rules / published scaffolder with an embedded template
+    package.json) + three SACRED product packages (zapier integration,
     published sdk, Next website)."""
     tracked: list[str] = [
-        _manifest(repo, "", "twenty", private=True,
-                  dev_deps={"@twenty/oxlint-rules": "workspace:*"}),
+        # root lists workspaces only — twenty-oxlint-rules is dep-declared
+        # NOWHERE in the repo (the rig fact that killed the v1 predicate).
+        _manifest(repo, "", "twenty", private=True),
     ]
     # (1) docs-content — a docs SITE: mostly .mdx with a few theme sources
     # (so it is NOT the S1c pure-config-only shape; ≥80% markdown).
@@ -413,21 +567,32 @@ def _twenty_monorepo(repo: Path):
         tracked.append(_write(
             repo, f"packages/twenty-docs/src/theme/C{i}.tsx",
             f"export const C{i} = () => null;\n"))
-    # (2) devDependency-only tooling — declared devDep, zero runtime imports.
+    # (2b) private-unconsumed tooling — private:true, no bin, zero runtime
+    # dependencies (only its OWN devDependency), consumed by nobody.
     tracked.append(_manifest(repo, "packages/twenty-oxlint-rules",
-                             "@twenty/oxlint-rules", private=True))
+                             "twenty-oxlint-rules", private=True,
+                             dev_deps={"@oxlint/plugins": "1.0.0"}))
     tracked.append(_write(repo, "packages/twenty-oxlint-rules/src/rule.ts",
                           "export function rule(ctx){ return ctx.report(); }\n"))
     tracked.append(_write(repo, "packages/twenty-oxlint-rules/src/rule2.ts",
                           "export function rule2(ctx){ return ctx.check(); }\n"))
-    # (3) scaffolder — bin + a template dir + zero in-repo runtime imports.
+    # (3) scaffolder — NOT private (published_cli veto fires — template
+    # evidence overrides it), a RUNTIME workspace dep on the sdk
+    # (scaffolders embed the SDK), and the template payload EMBEDS its own
+    # package.json — which makes the template dir a nested ws-unit that
+    # steals the files from files_by_unit (the rig miss).
     tracked.append(_manifest(repo, "packages/create-twenty-app",
                              "create-twenty-app", private=False,
-                             bin_entry="dist/cli.js"))
+                             deps={"twenty-sdk": "workspace:*"},
+                             bin_entry="dist/cli.cjs"))
     tracked.append(_write(repo, "packages/create-twenty-app/src/cli.ts",
                           "export function main(){ scaffold(); }\n"))
+    tracked.append(_manifest(
+        repo, "packages/create-twenty-app/src/constants/template",
+        "template-payload", private=True))
     tracked.append(_write(
-        repo, "packages/create-twenty-app/templates/base/index.ts", "x\n"))
+        repo,
+        "packages/create-twenty-app/src/constants/template/index.ts", "x\n"))
     # SACRED (a) integration = own PF — real .ts, not a devdep, no template.
     tracked.append(_manifest(repo, "packages/twenty-zapier", "twenty-zapier",
                              private=True,
@@ -471,14 +636,56 @@ def test_segb_flag_off_byte_inert(tmp_path, monkeypatch):
     assert "b53_dev_artifact" not in tele
 
 
-def test_segb_docs_devdep_scaffolder_laned(tmp_path, monkeypatch):
+def test_segb_docs_privateunconsumed_scaffolder_laned(tmp_path, monkeypatch):
     monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "1")
     tracked, routes = _twenty_monorepo(tmp_path)
     tele = _detect_b53(tmp_path, tracked, routes)
     da = tele.get("dev_artifact_units") or {}
     assert da.get("packages/twenty-docs") == "B53:docs-content"
-    assert da.get("packages/twenty-oxlint-rules") == "B53:devdep-only"
+    # v2: dep-declared nowhere → private-unconsumed prong (the devdep-only
+    # predicate can never fire on the real twenty-oxlint-rules).
+    assert da.get("packages/twenty-oxlint-rules") == "B53:private-unconsumed"
+    # v2: published (published_cli veto) + runtime sdk dep + template
+    # payload with its own package.json — template evidence wins.
     assert da.get("packages/create-twenty-app") == "B53:scaffolder"
+
+
+def test_segb_devdep_only_union_prong_survives(tmp_path, monkeypatch):
+    """The v1 devdep-only prong stays in the union: a package the root
+    manifest declares under devDependencies (and nothing else consumes)
+    lanes via the original predicate."""
+    monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "1")
+    tracked = [
+        _manifest(tmp_path, "", "acme", private=True,
+                  dev_deps={"@acme/lint-config": "workspace:*"}),
+        _manifest(tmp_path, "packages/lint-config", "@acme/lint-config",
+                  private=True, deps={"eslint-plugin-x": "1.0.0"}),
+        _write(tmp_path, "packages/lint-config/src/a.ts",
+               "export const rules = {};\n"),
+        _write(tmp_path, "packages/lint-config/src/b.ts",
+               "export const more = {};\n"),
+        _write(tmp_path, "packages/lint-config/src/c.ts",
+               "export const even = {};\n"),
+    ]
+    tele = _detect_b53(tmp_path, tracked, [])
+    da = tele.get("dev_artifact_units") or {}
+    assert da.get("packages/lint-config") == "B53:devdep-only"
+
+
+def test_segb_cli_without_template_stays_product(tmp_path, monkeypatch):
+    """midday-style packages/cli anti-case: bin + private, NO template dir
+    → no prong fires (scaffolder needs template evidence; the
+    private-unconsumed prong excludes bin-bearing packages)."""
+    monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "1")
+    tracked = [
+        _manifest(tmp_path, "", "acme", private=True),
+        _manifest(tmp_path, "packages/cli", "@acme/cli", private=True,
+                  deps={"commander": "12.0.0"}, bin_entry="dist/cli.js"),
+        _write(tmp_path, "packages/cli/src/cli.ts",
+               "export function main(){}\n"),
+    ]
+    tele = _detect_b53(tmp_path, tracked, [])
+    assert "packages/cli" not in (tele.get("dev_artifact_units") or {})
 
 
 def test_segb_sacred_anticases_survive(tmp_path, monkeypatch):

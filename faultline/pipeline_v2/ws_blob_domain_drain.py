@@ -10,7 +10,7 @@ DESPITE those PFs existing.
 
 This deterministic, keyless ($0) pass runs AFTER the anchored PF set + stamps
 exist (post-6.86) and BEFORE the LOC census (6.97) + the journey re-home
-stages. It re-attributes the MEMBER files of a donor blob's internal domain
+stages. It re-attributes the member files of a donor blob's internal domain
 dirs (``<pkg>/<container>/<domain>/**``) to the EXISTING PF whose identity the
 domain name echoes — moving them at the DEVELOPER-FEATURE level so the
 existing machinery carries the rest for free:
@@ -20,6 +20,32 @@ existing machinery carries the rest for free:
   * Stage 6.99 I16 re-home (path_index-driven strict-majority) then moves
     the journeys onto their real PF — NO new journey mover is written here
     (B52 conservation law); the I8 orphan guard protects the blob's last UF.
+
+V2 (census forensics, 2026-07-13): blob LOC is IMPLICIT SUBTREE mass —
+dev ``paths`` carry DIRECTORY entries and Stage 6.97
+``_expand_feature_files`` expands them recursively, so every
+path_index-UNATTRIBUTED file under the ws-package rolls to the blob
+(twenty-front: 8,574 tracked files, 4,165 in path_index, 4,409
+unattributed ⇒ Σpaths=1055 yet Σloc=674K). Draining only explicit
+member-dev files (v1) moved ~8.5K LOC of >100K available. V2 therefore:
+
+  * MOVE-SET per matched domain dir = donor-dev-owned explicit files
+    (v1) ∪ tracked files ABSENT from ``path_index`` (unattributed ⇒
+    donor's by the same subtree rule that gives the blob its LOC), minus
+    any file with a non-donor ``path_index`` entry or a live non-donor
+    dev claim (explicit or dir-prefix) — the drain NEVER touches another
+    feature's property (SACRED + keyed-8.9.6 idempotency: on a keyed
+    re-scan those files carry entries/claims and are skipped).
+  * CARVE devs claim the EXPLICIT FILE LIST only (never a directory) —
+    a dir path would expand over other devs' files and could steal them
+    through the 6.97 ``_primary`` dircount tiebreak (dircount favours
+    whole-dir holders); an explicit list creates no contest.
+  * DONOR ANCESTOR CARVE-OUT (load-bearing): a donor dev path that is an
+    ANCESTOR directory of a drained domain dir would keep covering the
+    moved files via expansion (and keep winning ``_primary``); each such
+    path is rewritten into its child paths minus the drained subtrees
+    (recursive split along the ancestor chain only, deterministic sorted
+    output). Without this the LOC does not shift — the v1 shortfall.
 
 DISCIPLINE (unchanged from B49/B51 + the SACRED anti-cases):
 
@@ -33,8 +59,6 @@ DISCIPLINE (unchanged from B49/B51 + the SACRED anti-cases):
     (``components``/``utils``/…) ⇒ skip (it IS app-shell content).
   * CROSS-UNIT LAW (B22a) — a file in package A never moves to a PF that owns
     no code in package A (monorepo boundary).
-  * IDEMPOTENCE with keyed 8.9.6 — only files whose PRIMARY owner is the donor
-    blob are touched; a file already product-homed (non-blob) is left as-is.
 
 Kill-switch ``FAULTLINE_WS_BLOB_DOMAIN_DRAIN=0`` (default OFF) → the pass is a
 no-op and scans are byte-identical to main.
@@ -66,6 +90,10 @@ _DRAIN_MARKER = "b53_domain_drain"
 
 #: Ecosystem container conventions (data, not code — YAML source of truth).
 _CONTAINERS_FILE = "ws-blob-drain-containers.yaml"
+
+#: Lane sentinel for the non-donor claim index (a pfid=None dev's claim
+#: blocks a drain conservatively — lane property is not the donor's).
+_LANE_TAG = "__lane__"
 
 __all__ = [
     "WS_BLOB_DRAIN_ENV",
@@ -156,22 +184,41 @@ def _target_owns_in_pkg(
     return False
 
 
+def _ancestors_of(path: str) -> list[str]:
+    """Every proper ancestor dir prefix of *path* (shallow→deep)."""
+    segs = path.split("/")
+    return ["/".join(segs[:i]) for i in range(1, len(segs))]
+
+
+def _under_any(path: str, dirs: list[str]) -> bool:
+    return any(path == d or path.startswith(d + "/") for d in dirs)
+
+
 def run_ws_blob_domain_drain(
     developer_features: list["Feature"],
     product_features: list["Feature"],
     user_flows: list[Any],
     flows: list[Any],
     ctx: Any,
+    path_index: Any = None,
 ) -> dict[str, Any]:
     """Drain ws-blob domain-dir members onto their real PFs. Mutates
     ``developer_features`` / ``product_features`` in place (appends carved
     devs; re-homes / shrinks member ownership). Returns telemetry for
     ``scan_meta.ws_blob_drain``. Never raises for a scan-shaped input — the
-    caller still wraps it in try/except (never break a scan)."""
+    caller still wraps it in try/except (never break a scan).
+
+    ``path_index`` = the Stage 6.8 lineage index (literal path →
+    ``{feature_uuid, …}``); a file carrying a NON-donor entry is never
+    touched. ``ctx.tracked_files`` powers the v2 subtree channel + the
+    ancestor carve-out; when absent (unit stubs), the pass degrades to the
+    v1 explicit-member behaviour."""
     tele: dict[str, Any] = {
         "enabled": True, "donors": [], "matched_dirs": {},
-        "files_moved": 0, "loc_moved": 0, "ufs_rehomed": 0,
-        "skipped_generic": 0, "skipped_ambig": 0, "samples": [],
+        "files_moved": 0, "files_moved_unattributed": 0, "loc_moved": 0,
+        "ufs_rehomed": 0, "skipped_generic": 0, "skipped_ambig": 0,
+        "skipped_pi_foreign": 0, "skipped_nondonor_covered": 0,
+        "samples": [],
     }
     if not product_features:
         return tele
@@ -206,118 +253,199 @@ def run_ws_blob_domain_drain(
         if pid:
             devs_by_pf[str(pid)].append(d)
 
-    # ── Match domain dirs → existing PFs ────────────────────────────────
-    drain_map: dict[str, str] = {}          # file → target PF key
-    matched_dirs: dict[str, str] = {}       # domain-dir path → target PF key
-    donors_hit: set[str] = set()
+    # ── v2 inputs: tracked population + literal path_index + claim index ─
+    tracked = sorted({
+        str(p).replace("\\", "/")
+        for p in (_attr(ctx, "tracked_files", None) or []) if p
+    })
+    prefix_set: set[str] = set()
+    for f in tracked:
+        prefix_set.update(_ancestors_of(f))
+    pi_owner: dict[str, str] = {}
+    if isinstance(path_index, dict):
+        for p, e in path_index.items():
+            fu = (e.get("feature_uuid") if isinstance(e, dict)
+                  else _attr(e, "feature_uuid", ""))
+            if fu:
+                pi_owner[str(p)] = str(fu)
+
+    # Live non-donor claim index (the dev ledger is the post-6.8 truth):
+    # every developer-layer, non-facet dev's path claims, tagged by its
+    # pfid (None → lane sentinel). Facets never win 6.97 primary, so their
+    # claims don't block a drain (mirror of the 6.97 non-facet-first rule).
+    from faultline.pipeline_v2.spine_hygiene import is_facet
+    exact_claims: dict[str, set[str]] = defaultdict(set)
+    dir_claims: dict[str, set[str]] = defaultdict(set)
+    for d in devs:
+        if is_facet(d):
+            continue
+        tag = str(_attr(d, "product_feature_id") or _LANE_TAG)
+        for p in (_attr(d, "paths") or []):
+            sp = str(p)
+            exact_claims[sp].add(tag)
+            dir_claims[sp].add(tag)
+
+    def _foreign_claim(f: str, donor_key: str) -> bool:
+        tags = set(exact_claims.get(f, ()))
+        for anc in _ancestors_of(f):
+            tags |= dir_claims.get(anc, set())
+        return any(t != donor_key for t in tags)
+
+    # ── Discover domain dirs (explicit + subtree channels) ──────────────
+    explicit_by_dir: dict[str, set[str]] = defaultdict(set)
+    tracked_by_dir: dict[str, set[str]] = defaultdict(set)
+    domain_of_dir: dict[str, str] = {}
+    donor_of_dir: dict[str, str] = {}
+    donor_uuid_sets: dict[str, frozenset[str]] = {}
     for donor_key, pkg in sorted(pkg_of_donor.items()):
         member_devs = devs_by_pf.get(donor_key, [])
         if not member_devs:
             continue
-        files_by_dir: dict[str, list[str]] = defaultdict(list)
-        domain_of_dir: dict[str, str] = {}
+        donor_uuid_sets[donor_key] = frozenset(
+            {str(_attr(d, "uuid") or "") for d in member_devs}
+            | {str(_attr(pf_by_key[donor_key], "uuid") or "")}
+        ) - {""}
+        # explicit channel (v1): donor member devs' owned entries.
         for d in member_devs:
-            for f in owned_paths_of(d):
-                dd = _domain_dir_of(str(f), pkg, containers)
+            for fp in owned_paths_of(d):
+                dd = _domain_dir_of(str(fp), pkg, containers)
                 if dd is None:
                     continue
-                files_by_dir[dd[0]].append(str(f))
+                explicit_by_dir[dd[0]].add(str(fp))
                 domain_of_dir[dd[0]] = dd[1]
-        for dir_path in sorted(files_by_dir):
-            key = normalize_anchor_key(domain_of_dir[dir_path])
-            if not key:
+                donor_of_dir.setdefault(dd[0], donor_key)
+        # subtree channel (v2): the tracked population under the package —
+        # the same implicit territory whose LOC rolls to the blob at 6.97.
+        pref = pkg + "/"
+        for f in tracked:
+            if not f.startswith(pref):
                 continue
-            if key in generic:
-                tele["skipped_generic"] += 1
+            dd = _domain_dir_of(f, pkg, containers)
+            if dd is None:
                 continue
-            hits = echo.pf_by_key.get(key)
-            if not hits:
-                continue  # no product surface — the domain stays in the blob
-            candidates = {
-                h for h in hits if h != donor_key and h not in ws_donor_keys
-            }
-            if not candidates:
+            tracked_by_dir[dd[0]].add(f)
+            domain_of_dir.setdefault(dd[0], dd[1])
+            donor_of_dir.setdefault(dd[0], donor_key)
+
+    # ── Match laws (unchanged from v1/B49/B51) ──────────────────────────
+    matched: dict[str, str] = {}  # domain-dir → target PF key
+    for dir_path in sorted(domain_of_dir):
+        donor_key = donor_of_dir[dir_path]
+        key = normalize_anchor_key(domain_of_dir[dir_path])
+        if not key:
+            continue
+        if key in generic:
+            tele["skipped_generic"] += 1
+            continue
+        hits = echo.pf_by_key.get(key)
+        if not hits:
+            continue  # no product surface — the domain stays in the blob
+        candidates = {
+            h for h in hits if h != donor_key and h not in ws_donor_keys
+        }
+        if not candidates:
+            continue
+        if len(candidates) > 1:
+            tele["skipped_ambig"] += 1
+            continue
+        target_key = next(iter(candidates))
+        target_pf = pf_by_key.get(target_key)
+        if target_pf is None:
+            continue
+        pkg = pkg_of_donor[donor_key]
+        if not _target_owns_in_pkg(target_key, target_pf, pkg, devs_by_pf):
+            continue  # B22a cross-unit boundary
+        matched[dir_path] = target_key
+
+    if not matched:
+        return tele
+
+    # ── Move-set per matched dir ─────────────────────────────────────────
+    drain_map: dict[str, str] = {}           # file → target PF key
+    unattributed_moved: set[str] = set()
+    dir_files: dict[str, list[str]] = {}
+    for dir_path in sorted(matched):
+        donor_key = donor_of_dir[dir_path]
+        target_key = matched[dir_path]
+        donor_uuids = donor_uuid_sets.get(donor_key, frozenset())
+        moved_here: set[str] = set()
+        # (a) explicit donor-dev-owned FILES (a dir entry's files arrive
+        # via the tracked channel; the entry itself is dropped in the
+        # rewrite — carve lists must stay explicit files).
+        for f in explicit_by_dir.get(dir_path, ()):
+            if tracked and f in prefix_set:
+                continue  # directory entry, not a file
+            moved_here.add(f)
+        # (b) unattributed tracked files (v2 subtree rule).
+        for f in sorted(tracked_by_dir.get(dir_path, ())):
+            if f in moved_here:
                 continue
-            if len(candidates) > 1:
-                tele["skipped_ambig"] += 1
+            fu = pi_owner.get(f)
+            if fu is not None:
+                if fu in donor_uuids:
+                    moved_here.add(f)  # donor-explicit via path_index
+                else:
+                    tele["skipped_pi_foreign"] += 1
                 continue
-            target_key = next(iter(candidates))
-            target_pf = pf_by_key.get(target_key)
-            if target_pf is None:
+            if _foreign_claim(f, donor_key):
+                tele["skipped_nondonor_covered"] += 1
                 continue
-            if not _target_owns_in_pkg(target_key, target_pf, pkg, devs_by_pf):
-                continue  # B22a cross-unit boundary
-            for f in files_by_dir[dir_path]:
-                drain_map.setdefault(f, target_key)
-            matched_dirs[dir_path] = target_key
-            donors_hit.add(donor_key)
+            moved_here.add(f)
+            unattributed_moved.add(f)
+        if not moved_here:
+            continue
+        for f in moved_here:
+            drain_map.setdefault(f, target_key)
+        dir_files[dir_path] = sorted(moved_here)
 
     if not drain_map:
         return tele
 
-    # ── Execute the move at the DEV level ───────────────────────────────
+    donors_hit = {donor_of_dir[dp] for dp in dir_files}
+    drained_dirs_by_donor: dict[str, list[str]] = defaultdict(list)
+    for dp in dir_files:
+        drained_dirs_by_donor[donor_of_dir[dp]].append(dp)
+
+    # ── Execute: dev-ledger surgery (the 6.97 LOC authority) ─────────────
     used_names = {str(_attr(d, "name")) for d in devs}
     new_devs: list[Any] = []
-    # donor key → target key → moved files (for PF-level bookkeeping).
-    pf_move: dict[str, dict[str, list[str]]] = defaultdict(
-        lambda: defaultdict(list))
-    for d in devs:
-        dpf = _attr(d, "product_feature_id")
-        if not dpf or str(dpf) not in donors_hit:
-            continue
-        owned = [str(p) for p in owned_paths_of(d)]
-        drained = [f for f in owned if f in drain_map]
-        if not drained:
-            continue
-        donor_key = str(dpf)
-        remaining = [f for f in owned if f not in drain_map]
+    for donor_key in sorted(donors_hit):
+        drained_dirs = sorted(drained_dirs_by_donor[donor_key])
+        for d in devs_by_pf.get(donor_key, []):
+            _rewrite_paths(d, drained_dirs, drain_map, tracked, prefix_set)
+        # per-target carve devs (explicit file lists — the no-contest law).
         by_target: dict[str, list[str]] = defaultdict(list)
-        for f in drained:
-            by_target[drain_map[f]].append(f)
-        if not remaining:
-            # Whole dev is drained: reassign it wholesale to the target with
-            # the most files (flows follow naturally, no empty husk); carve
-            # any remaining split targets. Deterministic tie → alpha.
-            primary = max(sorted(by_target),
-                          key=lambda t: (len(by_target[t]), t))
-            _reassign_dev(d, primary, set(by_target[primary]))
-            pf_move[donor_key][primary].extend(by_target[primary])
-            for tkey in sorted(t for t in by_target if t != primary):
-                carved = _make_drain_dev(
-                    d, pf_by_key[tkey], tkey, by_target[tkey], used_names)
-                used_names.add(str(_attr(carved, "name")))
-                new_devs.append(carved)
-                pf_move[donor_key][tkey].extend(by_target[tkey])
-                # those files leave the (now-reassigned) dev.
-                _shrink_dev(d, set(by_target[tkey]))
-        else:
-            # Straddling dev: carve each target's files; keep the remainder
-            # (and the dev's flows) with the donor.
-            for tkey in sorted(by_target):
-                carved = _make_drain_dev(
-                    d, pf_by_key[tkey], tkey, by_target[tkey], used_names)
-                used_names.add(str(_attr(carved, "name")))
-                new_devs.append(carved)
-                pf_move[donor_key][tkey].extend(by_target[tkey])
-            _shrink_dev(d, set(drained))
+        for dir_path in drained_dirs:
+            by_target[matched[dir_path]].extend(dir_files[dir_path])
+        member_devs = sorted(devs_by_pf.get(donor_key, []),
+                             key=lambda x: str(_attr(x, "name") or ""))
+        shell = member_devs[0] if member_devs else pf_by_key[donor_key]
+        donor_pf = pf_by_key.get(donor_key)
+        for target_key in sorted(by_target):
+            files_t = sorted(set(by_target[target_key]))
+            carved = _make_drain_dev(
+                shell, pf_by_key[target_key], target_key, files_t,
+                used_names)
+            used_names.add(str(_attr(carved, "name")))
+            new_devs.append(carved)
+            _widen_pf(pf_by_key[target_key], files_t, target_key)
+        if donor_pf is not None:
+            all_moved = {f for fs in by_target.values() for f in fs}
+            _shrink_pf(donor_pf, all_moved)
 
     developer_features.extend(new_devs)
 
-    # ── PF-level scope bookkeeping (mirror provenance_rehome widen) ──────
-    for donor_key, tmap in pf_move.items():
-        donor_pf = pf_by_key.get(donor_key)
-        all_moved: set[str] = set()
-        for tkey, files_t in tmap.items():
-            all_moved |= set(files_t)
-            target_pf = pf_by_key.get(tkey)
-            if target_pf is not None:
-                _widen_pf(target_pf, files_t, tkey)
-        if donor_pf is not None:
-            _shrink_pf(donor_pf, all_moved)
-
     tele["donors"] = sorted(donors_hit)
-    tele["matched_dirs"] = dict(sorted(matched_dirs.items()))
+    tele["matched_dirs"] = {
+        d: {
+            "pf": matched[d],
+            "files": len(dir_files.get(d, ())),
+            "loc": _count_loc({f: "" for f in dir_files.get(d, ())}, ctx),
+        }
+        for d in sorted(dir_files)
+    }
     tele["files_moved"] = len(drain_map)
+    tele["files_moved_unattributed"] = len(unattributed_moved)
     tele["loc_moved"] = _count_loc(drain_map, ctx)
     # Drain-time PROJECTION of the Stage-6.99 I16 effect (the authoritative
     # count is scan_meta.i16_rehome.rehomed): journeys homed on a donor whose
@@ -325,7 +453,8 @@ def run_ws_blob_domain_drain(
     tele["ufs_rehomed"] = _project_rehomes(
         user_flows, developer_features, drain_map, donors_hit)
     tele["samples"] = [
-        {"dir": k, "pf": v} for k, v in list(tele["matched_dirs"].items())[:20]
+        {"dir": d, "pf": matched[d], "files": len(dir_files[d])}
+        for d in list(sorted(dir_files))[:20]
     ]
     return tele
 
@@ -333,19 +462,81 @@ def run_ws_blob_domain_drain(
 # ── move mechanics (mirror provenance_rehome / lane_excavation) ───────────
 
 
-def _reassign_dev(dev: Any, target_key: str, moved: set[str]) -> None:
-    """Wholesale re-home a fully-drained dev onto ``target_key`` and stamp
-    the drain provenance on the moved members (I22)."""
-    dev.product_feature_id = target_key
-    for m in (_attr(dev, "member_files") or []):
-        p = m.get("path") if isinstance(m, dict) else getattr(m, "path", None)
-        if p in moved:
-            ev = _attr(m, "evidence") or ""
-            marked = f"{ev} [{_DRAIN_MARKER}->{target_key}]".strip()
+def _split_dir(
+    path: str, drained_under: list[str], tracked: list[str],
+    prefix_set: set[str],
+) -> list[str]:
+    """Recursive ancestor split: the child paths of directory *path* minus
+    the drained subtrees (deterministic sorted). A child that itself
+    contains a drained dir is split further; a child that IS one is
+    dropped."""
+    pref = path + "/"
+    children = sorted({
+        pref + f[len(pref):].split("/", 1)[0]
+        for f in tracked if f.startswith(pref)
+    })
+    out: list[str] = []
+    for c in children:
+        if any(c == d for d in drained_under):
+            continue  # the drained subtree leaves the donor entirely
+        deeper = [d for d in drained_under if d.startswith(c + "/")]
+        if deeper and c in prefix_set:
+            out.extend(_split_dir(c, deeper, tracked, prefix_set))
+        else:
+            out.append(c)
+    return out
+
+
+def _rewrite_paths(
+    dev: Any, drained_dirs: list[str], drain_map: dict[str, str],
+    tracked: list[str], prefix_set: set[str],
+) -> None:
+    """Apply the v2 surgery to one donor dev's ``paths`` + ``member_files``:
+    drop moved files and any entry at/under a drained dir; split ancestor
+    DIRECTORY entries into children minus the drained subtrees (the donor
+    ancestor carve-out — without it 6.97 expansion keeps covering the moved
+    files and the LOC never shifts)."""
+    def _rewrite_one(p: str) -> list[str] | None:
+        """``None`` → keep as-is; list → replacement entries (may be [])."""
+        if p in drain_map:
+            return []  # moved explicit file
+        if _under_any(p, drained_dirs):
+            return []  # entry inside a drained subtree
+        under = [d for d in drained_dirs if d.startswith(p + "/")]
+        if under and tracked:
+            return _split_dir(p, under, tracked, prefix_set)
+        return None
+
+    new_paths: list[str] = []
+    for p in (_attr(dev, "paths") or []):
+        rep = _rewrite_one(str(p))
+        if rep is None:
+            new_paths.append(str(p))
+        else:
+            new_paths.extend(rep)
+    dev.paths = list(dict.fromkeys(new_paths))  # dedup, order-stable
+
+    mfs = _attr(dev, "member_files") or []
+    kept: list[Any] = []
+    for m in mfs:
+        mp = m.get("path") if isinstance(m, dict) else getattr(m, "path", None)
+        if mp is None:
+            kept.append(m)
+            continue
+        rep = _rewrite_one(str(mp))
+        if rep is None:
+            kept.append(m)
+            continue
+        for child in rep:
             if isinstance(m, dict):
-                m["evidence"] = marked
-            else:
-                setattr(m, "evidence", marked)
+                mm: Any = dict(m)
+                mm["path"] = child
+            elif hasattr(m, "model_copy"):
+                mm = m.model_copy(update={"path": child})
+            else:  # pragma: no cover — exotic stub member
+                continue
+            kept.append(mm)
+    dev.member_files = kept
 
 
 def _make_drain_dev(
@@ -355,7 +546,8 @@ def _make_drain_dev(
     """A carved member dev under ``target_pf`` claiming ``files`` as primary
     (content-derived uuid, ``split_from`` lineage, ``fold:`` anchor, no
     flows) — mirrors ``provenance_rehome._make_rehome_dev`` with the B53
-    marker. Supports pydantic Features and lightweight stubs."""
+    marker. The paths are an EXPLICIT FILE LIST by construction (the
+    no-contest law). Supports pydantic Features and lightweight stubs."""
     base = f"{target_key}-{_DRAIN_MARKER}"
     name = base
     n = 2
@@ -409,17 +601,6 @@ def _make_drain_dev(
     return ch
 
 
-def _shrink_dev(dev: Any, moved: set[str]) -> None:
-    """Drop ``moved`` from a dev's ``paths`` + ``member_files``."""
-    dev.paths = [p for p in (_attr(dev, "paths") or []) if p not in moved]
-    kept = []
-    for m in (_attr(dev, "member_files") or []):
-        p = m.get("path") if isinstance(m, dict) else getattr(m, "path", None)
-        if p not in moved:
-            kept.append(m)
-    dev.member_files = kept
-
-
 def _widen_pf(pf: Any, files: list[str], target_key: str) -> None:
     """Add ``files`` to the PF's ``paths`` + ``member_files`` (so PF scope +
     validators see them regardless of member-dev traversal)."""
@@ -450,7 +631,9 @@ def _widen_pf(pf: Any, files: list[str], target_key: str) -> None:
 
 
 def _shrink_pf(pf: Any, moved: set[str]) -> None:
-    """Drop ``moved`` from the donor PF's ``paths`` + ``member_files``."""
+    """Drop ``moved`` from the donor PF's explicit ``paths`` +
+    ``member_files``. Directory entries stay — PF paths never drive the
+    6.97 LOC when member devs exist; the dev ledger is the authority."""
     pf.paths = [p for p in (_attr(pf, "paths") or []) if p not in moved]
     kept = []
     for m in (_attr(pf, "member_files") or []):

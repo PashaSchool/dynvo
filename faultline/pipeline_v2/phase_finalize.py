@@ -1257,6 +1257,10 @@ def run_finalize_phase(
                     wbd_tele = run_ws_blob_domain_drain(
                         features, product_features, user_flows,
                         list(bipartite.flows), ctx,
+                        # v2: the literal 6.8 index — a file carrying a
+                        # NON-donor entry is never touched; ABSENCE is the
+                        # unattributed subtree mass that rolls to the blob.
+                        path_index=lineage_result.path_index,
                     )
                     if wbd_tele.get("files_moved"):
                         scan_meta["ws_blob_drain"] = wbd_tele
