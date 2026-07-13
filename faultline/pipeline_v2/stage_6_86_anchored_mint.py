@@ -330,27 +330,43 @@ def _artifact_unit_anchor(
     unit_roots: tuple[str, ...],
     tokens: frozenset[str],
 ) -> bool:
-    """B58 Seg B — ``True`` when EVERY evidence unit of *a* sits inside a
-    dev-artifact workspace unit: a unit whose ROOT path carries a segment
-    from ``unit_root_artifact_tokens`` (novu ``playground/nextjs`` — the
+    """B58 Seg B — ``True`` when *a* is a dev-artifact-unit anchor: its
+    home is a workspace unit whose ROOT path carries a segment from
+    ``unit_root_artifact_tokens`` (novu ``playground/nextjs`` — the
     repo's own pnpm-workspace.yaml declares the playground apps). The
-    token test runs at UNIT-ROOT grain only — for evidence outside every
+    token test runs at UNIT-ROOT grain only — for paths outside every
     unit, only the TOP-LEVEL dir counts — so a product page merely NAMED
     ``playground`` (cal.com admin page, a route leaf inside apps/web)
-    can never fire. All-or-nothing over the evidence: one non-artifact
-    evidence unit vetoes the bar (conservative — never bar a mixed
-    surface)."""
+    can never fire.
+
+    Two rungs, canonical-first (v2 — the novu kill-switch census caught
+    the v1 hole: the ``notifications`` playground anchor escaped the
+    evidence rule because a same-KEY merge unioned real
+    ``libs/notifications`` evidence into it, then the surviving tile
+    absorbed all 16 barred siblings, 611→17,631 LOC):
+
+    1. the anchor-id-embedded path (``route:playground/nextjs/…``) —
+       the anchor's name-giving identity; merged foreign evidence can
+       never rescue an artifact-anchored tile;
+    2. no id path ⇒ all-or-nothing over the evidence: one non-artifact
+       evidence unit vetoes the bar (conservative — never bar a mixed
+       surface on evidence alone)."""
     if not tokens:
         return False
+
+    def _artifact_scope(path: str) -> bool:
+        u = _unit_of(path, unit_roots)
+        scope = u if u is not None else path.split("/", 1)[0]
+        return any(seg in tokens for seg in scope.lower().split("/"))
+
+    cid = a.canonical_id
+    tail = cid.split(":", 1)[1] if ":" in cid else cid
+    if "/" in tail:
+        return _artifact_scope(tail)
     evs = list(a.prefixes) + sorted(a.files)
     if not evs:
         return False
-    for ev in evs:
-        u = _unit_of(str(ev), unit_roots)
-        scope = u if u is not None else str(ev).split("/", 1)[0]
-        if not any(seg in tokens for seg in scope.lower().split("/")):
-            return False
-    return True
+    return all(_artifact_scope(str(ev)) for ev in evs)
 
 
 #: The surface token stripped to recover a route anchor's DOMAIN family. Only

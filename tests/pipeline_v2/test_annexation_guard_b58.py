@@ -330,6 +330,49 @@ def test_on_playground_anchor_never_mints(monkeypatch) -> None:
             "a playground-unit anchor minted: {!r}".format(pf.anchor_id))
 
 
+def test_on_contaminated_playground_anchor_still_barred(monkeypatch) -> None:
+    """Seg B v2 regression (novu kill-switch census, 2026-07-13): the
+    ``notifications`` playground anchor escaped the v1 all-or-nothing
+    evidence rule because a same-KEY merge unioned real product
+    evidence into it (libs/notifications) — the surviving tile then
+    absorbed all 16 barred playground siblings (611→17,631 LOC). The
+    anchor's CANONICAL id-path is playground — merged evidence must
+    never rescue it."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
+    routes = [
+        # dir-style playground page → path-bearing route anchor
+        {"pattern": "/notifications", "method": "PAGE",
+         "file": "playground/nextjs/src/pages/notifications/index.tsx"},
+        {"pattern": "/notifications", "method": "PAGE",
+         "file": "playground/nextjs/src/pages/notifications/detail.tsx"},
+        # real product surface elsewhere (keeps minting)
+        {"pattern": "/workflows", "method": "PAGE",
+         "file": "apps/dashboard/src/pages/workflows.tsx"},
+    ]
+    notif = dev(
+        "notifications",
+        ["playground/nextjs/src/pages/notifications/index.tsx",
+         "playground/nextjs/src/pages/notifications/detail.tsx",
+         # CONTAMINATION: same dev also owns real notification lib files
+         # (the same-key merge analogue — evidence is mixed)
+         "libs/notifications/src/store.ts",
+         "libs/notifications/src/badge.ts"],
+        flows=[flow("view-notifications-flow",
+                    "playground/nextjs/src/pages/notifications/index.tsx")])
+    workflows = dev(
+        "workflows",
+        ["apps/dashboard/src/pages/workflows.tsx"],
+        flows=[flow("manage-workflows-flow",
+                    "apps/dashboard/src/pages/workflows.tsx")])
+    wss = _PLAYGROUND_WORKSPACES + [ws("libs/notifications")]
+    pfs, tele = run_anchored_mint([notif, workflows], routes, ctx_of(wss))
+    assert workflows.product_feature_id is not None
+    for pf in pfs:
+        assert "playground" not in (pf.anchor_id or ""), (
+            "Seg B v2 REGRESSION: contaminated playground anchor "
+            "minted: {!r}".format(pf.anchor_id))
+
+
 def test_on_product_page_named_playground_still_mints(monkeypatch) -> None:
     """The cal.com counterfactual (Lane-C 'measured out' verdict): a
     REAL product admin page named ``playground`` inside apps/web is a
