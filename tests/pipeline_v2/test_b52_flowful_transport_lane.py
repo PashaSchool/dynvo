@@ -238,9 +238,12 @@ def test_drain_then_lane_tile_disappears(monkeypatch):
     assert uh.product_feature_id is None
     assert uh.lane_ref == dev.uuid
     assert uh.surface_scope == "platform_infrastructure"
-    # the flowful residue LANES (Seg1 ws-anchor carve-out).
+    # the flowful residue LANES (Seg1 ws-anchor carve-out) and carries
+    # the B52 provenance anchor (the lane builder keys flow_ids on it).
     assert dev.product_feature_id is None
     assert [fl.uuid for fl in dev.flows] == ["f-admin"]
+    from faultline.pipeline_v2.transport_handoff import FLOWFUL_LANE_ANCHOR
+    assert dev.anchor_id == FLOWFUL_LANE_ANCHOR
     # telemetry: lane row content + decomp extension.
     row = tele["laned"][0]
     assert row["lane_journeys"] == 1 and row["lane_flows"] == 1
@@ -458,16 +461,24 @@ def test_lane_builder_flow_ids_and_journeys(monkeypatch):
         _SHARED_REASON_INSTRUMENT,
         build_platform_infrastructure_lane,
     )
+    from faultline.pipeline_v2.transport_handoff import FLOWFUL_LANE_ANCHOR
     monkeypatch.setenv(FLOWFUL_TRANSPORT_LANE_ENV, "1")
     fl = Fl("f-admin", [(_handler("admin"), 200)], ep=_handler("admin"))
     resident = Dev("trpc", None, [_handler("admin")], flows=[fl])
     resident.shared_reason = _SHARED_REASON_INSTRUMENT
+    resident.anchor_id = FLOWFUL_LANE_ANCHOR      # B52 provenance
     flowless = Dev("scripts", None, ["scripts/build.ts"], flows=[])
     flowless.shared_reason = _SHARED_REASON_INSTRUMENT
+    # a PRE-EXISTING flowful lane resident (documenso openpage-api class:
+    # laned by another stage, NO provenance anchor) must stay
+    # byte-identical under the flag — the E==C SACRED exhibit.
+    legacy = Dev("openpage-api", None, ["packages/openpage-api/x.ts"],
+                 flows=[Fl("f-legacy", [("packages/openpage-api/x.ts", 9)])])
+    legacy.shared_reason = _SHARED_REASON_INSTRUMENT
     uf = UF("UF-H", "Admin Users Management", None, members=["f-admin"])
     uf.lane_ref = resident.uuid
     rows = build_platform_infrastructure_lane(
-        [resident, flowless], user_flows=[uf])
+        [resident, flowless, legacy], user_flows=[uf])
 
     r_trpc = next(r for r in rows if r["name"] == "trpc")
     assert r_trpc["flow_ids"] == ["f-admin"]
@@ -475,6 +486,9 @@ def test_lane_builder_flow_ids_and_journeys(monkeypatch):
         {"id": "UF-H", "name": "Admin Users Management"}]
     r_scripts = next(r for r in rows if r["name"] == "scripts")
     assert "flow_ids" not in r_scripts and "journeys" not in r_scripts
+    r_legacy = next(r for r in rows if r["name"] == "openpage-api")
+    assert "flow_ids" not in r_legacy and "journeys" not in r_legacy
+    assert r_legacy["flows"] == 1                 # legacy count untouched
 
 
 def test_lane_builder_off_no_new_keys(monkeypatch):

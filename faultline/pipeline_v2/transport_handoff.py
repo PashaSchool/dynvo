@@ -133,6 +133,13 @@ FLOWFUL_TRANSPORT_LANE_ENV = "FAULTLINE_FLOWFUL_TRANSPORT_LANE"
 _HANDOFF_MARKER = "transport-handoff"
 #: B51 provenance marker for router-decomposition carve chunks (I22).
 _ROUTER_DECOMP_MARKER = "transport-router-decomp"
+#: B52 provenance anchor stamped ONLY on a FLOWFUL dev the flowful-lane
+#: branch lanes (legacy never lanes a flowful dev → the field changes
+#: only in the flag-ON world). The lane builder keys ``flow_ids[]`` on
+#: THIS marker, so a pre-existing flowful lane resident (documenso
+#: ``openpage-api``: 32 flows, shell_lineage_only) stays byte-identical
+#: under the flag — the E==C SACRED proof.
+FLOWFUL_LANE_ANCHOR = f"lane:{_HANDOFF_MARKER}-flowful"
 
 #: Coverage telemetry floor (design §4 thin-coverage class): a strict
 #: re-home whose VOTING mass covers < 34% of the journey's span mass is
@@ -2393,6 +2400,12 @@ def run_transport_handoff(
                 else:
                     f.product_feature_id = None
                     f.shared_reason = _INSTRUMENT
+                    if (_attr(f, "flows") or []):
+                        # B52 provenance: only THIS branch ever lanes a
+                        # flowful dev — the lane builder keys flow_ids[]
+                        # on the marker (E==C SACRED: pre-existing
+                        # flowful lane residents stay untouched).
+                        f.anchor_id = FLOWFUL_LANE_ANCHOR
                     tele["devs_laned"] += 1
                     laned_devs.append(f)
 

@@ -1709,6 +1709,7 @@ def build_platform_infrastructure_lane(
     trpc) stays byte-identical."""
     from faultline.pipeline_v2.emission_integrity import ANCHORED_HUSK_REASON
     from faultline.pipeline_v2.transport_handoff import (
+        FLOWFUL_LANE_ANCHOR,
         flowful_transport_lane_enabled,
     )
 
@@ -1756,13 +1757,17 @@ def build_platform_infrastructure_lane(
             "flows": len(getattr(f, "flows", None) or []),
         }
         if flowful_lane:
-            # B52 flow-bearing lane representation (additive, non-empty
-            # only — flowless rows stay byte-identical).
-            fids = [str(getattr(fl, "uuid", "") or "")
-                    for fl in (getattr(f, "flows", None) or [])]
-            fids = [x for x in fids if x]
-            if fids:
-                row["flow_ids"] = fids
+            # B52 flow-bearing lane representation (additive; flow_ids
+            # ONLY on rows whose dev the flowful-lane branch itself
+            # laned — the provenance anchor — so a pre-existing flowful
+            # resident (documenso openpage-api) stays byte-identical
+            # under the flag, and flowless rows never change).
+            if getattr(f, "anchor_id", None) == FLOWFUL_LANE_ANCHOR:
+                fids = [str(getattr(fl, "uuid", "") or "")
+                        for fl in (getattr(f, "flows", None) or [])]
+                fids = [x for x in fids if x]
+                if fids:
+                    row["flow_ids"] = fids
             js = journeys_by_ref.get(row["uuid"])
             if js:
                 row["journeys"] = js
