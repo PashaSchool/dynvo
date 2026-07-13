@@ -386,6 +386,24 @@ ENV_OUTPUT_FLAGS = (
     # OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a separate
     # later commit per flip-protocol).
     "FAULTLINE_TRANSPORT_NAMESPACE_ECHO",
+    # B51 (2026-07-13) — transport router-mega decomposition: a FLOW-BEARING
+    # transport candidate (a dev whose flows I9 forbids laning — cal.com
+    # `trpc`: 66 flows) is decomposed per tRPC sub-router. Each sub-router
+    # group whose namespace token echoes an EXISTING product PF (the SAME
+    # `NamespaceEcho` matcher as r2.6: eventTypes→`event-types`,
+    # apiKeys→`api-keys`, webhook→`webhooks`) has its flows + routers-tree
+    # files carved into a product-owned chunk re-homed to that PF (I22
+    # marker), BEFORE the conservation gate; the carved files are LIFTED out
+    # of the lane so the existing r1 ladder drains their journeys (no new
+    # rung). Residue (unmatched sub-routers + non-routers `[trpc].ts`
+    # handler / middleware flows) stays flowful and keeps a REDUCED tile —
+    # an honest abstain, never forced onto a product surface. Conserves
+    # flows/journeys (moved, never dropped or minted). Reshapes
+    # developer_features[] (carved chunks) + product_features[] (a fully
+    # drained candidate lanes) + user_flows[].product_feature_id (drained
+    # journeys). Default OFF; =0/unset byte-identical. No KEY_SCHEMA bump
+    # (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_TRANSPORT_ROUTER_DECOMP",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

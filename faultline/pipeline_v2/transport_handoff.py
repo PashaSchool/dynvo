@@ -102,9 +102,11 @@ __all__ = [
     "TRANSPORT_HANDOFF_ENV",
     "TRANSPORT_HANDOFF_PLURALITY_ENV",
     "TRANSPORT_NAMESPACE_ECHO_ENV",
+    "TRANSPORT_ROUTER_DECOMP_ENV",
     "transport_handoff_enabled",
     "transport_plurality_enabled",
     "transport_namespace_echo_enabled",
+    "transport_router_decomp_enabled",
     "hub_cutoff",
     "GrainTarget",
     "TargetGrainIndex",
@@ -117,10 +119,14 @@ TRANSPORT_HANDOFF_ENV = "FAULTLINE_TRANSPORT_LANE_HANDOFF"
 TRANSPORT_HANDOFF_PLURALITY_ENV = "FAULTLINE_TRANSPORT_HANDOFF_PLURALITY"
 #: B49 r2.6 namespace-echo rung — default OFF.
 TRANSPORT_NAMESPACE_ECHO_ENV = "FAULTLINE_TRANSPORT_NAMESPACE_ECHO"
+#: B51 router-mega decomposition pass — default OFF.
+TRANSPORT_ROUTER_DECOMP_ENV = "FAULTLINE_TRANSPORT_ROUTER_DECOMP"
 
 #: Provenance marker stamped on re-homed / minted rows (I22
 #: explainability + idempotence).
 _HANDOFF_MARKER = "transport-handoff"
+#: B51 provenance marker for router-decomposition carve chunks (I22).
+_ROUTER_DECOMP_MARKER = "transport-router-decomp"
 
 #: Coverage telemetry floor (design §4 thin-coverage class): a strict
 #: re-home whose VOTING mass covers < 34% of the journey's span mass is
@@ -168,6 +174,24 @@ def transport_namespace_echo_enabled() -> bool:
     votes for otherwise-abstaining seeds."""
     return os.environ.get(
         TRANSPORT_NAMESPACE_ECHO_ENV, "0",
+    ).strip().lower() in {"1", "true"}
+
+
+def transport_router_decomp_enabled() -> bool:
+    """B51 router-mega decomposition — default OFF. When ON, a FLOW-BEARING
+    transport candidate (a dev carrying flows that I9 forbids laning) is
+    decomposed per tRPC sub-router: each sub-router group whose namespace
+    token echoes an EXISTING product PF (the SAME ``NamespaceEcho`` matcher
+    as r2.6) has its flows + routers-tree files re-homed to that PF, BEFORE
+    the conservation gate. Matched groups leave (the tile shrinks); residue
+    (unmatched sub-routers + non-routers ``[trpc].ts``/middleware flows)
+    stays flowful and holds the tile — an honest abstain, never forced.
+    Re-homed routers files are LIFTED out of the lane so the existing
+    resolve_user_flow ladder (r1) drains their journeys with NO new rung.
+    Conservation-safe: flows/files are MOVED (lineage re-stamped), never
+    dropped or minted."""
+    return os.environ.get(
+        TRANSPORT_ROUTER_DECOMP_ENV, "0",
     ).strip().lower() in {"1", "true"}
 
 
@@ -1053,6 +1077,7 @@ class _FileResolver:
         lane_pf_keys: frozenset[str] = frozenset(),
         neutral_files: frozenset[str] = frozenset(),
         ns_echo: NamespaceEcho | None = None,
+        lifted: frozenset[str] = frozenset(),
     ) -> None:
         self.unit = unit.strip("/")
         self.cand = cand_pf_key
@@ -1063,6 +1088,13 @@ class _FileResolver:
         #: B49 r2.6 namespace-echo (None when the flag is OFF → the rung
         #: is inert and the ladder is byte-identical to r1→r2→r3).
         self.ns_echo = ns_echo
+        #: B51 router-decomp — files physically inside the transport unit
+        #: that the decomposition pass already re-homed to a product PF
+        #: (carved into a product-owned chunk). They have LEFT the lane:
+        #: ``in_lane`` returns False so the r1 owned rung counts them as
+        #: product votes (their owner in ``owner_map`` is the product PF).
+        #: Empty when the flag is OFF → ``in_lane`` byte-identical.
+        self.lifted = lifted
         #: Files owned by a pfid=None LANE-RESIDENT dev — already
         #: adjudicated non-product mass (B21 lane-neutral doctrine):
         #: neutral ground, never a vote, never a seed, excluded from
@@ -1072,6 +1104,8 @@ class _FileResolver:
         self._seed: dict[str, tuple[GrainTarget | None, str, Counter]] = {}
 
     def in_lane(self, path: str) -> bool:
+        if path in self.lifted:
+            return False  # B51 — re-homed by decomp; no longer plumbing
         return path == self.unit or path.startswith(self.unit + "/")
 
     def is_neutral(self, path: str) -> bool:
@@ -1532,6 +1566,171 @@ def _i16_flagged(
     return bool(chk) and mis * 2 > chk
 
 
+#: tRPC router-tree transparent grouping segments (author-structural, not
+#: product surfaces): ``routers/viewer/<domain>`` nests every namespace
+#: under a grouping router. They carry no product identity, so the
+#: sub-router discriminator is the FIRST non-transparent token of the
+#: common hole. NOT a stop-list gate (a transparent-only common hole simply
+#: yields no discriminator → residue).
+_ROUTER_TRANSPARENT = frozenset({
+    "viewer", "publicviewer", "loggedinviewer", "apps",
+})
+
+
+def _flow_router_files(fl: Any) -> list[str]:
+    """The flow's distinct line-range file surface (falling back to the
+    entry file when a flow carries no line_ranges)."""
+    out: set[str] = set()
+    for lr in (_attr(fl, "line_ranges") or []):
+        p = _attr(lr, "path")
+        if p:
+            out.add(str(p))
+    if not out:
+        ep = _attr(fl, "entry_point_file")
+        if ep:
+            out.add(str(ep))
+    return sorted(out)
+
+
+def _flow_subrouter_disc(fl: Any) -> str | None:
+    """B51 grain — the sub-router discriminator of a flow whose span sits
+    under a tRPC ``routers/`` sub-tree: the deepest hole COMMON to ALL its
+    routers-tree line-range files (``_ns_tokens`` chains), reduced to the
+    first non-transparent segment. Returns ``None`` (RESIDUE) when the flow
+    has NO routers-tree file (middleware / client / ``api/trpc/*/[trpc].ts``
+    handler → residue immediately) or its routers files span more than one
+    sub-router (no single common discriminating hole)."""
+    chains: list[list[str]] = []
+    for p in _flow_router_files(fl):
+        toks = _ns_tokens(p)
+        if toks:
+            chains.append(toks)
+    if not chains:
+        return None  # no routers-tree file → residue
+    common = list(chains[0])
+    for ch in chains[1:]:
+        j = 0
+        while j < len(common) and j < len(ch) and common[j] == ch[j]:
+            j += 1
+        common = common[:j]
+    for tok in common:
+        if tok.lower() not in _ROUTER_TRANSPARENT:
+            return tok  # deepest common discriminating hole
+    return None  # transparent-only / empty common hole → residue
+
+
+def _move_group_flows(
+    src: Any, chunk: Any, group_flows: list[Any],
+    edges_by_flow_id: Mapping[str, list[Any]],
+) -> int:
+    """Move an EXPLICIT flow set (by object identity, not entry file — the
+    B51 decomp groups by routers-hole, whose flows enter via the residual
+    ``[trpc].ts`` handler) from ``src`` to ``chunk``, re-stamping the
+    bipartite identity fields + edges (the ``_move_carved_flows`` contract,
+    lineage preserved: same uuid, no mint → flow-dup LAW untouched)."""
+    ids = {id(f) for f in group_flows}
+    keep: list[Any] = []
+    moved = 0
+    for fl in (_attr(src, "flows") or []):
+        if id(fl) not in ids:
+            keep.append(fl)
+            continue
+        old_id = _attr(fl, "id")
+        chunk.flows.append(fl)
+        fl.primary_feature = _attr(chunk, "name")
+        new_id = f"{_attr(chunk, 'name')}::{_attr(fl, 'name')}"
+        fl.id = new_id
+        for e in edges_by_flow_id.get(str(old_id or ""), []):
+            if _attr(e, "type") == "primary":
+                e.feature = _attr(chunk, "name")
+            e.flow_id = new_id
+        moved += 1
+    src.flows = keep
+    return moved
+
+
+def _router_decomp(
+    unit: str,
+    cand_key: str,
+    cand_devs: list[Any],
+    echo: NamespaceEcho,
+    edges_by_flow_id: Mapping[str, list[Any]],
+    developer_features: list[Any],
+) -> dict[str, Any]:
+    """B51 — decompose a FLOW-BEARING transport candidate per sub-router.
+
+    Each sub-router group whose namespace token echoes an EXISTING product
+    PF (``NamespaceEcho`` — the r2.6 matcher, FULL normalized match, ambig
+    →residue, generic→residue, NEVER mints) has its flows + routers-tree
+    files carved into a product-owned chunk dev re-homed to that PF (I22
+    marker). Runs BEFORE the conservation gate; mutates in place.
+
+    Returns telemetry ``{groups, matched{pf:[disc]}, unmatched[], residue,
+    flows_moved, files_moved, lifted[]}``. ``lifted`` = the routers files
+    that left the lane (fed to the resolver so r1 drains their journeys).
+    Residue (unmatched / no-routers flows) stays on the residual dev — if
+    it is flowful the candidate keeps its (reduced) tile downstream."""
+    tele: dict[str, Any] = {
+        "unit": unit, "pf": cand_key, "groups": 0,
+        "matched": {}, "unmatched": [], "residue_flows": 0,
+        "flows_moved": 0, "files_moved": 0,
+    }
+    lifted: set[str] = set()
+    for src in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
+        if not (_attr(src, "flows") or []):
+            continue
+        owned = set(_owned_of(src))
+        groups: dict[str, list[Any]] = defaultdict(list)
+        residue = 0
+        for fl in list(_attr(src, "flows") or []):
+            disc = _flow_subrouter_disc(fl)
+            if disc is None:
+                residue += 1
+            else:
+                groups[disc].append(fl)
+        tele["groups"] += len(groups)
+        matched: dict[str, str] = {}  # disc → target pf key
+        for disc in sorted(groups):
+            t = echo.target_for(f"routers/{disc}/_decomp.ts")
+            if t is not None and t.kind == "pf" and t.key != cand_key:
+                matched[disc] = t.key
+            else:
+                tele["unmatched"].append(
+                    {"disc": disc, "flows": len(groups[disc])})
+        tele["residue_flows"] += residue + sum(
+            len(v) for d, v in groups.items() if d not in matched)
+        # coalesce matched groups by target PF → one chunk per PF.
+        by_pf: dict[str, list[str]] = defaultdict(list)
+        flows_by_pf: dict[str, list[Any]] = defaultdict(list)
+        for disc in sorted(matched):
+            by_pf[matched[disc]].append(disc)
+            flows_by_pf[matched[disc]].extend(groups[disc])
+        for pf_key in sorted(by_pf):
+            gflows = flows_by_pf[pf_key]
+            cfiles = sorted(
+                p for fl in gflows for p in _flow_router_files(fl)
+                if p in owned and _ns_tokens(p))
+            if not cfiles:
+                continue  # nothing this dev owns to carve — skip cleanly
+            chunk = _carve_chunk(src, f"pf:{pf_key}", cfiles,
+                                 marker=_ROUTER_DECOMP_MARKER)
+            name = f"{_attr(src, 'name')}-{_ROUTER_DECOMP_MARKER}-{pf_key}"
+            chunk.name = name
+            chunk.display_name = name
+            _move_group_flows(src, chunk, gflows, edges_by_flow_id)
+            _strip_carved_files(src, set(cfiles))
+            chunk.product_feature_id = pf_key
+            chunk.anchor_id = f"fold:{_ROUTER_DECOMP_MARKER}->pf:{pf_key}"
+            chunk.shared_reason = None
+            developer_features.append(chunk)
+            lifted.update(cfiles)
+            tele["flows_moved"] += len(gflows)
+            tele["files_moved"] += len(cfiles)
+            tele["matched"][pf_key] = sorted(by_pf[pf_key])
+    tele["lifted"] = sorted(lifted)
+    return tele
+
+
 def run_transport_handoff(
     developer_features: list[Any],
     product_features: list[Any],
@@ -1616,6 +1815,18 @@ def run_transport_handoff(
             nav_keys=nav_keys,
         )
 
+    # B51 — the router-decomposition matcher (flag-gated, default OFF):
+    # built once from the EXISTING non-candidate PFs' anchor-identities
+    # (SAME oracle as the r2.6 echo). None → decomp is skipped and the
+    # stage is byte-identical.
+    decomp_echo: NamespaceEcho | None = None
+    if transport_router_decomp_enabled():
+        decomp_echo = NamespaceEcho.build(
+            product_features,
+            excluded_pf_keys=frozenset(cand_pf.values()),
+            nav_keys=nav_keys,
+        )
+
     # THE grain oracle (condition 4) — built once, shared by vote+mint.
     if grain_index is None:
         from faultline.pipeline_v2.spine_anchors import build_spine_anchors
@@ -1640,6 +1851,47 @@ def run_transport_handoff(
         cand_devs = [f for f in devs
                      if str(_attr(f, "product_feature_id") or "") == cand_key]
 
+        # ── B51 router-mega decomposition (flag-gated; FLOW-BEARING only) ──
+        # Carves each matched sub-router group into a product-owned chunk
+        # BEFORE the conservation gate. Runs on the candidate's flow-bearing
+        # devs; refreshes the owner map so the resolver sees the re-homes,
+        # and LIFTS the carved files out of the lane (r1 drains their
+        # journeys). Flowless candidates (documenso trpc) are a no-op →
+        # byte-identical. Matched flows leave regardless of whether the
+        # candidate ultimately lanes: residue (unmatched / handler flows)
+        # keeps a reduced tile downstream — the honest Option-B abstain.
+        decomp_lifted: frozenset[str] = frozenset()
+        if decomp_echo is not None:
+            flow_bearing = [f for f in cand_devs if (_attr(f, "flows") or [])]
+            if flow_bearing:
+                edges_d: dict[str, list[Any]] = defaultdict(list)
+                for e in (feature_flow_edges or []):
+                    edges_d[_attr(e, "flow_id")].append(e)
+                d_tele = _router_decomp(
+                    unit, cand_key, flow_bearing, decomp_echo,
+                    edges_d, developer_features)
+                # Only emitted when a flow-bearing candidate is actually
+                # decomposed → a flowless candidate (documenso trpc) leaves
+                # the telemetry (and the whole output) byte-identical to OFF.
+                tele.setdefault("router_decomp", {})[unit] = d_tele
+                decomp_lifted = frozenset(d_tele.get("lifted") or [])
+                if decomp_lifted:
+                    # Refresh the dev set + owner map to see the carved
+                    # product-owned chunks; re-read the residual cand devs.
+                    devs = [f for f in developer_features
+                            if _attr(f, "layer", "developer") == "developer"
+                            and _attr(f, "name")]
+                    owner_map, neutral_files = _build_owner_map(devs)
+                    cand_devs = [
+                        f for f in devs
+                        if str(_attr(f, "product_feature_id") or "")
+                        == cand_key]
+                    for f in devs:
+                        for fl in (_attr(f, "flows") or []):
+                            u = _attr(fl, "uuid")
+                            if u and str(u) not in flow_by_uuid:
+                                flow_by_uuid[str(u)] = fl
+
         consumers: ConsumerIndex | None = None
         if consumer_index_factory is not None:
             consumers = consumer_index_factory(unit)
@@ -1657,7 +1909,8 @@ def run_transport_handoff(
         resolver = _FileResolver(
             unit, cand_key, owner_map, grain_index, consumers,
             lane_pf_keys=frozenset(cand_pf.values()),
-            neutral_files=neutral_files, ns_echo=echo)
+            neutral_files=neutral_files, ns_echo=echo,
+            lifted=decomp_lifted)
 
         # ── plan: UF votes ────────────────────────────────────────────
         resolutions = [
