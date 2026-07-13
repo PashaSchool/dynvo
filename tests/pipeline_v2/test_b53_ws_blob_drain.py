@@ -614,6 +614,100 @@ def test_v3_drain_wired_after_husk_fold_in_finalize():
     assert i_fold < i_drain < i_lattice
 
 
+# ── Seg A v4 — anchored-husk test judges ORGANIC mass (typebot Popup) ───────
+#
+# Probe forensics (2026-07-13): the v3 relocation did NOT clear popup —
+# the OFF-board killer is the EMISSION anchored-husk-shell rule
+# (emission_integrity Pass 1a, evaluated AFTER 6.97 stamps loc), which the
+# drain's carve mass defeated (pf.loc 0 → 203). Unreachable by placement:
+# the drain must precede 6.97 for the LOC census, the husk pass runs
+# after. v4: husk candidacy judges ORGANIC mass only — carve devs
+# (structured anchor marker) count zero; the unchanged husk machinery
+# then lanes the carve dev with its files.
+
+
+def _mk_carve(target_pf, target_key, files, loc):
+    """A REAL carve dev via the drain's own constructor (anchor marker
+    stamped), with 6.97-style loc pre-stamped."""
+    shell = _dev("shell-donor", ["x/src/main.ts"], pfid=None)
+    carve = WBD._make_drain_dev(shell, target_pf, target_key,
+                                list(files), set())
+    carve.loc = loc
+    return carve
+
+
+def test_v4_drain_mass_cannot_resurrect_anchored_husk():
+    """The popup class end-state: PF with ZERO organic mass + drain carve
+    mass + no flows is STILL a husk — the PF row drops and the flowless
+    carve dev unbinds to the platform lane carrying the drained files."""
+    from faultline.pipeline_v2 import emission_integrity as EI
+
+    popup_pf = _pf("popup", [], f"hub:{PKG}/src/features/popup")
+    popup_pf.loc = 203        # entirely carve-contributed (organic = 0)
+    popup_pf.loc_flow = None
+    files = [f"{PKG}/src/features/popup/a.ts",
+             f"{PKG}/src/features/popup/b.ts"]
+    carve = _mk_carve(popup_pf, "popup", files, 203)
+    assert WBD.is_drain_carve_dev(carve)          # structured marker live
+
+    features = [carve]
+    result = EI.EmissionIntegrityResult()
+    out = EI._drop_anchored_husks(features, [popup_pf], [], [], result)
+
+    assert "popup" not in {p.name for p in out}   # PF dropped (as OFF)
+    assert "popup" in result.anchored_husk_pfs_dropped
+    # the carve dev lanes with its files (zero-loss, I22-visible).
+    assert carve.product_feature_id is None
+    assert carve.shared_reason == EI.ANCHORED_HUSK_REASON
+    assert carve.paths == sorted(files)
+
+
+def test_v4_receiver_with_organic_mass_untouched():
+    """A receiver with organic owned LOC that ALSO took drain mass is
+    never a husk candidate — the organic test keeps every legitimate
+    receiver (all OFF-board survivors passed this same test on organic
+    mass)."""
+    from faultline.pipeline_v2 import emission_integrity as EI
+
+    or_pf = _pf("object-record", [OR_ANCHOR], "route:/object-record")
+    or_pf.loc = 253                               # 50 organic + 203 carve
+    organic_dev = _dev("object-record-owner", [OR_ANCHOR],
+                       pfid="object-record")
+    organic_dev.loc = 50
+    carve = _mk_carve(or_pf, "object-record", [OR1, OR2], 203)
+
+    features = [organic_dev, carve]
+    result = EI.EmissionIntegrityResult()
+    out = EI._drop_anchored_husks(features, [or_pf], [], [], result)
+
+    assert "object-record" in {p.name for p in out}
+    assert carve.product_feature_id == "object-record"   # untouched
+    assert carve.shared_reason is None
+    assert result.anchored_husk_pfs_dropped == []
+
+
+def test_v4_no_marks_board_behaves_as_before():
+    """No drain marks anywhere → the pass takes the original test
+    verbatim: a zero-owned anchored husk still drops, an owned PF still
+    survives (pre-v4 behaviour, byte-identical)."""
+    from faultline.pipeline_v2 import emission_integrity as EI
+
+    husk_pf = _pf("stale-husk", [], f"hub:{PKG}/src/features/stale-husk")
+    husk_pf.loc = 0
+    husk_pf.loc_flow = None
+    owned_pf = _pf("real-thing", [OR_ANCHOR], "route:/real-thing")
+    owned_pf.loc = 500
+    owned_dev = _dev("real-thing-owner", [OR_ANCHOR], pfid="real-thing")
+    owned_dev.loc = 500
+
+    result = EI.EmissionIntegrityResult()
+    out = EI._drop_anchored_husks(
+        [owned_dev], [husk_pf, owned_pf], [], [], result)
+
+    assert {p.name for p in out} == {"real-thing"}
+    assert result.anchored_husk_pfs_dropped == ["stale-husk"]
+
+
 # ── Seg B — dev-artifact ws-packages off the product layer ───────────────────
 
 import json  # noqa: E402

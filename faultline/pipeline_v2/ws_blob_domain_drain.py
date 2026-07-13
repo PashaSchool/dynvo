@@ -88,6 +88,13 @@ WS_BLOB_DRAIN_ENV = "FAULTLINE_WS_BLOB_DOMAIN_DRAIN"
 #: I22 provenance tag stamped on every drained member (explainability).
 _DRAIN_MARKER = "b53_domain_drain"
 
+#: Structured dev-level carve marker (v4): every carve dev's ``anchor_id``
+#: carries this prefix — set by :func:`_make_drain_dev` on BOTH the
+#: pydantic and stub branches, content-addressed, serialization-schema
+#: neutral (no new model field). The anchored-husk pass keys its ORGANIC
+#: mass test on this predicate — never on a name suffix.
+_CARVE_ANCHOR_PREFIX = f"fold:{_DRAIN_MARKER}->"
+
 #: Ecosystem container conventions (data, not code — YAML source of truth).
 _CONTAINERS_FILE = "ws-blob-drain-containers.yaml"
 
@@ -97,9 +104,24 @@ _LANE_TAG = "__lane__"
 
 __all__ = [
     "WS_BLOB_DRAIN_ENV",
+    "is_drain_carve_dev",
     "ws_blob_domain_drain_enabled",
     "run_ws_blob_domain_drain",
 ]
+
+
+def is_drain_carve_dev(dev: Any) -> bool:
+    """Is *dev* a B53 drain-carve member dev? Structured marker: the
+    ``fold:b53_domain_drain-><target-anchor>`` ``anchor_id`` prefix (the
+    carve constructor stamps it deterministically). Used by the
+    emission-integrity anchored-husk pass to judge husk candidacy on
+    ORGANIC mass only — drain-contributed mass must never spare a PF row
+    the OFF board would drop (PF-survival invariance; typebot Popup).
+    Boards with no drain marks return False everywhere → that pass stays
+    byte-identical."""
+    aid = (dev.get("anchor_id") if isinstance(dev, dict)
+           else getattr(dev, "anchor_id", None))
+    return str(aid or "").startswith(_CARVE_ANCHOR_PREFIX)
 
 
 def ws_blob_domain_drain_enabled() -> bool:

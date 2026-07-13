@@ -335,13 +335,42 @@ def _drop_anchored_husks(
         return not (getattr(feat, "loc", None)
                     or getattr(feat, "loc_flow", None))
 
+    # B53 v4 — the husk test judges ORGANIC mass only. The Stage-6.885b
+    # drain moves member files at the dev level, so a foldproof husk
+    # (typebot Popup: OFF board lanes it via THIS rule, loc=0) could come
+    # back flag-ON wearing drain-contributed LOC (carve dev 203 LOC ⇒
+    # pf.loc=203 ⇒ candidacy defeated ⇒ +1 flowless product PF the OFF
+    # board does not have). Drain mass must never change PF SURVIVAL:
+    # carve devs (structured ``fold:b53_domain_drain->`` anchor marker)
+    # are treated as zero-owned at dev grain, and their loc/loc_flow is
+    # subtracted from the pf-row's own test (PF loc is the member-dev
+    # rollup, so the carve is the only mass channel). A husk verdict then
+    # runs the UNCHANGED machinery below — the flowless carve dev unbinds
+    # to the platform lane carrying the drained files (zero-loss,
+    # I22-visible; the lane row's LOC vs the OFF board's 0 is an accepted
+    # honest delta). Boards with no drain marks take the original test
+    # verbatim (flag-OFF ⇒ byte-identical trivially).
+    from faultline.pipeline_v2.ws_blob_domain_drain import is_drain_carve_dev
+
     candidates: list["Feature"] = []
     for pf in product_features:
         if _is_platform_bucket(pf) or not getattr(pf, "anchor_id", None):
             continue
-        if not _zero_owned(pf) or (getattr(pf, "flows", None) or []):
+        if getattr(pf, "flows", None) or []:
             continue
-        if any(not _zero_owned(d) for d in devs_by_pf.get(_pf_key(pf), [])):
+        bound = devs_by_pf.get(_pf_key(pf), [])
+        carves = [d for d in bound if is_drain_carve_dev(d)]
+        if carves:
+            organic_loc = (getattr(pf, "loc", None) or 0) - sum(
+                (getattr(d, "loc", None) or 0) for d in carves)
+            organic_flow = (getattr(pf, "loc_flow", None) or 0) - sum(
+                (getattr(d, "loc_flow", None) or 0) for d in carves)
+            if organic_loc > 0 or organic_flow > 0:
+                continue
+        elif not _zero_owned(pf):
+            continue
+        if any(not _zero_owned(d) for d in bound
+               if not is_drain_carve_dev(d)):
             continue
         candidates.append(pf)
     if not candidates:
