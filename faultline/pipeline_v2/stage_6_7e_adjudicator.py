@@ -102,6 +102,11 @@ _CACHE_VERSION = 1
 #: beyond the budget are skipped and counted — never silently retried.
 _MAX_STAGE_COST_USD = 1.5
 
+#: Operator-audit sample cap — accepted verdicts persist their verified
+#: citation packets (file + exact_string + rung) into telemetry so the
+#: operator can hand-check the evidence without exhuming the llm-cache.
+_CITATIONS_SAMPLE_CAP = 40
+
 #: Work bounds (bounds-of-work only, not tuned to any repo).
 _BATCH_SIZE = 16
 _MAX_SELECTED = 200
@@ -857,6 +862,7 @@ def run_stage_6_7e(
         "merge_map": [],
         "demote_map": [],
         "renames": [],
+        "citations_applied": [],
     }
     gaps: list[Any] = []
 
@@ -934,6 +940,21 @@ def run_stage_6_7e(
     def _live_ids() -> set[str]:
         return {str(getattr(u, "id", "") or "") for u in user_flows}
 
+    def _keep_citations(uid: str, verdict: str, cits: list[Any]) -> None:
+        """Persist an ACCEPTED verdict's verified citation packet (capped)
+        — the operator's hand-audit trail (file + exact_string + rung)."""
+        if len(tele["citations_applied"]) >= _CITATIONS_SAMPLE_CAP:
+            return
+        tele["citations_applied"].append({
+            "uf_id": uid, "verdict": verdict,
+            "citations": [
+                {"file": str(c.get("file") or ""),
+                 "exact_string": str(c.get("exact_string") or ""),
+                 "rung": str(c.get("rung") or "")}
+                for c in cits if isinstance(c, dict)
+            ],
+        })
+
     for v in ordered:
         uid = str(v.get("uf_id") or "")
         verdict = str(v.get("verdict") or "")
@@ -991,6 +1012,7 @@ def run_stage_6_7e(
                              user_flows, vocab, pfd, tele):
                 tele["verdicts"]["rename"] += 1
                 seen_uids.add(uid)
+                _keep_citations(uid, "rename", citations)
         else:  # rung_evidence
             if not citations:
                 _reject(tele, "evidence-no-citations")
@@ -1005,6 +1027,7 @@ def run_stage_6_7e(
                     adjudicated_sources[uid].append(r)
             tele["verdicts"]["rung_evidence"] += 1
             seen_uids.add(uid)
+            _keep_citations(uid, "rung_evidence", citations)
 
     # ── Law C re-score — confidence is only ever written by Law C ────
     applied = (adjudicated_sources or tele["verdicts"]["merge"]

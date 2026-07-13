@@ -191,6 +191,24 @@ class TestCitationVerifier:
         assert _state(ufs)[1] == before[1]    # unselected row untouched
         assert gaps == []
 
+    def test_accepted_citations_persisted_for_audit(self, tmp_path):
+        """An ACCEPTED verdict's verified citation packet lands in
+        tele['citations_applied'] — the operator's hand-audit trail."""
+        pfs, ufs, flows = _widget_board(tmp_path)
+        tele, _gaps, _ = _run(ufs, flows, pfs, tmp_path, [_verdicts_payload([
+            {"uf_id": "UF-1", "verdict": "rung_evidence",
+             "citations": [{"file": "app/widgets.tsx",
+                            "exact_string": "widget_board",
+                            "rung": "i18n-key"}]},
+        ])])
+        assert tele["verdicts"]["rung_evidence"] == 1
+        assert tele["citations_applied"] == [{
+            "uf_id": "UF-1", "verdict": "rung_evidence",
+            "citations": [{"file": "app/widgets.tsx",
+                           "exact_string": "widget_board",
+                           "rung": "i18n-key"}],
+        }]
+
     def test_fake_citation_rejected(self, tmp_path):
         pfs, ufs, flows = _widget_board(tmp_path)
         payload = _verdicts_payload([{
