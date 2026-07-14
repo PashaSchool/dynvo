@@ -534,8 +534,10 @@ def test_segb_inert_without_the_b58_fence(monkeypatch):
     """Cap ON / B58 guard OFF: rung 2.5 feeds a fence that is not armed —
     the mint stays byte-identical to the plain OFF world (the cap is a
     sub-mechanism of the annexation guard, mirroring the B22/B23
-    lock-step precedent)."""
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    lock-step precedent). Explicit ``=0`` (not delenv): the guard's
+    default flipped ON at B62/ks29 — the test's semantics must be
+    default-agnostic across both worlds."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     monkeypatch.setenv(SAMEUNIT_DOMAIN_CAP_ENV, "1")
     host, victim = _segb_host(), _segb_victim()
     pfs, tele = run_anchored_mint(
