@@ -90,6 +90,10 @@ from faultline.pipeline_v2.extractors._util import (
 )
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
 from faultline.pipeline_v2.extractors.route import RouteFileExtractor
+from faultline.pipeline_v2.lazy_imports import (
+    dispatch_resolver_enabled,
+    ts_lazy_binding_specs,
+)
 from faultline.pipeline_v2.profiles._pages_surface import (
     _JS_EXTS,
     _PagesIndex,
@@ -461,16 +465,202 @@ def _build_alias_map(ctx: "ScanContext") -> dict[str, tuple[str, ...]]:
     return {k: tuple(sorted(v)) for k, v in out.items()}
 
 
-def _route_slug(path_literal: str) -> str:
-    """First meaningful static segment of a route path literal."""
+def _route_slug(path_literal: str, skip_interp: bool = False) -> str:
+    """First meaningful static segment of a route path literal.
+
+    B64 — ``skip_interp`` (armed only by the dispatch-resolver flag): a
+    segment carrying template interpolation (``${…}``) is DYNAMIC, the
+    same law as ``:param`` — interpolation TEXT is never a static
+    segment (pre-fix it minted garbage slugs like ``debug-path`` from
+    ``${debugPath()}/changesets``; wave-17 outline raw-dir-slug row)."""
     for seg in path_literal.split("/"):
         seg = seg.strip()
         if not seg or seg.startswith((":", "*")) or seg == "*":
+            continue
+        if skip_interp and "${" in seg:
             continue
         slug = slugify(seg)
         if slug and not is_noise(slug):
             return slug
     return ""
+
+
+# ── B64 (b) route-path const-fold ─────────────────────────────────────────
+#
+# A react-router ``path={draftsPath()}`` / ``{ path: ROUTES.home }`` carries
+# its route literal INDIRECTLY through a pure route-helper or a route-const
+# instead of a quoted string, so the literal-only ``_PATH_ATTR_RE`` /
+# ``_PATH_KEY_RE`` miss and the whole ``<Route>`` (path AND component) is
+# dropped — the outline "~87% invisible" class. B64 folds ONE level of PURE
+# literal-returning helpers/consts (in this file OR the imported definition
+# file) back into the literal so the route survives. Anti-cases — free vars,
+# call args, conditionals, concatenation, objects, interpolated templates,
+# multi-statement bodies — are an honest SKIP: no route path is invented
+# (the residual is the B63 metric). Runtime is never interpreted.
+_PATH_EXPR_ATTR_RE = re.compile(r"""\bpath\s*=\s*\{\s*([^{}]+?)\s*\}""")
+_PATH_EXPR_KEY_RE = re.compile(
+    r"""\bpath\s*:\s*([A-Za-z_$][\w$.]*(?:\(\s*\))?)\s*(?=[,}\n])""",
+)
+_EXPR_CALL_RE = re.compile(r"^([A-Za-z_$][\w$]*)\(\s*\)$")
+_EXPR_IDENT_RE = re.compile(r"^([A-Za-z_$][\w$]*)$")
+_EXPR_MEMBER_RE = re.compile(r"^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$")
+#: A PURE string value — a whole quoted literal with NO template
+#: substitution. Whole-string anchors: any surrounding operator (``+``,
+#: ``?``, ``(``) breaks the match, so concatenation / ternaries never fold.
+_PURE_STR_RE = re.compile(r"""^(["'])((?:(?!\1)(?!\$\{).)*)\1$""")
+_PURE_TEMPLATE_RE = re.compile(r"^`([^`$]*)`$")
+
+
+def _pure_string_value(expr: str) -> str | None:
+    """The string VALUE of ``expr`` iff it is a pure string literal or a
+    substitution-free template — else ``None`` (honest skip)."""
+    expr = expr.strip()
+    m = _PURE_STR_RE.match(expr)
+    if m:
+        return m.group(2)
+    t = _PURE_TEMPLATE_RE.match(expr)
+    if t:
+        return t.group(1)
+    return None
+
+
+def _extract_pure_def(text: str, name: str) -> str | None:
+    """The pure route literal a same-file ``name`` def resolves to, else
+    ``None``. Handles ``function name() { return <pure>; }`` (EMPTY params,
+    SINGLE-return body), ``const name = () => <pure>`` (empty-param arrow),
+    and a bare ``const name = <pure-string>``. Any parameter, extra
+    statement, branch, or non-literal return → ``None``."""
+    n = re.escape(name)
+    fn = re.search(
+        r"(?:export\s+)?(?:async\s+)?function\s+" + n
+        + r"\s*\(\s*\)\s*(?::[^{]+?)?\{\s*return\s+([^;{}]+?)\s*;?\s*\}",
+        text, re.S,
+    )
+    if fn:
+        return _pure_string_value(fn.group(1))
+    cm = re.search(
+        r"(?:export\s+)?(?:const|let|var)\s+" + n
+        + r"\s*(?::[^=]+?)?=\s*([^\n;]+)",
+        text,
+    )
+    if cm:
+        rhs = cm.group(1).strip().rstrip(";").strip()
+        am = re.match(r"^\(\s*\)\s*(?::[^=]+?)?=>\s*(.+)$", rhs)
+        if am:
+            body = am.group(1).strip()
+            bm = re.match(r"^\{\s*return\s+([^;{}]+?)\s*;?\s*\}$", body)
+            if bm:
+                return _pure_string_value(bm.group(1))
+            return _pure_string_value(body)
+        return _pure_string_value(rhs)
+    return None
+
+
+def _extract_object_member(text: str, obj: str, member: str) -> str | None:
+    """The pure literal at ``obj.member`` for a flat literal-map const
+    (``const ROUTES = { home: "/home", ... }``), else ``None``."""
+    n = re.escape(obj)
+    m = re.search(
+        r"(?:export\s+)?(?:const|let|var)\s+" + n
+        + r"\s*(?::[^=]+?)?=\s*\{(.*?)\}",
+        text, re.S,
+    )
+    if not m:
+        return None
+    mem = re.escape(member)
+    em = re.search(
+        r"""(?:^|[,{])\s*['"]?""" + mem + r"""['"]?\s*:\s*([^,}\n]+)""",
+        m.group(1),
+    )
+    if em:
+        return _pure_string_value(em.group(1).strip())
+    return None
+
+
+def _make_path_folder(
+    text: str,
+    imports: dict[str, str],
+    rel: str,
+    tracked_set: frozenset[str],
+    alias_map: dict[str, tuple[str, ...]] | None,
+    repo_path,  # noqa: ANN001 — Path
+):
+    """Build the one-level const-fold callback for a router file.
+
+    ``fold(expr) -> str`` returns the folded route literal for a bare
+    ident / zero-arg call / ``obj.member`` expression, or ``""`` when the
+    expression is not a PURE literal-returning def reachable in ONE level
+    (same file, or the file its ident is imported from). Deterministic;
+    bounded (one def-file read per specifier, cached)."""
+    def_cache: dict[str, str | None] = {}
+
+    def _def_text(name: str) -> str | None:
+        spec = imports.get(name)
+        if not spec:
+            return None
+        if spec in def_cache:
+            return def_cache[spec]
+        target = _resolve_spec(spec, rel, tracked_set, alias_map)
+        txt = read_text(repo_path / target) if target else None
+        def_cache[spec] = txt
+        return txt
+
+    def fold(expr: str) -> str:
+        expr = expr.strip()
+        call = _EXPR_CALL_RE.match(expr)
+        if call:
+            name = call.group(1)
+            lit = _extract_pure_def(text, name)
+            if lit is None:
+                dt = _def_text(name)
+                lit = _extract_pure_def(dt, name) if dt else None
+            return lit or ""
+        member = _EXPR_MEMBER_RE.match(expr)
+        if member:
+            obj, mem = member.group(1), member.group(2)
+            lit = _extract_object_member(text, obj, mem)
+            if lit is None:
+                dt = _def_text(obj)
+                lit = _extract_object_member(dt, obj, mem) if dt else None
+            return lit or ""
+        ident = _EXPR_IDENT_RE.match(expr)
+        if ident:
+            name = ident.group(1)
+            lit = _extract_pure_def(text, name)
+            if lit is None:
+                dt = _def_text(name)
+                lit = _extract_pure_def(dt, name) if dt else None
+            return lit or ""
+        # A template literal whose EVERY ``${…}`` interpolation folds
+        # (same one-level purity law, recursion depth 1 by grammar —
+        # a folded value is a plain literal): ``${debugPath()}/changesets``
+        # → ``/debug/changesets``. Any unfoldable interpolation ⇒ "".
+        if expr.startswith("`") and expr.endswith("`") and "${" in expr:
+            body = expr[1:-1]
+            out_parts: list[str] = []
+            pos = 0
+            ok = True
+            while True:
+                i = body.find("${", pos)
+                if i < 0:
+                    out_parts.append(body[pos:])
+                    break
+                j = body.find("}", i)
+                if j < 0:
+                    ok = False
+                    break
+                out_parts.append(body[pos:i])
+                inner = fold(body[i + 2:j])
+                if not inner:
+                    ok = False
+                    break
+                out_parts.append(inner)
+                pos = j + 1
+            if ok:
+                return "".join(out_parts)
+        return ""
+
+    return fold
 
 
 class _RouterIndex:
@@ -496,8 +686,17 @@ class _RouterIndex:
         # ``alias_map is None`` (flag off) ⇒ ``_resolve_spec`` keeps its
         # ``src/``-only behaviour and no route tuples are recorded, so the
         # index is byte-identical to pre-B44.
+        #
+        # B64 — the dispatch-resolver is SELF-CONTAINED: resolving a lazy
+        # route sub-tree inherently needs alias resolution to reach
+        # ``~/``/``@/``-aliased scenes (the Stage 6.3 import tree already
+        # resolves those via tsconfig independently), so arming the resolver
+        # arms the same alias map + route emission. With BOTH flags off this
+        # is byte-identical to pre-B44/B64.
         self._alias_on = router_alias_resolve_enabled()
-        alias_map = _build_alias_map(ctx) if self._alias_on else None
+        self._resolver_on = dispatch_resolver_enabled()
+        _routes_on = self._alias_on or self._resolver_on
+        alias_map = _build_alias_map(ctx) if _routes_on else None
 
         self.entries: list[FlowEntry] = []
         self.router_files: set[str] = set()
@@ -505,28 +704,72 @@ class _RouterIndex:
         owned: dict[str, str] = {}
         route_tuples: dict[str, set[tuple[str, str, str]]] = defaultdict(set)
         seen: set[tuple[str, str, str]] = set()
+        scanned: set[str] = set()
+        # B64 (a): a router file that ``lazy(() => import("./sub"))``-loads a
+        # sub-route-tree (outline's ``routes/index.tsx`` → ``./authenticated``,
+        # the ~87% bridge) names files that must be scanned EVEN when they sit
+        # past the ``_MAX_SOURCE_READS`` I/O window — the lazy edge is
+        # explicit author evidence, not speculative I/O. These are drained
+        # after the bounded pass, cap-exempt but budgeted against pathology.
+        lazy_pending: list[str] = []
 
-        reads = 0
-        for rel in _candidate_order(candidates):
-            if reads >= _MAX_SOURCE_READS:
-                break
-            text = read_text(ctx.repo_path / rel)
-            reads += 1
-            if not text or not _ROUTER_GRAMMAR_RE.search(text):
-                continue
+        def _scan(rel: str, text: str) -> None:
             self.router_files.add(rel)
             imports = _import_map(text)
+            folder = (
+                _make_path_folder(
+                    text, imports, rel, tracked_set, alias_map,
+                    ctx.repo_path,
+                )
+                if self._resolver_on else None
+            )
 
-            for path_literal, ident in self._route_pairs(text):
+            for path_literal, ident in self._route_pairs(text, folder):
                 resolved = self._resolve_ident(
                     ident, imports, rel, tracked_set, alias_map,
                 ) if ident else None
-                slug = _route_slug(path_literal)
+                slug = _route_slug(
+                    path_literal, skip_interp=self._resolver_on,
+                )
                 if not slug and resolved is not None:
                     _segs, fname = _segments(resolved)
                     slug = slugify(_first_dot_token(fname))
+                # B64 — tertiary fallback: the RESOLVED component's own
+                # ident names the branch when both the path (all-dynamic
+                # segments) and the file stem (``index.ts``) are mute
+                # (outline ``${searchPath()}/:query?`` + ``Search/index.ts``
+                # → ``search``). Only the ident whose resolution produced
+                # ``resolved`` may name — a prop/wrapper name never does.
+                if (
+                    self._resolver_on
+                    and (not slug or is_noise(slug))
+                    and resolved is not None
+                    and ident
+                ):
+                    for cand in reversed(ident.split()):
+                        spec = imports.get(cand)
+                        if not spec or _resolve_spec(
+                            spec, rel, tracked_set, alias_map,
+                        ) != resolved:
+                            continue
+                        s = slugify(cand)
+                        if s and not is_noise(s):
+                            slug = s
+                        break
                 if not slug or is_noise(slug):
                     continue
+                # B64 — error-route shell rule: the SAME law the Pages
+                # profile enforces via ``_SHELL_STEMS`` (404/500/_error are
+                # framework wiring, never a capability) applied to SPA
+                # route intake (wave-17 outline ``'404'`` raw-slug +
+                # flowless rows).
+                if self._resolver_on:
+                    stem = ""
+                    if resolved is not None:
+                        _rsegs, rfname = _segments(resolved)
+                        stem = _first_dot_token(rfname)
+                    if slug in ("404", "500") or stem in _SHELL_STEMS:
+                        continue
                 entry_file = resolved if resolved is not None else rel
                 route = path_literal if path_literal.startswith("/") else (
                     "/" + path_literal
@@ -541,8 +784,49 @@ class _RouterIndex:
                 if resolved is not None:
                     buckets[slug].add(resolved)
                     owned.setdefault(resolved, slug)
-                    if self._alias_on:
+                    if _routes_on:
                         route_tuples[slug].add((route, "PAGE", resolved))
+
+            # B64 (a): enqueue lazily-imported sub-route-trees of THIS router
+            # file (deterministic sorted order). Non-router targets read once
+            # in the drain and skipped; only router-grammar files recurse.
+            if self._resolver_on:
+                for _local, spec in sorted(ts_lazy_binding_specs(text).items()):
+                    target = _resolve_spec(spec, rel, tracked_set, alias_map)
+                    if (
+                        target
+                        and target not in scanned
+                        and _is_js_source(target)
+                        and not _is_excluded_path(target)
+                        and not _is_test_path(target)
+                    ):
+                        lazy_pending.append(target)
+
+        reads = 0
+        for rel in _candidate_order(candidates):
+            if reads >= _MAX_SOURCE_READS:
+                break
+            if rel in scanned:
+                continue
+            text = read_text(ctx.repo_path / rel)
+            reads += 1
+            scanned.add(rel)
+            if not text or not _ROUTER_GRAMMAR_RE.search(text):
+                continue
+            _scan(rel, text)
+
+        # B64 (a): drain lazy-followed sub-routers (cap-exempt, budgeted).
+        lazy_reads = 0
+        while lazy_pending and lazy_reads < _MAX_SOURCE_READS:
+            rel = lazy_pending.pop(0)
+            if rel in scanned:
+                continue
+            scanned.add(rel)
+            lazy_reads += 1
+            text = read_text(ctx.repo_path / rel)
+            if not text or not _ROUTER_GRAMMAR_RE.search(text):
+                continue  # a leaf scene component — resolved, not a sub-router
+            _scan(rel, text)
 
         self.buckets: dict[str, tuple[str, ...]] = {
             slug: tuple(sorted(paths))
@@ -558,7 +842,7 @@ class _RouterIndex:
         }
 
     @staticmethod
-    def _route_pairs(text: str) -> list[tuple[str, str]]:
+    def _route_pairs(text, folder=None):  # noqa: ANN001,ANN205 — see below
         """(path literal, component ident) pairs declared in ``text``.
 
         Two grammars: JSX ``<Route path=... element={...}>`` (a bounded
@@ -566,6 +850,12 @@ class _RouterIndex:
         bracket matching is brittle) and route OBJECTS
         (``{ path: "x", element: <X/> }``) for the
         ``createBrowserRouter`` / ``useRoutes`` style.
+
+        B64 (b): ``folder`` (``None`` unless the dispatch-resolver flag is
+        armed) folds a NON-literal path (``path={draftsPath()}`` /
+        ``{ path: ROUTES.home }``) into its route literal one level deep;
+        ``folder is None`` ⇒ every non-literal path is dropped exactly as
+        pre-B64 (byte-identical).
         """
         pairs: list[tuple[str, str]] = []
 
@@ -597,8 +887,25 @@ class _RouterIndex:
             window = text[s:end]
             pm = _PATH_ATTR_RE.search(window)
             if not pm:
+                # B64 (b): a non-literal path (helper call / const / member)
+                # folds one level; unfoldable ⇒ dropped, as pre-B64.
+                if folder is not None:
+                    em = _PATH_EXPR_ATTR_RE.search(window)
+                    if em:
+                        folded = folder(em.group(1))
+                        if folded:
+                            pairs.append((folded, _component_in(window)))
                 continue  # pathless layout route — shell, not an entry
-            pairs.append((pm.group(1), _component_in(window)))
+            path = pm.group(1)
+            # B64 (b): an interpolated template path — fold every ``${…}``
+            # when possible (``${debugPath()}/changesets`` →
+            # ``/debug/changesets``); unfoldable ⇒ keep the raw text
+            # (the slug law treats interpolation segments as dynamic).
+            if folder is not None and "${" in path:
+                folded = folder("`" + path + "`")
+                if folded:
+                    path = folded
+            pairs.append((path, _component_in(window)))
 
         if re.search(
             r"createBrowserRouter\s*\(|createHashRouter\s*\("
@@ -611,6 +918,23 @@ class _RouterIndex:
                 if i + 1 < len(key_matches):
                     end = min(end, key_matches[i + 1].start())
                 pairs.append((pm.group(1), _component_in(text[pm.end():end])))
+
+            # B64 (b): route OBJECTS whose ``path`` is a helper/const/member
+            # (``{ path: ROUTES.home, element: <Home/> }``) — invisible to
+            # the literal-only ``_PATH_KEY_RE``. Fold one level; unfoldable
+            # entries are skipped. Only runs when the flag armed ``folder``.
+            if folder is not None:
+                expr_matches = list(_PATH_EXPR_KEY_RE.finditer(text))
+                for i, pm in enumerate(expr_matches):
+                    folded = folder(pm.group(1))
+                    if not folded:
+                        continue
+                    end = pm.end() + _ROUTE_WINDOW
+                    if i + 1 < len(expr_matches):
+                        end = min(end, expr_matches[i + 1].start())
+                    pairs.append(
+                        (folded, _component_in(text[pm.end():end])),
+                    )
 
         return pairs
 

@@ -45,14 +45,25 @@ from pathlib import Path
 
 __all__ = [
     "LAZY_IMPORT_EDGES_ENV",
+    "DISPATCH_RESOLVER_ENV",
     "LazyImportEdge",
     "lazy_import_edges_enabled",
+    "dispatch_resolver_enabled",
     "collect_lazy_import_edges",
     "build_py_module_index",
     "build_ts_suffix_index",
+    "ts_lazy_binding_specs",
 ]
 
 LAZY_IMPORT_EDGES_ENV = "FAULTLINE_LAZY_IMPORT_EDGES"
+
+#: B64 — dynamic-dispatch resolver kill-switch. Default OFF: every B64
+#: mechanism (import-tree lazy edge, route-helper const-fold, registry
+#: {key: Component}) is inert and its subsystem's output is byte-identical
+#: to pre-B64. Shared by ``stage_6_3_import_tree`` and the react-router SPA
+#: profile so ONE env var arms the whole feature. Registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS``; no KEY_SCHEMA bump.
+DISPATCH_RESOLVER_ENV = "FAULTLINE_DISPATCH_RESOLVER"
 
 #: Bounded read — route/service modules are small; this only guards
 #: pathological blobs (mirrors the census bound).
@@ -72,6 +83,41 @@ def lazy_import_edges_enabled() -> bool:
     return os.environ.get(LAZY_IMPORT_EDGES_ENV, "1").strip() in {
         "1", "true", "True",
     }
+
+
+def dispatch_resolver_enabled() -> bool:
+    """``True`` when ``FAULTLINE_DISPATCH_RESOLVER`` is set truthy (default
+    OFF). Arms all three B64 mechanisms at once; unset/``0`` keeps every
+    consuming subsystem byte-identical to pre-B64."""
+    return os.environ.get(DISPATCH_RESOLVER_ENV, "0").strip().lower() not in {
+        "", "0", "false", "no", "off",
+    }
+
+
+#: A ``const|let|var NAME = <wrapper>(() => import("<spec>"))`` binding —
+#: ANY wrapper around a dynamic import counts (``lazy``, ``React.lazy``,
+#: project ``lazyWithRetry``/``createLazyComponent``): resolution is the
+#: filter, so no wrapper name-list is needed. The bounded ``{0,200}`` gap
+#: keeps the match local to one declaration (mirrors the SPA profile's
+#: ``_LAZY_IMPORT_RE`` — kept in sync).
+_TS_LAZY_BINDING_RE = re.compile(
+    r"""\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=[^;]{0,200}?"""
+    r"""import\(\s*['"]([^'"]+)['"]\s*\)""",
+)
+
+
+def ts_lazy_binding_specs(source: str) -> dict[str, str]:
+    """``{local_name: specifier}`` for every lazy-import CONST BINDING in a
+    TS/JS source (``const Page = lazy(() => import("./Page"))``).
+
+    Only NAMED bindings are returned — a bare ``import("./x")`` with no
+    local name has nothing for an identifier-matching traversal to hook
+    onto, and is left to the side-channel :func:`collect_lazy_import_edges`.
+    Deterministic: first binding for a name wins (source order)."""
+    out: dict[str, str] = {}
+    for m in _TS_LAZY_BINDING_RE.finditer(source):
+        out.setdefault(m.group(1), m.group(2))
+    return out
 
 
 @dataclass(frozen=True)

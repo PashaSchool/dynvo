@@ -509,6 +509,19 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides the
     # separate later flip commit only (flip-protocol).
     "FAULTLINE_ARTIFACT_INK_LANE",
+    # B64 — dynamic-dispatch resolver. Additively resolves (a) lazy dynamic
+    # imports (`const X = lazy(() => import("./Y"))`) into the Stage 6.3
+    # import-tree traversal so lazily-loaded route sub-trees (outline's
+    # `lazy(() => import("./authenticated"))` — ~87% of the product) become
+    # reachable; (b) one-level const-folds pure literal-returning route
+    # helpers/consts (`draftsPath()` → "/drafts", `{path: ROUTES.home}`) so
+    # react-router SPA routes whose path is a helper call/const resolve into
+    # routes_index; (c) object/Map registries ({key: Component}) in a
+    # route-binding file → one route/import edge per Component. Free vars /
+    # conditionals / non-literal returns → honest skip (B63 metric measures
+    # the residual). Default OFF; =0/unset byte-identical. No KEY_SCHEMA
+    # bump (own later flip per flip-protocol).
+    "FAULTLINE_DISPATCH_RESOLVER",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
