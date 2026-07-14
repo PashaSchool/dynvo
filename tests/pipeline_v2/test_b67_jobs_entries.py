@@ -577,6 +577,62 @@ def test_k8s_non_cronjob_is_skipped(tmp_path: Path, jobs_on) -> None:
     assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="go")) == []
 
 
+# ── per-workspace merge: twin-slug routes preservation ───────────────────────
+
+
+def _twin_candidates():
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+
+    a = AnchorCandidate(
+        name="calendar-event-list-fetch",
+        paths=("pkg/srv/crons/jobs/calendar-event-list-fetch.cron.job.ts",),
+        source="jobs-entry",
+        confidence_self=0.85,
+        routes=(("/calendar-event-list-fetch", "CRON",
+                 "pkg/srv/crons/jobs/calendar-event-list-fetch.cron.job.ts"),),
+    )
+    b = AnchorCandidate(
+        name="calendar-event-list-fetch",
+        paths=("pkg/srv/jobs/calendar-event-list-fetch.job.ts",),
+        source="jobs-entry",
+        confidence_self=0.85,
+        routes=(("/calendar-event-list-fetch", "JOB",
+                 "pkg/srv/jobs/calendar-event-list-fetch.job.ts"),),
+    )
+    return a, b
+
+
+def test_ws_merge_preserves_twin_routes_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """twenty forensics class: same-slug cron/job twins coalesce in the
+    per-workspace merge and historically LOST their explicit routes (22 of 27
+    dropped rows). Flag ON -> the coalesced candidate carries the routes
+    union."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    monkeypatch.setenv(JOBS_ENTRIES_ENV, "1")
+    a, b = _twin_candidates()
+    merged = _merge_anchors_across_workspaces([("srv", {"jobs-entry": [a, b]})])
+    (cand,) = merged["jobs-entry"]
+    assert set(cand.routes) == set(a.routes) | set(b.routes)
+    assert set(cand.paths) == set(a.paths) | set(b.paths)
+
+
+def test_ws_merge_legacy_drop_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Flag OFF -> byte-identity: the coalesce keeps the LEGACY behavior
+    (routes dropped), so OFF-world boards are unchanged."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    monkeypatch.delenv(JOBS_ENTRIES_ENV, raising=False)
+    a, b = _twin_candidates()
+    merged = _merge_anchors_across_workspaces([("srv", {"jobs-entry": [a, b]})])
+    (cand,) = merged["jobs-entry"]
+    assert cand.routes == ()
+
+
 def test_deterministic_sorted_emission(tmp_path: Path, jobs_on) -> None:
     files = []
     for stem in ("zeta", "alpha", "mid"):

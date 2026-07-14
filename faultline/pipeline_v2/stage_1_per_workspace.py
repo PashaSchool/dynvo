@@ -356,6 +356,34 @@ def _merge_anchors_across_workspaces(
 
     merged: dict[str, list[AnchorCandidate]] = defaultdict(list)
 
+    # B67 twin-slug routes preservation (flag-gated for OFF byte-identity).
+    # Both rebuild paths below construct NEW AnchorCandidates and historically
+    # DROPPED the explicit ``routes`` (and ``route_groups``) fields — any
+    # same-(source, slug) candidates that coalesce lose their routes_index
+    # rows silently. twenty's B67 forensics: every cron has a same-slug job
+    # twin (crons/jobs/X.cron.job.ts + jobs/X.job.ts -> two 1-path candidates
+    # -> coalesce -> routes gone; 22 of 27 dropped rows). The same hole eats
+    # any DSL-routed extractor's twins on monorepos (FastAPI/Express) — but
+    # restoring them un-gated would change OFF-world boards, so the general
+    # cleanup rides the B67 flip; until then preservation is armed only by
+    # FAULTLINE_JOBS_ENTRIES.
+    from faultline.pipeline_v2.extractors.jobs_entries import (
+        jobs_entries_enabled,
+    )
+    preserve_routes = jobs_entries_enabled()
+
+    def _routes_union(
+        cands: list[AnchorCandidate],
+    ) -> tuple[tuple[str, str, str], ...]:
+        out: list[tuple[str, str, str]] = []
+        seen_r: set[tuple[str, str, str]] = set()
+        for c in cands:
+            for r in (c.routes or ()):
+                if r not in seen_r:
+                    seen_r.add(r)
+                    out.append(r)
+        return tuple(out)
+
     for (source, slug), items in grouped.items():
         if len(items) == 1:
             merged[source].append(items[0][1])
@@ -380,6 +408,10 @@ def _merge_anchors_across_workspaces(
                     display_name=cand.display_name,
                     rationale=(
                         f"{cand.rationale} [workspace={ws_name}]"
+                    ),
+                    routes=cand.routes if preserve_routes else (),
+                    route_groups=(
+                        cand.route_groups if preserve_routes else ()
                     ),
                 )
                 merged[source].append(renamed)
@@ -406,6 +438,10 @@ def _merge_anchors_across_workspaces(
                     rationale=(
                         f"per-workspace merged from "
                         f"workspaces={contributing_wss}"
+                    ),
+                    routes=(
+                        _routes_union([c for _, c in items])
+                        if preserve_routes else ()
                     ),
                 ),
             )
