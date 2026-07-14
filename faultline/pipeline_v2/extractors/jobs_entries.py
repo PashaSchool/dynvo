@@ -63,6 +63,13 @@ JOBS_ENTRIES_ENV = "FAULTLINE_JOBS_ENTRIES"
 #: pathological blobs (mirrors ``lazy_imports._MAX_BYTES``).
 _MAX_BYTES = 1_500_000
 
+#: Bounded lookahead (chars) for a Trigger.dev ``id:`` literal after the
+#: ``task({`` config-object opens. The id is conventionally the FIRST
+#: property (papermark/midday corpus shapes); the bound only guards against
+#: matching an unrelated ``id: "..."`` deep inside the run body — a work/
+#: precision guard, not a tuned threshold.
+_TRIG_ID_WINDOW = 400
+
 
 def jobs_entries_enabled() -> bool:
     """``True`` when ``FAULTLINE_JOBS_ENTRIES`` is set truthy (default OFF).
@@ -176,6 +183,12 @@ class _TsGrammars:
     node_cron_method: str
     agenda_call: re.Pattern[str]
     agenda_method: str
+    trig_require: re.Pattern[str]
+    trig_scheduled_call: re.Pattern[str]
+    trig_task_call: re.Pattern[str]
+    trig_id_literal: re.Pattern[str]
+    trig_scheduled_method: str
+    trig_task_method: str
     extensions: tuple[str, ...]
     suffixes: tuple[str, ...]
 
@@ -190,6 +203,7 @@ def _ts_grammars() -> _TsGrammars | None:
     worker = g.get("bullmq_worker") or {}
     ncron = g.get("node_cron") or {}
     agenda = g.get("agenda") or {}
+    trig = g.get("trigger_dev") or {}
 
     def _c(pat: str | None) -> re.Pattern[str]:
         return re.compile(pat or r"(?!x)x")  # never-match placeholder when absent
@@ -208,6 +222,12 @@ def _ts_grammars() -> _TsGrammars | None:
         node_cron_method=str(ncron.get("method") or "CRON"),
         agenda_call=_c(agenda.get("call_re")),
         agenda_method=str(agenda.get("method") or "JOB"),
+        trig_require=_c(trig.get("require_import_re")),
+        trig_scheduled_call=_c(trig.get("scheduled_call_re")),
+        trig_task_call=_c(trig.get("task_call_re")),
+        trig_id_literal=_c(trig.get("id_literal_re")),
+        trig_scheduled_method=str(trig.get("scheduled_method") or "CRON"),
+        trig_task_method=str(trig.get("task_method") or "JOB"),
         extensions=tuple(str(e) for e in (block.get("extensions") or ())),
         suffixes=tuple(str(s) for s in (block.get("suffix_strip") or ())),
     )
@@ -262,6 +282,33 @@ def _collect_ts_js(text: str, path: str) -> list[_Job]:
         if not slug:
             continue
         jobs.append(_Job(slug, gr.agenda_method, path, "agenda", am.group(1)))
+
+    # 5) Seg D — Trigger.dev v3: task({id, run}) / schedules.task({id, cron,
+    #    run}) — import-corroborated. Identity = the literal ``id:`` (the
+    #    author's declared task identity, searched in a BOUNDED window right
+    #    after the config-object opens — it is conventionally the first
+    #    property); a member-expr id is an honest meta-skip: fall back to the
+    #    bound const name; neither static token -> no emission (B64 law).
+    if gr.trig_require.search(text):
+        for call_re, method in (
+            (gr.trig_scheduled_call, gr.trig_scheduled_method),
+            (gr.trig_task_call, gr.trig_task_method),
+        ):
+            for tm in call_re.finditer(text):
+                window = text[tm.end(): tm.end() + _TRIG_ID_WINDOW]
+                im = gr.trig_id_literal.search(window)
+                if im:
+                    identity = im.group(1)
+                    id_meta = identity
+                elif tm.group(1):
+                    identity = tm.group(1)  # bound const name fallback
+                    id_meta = ""
+                else:
+                    continue  # dynamic id, anonymous binding -> honest skip
+                slug = slugify(_strip_suffixes(identity, gr.suffixes))
+                if not slug:
+                    continue
+                jobs.append(_Job(slug, method, path, "trigger-dev", id_meta))
 
     return jobs
 

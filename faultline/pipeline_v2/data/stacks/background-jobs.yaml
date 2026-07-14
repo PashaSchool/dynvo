@@ -85,6 +85,21 @@ ts_js:
     agenda:
       call_re: '\bagenda\.define\s*\(\s*[''"]([^''"]+)[''"]'
       method: JOB
+    # Seg D — Trigger.dev v3 (papermark 18, midday part): ``task({id: "...",
+    # run})`` (JOB) / ``schedules.task({id: "...", cron, run})`` (CRON) —
+    # import-corroborated (@trigger.dev/sdk). Identity = the literal ``id:``
+    # (the author's declared task identity); a member-expr id is an honest
+    # meta-skip — the entry falls back to the bound const name; neither
+    # static token -> no emission (B64 literal law). The bare ``task(`` form
+    # uses a negative lookbehind so ``schedules.task`` / ``myTask(`` /
+    # ``x.task(`` never match it.
+    trigger_dev:
+      require_import_re: '@trigger\.dev/'
+      scheduled_call_re: '(?:(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?\bschedules\.task\s*\(\s*\{'
+      task_call_re: '(?:(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?(?<![.\w$])task\s*\(\s*\{'
+      id_literal_re: 'id\s*:\s*[''"]([^''"]+)[''"]'
+      scheduled_method: CRON
+      task_method: JOB
 
 # ── Seg B — Python ──────────────────────────────────────────────────────────
 python:

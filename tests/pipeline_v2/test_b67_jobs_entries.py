@@ -206,6 +206,103 @@ def test_agenda_define(tmp_path: Path, jobs_on) -> None:
     assert a.routes[0][1] == "JOB"
 
 
+# ── Seg D — Trigger.dev v3 ───────────────────────────────────────────────────
+
+
+def test_trigger_dev_task_literal_id(tmp_path: Path, jobs_on) -> None:
+    """papermark: ``task({id: "...", run})`` with @trigger.dev/sdk import ->
+    JOB entry named by the author's declared id."""
+    rel = _write(
+        tmp_path,
+        "ee/features/billing/cancellation/lib/trigger/pause-resume-notification.ts",
+        'import { logger, task } from "@trigger.dev/sdk";\n\n'
+        "export const sendPauseResumeNotificationTask = task({\n"
+        '  id: "send-pause-resume-notification",\n'
+        "  retry: { maxAttempts: 3 },\n"
+        "  run: async (payload) => {},\n"
+        "});\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next"))
+    assert a.name == "send-pause-resume-notification"
+    assert a.routes == (("/send-pause-resume-notification", "JOB", rel),)
+
+
+def test_trigger_dev_schedules_task_is_cron(tmp_path: Path, jobs_on) -> None:
+    """midday: ``schedules.task({id})`` -> CRON entry; the bare-task grammar
+    must NOT double-fire on the same call."""
+    rel = _write(
+        tmp_path,
+        "packages/jobs/src/tasks/bank/scheduler/bank-scheduler.ts",
+        'import { logger, schedules } from "@trigger.dev/sdk";\n\n'
+        "export const bankSyncScheduler = schedules.task({\n"
+        '  id: "bank-sync-scheduler",\n'
+        "  maxDuration: 120,\n"
+        "  run: async (payload) => {},\n"
+        "});\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next"))
+    assert a.name == "bank-sync-scheduler"
+    assert a.routes == (("/bank-sync-scheduler", "CRON", rel),)
+
+
+def test_trigger_dev_member_expr_id_falls_back_to_binding(
+    tmp_path: Path, jobs_on
+) -> None:
+    """ANTI-CASE (lead-ruled): a member-expr id is an honest meta-skip — the
+    entry falls back to the bound const name (Task suffix stripped), and no
+    id meta leaks into the rationale (B64 literal law)."""
+    rel = _write(
+        tmp_path,
+        "lib/trigger/bulk-download.ts",
+        'import { task } from "@trigger.dev/sdk";\n\n'
+        "export const bulkDownloadTask = task({\n"
+        "  id: TASK_IDS.bulkDownload,\n"
+        "  run: async () => {},\n"
+        "});\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next"))
+    assert a.name == "bulk-download"
+    assert "queue" not in a.rationale
+
+
+def test_trigger_dev_dynamic_id_anonymous_is_skipped(
+    tmp_path: Path, jobs_on
+) -> None:
+    """ANTI-CASE: member-expr id AND no const binding -> no static token ->
+    honest full skip."""
+    rel = _write(
+        tmp_path,
+        "lib/trigger/x.ts",
+        'import { task } from "@trigger.dev/sdk";\n'
+        "register(task({ id: TASK_IDS.x, run: async () => {} }));\n",
+    )
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next")) == []
+
+
+def test_trigger_dev_without_import_is_skipped(tmp_path: Path, jobs_on) -> None:
+    """ANTI-CASE: ``task({id})`` with no @trigger.dev import -> skip (generic
+    ``task(`` calls are everywhere)."""
+    rel = _write(
+        tmp_path,
+        "src/x.ts",
+        'export const t = task({ id: "not-trigger", run: async () => {} });\n',
+    )
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next")) == []
+
+
+def test_trigger_dev_wrapped_calls_never_match(tmp_path: Path, jobs_on) -> None:
+    """ANTI-CASE: ``myTask({id})`` / ``obj.task({id})`` never match the bare
+    task grammar (negative lookbehind)."""
+    rel = _write(
+        tmp_path,
+        "src/y.ts",
+        'import { x } from "@trigger.dev/sdk";\n'
+        'const a = myTask({ id: "nope" });\n'
+        'obj.task({ id: "nope2" });\n',
+    )
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next")) == []
+
+
 # ── test-strip / storybook / examples (SACRED) ───────────────────────────────
 
 
