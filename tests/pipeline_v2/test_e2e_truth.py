@@ -437,9 +437,10 @@ def _bulk_setup():
 # -- B47 Arm B: keyless journey recall (member-ful orphan graduation) --------
 
 
-def test_keyless_journey_recall_flag_default_off(monkeypatch):
+def test_keyless_journey_recall_flag_default_on(monkeypatch):
+    # B62 flip: default ON (KEY_SCHEMA 29). Unset ⇒ enabled; X=0 disables.
     monkeypatch.delenv(KEYLESS_JOURNEY_RECALL_ENV, raising=False)
-    assert not keyless_journey_recall_enabled()
+    assert keyless_journey_recall_enabled()
     monkeypatch.setenv(KEYLESS_JOURNEY_RECALL_ENV, "1")
     assert keyless_journey_recall_enabled()
     monkeypatch.setenv(KEYLESS_JOURNEY_RECALL_ENV, "0")
@@ -487,9 +488,9 @@ def test_orphan_stays_honest_gap_when_no_flow_covers(monkeypatch):
 
 
 def test_orphan_member_attach_off_byte_identical(monkeypatch):
-    # Flag OFF (default): even a covering flow is ignored — output byte-identical
-    # to the pre-B47 member-less recall seed.
-    monkeypatch.delenv(KEYLESS_JOURNEY_RECALL_ENV, raising=False)
+    # Flag forced OFF (X=0; default ON post-B62): even a covering flow is
+    # ignored — output byte-identical to the pre-B47 member-less recall seed.
+    monkeypatch.setenv(KEYLESS_JOURNEY_RECALL_ENV, "0")
     dev, routes_index = _bulk_setup()
     covering = _flow("browse-documents-flow", _DOCS_ROUTE, uuid="u-docs")
     res = synthesize_orphan_journeys(

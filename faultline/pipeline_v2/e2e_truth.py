@@ -850,10 +850,11 @@ _ORPHAN_MEMBER_CAP = 8
 
 
 def keyless_journey_recall_enabled() -> bool:
-    """Default OFF; ``FAULTLINE_KEYLESS_JOURNEY_RECALL=1`` attaches route-matched
-    existing flows as members to groundable orphan journeys (B47 Arm B). OFF
-    keeps output byte-identical (orphans stay member-less recall seeds)."""
-    return os.environ.get(KEYLESS_JOURNEY_RECALL_ENV, "0").strip().lower() in {
+    """Default ON (flipped B62, KEY_SCHEMA 29): attaches route-matched
+    existing flows as members to groundable orphan journeys (B47 Arm B).
+    ``FAULTLINE_KEYLESS_JOURNEY_RECALL=0`` disables — output byte-identical
+    (orphans stay member-less recall seeds)."""
+    return os.environ.get(KEYLESS_JOURNEY_RECALL_ENV, "1").strip().lower() in {
         "1", "true", "on", "yes",
     }
 

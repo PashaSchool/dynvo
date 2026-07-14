@@ -569,3 +569,11 @@ def test_flowless_router_dev_still_lanes():
     d = next(x for x in devs if x.name == "rpc-router")
     assert d.product_feature_id is None
     assert d.shared_reason == "technology_instrument"
+
+
+@pytest.fixture(autouse=True)
+def _b62_pin_flowful_transport_lane(monkeypatch):
+    """B62 flip isolation: FAULTLINE_FLOWFUL_TRANSPORT_LANE defaults ON since KEY_SCHEMA 29; this
+    module tests the pre-B52 B19/B22 handoff world, so the flipped co-flag is pinned OFF
+    (same mechanical pattern as the b50/b57/b61 rung-isolation fixtures)."""
+    monkeypatch.setenv("FAULTLINE_FLOWFUL_TRANSPORT_LANE", "0")

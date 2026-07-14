@@ -107,10 +107,13 @@ def _verdicts_payload(verdicts: list[dict]) -> str:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    monkeypatch.delenv(ENV_FLAG, raising=False)
+    # B62: ENV_FLAG (adjudicator) and UF_RUNG_SOURCES_V2 default ON now, so
+    # pin the clean OFF baseline with X=0; the model / gap-channel knobs are
+    # not part of the flip and keep their unset defaults.
+    monkeypatch.setenv(ENV_FLAG, "0")
     monkeypatch.delenv("FAULTLINE_STAGE_6_7E_MODEL", raising=False)
     monkeypatch.delenv("FAULTLINE_COVERAGE_GAP_CHANNEL", raising=False)
-    monkeypatch.delenv("FAULTLINE_UF_RUNG_SOURCES_V2", raising=False)
+    monkeypatch.setenv("FAULTLINE_UF_RUNG_SOURCES_V2", "0")
     yield
 
 
@@ -161,7 +164,13 @@ class TestKeylessNoOp:
         assert gaps == []
         assert flows[0].user_flow_id == "UF-1"
 
-    def test_flag_default_off(self):
+    def test_flag_default_on(self, monkeypatch):
+        # B62 flip: default ON (KEY_SCHEMA 29). Unset ⇒ enabled; X=0 disables.
+        monkeypatch.delenv(ENV_FLAG, raising=False)
+        assert adjudicator_6_7e_enabled() is True
+        monkeypatch.setenv(ENV_FLAG, "1")
+        assert adjudicator_6_7e_enabled() is True
+        monkeypatch.setenv(ENV_FLAG, "0")
         assert adjudicator_6_7e_enabled() is False
 
 

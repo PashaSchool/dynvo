@@ -92,8 +92,11 @@ def _detect(repo, tracked, **kw):
 # ── flag wiring ──────────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch):
+def test_flag_default_on(monkeypatch):
+    # B62 flip: default ON (KEY_SCHEMA 29). Unset ⇒ enabled; X=0 disables.
     monkeypatch.delenv(ENV, raising=False)
+    assert ws_library_lane_enabled() is True
+    monkeypatch.setenv(ENV, "0")
     assert ws_library_lane_enabled() is False
 
 
@@ -113,9 +116,9 @@ def test_flag_on(monkeypatch):
 
 
 def test_off_is_byte_noop(tmp_path: Path, monkeypatch):
-    """Flag OFF: the generic library MINTS — no transport_candidates key,
-    no b48 telemetry (the kill-switch byte-identity contract)."""
-    monkeypatch.delenv(ENV, raising=False)
+    """Flag forced OFF (X=0; default ON post-B62): the generic library
+    MINTS — no transport_candidates key, no b48 telemetry (kill-switch)."""
+    monkeypatch.setenv(ENV, "0")
     tele = _detect(tmp_path, _library_repo(tmp_path))
     assert "packages/widgetkit" not in tele.get("instruments", {})
     assert "transport_candidates" not in tele
@@ -167,7 +170,7 @@ def test_name_dep_transport_lanes_on(tmp_path: Path, monkeypatch):
 
 
 def test_name_dep_off_is_noop(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv(ENV, raising=False)
+    monkeypatch.setenv(ENV, "0")  # default ON post-B62; pin OFF explicitly
     tele = _detect(tmp_path, _namedep_repo(tmp_path))
     assert "packages/trpc" not in (tele.get("transport_candidates") or {})
     assert "packages/trpc" not in tele.get("instruments", {})

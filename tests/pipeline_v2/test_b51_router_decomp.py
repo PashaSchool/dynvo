@@ -29,6 +29,8 @@ Anti-cases (spec §SACRED + §Гейти-1):
 
 from __future__ import annotations
 
+import pytest
+
 from faultline.pipeline_v2.transport_handoff import (
     TRANSPORT_ROUTER_DECOMP_ENV,
     TargetGrainIndex,
@@ -391,3 +393,11 @@ def test_no_new_product_feature_minted(monkeypatch):
     assert tele["pfs_minted"] == 0
     # only the candidate row left; no product PF was created.
     assert {pf.name for pf in pfs} == names_before - {"trpc"}
+
+
+@pytest.fixture(autouse=True)
+def _b62_pin_flowful_transport_lane(monkeypatch):
+    """B62 flip isolation: FAULTLINE_FLOWFUL_TRANSPORT_LANE defaults ON since KEY_SCHEMA 29; this
+    module tests the pre-B52 Option-B decomp world, so the flipped co-flag is pinned OFF
+    (same mechanical pattern as the b50/b57/b61 rung-isolation fixtures)."""
+    monkeypatch.setenv("FAULTLINE_FLOWFUL_TRANSPORT_LANE", "0")

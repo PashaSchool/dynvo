@@ -158,8 +158,11 @@ def _total_flows(devs):
 # ── flag ──────────────────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch):
+def test_flag_default_on(monkeypatch):
+    # B62 flip: default ON (KEY_SCHEMA 29). Unset ⇒ enabled; X=0 disables.
     monkeypatch.delenv(FLOWFUL_TRANSPORT_LANE_ENV, raising=False)
+    assert flowful_transport_lane_enabled() is True
+    monkeypatch.setenv(FLOWFUL_TRANSPORT_LANE_ENV, "0")
     assert flowful_transport_lane_enabled() is False
 
 
@@ -276,7 +279,7 @@ def test_conservation_sigma_flows_and_ufs(monkeypatch):
 def test_flag_off_b51_law_byte_identical(monkeypatch):
     """OFF ⇒ the B51 all-or-nothing law holds verbatim: the cal shape
     abstains (residue>0), trpc keeps its whole tile."""
-    monkeypatch.delenv(FLOWFUL_TRANSPORT_LANE_ENV, raising=False)
+    monkeypatch.setenv(FLOWFUL_TRANSPORT_LANE_ENV, "0")  # default ON post-B62
     monkeypatch.setenv(TRANSPORT_ROUTER_DECOMP_ENV, "1")
     fa = Fl("f-apikeys", [(_rf("apiKeys"), 80)], ep=_rf("apiKeys"),
             name="manage-api-keys")
@@ -496,7 +499,11 @@ def test_lane_builder_off_no_new_keys(monkeypatch):
         _SHARED_REASON_INSTRUMENT,
         build_platform_infrastructure_lane,
     )
-    monkeypatch.delenv(FLOWFUL_TRANSPORT_LANE_ENV, raising=False)
+    # Both default ON post-B62; pin OFF so the lane's accepted-reason set is
+    # the pre-I22 world (the ANNEXATION_GUARD-only _SHARED_REASON_DEV_ARTIFACT
+    # addition stays inert) and no FLOWFUL flow_ids/journeys keys appear.
+    monkeypatch.setenv(FLOWFUL_TRANSPORT_LANE_ENV, "0")
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     fl = Fl("f-x", [(_handler("admin"), 200)], ep=_handler("admin"))
     resident = Dev("trpc", None, [_handler("admin")], flows=[fl])
     resident.shared_reason = _SHARED_REASON_INSTRUMENT

@@ -134,9 +134,10 @@ def _twenty_world():
 # ── flag semantics ──────────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch):
+def test_flag_default_on(monkeypatch):
+    # B62 flip: default ON (KEY_SCHEMA 29). Unset ⇒ enabled; X=0 disables.
     monkeypatch.delenv(WBD.WS_BLOB_DRAIN_ENV, raising=False)
-    assert ws_blob_domain_drain_enabled() is False
+    assert ws_blob_domain_drain_enabled() is True
     monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "1")
     assert ws_blob_domain_drain_enabled() is True
     monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "0")
@@ -847,7 +848,7 @@ def _detect_b53(repo, tracked, routes):
 
 
 def test_segb_flag_off_byte_inert(tmp_path, monkeypatch):
-    monkeypatch.delenv(WBD.WS_BLOB_DRAIN_ENV, raising=False)
+    monkeypatch.setenv(WBD.WS_BLOB_DRAIN_ENV, "0")  # default ON post-B62
     tracked, routes = _twenty_monorepo(tmp_path)
     tele = _detect_b53(tmp_path, tracked, routes)
     da = tele.get("dev_artifact_units") or {}

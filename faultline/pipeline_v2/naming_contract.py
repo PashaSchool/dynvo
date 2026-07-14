@@ -322,43 +322,44 @@ def uf_devgrain_name_enabled() -> bool:
 
 
 def uf_name_degrime_enabled() -> bool:
-    """B50 Seg1-2 display de-grime. Default **OFF**;
-    ``FAULTLINE_UF_NAME_DEGRIME=1`` arms the adjacent-echo discriminator +
-    glyph-less deparam at the display JOINER. Unset ⇒ byte-identical."""
-    return os.environ.get(UF_NAME_DEGRIME_ENV, "0").strip().lower() in {
+    """B50 Seg1-2 display de-grime. Default **ON** (flipped B62, KEY_SCHEMA
+    29): the adjacent-echo discriminator + glyph-less deparam run at the
+    display JOINER. ``FAULTLINE_UF_NAME_DEGRIME=0`` disables (byte-identical)."""
+    return os.environ.get(UF_NAME_DEGRIME_ENV, "1").strip().lower() in {
         "1", "true",
     }
 
 
 def uf_resource_rung_enabled() -> bool:
-    """B50 Seg3 earned resource rung. Default **OFF**;
-    ``FAULTLINE_UF_RESOURCE_RUNG=1`` arms the member-noun / route / test
-    grounding rungs in Law C (adds OR-sources to ``res_grounded``, bar
-    unchanged). Unset ⇒ confidence + serialized output byte-identical."""
-    return os.environ.get(UF_RESOURCE_RUNG_ENV, "0").strip().lower() in {
+    """B50 Seg3 earned resource rung. Default **ON** (flipped B62,
+    KEY_SCHEMA 29): the member-noun / route / test grounding rungs run in
+    Law C (adds OR-sources to ``res_grounded``, bar unchanged).
+    ``FAULTLINE_UF_RESOURCE_RUNG=0`` disables (confidence + serialized
+    output byte-identical)."""
+    return os.environ.get(UF_RESOURCE_RUNG_ENV, "1").strip().lower() in {
         "1", "true",
     }
 
 
 def uf_rung_sources_v2_enabled() -> bool:
-    """B57 Seg1 rung-source expansion. Default **OFF**;
-    ``FAULTLINE_UF_RUNG_SOURCES_V2=1`` arms the nav-cluster / i18n-key /
-    route-method / test-assert grounding rungs in Law C (adds OR-sources
-    to ``res_grounded`` / ``verb_grounded``, bar unchanged). Unset ⇒
-    confidence + serialized output byte-identical."""
-    return os.environ.get(UF_RUNG_SOURCES_V2_ENV, "0").strip().lower() in {
+    """B57 Seg1 rung-source expansion. Default **ON** (flipped B62,
+    KEY_SCHEMA 29): the nav-cluster / i18n-key / route-method / test-assert
+    grounding rungs run in Law C (adds OR-sources to ``res_grounded`` /
+    ``verb_grounded``, bar unchanged). ``FAULTLINE_UF_RUNG_SOURCES_V2=0``
+    disables (confidence + serialized output byte-identical)."""
+    return os.environ.get(UF_RUNG_SOURCES_V2_ENV, "1").strip().lower() in {
         "1", "true",
     }
 
 
 def uf_verb_snap_enabled() -> bool:
-    """B61 Seg1 evidence-born verb-snap. Default **OFF**;
-    ``FAULTLINE_UF_VERB_SNAP=1`` arms the deterministic lead-verb snap
-    (replace a lying lead verb with the canonical verb of the member
-    verb-composition's dominant family). DISPLAY channel; the ONLY
-    UF-name-changing flag. Unset ⇒ names + confidence + serialized output
-    byte-identical."""
-    return os.environ.get(UF_VERB_SNAP_ENV, "0").strip().lower() in {
+    """B61 Seg1 evidence-born verb-snap. Default **ON** (flipped B62,
+    KEY_SCHEMA 29): the deterministic lead-verb snap runs (replace a lying
+    lead verb with the canonical verb of the member verb-composition's
+    dominant family). DISPLAY channel; the ONLY UF-name-changing flag.
+    ``FAULTLINE_UF_VERB_SNAP=0`` disables (names + confidence + serialized
+    output byte-identical)."""
+    return os.environ.get(UF_VERB_SNAP_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

@@ -299,8 +299,12 @@ def test_locale_value_only_source_is_forbidden(
     assert src == "missing:expansion"
 
 
-def test_flag_off_orchestrator_is_not_flagged(tmp_path: Path) -> None:
-    # No env ⇒ default OFF ⇒ even with evidence present, no work is done.
+def test_flag_off_orchestrator_is_not_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default ON post-B62; pin OFF via X=0 ⇒ even with evidence present,
+    # no work is done.
+    monkeypatch.setenv(FULLNAME_LAW_ENV, "0")
     assert not pf_fullname_law_enabled()
     _write(tmp_path, "auth/saml.ts", "const singleSignOnServices = 1;")
     pf = _PF(rels=["auth/saml.ts"])
@@ -615,9 +619,12 @@ def test_integration_uf_inherits_expansion(
     assert tele["uf_fullname_inherited"] == 1
 
 
-def test_integration_flag_off_byte_identical_scan_meta(tmp_path: Path) -> None:
-    # Flag OFF ⇒ no B56 telemetry keys, no display expansion (byte-identical
-    # scan_meta.naming_contract vs pre-B56).
+def test_integration_flag_off_byte_identical_scan_meta(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag forced OFF (X=0; default ON post-B62) ⇒ no B56 telemetry keys, no
+    # display expansion (byte-identical naming_contract telemetry vs pre-B56).
+    monkeypatch.setenv(FULLNAME_LAW_ENV, "0")
     _write(tmp_path, "packages/sso/saml.ts",
            "const singleSignOnServices = 1;")
     pf = _pf_feature("sso", "Sso", "ws:packages/sso",

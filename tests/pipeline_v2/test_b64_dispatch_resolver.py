@@ -280,7 +280,9 @@ def test_spa_off_drops_helper_path_routes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(DISPATCH_RESOLVER_ENV, raising=False)
-    monkeypatch.delenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", raising=False)
+    # B62 flip isolation: ROUTER_ALIAS_RESOLVE defaults ON since KEY_SCHEMA
+    # 29; this test's world is the alias-arm-OFF one, so pin explicitly.
+    monkeypatch.setenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", "0")
     ctx = _ctx(tmp_path, _SPA_FILES)
     anchors = _spa_anchors(ctx)
     # Both routes use a helper-fn path ⇒ dropped ⇒ scenes invisible.
@@ -294,7 +296,9 @@ def test_spa_on_folds_pure_helper_route(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(DISPATCH_RESOLVER_ENV, "1")
-    monkeypatch.delenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", raising=False)
+    # B62 flip isolation: ROUTER_ALIAS_RESOLVE defaults ON since KEY_SCHEMA
+    # 29; this test's world is the alias-arm-OFF one, so pin explicitly.
+    monkeypatch.setenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", "0")
     ctx = _ctx(tmp_path, _SPA_FILES)
     anchors = _spa_anchors(ctx)
     # draftsPath() folds ⇒ Drafts scene surfaces under the "drafts" branch
@@ -392,7 +396,9 @@ def test_hygiene_rules_off_byte_identical(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(DISPATCH_RESOLVER_ENV, raising=False)
-    monkeypatch.delenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", raising=False)
+    # B62 flip isolation: ROUTER_ALIAS_RESOLVE defaults ON since KEY_SCHEMA
+    # 29; this test's world is the alias-arm-OFF one, so pin explicitly.
+    monkeypatch.setenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", "0")
     ctx = _ctx(tmp_path, _HYGIENE_FILES)
     anchors = _spa_anchors(ctx)
     # Pre-B64 behaviour preserved: raw template text mints its face-value

@@ -243,9 +243,10 @@ def ws_library_lane_enabled() -> bool:
     (no route/page surface via the route veto; not nav-confirmed) plus the
     import-direction library shape (or the B19 name-dep transport signature)
     are the mechanism. Candidates ride the B19/B22 transport-handoff channel
-    for journey conservation (never mint-time laning). ``=1``/``true`` opts
-    in; OFF is byte-identical to pre-B48."""
-    return os.environ.get(WS_LIBRARY_LANE_ENV, "0").strip().lower() in {
+    for journey conservation (never mint-time laning). Default ON (flipped
+    B62, KEY_SCHEMA 29); ``FAULTLINE_WS_LIBRARY_LANE=0`` disables
+    (byte-identical to pre-B48)."""
+    return os.environ.get(WS_LIBRARY_LANE_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

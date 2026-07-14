@@ -84,8 +84,9 @@ REACT_ROUTER_FW_PROFILE_ENV = "FAULTLINE_REACT_ROUTER_FW_PROFILE"
 
 
 def react_router_fw_profile_enabled() -> bool:
-    """``True`` when ``FAULTLINE_REACT_ROUTER_FW_PROFILE`` is set truthy."""
-    return os.environ.get(REACT_ROUTER_FW_PROFILE_ENV, "0").strip() not in {
+    """Default ON (flipped B62, KEY_SCHEMA 29); unset ≡ explicit-1.
+    ``FAULTLINE_REACT_ROUTER_FW_PROFILE=0`` (or false/off) disables."""
+    return os.environ.get(REACT_ROUTER_FW_PROFILE_ENV, "1").strip() not in {
         "", "0", "false", "False",
     }
 
