@@ -126,3 +126,30 @@ python:
       require_import_re: 'django_q|django-q'
       async_task_re: '\basync_task\s*\(\s*[''"]([\w.]+)[''"]'
       schedule_re: '\bschedule\s*\(\s*[''"]([\w.]+)[''"]'
+
+# ── Seg C — manifest cron (markers, NOT duplicates) ─────────────────────────
+manifests:
+  # Vercel ``crons[]`` — each entry's ``path`` is (almost always) an EXISTING
+  # api/cron route. system_flows already stamps those routes ``scheduled`` from
+  # the same vercel.json, so this extractor emits NOTHING for a cron path that
+  # resolves to a tracked route file (marker, not a duplicate entry — the
+  # SACRED dup-vercel-cron anti-case). A cron path with NO tracked route file
+  # (an orphan target) DOES get a CRON entry keyed on the path.
+  vercel:
+    filenames: ["vercel.json"]
+    crons_key: "crons"
+    path_key: "path"
+    # Route roots a "/api/cron/x" path may resolve to (Next app/pages router).
+    route_roots: ["app", "pages", "src/app", "src/pages"]
+    route_leaves: ["route.ts", "route.js", "route.tsx", "route.jsx"]
+  # GitHub Actions scheduled workflows — a NEW scheduled entry keyed on the
+  # workflow ``name`` (or file stem). NOT a route file, so no dedup concern.
+  github_actions:
+    dir_marker: ".github/workflows/"
+    extensions: [".yml", ".yaml"]
+    method: CRON
+  # Kubernetes ``CronJob`` — a NEW scheduled entry keyed on ``metadata.name``.
+  k8s_cronjob:
+    extensions: [".yml", ".yaml"]
+    kind: "CronJob"
+    method: CRON

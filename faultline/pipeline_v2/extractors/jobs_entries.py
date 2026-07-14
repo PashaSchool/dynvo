@@ -40,10 +40,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+import yaml
+
 from faultline.pipeline_v2.data import load_stack_yaml
 from faultline.pipeline_v2.extractors._util import (
     has_any_suffix,
     posix,
+    read_json,
     read_text,
     slugify,
 )
@@ -407,6 +410,137 @@ def _collect_python(text: str, path: str) -> list[_Job]:
     return jobs
 
 
+# ── Seg C — manifest cron (markers, not duplicates) ──────────────────────────
+
+
+def _manifests_cfg() -> dict:
+    m = _cfg().get("manifests")
+    return m if isinstance(m, dict) else {}
+
+
+def _yaml_docs(text: str) -> list[dict]:
+    """Parse a (possibly multi-document) YAML file into its mapping docs.
+
+    Tolerant: a malformed file yields ``[]`` rather than raising."""
+    try:
+        return [d for d in yaml.safe_load_all(text) if isinstance(d, dict)]
+    except yaml.YAMLError:
+        return []
+
+
+def _workflow_on_block(doc: dict):
+    """Return a GitHub-Actions ``on:`` block, tolerating PyYAML's boolean
+    coercion of the bare ``on`` key (the YAML 1.1 "Norway problem": ``on:`` may
+    parse as the boolean ``True`` key)."""
+    for key in ("on", True, "on".upper()):
+        if key in doc:
+            return doc[key]
+    return None
+
+
+def _on_has_schedule(on_block) -> bool:
+    if isinstance(on_block, dict):
+        return "schedule" in on_block
+    if isinstance(on_block, list):
+        return "schedule" in on_block
+    return False
+
+
+def _vercel_route_exists(cron_path: str, tracked: set[str], vcfg: dict) -> bool:
+    """``True`` when a Vercel cron ``path`` resolves to a tracked route file
+    (=> the cron is a MARKER on an existing route, not a new entry)."""
+    segs = [s for s in cron_path.split("/") if s]
+    if not segs:
+        return False
+    roots = [str(r) for r in (vcfg.get("route_roots") or ())]
+    leaves = [str(x) for x in (vcfg.get("route_leaves") or ())]
+    sub = "/".join(segs)
+    for root in roots:
+        for leaf in leaves:
+            if f"{root}/{sub}/{leaf}" in tracked:
+                return True
+        # Next Pages: pages/api/cron/x.ts
+        for ext in (".ts", ".js", ".tsx", ".jsx"):
+            if f"{root}/{sub}{ext}" in tracked:
+                return True
+    return False
+
+
+def _collect_manifests(ctx: "ScanContext") -> list[_Job]:
+    mcfg = _manifests_cfg()
+    if not mcfg:
+        return []
+    vcfg = mcfg.get("vercel") or {}
+    gcfg = mcfg.get("github_actions") or {}
+    kcfg = mcfg.get("k8s_cronjob") or {}
+    tracked = {posix(f) for f in ctx.tracked_files}
+    jobs: list[_Job] = []
+
+    vercel_names = {str(n) for n in (vcfg.get("filenames") or ())}
+    gh_dir = str(gcfg.get("dir_marker") or ".github/workflows/")
+    gh_exts = tuple(str(e) for e in (gcfg.get("extensions") or ()))
+    gh_method = str(gcfg.get("method") or "CRON")
+    k_exts = tuple(str(e) for e in (kcfg.get("extensions") or ()))
+    k_kind = str(kcfg.get("kind") or "CronJob")
+    k_method = str(kcfg.get("method") or "CRON")
+
+    for path in sorted(tracked):
+        if _should_skip_path(path):
+            continue
+        basename = path.rsplit("/", 1)[-1]
+
+        # 1) Vercel crons[] — marker on an existing route, else orphan entry.
+        if basename in vercel_names:
+            conf = read_json(ctx.repo_path / path)
+            if isinstance(conf, dict):
+                crons = conf.get(str(vcfg.get("crons_key") or "crons"))
+                pkey = str(vcfg.get("path_key") or "path")
+                if isinstance(crons, list):
+                    for c in crons:
+                        if not isinstance(c, dict):
+                            continue
+                        cpath = c.get(pkey)
+                        if not isinstance(cpath, str) or not cpath:
+                            continue
+                        if _vercel_route_exists(cpath, tracked, vcfg):
+                            continue  # marker — system_flows stamps the route
+                        slug = slugify(cpath)
+                        if slug:
+                            jobs.append(_Job(slug, "CRON", path, "vercel-cron", cpath))
+            continue
+
+        # 2) GitHub Actions scheduled workflow -> new scheduled entry.
+        if gh_dir in f"/{path}" and has_any_suffix(path, gh_exts):
+            text = read_text(ctx.repo_path / path)
+            if text and len(text) <= _MAX_BYTES:
+                for doc in _yaml_docs(text):
+                    if _on_has_schedule(_workflow_on_block(doc)):
+                        name = doc.get("name")
+                        identity = str(name) if isinstance(name, str) and name else _file_stem(path)
+                        slug = slugify(identity)
+                        if slug:
+                            jobs.append(_Job(slug, gh_method, path, "github-actions", ""))
+                        break
+            continue
+
+        # 3) Kubernetes CronJob -> new scheduled entry.
+        if has_any_suffix(path, k_exts):
+            text = read_text(ctx.repo_path / path)
+            if not text or "CronJob" not in text or len(text) > _MAX_BYTES:
+                continue
+            for doc in _yaml_docs(text):
+                if str(doc.get("kind") or "") != k_kind:
+                    continue
+                meta = doc.get("metadata")
+                name = meta.get("name") if isinstance(meta, dict) else None
+                identity = str(name) if isinstance(name, str) and name else _file_stem(path)
+                slug = slugify(identity)
+                if slug:
+                    jobs.append(_Job(slug, k_method, path, "k8s-cronjob", ""))
+
+    return jobs
+
+
 # ── extractor ────────────────────────────────────────────────────────────────
 
 
@@ -438,11 +572,9 @@ class JobsEntryExtractor:
         if not jobs_entries_enabled():
             return []
 
-        collectors = _segment_collectors()
-        if not collectors:
-            return []
-
         jobs: list[_Job] = []
+
+        collectors = _segment_collectors()
         for raw in ctx.tracked_files:
             path = posix(raw)
             if _should_skip_path(path):
@@ -455,6 +587,10 @@ class JobsEntryExtractor:
                 continue
             for collect in active:
                 jobs.extend(collect(text, path))
+
+        # Seg C — manifest cron is a whole-repo pass (vercel needs route-file
+        # resolution across the tracked set).
+        jobs.extend(_collect_manifests(ctx))
 
         return _emit(jobs)
 

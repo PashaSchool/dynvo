@@ -369,6 +369,96 @@ def test_python_test_file_is_not_entry(tmp_path: Path, jobs_on) -> None:
     assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="django")) == []
 
 
+# ── Seg C — manifest cron: vercel / GitHub Actions / k8s ─────────────────────
+
+
+def test_vercel_cron_on_existing_route_is_marker_not_entry(
+    tmp_path: Path, jobs_on
+) -> None:
+    """SACRED dup anti-case: a vercel crons[] path that resolves to a tracked
+    route file emits NO entry (system_flows marks the existing route)."""
+    import json
+
+    _write(
+        tmp_path,
+        "vercel.json",
+        json.dumps({"crons": [{"path": "/api/cron/digest", "schedule": "0 0 * * *"}]}),
+    )
+    route = _write(tmp_path, "app/api/cron/digest/route.ts", "export function GET(){}\n")
+    anchors = JobsEntryExtractor().extract(
+        _ctx(tmp_path, ["vercel.json", route], stack="next")
+    )
+    # No jobs-entry row for the already-routed cron path.
+    assert all(a.source == "jobs-entry" for a in anchors)
+    assert not any(
+        "/api/cron/digest" in r[0] or "digest" == a.name
+        for a in anchors for r in a.routes
+    )
+
+
+def test_vercel_cron_orphan_target_gets_entry(tmp_path: Path, jobs_on) -> None:
+    """A vercel cron path with NO tracked route file (orphan) DOES get an
+    entry so the scheduled capability is not lost."""
+    import json
+
+    _write(
+        tmp_path,
+        "vercel.json",
+        json.dumps({"crons": [{"path": "/api/cron/orphan-sweep", "schedule": "*/5 * * * *"}]}),
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, ["vercel.json"], stack="next"))
+    assert a.routes[0][1] == "CRON"
+    assert "orphan-sweep" in a.name
+
+
+def test_github_actions_scheduled_workflow(tmp_path: Path, jobs_on) -> None:
+    rel = _write(
+        tmp_path,
+        ".github/workflows/nightly.yml",
+        "name: Nightly DB Backup\n"
+        "on:\n"
+        "  schedule:\n"
+        '    - cron: "0 3 * * *"\n'
+        "jobs:\n  run:\n    runs-on: ubuntu-latest\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next"))
+    assert a.name == "nightly-db-backup"
+    assert a.routes == (("/nightly-db-backup", "CRON", rel),)
+
+
+def test_github_actions_non_scheduled_is_skipped(tmp_path: Path, jobs_on) -> None:
+    """ANTI-CASE: a push-triggered workflow is not a scheduled entry."""
+    rel = _write(
+        tmp_path,
+        ".github/workflows/ci.yml",
+        "name: CI\non:\n  push:\n    branches: [main]\njobs: {}\n",
+    )
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="next")) == []
+
+
+def test_k8s_cronjob(tmp_path: Path, jobs_on) -> None:
+    rel = _write(
+        tmp_path,
+        "deploy/cronjob.yaml",
+        "apiVersion: batch/v1\nkind: CronJob\n"
+        "metadata:\n  name: cleanup-orphans\n"
+        'spec:\n  schedule: "0 * * * *"\n',
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="go"))
+    assert a.name == "cleanup-orphans"
+    assert a.routes[0][1] == "CRON"
+
+
+def test_k8s_non_cronjob_is_skipped(tmp_path: Path, jobs_on) -> None:
+    """ANTI-CASE: a Deployment manifest is not a scheduled entry."""
+    rel = _write(
+        tmp_path,
+        "deploy/web.yaml",
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n",
+    )
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="go")) == []
+
+
 def test_deterministic_sorted_emission(tmp_path: Path, jobs_on) -> None:
     files = []
     for stem in ("zeta", "alpha", "mid"):
