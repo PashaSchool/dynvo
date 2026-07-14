@@ -79,6 +79,27 @@ def test_off_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel])) == []
 
 
+def test_off_not_registered_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OFF byte-identity at the REGISTRY surface: scan_meta.extractor_hits
+    serializes every registered source key, so with the flag unset the
+    extractor must not even REGISTER (kill-switch lesson: the sole A/B diff
+    was ``extractor_hits.jobs-entry`` ONLY-IN-B). With the flag set it must
+    appear."""
+    from faultline.pipeline_v2.stage_1_extractors import (
+        _load_default_extractors,
+    )
+
+    monkeypatch.delenv(JOBS_ENTRIES_ENV, raising=False)
+    names_off = {e.name for e in _load_default_extractors()}
+    assert "jobs-entry" not in names_off
+
+    monkeypatch.setenv(JOBS_ENTRIES_ENV, "1")
+    names_on = {e.name for e in _load_default_extractors()}
+    assert "jobs-entry" in names_on
+    # the rest of the registry is unchanged by the flag
+    assert names_on - {"jobs-entry"} == names_off
+
+
 # ── @Processor (NestJS / BullMQ) ─────────────────────────────────────────────
 
 
