@@ -1,0 +1,105 @@
+# B68 — terminal 4-way classification: the known-lexer-hole taxonomy
+# (category (5) of the terminal classifier,
+# faultline/pipeline_v2/terminal_classification.py).
+#
+# DOCTRINE (operator, 2026-07-14): the gap channel is an INTERNAL
+# pipeline state, never a final board category. The ONLY legal residue
+# on an emitted board is a coverage_gaps[] row whose ``why_unresolved``
+# names a KNOWN extraction hole from THIS table — the B63-unseen
+# classes. A residue outside this table is stamped with the honest
+# ``unmapped`` fallback (a code constant, deliberately NOT in this
+# table) and the census gate treats it as FAIL — never hidden, never
+# invented.
+#
+# MECHANISMS, NOT VOCABULARIES: the classifier's rungs (dev-artifact
+# channel, test/generated/ink predicates, NamespaceEcho, live-flow
+# ownership) are code; this file only names the residue classes and the
+# deterministic evidence that identifies each — file extensions
+# (matched without reading) and content markers (plain substrings on
+# the first 64 KiB — zero LLM, zero regex backtracking). Every token is
+# a UNIVERSAL framework/language convention, never a repo name.
+#
+# ORDER IS LAW: classes are matched top-down per file, first hit wins
+# (extension-only classes first — no I/O; content-marker classes after).
+# As the B65/B66/B67 fix family closes holes, their classes mechanically
+# stop firing and category (5) trends to zero.
+
+schema_version: 1
+
+known_lexer_holes:
+  # Languages the AST/extraction layer does not parse today (the known
+  # Ruby-AST-gap family — 0 flows on Rails without .rb/.erb support).
+  - id: language-beyond-ast
+    ref: B63-unseen
+    why: "entry-surface-beyond-extraction: language-beyond-ast (B63)"
+    extensions:
+      - .rb
+      - .erb
+      - .php
+      - .blade.php
+      - .ex
+      - .exs
+      - .heex
+      - .java
+      - .kt
+      - .cs
+      - .scala
+      - .hbs
+      - .twig
+
+  # Config-as-product surfaces (manifest-declared behavior with no code
+  # entry point the flow layer can anchor — the config-as-product class).
+  - id: config-as-product
+    ref: B63-unseen
+    why: "entry-surface-beyond-extraction: config-as-product (B63)"
+    extensions:
+      - .yaml
+      - .yml
+      - .toml
+      - .ini
+
+  # NestJS class-based entry surfaces (decorated controller/provider
+  # classes — the B66 hole family).
+  - id: nestjs-class
+    ref: B66
+    why: "entry-surface-beyond-extraction: nestjs-class (B66)"
+    extensions:
+      - .ts
+    markers:
+      - "@Controller("
+      - "@Injectable("
+      - "@Resolver("
+      - "@WebSocketGateway("
+
+  # Background-job / cron handlers beyond the B67 extraction segments.
+  - id: background-jobs
+    ref: B67
+    why: "entry-surface-beyond-extraction: background-job/cron (B67)"
+    markers:
+      - "@Processor("
+      - "new Worker("
+      - "cron.schedule("
+      - "@Cron("
+      - "from celery"
+      - "import celery"
+      - "APScheduler"
+      - "@shared_task"
+      - "client.defineJob("
+
+  # Dynamic-dispatch entry surfaces the resolver cannot fold (B64
+  # residual: free vars / conditionals / non-literal returns).
+  - id: dynamic-dispatch
+    ref: B64
+    why: "entry-surface-beyond-extraction: dynamic-dispatch (B64)"
+    extensions:
+      - .ts
+      - .tsx
+      - .js
+      - .jsx
+      - .mjs
+      - .cjs
+    markers:
+      - "React.lazy("
+      - "lazy(() =>"
+      - "await import("
+      - "import.meta.glob("
