@@ -150,6 +150,24 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     _try("faultline.pipeline_v2.extractors.rails_views",     "RailsViewsExtractor")
     _try("faultline.pipeline_v2.extractors.rails_jobs",      "RailsJobsExtractor")
     _try("faultline.pipeline_v2.extractors.rails_stimulus",  "RailsStimulusExtractor")
+    # B67 — background-job / cron entry extractor. Emits a routes_index entry
+    # (synthetic JOB/CRON method) per @Processor/Worker/cron.schedule (TS/JS),
+    # celery/APScheduler/rq/trigger.dev (Python/TS), and manifest-cron
+    # (vercel/actions/k8s) handler, so background capabilities mint
+    # flows/journeys. Registration itself is FLAG-GATED (FAULTLINE_JOBS_ENTRIES,
+    # default OFF): scan_meta.extractor_hits serializes EVERY registered source
+    # key (phase_extract), so an unconditionally-registered-but-inert extractor
+    # still grows the OFF board by one key — the B67 kill-switch caught exactly
+    # that (plane/twenty digest mismatch, sole diff = extractor_hits.jobs-entry
+    # ONLY-IN-B). The extract() gate stays as a second guard.
+    try:
+        from faultline.pipeline_v2.extractors.jobs_entries import (
+            jobs_entries_enabled,
+        )
+        if jobs_entries_enabled():
+            _try("faultline.pipeline_v2.extractors.jobs_entries", "JobsEntryExtractor")
+    except ImportError:  # pragma: no cover — missing extractor is non-fatal
+        pass
 
     return out
 
