@@ -486,6 +486,18 @@ ENV_OUTPUT_FLAGS = (
     # commit per flip-protocol).
     "FAULTLINE_STAGE_6_7E_ADJUDICATOR",
     "FAULTLINE_STAGE_6_7E_MODEL",
+    # B61 Seg1 (2026-07-13) — evidence-born verb-snap: a deterministic
+    # post-pass that REPLACES a UF display's leading verb when its
+    # action-family is absent from the member verb-composition (B57
+    # member_verb_composition — HTTP-methods / page-kinds), snapping it to
+    # the canonical verb of the composition's dominant family (mutation
+    # outranks read). The FIRST flag permitted to change a UF NAME; carries
+    # its own kill-switch so the B40 UF-NAMES byte-stable law under the
+    # rung/adjudicator flags is preserved. Reshapes user_flows[].name (and,
+    # via Law C's structural:verb-composition rung, name_confidence/
+    # name_evidence). Default OFF; =0/unset byte-identical. No KEY_SCHEMA
+    # bump (flip is a separate later commit per flip-protocol).
+    "FAULTLINE_UF_VERB_SNAP",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
