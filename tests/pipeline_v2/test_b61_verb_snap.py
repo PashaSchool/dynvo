@@ -355,3 +355,41 @@ class TestGenericCompositionGrounding:
         assert u.name == "Create webhooks"
         assert tele["uf_verb_snap"]["generic_grounded"] == 0
         assert "structural:verb-composition-generic" not in (u.name_evidence or [])
+
+
+# ── iter3: never-worse mfams guard (real keyed-sample harm class) ────────
+
+
+class TestMemberNamedGuard:
+    def test_member_named_lead_never_snapped(self, monkeypatch):
+        monkeypatch.setenv(_FLAG, "1")
+        monkeypatch.setenv(_V2, "1")
+        # Page-only composition ({browse,view}) BUT a member flow NAME
+        # witnesses the create lead ('create-dataroom-flow' class) — the
+        # papermark 'Create and manage data rooms' harm case: the name is
+        # TRUE, the composition merely under-represents it. Never snapped.
+        f = _FL("f1", "create dataroom", paths=["app/datarooms/page.tsx"])
+        r = [{"file": "app/datarooms/page.tsx", "method": "PAGE"}]
+        u = _uf("UF-1", "Create and manage data rooms", "wh",
+                resource="data rooms", members=["f1"])
+        tele = _apply([u], [_pf("wh", "Data Rooms")], [f], r)
+        assert u.name == "Create and manage data rooms"   # never-worse
+        assert u.name_confidence == "high"                # base sources hold
+        assert tele["uf_verb_snap"]["snapped"] == 0
+        assert tele["uf_verb_snap"]["skipped_member_named"] == 1
+
+    def test_unwitnessed_lead_still_snaps(self, monkeypatch):
+        monkeypatch.setenv(_FLAG, "1")
+        monkeypatch.setenv(_V2, "1")
+        # No member flow name witnesses 'configure' (update family), member
+        # verbs are UNRECOGNIZED (mfams empty — else Law B's narrow floor
+        # owns the row), and the composition is read-only -> the honest
+        # born name is Browse.
+        f = _FL("f1", "process branding", paths=["app/branding/page.tsx"])
+        r = [{"file": "app/branding/page.tsx", "method": "PAGE"}]
+        u = _uf("UF-1", "Configure custom branding", "wh",
+                resource="custom branding", members=["f1"])
+        tele = _apply([u], [_pf("wh", "Branding")], [f], r)
+        assert u.name == "Browse custom branding"
+        assert u.name_confidence == "high"
+        assert tele["uf_verb_snap"]["snapped"] == 1

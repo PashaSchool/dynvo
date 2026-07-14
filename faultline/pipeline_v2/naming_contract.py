@@ -2163,6 +2163,20 @@ def _apply_uf_name_laws(
                 continue  # SACRED — empty composition, name unchanged
             if lead in comp:
                 continue  # verb already grounded by composition — no change
+            # b61-iter3 NEVER-WORSE guard (real keyed samples caught it):
+            # a lead the member FLOW-NAME families already witness (Law
+            # C's base ``lead in mfams`` source) is TRUE — page-only
+            # compositions under-represent mutations (server actions are
+            # invisible to routes_index), so overwriting a member-named
+            # Create/Verify/Run lead with a read verb would make the name
+            # LIE and could demote an already-high row ('Create and
+            # manage data rooms' -> 'Browse ...' harm class). Snap fires
+            # ONLY for rows whose lead no verb source grounds — the
+            # would-be missing:verb residue.
+            if lead in _mfams(_members(uf)):
+                _snap_tele["skipped_member_named"] = (
+                    _snap_tele.get("skipped_member_named", 0) + 1)
+                continue
             target = _dominant_comp_family(comp)
             if target is None:
                 continue
