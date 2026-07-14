@@ -1346,14 +1346,26 @@ class CoverageGap(BaseModel):
     #: The originating seed's ``synthesis_reason`` — traceability to the old
     #: recall-row world (``system_flow_recall`` / ``e2e_journey_recall``).
     synthesis_reason: str | None = None
+    #: B68 (2026-07-15) — terminal 4-way classification: stamped ONLY when
+    #: the terminal classifier (``FAULTLINE_TERMINAL_CLASSIFICATION``) kept
+    #: this row as legal (5)-residue — a reference to a KNOWN lexer hole
+    #: (``data/terminal-classification.yaml``, the B63-unseen classes) or
+    #: the honest ``unmapped`` fallback. ``None`` (key omitted from dumps —
+    #: byte-identity law) whenever the flag is off or the row was
+    #: classified away.
+    why_unresolved: str | None = None
 
     @model_serializer(mode="wrap")
     def _omit_none_authored(self, handler: Any) -> Any:
-        """Drop ``authored_label`` from dumps when ``None`` (the system
-        kinds) — the codebase omit-when-default convention."""
+        """Drop ``authored_label`` / ``why_unresolved`` from dumps when
+        ``None`` — the codebase omit-when-default convention (B45 / B68
+        byte-identity law)."""
         data = handler(self)
-        if isinstance(data, dict) and data.get("authored_label") is None:
-            data.pop("authored_label", None)
+        if isinstance(data, dict):
+            if data.get("authored_label") is None:
+                data.pop("authored_label", None)
+            if data.get("why_unresolved") is None:
+                data.pop("why_unresolved", None)
         return data
 
 
