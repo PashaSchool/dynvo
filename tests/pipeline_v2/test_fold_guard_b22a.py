@@ -26,6 +26,8 @@ no directory-name vocabulary, no thresholds.
 
 from __future__ import annotations
 
+import pytest
+
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -269,3 +271,11 @@ def test_no_workspace_units_guard_inert() -> None:
     assert victim.product_feature_id == metrics.product_feature_id
     assert "fold_walk_crossunit_rehomed" not in tele
     assert "fold_walk_crossunit_laned" not in tele
+
+
+@pytest.fixture(autouse=True)
+def _b62_pin_annexation_guard(monkeypatch):
+    """B62 flip isolation: FAULTLINE_ANNEXATION_GUARD defaults ON since KEY_SCHEMA 29; this
+    module tests the pre-B58 fold-guard world, so the flipped co-flag is pinned OFF
+    (same mechanical pattern as the b50/b57/b61 rung-isolation fixtures)."""
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")

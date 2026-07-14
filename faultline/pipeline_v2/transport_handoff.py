@@ -209,8 +209,9 @@ def transport_router_decomp_enabled() -> bool:
 
 
 def flowful_transport_lane_enabled() -> bool:
-    """B52 flow-bearing transport lane (Option A) — default OFF. When ON,
-    a ws-anchored transport candidate that cannot fully drain leaves the
+    """B52 flow-bearing transport lane (Option A) — default ON (flipped
+    B62, KEY_SCHEMA 29); ``FAULTLINE_FLOWFUL_TRANSPORT_LANE=0`` disables.
+    When ON, a ws-anchored transport candidate that cannot fully drain leaves the
     product layer ANYWAY: the B51 decomposition runs in drain-then-lane
     mode (matched sub-router/handler groups re-home WITH their journeys;
     the (c) handler grain ``api/trpc/<domain>/…`` is legal), the flowful
@@ -225,7 +226,7 @@ def flowful_transport_lane_enabled() -> bool:
     carve back (I8 backstop). The ONE cycle switch — it drives the B51
     pass without needing ``FAULTLINE_TRANSPORT_ROUTER_DECOMP``."""
     return os.environ.get(
-        FLOWFUL_TRANSPORT_LANE_ENV, "0",
+        FLOWFUL_TRANSPORT_LANE_ENV, "1",
     ).strip().lower() in {"1", "true"}
 
 

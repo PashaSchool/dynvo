@@ -204,10 +204,10 @@ class ExpansionResult(NamedTuple):
 
 
 def pf_fullname_law_enabled() -> bool:
-    """B56 full-name display law. Default **OFF**; only
-    ``FAULTLINE_PF_FULLNAME_LAW`` in ``{1, true, yes, on}`` arms it. Unset
-    restores the pre-B56 display byte-identically."""
-    return os.environ.get(FULLNAME_LAW_ENV, "0").strip().lower() in {
+    """B56 full-name display law. Default **ON** (flipped B62, KEY_SCHEMA
+    29); ``FAULTLINE_PF_FULLNAME_LAW`` in ``{0, false, off}`` disables it,
+    restoring the pre-B56 display byte-identically."""
+    return os.environ.get(FULLNAME_LAW_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 

@@ -83,10 +83,12 @@ class _FL:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    """Every test starts with both flags UNSET (default OFF)."""
-    monkeypatch.delenv(_FLAG, raising=False)
-    monkeypatch.delenv(_V2, raising=False)
-    monkeypatch.delenv(nc.UF_NAME_DEGRIME_ENV, raising=False)
+    """Every test starts with the snap flag, its co-flag, and the degrime
+    display flag forced OFF via X=0. All three default ON post-B62
+    (KEY_SCHEMA 29), so the OFF baseline is pinned, not left unset."""
+    monkeypatch.setenv(_FLAG, "0")
+    monkeypatch.setenv(_V2, "0")
+    monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "0")
     yield
 
 

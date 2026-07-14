@@ -133,7 +133,7 @@ def test_off_multi_unit_host_annexes_cross_unit_dev(monkeypatch) -> None:
     evidence spans apps/web + packages/lib ⇒ B22a's unit-unanimity is
     ``None`` ⇒ the host is never foreign ⇒ the packages/i18n dev is
     annexed at root plurality. This test IS the diagnosis."""
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     devs, routes = _plane_fixture()
     board, dash = devs
     victim = _victim_i18n()
@@ -186,7 +186,7 @@ def _victim_api_v2() -> Feature:
 
 
 def test_off_entry_rung_annexes_cross_unit_dev(monkeypatch) -> None:
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     devs, routes = _plane_fixture()
     board, dash = devs
     victim = _victim_api_v2()
@@ -224,7 +224,7 @@ def test_same_unit_dense_module_untouched_on_and_off(monkeypatch) -> None:
         if on:
             monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
         else:
-            monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+            monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
         devs, routes = _plane_fixture()
         board, dash = devs
         paths = [f"apps/web/src/records/obj{i}.ts" for i in range(12)]
@@ -252,7 +252,7 @@ def test_non_coherent_dev_never_fenced(monkeypatch) -> None:
         if on:
             monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
         else:
-            monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+            monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
         devs, routes = _plane_fixture()
         paths = ["apps/web/src/embed/frame.ts",
                  "packages/lib/src/embed-kit.ts"]
@@ -299,7 +299,7 @@ def _playground_fixture() -> tuple[list[Feature], list[dict]]:
 def test_off_playground_anchor_mints(monkeypatch) -> None:
     """OFF reproduces the novu hole: the playground example app mints a
     product PF."""
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     devs, routes = _playground_fixture()
     notif, workflows = devs
     pfs, tele = run_anchored_mint(devs, routes,
@@ -486,7 +486,7 @@ def test_uf_rollup_skips_dev_artifact_flows(monkeypatch) -> None:
     assert not any("bell" in n.lower() for n in on_names), on_names
     assert any("billing" in n.lower() for n in on_names), on_names
 
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     off = cluster_user_flows(_scan())
     assert off["uf_filtered_dev_artifact"] == 0
     assert len(off["user_flows"]) >= len(on["user_flows"])
@@ -511,7 +511,7 @@ def test_route_group_recall_skips_artifact_toplevel(monkeypatch) -> None:
     assert tele_on.get("skipped_dev_artifact", 0) == 2, tele_on
     assert tele_on["groups"] == 1, tele_on  # only the apps/web group
 
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     tele_off = seed_route_group_journeys([], [], [], [], list(routes))
     assert tele_off.get("skipped_dev_artifact", 0) == 0
     assert tele_off["groups"] == 2, tele_off
@@ -550,7 +550,7 @@ def test_rollup_adapter_carries_lane_reason(monkeypatch) -> None:
     assert not any("bell" in n.lower() for n in names_on), names_on
     assert any("billing" in n.lower() for n in names_on), names_on
 
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     flows_off, feats_off = _mk()
     ufs_off, tele_off = run_user_flow_rollup(flows_off, feats_off)
     assert len(ufs_off) >= len(ufs_on)
@@ -591,6 +591,6 @@ def test_uf_rollup_skips_artifact_entry_flows(monkeypatch) -> None:
     assert not any("hook" in n.lower() for n in names), names
     assert any("playground" in n.lower() for n in names), names
 
-    monkeypatch.delenv("FAULTLINE_ANNEXATION_GUARD", raising=False)
+    monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "0")
     off = cluster_user_flows(_scan())
     assert off["uf_filtered_dev_artifact"] == 0

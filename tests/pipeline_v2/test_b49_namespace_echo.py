@@ -26,6 +26,8 @@ Anti-cases (spec §SACRED + §Гейти-1):
 
 from __future__ import annotations
 
+import pytest
+
 from faultline.pipeline_v2.spine_anchors import SpineAnchor
 from faultline.pipeline_v2.transport_handoff import (
     TRANSPORT_NAMESPACE_ECHO_ENV,
@@ -355,3 +357,11 @@ def test_builder_excludes_candidate_pf():
         GrainTarget("pf", "api-keys")
     # a token echoing the candidate itself resolves to nothing.
     assert echo.target_for(f"{UNIT}/server/routers/trpc/x.ts") is None
+
+
+@pytest.fixture(autouse=True)
+def _b62_pin_flowful_transport_lane(monkeypatch):
+    """B62 flip isolation: FAULTLINE_FLOWFUL_TRANSPORT_LANE defaults ON since KEY_SCHEMA 29; this
+    module tests the pre-B52 r2.6-rung transport world, so the flipped co-flag is pinned OFF
+    (same mechanical pattern as the b50/b57/b61 rung-isolation fixtures)."""
+    monkeypatch.setenv("FAULTLINE_FLOWFUL_TRANSPORT_LANE", "0")

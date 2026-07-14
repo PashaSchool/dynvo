@@ -568,7 +568,19 @@ ENV_OUTPUT_FLAGS = (
 #: change what "unset" means, so cached entries keyed under unset must not
 #: be served across them (v16/v21/v25/v27 precedent). Keyed proof:
 #: papermark green (Welcome demoted, I9=0, lane 43->42, 2026-07-12).
-KEY_SCHEMA_VERSION = 28
+#: v29 (B62 flip): the proven campaign set flips default OFF -> ON in ONE
+#: commit (14 flags): FAULTLINE_REACT_ROUTER_FW_PROFILE, _ROUTER_ALIAS_RESOLVE,
+#: _KEYLESS_JOURNEY_RECALL, _WS_LIBRARY_LANE, _UF_NAME_DEGRIME,
+#: _UF_RESOURCE_RUNG, _FLOWFUL_TRANSPORT_LANE, _WS_BLOB_DOMAIN_DRAIN,
+#: _PF_FULLNAME_LAW, _UF_RUNG_SOURCES_V2, _STAGE_6_7E_ADJUDICATOR,
+#: _ANNEXATION_GUARD, _ARTIFACT_INK_LANE, _UF_VERB_SNAP. Default flips change
+#: what "unset" means, so cached entries keyed under unset must not be served
+#: across them (v16/v21/v25/v27/v28 precedent). Every flag keeps its X=0
+#: kill-switch (explicit "0"/"false"/"off" still disables — inverted-
+#: kill-switch unit per flag). B49/B51 transport flags stay OFF (superseded
+#: by B52 FLOWFUL_TRANSPORT_LANE). DISPATCH_RESOLVER (B64) NOT in this flip.
+#: scan_meta.key_schema=29 emitted so downstream rulers gate new-world logic.
+KEY_SCHEMA_VERSION = 29
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

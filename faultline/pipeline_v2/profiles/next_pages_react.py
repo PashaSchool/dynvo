@@ -379,8 +379,9 @@ ROUTER_ALIAS_RESOLVE_ENV = "FAULTLINE_ROUTER_ALIAS_RESOLVE"
 
 
 def router_alias_resolve_enabled() -> bool:
-    """``True`` when ``FAULTLINE_ROUTER_ALIAS_RESOLVE`` is set truthy."""
-    return os.environ.get(ROUTER_ALIAS_RESOLVE_ENV, "0").strip() not in {
+    """Default ON (flipped B62, KEY_SCHEMA 29); unset ≡ explicit-1.
+    ``FAULTLINE_ROUTER_ALIAS_RESOLVE=0`` (or false/off) disables."""
+    return os.environ.get(ROUTER_ALIAS_RESOLVE_ENV, "1").strip() not in {
         "", "0", "false", "False",
     }
 

@@ -284,7 +284,7 @@ def test_anticase_alias_off_is_inert(
     """ANTI-CASE: flag OFF ⇒ the ``~/`` → ``app/`` resolution does NOT
     happen (``src/``-only) and NO route tuples are recorded — the pre-B44
     empty-board behaviour is preserved byte-identically."""
-    monkeypatch.delenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", raising=False)
+    monkeypatch.setenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", "0")
     ctx = _ctx(tmp_path, _spa_alias_files())
     idx = _RouterIndex(ctx)
     assert idx.buckets == {}
@@ -314,7 +314,7 @@ def test_anticase_src_aliased_spa_unchanged(
         ),
         "src/scenes/Dash.tsx": _ROUTE_PAGE,
     }
-    monkeypatch.delenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", raising=False)
+    monkeypatch.setenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", "0")
     off = _RouterIndex(_ctx(tmp_path / "off", files)).buckets
     monkeypatch.setenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", "1")
     on = _RouterIndex(_ctx(tmp_path / "on", files)).buckets
@@ -334,7 +334,7 @@ def test_spa_extractor_routes_gated_by_flag(
     cands_on = ReactRouterSpaExtractor(prof._router).extract(ctx)
     assert cands_on and any(c.routes for c in cands_on)
 
-    monkeypatch.delenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", raising=False)
+    monkeypatch.setenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", "0")
     prof._router_index = None
     cands_off = ReactRouterSpaExtractor(prof._router).extract(ctx)
     # OFF ⇒ no buckets resolved for this ``app/``-aliased SPA ⇒ no anchors.

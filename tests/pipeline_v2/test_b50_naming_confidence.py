@@ -68,9 +68,12 @@ class _FL:
 
 @pytest.fixture(autouse=True)
 def _clean_degrime_env(monkeypatch):
-    """Every test starts with both B50 flags UNSET (default OFF)."""
-    monkeypatch.delenv(nc.UF_NAME_DEGRIME_ENV, raising=False)
-    monkeypatch.delenv("FAULTLINE_UF_RESOURCE_RUNG", raising=False)
+    """Every test starts with both B50 flags forced OFF via X=0.
+
+    Both flags default ON post-B62 (KEY_SCHEMA 29), so the OFF baseline
+    must be pinned explicitly rather than left unset (mechanical B62)."""
+    monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "0")
+    monkeypatch.setenv("FAULTLINE_UF_RESOURCE_RUNG", "0")
     yield
 
 

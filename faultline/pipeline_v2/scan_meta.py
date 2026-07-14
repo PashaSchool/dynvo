@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from faultline.models.types import SCHEMA_VERSION
+from faultline.pipeline_v2.scan_result_cache import KEY_SCHEMA_VERSION
 from faultline.pipeline_v2 import degradations
 from faultline.pipeline_v2.stage_6_3_import_tree import (
     DEFAULT_MAX_FILES_PER_FEATURE as _IMPORT_TREE_MAX_FILES,
@@ -347,6 +348,12 @@ def assemble_scan_meta(
         # so consumers that only read scan_meta (without parsing the
         # full map) can still detect the schema generation.
         "schema_version": SCHEMA_VERSION,
+        # Cache/flip schema generation (KEY_SCHEMA_VERSION in
+        # scan_result_cache). Bumped on a default-flip so downstream rulers
+        # (validate_scan / obstacle_course) can gate new-world logic on a
+        # single monotonic integer: >=29 is the B62 default-ON world.
+        # Additive; pre-B62 boards carry no key (readers default to 0).
+        "key_schema": KEY_SCHEMA_VERSION,
         "pipeline_version": "v2",
         "run_id": ctx.run_id,
         "stack": ctx.stack,

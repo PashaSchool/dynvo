@@ -291,11 +291,12 @@ def fold_crossapp_guard_enabled() -> bool:
 
 
 def annexation_guard_enabled() -> bool:
-    """B58 — default OFF; ``FAULTLINE_ANNEXATION_GUARD=1`` arms the
-    container-anchor annexation guard (Seg A canonical-unit fencing on
-    the entry/span/walk rescue rungs + Seg B dev-artifact-unit mint
-    bar). OFF is byte-identical to the pre-B58 pipeline."""
-    return os.environ.get(ANNEXATION_GUARD_ENV, "0").strip().lower() in {
+    """B58 — default ON (flipped B62, KEY_SCHEMA 29): the container-anchor
+    annexation guard runs (Seg A canonical-unit fencing on the
+    entry/span/walk rescue rungs + Seg B dev-artifact-unit mint bar).
+    ``FAULTLINE_ANNEXATION_GUARD`` in ``{0, false, off}`` disables —
+    byte-identical to the pre-B58 pipeline."""
+    return os.environ.get(ANNEXATION_GUARD_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
@@ -1963,7 +1964,14 @@ def build_platform_infrastructure_lane(
     lane_reasons = {_SHARED_REASON_NONE, _SHARED_REASON_BAR,
                     _SHARED_REASON_SHELL, ANCHORED_HUSK_REASON,
                     _SHARED_REASON_INSTRUMENT, _SHARED_REASON_INFRA_FANIN,
-                    _SHARED_REASON_CROSS_UNIT}
+                    _SHARED_REASON_CROSS_UNIT,
+                    # B58 debt (I22 dev-orphans): a pfid=None dev tagged
+                    # ``dev_artifact_unit`` by the annexation guard's Seg-B
+                    # bar is a lane resident, not an invisible orphan —
+                    # emit its row. Byte-inert unless FAULTLINE_ANNEXATION_
+                    # GUARD is ON (the only tagger), so the all-OFF world
+                    # is unchanged.
+                    _SHARED_REASON_DEV_ARTIFACT}
     for f in developer_features:
         if getattr(f, "layer", "developer") != "developer":
             continue

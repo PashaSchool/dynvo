@@ -83,9 +83,10 @@ class _Conventions(NamedTuple):
 
 
 def artifact_ink_enabled() -> bool:
-    """Default OFF; ``FAULTLINE_ARTIFACT_INK_LANE=1`` turns the drain on.
-    OFF is byte-identical to main (the kill-switch law)."""
-    return os.environ.get(ARTIFACT_INK_ENV, "0").strip().lower() in {
+    """Default ON (flipped B62, KEY_SCHEMA 29): the drain runs.
+    ``FAULTLINE_ARTIFACT_INK_LANE=0`` turns it off — byte-identical to
+    pre-B59 main (the kill-switch law)."""
+    return os.environ.get(ARTIFACT_INK_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

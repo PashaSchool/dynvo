@@ -78,11 +78,16 @@ class _FL:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    """Every test starts with the B57 flag UNSET (default OFF) and the
-    sibling display flags at their defaults."""
-    monkeypatch.delenv(_FLAG, raising=False)
-    monkeypatch.delenv("FAULTLINE_UF_RESOURCE_RUNG", raising=False)
-    monkeypatch.delenv(nc.UF_NAME_DEGRIME_ENV, raising=False)
+    """Every test starts with the B57 flag and its sibling display flags
+    forced OFF via X=0. All default ON post-B62 (KEY_SCHEMA 29), so the OFF
+    baseline is pinned explicitly, not left unset (mechanical B62). VERB_SNAP
+    (B61, default ON post-B62) is pinned too: it runs before Law C and can
+    ground the lead, so leaving it on would perturb the rung-only confidence
+    these tests isolate (its own interaction is covered in test_b61_verb_snap)."""
+    monkeypatch.setenv(_FLAG, "0")
+    monkeypatch.setenv("FAULTLINE_UF_RESOURCE_RUNG", "0")
+    monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "0")
+    monkeypatch.setenv("FAULTLINE_UF_VERB_SNAP", "0")
     yield
 
 

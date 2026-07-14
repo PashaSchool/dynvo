@@ -193,7 +193,7 @@ def test_config_blocklist_stays_product_under_locale(tmp_path, monkeypatch):
 
 
 def test_flag_off_noop(tmp_path, monkeypatch):
-    monkeypatch.delenv(ARTIFACT_INK_ENV, raising=False)
+    monkeypatch.setenv(ARTIFACT_INK_ENV, "0")  # default ON post-B62; pin OFF
     assert not artifact_ink_enabled()
     root = tmp_path / "repo"
     _fixture(root)

@@ -125,10 +125,10 @@ def is_drain_carve_dev(dev: Any) -> bool:
 
 
 def ws_blob_domain_drain_enabled() -> bool:
-    """Default OFF (both Seg A drain and Seg B lane gate on this ONE flag);
-    ``FAULTLINE_WS_BLOB_DOMAIN_DRAIN=1`` turns the pass on. OFF is byte-
-    identical to main (the kill-switch law)."""
-    return os.environ.get(WS_BLOB_DRAIN_ENV, "0").strip().lower() in {
+    """Default ON (flipped B62, KEY_SCHEMA 29; both Seg A drain and Seg B
+    lane gate on this ONE flag). ``FAULTLINE_WS_BLOB_DOMAIN_DRAIN=0`` turns
+    the pass off — byte-identical to pre-B53 main (the kill-switch law)."""
+    return os.environ.get(WS_BLOB_DRAIN_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

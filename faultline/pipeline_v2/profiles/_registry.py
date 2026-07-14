@@ -85,7 +85,7 @@ def _load_default_profiles() -> list[FrameworkProfile]:
     # than via a pyproject entry-point precisely because an unconditional
     # entry-point would bypass the flag.
     import os
-    if os.environ.get("FAULTLINE_REACT_ROUTER_FW_PROFILE", "0").strip() not in {
+    if os.environ.get("FAULTLINE_REACT_ROUTER_FW_PROFILE", "1").strip() not in {
         "", "0", "false", "False",
     }:
         _try("faultline.pipeline_v2.profiles.react_router_fw",

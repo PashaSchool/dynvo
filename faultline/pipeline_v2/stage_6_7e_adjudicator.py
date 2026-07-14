@@ -208,10 +208,10 @@ _E2E_RECALL_REASON = "e2e_journey_recall"
 
 
 def adjudicator_6_7e_enabled() -> bool:
-    """Default **OFF**; ``FAULTLINE_STAGE_6_7E_ADJUDICATOR=1`` arms the
-    stage on keyed scans. Unset ⇒ the stage is never called — serialized
-    output byte-identical."""
-    return os.environ.get(ENV_FLAG, "0").strip().lower() in {"1", "true"}
+    """Default **ON** (flipped B62, KEY_SCHEMA 29): the stage runs on keyed
+    scans. ``FAULTLINE_STAGE_6_7E_ADJUDICATOR=0`` disables ⇒ the stage is
+    never called — serialized output byte-identical."""
+    return os.environ.get(ENV_FLAG, "1").strip().lower() in {"1", "true"}
 
 
 def resolve_adjudicator_model() -> str:
