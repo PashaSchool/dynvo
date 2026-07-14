@@ -306,3 +306,96 @@ def test_spa_on_folds_pure_helper_route(
     )
     # homePath is a conditional ⇒ no "home" route bucket from folding.
     assert "home" not in anchors
+
+
+# ── (b2) hygiene iteration — wave-17 outline adjudication fixes ───────────
+
+
+def test_template_interpolation_folds_when_pure() -> None:
+    f = _folder()
+    # every ${…} folds -> literal path
+    assert f("`${draftsPath()}/changesets`") == "/drafts/changesets"
+    # unfoldable interpolation (conditional helper) -> honest ""
+    assert f("`${homePath()}/:tab?`") == ""
+    # free-var interpolation -> ""
+    assert f("`/doc/${slug}`") == ""
+
+
+def test_route_slug_interp_segment_dynamic() -> None:
+    from faultline.pipeline_v2.profiles.next_pages_react import _route_slug
+    # OFF law (default): interpolation text minted a garbage slug
+    assert _route_slug("${debugPath()}/changesets") == "debug-path"
+    # B64 law: ${…} segment is DYNAMIC like :param — next static wins
+    assert _route_slug("${debugPath()}/changesets", skip_interp=True) == (
+        "changesets"
+    )
+    # all-dynamic path -> no slug
+    assert _route_slug("${homePath()}/:tab?", skip_interp=True) == ""
+
+
+_HYGIENE_FILES = {
+    "package.json": (
+        '{"name": "spa", "dependencies": {"react": "^19", '
+        '"react-router-dom": "^6"}}'
+    ),
+    "src/routeHelpers.ts": (
+        'export function debugPath(): string { return "/debug"; }\n'
+        "export function searchPath({q}: {q?: string} = {}): string "
+        '{ return "/search" + (q ? "?q=" + q : ""); }\n'
+    ),
+    "src/App.tsx": (
+        'import { debugPath, searchPath } from "./routeHelpers";\n'
+        'const Search = lazy(() => import("./scenes/Search"));\n'
+        'const Changesets = lazy(() => import("./scenes/Changesets"));\n'
+        'const Error404 = lazy(() => import("./scenes/Error404"));\n'
+        "export default function App(){ return (\n"
+        "  <Routes>\n"
+        "    <Route path={`${debugPath()}/changesets`} element={<Changesets/>} />\n"
+        "    <Route path={`${searchPath()}/:query?`} element={<Search/>} />\n"
+        '    <Route path="/404" element={<Error404/>} />\n'
+        "  </Routes>); }\n"
+    ),
+    "src/scenes/Search/index.tsx": _PAGE,
+    "src/scenes/Changesets.tsx": _PAGE,
+    "src/scenes/Error404.tsx": _PAGE,
+    "src/main.tsx": (
+        'import { createRoot } from "react-dom/client";\n'
+        'import App from "./App";\n'
+        "createRoot(document.getElementById('root')).render(<App/>);\n"
+    ),
+}
+
+
+def test_hygiene_rules_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(DISPATCH_RESOLVER_ENV, "1")
+    ctx = _ctx(tmp_path, _HYGIENE_FILES)
+    anchors = _spa_anchors(ctx)
+    # template folds -> honest 'debug' branch holds Changesets
+    assert "debug" in anchors
+    assert set(anchors["debug"].paths) == {"src/scenes/Changesets.tsx"}
+    # unfoldable searchPath + index-file stem -> IDENT names the branch
+    assert "search" in anchors
+    assert set(anchors["search"].paths) == {"src/scenes/Search/index.tsx"}
+    # garbage interp slugs never mint
+    assert "debug-path" not in anchors
+    assert "search-path" not in anchors
+    # error-route shell rule: 404 never a capability
+    assert "404" not in anchors
+    assert not any(
+        "Error404" in p for a in anchors.values() for p in a.paths
+    )
+
+
+def test_hygiene_rules_off_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(DISPATCH_RESOLVER_ENV, raising=False)
+    monkeypatch.delenv("FAULTLINE_ROUTER_ALIAS_RESOLVE", raising=False)
+    ctx = _ctx(tmp_path, _HYGIENE_FILES)
+    anchors = _spa_anchors(ctx)
+    # Pre-B64 behaviour preserved: raw template text mints its face-value
+    # slugs and 404 mints (the OFF-world debt is untouched by the flag).
+    assert "debug-path" in anchors
+    assert "404" in anchors

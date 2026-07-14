@@ -465,11 +465,19 @@ def _build_alias_map(ctx: "ScanContext") -> dict[str, tuple[str, ...]]:
     return {k: tuple(sorted(v)) for k, v in out.items()}
 
 
-def _route_slug(path_literal: str) -> str:
-    """First meaningful static segment of a route path literal."""
+def _route_slug(path_literal: str, skip_interp: bool = False) -> str:
+    """First meaningful static segment of a route path literal.
+
+    B64 — ``skip_interp`` (armed only by the dispatch-resolver flag): a
+    segment carrying template interpolation (``${…}``) is DYNAMIC, the
+    same law as ``:param`` — interpolation TEXT is never a static
+    segment (pre-fix it minted garbage slugs like ``debug-path`` from
+    ``${debugPath()}/changesets``; wave-17 outline raw-dir-slug row)."""
     for seg in path_literal.split("/"):
         seg = seg.strip()
         if not seg or seg.startswith((":", "*")) or seg == "*":
+            continue
+        if skip_interp and "${" in seg:
             continue
         slug = slugify(seg)
         if slug and not is_noise(slug):
@@ -623,6 +631,33 @@ def _make_path_folder(
                 dt = _def_text(name)
                 lit = _extract_pure_def(dt, name) if dt else None
             return lit or ""
+        # A template literal whose EVERY ``${…}`` interpolation folds
+        # (same one-level purity law, recursion depth 1 by grammar —
+        # a folded value is a plain literal): ``${debugPath()}/changesets``
+        # → ``/debug/changesets``. Any unfoldable interpolation ⇒ "".
+        if expr.startswith("`") and expr.endswith("`") and "${" in expr:
+            body = expr[1:-1]
+            out_parts: list[str] = []
+            pos = 0
+            ok = True
+            while True:
+                i = body.find("${", pos)
+                if i < 0:
+                    out_parts.append(body[pos:])
+                    break
+                j = body.find("}", i)
+                if j < 0:
+                    ok = False
+                    break
+                out_parts.append(body[pos:i])
+                inner = fold(body[i + 2:j])
+                if not inner:
+                    ok = False
+                    break
+                out_parts.append(inner)
+                pos = j + 1
+            if ok:
+                return "".join(out_parts)
         return ""
 
     return fold
@@ -693,12 +728,48 @@ class _RouterIndex:
                 resolved = self._resolve_ident(
                     ident, imports, rel, tracked_set, alias_map,
                 ) if ident else None
-                slug = _route_slug(path_literal)
+                slug = _route_slug(
+                    path_literal, skip_interp=self._resolver_on,
+                )
                 if not slug and resolved is not None:
                     _segs, fname = _segments(resolved)
                     slug = slugify(_first_dot_token(fname))
+                # B64 — tertiary fallback: the RESOLVED component's own
+                # ident names the branch when both the path (all-dynamic
+                # segments) and the file stem (``index.ts``) are mute
+                # (outline ``${searchPath()}/:query?`` + ``Search/index.ts``
+                # → ``search``). Only the ident whose resolution produced
+                # ``resolved`` may name — a prop/wrapper name never does.
+                if (
+                    self._resolver_on
+                    and (not slug or is_noise(slug))
+                    and resolved is not None
+                    and ident
+                ):
+                    for cand in reversed(ident.split()):
+                        spec = imports.get(cand)
+                        if not spec or _resolve_spec(
+                            spec, rel, tracked_set, alias_map,
+                        ) != resolved:
+                            continue
+                        s = slugify(cand)
+                        if s and not is_noise(s):
+                            slug = s
+                        break
                 if not slug or is_noise(slug):
                     continue
+                # B64 — error-route shell rule: the SAME law the Pages
+                # profile enforces via ``_SHELL_STEMS`` (404/500/_error are
+                # framework wiring, never a capability) applied to SPA
+                # route intake (wave-17 outline ``'404'`` raw-slug +
+                # flowless rows).
+                if self._resolver_on:
+                    stem = ""
+                    if resolved is not None:
+                        _rsegs, rfname = _segments(resolved)
+                        stem = _first_dot_token(rfname)
+                    if slug in ("404", "500") or stem in _SHELL_STEMS:
+                        continue
                 entry_file = resolved if resolved is not None else rel
                 route = path_literal if path_literal.startswith("/") else (
                     "/" + path_literal
@@ -825,7 +896,16 @@ class _RouterIndex:
                         if folded:
                             pairs.append((folded, _component_in(window)))
                 continue  # pathless layout route — shell, not an entry
-            pairs.append((pm.group(1), _component_in(window)))
+            path = pm.group(1)
+            # B64 (b): an interpolated template path — fold every ``${…}``
+            # when possible (``${debugPath()}/changesets`` →
+            # ``/debug/changesets``); unfoldable ⇒ keep the raw text
+            # (the slug law treats interpolation segments as dynamic).
+            if folder is not None and "${" in path:
+                folded = folder("`" + path + "`")
+                if folded:
+                    path = folded
+            pairs.append((path, _component_in(window)))
 
         if re.search(
             r"createBrowserRouter\s*\(|createHashRouter\s*\("
