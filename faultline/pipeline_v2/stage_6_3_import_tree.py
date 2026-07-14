@@ -103,6 +103,10 @@ from faultline.pipeline_v2.flow_symbols import (
     _offset_to_line,
     _python_body_end_line,
 )
+from faultline.pipeline_v2.lazy_imports import (
+    dispatch_resolver_enabled,
+    ts_lazy_binding_specs,
+)
 
 if TYPE_CHECKING:
     from faultline.models.types import Feature
@@ -413,6 +417,19 @@ def _extract_ts_imports(source: str) -> dict[str, str]:
             out[bind] = mod
     # Side-effect imports — register the module but no local name.
     # Not useful for symbol-level traversal so we don't add them.
+    #
+    # B64 (a) — dynamic-dispatch resolver: bind lazy dynamic-import consts
+    # (``const Page = lazy(() => import("./Page"))``) as ordinary import
+    # edges so a lazily-loaded route sub-tree (outline's
+    # ``lazy(() => import("./authenticated"))`` bridge — ~87% of the
+    # product) becomes reachable by the identifier-matching BFS below,
+    # resolved by the SAME ``resolve_ts_import`` path as a static import.
+    # Static ``import … from`` names already present WIN (``setdefault``),
+    # so a re-exported name is never repointed. Flag OFF ⇒ this block is
+    # skipped and the map is byte-identical to pre-B64.
+    if dispatch_resolver_enabled():
+        for local, spec in ts_lazy_binding_specs(source).items():
+            out.setdefault(local, spec)
     return out
 
 
