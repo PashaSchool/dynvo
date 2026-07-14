@@ -3006,6 +3006,43 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Stage 6.995 — B68 terminal 4-way classification ────────────
+    # Operator doctrine 2026-07-14: the gap channel is an INTERNAL state,
+    # never a final board category. Runs LAST — after every gap producer
+    # (B45 emit + 6.7e adjudicated merge) and every board mutation — so
+    # it judges the exact rows Stage 7 would emit. Mutates ONLY
+    # coverage_gaps[] (+ the scan_meta audit trace); ownership channels
+    # (path_index / features / user_flows) are read-only inputs.
+    # Kill-switch FAULTLINE_TERMINAL_CLASSIFICATION (default OFF) —
+    # unset/=0 never runs the pass (byte-identity with main).
+    from faultline.pipeline_v2.terminal_classification import (
+        run_terminal_classification,
+        terminal_classification_enabled,
+    )
+    if terminal_classification_enabled() and coverage_gaps is not None:
+        try:
+            _tc_tele = run_terminal_classification(
+                coverage_gaps,
+                product_features,
+                features,
+                scan_meta,
+                dev_artifact_units=dev_artifact_units,
+                instrument_dirs=instrument_dirs,
+                repo_path=repo_path,
+            )
+            write_stage_artifact(
+                ctx.repo_path,
+                stage_index=7,
+                stage_name="terminal_classification",
+                payload=_tc_tele,
+                run_dir=run_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"terminal-classification stage failed ({exc}); "
+                f"coverage_gaps left as-is"
+            )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {

@@ -541,6 +541,21 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides the
     # separate later flip commit only (flip-protocol).
     "FAULTLINE_JOBS_ENTRIES",
+    # B68 — terminal 4-way classification of the coverage-gap band (Stage
+    # 6.995, operator doctrine 2026-07-14: the gap channel is an internal
+    # state, never a final board category). Each gap row decomposes BY
+    # MEMBERS into (1) not-a-feature e2e/test labels (audit trace, off the
+    # board), (2) part-of-existing-PF (NamespaceEcho / live-flow owner —
+    # claim dissolves), (3) own-PF worthiness evaluation (records only —
+    # member-less mints stay forbidden, B23/B33), (4) dev-infrastructure
+    # (existing predicates: dev_artifact_units / instruments / test /
+    # generated / artifact-ink / lane / shared-leaf); the ONLY legal
+    # residue is (5) a row stamped ``why_unresolved`` naming a known lexer
+    # hole (data/terminal-classification.yaml). Reshapes coverage_gaps[]
+    # (rows removed / trimmed / stamped) + scan_meta. Default OFF; =0/unset
+    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
+    # the separate later flip commit only (flip-protocol).
+    "FAULTLINE_TERMINAL_CLASSIFICATION",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
