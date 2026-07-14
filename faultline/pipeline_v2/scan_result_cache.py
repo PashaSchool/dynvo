@@ -2,6 +2,7 @@
 
 Why this exists
 ===============
+
 ``temperature=0`` on Anthropic is **not** bit-exact: the same prompt can
 produce a slightly different completion run-to-run. Several LLM stages of
 ``pipeline_v2`` (Stage 3 flow detection, the 6.7b/6.7c user-flow stages,
@@ -498,6 +499,16 @@ ENV_OUTPUT_FLAGS = (
     # name_evidence). Default OFF; =0/unset byte-identical. No KEY_SCHEMA
     # bump (flip is a separate later commit per flip-protocol).
     "FAULTLINE_UF_VERB_SNAP",
+    # B59 (2026-07-13) — artifact-ink accounting drain. Stage 6.97 reclassifies
+    # a feature's OWNED non-authorial "ink" LOC (locale catalogs / generated
+    # schemas / test data / dev seeders) OUT of product ``loc`` into a separate
+    # ``artifact_ink_loc`` field + a ``scan_meta.artifact_ink`` lane aggregate,
+    # so ``loc`` reads as an HONEST product-code size. ACCOUNTING ONLY —
+    # membership / path_index / line coordinates / flows / user_flows are
+    # untouched (journeys I15/I16 provably unchanged). Default OFF; =0/unset is
+    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides the
+    # separate later flip commit only (flip-protocol).
+    "FAULTLINE_ARTIFACT_INK_LANE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

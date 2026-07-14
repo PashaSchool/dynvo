@@ -58,6 +58,17 @@ def test_dependency_anchors_loads() -> None:
     assert data, "dependency-anchors.yaml parsed empty"
 
 
+def test_artifact_conventions_loads() -> None:
+    """B59 — the artifact-ink conventions parse to a non-empty dict via
+    importlib.resources (packaged data, no eval/ sibling dependence)."""
+    data = load_yaml("artifact_conventions.yaml")
+    assert isinstance(data, dict)
+    assert data, "artifact_conventions.yaml parsed empty"
+    # Structural sections the classifier depends on must be present.
+    assert data.get("config_blocklist_basenames")
+    assert (data.get("locale") or {}).get("extensions")
+
+
 def test_missing_resource_is_hard_error() -> None:
     """A missing data file must raise, never silently return {}."""
     with pytest.raises(FileNotFoundError):

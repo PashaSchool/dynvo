@@ -450,11 +450,43 @@ def apply_feature_loc(
 
     primary_of: dict[str, int] = {fp: _primary(fp) for fp in file_to_devs}
 
+    # ── B59 artifact-ink accounting drain (flag-gated, default OFF) ──────
+    # When enabled, a feature's OWNED non-authorial "ink" files (locale
+    # catalogs / generated schemas / test data / seeds) have their LOC
+    # reclassified OUT of ``loc`` into ``artifact_ink_loc`` + a
+    # ``scan_meta.artifact_ink`` lane aggregate. Membership / path_index /
+    # line coordinates / flows / user_flows are UNTOUCHED (accounting only).
+    # OFF path stays byte-identical (early-guarded below). Late import keeps
+    # the tools←pipeline_v2 module-import order cycle-free (artifact_ink
+    # imports this module's ``_is_excluded_name``).
+    from faultline.pipeline_v2.artifact_ink import (
+        artifact_ink_enabled,
+        classify_artifact,
+    )
+
+    art_enabled = artifact_ink_enabled()
+    _art_memo: dict[str, str | None] = {}
+
+    def _art_of(fp: str) -> str | None:
+        cls = _art_memo.get(fp, "\0")
+        if cls == "\0":
+            cls = classify_artifact(fp)
+            _art_memo[fp] = cls
+        return cls
+
     # ── Developer feature loc / loc_shared + member_files loc ───────────
     zero_loc_with_paths = 0
     for i, feat in enumerate(dev_features):
         files = dev_files[i]
-        owned = sum(l for fp, l in files.items() if primary_of[fp] == i)
+        if art_enabled:
+            _art_here = {fp for fp in files if primary_of[fp] == i and _art_of(fp)}
+            owned = sum(
+                l for fp, l in files.items()
+                if primary_of[fp] == i and fp not in _art_here
+            )
+            feat.artifact_ink_loc = sum(files[fp] for fp in _art_here) or None
+        else:
+            owned = sum(l for fp, l in files.items() if primary_of[fp] == i)
         shared = sum(l for fp, l in files.items() if primary_of[fp] != i)
         # W3.1 D11 (pretalx I13 trip, 88,903 > repo 88,784): the old
         # I2-safety floor (`owned = max(files.values())` for a
@@ -487,6 +519,15 @@ def apply_feature_loc(
     pf_owned_sets: list[dict[str, int]] = []
     sum_pf_owned = 0
     sum_pf_shared = 0
+    # B59 accumulators (populated only when art_enabled; conservation:
+    # sum_pf_owned (reduced) + sum(art_by_pf) == sum_pf_owned_before).
+    sum_pf_owned_before = 0
+    pf_artifact_by_name: dict[str, int | None] = {}
+    art_by_pf: dict[str, int] = {}
+    art_by_class: dict[str, int] = {c: 0 for c in ("locale", "generated",
+                                                   "testing", "seed")}
+    art_files_total = 0
+    art_samples: set[str] = set()
     pfs = product_features or []
     for pf in pfs:
         members = dev_idx_by_pfid.get(pf.name, [])
@@ -503,13 +544,34 @@ def apply_feature_loc(
             own = _expand_feature_files(root, pf.paths, cache)
             owned_files = {fp: l for fp, l in own.items() if fp not in primary_of}
             ref_files = own
-        pf.loc = sum(owned_files.values())
+        if art_enabled:
+            pf_art = {fp: l for fp, l in owned_files.items() if _art_of(fp)}
+            product_owned = {
+                fp: l for fp, l in owned_files.items() if fp not in pf_art
+            }
+            art_loc = sum(pf_art.values())
+            pf.artifact_ink_loc = art_loc or None
+            pf.loc = sum(product_owned.values())
+            sum_pf_owned_before += sum(owned_files.values())
+            if pf_art:
+                art_by_pf[pf.name] = art_loc
+                pf_artifact_by_name[pf.name] = art_loc
+                art_files_total += len(pf_art)
+                for fp, fl in pf_art.items():
+                    cls = _art_of(fp) or "locale"
+                    art_by_class[cls] = art_by_class.get(cls, 0) + fl
+                    if len(art_samples) < 20:
+                        art_samples.add(fp)
+            effective_owned = product_owned
+        else:
+            pf.loc = sum(owned_files.values())
+            effective_owned = owned_files
         pf.loc_shared = sum(
             l for fp, l in ref_files.items() if fp not in owned_files
         )
         _stamp_member_file_loc(root, pf, cache)
         pf_loc_by_name[pf.name] = (pf.loc, pf.loc_shared)
-        pf_owned_sets.append(owned_files)
+        pf_owned_sets.append(effective_owned)
         sum_pf_owned += pf.loc
         sum_pf_shared += pf.loc_shared
 
@@ -534,6 +596,8 @@ def apply_feature_loc(
             flow_pair = pf_flow_by_name.get(feat.name)
             if flow_pair is not None:
                 feat.loc_flow, feat.loc_flow_shared = flow_pair
+            if art_enabled:
+                feat.artifact_ink_loc = pf_artifact_by_name.get(feat.name)
 
     # ── Global sanity ──────────────────────────────────────────────────
     repo_loc = sum(v for v in cache.values() if v > 0)
@@ -545,7 +609,10 @@ def apply_feature_loc(
     }
     if flow_accounting is not None:
         loc_accounting.update(flow_accounting)
-    return {
+    art_total = sum(art_by_pf.values())
+    if art_enabled:
+        loc_accounting["sum_artifact_ink"] = art_total
+    result: dict[str, Any] = {
         "enabled": True,
         "features_total": len(features),
         "features_with_loc": sum(1 for f in features if (f.loc or 0) > 0),
@@ -555,6 +622,24 @@ def apply_feature_loc(
         "files_counted": counted_files,
         "loc_accounting": loc_accounting,
     }
+    # B59 telemetry — emitted ONLY when enabled, so scan_meta["feature_loc"]
+    # is byte-identical to main on a default (flag-OFF) scan.
+    if art_enabled:
+        sorted_pf = sorted(art_by_pf.items(), key=lambda kv: (-kv[1], kv[0]))
+        by_pf_out: dict[str, int] = dict(sorted_pf[:40])
+        if len(sorted_pf) > 40:
+            by_pf_out["_other"] = sum(v for _, v in sorted_pf[40:])
+        result["artifact_ink"] = {
+            "enabled": True,
+            "applied": art_total > 0,
+            "total_loc": art_total,
+            "total_files": art_files_total,
+            "by_class": dict(art_by_class),
+            "by_pf": by_pf_out,
+            "conservation_ok": (sum_pf_owned + art_total == sum_pf_owned_before),
+            "samples": sorted(art_samples),
+        }
+    return result
 
 
 def _merged_span_len(intervals: list[tuple[int, int]]) -> int:
