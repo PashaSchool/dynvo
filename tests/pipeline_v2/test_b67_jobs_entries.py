@@ -257,6 +257,118 @@ def test_routes_flow_into_routes_index(tmp_path: Path, jobs_on) -> None:
     assert rows[0]["pattern"] == "/cleanup"
 
 
+# ── Seg B — Python: celery / APScheduler / rq / django-q ─────────────────────
+
+
+def test_celery_bare_shared_task(tmp_path: Path, jobs_on) -> None:
+    """plane: bare ``@shared_task`` -> JOB entry on the function name."""
+    rel = _write(
+        tmp_path,
+        "apps/api/plane/bgtasks/deletion_task.py",
+        "from celery import shared_task\n\n"
+        "@shared_task\n"
+        "def soft_delete_related_objects(app_label, model_name): ...\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="django"))
+    assert a.name == "soft-delete-related-objects"
+    assert a.routes == (("/soft-delete-related-objects", "JOB", rel),)
+
+
+def test_celery_multiline_member_expr_name(tmp_path: Path, jobs_on) -> None:
+    """onyx: ``@shared_task(name=OnyxCeleryTask.X, …)`` spanning lines -> entry
+    on the function name (``_task`` suffix stripped); member-expr name is an
+    honest skip for the meta (B64 law)."""
+    rel = _write(
+        tmp_path,
+        "backend/ee/onyx/background/celery/tasks/cleanup/tasks.py",
+        "from celery import shared_task\n\n"
+        "@shared_task(\n"
+        "    name=OnyxCeleryTask.EXPORT_QUERY_HISTORY_CLEANUP_TASK,\n"
+        "    ignore_result=True,\n"
+        "    soft_time_limit=JOB_TIMEOUT,\n"
+        ")\n"
+        "def export_query_history_cleanup_task(*, tenant_id): ...\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="django"))
+    assert a.name == "export-query-history-cleanup"
+    assert "queue" not in a.rationale
+
+
+def test_celery_literal_name_meta(tmp_path: Path, jobs_on) -> None:
+    rel = _write(
+        tmp_path,
+        "app/tasks.py",
+        "import celery\n\n"
+        '@app.task(name="emails.send")\n'
+        "def send_email(): ...\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="django"))
+    assert a.name == "send-email"
+    assert "'emails.send'" in a.rationale
+
+
+def test_apscheduler_decorator_and_add_job(tmp_path: Path, jobs_on) -> None:
+    rel = _write(
+        tmp_path,
+        "app/scheduler.py",
+        "from apscheduler.schedulers.background import BackgroundScheduler\n\n"
+        '@scheduled_job("cron", hour=3)\n'
+        "def nightly_rollup(): ...\n\n"
+        'scheduler.add_job(cleanup_sessions, "interval", minutes=5)\n',
+    )
+    anchors = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="fastapi"))
+    got = sorted((a.name, a.routes[0][1]) for a in anchors)
+    assert got == [("cleanup-sessions", "CRON"), ("nightly-rollup", "CRON")]
+
+
+def test_rq_job_requires_rq_import(tmp_path: Path, jobs_on) -> None:
+    rel = _write(
+        tmp_path,
+        "app/tasks.py",
+        "from rq import job\n\n"
+        '@job("default")\n'
+        "def resize_image(): ...\n",
+    )
+    (a,) = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="fastapi"))
+    assert a.name == "resize-image"
+    assert a.routes[0][1] == "JOB"
+
+
+def test_rq_job_without_import_is_skipped(tmp_path: Path, jobs_on) -> None:
+    """ANTI-CASE: a generic ``@job`` decorator with no rq import -> skip."""
+    rel = _write(tmp_path, "app/x.py", '@job("x")\ndef f(): ...\n')
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="fastapi")) == []
+
+
+def test_django_q_tasks(tmp_path: Path, jobs_on) -> None:
+    rel = _write(
+        tmp_path,
+        "app/services.py",
+        "from django_q.tasks import async_task, schedule\n\n"
+        'async_task("app.mail.send_welcome")\n'
+        'schedule("app.reports.weekly")\n',
+    )
+    anchors = JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="django"))
+    got = sorted((a.name, a.routes[0][1]) for a in anchors)
+    assert got == [("send-welcome", "JOB"), ("weekly", "CRON")]
+
+
+def test_django_q_words_without_import_skipped(tmp_path: Path, jobs_on) -> None:
+    """ANTI-CASE: the common word ``schedule(`` with no django_q import -> skip."""
+    rel = _write(tmp_path, "app/y.py", 'schedule("a.b.c")\n')
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="django")) == []
+
+
+def test_python_test_file_is_not_entry(tmp_path: Path, jobs_on) -> None:
+    """ANTI-CASE: a celery task inside a test file -> not an entry."""
+    rel = _write(
+        tmp_path,
+        "apps/api/plane/bgtasks/tests/test_deletion.py",
+        "from celery import shared_task\n@shared_task\ndef fake_task(): ...\n",
+    )
+    assert JobsEntryExtractor().extract(_ctx(tmp_path, [rel], stack="django")) == []
+
+
 def test_deterministic_sorted_emission(tmp_path: Path, jobs_on) -> None:
     files = []
     for stem in ("zeta", "alpha", "mid"):

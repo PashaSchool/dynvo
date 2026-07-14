@@ -85,3 +85,44 @@ ts_js:
     agenda:
       call_re: '\bagenda\.define\s*\(\s*[''"]([^''"]+)[''"]'
       method: JOB
+
+# ── Seg B — Python ──────────────────────────────────────────────────────────
+python:
+  extensions: [".py"]
+  # snake_case name suffixes stripped to reach the capability slug
+  # (``export_query_history_cleanup_task`` -> ``export_query_history_cleanup``).
+  suffix_strip: ["_task", "_job", "_cron", "_worker", "_scheduler"]
+  grammars:
+    # Celery ``@shared_task`` / ``@app.task`` / ``@celery_app.task`` (plane 30,
+    # onyx 24). The decorator may span lines (``@shared_task(name=..., ...)``);
+    # identity is the decorated FUNCTION name; the ``name=`` kwarg is meta only
+    # when a string literal (onyx's ``name=OnyxCeleryTask.X`` is a member expr
+    # -> honest skip, entry still emitted on the function name — B64 law).
+    celery:
+      require_import_re: '\bcelery\b|\bshared_task\b'
+      decorator_re: '@(?:shared_task|[A-Za-z_][\w.]*\.task)\b'
+      def_re: 'def\s+([A-Za-z_]\w*)\s*\('
+      name_literal_re: 'name\s*=\s*[''"]([^''"]+)[''"]'
+      method: JOB
+    # APScheduler ``@scheduled_job(...)`` decorator and
+    # ``scheduler.add_job(func, "cron"|"interval", ...)`` — import-corroborated.
+    apscheduler:
+      require_import_re: 'apscheduler'
+      decorator_re: '@(?:[A-Za-z_][\w.]*\.)?scheduled_job\b'
+      def_re: 'def\s+([A-Za-z_]\w*)\s*\('
+      add_job_re: '\.add_job\s*\(\s*([A-Za-z_][\w.]*)'
+      method: CRON
+    # RQ ``@job(...)`` decorator — strict rq import corroboration (``@job`` is
+    # a generic decorator name).
+    rq:
+      require_import_re: 'from\s+rq\b|\bimport\s+rq\b|\brq\.'
+      decorator_re: '@job\b'
+      def_re: 'def\s+([A-Za-z_]\w*)\s*\('
+      method: JOB
+    # django-q ``async_task("mod.func", ...)`` (JOB) / ``schedule("mod.func",
+    # ...)`` (CRON) — strict django_q import corroboration; identity = the last
+    # segment of the literal dotted function path.
+    django_q:
+      require_import_re: 'django_q|django-q'
+      async_task_re: '\basync_task\s*\(\s*[''"]([\w.]+)[''"]'
+      schedule_re: '\bschedule\s*\(\s*[''"]([\w.]+)[''"]'

@@ -263,18 +263,168 @@ def _collect_ts_js(text: str, path: str) -> list[_Job]:
     return jobs
 
 
+# ── Seg B — Python ───────────────────────────────────────────────────────────
+
+
+@dataclass
+class _PyGrammars:
+    celery_require: re.Pattern[str]
+    celery_decorator: re.Pattern[str]
+    celery_def: re.Pattern[str]
+    celery_name_literal: re.Pattern[str]
+    celery_method: str
+    aps_require: re.Pattern[str]
+    aps_decorator: re.Pattern[str]
+    aps_def: re.Pattern[str]
+    aps_add_job: re.Pattern[str]
+    aps_method: str
+    rq_require: re.Pattern[str]
+    rq_decorator: re.Pattern[str]
+    rq_def: re.Pattern[str]
+    rq_method: str
+    dq_require: re.Pattern[str]
+    dq_async_task: re.Pattern[str]
+    dq_schedule: re.Pattern[str]
+    extensions: tuple[str, ...]
+    suffixes: tuple[str, ...]
+
+
+@lru_cache(maxsize=1)
+def _py_grammars() -> _PyGrammars | None:
+    block = _cfg().get("python")
+    if not isinstance(block, dict):
+        return None
+    g = block.get("grammars") or {}
+    cel = g.get("celery") or {}
+    aps = g.get("apscheduler") or {}
+    rq = g.get("rq") or {}
+    dq = g.get("django_q") or {}
+
+    def _c(pat: str | None) -> re.Pattern[str]:
+        return re.compile(pat or r"(?!x)x")
+
+    return _PyGrammars(
+        celery_require=_c(cel.get("require_import_re")),
+        celery_decorator=_c(cel.get("decorator_re")),
+        celery_def=_c(cel.get("def_re")),
+        celery_name_literal=_c(cel.get("name_literal_re")),
+        celery_method=str(cel.get("method") or "JOB"),
+        aps_require=_c(aps.get("require_import_re")),
+        aps_decorator=_c(aps.get("decorator_re")),
+        aps_def=_c(aps.get("def_re")),
+        aps_add_job=_c(aps.get("add_job_re")),
+        aps_method=str(aps.get("method") or "CRON"),
+        rq_require=_c(rq.get("require_import_re")),
+        rq_decorator=_c(rq.get("decorator_re")),
+        rq_def=_c(rq.get("def_re")),
+        rq_method=str(rq.get("method") or "JOB"),
+        dq_require=_c(dq.get("require_import_re")),
+        dq_async_task=_c(dq.get("async_task_re")),
+        dq_schedule=_c(dq.get("schedule_re")),
+        extensions=tuple(str(e) for e in (block.get("extensions") or ())),
+        suffixes=tuple(str(s) for s in (block.get("suffix_strip") or ())),
+    )
+
+
+def _last_segment(dotted: str) -> str:
+    return dotted.rsplit(".", 1)[-1]
+
+
+def _decorated_def_jobs(
+    text: str,
+    path: str,
+    decorator: re.Pattern[str],
+    def_re: re.Pattern[str],
+    method: str,
+    grammar: str,
+    suffixes: tuple[str, ...],
+    name_literal: re.Pattern[str] | None = None,
+) -> list[_Job]:
+    """One job per ``def`` that FOLLOWS a matching decorator.
+
+    The decorator may span lines (``@shared_task(\\n name=..., \\n)``); the
+    first ``def NAME(`` after the decorator names the handler."""
+    jobs: list[_Job] = []
+    for dm in decorator.finditer(text):
+        fn = def_re.search(text, dm.end())
+        if fn is None:
+            continue
+        identity = _strip_suffixes(fn.group(1), suffixes)
+        slug = slugify(identity)
+        if not slug:
+            continue
+        queue_meta = ""
+        if name_literal is not None:
+            nm = name_literal.search(text, dm.start(), fn.start())
+            if nm:
+                queue_meta = nm.group(1)
+        jobs.append(_Job(slug, method, path, grammar, queue_meta))
+    return jobs
+
+
+def _collect_python(text: str, path: str) -> list[_Job]:
+    gr = _py_grammars()
+    if gr is None:
+        return []
+    jobs: list[_Job] = []
+
+    # Celery @shared_task / @app.task (decorator -> def).
+    if gr.celery_require.search(text):
+        jobs.extend(_decorated_def_jobs(
+            text, path, gr.celery_decorator, gr.celery_def,
+            gr.celery_method, "celery", gr.suffixes, gr.celery_name_literal,
+        ))
+
+    # APScheduler @scheduled_job (decorator -> def) + scheduler.add_job(func,…).
+    if gr.aps_require.search(text):
+        jobs.extend(_decorated_def_jobs(
+            text, path, gr.aps_decorator, gr.aps_def,
+            gr.aps_method, "apscheduler", gr.suffixes,
+        ))
+        for am in gr.aps_add_job.finditer(text):
+            slug = slugify(_strip_suffixes(_last_segment(am.group(1)), gr.suffixes))
+            if slug:
+                jobs.append(_Job(slug, gr.aps_method, path, "apscheduler", ""))
+
+    # RQ @job (decorator -> def) — strict rq import.
+    if gr.rq_require.search(text):
+        jobs.extend(_decorated_def_jobs(
+            text, path, gr.rq_decorator, gr.rq_def,
+            gr.rq_method, "rq", gr.suffixes,
+        ))
+
+    # django-q async_task("mod.func") / schedule("mod.func") — strict import.
+    if gr.dq_require.search(text):
+        for qm in gr.dq_async_task.finditer(text):
+            slug = slugify(_strip_suffixes(_last_segment(qm.group(1)), gr.suffixes))
+            if slug:
+                jobs.append(_Job(slug, "JOB", path, "django-q", qm.group(1)))
+        for qm in gr.dq_schedule.finditer(text):
+            slug = slugify(_strip_suffixes(_last_segment(qm.group(1)), gr.suffixes))
+            if slug:
+                jobs.append(_Job(slug, "CRON", path, "django-q", qm.group(1)))
+
+    return jobs
+
+
 # ── extractor ────────────────────────────────────────────────────────────────
 
 
 # Segment collectors: (predicate on posix-path, collector(text, path)).
 # Grows one entry per segment commit. Order is informational only.
 def _segment_collectors() -> list:
-    gr = _ts_grammars()
     out: list = []
-    if gr is not None and gr.extensions:
+    ts = _ts_grammars()
+    if ts is not None and ts.extensions:
         out.append((
-            lambda p: has_any_suffix(p, gr.extensions),
+            lambda p, exts=ts.extensions: has_any_suffix(p, exts),
             _collect_ts_js,
+        ))
+    py = _py_grammars()
+    if py is not None and py.extensions:
+        out.append((
+            lambda p, exts=py.extensions: has_any_suffix(p, exts),
+            _collect_python,
         ))
     return out
 
