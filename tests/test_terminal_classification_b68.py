@@ -446,6 +446,92 @@ def test_no_silent_drop_conservation(
     assert [r["id"] for r in tele["rows"]] == ids
 
 
+# ── B68 Q2 slice (а) — five ratified marker classes + repo_hygiene ───────
+
+
+@pytest.mark.parametrize("relpath,content,expect", [
+    ("packages/emails/welcome-mail.tsx",
+     'import { Html } from "@react-email/components";\n',
+     "email-template (B63)"),
+    ("packages/cli/bin/run-tool.ts",
+     'import { Command } from "commander";\n',
+     "cli-command (B63)"),
+    ("packages/mcp/server-main.ts",
+     'import { McpServer } from "@modelcontextprotocol/sdk/server";\n',
+     "mcp-server (B63)"),
+    ("packages/zap/index-app.ts",
+     'const zapier = require("zapier-platform-core");\n',
+     "integration-platform-app (B63)"),
+    ("packages/desktop/main-boot.ts",
+     'import { app } from "electron";\napp.whenReady().then(main);\n',
+     "desktop-shell (B63)"),
+])
+def test_q2_marker_classes_positive(
+        relpath: str, content: str, expect: str,
+        tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each ratified class names its residue row (census-verified
+    markers: react-email / commander / MCP SDK / zapier / electron)."""
+    abs_path = tmp_path / relpath
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_text(content, encoding="utf-8")
+    gap = _gap("loc_worthy", "billing", files=[(relpath, 1, 10)])
+    gaps: list[Any] = [gap]
+    _run(gaps, [_pf("billing")], [], monkeypatch, repo_path=tmp_path)
+    assert len(gaps) == 1
+    why = str(gaps[0].why_unresolved)
+    assert expect in why
+    assert gaps[0].why_unresolved in known_hole_whys()
+
+
+def test_q2_marker_in_test_file_does_not_fire(
+        tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ANTI-CASE: a taxonomy marker inside a TEST file never reaches the
+    known-hole rung — rung (4) test_path classifies it first (dev-infra),
+    the row dissolves, and no why_unresolved is ever stamped."""
+    relpath = "packages/cli/__tests__/run-tool.test.ts"
+    abs_path = tmp_path / relpath
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_text('import { Command } from "commander";\n',
+                        encoding="utf-8")
+    gap = _gap("loc_worthy", "billing", files=[(relpath, 1, 5)])
+    gaps: list[Any] = [gap]
+    tele, _ = _run(gaps, [_pf("billing")], [], monkeypatch,
+                   repo_path=tmp_path)
+    assert gaps == []  # dissolved via dev-infra, not legalized as (5)
+    f = tele["rows"][0]["files"][0]
+    assert f["fate"] == FATE_DEV_INFRA
+    assert f["evidence"] == "test_path"
+    assert tele["by_why"] == {}
+
+
+def test_q2_repo_hygiene_dotfile(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dot-leading basename is repo tooling by convention — rung (4)
+    ``repo_hygiene``, no file read needed."""
+    gap = _gap("loc_worthy", "billing",
+               files=[("packages/widget/.env.example", 1, 3)])
+    gaps: list[Any] = [gap]
+    tele, _ = _run(gaps, [_pf("billing")], [], monkeypatch)
+    assert gaps == []
+    f = tele["rows"][0]["files"][0]
+    assert f["fate"] == FATE_DEV_INFRA
+    assert f["evidence"] == "repo_hygiene"
+
+
+def test_q2_non_dotfile_is_not_repo_hygiene(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """ANTI-CASE: dots INSIDE the basename never trigger the dotfile
+    convention — a regular source file stays on the honest ladder."""
+    gap = _gap("loc_worthy", "billing",
+               files=[("packages/widget/env.example.ts", 1, 3)])
+    gaps: list[Any] = [gap]
+    tele, _ = _run(gaps, [_pf("billing")], [], monkeypatch)
+    assert len(gaps) == 1  # residue → (5) unmapped, NOT dev-infra
+    f = tele["rows"][0]["files"][0]
+    assert f["fate"] == FATE_RESIDUE
+    assert gaps[0].why_unresolved == WHY_UNMAPPED
+
+
 def test_determinism_two_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     def build() -> tuple[list[Any], list[Any], list[Any]]:
         gaps: list[Any] = [

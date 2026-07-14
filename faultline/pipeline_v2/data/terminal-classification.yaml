@@ -103,3 +103,72 @@ known_lexer_holes:
       - "lazy(() =>"
       - "await import("
       - "import.meta.glob("
+
+  # B68 Q2 slice (а), ratified 2026-07-15 — five classes verified on the
+  # 17-board census residue against the LIVE corpus checkouts (twenty
+  # Twenty Emails 16/42 files hit @react-email/, midday CLI 16/27 hit
+  # commander, midday MCP Apps 2/21 hit @modelcontextprotocol/sdk,
+  # twenty Zapier 6/20 hit zapier-platform-core, twenty Desktop 6/23 hit
+  # electron markers). The (б) families (SPA internal-module PF-grain,
+  # ws-blob/lane debt, python-module dispatch) are deliberately NOT here:
+  # they are not per-file lexer holes and stay honest `unmapped` until
+  # their own cycles (B58-v3/B48 wave; python-dispatch B-cycle).
+
+  # Render-only email template surfaces (react-email JSX — no route ever).
+  - id: email-template
+    ref: B63-unseen
+    why: "entry-surface-beyond-extraction: email-template (B63)"
+    extensions:
+      - .tsx
+      - .jsx
+      - .ts
+    markers:
+      - "@react-email/"
+      - "jsx-email"
+
+  # CLI command entry points (argv-driven, no HTTP surface).
+  - id: cli-command
+    ref: B63-unseen
+    why: "entry-surface-beyond-extraction: cli-command (B63)"
+    markers:
+      - "from \"commander\""
+      - "from 'commander'"
+      - "require(\"commander\")"
+      - "from \"yargs\""
+      - "from \"citty\""
+      - "@oclif/"
+      - "from \"clipanion\""
+      - "@click.command("
+      - "#!/usr/bin/env node"
+
+  # MCP server entry surfaces (tool/resource handlers, no HTTP routes).
+  - id: mcp-server
+    ref: B63-unseen
+    why: "entry-surface-beyond-extraction: mcp-server (B63)"
+    markers:
+      - "@modelcontextprotocol/sdk"
+      - "mcp-handler"
+      - "McpServer("
+
+  # Integration-platform apps (triggers/actions declared to a vendor
+  # platform and executed by it — no in-repo HTTP surface).
+  - id: integration-platform-app
+    ref: B63-unseen
+    why: "entry-surface-beyond-extraction: integration-platform-app (B63)"
+    markers:
+      - "zapier-platform-core"
+
+  # Desktop shell entries (electron main/renderer bootstrap).
+  - id: desktop-shell
+    ref: B63-unseen
+    why: "entry-surface-beyond-extraction: desktop-shell (B63)"
+    extensions:
+      - .ts
+      - .tsx
+      - .js
+      - .mjs
+      - .cjs
+    markers:
+      - "from \"electron\""
+      - "require(\"electron\")"
+      - "app.whenReady("

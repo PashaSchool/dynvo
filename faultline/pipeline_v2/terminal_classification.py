@@ -249,6 +249,13 @@ def _dev_infra_evidence(
         return "dev_artifact_unit"          # B58 / B53 Seg B / B28 P-D
     if _under_any_unit(path, instrument_dirs):
         return "technology_instrument"      # W4.2 Fix 1 channel
+    # B68 Q2 slice (а), ratified 2026-07-15 — repo-hygiene dotfiles: a
+    # dot-leading BASENAME (.gitignore / .prettierignore / .oxlintrc.json
+    # / .env.example / .zapierapprc …) is repo tooling by convention,
+    # never a journey surface (17-board census: 9× .gitignore et al. sat
+    # in gap residue as noise). Mechanism (name shape), not a vocabulary.
+    if path.replace("\\", "/").rsplit("/", 1)[-1].startswith("."):
+        return "repo_hygiene"               # B68 dotfile convention
     if is_test_path(path):
         return "test_path"                  # Stage 6.9
     if is_generated_path(path):
