@@ -74,6 +74,7 @@ __all__ = [
     "UF_NAME_DEGRIME_ENV",
     "UF_RESOURCE_RUNG_ENV",
     "UF_RUNG_SOURCES_V2_ENV",
+    "UF_VERB_SNAP_ENV",
     "naming_contract_enabled",
     "humanize_route_names_enabled",
     "pf_name_law_enabled",
@@ -81,6 +82,7 @@ __all__ = [
     "uf_name_degrime_enabled",
     "uf_resource_rung_enabled",
     "uf_rung_sources_v2_enabled",
+    "uf_verb_snap_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -187,6 +189,33 @@ UF_RESOURCE_RUNG_ENV = "FAULTLINE_UF_RESOURCE_RUNG"
 #: CONFIDENCE/EVIDENCE channel only — UF NAMES are byte-stable either way
 #: (the B40 law). Unset ⇒ confidence + serialized output byte-identical.
 UF_RUNG_SOURCES_V2_ENV = "FAULTLINE_UF_RUNG_SOURCES_V2"
+
+#: B61 Seg1 — evidence-born verb-snap kill-switch (default **OFF**). A
+#: deterministic post-pass that REPLACES a UF display's LEADING verb when
+#: its action-family is ABSENT from the member VERB-COMPOSITION (B57
+#: :func:`member_verb_composition` — the HTTP-methods / page-kinds the
+#: member flows structurally imply). The lead verb is snapped to the
+#: canonical verb of the composition's DOMINANT family (mutation families
+#: outrank read — a mutation is the stronger claim the code makes); the
+#: resource remainder, membership, identity, and lineage are untouched.
+#:
+#: This is the DISPLAY channel — and, unlike every rung/adjudicator flag,
+#: it is the FIRST feature permitted to CHANGE a UF NAME. It therefore
+#: carries its OWN kill-switch so the B40 "UF NAMES byte-stable" law under
+#: ``FAULTLINE_UF_RUNG_SOURCES_V2`` / ``FAULTLINE_STAGE_6_7E_ADJUDICATOR``
+#: is preserved intact: those flags STILL never change a name; only THIS
+#: flag legally extends the law to a name-changing, still-deterministic,
+#: still-$0 post-pass. NAME_CONFIDENCE is never written here — Law C scores
+#: the snapped name via its existing ``structural:verb-composition`` rung
+#: (so an earned high requires ``FAULTLINE_UF_RUNG_SOURCES_V2`` co-armed,
+#: as the keyed battery runs it). SACRED: an EMPTY composition leaves the
+#: name UNCHANGED (no facts → no claim → honest ``missing:verb``); a
+#: mutation verb is assigned ONLY over a mutation composition (a GET-only
+#: journey never earns a create/delete name); authored/pinned rows are
+#: exempt; the snap is COLLISION-SAFE (B31 twin-protection — two rows
+#: never snap to one name). Unset ⇒ names + confidence + serialized output
+#: byte-identical.
+UF_VERB_SNAP_ENV = "FAULTLINE_UF_VERB_SNAP"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
@@ -312,6 +341,18 @@ def uf_rung_sources_v2_enabled() -> bool:
     to ``res_grounded`` / ``verb_grounded``, bar unchanged). Unset ⇒
     confidence + serialized output byte-identical."""
     return os.environ.get(UF_RUNG_SOURCES_V2_ENV, "0").strip().lower() in {
+        "1", "true",
+    }
+
+
+def uf_verb_snap_enabled() -> bool:
+    """B61 Seg1 evidence-born verb-snap. Default **OFF**;
+    ``FAULTLINE_UF_VERB_SNAP=1`` arms the deterministic lead-verb snap
+    (replace a lying lead verb with the canonical verb of the member
+    verb-composition's dominant family). DISPLAY channel; the ONLY
+    UF-name-changing flag. Unset ⇒ names + confidence + serialized output
+    byte-identical."""
+    return os.environ.get(UF_VERB_SNAP_ENV, "0").strip().lower() in {
         "1", "true",
     }
 
@@ -1793,6 +1834,57 @@ def _name_lead_family(display: str, idx: Mapping[str, Any]) -> str | None:
     return fam
 
 
+#: B61 — deterministic dominant-family priority for a member verb-composition.
+#: Mutation families outrank read (a WRITE is the stronger claim the code
+#: makes — SACRED: mutation name only over a mutation composition); ties break
+#: by this frozen CRUD order. The composition families a journey can ever imply
+#: are exactly ``member_verb_composition``'s range — the HTTP-method families
+#: (:data:`_HTTP_METHOD_VERB_FAMILIES`) ∪ the page-read families
+#: (:data:`_PAGE_VERB_FAMILIES`) = {browse, view, create, update, delete}; no
+#: "act"/"read" bucket ever appears, so every family here has a canonical
+#: display verb in :data:`_ACTION_FAMILY_WORD`.
+_SNAP_MUTATION_ORDER: tuple[str, ...] = ("create", "update", "delete")
+_SNAP_READ_ORDER: tuple[str, ...] = ("browse", "view")
+
+
+def _dominant_comp_family(comp: Iterable[str]) -> str | None:
+    """The family whose canonical verb a verb-snap adopts: the first present
+    mutation family (create → update → delete) when the composition mutates,
+    else the first present read family (browse → view). ``None`` when the
+    composition names no snap-eligible family (defensive; e.g. an empty set —
+    the caller must already have skipped it)."""
+    fams = set(comp)
+    for fam in _SNAP_MUTATION_ORDER:
+        if fam in fams:
+            return fam
+    for fam in _SNAP_READ_ORDER:
+        if fam in fams:
+            return fam
+    return None
+
+
+def _snap_lead_verb(
+    name: str, target_fam: str, vocab: Mapping[str, Any],
+) -> str:
+    """Replace a UF display's LEADING word (the verb that lies) with the
+    canonical verb of ``target_fam`` (:data:`_ACTION_FAMILY_WORD` — the
+    engine's frozen per-family display verb; for the composition families it
+    IS the family's canonical head verb, e.g. create → "Create"), preserving
+    the resource remainder VERBATIM, then run the FULL B50 chain (degrime echo
+    collapse + casing polish). 'Manage webhooks' + create → 'Create webhooks';
+    'Handle incoming events' + delete → 'Delete incoming events'. ONLY the
+    single leading token is replaced (the resource part is SACRED — spec B61)."""
+    verb = _ACTION_FAMILY_WORD.get(target_fam)
+    if not verb:
+        return name
+    parts = (name or "").strip().split(None, 1)
+    remainder = parts[1] if len(parts) == 2 else ""
+    snapped = f"{verb} {remainder}".strip() if remainder else verb
+    if uf_name_degrime_enabled():
+        snapped = _degrime_display(snapped)
+    return polish_display_casing(snapped, vocab)
+
+
 def _action_family_from_domain(domain: str) -> str | None:
     """``lattice:action:<res>-<fam>`` → ``<fam>`` (the labeler-collapsed
     action child's true family)."""
@@ -2021,6 +2113,74 @@ def _apply_uf_name_laws(
             if skipped:
                 tele["uf_degrime_collision_skipped"] = (
                     tele.get("uf_degrime_collision_skipped", 0) + skipped)
+
+    # ── B61 Seg1 — evidence-born verb-snap (FAULTLINE_UF_VERB_SNAP) ──
+    # A UF display whose LEAD-verb family is ABSENT from the member
+    # verb-composition (the name's verb lies about the code) has that lead
+    # verb REPLACED by the canonical verb of the composition's DOMINANT
+    # family (mutation outranks read). The resource remainder, membership,
+    # identity, and lineage are untouched; authored/pinned rows are exempt;
+    # an EMPTY composition leaves the name UNCHANGED (no facts → no claim →
+    # honest missing:verb below). Runs BEFORE Law C so the snapped name is
+    # scored by the existing structural:verb-composition rung (earned high
+    # at $0, requires FAULTLINE_UF_RUNG_SOURCES_V2 co-armed). COLLISION-SAFE
+    # (B31): targets computed first, two rows never snap to one name. This
+    # body — inside _apply_uf_name_laws — runs identically in the initial
+    # contract pass and the B57 Seg2 rescore seam; it is IDEMPOTENT (once
+    # lead ∈ comp the snap never refires). Flag OFF ⇒ names/confidence/
+    # serialized output byte-identical (the ONLY UF-name-changing flag).
+    if uf_verb_snap_enabled():
+        _snap_tele = tele.setdefault("uf_verb_snap", {
+            "snapped": 0, "families": {}, "skipped_empty": 0,
+            "skipped_authored": 0, "skipped_collision": 0,
+        })
+        _snap_mf, _snap_pf = route_verb_indexes(routes_index)
+        _snap_fbi = flow_by_id or {}
+        _snap_proposals: dict[str, str] = {}
+        _snap_fam: dict[str, str] = {}
+        for uf in ordered:
+            if _uf_protected(uf, authored_ids, keeper_on):
+                _snap_tele["skipped_authored"] += 1
+                continue
+            cur = str(getattr(uf, "name", "") or "")
+            lead = _name_lead_family(cur, idx)
+            if lead is None:
+                continue  # no recognized lead verb — nothing to fold (honest)
+            comp = member_verb_composition(uf, _snap_fbi, _snap_mf, _snap_pf)
+            if not comp:
+                _snap_tele["skipped_empty"] += 1
+                continue  # SACRED — empty composition, name unchanged
+            if lead in comp:
+                continue  # verb already grounded by composition — no change
+            target = _dominant_comp_family(comp)
+            if target is None:
+                continue
+            snapped = _snap_lead_verb(cur, target, vocab)
+            # Defense in depth: only commit when the snapped lead verb truly
+            # folds back INTO the composition (earned-high by construction)
+            # and the result is law-clean (no pf_uf_twin / param / etc.).
+            if (snapped and snapped.strip().lower() != cur.strip().lower()
+                    and _name_lead_family(snapped, idx) in comp
+                    and not display_law_violations(
+                        snapped, vocab, pf_display=_pfd(uf) or None)):
+                _uid = str(getattr(uf, "id", "") or "")
+                _snap_proposals[_uid] = snapped
+                _snap_fam[_uid] = target
+        if _snap_proposals:
+            _snap_cur = {
+                str(getattr(u, "id", "") or ""): str(getattr(u, "name", "") or "")
+                for u in ordered
+            }
+            _snap_by_id = {str(getattr(u, "id", "") or ""): u for u in ordered}
+            _snap_allowed = degrime_rename_plan(_snap_cur, _snap_proposals)
+            for _uid in sorted(_snap_allowed):
+                _snap_by_id[_uid].name = _snap_proposals[_uid]
+                _snap_tele["snapped"] += 1
+                _fam = _snap_fam[_uid]
+                _snap_tele["families"][_fam] = (
+                    _snap_tele["families"].get(_fam, 0) + 1)
+            _snap_tele["skipped_collision"] += (
+                len(_snap_proposals) - len(_snap_allowed))
 
     rungs_on = name_evidence_rungs_enabled()
     _nav = nav_labels or {}
