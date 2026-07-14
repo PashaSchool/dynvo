@@ -93,9 +93,11 @@ __all__ = [
     "MINT_DOMAIN_FOLD_ENV",
     "FOLD_CROSSAPP_GUARD_ENV",
     "ANNEXATION_GUARD_ENV",
+    "SAMEUNIT_DOMAIN_CAP_ENV",
     "mint_domain_fold_enabled",
     "fold_crossapp_guard_enabled",
     "annexation_guard_enabled",
+    "sameunit_domain_cap_enabled",
     "anchored_mint_enabled",
     "run_anchored_mint",
     "build_platform_infrastructure_lane",
@@ -161,6 +163,52 @@ FOLD_CROSSAPP_GUARD_ENV = "FAULTLINE_FOLD_CROSSAPP_GUARD"
 #:
 #: Default OFF; ``FAULTLINE_ANNEXATION_GUARD=1`` arms both segments.
 ANNEXATION_GUARD_ENV = "FAULTLINE_ANNEXATION_GUARD"
+
+#: B58-v2 (2026-07-14) — same-unit domain-dir cap. The B58 residual: the
+#: guard above judges CROSS-unit force-binds only, so a container anchor
+#: still annexes its OWN unit's sibling domains. Two segments, one flag:
+#:
+#: * Seg A (drain-side, ``ws_blob_domain_drain`` donor class 2) — a
+#:   container-anchor PF (``fdir:``/path-tailed ``route:``) sheds member
+#:   files that live in a SAME-unit foreign domain-dir (a child of a
+#:   ``domain_dir_containers`` segment + the cap-only ``components``
+#:   extension) when the domain name echo-matches exactly ONE existing
+#:   PF (NamespaceEcho v1 laws: full normalized match, ambiguous → skip,
+#:   generic tokens → skip; nav-key-only matches are TELEMETRY, never a
+#:   move — no receiver, no conservation hole). Census (keyed boards
+#:   2026-07-14, B58-OFF): Soc0 ``Network Security``
+#:   (fdir:frontend/src/modules/network-security) = 103,796 LOC = 38.6%
+#:   of the board over 418 files, of which own-subtree = 148 files
+#:   (35.4% files / 17.2% LOC), same-unit foreign ``features/*`` = 15
+#:   dirs / 55 files (~20K LOC — 13 of the 15 domain names have an
+#:   existing PF receiver: cases/detectors/investigations/integrations/
+#:   labels/token-usage/threat-hunts/inline-suggestions/organization-
+#:   members/findings/insights/detections/event-routing), plus
+#:   ``components/*`` = 13 dirs / 121 files (29% of the PF's files;
+#:   ``components/api-keys`` has NO PF on the annexed board — nav-only
+#:   class). NO numeric thresholds: the operator ruling (2026-07-14)
+#:   replaced the draft X%/N-dirs fractional cap with the echo gate —
+#:   the cap fires exactly where the board itself proves a competing
+#:   owner exists (rule-no-magic-tuning: zero constants).
+#: * Seg B (mint-side, ``_canonical_anchor_unit`` rung 2.5) — a route
+#:   anchor whose full-surface unit test is NON-unanimous (multi-unit
+#:   evidence ⇒ canonical unit ``None`` ⇒ "never foreign" ⇒ the B58
+#:   fence is blind to it) resolves by unit unanimity over its PAGE
+#:   surface only. Census: plane ``spaces`` (route:space) = 75,978 LOC =
+#:   39.1% of the board over 575 paths — 451 files annexed from
+#:   apps/api (db 177 / app 110 / api 47 — the api's SHARED core) vs
+#:   124 own apps/space files; its page routes live wholly in
+#:   ``apps/space/app/**`` while api routes live in apps/api, so the
+#:   page-surface rung restores the fence. Full-stack lineage binds are
+#:   untouched (Soc0 route:detection carries 28 backend/routers files
+#:   via LINEAGE — the fence guards rescue rungs only). Api-only
+#:   multi-unit anchors still resolve ``None`` (conservative). Seg B is
+#:   live only while the B58 guard itself is armed (the fence machinery
+#:   it feeds is Seg-A-of-B58 property).
+#:
+#: Default OFF; ``FAULTLINE_SAMEUNIT_DOMAIN_CAP=1`` arms both segments.
+#: OFF is byte-identical to the pre-B58-v2 pipeline.
+SAMEUNIT_DOMAIN_CAP_ENV = "FAULTLINE_SAMEUNIT_DOMAIN_CAP"
 
 #: θ — the majority threshold (calibration §F: U-cap is monotonically
 #: decreasing in θ; 0.5 is the conservation-law dual of §4.5).
@@ -297,6 +345,16 @@ def annexation_guard_enabled() -> bool:
     ``FAULTLINE_ANNEXATION_GUARD`` in ``{0, false, off}`` disables —
     byte-identical to the pre-B58 pipeline."""
     return os.environ.get(ANNEXATION_GUARD_ENV, "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def sameunit_domain_cap_enabled() -> bool:
+    """B58-v2 — default OFF; ``FAULTLINE_SAMEUNIT_DOMAIN_CAP=1`` arms the
+    same-unit domain-dir cap (Seg A drain donor class 2 + Seg B
+    page-surface canonical-unit rung). OFF is byte-identical to the
+    pre-B58-v2 pipeline."""
+    return os.environ.get(SAMEUNIT_DOMAIN_CAP_ENV, "0").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
@@ -921,6 +979,9 @@ def run_anchored_mint(
     # dev-artifact-unit bar). Empty tuple on single-unit repos.
     _ws_unit_roots: tuple[str, ...] = _workspace_unit_roots(ctx)
     _annex_on: bool = annexation_guard_enabled()
+    # B58-v2 Seg B — the page-surface canonical-unit rung feeds the B58
+    # fence, so it is live only while that fence itself is armed.
+    _sameunit_cap_on: bool = _annex_on and sameunit_domain_cap_enabled()
     _art_tokens: frozenset[str] = frozenset(
         str(t).strip().lower()
         for t in (vocab.get("unit_root_artifact_tokens") or ())
@@ -1254,6 +1315,14 @@ def run_anchored_mint(
         2. unit UNANIMITY over the anchor's OWN route surface files
            (page + api) — a key-only route anchor (``route:space``) is
            identified by where its routes live;
+        2.5. B58-v2 Seg B (``FAULTLINE_SAMEUNIT_DOMAIN_CAP=1`` only) —
+           when rung 2 is NON-unanimous, unit unanimity over the PAGE
+           surface alone: a full-stack anchor whose pages all live in
+           one dedicated app (plane ``route:space`` — pages wholly in
+           apps/space, api views in apps/api) is canonically THAT app;
+           its api evidence widens ownership, not identity. Multi-unit
+           PAGE surfaces and api-only anchors still fall through
+           (conservative — never called foreign);
         3. the B22a evidence-unanimity fallback (``_anchor_unit``).
 
         ``None`` ⇒ genuinely cross-unit — never called foreign."""
@@ -1272,6 +1341,16 @@ def run_anchored_mint(
                     }
                     if len(units) == 1:
                         unit = next(iter(units))
+                    elif len(units) > 1 and _sameunit_cap_on:
+                        page_units = {
+                            u for p in sorted(a.page_route_files)
+                            if (u := _unit_of(str(p), _ws_unit_roots))
+                            is not None
+                        }
+                        if len(page_units) == 1:
+                            unit = next(iter(page_units))
+                            tele["cap_page_surface_unit"] = (
+                                tele.get("cap_page_surface_unit", 0) + 1)
                 if unit is None:
                     unit = _anchor_unit(cid)
             _canon_unit_cache[cid] = unit

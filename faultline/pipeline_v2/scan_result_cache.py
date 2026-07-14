@@ -166,6 +166,18 @@ ENV_OUTPUT_FLAGS = (
     # the platform_infrastructure lane. Appended WITHOUT a KEY_SCHEMA bump —
     # reconciled at merge.
     "FAULTLINE_ANNEXATION_GUARD",
+    # B58-v2 (2026-07-14) — same-unit domain-dir cap: Seg A extends the
+    # B53 drain with donor class 2 (a container-anchor PF sheds member
+    # files annexed from SAME-unit foreign domain-dirs whose name
+    # echo-matches exactly ONE existing PF; nav-only matches are
+    # telemetry, never a move); Seg B adds the page-surface
+    # canonical-unit rung to the B58 fence (a multi-unit route anchor
+    # resolves to its PAGE unit — plane route:space). Reshapes
+    # developer_features[] (carve devs + donor path surgery) +
+    # product_features[] member ownership + path_index + downstream
+    # user_flows[] homes (I16). Appended WITHOUT a KEY_SCHEMA bump —
+    # reconciled at merge.
+    "FAULTLINE_SAMEUNIT_DOMAIN_CAP",
     # B22 (2026-07-10) — transport-lane journey-conservation handoff (Stage
     # 6.985): the transport prong marks candidates at 6.86 and the handoff
     # re-homes their journeys/devs post-journey-layer before laning the PF
