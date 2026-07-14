@@ -104,6 +104,14 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "route-express":   4,   # Express .get/.post route registrations
     "go-router":       4,   # Go HTTP mux/handler registrations
     "django-route":    4,   # Django/DRF urls.py urlpatterns + views
+    # B67 — background-job / cron handlers declared via decorator / call /
+    # manifest (@Processor, celery @shared_task, node-cron, vercel/GH/k8s).
+    # Same class as the other declared entry points (parsed from source
+    # markers, not module layout), so the same tier — and job handler files
+    # are disjoint from HTTP route files in practice, so a jobs-entry never
+    # annexes a real route surface. Explicit entry required (a missing source
+    # defaults to 0 and loses every file-ownership conflict).
+    "jobs-entry":      4,
     # Profile-supplied Django app-directory anchors (Phase B #2). Same
     # code-layout tier as fastapi-domain: below declared URLConf routes
     # (the urls/views files belong to the route anchor), above schema.

@@ -1,0 +1,87 @@
+# background-jobs.yaml — grammar VOCABULARY for the B67 jobs/cron entry
+# extractor (``faultline.pipeline_v2.extractors.jobs_entries``).
+#
+# Runtime copy packaged here; authoring copy mirrored at
+# ``eval/stacks/background-jobs.yaml`` (local-only, untracked — same manual
+# dual-copy convention as the other stacks/ files). Keep the two byte-identical.
+#
+# WHY (B67 / B63 meter, 192 unseen): background/cron handlers are not in
+# ``routes_index`` — their flows/journeys never mint, so system capabilities
+# (sync / digest / cleanup / billing-cron) are invisible. This file holds the
+# per-grammar STRUCTURAL patterns (decorator / call signatures) and the
+# corroboration vocabulary (required library imports, name-suffixes to strip,
+# artifact dirs to skip). The MECHANISM (dispatch, identity derivation, dedup,
+# emission) lives in the Python module; this file is data only — no tuned
+# numbers, no repo-specific paths (rule-no-magic-tuning / rule-no-repo-paths).
+#
+# B64 literal law: an identity is only taken from a STATIC source token — a
+# class/function name (always literal) or a STRING-LITERAL queue/task name.
+# A queue/task name that is a variable or member expression (twenty's
+# ``@Processor(MessageQueue.cronQueue)``, onyx's ``@shared_task(name=Onyx...)``)
+# is an honest skip for the *name meta* only; the entry is still emitted keyed
+# on the class/function name. Truly dynamic registrations (no static
+# class/function, name is a free variable) emit nothing.
+
+# Confidence carried on every emitted AnchorCandidate (explicit author intent —
+# a decorated/declared handler is a high-precision signal when present).
+confidence: 0.85
+
+# Files whose job-like signatures are NOT product entries. Test/mock/fixture
+# files are handled by the shared ``is_test_path`` predicate; this list adds the
+# artifact classes that predicate does NOT cover (storybook, examples,
+# playground, demos, samples). Matched as an exact path SEGMENT (never a
+# substring — ``sampleService`` is not ``sample``).
+skip_path_segments:
+  - __stories__
+  - stories
+  - storybook
+  - examples
+  - example
+  - playground
+  - playgrounds
+  - demo
+  - demos
+  - sample
+  - samples
+  - fixtures
+  - fixture
+  - mocks
+  - mock
+  - __generated__
+  - generated
+# Filename dot-component markers (``foo.stories.ts`` -> component ``stories``).
+skip_filename_markers:
+  - stories
+  - story
+
+# ── Seg A — TS / JS ─────────────────────────────────────────────────────────
+ts_js:
+  extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]
+  # Class/queue name suffixes stripped to reach the capability slug.
+  suffix_strip: [CronJob, Job, Cron, Worker, Processor, Consumer, Handler, Scheduler, Task]
+  grammars:
+    # NestJS / BullMQ ``@Processor`` on a class (twenty: 85 handlers).
+    # The queue argument is usually a member expr (MessageQueue.cronQueue) —
+    # identity is the CLASS name; queue meta only when a string literal.
+    processor:
+      decorator_re: '@Processor\b'
+      class_re: '(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)'
+      queue_literal_re: '@Processor\(\s*[''"]([^''"]+)[''"]'
+      cron_hint_re: '\.cron\.|@Cron\b|SentryCronMonitor|CronExpression|CronPattern|CRON_PATTERN'
+      method: JOB
+    # BullMQ ``new Worker("queue", handler)`` — requires a bullmq import so a
+    # DOM/web ``new Worker(new URL(...))`` never false-positives.
+    bullmq_worker:
+      require_import_re: 'from\s+[''"]bullmq[''"]|require\(\s*[''"]bullmq[''"]\s*\)'
+      call_re: 'new\s+Worker\s*(?:<[^>]*>)?\(\s*[''"]([^''"]+)[''"]'
+      method: JOB
+    # node-cron ``cron.schedule("* * * * *", handler)`` — requires a node-cron
+    # import. Identity is the bound variable name when present, else file stem.
+    node_cron:
+      require_import_re: 'node-cron|from\s+[''"]cron[''"]|require\(\s*[''"](?:node-)?cron[''"]\s*\)'
+      call_re: '(?:(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*)?\b(?:cron|nodeCron)\.schedule\s*\(\s*[''"]([^''"]+)[''"]'
+      method: CRON
+    # agenda ``agenda.define("job name", ...)`` and bree job registration.
+    agenda:
+      call_re: '\bagenda\.define\s*\(\s*[''"]([^''"]+)[''"]'
+      method: JOB

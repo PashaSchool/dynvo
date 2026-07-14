@@ -150,6 +150,13 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     _try("faultline.pipeline_v2.extractors.rails_views",     "RailsViewsExtractor")
     _try("faultline.pipeline_v2.extractors.rails_jobs",      "RailsJobsExtractor")
     _try("faultline.pipeline_v2.extractors.rails_stimulus",  "RailsStimulusExtractor")
+    # B67 — background-job / cron entry extractor. Emits a routes_index entry
+    # (synthetic JOB/CRON method) per @Processor/Worker/cron.schedule (TS/JS),
+    # celery/APScheduler/rq (Python), and manifest-cron (vercel/actions/k8s)
+    # handler, so background capabilities mint flows/journeys. Self-skips
+    # unless FAULTLINE_JOBS_ENTRIES is set (default OFF) — byte-identical when
+    # unset. Registered unconditionally; the flag gate lives in extract().
+    _try("faultline.pipeline_v2.extractors.jobs_entries",    "JobsEntryExtractor")
 
     return out
 

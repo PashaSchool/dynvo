@@ -522,6 +522,13 @@ ENV_OUTPUT_FLAGS = (
     # the residual). Default OFF; =0/unset byte-identical. No KEY_SCHEMA
     # bump (own later flip per flip-protocol).
     "FAULTLINE_DISPATCH_RESOLVER",
+    # B67 — background-job / cron entry extractor. Emits routes_index entries
+    # (synthetic JOB/CRON method) for background handlers (@Processor/BullMQ
+    # Worker/node-cron TS/JS, celery/APScheduler/rq Python, vercel/actions/k8s
+    # manifest-cron) so their flows/journeys mint. Default OFF; =0/unset is
+    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides the
+    # separate later flip commit only (flip-protocol).
+    "FAULTLINE_JOBS_ENTRIES",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
