@@ -294,3 +294,64 @@ class TestCollisionAndIdempotency:
         tele2 = _apply([u], pfs, flows, r)            # the rescore seam
         assert u.name == "Create webhooks"
         assert tele2["uf_verb_snap"]["snapped"] == 0  # no refire
+
+
+# ── iter2: generic-lead composition grounding (same flag) ────────────────
+
+
+class TestGenericCompositionGrounding:
+    def test_manage_lead_grounds_from_composition(self, monkeypatch):
+        monkeypatch.setenv(_FLAG, "1")
+        monkeypatch.setenv(_V2, "1")
+        # 'Manage' folds to NO family; member flow names give no families
+        # (mfams empty) — pre-iter2 this row was stuck missing:verb.
+        f = _FL("f1", "process tag", paths=["api/tags.ts"])
+        r = [{"file": "api/tags.ts", "method": "POST"}]
+        u = _uf("UF-1", "Manage tags", "wh", resource="tags", members=["f1"])
+        tele = _apply([u], [_pf("wh", "Tags")], [f], r)
+        assert u.name == "Manage tags"                 # name NEVER touched
+        assert u.name_confidence == "high"
+        assert "structural:verb-composition-generic" in (u.name_evidence or [])
+        assert tele["uf_verb_snap"]["generic_grounded"] == 1
+
+    def test_editorial_lead_grounds_and_keeps_name(self, monkeypatch):
+        monkeypatch.setenv(_FLAG, "1")
+        monkeypatch.setenv(_V2, "1")
+        # 'Confirm' is not in the action-families vocab -> lead None.
+        f = _FL("f1", "process request", paths=["api/email-change.ts"])
+        r = [{"file": "api/email-change.ts", "method": "POST"}]
+        u = _uf("UF-1", "Confirm email change", "wh",
+                resource="email change", members=["f1"])
+        _apply([u], [_pf("wh", "Email")], [f], r)
+        assert u.name == "Confirm email change"        # editorial name kept
+        assert u.name_confidence == "high"
+
+    def test_empty_composition_stays_medium(self, monkeypatch):
+        monkeypatch.setenv(_FLAG, "1")
+        monkeypatch.setenv(_V2, "1")
+        f = _FL("f1", "helper thing", paths=["lib/util.ts"])
+        u = _uf("UF-1", "Manage tags", "wh", resource="tags", members=["f1"])
+        tele = _apply([u], [_pf("wh", "Tags")], [f], [])
+        assert u.name_confidence == "medium"           # honest missing:verb
+        assert "missing:verb" in (u.name_evidence or [])
+        assert tele["uf_verb_snap"]["generic_grounded"] == 0
+
+    def test_flag_off_no_generic_grounding(self, monkeypatch):
+        monkeypatch.setenv(_V2, "1")                    # v2 on, snap OFF
+        f = _FL("f1", "process tag", paths=["api/tags.ts"])
+        r = [{"file": "api/tags.ts", "method": "POST"}]
+        u = _uf("UF-1", "Manage tags", "wh", resource="tags", members=["f1"])
+        tele = _apply([u], [_pf("wh", "Tags")], [f], r)
+        assert u.name_confidence == "medium"           # byte-identical rubric
+        assert "uf_verb_snap" not in tele
+
+    def test_recognized_lead_never_takes_generic_rung(self, monkeypatch):
+        monkeypatch.setenv(_FLAG, "1")
+        monkeypatch.setenv(_V2, "1")
+        # 'Delete' lead over POST-only comp: the SNAP path owns it (renames
+        # to Create); the generic rung must not fire for recognized leads.
+        u, pfs, flows, r = _post("Delete webhooks", "webhooks")
+        tele = _apply([u], pfs, flows, r)
+        assert u.name == "Create webhooks"
+        assert tele["uf_verb_snap"]["generic_grounded"] == 0
+        assert "structural:verb-composition-generic" not in (u.name_evidence or [])

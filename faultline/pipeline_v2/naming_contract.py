@@ -208,7 +208,13 @@ UF_RUNG_SOURCES_V2_ENV = "FAULTLINE_UF_RUNG_SOURCES_V2"
 #: still-$0 post-pass. NAME_CONFIDENCE is never written here — Law C scores
 #: the snapped name via its existing ``structural:verb-composition`` rung
 #: (so an earned high requires ``FAULTLINE_UF_RUNG_SOURCES_V2`` co-armed,
-#: as the keyed battery runs it). SACRED: an EMPTY composition leaves the
+#: as the keyed battery runs it). Iter2 rider (same flag): a GENERIC /
+#: editorial lead with NO action family ('Manage …', 'Confirm …') is
+#: verb-grounded by a NON-EMPTY member verb-composition — the exact mirror
+#: of Law C's own generic clause (``lead is None and mfams >= 1``) with
+#: route-structural facts as one more OR-source at the SAME bar (evidence
+#: tag ``structural:verb-composition-generic``); such names are NEVER
+#: snapped (no family conflict — nothing lies). SACRED: an EMPTY composition leaves the
 #: name UNCHANGED (no facts → no claim → honest ``missing:verb``); a
 #: mutation verb is assigned ONLY over a mutation composition (a GET-only
 #: journey never earns a create/delete name); authored/pinned rows are
@@ -2129,13 +2135,18 @@ def _apply_uf_name_laws(
     # contract pass and the B57 Seg2 rescore seam; it is IDEMPOTENT (once
     # lead ∈ comp the snap never refires). Flag OFF ⇒ names/confidence/
     # serialized output byte-identical (the ONLY UF-name-changing flag).
-    if uf_verb_snap_enabled():
+    _snap_on = uf_verb_snap_enabled()
+    _snap_mf: dict[str, set[str]] = {}
+    _snap_pf: set[str] = set()
+    _snap_fbi: Mapping[str, Any] = flow_by_id or {}
+    _snap_tele: dict[str, Any] = {}
+    if _snap_on:
         _snap_tele = tele.setdefault("uf_verb_snap", {
             "snapped": 0, "families": {}, "skipped_empty": 0,
             "skipped_authored": 0, "skipped_collision": 0,
+            "generic_grounded": 0,
         })
         _snap_mf, _snap_pf = route_verb_indexes(routes_index)
-        _snap_fbi = flow_by_id or {}
         _snap_proposals: dict[str, str] = {}
         _snap_fam: dict[str, str] = {}
         for uf in ordered:
@@ -2497,6 +2508,28 @@ def _apply_uf_name_laws(
                 if verb_composition_hit:
                     _v2_tele["verb-composition"] += 1
 
+        # ── B61 iter2 — generic-lead composition grounding (same
+        # FAULTLINE_UF_VERB_SNAP flag). The exact mirror of the base
+        # rubric's generic clause (``lead is None and len(mfams) >= 1`` —
+        # "it abstracts, it does not over-claim"): a generic/editorial
+        # lead with NO action family ('Manage …', 'Complete …',
+        # 'Confirm …') is verb-grounded by the member VERB-COMPOSITION —
+        # route-declared HTTP methods / page surfaces are a STRONGER
+        # evidence class than the flow-name-derived ``mfams`` the base
+        # clause accepts. Same bar, one more OR-source (B50 Seg3 / B57
+        # Seg1 precedent); names are NEVER touched here (a generic lead
+        # has no family conflict — nothing lies, nothing snaps). EMPTY
+        # composition stays honest ``missing:verb``. Flag OFF ⇒ False ⇒
+        # byte-identical.
+        generic_comp_hit = False
+        if _snap_on and lead is None:
+            generic_comp_hit = bool(member_verb_composition(
+                uf, _snap_fbi, _snap_mf, _snap_pf))
+            if generic_comp_hit and not (base_verb or registry_hit
+                                         or route_verb_hit or ta_verb_hit
+                                         or verb_composition_hit):
+                _snap_tele["generic_grounded"] += 1
+
         # ── B57 Seg2 — adjudicated rungs (verified citations; TWO
         # channels since b57-seg2-iter: resource + verb — each verb
         # citation was family-matched against this UF's lead verb by the
@@ -2515,7 +2548,7 @@ def _apply_uf_name_laws(
                         or ta_res_hit or adj_hit)
         verb_grounded = (base_verb or registry_hit or route_verb_hit
                          or ta_verb_hit or verb_composition_hit
-                         or adj_verb_hit)
+                         or generic_comp_hit or adj_verb_hit)
 
         def _rung_fired() -> list[str]:
             r: list[str] = []
@@ -2551,6 +2584,8 @@ def _apply_uf_name_laws(
                     fired.append("verb:test-assert")
                 if verb_composition_hit:
                     fired.append("structural:verb-composition")
+                if generic_comp_hit:
+                    fired.append("structural:verb-composition-generic")
                 fired.extend(f"adjudicated:{a}" for a in adj_verb_rungs)
                 uf.name_evidence = fired or ["structural-route"]
         elif res_grounded:
