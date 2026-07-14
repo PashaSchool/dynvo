@@ -62,6 +62,14 @@ DISCIPLINE (unchanged from B49/B51 + the SACRED anti-cases):
 
 Kill-switch ``FAULTLINE_WS_BLOB_DOMAIN_DRAIN=0`` (default OFF) → the pass is a
 no-op and scans are byte-identical to main.
+
+B58-v2 (2026-07-14) adds donor CLASS 2 to the same pass — the same-unit
+domain-dir cap (Seg A): a container-anchor PF (``fdir:`` / path-tailed
+``route:``) sheds member files annexed from SAME-unit foreign domain dirs.
+Separate switch (``FAULTLINE_SAMEUNIT_DOMAIN_CAP``, armed by the caller via
+``sameunit_cap=``); either class runs without the other; both OFF ⇒
+byte-identical. See :func:`run_ws_blob_domain_drain` for the class-2 laws
+and ``stage_6_86_anchored_mint.SAMEUNIT_DOMAIN_CAP_ENV`` for the census.
 """
 
 from __future__ import annotations
@@ -153,6 +161,21 @@ def _containers() -> tuple[frozenset[str], frozenset[str]]:
     return containers, generic
 
 
+@lru_cache(maxsize=1)
+def _cap_containers() -> frozenset[str]:
+    """B58-v2 Seg A container set: the B53 ``domain_dir_containers`` plus
+    the cap-only ``sameunit_cap_extra_containers`` extension
+    (``components`` — see the YAML doctrine note). Used ONLY by the cap
+    donor class (class 2); the ws-blob class keeps the B53 list."""
+    data = load_yaml(_CONTAINERS_FILE)
+    extra = frozenset(
+        str(c).strip().lower()
+        for c in (data.get("sameunit_cap_extra_containers") or [])
+        if str(c).strip()
+    )
+    return _containers()[0] | extra
+
+
 def _attr(o: Any, name: str, default: Any = None) -> Any:
     return o.get(name, default) if isinstance(o, dict) else getattr(o, name, default)
 
@@ -223,6 +246,10 @@ def run_ws_blob_domain_drain(
     flows: list[Any],
     ctx: Any,
     path_index: Any = None,
+    *,
+    ws_blob: bool = True,
+    sameunit_cap: bool = False,
+    nav_keys: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Drain ws-blob domain-dir members onto their real PFs. Mutates
     ``developer_features`` / ``product_features`` in place (appends carved
@@ -234,7 +261,33 @@ def run_ws_blob_domain_drain(
     ``{feature_uuid, …}``); a file carrying a NON-donor entry is never
     touched. ``ctx.tracked_files`` powers the v2 subtree channel + the
     ancestor carve-out; when absent (unit stubs), the pass degrades to the
-    v1 explicit-member behaviour."""
+    v1 explicit-member behaviour.
+
+    Donor classes (each behind its own caller-supplied switch, so the
+    call site can arm either independently — the flags stay independent
+    kill-switches):
+
+    * ``ws_blob`` (B53, default True — the historical behaviour): a
+      ``ws:``-anchored package blob sheds ``<pkg>/<container>/<domain>``
+      members; explicit + tracked-subtree channels.
+    * ``sameunit_cap`` (B58-v2 Seg A, default False): a container-anchor
+      PF (``fdir:`` / path-tailed ``route:``) sheds member files living
+      in a SAME-unit foreign domain-dir — a ``<container>/<domain>``
+      child of the donor's own workspace unit OUTSIDE the anchor's
+      identity subtree (structural self-exemption: the twenty
+      object-record sub-dir mass is at/under the anchor tail, so the
+      cap never sees it). Explicit channel ONLY (the annexed PF's
+      territory is exactly its member files — subtree mass belongs to
+      the blob class); containers = B53 list + the cap-only
+      ``components`` extension; match laws identical (NamespaceEcho
+      full-match / ambiguous-skip / generic-skip + the B22a
+      target-owns-in-unit law). A domain key with NO product PF whose
+      normalized name sits in ``nav_keys`` is recorded in
+      ``tele['nav_only_dirs']`` and NOT moved (no receiver ⇒ moving
+      would open a conservation hole; the exhibit's later re-mint is a
+      separate channel). A donor that would end file-LESS pulls its
+      whole move back (``skipped_would_empty`` — PF-survival
+      invariance, the I8-pullback shape at donor grain)."""
     tele: dict[str, Any] = {
         "enabled": True, "donors": [], "matched_dirs": {},
         "files_moved": 0, "files_moved_unattributed": 0, "loc_moved": 0,
@@ -255,7 +308,7 @@ def run_ws_blob_domain_drain(
             continue
         pf_by_key[k] = pf
         aid = str(_attr(pf, "anchor_id") or "")
-        if aid.startswith("ws:"):
+        if ws_blob and aid.startswith("ws:"):
             pkg = aid[3:].strip("/")
             if pkg:
                 ws_donor_keys.add(k)
@@ -349,6 +402,61 @@ def run_ws_blob_domain_drain(
             domain_of_dir.setdefault(dd[0], dd[1])
             donor_of_dir.setdefault(dd[0], donor_key)
 
+    # ── B58-v2 Seg A — donor class 2: same-unit container-anchor cap ────
+    # Explicit channel ONLY; pkg := the donor's workspace unit; the
+    # anchor's own identity subtree is structurally exempt.
+    cap_donor_keys: set[str] = set()
+    if sameunit_cap:
+        tele["cap_donors"] = []
+        tele["nav_only_dirs"] = {}
+        tele["skipped_would_empty"] = 0
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+            _unit_of,
+            _workspace_unit_roots,
+        )
+        unit_roots = _workspace_unit_roots(ctx)
+        cap_containers = _cap_containers()
+        for donor_key in (sorted(pf_by_key) if unit_roots else ()):
+            if donor_key in pkg_of_donor:
+                continue  # ws-blob donors stay class 1
+            pf = pf_by_key[donor_key]
+            aid = str(_attr(pf, "anchor_id") or "")
+            kind, _, tail = aid.partition(":")
+            tail = tail.strip("/")
+            if kind not in ("fdir", "route") or "/" not in tail:
+                # key-only route anchors carry no identity subtree the
+                # cap could fence against — their over-annexation class
+                # is Seg B's (mint-side canonical page-surface rung).
+                continue
+            unit = _unit_of(tail, unit_roots)
+            if unit is None:
+                continue
+            member_devs = devs_by_pf.get(donor_key, [])
+            if not member_devs:
+                continue
+            found = False
+            for d in member_devs:
+                for fp in owned_paths_of(d):
+                    f = str(fp)
+                    dd = _domain_dir_of(f, unit, cap_containers)
+                    if dd is None:
+                        continue
+                    if (dd[0] == tail or dd[0].startswith(tail + "/")
+                            or tail.startswith(dd[0] + "/")):
+                        continue  # anchor's own identity subtree (SACRED)
+                    explicit_by_dir[dd[0]].add(f)
+                    domain_of_dir.setdefault(dd[0], dd[1])
+                    donor_of_dir.setdefault(dd[0], donor_key)
+                    found = True
+            if found:
+                cap_donor_keys.add(donor_key)
+                pkg_of_donor[donor_key] = unit
+                donor_uuid_sets[donor_key] = frozenset(
+                    {str(_attr(d, "uuid") or "") for d in member_devs}
+                    | {str(_attr(pf, "uuid") or "")}
+                ) - {""}
+                tele["cap_donors"].append(donor_key)
+
     # ── Match laws (unchanged from v1/B49/B51) ──────────────────────────
     matched: dict[str, str] = {}  # domain-dir → target PF key
     for dir_path in sorted(domain_of_dir):
@@ -361,6 +469,14 @@ def run_ws_blob_domain_drain(
             continue
         hits = echo.pf_by_key.get(key)
         if not hits:
+            # B58-v2 nav-only rung: a cap-donor domain with NO product PF
+            # but a nav-declared key is TELEMETRY, never a move (no
+            # receiver ⇒ no conservation-safe destination). The keyed
+            # exhibit: Soc0 components/api-keys — the api-keys PF does
+            # not exist on the annexed board, only the nav entry does.
+            if (donor_key in cap_donor_keys and nav_keys
+                    and key in nav_keys):
+                tele["nav_only_dirs"][dir_path] = key
             continue  # no product surface — the domain stays in the blob
         candidates = {
             h for h in hits if h != donor_key and h not in ws_donor_keys
@@ -419,6 +535,30 @@ def run_ws_blob_domain_drain(
         for f in moved_here:
             drain_map.setdefault(f, target_key)
         dir_files[dir_path] = sorted(moved_here)
+
+    # ── B58-v2 would-empty guard (PF-survival invariance) ───────────────
+    # A cap donor whose ENTIRE explicit file set would leave dies as a PF
+    # row the OFF board keeps — the drain must never change which PFs
+    # survive. Pull the whole donor's move back (I8-pullback shape at
+    # donor grain; refusal is success).
+    if cap_donor_keys:
+        for donor_key in sorted(cap_donor_keys):
+            donor_dirs = [dp for dp in dir_files
+                          if donor_of_dir[dp] == donor_key]
+            if not donor_dirs:
+                continue
+            all_files = {
+                str(fp)
+                for d in devs_by_pf.get(donor_key, [])
+                for fp in owned_paths_of(d)
+            }
+            moved = {f for dp in donor_dirs for f in dir_files[dp]}
+            if all_files and not (all_files - moved):
+                for dp in donor_dirs:
+                    for f in dir_files[dp]:
+                        drain_map.pop(f, None)
+                    dir_files.pop(dp)
+                tele["skipped_would_empty"] += 1
 
     if not drain_map:
         return tele

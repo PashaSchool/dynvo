@@ -1361,11 +1361,19 @@ def run_finalize_phase(
     # survives (B42 territory). Kill-switch
     # FAULTLINE_WS_BLOB_DOMAIN_DRAIN=0 (default) → byte-identical.
     if anchored_mint_applied and not uf_suppressed:
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+            sameunit_domain_cap_enabled,
+        )
         from faultline.pipeline_v2.ws_blob_domain_drain import (
             run_ws_blob_domain_drain,
             ws_blob_domain_drain_enabled,
         )
-        if ws_blob_domain_drain_enabled():
+        # B58-v2: the same pass carries the same-unit domain-dir cap
+        # (donor class 2) — either flag alone arms the call; each class
+        # runs only under its own switch (independent kill-switches).
+        _wbd_on = ws_blob_domain_drain_enabled()
+        _cap_on = sameunit_domain_cap_enabled()
+        if _wbd_on or _cap_on:
             with StageLogger(run_dir, 6, "ws_blob_drain") as log_wbd:
                 try:
                     wbd_tele = run_ws_blob_domain_drain(
@@ -1375,6 +1383,12 @@ def run_finalize_phase(
                         # NON-donor entry is never touched; ABSENCE is the
                         # unattributed subtree mass that rolls to the blob.
                         path_index=lineage_result.path_index,
+                        ws_blob=_wbd_on,
+                        sameunit_cap=_cap_on,
+                        # B58-v2 nav-only telemetry rung: the SAME
+                        # normalized nav keys the mint received (bound
+                        # above whenever anchored_mint_applied is True).
+                        nav_keys=frozenset(_nav_keys),
                     )
                     if wbd_tele.get("files_moved"):
                         scan_meta["ws_blob_drain"] = wbd_tele

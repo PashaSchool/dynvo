@@ -36,6 +36,22 @@ domain_dir_containers:
   - scenes
   - pages
 
+# B58-v2 — same-unit domain-dir cap (Seg A, donor class 2 in the same
+# drain). Extra container segments recognized ONLY by the cap donor
+# class, never by the ws-blob class above. `components` is deliberately
+# BOTH a generic domain token (a `<container>/components/` child is
+# app-shell, stays) AND a cap container (a `components/<name>/` CHILD is
+# an author-declared capability slice when <name> echo-matches an
+# existing PF — Soc0 census 2026-07-14: 121/418 of the annexed
+# network-security PF's files live under frontend/src/components/*, 13
+# named children, `components/api-keys` carrying a foreign journey).
+# The two roles never collide: the lists apply at different path levels
+# (container segment vs domain segment), and the echo gate means an
+# unmatched components child ALWAYS stays with its anchor (the
+# centralized shared-UI anti-case is a structural no-op).
+sameunit_cap_extra_containers:
+  - components
+
 # Generic 2nd-level dirs that are app-shell content, NEVER a domain PF —
 # they stay in the blob (they ARE the real app-shell). Compared after
 # `normalize_anchor_key` (singularized), so both `component` and
