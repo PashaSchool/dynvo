@@ -1,0 +1,172 @@
+# server-api-entries.yaml — grammar VOCABULARY for the B66 server API-entry
+# extractor (``faultline.pipeline_v2.extractors.server_api_entries``).
+#
+# Runtime copy packaged here; authoring copy mirrored at
+# ``eval/stacks/server-api-entries.yaml`` (local-only, untracked — same manual
+# dual-copy convention as the other stacks/ files). Keep the two byte-identical.
+#
+# WHY (B66 / B63 meter, 554 unseen): code-first server API surfaces that live
+# in DECORATORS / DSL calls (not the filesystem route tree) never land in
+# ``routes_index`` — so their flows/journeys never mint and whole backends
+# stay invisible (NestJS controllers 169, GraphQL code-first resolvers 205,
+# tRPC procedures 120, koa/hono routers ~60). This file holds the per-grammar
+# STRUCTURAL patterns (decorator / builder / call signatures) and the
+# corroboration vocabulary (required library imports, framework name-suffixes
+# to strip, artifact dirs to skip). The MECHANISM (dispatch, identity
+# derivation, route normalization, dedup, emission) lives in the Python module;
+# this file is data only — no tuned numbers, no repo-specific paths
+# (rule-no-magic-tuning / rule-no-repo-paths).
+#
+# LITERAL LAW (B64): an identity/route is taken only from a STATIC token — a
+# class/const name, a decorator string-literal path, a procedure key, a
+# builder field-name literal. A path/name that is a variable or member
+# expression is an honest skip (no emission for that route); the entry-unit is
+# still emitted when its own name is a static token.
+#
+# EXISTING SOURCES UNTOUCHED: this extractor only ADDS routes_index kinds; it
+# never removes or rewrites another source's rows. build_routes_index Pass A
+# folds every extractor's ``.routes`` deduped by (pattern, method, file), so a
+# route already emitted by another source is not duplicated.
+
+# Confidence carried on every emitted AnchorCandidate (a decorated/declared
+# server entry is a high-precision, explicit-author-intent signal).
+confidence: 0.85
+
+# Source-file extensions this extractor reads (TS/JS ecosystems — every target
+# framework is TS/JS). No Python here: FastAPI/Django already have extractors.
+extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]
+
+# Files whose entry-like signatures are NOT product entries. Test/mock/fixture
+# files are handled by the shared ``is_test_path`` predicate; this list adds the
+# artifact classes that predicate does NOT cover (storybook, examples,
+# playground, demos, samples, generated). Matched as an exact path SEGMENT
+# (never a substring — ``sampleService`` is not ``sample``).
+skip_path_segments:
+  - __stories__
+  - stories
+  - storybook
+  - examples
+  - example
+  - playground
+  - playgrounds
+  - demo
+  - demos
+  - sample
+  - samples
+  - fixtures
+  - fixture
+  - mocks
+  - mock
+  - __generated__
+  - generated
+# Filename dot-component markers (``foo.stories.ts`` -> component ``stories``).
+skip_filename_markers:
+  - stories
+  - story
+  - e2e
+  - mock
+  - mocks
+
+# Framework name-suffixes stripped to reach the capability slug
+# (``UsersController`` -> ``users``, ``BookingResolver`` -> ``booking``,
+# ``organizationRouter`` -> ``organization``).
+suffix_strip: [Controller, Resolver, Router, Procedure, Schema, Gateway, Service]
+
+# ── Seg A — NestJS REST controllers ─────────────────────────────────────────
+# @Controller(prefix) class whose methods carry HTTP verb decorators. Each verb
+# decorator = one route (method = the HTTP verb; pattern = prefix + method-path,
+# normalized). The controller class is the entry-file; its slug is the prefix
+# first-segment, else the class name (``Controller`` stripped). Corroboration:
+# a @nestjs import OR the @Controller marker itself (Nest-specific).
+nestjs:
+  method: ""  # per-verb (see verb_re); no single method
+  require_import_re: '@nestjs/'
+  # @Controller("users") | @Controller('api/users') | @Controller(`v2/x`)
+  controller_string_arg_re: '@Controller\(\s*[''"`]([^''"`]*)[''"`]'
+  # @Controller({ path: "users", version: "2" })
+  controller_obj_path_re: '@Controller\(\s*\{[^}]*?\bpath\s*:\s*[''"`]([^''"`]+)[''"`]'
+  # @Controller() | @Controller  (no path) — root-mounted
+  controller_bare_re: '@Controller\b'
+  # class UsersController  (identity fallback when there is no prefix)
+  class_re: '(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)'
+  # HTTP verb decorators. group(1)=verb, group(2)=optional literal path.
+  verb_re: '@(Get|Post|Put|Patch|Delete|Options|Head|All)\s*\(\s*(?:[''"`]([^''"`]*)[''"`])?'
+
+# ── Seg B — GraphQL code-first ──────────────────────────────────────────────
+# Three flavors, each import-corroborated. Resolver = entry; each operation =
+# one route (method = QUERY | MUTATION | SUBSCRIPTION; pattern = operation
+# name). ALL decorator-based GraphQL (@Resolver + @Query/@Mutation) is handled
+# here regardless of type-graphql vs @nestjs/graphql — putting it in Seg A too
+# would double-count the same file.
+graphql:
+  query_method: QUERY
+  mutation_method: MUTATION
+  subscription_method: SUBSCRIPTION
+  # -- decorator flavor (type-graphql / @nestjs/graphql) --
+  decorator:
+    require_import_re: 'type-graphql|@nestjs/graphql'
+    # @Resolver(() => User) | @Resolver(of => User) | @Resolver("User")
+    resolver_type_re: '@Resolver\(\s*(?:\(\s*\)?\s*=>\s*|of\s*=>\s*|[''"`])?([A-Za-z_$][\w$]*)'
+    resolver_class_re: '(?:export\s+)?class\s+([A-Za-z_$][\w$]*)'
+    # @Query | @Mutation | @Subscription — group(1)=kind. The optional
+    # ``(...)`` args and any stacked decorators before the method are skipped in
+    # code by balanced-paren walking (handles same-line AND multi-line forms).
+    op_decorator_re: '@(Query|Mutation|Subscription)\b'
+    # optional { name: "explicitName" } searched ONLY inside the decorator args.
+    op_name_option_re: '\bname\s*:\s*[''"`]([^''"`]+)[''"`]'
+  # -- pothos (@pothos/core) — builder.queryField("name", ...) etc. --
+  pothos:
+    require_import_re: '@pothos/core|new SchemaBuilder'
+    field_re: '\bbuilder\s*\.\s*(query|mutation|subscription)Field\s*\(\s*[''"`]([^''"`]+)[''"`]'
+  # -- nexus — queryField("name") / mutationField("name") + extendType({type:
+  #    "Query", definition(t){ t.field("name") } }). --
+  nexus:
+    require_import_re: 'from\s+[''"`]nexus[''"`]|require\(\s*[''"`]nexus[''"`]'
+    field_re: '(?<![.\w$])(query|mutation|subscription)Field\s*\(\s*[''"`]([^''"`]+)[''"`]'
+    extend_type_re: 'extendType\s*\(\s*\{[^}]*?\btype\s*:\s*[''"`](Query|Mutation|Subscription)[''"`]'
+    # within an extendType block, t.field("name") / t.nonNull.field("name") /
+    # t.list.field("name") — group(1)=field name.
+    extend_field_re: '\bt(?:\.\w+)*\.field\s*\(\s*[''"`]([^''"`]+)[''"`]'
+
+# ── Seg C — tRPC procedures ─────────────────────────────────────────────────
+# A router({ key: publicProcedure...query()/mutation() }) file. Each procedure
+# key = one route (method by the terminating .query/.mutation/.subscription;
+# pattern = "<namespace>.<key>"). Namespace = the router const name with the
+# ``Router`` suffix stripped. Corroboration: a @trpc/server import or an
+# initTRPC / *Procedure marker.
+trpc:
+  fallback_method: PROCEDURE
+  query_method: QUERY
+  mutation_method: MUTATION
+  subscription_method: SUBSCRIPTION
+  require_import_re: '@trpc/server|initTRPC|createTRPCRouter|publicProcedure|protectedProcedure'
+  # export const userRouter = router({ ... }) | createTRPCRouter({ ... })
+  router_const_re: '(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:t\s*\.\s*router|router|createTRPCRouter|createRouter)\s*\('
+  # key: publicProcedure | protectedProcedure | t.procedure | adminProcedure ...
+  procedure_key_re: '([A-Za-z_$][\w$]*)\s*:\s*(?:t\s*\.\s*procedure|(?:[A-Za-z_$][\w$]*)?[Pp]rocedure)\b'
+  # after a procedure key, the terminating verb within a bounded window.
+  verb_re: '\.\s*(query|mutation|subscription)\s*\('
+  verb_window: 800
+
+# ── Seg D — koa-router + hono ───────────────────────────────────────────────
+# koa: new Router()+router.<verb>(path|rpc-name) (outline's
+# router.post("documents.list", ...)). hono: new Hono()+app.<verb>(path). Each
+# call = one route (real HTTP verb; pattern = the literal path/rpc-name). Each
+# import-corroborated so a stray ``x.get(...)`` never false-positives.
+koa:
+  require_import_re: '@koa/router|koa-router|from\s+[''"`]koa[''"`]'
+  # const router = new Router({ prefix: "/api" }) — receiver + optional prefix.
+  router_ctor_re: '(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+Router\s*\('
+  prefix_re: 'new\s+Router\s*\(\s*\{[^}]*?\bprefix\s*:\s*[''"`]([^''"`]+)[''"`]'
+  # <receiver>.get("/x" | "documents.list", ...) — group(1)=receiver,
+  # group(2)=verb, group(3)=path/rpc-name.
+  method_call_re: '\b([A-Za-z_$][\w$]*)\s*\.\s*(get|post|put|patch|delete|del|all)\s*\(\s*[''"`]([^''"`]+)[''"`]'
+  default_receivers: [router]
+hono:
+  require_import_re: 'from\s+[''"`]hono[''"`]|require\(\s*[''"`]hono[''"`]'
+  # const app = new Hono() — receiver capture.
+  app_ctor_re: '(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+Hono\s*(?:<[^>]*>)?\s*\('
+  # ``.on(method, path)`` is intentionally excluded — its FIRST arg is the HTTP
+  # method, not the path, so a path-capturing regex would misread it.
+  method_call_re: '\b([A-Za-z_$][\w$]*)\s*\.\s*(get|post|put|patch|delete|options)\s*\(\s*[''"`]([^''"`]+)[''"`]'
+  default_receivers: [app]
