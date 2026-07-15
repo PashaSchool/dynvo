@@ -235,20 +235,22 @@ UF_VERB_SNAP_ENV = "FAULTLINE_UF_VERB_SNAP"
 #: under ``FAULTLINE_NAMING_LAW`` (banked — see its note below).
 HOMING_HYGIENE_ENV = "FAULTLINE_HOMING_HYGIENE"
 
-#: B69-v2 third split — the bare-verb / dev-grain-token display law,
-#: BANKED for the B70 redesign. The keyed re-convoy proved THIS
-#: vocabulary-driven implementation violates the mechanisms-over-
-#: vocabularies law: verb-class token lists ban healthy product resources
+#: B69-v2 third split → B70 member-evidence redesign — the bare-verb /
+#: dev-grain-token display law. The keyed re-convoy proved the ORIGINAL
+#: vocabulary-driven implementation violated the mechanisms-over-
+#: vocabularies law: verb-class token lists banned healthy product resources
 #: ('Manage download', 'Browse webhook', 'Connect auth' — download /
 #: webhook / auth / verify / register all live in verb classes) while
 #: MISSING the true exhibit ('View mupdf' — mupdf is in no vocabulary);
-#: each ban cascades retry → new names → collisions → B31 parentheticals
-#: (= the entire off-rail churn of the keyed pair). B70 redesign law:
-#: bare-detection through MEMBER-EVIDENCE, not vocabulary — ban a name
-#: only when its resource token has NO member evidence in the row ('View
-#: mupdf' caught by evidence ABSENCE; 'Manage download' lives by its
-#: route evidence). Mechanics banked UNCHANGED under this flag; default
-#: OFF ⇒ the law list is byte-identical.
+#: each ban cascaded retry → new names → collisions → B31 parentheticals
+#: (= the entire off-rail churn of the keyed pair). B70 redesign (landed in
+#: :func:`display_law_violations`): the strip STOPS at a token a row member
+#: grounds (``member_tokens``) — a grounded verb-homonym is the resource,
+#: not the action — and a nominal remainder no member backs is flagged
+#: ``evidence_absent`` ('View mupdf' caught by evidence ABSENCE; 'Manage
+#: download' lives by its route evidence). No member context at a call site
+#: ⇒ the banked vocabulary behavior, unchanged. Default OFF ⇒ the law list
+#: is byte-identical.
 NAMING_LAW_ENV = "FAULTLINE_NAMING_LAW"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
@@ -933,10 +935,19 @@ def display_law_violations(
     vocab: Mapping[str, Any] | None = None,
     *,
     pf_display: str | None = None,
+    member_tokens: frozenset[str] | None = None,
 ) -> list[str]:
     """Deterministic law check for one display name. Returns the list of
     violated law ids (empty == clean). ``pf_display`` (UF checks only)
-    arms the ``pf_uf_twin`` law against the journey's own capability."""
+    arms the ``pf_uf_twin`` law against the journey's own capability.
+
+    ``member_tokens`` (B70) is the set of resource tokens a row's own
+    members actually anchor (singular-folded). It arms the member-evidence
+    branch of the banked ``FAULTLINE_NAMING_LAW`` display law: a
+    verb-homonym resource that a member grounds ('download', 'webhook') is
+    the THING, not the action, and a nominal remainder no member backs
+    ('View mupdf') names nothing real. ``None`` (no member context at the
+    call site) ⇒ the banked vocabulary behavior, byte-identical."""
     v = vocab or load_naming_vocab()
     out: list[str] = []
     t = (text or "").strip()
@@ -960,30 +971,47 @@ def display_law_violations(
         if m and m.group(1).lower() in exts:
             out.append("file_stem")
             break
-    # B69-v2 — B56-family codification, BANKED under FAULTLINE_NAMING_LAW
-    # (third split; see NAMING_LAW_ENV): a display that names an ACTION
-    # without a thing ('Manage', 'Browse & manage') or whose only "thing"
-    # is a dev-grain transport token ('View API', 'Manage tRPC', bare
-    # 'API') is not a journey name. Strip the LEADING verb-class tokens
+    # B56-family codification, armed by FAULTLINE_NAMING_LAW: a display that
+    # names an ACTION without a thing ('Manage', 'Browse & manage') or whose
+    # only "thing" is a dev-grain transport token ('View API', 'Manage tRPC',
+    # bare 'API') is not a journey name. Strip the LEADING verb-class tokens
     # (vocab-derived — template leads + flow_verb_classes + action-family
-    # verbs) and connectors; an empty remainder is ``bare_verb``, a
-    # remainder made ONLY of dev-grain segments is ``devgrain_token``.
-    # KNOWN-REFUTED as a vocabulary mechanism (re-convoy forensics):
-    # false-positives on verb-homonym resources ('Manage download',
-    # 'Browse webhook'), misses evidence-less tokens ('View mupdf') — the
-    # B70 redesign gates on MEMBER-EVIDENCE instead. Armed ONLY by the
-    # banked flag; OFF ⇒ the law list is byte-identical.
+    # verbs) and connectors; an empty remainder is ``bare_verb``, a remainder
+    # made ONLY of dev-grain segments is ``devgrain_token``.
+    #
+    # B70 member-evidence redesign (mechanisms-over-vocabularies): the pure
+    # vocabulary mechanism false-positived on verb-homonym resources
+    # ('Manage download', 'Browse webhook' — download/webhook/auth all live
+    # in verb classes so the strip ate them → bare) and MISSED the true
+    # exhibit ('View mupdf' — mupdf is in no vocabulary). When ``member_tokens``
+    # is supplied (a row's own member evidence), the strip STOPS at a token a
+    # member grounds — so a grounded verb-homonym is kept as the resource — and
+    # a nominal remainder no member grounds is flagged ``evidence_absent``.
+    # ``member_tokens is None`` (no member context) ⇒ the banked behavior,
+    # byte-identical. Armed ONLY by the banked flag; OFF ⇒ the law list is
+    # byte-identical.
     if naming_law_enabled() and t:
         lows = [w.lower() for w in _WORD_RE.findall(t)]
         verb_toks = _verb_class_tokens(v)
+
+        def _grounded(w: str) -> bool:
+            if member_tokens is None:
+                return False
+            return w in member_tokens or _degrime_sing(w) in member_tokens
+
         i = 0
-        while i < len(lows) and (lows[i] in verb_toks or lows[i] == "and"):
+        while i < len(lows) and (
+                (lows[i] in verb_toks and not _grounded(lows[i]))
+                or lows[i] == "and"):
             i += 1
         rest = lows[i:]
         if lows and i and not rest:
             out.append("bare_verb")
         elif rest and all(w in _API_SEGS for w in rest):
             out.append("devgrain_token")
+        elif (member_tokens is not None and rest
+                and not any(_grounded(w) for w in rest)):
+            out.append("evidence_absent")
     if pf_display is not None and t and (
         t.strip().lower() == (pf_display or "").strip().lower()
     ):
@@ -2057,6 +2085,23 @@ def _apply_uf_name_laws(
         base = re.sub(r"[-_]+", " ", base).strip()
         return _resource_phrase(base, vocab) or base
 
+    def _uf_member_evidence(uf: Any) -> frozenset[str]:
+        """B70 — resource tokens the UF's OWN evidence grounds (member flow
+        names + resource + resource-phrase), singular-folded. Arms the
+        FAULTLINE_NAMING_LAW member-evidence display law so a grounded
+        verb-homonym resource survives and an evidence-less remainder is
+        flagged. Only consulted when that flag is armed (OFF ⇒ ignored, so
+        threading it here is byte-identical when the flag is off)."""
+        toks: set[str] = set()
+        srcs = list(_members(uf))
+        srcs.append(str(getattr(uf, "resource", "") or ""))
+        srcs.append(_res(uf))
+        for src in srcs:
+            for tok in re.split(r"[^a-z0-9]+", (src or "").lower()):
+                if tok:
+                    toks.add(_degrime_sing(tok))
+        return frozenset(toks)
+
     def _folded(uf: Any) -> str:
         return str(getattr(uf, "name", "") or "").strip().lower()
 
@@ -2090,7 +2135,9 @@ def _apply_uf_name_laws(
             word = "View" if "view" in mfams else "Browse"
             cand = polish_display_casing(f"{word} {_res(uf)}".strip(), vocab)
             if (cand and cand.strip().lower() != _folded(uf)
-                    and not display_law_violations(cand, vocab, pf_display=_pfd(uf) or None)):
+                    and not display_law_violations(
+                        cand, vocab, pf_display=_pfd(uf) or None,
+                        member_tokens=_uf_member_evidence(uf))):
                 uf.name = cand
                 narrowed.add(str(getattr(uf, "id", "") or ""))
                 tele["uf_claim_narrowed"] = tele.get("uf_claim_narrowed", 0) + 1
@@ -2120,7 +2167,9 @@ def _apply_uf_name_laws(
             cand = polish_display_casing(
                 f"{_ACTION_FAMILY_WORD[fam]} {_res(uf)}".strip(), vocab)
             if (cand and cand.strip().lower() != _folded(uf)
-                    and not display_law_violations(cand, vocab, pf_display=_pfd(uf) or None)):
+                    and not display_law_violations(
+                        cand, vocab, pf_display=_pfd(uf) or None,
+                        member_tokens=_uf_member_evidence(uf))):
                 if _lawa_two_phase:
                     _lawa_proposals[str(getattr(uf, "id", "") or "")] = cand
                 else:
@@ -2166,7 +2215,9 @@ def _apply_uf_name_laws(
                 cand = polish_display_casing(f"{base} ({q})", vocab)
                 fld = cand.strip().lower()
                 if (fld not in taken
-                        and not display_law_violations(cand, vocab, pf_display=pfd or None)):
+                        and not display_law_violations(
+                            cand, vocab, pf_display=pfd or None,
+                            member_tokens=_uf_member_evidence(uf))):
                     uf.name = cand
                     taken[fld] = str(getattr(uf, "id", "") or "")
                     qualified.add(str(getattr(uf, "id", "") or ""))
@@ -2198,7 +2249,8 @@ def _apply_uf_name_laws(
             deparamed = _deparam_display(cur)
             if (deparamed and deparamed != cur
                     and not display_law_violations(
-                        deparamed, vocab, pf_display=_pfd(uf) or None)):
+                        deparamed, vocab, pf_display=_pfd(uf) or None,
+                        member_tokens=_uf_member_evidence(uf))):
                 dep_proposals[str(getattr(uf, "id", "") or "")] = deparamed
         if dep_proposals:
             cur_names = {
@@ -2282,7 +2334,8 @@ def _apply_uf_name_laws(
             if (snapped and snapped.strip().lower() != cur.strip().lower()
                     and _name_lead_family(snapped, idx) in comp
                     and not display_law_violations(
-                        snapped, vocab, pf_display=_pfd(uf) or None)):
+                        snapped, vocab, pf_display=_pfd(uf) or None,
+                        member_tokens=_uf_member_evidence(uf))):
                 _uid = str(getattr(uf, "id", "") or "")
                 _snap_proposals[_uid] = snapped
                 _snap_fam[_uid] = target

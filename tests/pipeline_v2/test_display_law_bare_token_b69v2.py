@@ -1,13 +1,18 @@
-"""B69-v2 add-on 2 — the bare-verb / dev-grain-token display law
-(BANKED under FAULTLINE_NAMING_LAW, third split).
+"""B69-v2 add-on 2 → B70 member-evidence redesign — the bare-verb /
+dev-grain-token display law (armed by FAULTLINE_NAMING_LAW).
 
-Re-convoy forensics: the vocabulary-driven implementation false-positives
-on verb-homonym resources ('Manage download', 'Browse webhook', 'Connect
-auth') and MISSES the true exhibit ('View mupdf' — in no vocabulary), so
-it left the HOMING family and is banked unchanged for the B70
-member-evidence redesign. These units pin the banked mechanics AND the
-new routing (armed ONLY by FAULTLINE_NAMING_LAW; HOMING/SEED never arm
-it).
+Re-convoy forensics: the ORIGINAL vocabulary-driven implementation
+false-positived on verb-homonym resources ('Manage download', 'Browse
+webhook', 'Connect auth' — download/webhook/auth all live in verb classes
+so the leading-verb strip ate them → 'bare') and MISSED the true exhibit
+('View mupdf' — mupdf is in no vocabulary). B70 redesign (landed): when a
+row's own member evidence (``member_tokens``) is supplied, the strip STOPS
+at a token a member grounds — so a grounded verb-homonym is kept as the
+resource — and a nominal remainder no member grounds is flagged
+``evidence_absent``. No member context ⇒ the banked vocabulary behavior,
+byte-identical (so every no-``member_tokens`` unit below still pins the
+banked mechanics exactly). Armed ONLY by FAULTLINE_NAMING_LAW;
+HOMING/SEED never arm it.
 
 B56-family codification: 'Manage' (bare verb) and 'View API' / 'Manage
 tRPC' (verb + dev-grain transport token) are not journey names. The law
@@ -114,11 +119,70 @@ def test_third_split_homing_or_seed_never_arm_the_law(monkeypatch):
         assert "devgrain_token" not in got, name
 
 
-def test_banked_forensics_pinned_false_positive_and_miss(monkeypatch):
-    """The refutation exhibit, pinned for the B70 redesign: armed, the
-    vocabulary mechanism bans healthy resources (verb-homonyms) and
-    misses 'View mupdf' — the member-evidence redesign must invert BOTH."""
+def test_banked_forensics_no_member_context_is_byte_identical(monkeypatch):
+    """No ``member_tokens`` ⇒ the banked vocabulary behavior, unchanged:
+    the refuted false-positive/miss are PRESERVED verbatim on the
+    context-free path (the ~28 non-UF call sites), so arming the flag
+    there is byte-identical to the banked implementation."""
     monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
     assert "bare_verb" in display_law_violations("Manage download", VOCAB)
     assert "bare_verb" in display_law_violations("Browse webhook", VOCAB)
     assert display_law_violations("View mupdf", VOCAB) == []  # the miss
+
+
+def test_member_evidence_inverts_the_false_positive(monkeypatch):
+    """B70 redesign: a verb-homonym resource a member GROUNDS is the thing,
+    not the action — the strip stops at it and the name is clean. Inverts
+    the refuted 'Manage download'/'Browse webhook' false-positive."""
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
+    assert display_law_violations(
+        "Manage download", VOCAB,
+        member_tokens=frozenset({"download"})) == []
+    assert display_law_violations(
+        "Browse webhook", VOCAB,
+        member_tokens=frozenset({"webhook"})) == []
+    # singular/plural-robust: a plural display token folds to the singular
+    # the member evidence carries ('_uf_member_evidence' folds member tokens
+    # to singular, so 'download' grounds a 'downloads' display).
+    assert display_law_violations(
+        "Manage downloads", VOCAB,
+        member_tokens=frozenset({"download"})) == []
+
+
+def test_member_evidence_catches_the_miss(monkeypatch):
+    """B70 redesign: a nominal remainder NO member backs names nothing real —
+    'View mupdf' (mupdf in no member) is now flagged ``evidence_absent``,
+    the exhibit the vocabulary mechanism missed."""
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
+    got = display_law_violations(
+        "View mupdf", VOCAB, member_tokens=frozenset({"pdf", "render"}))
+    assert "evidence_absent" in got
+    # ...but with mupdf actually grounded by a member it is clean.
+    assert display_law_violations(
+        "View mupdf", VOCAB, member_tokens=frozenset({"mupdf"})) == []
+
+
+def test_member_evidence_bare_and_transport_still_fire(monkeypatch):
+    """The structural laws survive the redesign: a pure verb is still
+    ``bare_verb`` and a transport-only remainder still ``devgrain_token``,
+    regardless of member evidence (no member can ground 'nothing' or a
+    dev-grain transport token into a journey name)."""
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
+    assert "bare_verb" in display_law_violations(
+        "Manage", VOCAB, member_tokens=frozenset({"download"}))
+    assert "devgrain_token" in display_law_violations(
+        "View API", VOCAB, member_tokens=frozenset({"api", "user"}))
+
+
+def test_member_evidence_real_resource_stays_clean(monkeypatch):
+    """A verb + real (grounded) resource — the canonical journey shape —
+    is untouched whether or not the resource is a verb-homonym."""
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
+    for name, mem in (
+        ("Manage users", {"users"}),
+        ("Browse AI", {"ai"}),
+        ("View datarooms", {"datarooms"}),
+        ("Create and manage webhooks", {"webhooks"}),
+    ):
+        got = display_law_violations(name, VOCAB, member_tokens=frozenset(mem))
+        assert got == [], (name, got)
