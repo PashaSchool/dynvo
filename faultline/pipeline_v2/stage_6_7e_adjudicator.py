@@ -87,6 +87,7 @@ from faultline.pipeline_v2.naming_contract import (
     _uf_flow_maps,
     degrime_rename_plan,
     display_law_violations,
+    homing_hygiene_enabled,
     load_naming_vocab,
     member_verb_composition,
     nav_label_sets_for_pfs,
@@ -212,6 +213,33 @@ def adjudicator_6_7e_enabled() -> bool:
     scans. ``FAULTLINE_STAGE_6_7E_ADJUDICATOR=0`` disables ⇒ the stage is
     never called — serialized output byte-identical."""
     return os.environ.get(ENV_FLAG, "1").strip().lower() in {"1", "true"}
+
+
+def _rescore_tele_view(rescore_tele: Mapping[str, Any]) -> dict[str, Any]:
+    """The ``law_c_rescore`` scan_meta view of the re-score pass telemetry.
+
+    B69-v2 telemetry law: the historical 3-key whitelist DISCARDED every
+    Law-A action counter the re-score produced (``uf_uniqueness_qualified``
+    et al.), so a qualifier stamped during the 6.7e re-score was invisible
+    to ``scan_meta.naming_contract`` AND to this stage's own telemetry —
+    the operator's parenthetical census read 0 while the board wore four
+    (the B69 keyed-A/B forensics exhibit). Armed, every SCALAR key is
+    preserved (a mechanism — future counters ride along; the nested
+    verb-snap/labeler blobs stay out of scan_meta). OFF ⇒ the exact
+    historical 3-key view, byte-identical."""
+    base = {
+        k: rescore_tele[k]
+        for k in ("confidence_before", "confidence_after", "skipped")
+        if k in rescore_tele
+    }
+    if homing_hygiene_enabled():
+        for k in sorted(rescore_tele):
+            if k in base:
+                continue
+            v = rescore_tele[k]
+            if isinstance(v, (int, float, str, bool)):
+                base[k] = v
+    return base
 
 
 def resolve_adjudicator_model() -> str:
@@ -1275,11 +1303,7 @@ def run_stage_6_7e(
             repo_root=repo_root,
             adjudicated_sources=adjudicated_sources or None,
         )
-        tele["law_c_rescore"] = {
-            k: rescore_tele[k]
-            for k in ("confidence_before", "confidence_after", "skipped")
-            if k in rescore_tele
-        }
+        tele["law_c_rescore"] = _rescore_tele_view(rescore_tele)
     gaps.sort(key=lambda g: (
         str(getattr(g, "product_feature_id", "") or ""),
         str(getattr(g, "id", "") or "")))
