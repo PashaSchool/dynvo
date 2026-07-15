@@ -110,6 +110,7 @@ def seed_route_group_journeys(
     routes_index: list[dict[str, Any]] | None,
     scope_classifier: Any = None,
     route_by_file: dict[str, Any] | None = None,
+    coalesce_same_pf_resource: bool | None = None,
 ) -> dict[str, Any]:
     """Append one thin tagged seed UF per uncovered >=2-route product
     group (mutates ``user_flows`` in place; ids continue the stable
@@ -326,19 +327,19 @@ def seed_route_group_journeys(
     # Coalesce at BIRTH: the first-seen group (sorted order — deterministic)
     # keeps its identity and base name; later twins fold their member flows
     # in (deduped, re-capped). Cross-PF same-noun seeds are NOT coalesced
-    # (different homes = honest separate journeys). Flag OFF ⇒
-    # byte-identical.
-    from faultline.pipeline_v2.naming_contract import homing_hygiene_enabled
-    if homing_hygiene_enabled() and seeds:
-        by_key: dict[tuple[str, str], Any] = {}
+    # (different homes = honest separate journeys). Armed by the caller
+    # (finalize passes ``homing_hygiene_enabled()`` — this module stays
+    # import-light); ``None``/False ⇒ byte-identical.
+    if coalesce_same_pf_resource and seeds:
+        by_co_key: dict[tuple[str, str], Any] = {}
         kept: list[Any] = []
         tele["coalesced"] = 0
         for uf in seeds:
-            key = (str(uf.product_feature_id or ""),
-                   str(uf.resource or "").strip().lower())
-            first = by_key.get(key)
-            if first is None or not key[1]:
-                by_key[key] = uf
+            co_key = (str(uf.product_feature_id or ""),
+                      str(uf.resource or "").strip().lower())
+            first = by_co_key.get(co_key)
+            if first is None or not co_key[1]:
+                by_co_key[co_key] = uf
                 kept.append(uf)
                 continue
             merged = list(first.member_flow_ids or [])
@@ -349,7 +350,7 @@ def seed_route_group_journeys(
             first.member_count = len(first.member_flow_ids)
             tele["coalesced"] += 1
             tele.setdefault("coalesced_seeds", []).append({
-                "pf": key[0], "resource": key[1],
+                "pf": co_key[0], "resource": co_key[1],
                 "dropped_name": str(uf.name or ""),
                 "into_name": str(first.name or ""),
             })

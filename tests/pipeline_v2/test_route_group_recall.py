@@ -234,12 +234,13 @@ def _twin_scene(page_pf="datarooms"):
     return ufs, features, pfs, flows
 
 
-def test_b69v2_same_pf_resource_seeds_coalesce(monkeypatch):
+def test_b69v2_same_pf_resource_seeds_coalesce():
     """The papermark-ON twin class: API-side + page-side groups of the SAME
-    noun under the SAME PF are ONE journey — no twin, no parenthetical."""
-    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+    noun under the SAME PF are ONE journey — no twin, no parenthetical.
+    (Armed via the explicit kwarg — finalize passes the family flag.)"""
     ufs, features, pfs, flows = _twin_scene()
-    tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES)
+    tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES,
+                                     coalesce_same_pf_resource=True)
     assert tele["holes"] == 2
     assert tele.get("coalesced") == 1
     assert tele["seeded"] == 1
@@ -250,19 +251,18 @@ def test_b69v2_same_pf_resource_seeds_coalesce(monkeypatch):
     assert "(" not in (seed.name or "")
 
 
-def test_b69v2_cross_pf_same_noun_not_coalesced(monkeypatch):
+def test_b69v2_cross_pf_same_noun_not_coalesced():
     """Anti-case: same noun, DIFFERENT homes — honest separate journeys."""
-    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
     ufs, features, pfs, flows = _twin_scene(page_pf="conversations")
-    tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES)
+    tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES,
+                                     coalesce_same_pf_resource=True)
     assert tele.get("coalesced", 0) == 0
     assert tele["seeded"] == 2
 
 
-def test_b69v2_coalesce_off_byte_identical(monkeypatch):
-    """Kill-switch: flag unset ⇒ both twins seed exactly as pre-B69-v2
-    (second wears the dir-segment parenthetical at birth)."""
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+def test_b69v2_coalesce_off_byte_identical():
+    """Kill-switch: kwarg unset/None ⇒ both twins seed exactly as
+    pre-B69-v2 (second wears the dir-segment parenthetical at birth)."""
     ufs, features, pfs, flows = _twin_scene()
     tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES)
     assert "coalesced" not in tele
@@ -271,12 +271,13 @@ def test_b69v2_coalesce_off_byte_identical(monkeypatch):
     assert any("(" in n for n in names)  # the pre-B69v2 birth parenthetical
 
 
-def test_b69v2_coalesce_deterministic(monkeypatch):
-    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+def test_b69v2_coalesce_deterministic():
     a = _twin_scene()
     b = _twin_scene()
-    ta = seed_route_group_journeys(a[0], a[1], a[2], a[3], _TWIN_ROUTES)
-    tb = seed_route_group_journeys(b[0], b[1], b[2], b[3], _TWIN_ROUTES)
+    ta = seed_route_group_journeys(a[0], a[1], a[2], a[3], _TWIN_ROUTES,
+                                   coalesce_same_pf_resource=True)
+    tb = seed_route_group_journeys(b[0], b[1], b[2], b[3], _TWIN_ROUTES,
+                                   coalesce_same_pf_resource=True)
     assert ta == tb
     assert [(u.name, u.member_flow_ids) for u in a[0]] == \
         [(u.name, u.member_flow_ids) for u in b[0]]

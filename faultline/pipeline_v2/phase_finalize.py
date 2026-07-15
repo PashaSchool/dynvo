@@ -1149,11 +1149,17 @@ def run_finalize_phase(
         except Exception:  # noqa: BLE001 — guard is best-effort
             seed_clf = None
     if route_group_seeds_enabled():
+        # B69-v2 — same-(pf,resource) seed coalescence, armed here (the
+        # recall module stays import-light; naming_contract owns the flag).
+        from faultline.pipeline_v2.naming_contract import (
+            homing_hygiene_enabled as _hh_seed_coalesce,
+        )
         with StageLogger(run_dir, 6, "route_group_recall") as log_rgr:
             rgr_tele = seed_route_group_journeys(
                 user_flows, features, product_features,
                 list(bipartite.flows), lineage_result.routes_index,
                 scope_classifier=seed_clf, route_by_file=seed_rbf,
+                coalesce_same_pf_resource=_hh_seed_coalesce(),
             )
             if rgr_tele.get("holes") or rgr_tele.get("seeded"):
                 scan_meta["route_group_recall"] = rgr_tele
