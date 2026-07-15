@@ -600,6 +600,21 @@ ENV_OUTPUT_FLAGS = (
     # this display-casing fix is gated separately. Default OFF; =0/unset
     # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — flip-protocol.
     "FAULTLINE_RECALL_QUAL_CASING",
+    # B58-v3 (2026-07-15) — grain wave, ONE flag gates both segments (the
+    # B53 precedent): Seg C Stage 6.9c schema-monolith member strip (a
+    # whole-DB schema file + its package's plumbing leave every
+    # FOREIGN-anchored claimant's ledgers — documenso team.verify 84%
+    # prisma) + Seg A fdir internal-lib candidacy in the B48 ws-library
+    # lane (broadly-imported zero-surface feature-dir modules —
+    # twenty-front src/modules/apollo, cal.com apps/web/modules/data-table
+    # — ride the SAME 6.985 transport-handoff conservation channel; the
+    # handoff resolves fdir: anchors for grain-wave candidates). Reshapes
+    # developer_features[] ledgers + product_features[] membership/LOC +
+    # the platform lane + user_flows[].product_feature_id when candidates
+    # exist. Default OFF; =0/unset byte-identical. Appended WITHOUT a
+    # KEY_SCHEMA bump — the bump rides the separate later flip commit only
+    # (flip-protocol).
+    "FAULTLINE_GRAIN_WAVE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

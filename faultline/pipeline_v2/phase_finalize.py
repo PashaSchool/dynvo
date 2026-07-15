@@ -445,6 +445,51 @@ def run_finalize_phase(
         )
     scan_meta["stage_6_9b_generated_strip"] = dict(generated_strip_telemetry)
 
+    # ── Stage 6.9c — schema-monolith member strip (B58-v3 Seg C) ────────
+    # A whole-DB schema monolith (``schema.prisma`` / ``db/schema.rb``)
+    # annexed onto a FOREIGN-anchored feature (the stage-2 route,schema
+    # join + the 6.97 primary-owner tiebreak dumping the schema package's
+    # shared plumbing onto a leaf route — documenso team.verify 1,202 LOC
+    # where 152 exist) is stripped from every foreign claimant; the
+    # schema package's own feature (majority-inside) keeps its claims.
+    # Runs HERE — after the 6.9/6.9b strips (same output-tree contract),
+    # BEFORE the 6.86 mint (PF member_files are carried from dev ledgers,
+    # spine anchors read owned_paths_of — PF rows form clean) and BEFORE
+    # Stage 6.97 (owned LOC re-truths). Monoliths carry no flows, so the
+    # journey layer is structurally unaffected. Kill-switch: the pass
+    # only runs under FAULTLINE_GRAIN_WAVE=1 (default OFF) — unset/=0 is
+    # byte-identical (no scan_meta key, no artifact).
+    _sms_dropped = 0
+    from faultline.pipeline_v2.schema_member_strip import (
+        grain_wave_enabled,
+        strip_schema_monolith_members,
+    )
+    if grain_wave_enabled():
+        with StageLogger(run_dir, 6, "schema_member_strip") as log6_9c:
+            try:
+                sms_tele = strip_schema_monolith_members(
+                    features, product_features,
+                )
+                _sms_dropped = sms_tele.get("features_dropped", 0)
+                if sms_tele.get("paths_removed") or sms_tele.get("no_home"):
+                    scan_meta["schema_member_strip"] = sms_tele
+                log6_9c.info(
+                    "schema_member_strip: pkgs=%d paths_removed=%d "
+                    "features_stripped=%d dropped=%d no_home=%d" % (
+                        len(sms_tele.get("packages", [])),
+                        sms_tele.get("paths_removed", 0),
+                        sms_tele.get("features_stripped", 0),
+                        _sms_dropped,
+                        len(sms_tele.get("no_home", [])),
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log6_9c.info(
+                    f"schema_member_strip: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # Reconcile Layer-2 after the strips. A product feature whose only member
     # was a test-only / generated-only developer feature is now empty — the
     # strips dropped that feature here in the finalize phase, AFTER Stage 8.6's
@@ -454,7 +499,7 @@ def run_finalize_phase(
     # reaches output. No-op when neither strip dropped a feature.
     if test_strip_telemetry.get("features_dropped") or generated_strip_telemetry.get(
         "features_dropped"
-    ):
+    ) or _sms_dropped:
         from faultline.pipeline_v2.stage_8_6_nonsource_drop import (
             drop_phantom_product_features,
         )

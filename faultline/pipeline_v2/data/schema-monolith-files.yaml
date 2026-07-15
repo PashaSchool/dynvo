@@ -1,0 +1,24 @@
+# B58-v3 Seg C — monolithic whole-DB schema files (structural corroboration).
+#
+# A "monolithic schema" is a SINGLE file that declares the entire database
+# schema for a repo (every domain model in one place). Ecosystem convention,
+# not a repo-specific path (rule-no-repo-specific-paths): these basenames /
+# path-suffixes are framework canon, the same class the schema-domain
+# extractor already keys on. The list is CORROBORATION for the structural
+# mechanism (a whole-DB schema file annexed as an anchor member of a
+# foreign-anchored route/leaf PF is a dev-infra leak, not that PF's own
+# code) — it is NOT the mechanism itself.
+#
+# Only add a filename here when it is a WHOLE-DB monolith by convention.
+# Per-domain schema files (Drizzle `<domain>/schema.ts`, Django per-app
+# `models.py`, per-model Ent `<model>.go`) are DELIBERATELY excluded — they
+# are legitimately owned by their domain feature and must never be stripped.
+
+# Matched on the lowercased basename (exact).
+monolith_basenames:
+  - schema.prisma          # Prisma — single-file whole-DB schema (universal)
+
+# Matched on the lowercased path suffix (endswith).
+monolith_path_suffixes:
+  - db/schema.rb           # Rails — the ActiveRecord schema dump (whole DB)
+  - db/structure.sql       # Rails (sql schema-format) — whole-DB structure dump
