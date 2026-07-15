@@ -169,6 +169,27 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     except ImportError:  # pragma: no cover — missing extractor is non-fatal
         pass
 
+    # B66 — code-first server API-entry extractor. Emits routes_index entries
+    # for NestJS controllers, GraphQL code-first resolvers (decorator/pothos/
+    # nexus), tRPC procedures, and koa/hono routers — server surfaces whose URL
+    # lives in decorators/DSL calls, not the filesystem, so their flows/journeys
+    # mint. Registration is FLAG-GATED (FAULTLINE_SERVER_API_ENTRIES, default
+    # OFF) for the same reason as B67: scan_meta.extractor_hits serializes EVERY
+    # registered source key, so an unconditionally-registered-but-inert extractor
+    # would still grow the OFF board by one key. The extract() gate is a second
+    # guard.
+    try:
+        from faultline.pipeline_v2.extractors.server_api_entries import (
+            server_api_entries_enabled,
+        )
+        if server_api_entries_enabled():
+            _try(
+                "faultline.pipeline_v2.extractors.server_api_entries",
+                "ServerApiEntryExtractor",
+            )
+    except ImportError:  # pragma: no cover — missing extractor is non-fatal
+        pass
+
     return out
 
 

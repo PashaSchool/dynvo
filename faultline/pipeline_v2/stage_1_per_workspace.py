@@ -370,7 +370,15 @@ def _merge_anchors_across_workspaces(
     from faultline.pipeline_v2.extractors.jobs_entries import (
         jobs_entries_enabled,
     )
-    preserve_routes = jobs_entries_enabled()
+    from faultline.pipeline_v2.extractors.server_api_entries import (
+        server_api_entries_enabled,
+    )
+    # B66 rides the same armed path: NestJS/tRPC/GraphQL entries are heavily
+    # monorepo (twenty packages/twenty-server, cal apps/api/v2), so same-slug
+    # twins that coalesce here would otherwise LOSE their explicit routes before
+    # they reach routes_index. Armed by EITHER flag; OFF-world (both unset) is
+    # byte-identical.
+    preserve_routes = jobs_entries_enabled() or server_api_entries_enabled()
 
     def _routes_union(
         cands: list[AnchorCandidate],

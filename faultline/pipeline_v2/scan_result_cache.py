@@ -584,6 +584,15 @@ ENV_OUTPUT_FLAGS = (
     # armed. Default OFF; =0/unset byte-identical. Appended WITHOUT a
     # KEY_SCHEMA bump — flip-protocol.
     "FAULTLINE_NAMING_LAW",
+    # B66 — code-first server API-entry extractor. Emits routes_index entries
+    # (real HTTP methods for NestJS/koa/hono; synthetic QUERY/MUTATION/
+    # SUBSCRIPTION for GraphQL/tRPC) for decorator-/DSL-routed backends whose
+    # URL lives in code, not the filesystem (NestJS controllers, GraphQL
+    # code-first resolvers, tRPC procedures, koa/hono routers) so their
+    # flows/journeys mint. Default OFF; =0/unset is byte-identical. Appended
+    # WITHOUT a KEY_SCHEMA bump — the bump rides the separate later flip commit
+    # only (flip-protocol).
+    "FAULTLINE_SERVER_API_ENTRIES",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
