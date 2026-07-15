@@ -229,3 +229,79 @@ def test_rename_collision_gated_against_final_board():
     assert tele["rehomed"] == 1
     assert sick.name == "View faqs"
     assert tele["rename_kept"] == 1
+
+
+def test_anticase_home_evidence_guard():
+    """(7, offline-drive forensics) a row holding ANY home-anchor-matched
+    member ('View dataroom analytics and audit log' carries faqs' own
+    app/(ee)/api/faqs route) is home-tied — never moved."""
+    registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()
+    fl_an1 = Fl("f-an1", "pages/api/teams/t/analytics/a.ts",
+                "view-analytics-flow")
+    fl_an2 = Fl("f-an2", "pages/api/teams/t/analytics/b.ts",
+                "view-audit-log-flow")
+    devs.append(Dev("d3", [fl_an1, fl_an2]))
+    mixed = UF("View dataroom analytics and audit log", "faqs",
+               ["f-faq", "f-an1", "f-an2"])
+    ufs = [sick, real_faqs, keeper, mixed]
+    tele = run_post_uf_rehome(ufs, devs, pfs, registry)
+    assert mixed.product_feature_id == "faqs"
+    assert tele.get("home_evidence_guarded", 0) >= 1
+
+
+def test_anticase_home_noun_echo_guard():
+    """(8, offline-drive forensics) 'Manage dataroom FAQs': faq-CRUD flows
+    under the datarooms API subtree — zero structural home match, but the
+    flow names / resource echo the home noun — dataroom-SCOPED faqs stay
+    under PF faqs."""
+    registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()
+    # Entries OUTSIDE every faq-anchor prefix (the real rebuilt registry's
+    # shape: the merged faq anchor does NOT cover the datarooms/[id]/faqs
+    # subtree) — home_share is exactly 0.0; only the NAME/resource echo
+    # ties the row home.
+    fl_f1 = Fl("f-f1", "pages/api/teams/t/datarooms/d/qa/index.ts",
+               "manage-team-dataroom-faqs-flow")
+    fl_f2 = Fl("f-f2", "pages/api/teams/t/datarooms/d/qa/one.ts",
+               "manage-team-dataroom-faq-by-faq-id-flow")
+    devs.append(Dev("d4", [fl_f1, fl_f2]))
+    scoped = UF("Manage dataroom FAQs", "faqs", ["f-f1", "f-f2"],
+                resource="faq")
+    ufs = [sick, real_faqs, keeper, scoped]
+    tele = run_post_uf_rehome(ufs, devs, pfs, registry)
+    assert scoped.product_feature_id == "faqs"
+    assert tele.get("home_echo_guarded", 0) >= 1
+    # …and the actual disease row still fires alongside the guards:
+    assert sick.product_feature_id == "datarooms"
+
+
+def test_fold_rung3_resource_twin():
+    """The rehomed seed dissolves into the organic receiver journey of the
+    SAME singular-folded resource even with no member overlap and a
+    different name ('View faqs' res=datarooms → 'Browse and filter
+    datarooms' res=dataroom)."""
+    registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()
+    fl_x = Fl("f-x", "pages/datarooms/settings.tsx", "dataroom-settings-flow")
+    devs.append(Dev("d5", [fl_x]))
+    organic = UF("Browse and filter datarooms", "datarooms", ["f-x"])
+    organic.resource = "dataroom"
+    ufs = [sick, real_faqs, keeper, organic]
+    tele = run_post_uf_rehome(ufs, devs, pfs, registry)
+    assert tele["folded"] == 1
+    assert sick not in ufs
+    assert organic.member_flow_ids == ["f-x", "f-list", "f-view"]
+
+
+def test_anticase_organic_rows_telemetry_only():
+    """(9, cal.com control forensics) an ORGANIC row tripping the breadth
+    ruler is a telemetry-only candidate — never moved (the rail's action
+    scope is the synthesized seed class; organic mis-homes belong to the
+    I16/B24 family)."""
+    registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()
+    organic_sick = UF("Reset forgotten password", "faqs",
+                      ["f-list", "f-view"])  # organic, zero home tie
+    ufs = [organic_sick, real_faqs, keeper]
+    tele = run_post_uf_rehome(ufs, devs, pfs, registry)
+    assert organic_sick.product_feature_id == "faqs"  # untouched
+    assert tele["rehomed"] == 0 and tele["folded"] == 0
+    assert tele["organic_candidates"] == 1
+    assert tele["organic_candidate_rows"][0]["to"] == "datarooms"

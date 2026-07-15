@@ -36,18 +36,25 @@ multiplicatively-wider share (``rival >= _RATIO × home`` AND
 on). SCALE-INVARIANT ratios over the row's own member set — no per-repo
 constants (rule-no-magic-tuning).
 
+ACTION SCOPE — SYNTHESIZED rows only (the mandate's disease class: the
+PF-noun seed machinery mis-homed by the mint fold). An organic / lattice
+row tripping the same ruler is recorded as a telemetry-only candidate
+(``organic_candidates``): the cal.com control drive surfaced 5 such rows
+(an echo-PF 'features' debt class) and moving LLM-drawn journeys belongs
+to the I16/B24 family, not this rail — the control repo's strict-no-op
+gate is part of the mandate.
+
 ACTIONS:
 * fold-into-existing — when the receiver PF holds an ORGANIC journey that
-  already cites one of the row's member flows (or wears the same folded
-  name), the row's members fold into it and the row dissolves (a rehomed
-  seed must not shadow the journey that legitimately covers the surface).
-* rehome — otherwise the row moves (``product_feature_id``) and, when it is
-  a SYNTHESIZED row (PF-noun-named seed machinery — the proven lying class),
-  it is renamed from its OWN group resource via the journey templates
-  (rename-on-rehome, C′). Organic rows keep their LLM-drawn names. The
-  rename is law-gated (``display_law_violations`` — including the B69-v2
-  bare-verb/dev-grain-token law) and collision-gated against the FINAL
-  board; a failed rename keeps the old name and is counted honestly.
+  already cites one of the row's member flows, wears the same folded name,
+  or holds the same singular-folded resource, the row's members fold into
+  it and the row dissolves (a rehomed seed must not shadow the journey
+  that legitimately covers the surface).
+* rehome — otherwise the row moves (``product_feature_id``) and is renamed
+  from its OWN group resource via the journey templates (rename-on-rehome,
+  C′). The rename is law-gated (``display_law_violations`` — including the
+  B69-v2 bare-verb/dev-grain-token law) and collision-gated against the
+  FINAL board; a failed rename keeps the old name and is counted honestly.
 
 NAMED GUARDS (unit anti-cases, phase-1 §4 + v2 forensics):
 * θ-guard — a home holding a member majority is legitimate (UF-013 'Create
@@ -71,6 +78,7 @@ from collections import Counter
 from typing import Any, Mapping
 
 from faultline.pipeline_v2.naming_contract import (
+    _degrime_sing,
     _flow_verb_verdict,
     _resource_phrase,
     _verb_class_tokens,
@@ -109,6 +117,40 @@ def _pf_display(pf: Any) -> str:
 
 def _folded(name: Any) -> str:
     return str(name or "").strip().lower()
+
+
+def _sing_tokens(*texts: str) -> set[str]:
+    """Singular-folded word tokens of the given texts (the B50 fold — the
+    same normalization Law-A's echo guard uses)."""
+    out: set[str] = set()
+    for t in texts:
+        for w in re.split(r"[^a-z0-9]+", str(t or "").lower()):
+            if w:
+                out.add(_degrime_sing(w))
+    return out
+
+
+def _home_noun_echo(
+    uf: Any, home_pf: Any, flow_by_uuid: Mapping[str, Any],
+) -> bool:
+    """The phase-1 §3 'different-domain members' predicate, mechanized: a
+    row whose OWN resource or member-flow NAMES echo the home PF's noun is
+    home-TIED — its members belong to the home's domain even when they live
+    inside another PF's route subtree (papermark 'Manage dataroom FAQs':
+    faq-CRUD flows under the datarooms API subtree — dataroom-SCOPED faqs
+    legally home to PF faqs; the offline drive proved the bare breadth
+    ruler would move them). Only a row with NO structural match AND NO noun
+    tie is annexed booty."""
+    home_toks = _sing_tokens(
+        str(_attr(home_pf, "name") or ""), _pf_display(home_pf))
+    if not home_toks:
+        return False
+    row_toks = _sing_tokens(str(_attr(uf, "resource") or ""))
+    for fid in (_attr(uf, "member_flow_ids") or []):
+        fl = flow_by_uuid.get(str(fid))
+        if fl is not None:
+            row_toks |= _sing_tokens(str(_attr(fl, "name") or ""))
+    return bool(home_toks & row_toks)
 
 
 def _member_entries(uf: Any, flow_by_uuid: Mapping[str, Any]) -> list[str]:
@@ -244,6 +286,22 @@ def run_post_uf_rehome(
         home_share = len(home_anchor.matched_set(entries)) / n
         if home_share >= _THETA:
             continue  # θ-guard: the home owns a member majority (UF-013)
+        if home_share > 0.0:
+            # home-evidence guard: the home anchor structurally matches at
+            # least ONE member entry — the row holds home-native evidence
+            # ('View dataroom analytics and audit log' carries faqs' own
+            # app/(ee)/api/faqs route). A row is annexed booty only with
+            # ZERO home tie; under-firing beats an invented move (B49).
+            tele["home_evidence_guarded"] = (
+                tele.get("home_evidence_guarded", 0) + 1)
+            continue
+        if _home_noun_echo(uf, pf_by_key.get(pfid), flow_by_uuid):
+            # noun-echo guard (phase-1 §3 different-domain predicate):
+            # member flow names / own resource echo the home PF's noun —
+            # dataroom-SCOPED faqs stay under faqs ('Manage dataroom FAQs').
+            tele["home_echo_guarded"] = (
+                tele.get("home_echo_guarded", 0) + 1)
+            continue
         rival_key: str | None = None
         rival_share = 0.0
         for key in sorted(anchor_by_pf):
@@ -260,6 +318,26 @@ def run_post_uf_rehome(
                 # the mupdf class: signal without a target, do NOT move.
                 tele["signal_no_target"] += 1
             continue
+        if not bool(_attr(uf, "synthesized")):
+            # ACTION SCOPE = synthesized rows only (the mandate's disease
+            # class: PF-noun seed machinery mis-homed by the mint fold).
+            # An organic/lattice row tripping the same ruler is recorded
+            # as a telemetry-only candidate — the cal.com control drive
+            # showed 5 such rows (an echo-PF 'features' debt class), and
+            # moving LLM-drawn journeys belongs to the I16/B24 family, not
+            # this rail (strict-no-op control gate; B49: never invent a
+            # move outside the proven exhibit class).
+            tele["organic_candidates"] = (
+                tele.get("organic_candidates", 0) + 1)
+            if len(tele.setdefault("organic_candidate_rows", [])) < 10:
+                tele["organic_candidate_rows"].append({
+                    "uf": str(_attr(uf, "id") or ""),
+                    "name": str(_attr(uf, "name") or ""),
+                    "from": pfid, "to": rival_key,
+                    "home_share": round(home_share, 3),
+                    "rival_share": round(rival_share, 3),
+                })
+            continue
         plans.append({
             "uf": uf, "from": pfid, "to": rival_key,
             "home_share": round(home_share, 3),
@@ -275,20 +353,39 @@ def run_post_uf_rehome(
         uid = str(_attr(uf, "id") or "")
         member_ids = [str(m) for m in (_attr(uf, "member_flow_ids") or [])]
         # fold-into-existing: an ORGANIC receiver journey that already cites
-        # one of the row's member flows (or wears the same folded name).
+        # one of the row's member flows, wears the same folded name, or
+        # holds the SAME singular-folded resource (papermark: the rehomed
+        # 'View faqs' seed, resource='datarooms', dissolves into organic
+        # 'Browse and filter datarooms', resource='dataroom' — the journey
+        # that legitimately covers the surface). Rungs ranked: member
+        # overlap > name twin > resource twin; first receiver row in board
+        # order wins (deterministic).
+        organic = [
+            other for other in user_flows
+            if other is not uf and not bool(_attr(other, "synthesized"))
+            and str(_attr(other, "product_feature_id") or "") == target
+        ]
         fold_target = None
-        for other in user_flows:
-            if other is uf or bool(_attr(other, "synthesized")):
-                continue
-            if str(_attr(other, "product_feature_id") or "") != target:
-                continue
-            other_members = {
-                str(m) for m in (_attr(other, "member_flow_ids") or [])}
-            if (other_members & set(member_ids)
-                    or _folded(_attr(other, "name"))
-                    == _folded(_attr(uf, "name"))):
+        member_set = set(member_ids)
+        for other in organic:  # rung 1 — member overlap
+            if {str(m) for m in (_attr(other, "member_flow_ids") or [])} \
+                    & member_set:
                 fold_target = other
                 break
+        if fold_target is None:  # rung 2 — name twin
+            for other in organic:
+                if _folded(_attr(other, "name")) == \
+                        _folded(_attr(uf, "name")):
+                    fold_target = other
+                    break
+        if fold_target is None:  # rung 3 — resource twin
+            row_res = _sing_tokens(str(_attr(uf, "resource") or ""))
+            if row_res:
+                for other in organic:
+                    if _sing_tokens(
+                            str(_attr(other, "resource") or "")) == row_res:
+                        fold_target = other
+                        break
         if fold_target is not None:
             existing = [
                 str(m) for m in (_attr(fold_target, "member_flow_ids") or [])]
