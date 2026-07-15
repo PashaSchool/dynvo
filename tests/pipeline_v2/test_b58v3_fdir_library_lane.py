@@ -407,3 +407,333 @@ def test_handoff_ignores_fdir_anchor_off(monkeypatch):
     )
     assert tele["candidate_pfs"] == {}
     assert tele["laned"] == []
+
+
+# ── iter-2 MODE 2: twin-unit resolution (typebot variables class) ────────
+
+
+def _twin_scene(pf_anchor: str, pf_name: str = "variables",
+                extra_pfs=()):
+    from datetime import datetime, timezone
+
+    class Dev:
+        def __init__(self, name, pfid, paths):
+            self.name = name
+            self.uuid = f"dev-{name}"
+            self.layer = "developer"
+            self.product_feature_id = pfid
+            self.paths = list(paths)
+            self.member_files = []
+            self.flows = []
+            self.shared_reason = None
+            self.anchor_id = None
+            self.authors = []
+            self.total_commits = 0
+            self.bug_fixes = 0
+            self.coverage_pct = None
+            self.last_modified = datetime.fromtimestamp(0, timezone.utc)
+            self.health_score = 0.0
+
+    class PF:
+        def __init__(self, name, anchor_id):
+            self.name = name
+            self.uuid = f"pf-{name}"
+            self.layer = "product"
+            self.anchor_id = anchor_id
+
+    class Ctx:
+        repo_path = "."
+        tracked_files = []
+
+    unit = "packages/variables"
+    devs = [Dev("variables-app", pf_name,
+                ["apps/builder/src/features/variables/store.ts"])]
+    pfs = [PF(pf_name, pf_anchor)] + [PF(n, a) for n, a in extra_pfs]
+    return unit, devs, pfs, Ctx()
+
+
+def _run_twin(unit, devs, pfs, ctx, routes=None, flag="1", monkeypatch=None):
+    from faultline.pipeline_v2.transport_handoff import (
+        TargetGrainIndex,
+        run_transport_handoff,
+    )
+    if flag is None:
+        monkeypatch.delenv(ENV, raising=False)
+    else:
+        monkeypatch.setenv(ENV, flag)
+    grain = TargetGrainIndex([], pfs, routes_index=routes or [],
+                             excluded_units=[unit],
+                             candidate_pf_keys=set())
+    return run_transport_handoff(
+        devs, pfs, [], [], routes or [], ctx,
+        {unit: "B48:library"},
+        grain_index=grain,
+    )
+
+
+def test_exhibit_typebot_variables_twin_resolves(monkeypatch):
+    """THE MODE-2 exhibit: candidate packages/variables has no own PF;
+    the row's PF is the app-side twin fdir:apps/builder/src/features/
+    variables — the twin resolves, the lane machinery engages
+    (PF-scoped downstream)."""
+    unit, devs, pfs, ctx = _twin_scene(
+        "fdir:apps/builder/src/features/variables")
+    tele = _run_twin(unit, devs, pfs, ctx, monkeypatch=monkeypatch)
+    assert tele["candidate_pfs"] == {unit: "variables"}
+    assert tele["twin_resolutions"] == {
+        unit: "fdir-twin:apps/builder/src/features/variables"}
+
+
+def test_twin_route_anchored_pf_refused(monkeypatch):
+    """typebot theme/settings shape: a route:-anchored same-name PF is
+    a REAL product surface — never a twin lane target."""
+    unit, devs, pfs, ctx = _twin_scene("route:variables")
+    tele = _run_twin(unit, devs, pfs, ctx, monkeypatch=monkeypatch)
+    assert tele["candidate_pfs"] == {}
+
+
+def test_twin_with_route_file_inside_refused(monkeypatch):
+    """website-with-routes analog: an fdir twin whose dir carries a
+    route file is a surface — refused."""
+    unit, devs, pfs, ctx = _twin_scene(
+        "fdir:apps/builder/src/features/variables")
+    routes = [{"file": "apps/builder/src/features/variables/page.tsx",
+               "pattern": "/variables"}]
+    tele = _run_twin(unit, devs, pfs, ctx, routes=routes,
+                     monkeypatch=monkeypatch)
+    assert tele["candidate_pfs"] == {}
+
+
+def test_twin_ambiguous_refused(monkeypatch):
+    """TWO same-basename fdir PFs — ambiguous, honest abstain."""
+    unit, devs, pfs, ctx = _twin_scene(
+        "fdir:apps/builder/src/features/variables",
+        extra_pfs=[("variables-2", "fdir:apps/viewer/src/variables")],
+    )
+    tele = _run_twin(unit, devs, pfs, ctx, monkeypatch=monkeypatch)
+    assert tele["candidate_pfs"] == {}
+
+
+def test_twin_off_world_inert(monkeypatch):
+    """Kill-switch: OFF — no twin resolution, candidate stays
+    unresolved (byte-identical world)."""
+    unit, devs, pfs, ctx = _twin_scene(
+        "fdir:apps/builder/src/features/variables")
+    tele = _run_twin(unit, devs, pfs, ctx, flag=None,
+                     monkeypatch=monkeypatch)
+    assert tele["candidate_pfs"] == {}
+    assert "twin_resolutions" not in tele
+
+
+# ── iter-2 MODE 1: abstain telemetry + breadth/root/subpath fixes ────────
+
+
+def test_abstain_telemetry_records_breadth_and_norung(tmp_path, monkeypatch):
+    """Census adjudicability: every considered-but-abstained unit
+    carries its exact gate in b48_abstains (the wave's 15/16 silent
+    abstains were un-diagnosable without it)."""
+    monkeypatch.setenv(ENV, "1")
+    tracked = [
+        _manifest(tmp_path, "", "root", private=True),
+        _manifest(tmp_path, WEB, "@acme/web", private=True),
+        # narrow leaf: 1 importer file / 1 unit → breadth abstain.
+        _write(tmp_path, f"{DATAKIT}/table.ts",
+               "export const Table = () => null;\n"),
+        _write(tmp_path, f"{WEB}/modules/invoices/list.ts",
+               'import { Table } from "../datakit/table";\n'),
+    ]
+    fdirs = [DATAKIT, f"{WEB}/modules/invoices"]
+    tele = _detect(tmp_path, tracked, fdirs=fdirs)
+    ab = tele.get("b48_abstains") or {}
+    assert ab.get(DATAKIT, "").startswith("breadth:inf=1,inu=1")
+
+
+def test_abstain_telemetry_absent_when_off(tmp_path, monkeypatch):
+    monkeypatch.delenv(ENV, raising=False)
+    tracked, fdirs, routes = _calcom_datakit_repo(tmp_path)
+    tele = _detect(tmp_path, tracked, routes=routes, fdirs=fdirs)
+    assert "b48_abstains" not in tele
+
+
+def test_exhibit_midday_bot_two_unit_breadth(tmp_path, monkeypatch):
+    """midday packages/bot class (inf=12, inu=2): a zero-surface lib
+    heavily consumed by TWO units lanes under the grain breadth
+    (inu>=2); OFF keeps the ws bar (inu>=3) — byte-identical."""
+    def scene(repo: Path) -> list[str]:
+        tracked = [
+            _manifest(repo, "", "root", private=True),
+            _manifest(repo, "packages/botkit", "botkit"),
+            _write(repo, "packages/botkit/src/bot.ts",
+                   "export const bot = () => null;\n"),
+        ]
+        for unit, files in (("dashboard", ("a", "b", "c")),
+                            ("api", ("x", "y", "z"))):
+            tracked.append(_manifest(repo, f"apps/{unit}",
+                                     f"@acme/{unit}", private=True))
+            for fn in files:
+                tracked.append(_write(
+                    repo, f"apps/{unit}/src/{fn}.ts",
+                    'import { bot } from "botkit";\n'))
+        return tracked
+
+    monkeypatch.setenv(ENV, "1")
+    on_repo = tmp_path / "on"
+    tele_on = _detect(on_repo, scene(on_repo))
+    assert (tele_on.get("transport_candidates") or {}).get(
+        "packages/botkit") == "B48:library"
+
+    monkeypatch.delenv(ENV, raising=False)
+    off_repo = tmp_path / "off"
+    tele_off = _detect(off_repo, scene(off_repo))
+    assert "packages/botkit" not in (
+        tele_off.get("transport_candidates") or {})
+
+
+def test_anticase_single_unit_consumer_never_lanes(tmp_path, monkeypatch):
+    """rr packages/import class (inf=1, inu=1): a narrow lib stays —
+    the inf>=5 file bar and the 2-unit floor both hold even ON."""
+    monkeypatch.setenv(ENV, "1")
+    tracked = [
+        _manifest(tmp_path, "", "root", private=True),
+        _manifest(tmp_path, "packages/importkit", "importkit"),
+        _write(tmp_path, "packages/importkit/src/parse.ts",
+               "export const parse = () => null;\n"),
+        _manifest(tmp_path, "apps/server", "@acme/server", private=True),
+    ] + [
+        _write(tmp_path, f"apps/server/src/{fn}.ts",
+               'import { parse } from "importkit";\n')
+        for fn in ("a", "b", "c", "d", "e", "f")
+    ]
+    tele = _detect(tmp_path, tracked)
+    assert "packages/importkit" not in (
+        tele.get("transport_candidates") or {})
+    ab = tele.get("b48_abstains") or {}
+    assert ab.get("packages/importkit", "").startswith("breadth:inf=6,inu=1")
+
+
+def test_exhibit_novu_ee_root_container(tmp_path, monkeypatch):
+    """novu ee-auth/ee-billing class: enterprise/packages/<pkg> is a
+    legal grain candidate root (parallel-EE convention); OFF it stays
+    not_shared_container-vetoed."""
+    def scene(repo: Path) -> list[str]:
+        tracked = [
+            _manifest(repo, "", "root", private=True),
+            _manifest(repo, "enterprise/packages/authkit",
+                      "@acme/ee-authkit", private=True),
+            _write(repo, "enterprise/packages/authkit/src/index.ts",
+                   "export const auth = () => null;\n"),
+        ]
+        for unit, files in (("web", ("a", "b", "c")),
+                            ("admin", ("x",)), ("worker", ("y",))):
+            tracked.append(_manifest(repo, f"apps/{unit}",
+                                     f"@acme/{unit}", private=True))
+            for fn in files:
+                tracked.append(_write(
+                    repo, f"apps/{unit}/src/{fn}.ts",
+                    'import { auth } from "@acme/ee-authkit";\n'))
+        return tracked
+
+    monkeypatch.setenv(ENV, "1")
+    on_repo = tmp_path / "on"
+    tele_on = _detect(on_repo, scene(on_repo))
+    assert (tele_on.get("transport_candidates") or {}).get(
+        "enterprise/packages/authkit") == "B48:library"
+
+    monkeypatch.delenv(ENV, raising=False)
+    off_repo = tmp_path / "off"
+    tele_off = _detect(off_repo, scene(off_repo))
+    assert "enterprise/packages/authkit" not in (
+        tele_off.get("transport_candidates") or {})
+
+
+def test_anticase_ee_root_with_routes_vetoed(tmp_path, monkeypatch):
+    """An EE package carrying a route file is a surface — vetoed even
+    under the grain roots."""
+    monkeypatch.setenv(ENV, "1")
+    tracked = [
+        _manifest(tmp_path, "", "root", private=True),
+        _manifest(tmp_path, "enterprise/packages/portal",
+                  "@acme/ee-portal", private=True),
+        _write(tmp_path, "enterprise/packages/portal/pages/index.tsx",
+               "export default function P() { return null; }\n"),
+    ]
+    for unit, files in (("web", ("a", "b", "c")),
+                        ("admin", ("x",)), ("worker", ("y",))):
+        tracked.append(_manifest(tmp_path, f"apps/{unit}",
+                                 f"@acme/{unit}", private=True))
+        for fn in files:
+            tracked.append(_write(
+                tmp_path, f"apps/{unit}/src/{fn}.ts",
+                'import P from "@acme/ee-portal";\n'))
+    routes = [{"file": "enterprise/packages/portal/pages/index.tsx",
+               "pattern": "/portal"}]
+    tele = _detect(tmp_path, tracked, routes=routes)
+    assert "enterprise/packages/portal" not in (
+        tele.get("transport_candidates") or {})
+    ab = tele.get("b48_abstains") or {}
+    assert ab.get("enterprise/packages/portal") == "veto:route_surface"
+
+
+def test_exhibit_calcom_pbac_subpath_deepening(tmp_path, monkeypatch):
+    """cal.com packages/features/pbac class: consumers import ONLY via
+    the parent's name channel (@acme/features/pbac/...) — OFF the
+    credit lands on packages/features (fdir measures inf=0); ON the
+    subpath deepens to the pbac fdir, which lanes as a library."""
+    def scene(repo: Path) -> tuple[list[str], list[str]]:
+        tracked = [
+            _manifest(repo, "", "root", private=True),
+            _manifest(repo, "packages/features", "@acme/features",
+                      private=True),
+            # the features package's own shell (never config-only).
+            _write(repo, "packages/features/index.ts",
+                   'export * from "./pbac/service";\n'),
+            _write(repo, "packages/features/shell.ts",
+                   "export const shell = 1;\n"),
+            _write(repo, "packages/features/pbac/service.ts",
+                   "export const check = () => null;\n"),
+            _write(repo, "packages/features/pbac/registry.ts",
+                   'export * from "./service";\n'),
+        ]
+        fdirs = ["packages/features/pbac"]
+        for unit, files in (("web", ("a", "b", "c")),
+                            ("admin", ("x",)), ("worker", ("y",))):
+            tracked.append(_manifest(repo, f"apps/{unit}",
+                                     f"@acme/{unit}", private=True))
+            for fn in files:
+                tracked.append(_write(
+                    repo, f"apps/{unit}/src/{fn}.ts",
+                    'import { check } from '
+                    '"@acme/features/pbac/service";\n'))
+        return tracked, fdirs
+
+    monkeypatch.setenv(ENV, "1")
+    on_repo = tmp_path / "on"
+    tracked, fdirs = scene(on_repo)
+    tele_on = _detect(on_repo, tracked, fdirs=fdirs)
+    assert (tele_on.get("transport_candidates") or {}).get(
+        "packages/features/pbac") == "B48-fdir:library"
+
+    monkeypatch.delenv(ENV, raising=False)
+    off_repo = tmp_path / "off"
+    tracked, fdirs = scene(off_repo)
+    tele_off = _detect(off_repo, tracked, fdirs=fdirs)
+    assert "packages/features/pbac" not in (
+        tele_off.get("transport_candidates") or {})
+
+
+def test_anticase_library_cluster_honest_abstain(tmp_path, monkeypatch):
+    """twenty metadata-store / cal.com data-table class: a module
+    importing >1 sibling PRODUCT-standing units keeps the fan-out guard
+    (dou>1) — recorded as no_rung in the abstain channel, never forced.
+    The cluster-SCC question is a doctrine decision, not a rung."""
+    monkeypatch.setenv(ENV, "1")
+    tracked, fdirs, routes = _calcom_datakit_repo(tmp_path)
+    # datakit now imports TWO sibling modules → dou=2 → no rung.
+    tracked.append(_write(
+        tmp_path, f"{DATAKIT}/glue.ts",
+        'import { a } from "../invoices/list";\n'
+        'import { b } from "../customers/list";\n'))
+    tele = _detect(tmp_path, tracked, routes=routes, fdirs=fdirs)
+    assert DATAKIT not in (tele.get("transport_candidates") or {})
+    ab = tele.get("b48_abstains") or {}
+    assert ab.get(DATAKIT, "").startswith("no_rung:dou=2")

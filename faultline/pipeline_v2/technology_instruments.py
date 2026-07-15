@@ -150,6 +150,13 @@ CONFIG_LANE_ENV = "FAULTLINE_CONFIG_LANE"
 _CANDIDATE_ROOTS = ("packages", "libs", "internal", "tooling", "config",
                     "modules")
 
+#: B58-v3 (grain wave) — enterprise-edition parallel workspace roots:
+#: ``<ee-root>/<candidate-root>/<pkg>`` is a nested shared-container
+#: convention (novu ``enterprise/packages/*``), not a hub child. Used
+#: ONLY by the grain-gated B48 veto wrapper — the OFF-world _vetoes
+#: never consults it.
+_GRAIN_EE_ROOTS = ("enterprise", "ee")
+
 #: Infra-noun corroboration vocabulary (S1e / S2). Weak-signal ONLY —
 #: never sufficient by itself, per the operator amendment ("name-vocab
 #: is corroboration, not a signal"). Runtime-infrastructure nouns; the
@@ -435,6 +442,34 @@ def detect_technology_instruments(
             return name_to_unit.get("/".join(segs[:2]))
         return name_to_unit.get(segs[0])
 
+    # B58-v3 iter-2 (FAULTLINE_GRAIN_WAVE, default OFF) — name-channel
+    # SUBPATH deepening. ``@calcom/features/pbac/lib/x`` resolves above
+    # to the PARENT unit (``packages/features``), so a feature-dir
+    # pseudo-unit consumed exclusively through its package's name
+    # channel measures inf=0/inu=0 and silently abstains from B48
+    # (census MODE 1: cal.com pbac — 91 importing files in packages/trpc
+    # alone, measured as 1). When the grain wave is ON, a name-channel
+    # spec WITH a subpath remainder deepens to the actual target FILE
+    # (ext/index/src probes against tracked files), so imports credit
+    # the deepest unit exactly like relative imports do. OFF →
+    # byte-identical (the helper is never consulted).
+    _SUBPATH_PROBES = (
+        "", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
+        "/index.ts", "/index.tsx", "/index.js",
+    )
+
+    def _deepen_ws_subpath(spec: str, unit: str) -> str | None:
+        segs = spec.split("/")
+        sub = "/".join(segs[2:] if spec.startswith("@") else segs[1:])
+        if not sub:
+            return None
+        for root in (f"{unit}/{sub}", f"{unit}/src/{sub}"):
+            for probe in _SUBPATH_PROBES:
+                cand = root + probe
+                if cand in tracked_set:
+                    return cand
+        return None
+
     def _external(dep: str, spec: Any) -> bool:
         return (dep not in internal_names
                 and not str(spec).startswith("workspace:")
@@ -481,6 +516,9 @@ def detect_technology_instruments(
     }
 
     # ── one import walk ───────────────────────────────────────────────
+    # B58-v3 (grain wave) — ONE flag read for the walk + the B48 loop.
+    from faultline.pipeline_v2.schema_member_strip import grain_wave_enabled
+    _grain_fdir = grain_wave_enabled()
     cache = source_cache or _SourceCache(repo_path)
     # W6-AST Hook B (M4): graph-backed provenance (S2); None → legacy.
     from faultline.pipeline_v2.ts_ast.adapter import repo_provenance
@@ -513,6 +551,10 @@ def detect_technology_instruments(
                 continue
         for spec in specs:
             tu: str | None = _ws_unit_of_spec(spec)
+            if tu is not None and _grain_fdir:
+                deep = _deepen_ws_subpath(spec, tu)
+                if deep is not None:
+                    tu = unit_of_file.get(deep, tu)
             if tu is None:
                 tgt = (prov.resolve(rel, spec)
                        if prov is not None and rel in prov.files
@@ -872,12 +914,35 @@ def detect_technology_instruments(
             # Candidates ride the SAME transport_candidates channel —
             # journey conservation stays with the 6.985 handoff
             # (all-or-nothing; never mint-time laning). OFF → the set
-            # below stays {ws-pkg} → byte-identical.
-            from faultline.pipeline_v2.schema_member_strip import (
-                grain_wave_enabled,
-            )
-            _grain_fdir = grain_wave_enabled()
+            # below stays {ws-pkg} → byte-identical. (_grain_fdir is
+            # read once above the import walk.)
             _b48_kinds = {"ws-pkg", "fdir"} if _grain_fdir else {"ws-pkg"}
+
+            def _grain_ws_vetoes(u: str) -> str | None:
+                # B58-v3 iter-2 — grain-mode ws-pkg vetoes: identical to
+                # _vetoes EXCEPT an enterprise-edition nested workspace
+                # container (``enterprise/packages/<pkg>`` /
+                # ``ee/packages/<pkg>`` — the parallel-EE ecosystem
+                # convention: novu enterprise/packages, cal.com ee) is a
+                # legal candidate root (census MODE 1: novu ee-auth /
+                # ee-billing silently abstained as not_shared_container).
+                # Every other veto (route surface, published CLI, hub
+                # family) applies unchanged.
+                f = facts[u]
+                if any(rf == u or rf.startswith(u + "/")
+                       for rf in route_files):
+                    return "route_surface"
+                if f["bin"] and f["private"] is not True:
+                    return "published_cli"
+                segs = u.split("/")
+                ok_plain = segs[0] in _CANDIDATE_ROOTS and len(segs) <= 2
+                ok_ee = (len(segs) == 3 and segs[0] in _GRAIN_EE_ROOTS
+                         and segs[1] in _CANDIDATE_ROOTS)
+                if not (ok_plain or ok_ee):
+                    return _vetoes(u)  # original reason strings
+                if any(h == u or h.startswith(u + "/") for h in hub_list):
+                    return "hosts_hub_family"
+                return None
 
             def _fdir_vetoes(u: str) -> str | None:
                 if any(rf == u or rf.startswith(u + "/")
@@ -894,24 +959,54 @@ def detect_technology_instruments(
                     return "nested_candidate"
                 return None
 
-            changed = True
-            while changed:
+            # B58-v3 iter-2 — candidate-grade abstain telemetry: every
+            # unit the loop CONSIDERED but did not take, with the exact
+            # gate it fell at (the wave census was un-adjudicable without
+            # it — 15/16 Seg-A rows abstained silently). Recorded from
+            # the FINAL fixed-point pass only (reasons over intermediate
+            # states are transient); emitted only under the grain flag —
+            # the OFF world's telemetry stays byte-identical.
+            abstains: dict[str, str] = {}
+
+            def _b48_pass(final: bool) -> bool:
                 changed = False
                 for u in sorted(facts):
                     if (u in instruments or u in b48
                             or units.get(u) not in _b48_kinds):
                         continue
                     if units.get(u) == "fdir":
-                        if _fdir_vetoes(u):
+                        veto = _fdir_vetoes(u)
+                        if veto:
+                            if final:
+                                abstains[u] = f"veto:{veto}"
                             continue
-                    elif _vetoes(u):  # route_surface / published_cli /
-                        continue      # nested_family / hosts_hub_family / …
+                    else:
+                        veto = (_grain_ws_vetoes(u) if _grain_fdir
+                                else _vetoes(u))
+                        if veto:
+                            if final:
+                                # not_shared_container is silent in the
+                                # ws tele["vetoed"] channel by design —
+                                # the abstain channel records it.
+                                abstains[u] = f"veto:{veto}"
+                            continue
                     if _nav_confirmed(u):  # S3 nav
+                        if final:
+                            abstains[u] = "nav_confirmed"
                         continue
                     fx = facts[u]
                     inf = len(in_files.get(u, ()))
                     inu = len(in_units.get(u, ()))
-                    if inf < 5 or inu < 3:  # import-breadth (same as S2)
+                    # B58-v3 iter-2 — grain breadth: a zero-surface lib
+                    # heavily consumed by TWO units is still cross-unit
+                    # shared plumbing (census MODE 1: midday
+                    # packages/bot inf=12/inu=2 silently abstained); the
+                    # file bar (inf>=5) is unchanged — a 1-unit-consumed
+                    # leaf module never lanes.
+                    _inu_bar = 2 if _grain_fdir else 3
+                    if inf < 5 or inu < _inu_bar:  # import-breadth
+                        if final:
+                            abstains[u] = f"breadth:inf={inf},inu={inu}"
                         continue
                     sig: str | None = None
                     _pfx = ("B48-fdir" if units.get(u) == "fdir"
@@ -928,12 +1023,25 @@ def detect_technology_instruments(
                     if sig:
                         b48[u] = sig
                         changed = True
+                    elif final:
+                        dou = sorted(_b48_dou(u))
+                        abstains[u] = (
+                            "no_rung:dou=%d(%s)" % (
+                                len(dou), ",".join(dou[:3])))
+                return changed
+
+            while _b48_pass(final=False):
+                pass
+            if _grain_fdir:
+                _b48_pass(final=True)  # reasons over the settled state
             if b48:
                 tc = dict(tele.get("transport_candidates") or {})
                 for u, sig in b48.items():
                     tc.setdefault(u, sig)
                 tele["transport_candidates"] = dict(sorted(tc.items()))
                 tele["b48_library_candidates"] = dict(sorted(b48.items()))
+            if _grain_fdir and abstains:
+                tele["b48_abstains"] = dict(sorted(abstains.items()))
 
     # B28 P-D — hub-fixture MARK (mark-only, the B22 candidate-marking
     # shape: no instrument dir, no lane at 6.86 — the unit mints normally

@@ -1972,6 +1972,64 @@ def run_transport_handoff(
                 if key:
                     cand_pf[unit] = key
                 break
+
+    # B58-v3 iter-2 (FAULTLINE_GRAIN_WAVE) — twin-unit resolution
+    # (census MODE 2: candidate present, row standing). A ws-package
+    # capability often has an APP-SIDE twin feature-dir carrying the
+    # PF-of-record (typebot: candidate ``packages/variables`` laned
+    # while the gap row sat on the PF anchored
+    # ``fdir:apps/builder/src/features/variables``) — the exact-dir
+    # resolution above can never see it, so the candidate silently
+    # skips and the row survives. Fallback, guarded: only when the
+    # candidate has NO own-anchored PF; twin anchor must be ``fdir:``
+    # (a ``route:`` twin is a REAL product surface — never a lane
+    # target; a ``ws:`` twin is a different package that merely shares
+    # a name — ambiguous); the twin dir must carry no route file (the
+    # website-with-routes analog); the basename identity uses the SAME
+    # ``normalize_anchor_key`` as every echo matcher; exactly ONE twin,
+    # never a PF another candidate already resolved. Downstream is
+    # PF-scoped by construction (cand_devs/journeys key on the PF), so
+    # the twin PF's devs and journeys ride the existing all-or-nothing
+    # conservation machinery unchanged.
+    if _accept_fdir:
+        from faultline.pipeline_v2.spine_anchors import (
+            normalize_anchor_key as _nak,
+        )
+        _route_files = {
+            str(e.get("file") or "") for e in (routes_index or [])
+            if isinstance(e, Mapping) and e.get("file")
+        }
+        _taken = set(cand_pf.values())
+        _twin_tele: dict[str, str] = {}
+        for unit in sorted(transport_candidates):
+            if unit in cand_pf:
+                continue
+            base = _nak(unit.strip("/").rsplit("/", 1)[-1])
+            if not base:
+                continue
+            twins: list[tuple[str, str]] = []
+            for pf in product_features:
+                aid = str(_attr(pf, "anchor_id") or "")
+                if not aid.startswith("fdir:"):
+                    continue
+                d = aid[len("fdir:"):].strip("/")
+                if not d or _nak(d.rsplit("/", 1)[-1]) != base:
+                    continue
+                key = str(_attr(pf, "id") or _attr(pf, "name") or "")
+                if key and key not in _taken:
+                    twins.append((d, key))
+            if len(twins) != 1:
+                continue  # ambiguous / none — honest abstain
+            twin_dir, twin_key = twins[0]
+            if any(rf == twin_dir or rf.startswith(twin_dir + "/")
+                   for rf in _route_files):
+                continue  # route-bearing twin = real surface
+            cand_pf[unit] = twin_key
+            _taken.add(twin_key)
+            _twin_tele[unit] = f"fdir-twin:{twin_dir}"
+        if _twin_tele:
+            tele["twin_resolutions"] = dict(sorted(_twin_tele.items()))
+
     tele["candidate_pfs"] = dict(sorted(cand_pf.items()))
     if not cand_pf:
         return tele
