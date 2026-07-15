@@ -556,14 +556,14 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
     # the separate later flip commit only (flip-protocol).
     "FAULTLINE_TERMINAL_CLASSIFICATION",
-    # B69-v2 (2026-07-15) — PF-homing hygiene family: Stage 6.99b post-UF
-    # rehome rail (anchor-breadth ruler; rename-on-rehome for synthesized
-    # rows; fold-into-existing) + the naming-side guards (bare-verb /
-    # dev-grain-token display law, B31 pf-display echo-guard, 6.7e Law-A
-    # telemetry preservation). Reshapes user_flows[] homes/names +
-    # scan_meta telemetry. Default OFF; =0/unset byte-identical. Appended
-    # WITHOUT a KEY_SCHEMA bump — the bump rides the separate flip commit
-    # only (flip-protocol).
+    # B69-v2 (2026-07-15) — PF-homing hygiene family, FINAL composition
+    # (re-convoy ruling): Stage 6.99b post-UF rehome rail (anchor-breadth
+    # ruler; rename-on-rehome for synthesized rows; fold-into-existing;
+    # home-tie guards) + B31 pf-display echo-guard + 6.7e Law-A telemetry
+    # preservation. Reshapes user_flows[] homes/names + scan_meta
+    # telemetry. Default OFF; =0/unset byte-identical. Appended WITHOUT a
+    # KEY_SCHEMA bump — the bump rides the separate flip commit only
+    # (flip-protocol).
     "FAULTLINE_HOMING_HYGIENE",
     # B69-v2 SPLIT ruling (2026-07-15) — seed-birth hygiene pair, banked
     # for its OWN cycle: same-(pf,resource) route-group seed coalescence +
@@ -574,6 +574,16 @@ ENV_OUTPUT_FLAGS = (
     # (seed rows / names / intents). Default OFF; =0/unset byte-identical.
     # Appended WITHOUT a KEY_SCHEMA bump — flip-protocol.
     "FAULTLINE_SEED_HYGIENE",
+    # B69-v2 THIRD split (2026-07-15) — the bare-verb/dev-grain-token
+    # display law, BANKED for the B70 member-evidence redesign: the
+    # vocabulary-driven implementation false-positives on verb-homonym
+    # resources ('Manage download', 'Browse webhook') and misses
+    # evidence-less tokens ('View mupdf'); each ban cascades into retries/
+    # collisions/B31 parentheticals (the keyed pair's entire off-rail
+    # churn). Mechanics banked unchanged. Reshapes UF display names when
+    # armed. Default OFF; =0/unset byte-identical. Appended WITHOUT a
+    # KEY_SCHEMA bump — flip-protocol.
+    "FAULTLINE_NAMING_LAW",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

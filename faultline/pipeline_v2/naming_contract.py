@@ -84,6 +84,7 @@ __all__ = [
     "uf_rung_sources_v2_enabled",
     "uf_verb_snap_enabled",
     "homing_hygiene_enabled",
+    "naming_law_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -224,16 +225,31 @@ UF_RUNG_SOURCES_V2_ENV = "FAULTLINE_UF_RUNG_SOURCES_V2"
 #: byte-identical.
 UF_VERB_SNAP_ENV = "FAULTLINE_UF_VERB_SNAP"
 
-#: B69-v2 — PF-homing hygiene family (post-UF rehome rail Stage 6.99b +
-#: rename-on-rehome + the naming-side guards it rides with: the bare-verb /
-#: dev-grain-token display law, the B31 pf-display echo-guard, the 6.7e
-#: Law-A telemetry preservation). Default OFF; OFF ⇒ every consumer is
-#: skipped and the serialized output is byte-identical to pre-B69-v2.
-#: SPLIT ruling: the seed-birth hygiene pair (same-(pf,resource)
-#: coalescence + method-derived seed intent) is the SEPARATE
-#: ``FAULTLINE_SEED_HYGIENE`` family owned by ``route_group_recall`` —
-#: board-wide blast radius at seeding, its own cycle and keyed A/B.
+#: B69-v2 — PF-homing hygiene family, FINAL composition (re-convoy
+#: forensics ruling): the Stage 6.99b post-UF rehome rail (A′ + C′ rename +
+#: home-tie guards) + the B31 pf-display echo-guard + the 6.7e Law-A
+#: telemetry preservation. Default OFF; OFF ⇒ every consumer is skipped
+#: and the serialized output is byte-identical to pre-B69-v2. SPLIT
+#: rulings: the seed-birth pair lives under ``FAULTLINE_SEED_HYGIENE``
+#: (route_group_recall); the bare-verb/dev-grain-token display law lives
+#: under ``FAULTLINE_NAMING_LAW`` (banked — see its note below).
 HOMING_HYGIENE_ENV = "FAULTLINE_HOMING_HYGIENE"
+
+#: B69-v2 third split — the bare-verb / dev-grain-token display law,
+#: BANKED for the B70 redesign. The keyed re-convoy proved THIS
+#: vocabulary-driven implementation violates the mechanisms-over-
+#: vocabularies law: verb-class token lists ban healthy product resources
+#: ('Manage download', 'Browse webhook', 'Connect auth' — download /
+#: webhook / auth / verify / register all live in verb classes) while
+#: MISSING the true exhibit ('View mupdf' — mupdf is in no vocabulary);
+#: each ban cascades retry → new names → collisions → B31 parentheticals
+#: (= the entire off-rail churn of the keyed pair). B70 redesign law:
+#: bare-detection through MEMBER-EVIDENCE, not vocabulary — ban a name
+#: only when its resource token has NO member evidence in the row ('View
+#: mupdf' caught by evidence ABSENCE; 'Manage download' lives by its
+#: route evidence). Mechanics banked UNCHANGED under this flag; default
+#: OFF ⇒ the law list is byte-identical.
+NAMING_LAW_ENV = "FAULTLINE_NAMING_LAW"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
@@ -378,12 +394,23 @@ def uf_verb_snap_enabled() -> bool:
 
 def homing_hygiene_enabled() -> bool:
     """B69-v2 — default OFF; ``FAULTLINE_HOMING_HYGIENE=1`` arms the
-    PF-homing hygiene family (Stage 6.99b post-UF rehome rail +
-    rename-on-rehome + the bare-verb/dev-grain-token display law + the B31
-    pf-display echo-guard + the 6.7e Law-A telemetry preservation).
-    OFF ⇒ byte-identical output. The seed-birth pair lives under the
-    separate ``FAULTLINE_SEED_HYGIENE`` flag (split ruling)."""
+    PF-homing hygiene family, FINAL composition (Stage 6.99b post-UF
+    rehome rail + rename-on-rehome + the B31 pf-display echo-guard + the
+    6.7e Law-A telemetry preservation). OFF ⇒ byte-identical output.
+    Split rulings: the seed-birth pair = ``FAULTLINE_SEED_HYGIENE``; the
+    display law = ``FAULTLINE_NAMING_LAW`` (banked)."""
     return os.environ.get(HOMING_HYGIENE_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def naming_law_enabled() -> bool:
+    """B69-v2 third split — default OFF; ``FAULTLINE_NAMING_LAW=1`` arms
+    the BANKED bare-verb/dev-grain-token display law (vocabulary-driven
+    implementation kept unchanged for the B70 member-evidence redesign;
+    see :data:`NAMING_LAW_ENV`). Independent of the HOMING and SEED
+    flags."""
+    return os.environ.get(NAMING_LAW_ENV, "0").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
@@ -933,18 +960,20 @@ def display_law_violations(
         if m and m.group(1).lower() in exts:
             out.append("file_stem")
             break
-    # B69-v2 — B56-family codification: a display that names an ACTION
+    # B69-v2 — B56-family codification, BANKED under FAULTLINE_NAMING_LAW
+    # (third split; see NAMING_LAW_ENV): a display that names an ACTION
     # without a thing ('Manage', 'Browse & manage') or whose only "thing"
     # is a dev-grain transport token ('View API', 'Manage tRPC', bare
     # 'API') is not a journey name. Strip the LEADING verb-class tokens
     # (vocab-derived — template leads + flow_verb_classes + action-family
     # verbs) and connectors; an empty remainder is ``bare_verb``, a
     # remainder made ONLY of dev-grain segments is ``devgrain_token``.
-    # Armed by the family flag; OFF ⇒ the law list is byte-identical.
-    # Because EVERY display writer law-checks through this function
-    # (Pass-2 candidates, labeler picks, verifier reverts, C′ renames),
-    # the bare/token class is impossible on ANY channel once armed.
-    if homing_hygiene_enabled() and t:
+    # KNOWN-REFUTED as a vocabulary mechanism (re-convoy forensics):
+    # false-positives on verb-homonym resources ('Manage download',
+    # 'Browse webhook'), misses evidence-less tokens ('View mupdf') — the
+    # B70 redesign gates on MEMBER-EVIDENCE instead. Armed ONLY by the
+    # banked flag; OFF ⇒ the law list is byte-identical.
+    if naming_law_enabled() and t:
         lows = [w.lower() for w in _WORD_RE.findall(t)]
         verb_toks = _verb_class_tokens(v)
         i = 0

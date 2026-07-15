@@ -52,9 +52,12 @@ ACTIONS:
   that legitimately covers the surface).
 * rehome — otherwise the row moves (``product_feature_id``) and is renamed
   from its OWN group resource via the journey templates (rename-on-rehome,
-  C′). The rename is law-gated (``display_law_violations`` — including the
-  B69-v2 bare-verb/dev-grain-token law) and collision-gated against the
-  FINAL board; a failed rename keeps the old name and is counted honestly.
+  C′). The rename is law-gated (``display_law_violations`` — whichever
+  laws are armed; the banked FAULTLINE_NAMING_LAW rides along only when
+  armed) and collision-gated against the FINAL board; the bare/echo/
+  verb-resource degeneracies are refused by C′'s OWN structural guards
+  regardless of any law flag; a failed rename keeps the old name and is
+  counted honestly.
 
 NAMED GUARDS (unit anti-cases, phase-1 §4 + v2 forensics):
 * θ-guard — a home holding a member majority is legitimate (UF-013 'Create
@@ -177,8 +180,9 @@ def _rename_on_rehome(
     """C′ — deterministic rename of a rehomed SYNTHESIZED row from its OWN
     group resource ('View faqs' seed of dataroom pages, resource='datarooms'
     → 'View datarooms'). Returns the new display or ``None`` when the row
-    keeps its name (no resource, render law-dirty — including the B69-v2
-    bare-verb/dev-grain-token law — collision, or a no-op)."""
+    keeps its name (no resource, verb-class resource, degenerate/echo
+    render — C′'s OWN structural guards, law-flag-independent — render
+    law-dirty, collision, or a no-op)."""
     resource = str(_attr(uf, "resource") or "").strip()
     if not resource:
         return None
