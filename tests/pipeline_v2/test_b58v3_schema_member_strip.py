@@ -256,6 +256,61 @@ class TestEmptiedFeatureDrop:
         assert tele["features_dropped"] == 0
 
 
+# ── collateral fixation: typebot ESVE (wave iter-2, HONEST arithmetic) ───
+
+
+class TestCollateralTypebotEsve:
+    """Wave census collateral (GAP-a863d0abc0 'blocks-logic', ON-only):
+    dev ``evaluate-set-variable-expression`` (96 paths, anchor
+    ws:packages/blocks/logic) carried TWO prisma monoliths
+    (packages/prisma/{mysql,postgresql}/schema.prisma) that denied it
+    anchor lineage (BASE: shared_reason=no_anchor_lineage, pfid=None —
+    parked in the platform lane, 3,709 LOC). The Seg C strip removed
+    the dev-infra pollution → the dev homed to its structurally
+    correct PF (blocks-logic) → the PF crossed loc-worthiness → a NEW
+    gap row = MASKED DEBT MATERIALIZED, not a defect (no journey moved:
+    the PF is flowless in BOTH worlds; the PF row exists in BOTH).
+    This unit pins the mechanism: multi-monolith claims strip, the
+    dev's real files survive."""
+
+    def test_two_monolith_claims_strip_dev_survives(self):
+        esve = _dev(
+            "evaluate-set-variable-expression",
+            ["packages/blocks/logic/src/evaluate.ts",
+             "packages/blocks/logic/src/expression.ts",
+             "apps/builder/src/features/analytics/api/handleGetStats.ts",
+             "packages/prisma/mysql/schema.prisma",
+             "packages/prisma/postgresql/schema.prisma"],
+        )
+        mysql_home = _dev(
+            "prisma-mysql",
+            ["packages/prisma/mysql/schema.prisma",
+             "packages/prisma/mysql/client.ts"],
+        )
+        pg_home = _dev(
+            "prisma-postgresql",
+            ["packages/prisma/postgresql/schema.prisma",
+             "packages/prisma/postgresql/client.ts"],
+        )
+        features = [esve, mysql_home, pg_home]
+        tele = strip_schema_monolith_members(features)
+
+        assert sorted(tele["packages"]) == [
+            "packages/prisma/mysql", "packages/prisma/postgresql"]
+        # BOTH monolith claims leave the dev; its real files stay.
+        assert set(esve.paths) == {
+            "packages/blocks/logic/src/evaluate.ts",
+            "packages/blocks/logic/src/expression.ts",
+            "apps/builder/src/features/analytics/api/handleGetStats.ts",
+        }
+        assert esve in features  # survives — never dropped
+        # each monolith keeps its 100%-inside home.
+        assert tele["homes"] == {
+            "packages/prisma/mysql": ["prisma-mysql"],
+            "packages/prisma/postgresql": ["prisma-postgresql"],
+        }
+
+
 # ── kill-switch law ──────────────────────────────────────────────────────
 
 
