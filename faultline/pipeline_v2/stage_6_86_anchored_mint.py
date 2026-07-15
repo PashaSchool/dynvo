@@ -210,6 +210,17 @@ ANNEXATION_GUARD_ENV = "FAULTLINE_ANNEXATION_GUARD"
 #: OFF is byte-identical to the pre-B58-v2 pipeline.
 SAMEUNIT_DOMAIN_CAP_ENV = "FAULTLINE_SAMEUNIT_DOMAIN_CAP"
 
+#: B69-v2 — PF-homing hygiene family. The mint's ONLY duty under this flag
+#: is exporting its anchor registry to the Stage 6.99b post-UF rehome rail
+#: (``tele["homing_hygiene_anchor_registry"]`` — popped by the finalize
+#: caller BEFORE the tele reaches scan_meta / the stage artifact, so the
+#: serialized output never carries it). The mint's fold ladder itself is
+#: UNTOUCHED (the mint-time Seg A of the banked fix/b69-pf-homing branch
+#: was refuted for redraw collateral — re-seed plurality + touched-set
+#: coupling in route_group_recall; the v2 cure is post-UF). Default OFF;
+#: OFF ⇒ the tele key is never attached ⇒ byte-identical.
+HOMING_HYGIENE_ENV = "FAULTLINE_HOMING_HYGIENE"
+
 #: θ — the majority threshold (calibration §F: U-cap is monotonically
 #: decreasing in θ; 0.5 is the conservation-law dual of §4.5).
 _THETA = 0.5
@@ -355,6 +366,18 @@ def sameunit_domain_cap_enabled() -> bool:
     page-surface canonical-unit rung). OFF is byte-identical to the
     pre-B58-v2 pipeline."""
     return os.environ.get(SAMEUNIT_DOMAIN_CAP_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def homing_hygiene_enabled() -> bool:
+    """B69-v2 — default OFF; ``FAULTLINE_HOMING_HYGIENE=1`` makes the mint
+    export its anchor registry for the Stage 6.99b post-UF rehome rail
+    (a tele side-channel the caller pops; never serialized). OFF ⇒ the
+    key is never attached ⇒ byte-identical. (Deliberate local duplicate
+    of :func:`faultline.pipeline_v2.naming_contract.homing_hygiene_enabled`
+    — the mint stays import-light, banked-branch precedent.)"""
+    return os.environ.get(HOMING_HYGIENE_ENV, "0").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
@@ -1901,6 +1924,18 @@ def run_anchored_mint(
     if infra_devs:
         tele["shared_consumers"] = _attach_shared_consumers(
             ctx, in_scope, infra_devs, owned_by_dev)
+
+    # B69-v2 — anchor-registry side-channel for the Stage 6.99b post-UF
+    # rehome rail. The rail judges a journey's TRUE structural home by
+    # anchor prefix breadth (mint-time truth), because the path_index →
+    # dev → PF owner map the I16 rail uses is itself poisoned by the very
+    # annexation being cured (papermark: dev 'datarooms' fold:entry into
+    # the 'faq' anchor makes the annexed pages LOOK faqs-owned). Live
+    # ``SpineAnchor`` objects — the finalize caller MUST pop this key
+    # before tele reaches scan_meta / the stage artifact. Flag OFF ⇒ the
+    # key is never attached ⇒ byte-identical.
+    if homing_hygiene_enabled():
+        tele["homing_hygiene_anchor_registry"] = dict(anchor_by_id)
 
     tele["applied"] = True
     return product_features, tele

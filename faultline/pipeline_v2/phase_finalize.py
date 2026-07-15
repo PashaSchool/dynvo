@@ -486,6 +486,7 @@ def run_finalize_phase(
     anchored_hub_stamps: dict[str, str] = {}
     instrument_dirs: frozenset[str] = frozenset()  # W4.2 Fix 1
     dev_artifact_units: frozenset[str] = frozenset()  # B28 P-D marks
+    _hh_anchor_registry: dict[str, Any] | None = None  # B69-v2 (6.99b rail)
     if anchored_mint_enabled():
         write_stage_input(run_dir, 6, "anchored_mint", {
             "features": features,
@@ -532,6 +533,13 @@ def run_finalize_phase(
                     extractor_signals=stage1_out,
                     nav_keys=frozenset(_nav_keys),
                 )
+                # B69-v2 — pop the anchor-registry side-channel BEFORE the
+                # tele reaches scan_meta / the stage artifact (live
+                # SpineAnchor objects, consumed by the Stage 6.99b post-UF
+                # rehome rail below; present only under
+                # FAULTLINE_HOMING_HYGIENE=1).
+                _hh_anchor_registry = mint_tele.pop(
+                    "homing_hygiene_anchor_registry", None)
                 if mint_tele.get("applied"):
                     product_features = mint_pfs
                     anchored_mint_applied = True
@@ -2841,6 +2849,29 @@ def run_finalize_phase(
         except Exception as exc:  # noqa: BLE001 — never break a scan
             scan_meta.setdefault("warnings", []).append(
                 f"i16-rehome failed ({exc}); UF homes left as-is")
+
+    # ── Stage 6.99b — B69-v2 post-UF PF-homing hygiene rehome ──────────
+    # Anchor-breadth ruler over member entries (mint-time structural truth,
+    # via the 6.86 side-channel) — NOT the path_index owner map, which the
+    # annexation being cured has itself poisoned (why 6.99/I16 stays blind
+    # to this class). Runs AFTER naming/labeler/B31 so the only rows that
+    # change are the rows it touches (surgical; the mint-time variant was
+    # refuted for full-board redraw — banked fix/b69-pf-homing). Telemetry
+    # is written WHENEVER the flag is armed (the cal.com strict-no-op gate
+    # needs proof the rail evaluated and stayed inert). Default OFF ⇒
+    # byte-identical.
+    from faultline.pipeline_v2.stage_6_99b_post_uf_rehome import (
+        homing_hygiene_enabled as _hh_enabled,
+        run_post_uf_rehome,
+    )
+    if _hh_enabled():
+        try:
+            _hh_tele = run_post_uf_rehome(
+                user_flows, features, product_features, _hh_anchor_registry)
+            scan_meta["post_uf_rehome"] = _hh_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"post-uf-rehome failed ({exc}); UF homes left as-is")
 
     # ── W3 rider — full-bill LLM cost refresh (chain4 finding) ─────
     # ``run.py`` snapshots ``cost_usd``/``calls`` into scan_meta BEFORE

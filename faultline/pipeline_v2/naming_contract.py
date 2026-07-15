@@ -83,6 +83,7 @@ __all__ = [
     "uf_resource_rung_enabled",
     "uf_rung_sources_v2_enabled",
     "uf_verb_snap_enabled",
+    "homing_hygiene_enabled",
     "load_naming_vocab",
     "polish_display_casing",
     "display_law_violations",
@@ -223,6 +224,14 @@ UF_RUNG_SOURCES_V2_ENV = "FAULTLINE_UF_RUNG_SOURCES_V2"
 #: byte-identical.
 UF_VERB_SNAP_ENV = "FAULTLINE_UF_VERB_SNAP"
 
+#: B69-v2 — PF-homing hygiene family (post-UF rehome rail Stage 6.99b +
+#: rename-on-rehome + the naming-side guards it rides with: the bare-verb /
+#: dev-grain-token display law, the B31 pf-display echo-guard, the
+#: same-(pf,resource) seed coalescence, the 6.7e Law-A telemetry
+#: preservation). One umbrella flag, default OFF; OFF ⇒ every consumer is
+#: skipped and the serialized output is byte-identical to pre-B69-v2.
+HOMING_HYGIENE_ENV = "FAULTLINE_HOMING_HYGIENE"
+
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
 #: when the route anchor's terminal dir segment leaked them (operator
 #: doctrine: 'there is no such thing as a page in product features'). Anchor-
@@ -361,6 +370,17 @@ def uf_verb_snap_enabled() -> bool:
     output byte-identical)."""
     return os.environ.get(UF_VERB_SNAP_ENV, "1").strip().lower() in {
         "1", "true",
+    }
+
+
+def homing_hygiene_enabled() -> bool:
+    """B69-v2 — default OFF; ``FAULTLINE_HOMING_HYGIENE=1`` arms the
+    PF-homing hygiene family (Stage 6.99b post-UF rehome rail +
+    rename-on-rehome + the bare-verb/dev-grain-token display law + the B31
+    pf-display echo-guard + same-(pf,resource) seed coalescence + the 6.7e
+    Law-A telemetry preservation). OFF ⇒ byte-identical output."""
+    return os.environ.get(HOMING_HYGIENE_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
     }
 
 

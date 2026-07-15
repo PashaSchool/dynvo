@@ -556,6 +556,16 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
     # the separate later flip commit only (flip-protocol).
     "FAULTLINE_TERMINAL_CLASSIFICATION",
+    # B69-v2 (2026-07-15) — PF-homing hygiene family: Stage 6.99b post-UF
+    # rehome rail (anchor-breadth ruler; rename-on-rehome for synthesized
+    # rows; fold-into-existing) + the naming-side guards (bare-verb /
+    # dev-grain-token display law, B31 pf-display echo-guard,
+    # same-(pf,resource) seed coalescence, 6.7e Law-A telemetry
+    # preservation). Reshapes user_flows[] homes/names + scan_meta
+    # telemetry. Default OFF; =0/unset byte-identical. Appended WITHOUT a
+    # KEY_SCHEMA bump — the bump rides the separate flip commit only
+    # (flip-protocol).
+    "FAULTLINE_HOMING_HYGIENE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
