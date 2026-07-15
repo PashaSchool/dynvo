@@ -32,10 +32,12 @@ from faultline.pipeline_v2.synth_quality import (
     BACKSTOP_REASON,
     E2E_RECALL_REASON,
     MARKER_SURFACE_COORDS_ENV,
+    RECALL_QUAL_CASING_ENV,
     RECALL_ROW_NAMES_ENV,
     ROUTE_GROUP_REASON,
     distinct_recall_row_names,
     honest_coverage_markers,
+    recall_qual_casing_enabled,
     recall_row_names_enabled,
     run_synth_quality,
 )
@@ -382,6 +384,55 @@ def test_flag_default_is_on(monkeypatch):
 def test_env_output_flag_registered():
     from faultline.pipeline_v2.scan_result_cache import ENV_OUTPUT_FLAGS
     assert "FAULTLINE_RECALL_ROW_NAMES" in ENV_OUTPUT_FLAGS
+
+
+# ── B70: route-terminal parenthetical casing (FAULTLINE_RECALL_QUAL_CASING) ──
+
+
+def _twin_quad():
+    """Four identical-evidence twins whose ladder falls to the route
+    terminal '(sign)' then the PF qualifier (see the twins test above)."""
+    pfs = [_pf("trpc", "tRPC")]
+    ufs = [
+        _uf(f"UF-00{i}", "Manage tRPC", reason=E2E_RECALL_REASON, pf="trpc",
+            resource="waiting", intent="execute", routes=["/sign/:param"],
+            marker=True)
+        for i in range(1, 5)
+    ]
+    return ufs, pfs
+
+
+def test_qual_casing_default_off_keeps_lowercase(monkeypatch):
+    """Default OFF ⇒ the route-terminal qualifier stays lowercase, exactly as
+    the B31 twins test pins it (byte-identical live output)."""
+    monkeypatch.delenv(RECALL_QUAL_CASING_ENV, raising=False)
+    assert not recall_qual_casing_enabled()
+    ufs, pfs = _twin_quad()
+    distinct_recall_row_names(ufs, pfs, {})
+    names = _names(ufs)
+    assert names[1] == "Run waiting (sign)"      # lowercase terminal, unchanged
+    assert names[3] == "Manage tRPC (sign)"
+
+
+def test_qual_casing_on_capitalizes_route_terminal(monkeypatch):
+    """Armed ⇒ the route-terminal qualifier is capitalized to match the
+    proper-cased PF qualifier; the composed base and the PF qualifier are
+    untouched ('(tRPC)' keeps its brand casing)."""
+    monkeypatch.setenv(RECALL_QUAL_CASING_ENV, "1")
+    assert recall_qual_casing_enabled()
+    ufs, pfs = _twin_quad()
+    distinct_recall_row_names(ufs, pfs, {})
+    names = _names(ufs)
+    assert names[0] == "Run waiting"             # composed base untouched
+    assert names[1] == "Run waiting (Sign)"      # terminal capitalized
+    assert names[2] == "Run waiting (tRPC)"      # PF brand qualifier untouched
+    assert names[3] == "Manage tRPC (Sign)"
+    _assert_unique(ufs)
+
+
+def test_qual_casing_env_flag_registered():
+    from faultline.pipeline_v2.scan_result_cache import ENV_OUTPUT_FLAGS
+    assert "FAULTLINE_RECALL_QUAL_CASING" in ENV_OUTPUT_FLAGS
 
 
 def test_clean_board_adds_no_scan_meta_key():

@@ -211,6 +211,30 @@ def recall_row_names_enabled() -> bool:
         not in {"0", "false", "no", "off"}
 
 
+#: B70 — the B31 route-terminal parenthetical qualifier renders LOWERCASE
+#: ('Manage links (general)') because ``_route_terminals`` lowercases the
+#: route segment, while the PF-display qualifier on the same row is
+#: proper-cased ('Manage links (Datarooms)'). This flag capitalizes the
+#: terminal qualifier so the two match. Default OFF; unset/=0 keeps the
+#: lowercase qualifier byte-identical (the B31 recall-row naming is itself
+#: default ON, so this fix is gated separately per the flip protocol).
+RECALL_QUAL_CASING_ENV = "FAULTLINE_RECALL_QUAL_CASING"
+
+
+def recall_qual_casing_enabled() -> bool:
+    """Default OFF; ``FAULTLINE_RECALL_QUAL_CASING=1`` capitalizes the B31
+    route-terminal parenthetical qualifier to match the PF-display one."""
+    return os.environ.get(RECALL_QUAL_CASING_ENV, "0").strip().lower() \
+        in {"1", "true", "yes", "on"}
+
+
+def _cap_qual(term: str) -> str:
+    """Capitalize each word of a route-terminal qualifier so its
+    parenthetical matches the proper-cased PF qualifier ('general' ->
+    'General'); known acronyms are re-cased later by polish_display_casing."""
+    return " ".join(w[:1].upper() + w[1:] if w else w for w in term.split())
+
+
 # ── universal accessors (typed models / namespaces AND raw JSON dicts) ───────
 # Production passes pydantic ``UserFlow`` / ``Flow`` objects (attribute access);
 # the offline validator-sim + sweep pass raw scan-JSON dicts (item access). Both
@@ -1300,8 +1324,11 @@ def _recall_name_candidates(
         tmpl = _INTENT_TMPL.get(intent) or _INTENT_TMPL["manage"]
         composed = tmpl.format(r=res_phrase)
     # A terminal that merely repeats the resource phrase qualifies nothing
-    # ("Manage admin (admin)") — skip it.
+    # ("Manage admin (admin)") — skip it. (Filter on the lowercase form; the
+    # B70 casing fix — if armed — capitalizes only the surviving qualifiers.)
     terminals = [t for t in _route_terminals(uf) if t != (res_phrase or "")]
+    if recall_qual_casing_enabled():
+        terminals = [_cap_qual(t) for t in terminals]
     if composed:
         _add(composed)
         for term in terminals:
@@ -1667,6 +1694,7 @@ __all__ = [
     "BACKSTOP_OWNED_COVER_ENV",
     "MARKER_SURFACE_COORDS_ENV",
     "RECALL_ROW_NAMES_ENV",
+    "RECALL_QUAL_CASING_ENV",
     "COVERAGE_GAP_CHANNEL_ENV",
     "SYSTEM_RECALL_REASON",
     "BACKSTOP_REASON",

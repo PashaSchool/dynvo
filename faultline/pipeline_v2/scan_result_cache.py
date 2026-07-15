@@ -593,6 +593,13 @@ ENV_OUTPUT_FLAGS = (
     # WITHOUT a KEY_SCHEMA bump — the bump rides the separate later flip commit
     # only (flip-protocol).
     "FAULTLINE_SERVER_API_ENTRIES",
+    # B70 (2026-07-15) — capitalize the B31 route-terminal parenthetical
+    # qualifier ('Manage links (general)' -> '(General)') so it matches the
+    # proper-cased PF-display qualifier on the same recall row. The B31
+    # recall-row naming (FAULTLINE_RECALL_ROW_NAMES) is itself default ON, so
+    # this display-casing fix is gated separately. Default OFF; =0/unset
+    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — flip-protocol.
+    "FAULTLINE_RECALL_QUAL_CASING",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
