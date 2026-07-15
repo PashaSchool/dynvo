@@ -517,3 +517,134 @@ def test_ws_merge_legacy_drop_off(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     (cand,) = merged[SERVER_API_ENTRY_SOURCE]
     assert cand.routes == ()
+
+
+# ── ORIGIN-GATE: an armed flag preserves ONLY its own source's routes ────────
+#
+# Regression (VERIFIED, control boards onyx-off.json vs onyx.json): the merge
+# armed preservation as a blanket ``jobs OR server_api`` boolean, so on python
+# repos the ``route`` extractor's internal FastAPI candidates — which OFF-world
+# DROP at coalesce — survived whenever B66 (or B67) was on. onyx unique-routes
+# 56 -> 208 (+487 raw, all backend/**/*.py), re-partitioning UF/PF on a stack
+# entirely outside this flag's scope. Fix: preservation is keyed to the
+# candidate's BIRTH source (``cand.source`` == the extractor's registration
+# name); each flag arms ONLY its own source key.
+
+
+def _py_route_twins():
+    """onyx-class: two same-slug FastAPI ``route`` candidates (1 path each ->
+    they coalesce) that DID NOT come from an armed source."""
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+
+    a = AnchorCandidate(
+        name="users",
+        paths=("backend/onyx/server/users/api.py",),
+        source="route",
+        confidence_self=0.9,
+        routes=(("/users", "GET", "backend/onyx/server/users/api.py"),),
+    )
+    b = AnchorCandidate(
+        name="users",
+        paths=("backend/onyx/server/manage/users.py",),
+        source="route",
+        confidence_self=0.9,
+        routes=(("/manage/users", "GET",
+                 "backend/onyx/server/manage/users.py"),),
+    )
+    return a, b
+
+
+def test_ws_merge_unarmed_route_source_dropped_even_when_b66_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CORE anti-case (onyx): python FastAPI ``route`` candidates that coalesce
+    must NOT keep their routes just because B66 is armed — B66 arms only
+    ``server-api-entry``. routes_index ON == OFF byte-for-byte for the unarmed
+    source (the candidate still coalesces on paths; only its routes drop)."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    a, b = _py_route_twins()
+    # Extension is a TEST assert only (per fix mandate: the PRODUCTION
+    # mechanism keys on cand.source, never on the file extension).
+    assert all(p.endswith(".py") for c in (a, b) for p in c.paths)
+
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "1")
+    monkeypatch.delenv("FAULTLINE_JOBS_ENTRIES", raising=False)
+    on = _merge_anchors_across_workspaces([("srv", {"route": [a, b]})])
+    (cand_on,) = on["route"]
+    assert cand_on.routes == ()
+    assert set(cand_on.paths) == set(a.paths) | set(b.paths)
+
+    monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    off = _merge_anchors_across_workspaces([("srv", {"route": [a, b]})])
+    (cand_off,) = off["route"]
+    # ON == OFF for the unarmed source (byte-for-byte on this group).
+    assert cand_on.routes == cand_off.routes == ()
+    assert cand_on.paths == cand_off.paths
+
+
+def test_ws_merge_armed_preserves_only_new_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TS-monorepo contract: with B66 armed the union preserves EXACTLY the new
+    source's emission — a co-present unarmed ``route`` group in the SAME merge
+    still drops its routes (no blanket preservation leaks across sources)."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    api_a, api_b = _twin_candidates()        # source == server-api-entry (armed)
+    route_a, route_b = _py_route_twins()     # source == route (unarmed)
+
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "1")
+    monkeypatch.delenv("FAULTLINE_JOBS_ENTRIES", raising=False)
+    merged = _merge_anchors_across_workspaces(
+        [(
+            "srv",
+            {
+                SERVER_API_ENTRY_SOURCE: [api_a, api_b],
+                "route": [route_a, route_b],
+            },
+        )]
+    )
+    (api_cand,) = merged[SERVER_API_ENTRY_SOURCE]
+    (route_cand,) = merged["route"]
+    assert set(api_cand.routes) == set(api_a.routes) | set(api_b.routes)
+    assert route_cand.routes == ()
+
+
+def test_ws_merge_jobs_armed_gates_by_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BOTH-FLAGS coverage: the same merge path is armed by B67
+    FAULTLINE_JOBS_ENTRIES. Under jobs-armed (B66 off) the ``jobs-entry`` twins
+    keep their routes, but a co-present unarmed ``route`` group still drops
+    them — origin-gating holds for the jobs flag too."""
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    ja = AnchorCandidate(
+        name="sync", paths=("pkg/a/jobs/sync.cron.job.ts",),
+        source="jobs-entry", confidence_self=0.85,
+        routes=(("/sync", "CRON", "pkg/a/jobs/sync.cron.job.ts"),),
+    )
+    jb = AnchorCandidate(
+        name="sync", paths=("pkg/b/jobs/sync.job.ts",),
+        source="jobs-entry", confidence_self=0.85,
+        routes=(("/sync", "JOB", "pkg/b/jobs/sync.job.ts"),),
+    )
+    route_a, route_b = _py_route_twins()
+
+    monkeypatch.setenv("FAULTLINE_JOBS_ENTRIES", "1")
+    monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    merged = _merge_anchors_across_workspaces(
+        [("srv", {"jobs-entry": [ja, jb], "route": [route_a, route_b]})]
+    )
+    (jobs_cand,) = merged["jobs-entry"]
+    (route_cand,) = merged["route"]
+    assert set(jobs_cand.routes) == set(ja.routes) | set(jb.routes)
+    assert route_cand.routes == ()

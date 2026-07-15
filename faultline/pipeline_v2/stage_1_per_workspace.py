@@ -368,17 +368,34 @@ def _merge_anchors_across_workspaces(
     # cleanup rides the B67 flip; until then preservation is armed only by
     # FAULTLINE_JOBS_ENTRIES.
     from faultline.pipeline_v2.extractors.jobs_entries import (
+        JobsEntryExtractor,
         jobs_entries_enabled,
     )
     from faultline.pipeline_v2.extractors.server_api_entries import (
+        SERVER_API_ENTRY_SOURCE,
         server_api_entries_enabled,
     )
     # B66 rides the same armed path: NestJS/tRPC/GraphQL entries are heavily
     # monorepo (twenty packages/twenty-server, cal apps/api/v2), so same-slug
     # twins that coalesce here would otherwise LOSE their explicit routes before
-    # they reach routes_index. Armed by EITHER flag; OFF-world (both unset) is
-    # byte-identical.
-    preserve_routes = jobs_entries_enabled() or server_api_entries_enabled()
+    # they reach routes_index.
+    #
+    # ORIGIN-GATED, not blanket. Preservation is keyed to each candidate's
+    # BIRTH source — every extractor stamps ``cand.source == <its name>`` per
+    # the base.AnchorExtractor contract, and the group key below IS that source
+    # — so ONLY candidates minted by an armed extractor keep their routes
+    # through a coalesce. A blanket ``A or B`` boolean also preserved UNARMED
+    # sources' routes: on python monorepos the ``route`` extractor's internal
+    # FastAPI candidates (backend/**/*.py) that OFF-world DROP at coalesce would
+    # survive whenever either flag was on — a board-wide ON-world regression on
+    # stacks entirely outside this flag's scope (onyx routes_index 56->208).
+    # Each flag arms ONLY its own source key; both unset -> empty set ->
+    # byte-identical OFF world (kill-switch law).
+    armed_sources: set[str] = set()
+    if jobs_entries_enabled():
+        armed_sources.add(JobsEntryExtractor.name)
+    if server_api_entries_enabled():
+        armed_sources.add(SERVER_API_ENTRY_SOURCE)
 
     def _routes_union(
         cands: list[AnchorCandidate],
@@ -396,6 +413,12 @@ def _merge_anchors_across_workspaces(
         if len(items) == 1:
             merged[source].append(items[0][1])
             continue
+
+        # Origin gate: routes survive a coalesce ONLY when this group's source
+        # was minted by an armed extractor. All candidates in a group share the
+        # same source (it is the group key), so one membership test decides the
+        # whole group — no cross-source mixing is possible inside a group.
+        preserve = source in armed_sources
 
         # Check disjoint + chunky enough to keep separate.
         paths_lists = [c.paths for _, c in items]
@@ -417,9 +440,9 @@ def _merge_anchors_across_workspaces(
                     rationale=(
                         f"{cand.rationale} [workspace={ws_name}]"
                     ),
-                    routes=cand.routes if preserve_routes else (),
+                    routes=cand.routes if preserve else (),
                     route_groups=(
-                        cand.route_groups if preserve_routes else ()
+                        cand.route_groups if preserve else ()
                     ),
                 )
                 merged[source].append(renamed)
@@ -449,7 +472,7 @@ def _merge_anchors_across_workspaces(
                     ),
                     routes=(
                         _routes_union([c for _, c in items])
-                        if preserve_routes else ()
+                        if preserve else ()
                     ),
                 ),
             )
