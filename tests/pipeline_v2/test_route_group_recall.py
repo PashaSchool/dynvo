@@ -193,3 +193,90 @@ def test_guardless_call_is_byte_identical_to_pre_w42():
     ufs: list = []
     tele = seed_route_group_journeys(ufs, devs, pfs, flows, list(_ROUTES))
     assert tele["seeded"] == 1 and ufs[0].product_feature_id == "toolkit"
+
+
+# ── B69-v2 — same-(pf,resource) seed coalescence ─────────────────────────────
+
+
+_TWIN_ROUTES = [
+    # API-side conversations group (2 files) …
+    {"pattern": "/api/teams/[teamId]/datarooms/[id]/conversations",
+     "method": "GET", "surface_scope": "product",
+     "file": "pages/api/teams/t/datarooms/d/conversations/index.ts"},
+    {"pattern": "/api/teams/[teamId]/datarooms/[id]/conversations/[cId]",
+     "method": "POST", "surface_scope": "product",
+     "file": "pages/api/teams/t/datarooms/d/conversations/one.ts"},
+    # … and the page-side conversations group (2 files), same noun.
+    {"pattern": "/datarooms/[id]/conversations", "method": "PAGE",
+     "surface_scope": "product",
+     "file": "pages/datarooms/d/conversations/index.tsx"},
+    {"pattern": "/datarooms/[id]/conversations/[cId]", "method": "PAGE",
+     "surface_scope": "product",
+     "file": "pages/datarooms/d/conversations/one.tsx"},
+]
+
+
+def _twin_scene(page_pf="datarooms"):
+    flows = [
+        _flow("f-api-1", "pages/api/teams/t/datarooms/d/conversations/index.ts"),
+        _flow("f-api-2", "pages/api/teams/t/datarooms/d/conversations/one.ts"),
+        _flow("f-pg-1", "pages/datarooms/d/conversations/index.tsx"),
+        _flow("f-pg-2", "pages/datarooms/d/conversations/one.tsx"),
+    ]
+    ufs = []
+    features = [
+        _dev("datarooms", ["pages/api/teams/t/datarooms/d/conversations/index.ts",
+                           "pages/api/teams/t/datarooms/d/conversations/one.ts"]),
+        _dev(page_pf, ["pages/datarooms/d/conversations/index.tsx",
+                       "pages/datarooms/d/conversations/one.tsx"]),
+    ]
+    pfs = [_pf("datarooms"), _pf("conversations")]
+    return ufs, features, pfs, flows
+
+
+def test_b69v2_same_pf_resource_seeds_coalesce(monkeypatch):
+    """The papermark-ON twin class: API-side + page-side groups of the SAME
+    noun under the SAME PF are ONE journey — no twin, no parenthetical."""
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+    ufs, features, pfs, flows = _twin_scene()
+    tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES)
+    assert tele["holes"] == 2
+    assert tele.get("coalesced") == 1
+    assert tele["seeded"] == 1
+    seed = ufs[-1]
+    assert set(seed.member_flow_ids) == {
+        "f-api-1", "f-api-2", "f-pg-1", "f-pg-2"}
+    assert seed.member_count == 4
+    assert "(" not in (seed.name or "")
+
+
+def test_b69v2_cross_pf_same_noun_not_coalesced(monkeypatch):
+    """Anti-case: same noun, DIFFERENT homes — honest separate journeys."""
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+    ufs, features, pfs, flows = _twin_scene(page_pf="conversations")
+    tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES)
+    assert tele.get("coalesced", 0) == 0
+    assert tele["seeded"] == 2
+
+
+def test_b69v2_coalesce_off_byte_identical(monkeypatch):
+    """Kill-switch: flag unset ⇒ both twins seed exactly as pre-B69-v2
+    (second wears the dir-segment parenthetical at birth)."""
+    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    ufs, features, pfs, flows = _twin_scene()
+    tele = seed_route_group_journeys(ufs, features, pfs, flows, _TWIN_ROUTES)
+    assert "coalesced" not in tele
+    assert tele["seeded"] == 2
+    names = sorted(str(u.name) for u in ufs[-2:])
+    assert any("(" in n for n in names)  # the pre-B69v2 birth parenthetical
+
+
+def test_b69v2_coalesce_deterministic(monkeypatch):
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+    a = _twin_scene()
+    b = _twin_scene()
+    ta = seed_route_group_journeys(a[0], a[1], a[2], a[3], _TWIN_ROUTES)
+    tb = seed_route_group_journeys(b[0], b[1], b[2], b[3], _TWIN_ROUTES)
+    assert ta == tb
+    assert [(u.name, u.member_flow_ids) for u in a[0]] == \
+        [(u.name, u.member_flow_ids) for u in b[0]]

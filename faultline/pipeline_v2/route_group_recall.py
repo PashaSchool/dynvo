@@ -317,6 +317,44 @@ def seed_route_group_journeys(
             tele["seeds"].append({"group": g, "pf": pf_home,
                                   "members": len(member_ids), "name": name})
 
+    # B69-v2 — same-(pf,resource) seed coalescence: an API-side group and a
+    # page-side group of the SAME noun homed to the SAME PF are one product
+    # journey split by transport, not two ('conversations' under
+    # pages/api/teams/.../datarooms/[id]/ AND pages/datarooms/[id]/ — the
+    # keyed A/B showed the twin pair colliding at naming and cascading into
+    # labeler twin-picks + B31 parenthetical qualifiers downstream).
+    # Coalesce at BIRTH: the first-seen group (sorted order — deterministic)
+    # keeps its identity and base name; later twins fold their member flows
+    # in (deduped, re-capped). Cross-PF same-noun seeds are NOT coalesced
+    # (different homes = honest separate journeys). Flag OFF ⇒
+    # byte-identical.
+    from faultline.pipeline_v2.naming_contract import homing_hygiene_enabled
+    if homing_hygiene_enabled() and seeds:
+        by_key: dict[tuple[str, str], Any] = {}
+        kept: list[Any] = []
+        tele["coalesced"] = 0
+        for uf in seeds:
+            key = (str(uf.product_feature_id or ""),
+                   str(uf.resource or "").strip().lower())
+            first = by_key.get(key)
+            if first is None or not key[1]:
+                by_key[key] = uf
+                kept.append(uf)
+                continue
+            merged = list(first.member_flow_ids or [])
+            for mid in (uf.member_flow_ids or []):
+                if mid not in merged:
+                    merged.append(mid)
+            first.member_flow_ids = merged[:_SEED_MEMBER_CAP]
+            first.member_count = len(first.member_flow_ids)
+            tele["coalesced"] += 1
+            tele.setdefault("coalesced_seeds", []).append({
+                "pf": key[0], "resource": key[1],
+                "dropped_name": str(uf.name or ""),
+                "into_name": str(first.name or ""),
+            })
+        seeds = kept
+
     seeds.sort(key=lambda u: ((u.name or "").lower(), str(u.resource or "")))
     for i, uf in enumerate(seeds, start=1):
         uf.id = f"UF-{max_id + i:03d}"
