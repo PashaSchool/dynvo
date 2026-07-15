@@ -73,6 +73,7 @@ from typing import Any, Mapping
 from faultline.pipeline_v2.naming_contract import (
     _flow_verb_verdict,
     _resource_phrase,
+    _verb_class_tokens,
     display_law_violations,
     homing_hygiene_enabled,
     load_naming_vocab,
@@ -122,22 +123,6 @@ def _member_entries(uf: Any, flow_by_uuid: Mapping[str, Any]) -> list[str]:
             seen.add(ep)
             out.append(ep)
     return out
-
-
-def _verb_class_tokens(vocab: Mapping[str, Any]) -> frozenset[str]:
-    """Verb-class tokens derived from the vocab's OWN data — the journey
-    templates' lead words plus every ``flow_verb_classes`` member (a
-    mechanism over the curated YAML, never a new hardcoded list)."""
-    out: set[str] = set()
-    templates: Mapping[str, Any] = vocab.get("journey_templates") or {}
-    for group in templates.values():
-        for t in (group or {}).values():
-            lead = str(t or "").split(None, 1)[0].strip().lower() if t else ""
-            if lead:
-                out.add(lead)
-    for verbs in (vocab.get("flow_verb_classes") or {}).values():
-        out.update(str(v).lower() for v in (verbs or []))
-    return frozenset(out)
 
 
 def _rename_on_rehome(

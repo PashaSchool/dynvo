@@ -878,6 +878,25 @@ def polish_display_casing(text: str, vocab: Mapping[str, Any] | None = None) -> 
 # ── Display-name laws ───────────────────────────────────────────────────
 
 
+def _verb_class_tokens(vocab: Mapping[str, Any]) -> frozenset[str]:
+    """Verb-class tokens derived from the vocab's OWN data — the journey
+    templates' lead words, every ``flow_verb_classes`` member, and the
+    action-family verbs (a mechanism over the curated YAML, never a new
+    hardcoded list). Consumers: the B69-v2 bare-verb/dev-grain-token
+    display law and the Stage 6.99b rename-on-rehome resource guard."""
+    out: set[str] = set()
+    templates: Mapping[str, Any] = vocab.get("journey_templates") or {}
+    for group in templates.values():
+        for t in (group or {}).values():
+            lead = str(t or "").split(None, 1)[0].strip().lower() if t else ""
+            if lead:
+                out.add(lead)
+    for verbs in (vocab.get("flow_verb_classes") or {}).values():
+        out.update(str(v).lower() for v in (verbs or []))
+    out.update(_action_family_index(vocab)["verb2fam"].keys())
+    return frozenset(out)
+
+
 def display_law_violations(
     text: str,
     vocab: Mapping[str, Any] | None = None,
@@ -910,6 +929,28 @@ def display_law_violations(
         if m and m.group(1).lower() in exts:
             out.append("file_stem")
             break
+    # B69-v2 — B56-family codification: a display that names an ACTION
+    # without a thing ('Manage', 'Browse & manage') or whose only "thing"
+    # is a dev-grain transport token ('View API', 'Manage tRPC', bare
+    # 'API') is not a journey name. Strip the LEADING verb-class tokens
+    # (vocab-derived — template leads + flow_verb_classes + action-family
+    # verbs) and connectors; an empty remainder is ``bare_verb``, a
+    # remainder made ONLY of dev-grain segments is ``devgrain_token``.
+    # Armed by the family flag; OFF ⇒ the law list is byte-identical.
+    # Because EVERY display writer law-checks through this function
+    # (Pass-2 candidates, labeler picks, verifier reverts, C′ renames),
+    # the bare/token class is impossible on ANY channel once armed.
+    if homing_hygiene_enabled() and t:
+        lows = [w.lower() for w in _WORD_RE.findall(t)]
+        verb_toks = _verb_class_tokens(v)
+        i = 0
+        while i < len(lows) and (lows[i] in verb_toks or lows[i] == "and"):
+            i += 1
+        rest = lows[i:]
+        if lows and i and not rest:
+            out.append("bare_verb")
+        elif rest and all(w in _API_SEGS for w in rest):
+            out.append("devgrain_token")
     if pf_display is not None and t and (
         t.strip().lower() == (pf_display or "").strip().lower()
     ):
