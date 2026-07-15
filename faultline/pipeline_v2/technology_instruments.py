@@ -856,15 +856,56 @@ def detect_technology_instruments(
                 return {t for t in out_units.get(u, ())
                         if t not in instruments and t not in b48}
 
+            # B58-v3 Seg A (FAULTLINE_GRAIN_WAVE, default OFF) — fdir
+            # internal-lib candidacy. The B48 rungs above run only on
+            # ``ws-pkg`` units, so a broadly-imported zero-surface
+            # FEATURE-DIR module (twenty-front ``src/modules/apollo`` —
+            # name-dep on @apollo/client; cal.com
+            # ``apps/web/modules/data-table`` — library shape) mints a
+            # fake flowless product tile the census cannot dissolve. ON
+            # extends candidacy to ``fdir`` pseudo-units with the SAME
+            # breadth bars + S1/S2 rungs; the ws-root shape vetoes
+            # (not_shared_container / nested_family) don't apply to a
+            # dir that is nested by construction — the surface vetoes
+            # do (route files inside → website-with-routes analog; hub
+            # family; instrument containment; one grain per subtree).
+            # Candidates ride the SAME transport_candidates channel —
+            # journey conservation stays with the 6.985 handoff
+            # (all-or-nothing; never mint-time laning). OFF → the set
+            # below stays {ws-pkg} → byte-identical.
+            from faultline.pipeline_v2.schema_member_strip import (
+                grain_wave_enabled,
+            )
+            _grain_fdir = grain_wave_enabled()
+            _b48_kinds = {"ws-pkg", "fdir"} if _grain_fdir else {"ws-pkg"}
+
+            def _fdir_vetoes(u: str) -> str | None:
+                if any(rf == u or rf.startswith(u + "/")
+                       for rf in route_files):
+                    return "route_surface"
+                if any(h == u or h.startswith(u + "/")
+                       or u.startswith(h + "/") for h in hub_list):
+                    return "hosts_hub_family"
+                for d in instruments:
+                    if u == d or u.startswith(d + "/"):
+                        return "inside_instrument"
+                if any(u.startswith(c + "/") or c.startswith(u + "/")
+                       for c in b48):
+                    return "nested_candidate"
+                return None
+
             changed = True
             while changed:
                 changed = False
                 for u in sorted(facts):
                     if (u in instruments or u in b48
-                            or units.get(u) != "ws-pkg"):
+                            or units.get(u) not in _b48_kinds):
                         continue
-                    if _vetoes(u):  # route_surface / published_cli /
-                        continue    # nested_family / hosts_hub_family / …
+                    if units.get(u) == "fdir":
+                        if _fdir_vetoes(u):
+                            continue
+                    elif _vetoes(u):  # route_surface / published_cli /
+                        continue      # nested_family / hosts_hub_family / …
                     if _nav_confirmed(u):  # S3 nav
                         continue
                     fx = facts[u]
@@ -873,15 +914,17 @@ def detect_technology_instruments(
                     if inf < 5 or inu < 3:  # import-breadth (same as S2)
                         continue
                     sig: str | None = None
+                    _pfx = ("B48-fdir" if units.get(u) == "fdir"
+                            else "B48")
                     if fx["name_keys"] & repo_ext_tokens:
                         # S1 name-dep transport: NAMED after its own external
                         # dependency family (waives the dou fan-out guard —
                         # a transport re-routes domain by construction).
-                        sig = "B48:name-dep"
+                        sig = f"{_pfx}:name-dep"
                     elif len(_b48_dou(u)) <= 1:
                         # S2 library: imports <=1 non-instrument in-repo unit
                         # (fixed point over instruments + B48 candidates).
-                        sig = "B48:library"
+                        sig = f"{_pfx}:library"
                     if sig:
                         b48[u] = sig
                         changed = True
@@ -1077,8 +1120,16 @@ def detect_technology_instruments(
 
     # satellite fdirs
     satellites: dict[str, str] = {}
+    _tc_units = frozenset(tele.get("transport_candidates") or {})
     for u in sorted(units):
         if units[u] != "fdir" or u not in facts:
+            continue
+        if u in _tc_units:
+            # B58-v3 Seg A — an fdir already riding the transport-handoff
+            # channel must not ALSO become a satellite instrument dir
+            # (mint suppression + handoff lane would conflict). Structural
+            # no-op when the grain wave is OFF: ws-pkg candidates never
+            # collide with the fdir-only satellite loop.
             continue
         key = _norm(u.rsplit("/", 1)[-1])
         for iu in sorted(instruments):

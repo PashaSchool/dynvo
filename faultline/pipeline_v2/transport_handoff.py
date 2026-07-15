@@ -1949,14 +1949,25 @@ def run_transport_handoff(
     owner_map, neutral_files = _build_owner_map(devs)
 
     # Candidate unit → its minted PF (anchor identity: ``ws:<unit>``).
+    # B58-v3 Seg A (FAULTLINE_GRAIN_WAVE, default OFF): a grain-wave
+    # fdir candidate's PF is ``fdir:``-anchored (cal.com data-table =
+    # ``fdir:apps/web/modules/data-table``) — resolve that shape too,
+    # gated so the OFF world never widens the ws: contract (and OFF
+    # produces no fdir candidates in the first place — belt and braces).
+    from faultline.pipeline_v2.schema_member_strip import (
+        grain_wave_enabled as _grain_wave_enabled,
+    )
+    _accept_fdir = _grain_wave_enabled()
     pf_by_key = { (str(_attr(pf, "id") or _attr(pf, "name"))): pf
                   for pf in product_features
                   if (_attr(pf, "id") or _attr(pf, "name")) }
     cand_pf: dict[str, str] = {}
     for unit in sorted(transport_candidates):
-        want = f"ws:{unit.strip('/')}"
+        wanted = [f"ws:{unit.strip('/')}"]
+        if _accept_fdir:
+            wanted.append(f"fdir:{unit.strip('/')}")
         for pf in product_features:
-            if str(_attr(pf, "anchor_id") or "") == want:
+            if str(_attr(pf, "anchor_id") or "") in wanted:
                 key = str(_attr(pf, "id") or _attr(pf, "name") or "")
                 if key:
                     cand_pf[unit] = key
