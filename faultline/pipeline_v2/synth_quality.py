@@ -1269,10 +1269,28 @@ def _recall_name_candidates(
         if c and c not in out:
             out.append(c)
 
+    # B69-v2 — the pf_display rung needs the SAME echo-guard the terminal
+    # rung has always had: qualifying 'Browse & filter links' with its own
+    # PF display '(Links)' is the tautology class the keyed A/B caught
+    # ('Browse & filter links (Links)' — synth_quality was the author; the
+    # Law-A rung correctly refused the same qualifier via B50's
+    # ``_qualifier_echoes_base`` while this ladder re-minted it). Guarded
+    # under the family flag; OFF ⇒ candidate set byte-identical.
+    def _pf_qual_ok(base: str) -> bool:
+        if not pf_display:
+            return False
+        from faultline.pipeline_v2.naming_contract import (
+            _qualifier_echoes_base,
+            homing_hygiene_enabled,
+        )
+        if not homing_hygiene_enabled():
+            return True
+        return not _qualifier_echoes_base(base, pf_display)
+
     authored = str(_get(uf, "authored_label", None) or "").strip()
     if authored:
         _add(authored)
-        if pf_display:
+        if _pf_qual_ok(authored):
             _add(f"{authored} ({pf_display})")
 
     res_phrase = _resource_phrase_b31(str(_get(uf, "resource", "") or ""))
@@ -1288,12 +1306,12 @@ def _recall_name_candidates(
         _add(composed)
         for term in terminals:
             _add(f"{composed} ({term})")
-        if pf_display:
+        if _pf_qual_ok(composed):
             _add(f"{composed} ({pf_display})")
     if current:
         for term in terminals:
             _add(f"{current} ({term})")
-        if pf_display:
+        if _pf_qual_ok(current):
             _add(f"{current} ({pf_display})")
     return out
 

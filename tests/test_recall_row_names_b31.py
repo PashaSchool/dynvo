@@ -526,3 +526,71 @@ def test_rerun_on_renamed_output_is_noop():
     tele = distinct_recall_row_names(ufs, pfs, {})
     assert tele["renamed"] == 0
     assert _names(ufs) == first
+
+
+# ── B69-v2 — pf_display echo-guard on the qualifier rungs ────────────────────
+
+
+def test_b69v2_pf_display_echo_qualifier_skipped_when_armed(monkeypatch):
+    """The papermark-ON exhibit: two same-(intent,resource) links seeds,
+    the second's OWN PF display 'Links' echoes the composed base — armed,
+    the ladder refuses the tautology ('Browse & filter links (Links)') and
+    keeps the current name honestly (residual collision, never a lie)."""
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+    pfs = [_pf("datarooms", "Datarooms"), _pf("links", "Links")]
+    ufs = [
+        _uf("UF-001", "Manage links", reason=ROUTE_GROUP_REASON,
+            pf="datarooms", resource="links", intent="browse",
+            members=("f1",)),
+        _uf("UF-002", "Manage links", reason=ROUTE_GROUP_REASON,
+            pf="links", resource="links", intent="browse",
+            members=("f2",)),
+    ]
+    tele = distinct_recall_row_names(ufs, pfs, {})
+    names = _names(ufs)
+    assert "Browse & filter links (Links)" not in names
+    # the non-echoing qualifier ('Datarooms' on a links base) is still legal
+    assert names[0] == "Browse & filter links"
+    assert names[1] in {"Manage links", "Manage links (Datarooms)"} or \
+        "(Links)" not in names[1]
+    assert not any("(Links)" in n for n in names)
+    assert tele["residual_collisions"] >= 0  # honest ledger, no crash
+
+
+def test_b69v2_pf_display_non_echo_qualifier_still_available(monkeypatch):
+    """Anti-case: a DISTINGUISHING PF qualifier (no token echo) survives the
+    guard — the rung still resolves cross-PF twins."""
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+    pfs = [_pf("trpc", "tRPC")]
+    ufs = [
+        _uf("UF-001", "Manage tRPC", reason=E2E_RECALL_REASON, pf="trpc",
+            resource="waiting", intent="execute", routes=["/sign/:param"],
+            marker=True),
+        _uf("UF-002", "Manage tRPC", reason=E2E_RECALL_REASON, pf="trpc",
+            resource="waiting", intent="execute", routes=["/sign/:param"],
+            marker=True),
+        _uf("UF-003", "Manage tRPC", reason=E2E_RECALL_REASON, pf="trpc",
+            resource="waiting", intent="execute", routes=["/sign/:param"],
+            marker=True),
+    ]
+    distinct_recall_row_names(ufs, pfs, {})
+    assert _names(ufs)[2] == "Run waiting (tRPC)"  # unchanged vs pre-B69v2
+
+
+def test_b69v2_off_ladder_byte_identical(monkeypatch):
+    """Kill-switch: flag unset ⇒ the ladder (tautology included) is
+    byte-identical to pre-B69-v2 behaviour."""
+    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    pfs = [_pf("datarooms", "Datarooms"), _pf("links", "Links")]
+    ufs = [
+        _uf("UF-001", "Manage links", reason=ROUTE_GROUP_REASON,
+            pf="datarooms", resource="links", intent="browse",
+            members=("f1",)),
+        _uf("UF-002", "Manage links", reason=ROUTE_GROUP_REASON,
+            pf="links", resource="links", intent="browse",
+            members=("f2",)),
+    ]
+    distinct_recall_row_names(ufs, pfs, {})
+    names = _names(ufs)
+    assert names[0] == "Browse & filter links"
+    assert names[1] == "Browse & filter links (Links)"  # the old tautology
