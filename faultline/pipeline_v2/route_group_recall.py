@@ -45,6 +45,12 @@ _PARAM_SEG = re.compile(r"^(\[.*\]|\{.*\}|:.+|\(.*\))$")
 #: Same member cap as the 6.7d PF-UF backstop (thin by construction).
 _SEED_MEMBER_CAP = 8
 
+#: B69-v2 — read-class route methods (page renders + safe HTTP verbs).
+#: A group whose routes are ALL read-class seeds a 'browse' journey; any
+#: write verb (POST/PUT/PATCH/DELETE/…) makes it 'manage' — derived from
+#: the module's OWN routes_index data, no vocabulary.
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PAGE"})
+
 _REASON = "route_group_recall"
 
 
@@ -111,6 +117,7 @@ def seed_route_group_journeys(
     scope_classifier: Any = None,
     route_by_file: dict[str, Any] | None = None,
     coalesce_same_pf_resource: bool | None = None,
+    derive_seed_intent: bool | None = None,
 ) -> dict[str, Any]:
     """Append one thin tagged seed UF per uncovered >=2-route product
     group (mutates ``user_flows`` in place; ids continue the stable
@@ -246,6 +253,21 @@ def seed_route_group_journeys(
 
     from faultline.models.types import UserFlow
 
+    # B69-v2 (commit 8, ratified) — seed intent from the group's OWN route
+    # methods, not a hardcoded 'browse': the papermark faqs seed (GET+POST+
+    # PUT+DELETE CRUD group) carried intent='browse' and B31's recompose
+    # ladder then minted the verb-lie 'Browse & filter faqs' over
+    # manage-only members. Read-class-only groups stay 'browse' (the true
+    # browse seed anti-case). Armed by the caller (finalize passes the
+    # family flag); None/False ⇒ intent='browse' byte-identical.
+    write_method_files: set[str] = set()
+    if derive_seed_intent:
+        for _route_row in routes_index or []:
+            _wm = str((_route_row or {}).get("method") or "").strip().upper()
+            _wf = str((_route_row or {}).get("file") or "")
+            if _wf and _wm and _wm not in _READ_METHODS:
+                write_method_files.add(_wf)
+
     seeds: list[Any] = []
     for g in sorted(groups):
         e = groups[g]
@@ -304,7 +326,9 @@ def seed_route_group_journeys(
             resource=noun,
             domain=None,
             product_feature_id=pf_home,
-            intent="browse",
+            intent=("manage" if (derive_seed_intent
+                                 and (files & write_method_files))
+                    else "browse"),
             member_flow_ids=member_ids,
             member_count=len(member_ids),
             routes=[],

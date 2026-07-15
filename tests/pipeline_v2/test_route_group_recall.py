@@ -281,3 +281,70 @@ def test_b69v2_coalesce_deterministic():
     assert ta == tb
     assert [(u.name, u.member_flow_ids) for u in a[0]] == \
         [(u.name, u.member_flow_ids) for u in b[0]]
+
+
+# ── B69-v2 commit 8 — seed intent from the group's own route methods ────────
+
+
+_CRUD_ROUTES = [
+    # the papermark faqs shape: a CRUD API group (GET list + write verbs)
+    {"pattern": "/api/teams/[teamId]/datarooms/[id]/faqs", "method": "GET",
+     "surface_scope": "product",
+     "file": "pages/api/teams/t/datarooms/d/faqs/index.ts"},
+    {"pattern": "/api/teams/[teamId]/datarooms/[id]/faqs", "method": "POST",
+     "surface_scope": "product",
+     "file": "pages/api/teams/t/datarooms/d/faqs/one.ts"},
+    # a pure page group — the TRUE browse seed (anti-case)
+    {"pattern": "/tables", "method": "PAGE", "surface_scope": "product",
+     "file": "app/tables/page.tsx"},
+    {"pattern": "/tables/[id]", "method": "PAGE", "surface_scope": "product",
+     "file": "app/tables/[id]/page.tsx"},
+]
+
+
+def _intent_scene():
+    flows = [
+        _flow("f-faq-1", "pages/api/teams/t/datarooms/d/faqs/index.ts"),
+        _flow("f-faq-2", "pages/api/teams/t/datarooms/d/faqs/one.ts"),
+        _flow("f-tab-1", "app/tables/page.tsx"),
+        _flow("f-tab-2", "app/tables/[id]/page.tsx"),
+    ]
+    features = [
+        _dev("datarooms", ["pages/api/teams/t/datarooms/d/faqs/index.ts",
+                           "pages/api/teams/t/datarooms/d/faqs/one.ts"]),
+        _dev("tables", ["app/tables/page.tsx", "app/tables/[id]/page.tsx"]),
+    ]
+    pfs = [_pf("datarooms"), _pf("tables")]
+    return [], features, pfs, flows
+
+
+def test_b69v2_write_group_seed_intent_manage():
+    """The ratified commit-8 unit: a manage-only (write-verb) group seeds
+    intent='manage' while keeping the 'Browse & manage {r}' birth name —
+    B31's recompose ladder can no longer mint the 'Browse & filter faqs'
+    verb-lie from a hardcoded browse intent."""
+    ufs, features, pfs, flows = _intent_scene()
+    seed_route_group_journeys(ufs, features, pfs, flows, _CRUD_ROUTES,
+                              derive_seed_intent=True)
+    by_res = {str(u.resource): u for u in ufs}
+    faqs_seed = by_res["faqs"]
+    assert faqs_seed.intent == "manage"
+    assert faqs_seed.name == "Browse & manage faqs"
+
+
+def test_b69v2_true_browse_seed_stays_browse():
+    """Anti-case: a read-class-only (PAGE) group is a genuine browse
+    journey — intent stays 'browse'."""
+    ufs, features, pfs, flows = _intent_scene()
+    seed_route_group_journeys(ufs, features, pfs, flows, _CRUD_ROUTES,
+                              derive_seed_intent=True)
+    by_res = {str(u.resource): u for u in ufs}
+    assert by_res["tables"].intent == "browse"
+
+
+def test_b69v2_seed_intent_off_byte_identical():
+    """Kill-switch: kwarg unset ⇒ every seed keeps the pre-B69-v2
+    hardcoded 'browse' intent."""
+    ufs, features, pfs, flows = _intent_scene()
+    seed_route_group_journeys(ufs, features, pfs, flows, _CRUD_ROUTES)
+    assert {str(u.intent) for u in ufs} == {"browse"}
