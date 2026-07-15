@@ -90,7 +90,7 @@ from faultline.pipeline_v2.extractors._util import (
 )
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
 from faultline.pipeline_v2.extractors.route import RouteFileExtractor
-from faultline.pipeline_v2.lazy_imports import (
+from faultline.pipeline_v2.profiles._dispatch import (
     dispatch_resolver_enabled,
     ts_lazy_binding_specs,
 )
