@@ -559,13 +559,21 @@ ENV_OUTPUT_FLAGS = (
     # B69-v2 (2026-07-15) — PF-homing hygiene family: Stage 6.99b post-UF
     # rehome rail (anchor-breadth ruler; rename-on-rehome for synthesized
     # rows; fold-into-existing) + the naming-side guards (bare-verb /
-    # dev-grain-token display law, B31 pf-display echo-guard,
-    # same-(pf,resource) seed coalescence, 6.7e Law-A telemetry
-    # preservation). Reshapes user_flows[] homes/names + scan_meta
-    # telemetry. Default OFF; =0/unset byte-identical. Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate flip commit only
-    # (flip-protocol).
+    # dev-grain-token display law, B31 pf-display echo-guard, 6.7e Law-A
+    # telemetry preservation). Reshapes user_flows[] homes/names +
+    # scan_meta telemetry. Default OFF; =0/unset byte-identical. Appended
+    # WITHOUT a KEY_SCHEMA bump — the bump rides the separate flip commit
+    # only (flip-protocol).
     "FAULTLINE_HOMING_HYGIENE",
+    # B69-v2 SPLIT ruling (2026-07-15) — seed-birth hygiene pair, banked
+    # for its OWN cycle: same-(pf,resource) route-group seed coalescence +
+    # method-derived seed intent (route_group_recall). Board-wide blast
+    # radius at seeding (the keyed A/B showed the pair driving churn on
+    # both repos while the 6.99b rail was exactly-one-action) — hence its
+    # own flag, own seed-grain gates, own keyed A/B. Reshapes user_flows[]
+    # (seed rows / names / intents). Default OFF; =0/unset byte-identical.
+    # Appended WITHOUT a KEY_SCHEMA bump — flip-protocol.
+    "FAULTLINE_SEED_HYGIENE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

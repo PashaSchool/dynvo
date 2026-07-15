@@ -226,10 +226,13 @@ UF_VERB_SNAP_ENV = "FAULTLINE_UF_VERB_SNAP"
 
 #: B69-v2 — PF-homing hygiene family (post-UF rehome rail Stage 6.99b +
 #: rename-on-rehome + the naming-side guards it rides with: the bare-verb /
-#: dev-grain-token display law, the B31 pf-display echo-guard, the
-#: same-(pf,resource) seed coalescence, the 6.7e Law-A telemetry
-#: preservation). One umbrella flag, default OFF; OFF ⇒ every consumer is
+#: dev-grain-token display law, the B31 pf-display echo-guard, the 6.7e
+#: Law-A telemetry preservation). Default OFF; OFF ⇒ every consumer is
 #: skipped and the serialized output is byte-identical to pre-B69-v2.
+#: SPLIT ruling: the seed-birth hygiene pair (same-(pf,resource)
+#: coalescence + method-derived seed intent) is the SEPARATE
+#: ``FAULTLINE_SEED_HYGIENE`` family owned by ``route_group_recall`` —
+#: board-wide blast radius at seeding, its own cycle and keyed A/B.
 HOMING_HYGIENE_ENV = "FAULTLINE_HOMING_HYGIENE"
 
 #: Dev-grain surface nouns that must never TRAIL a product-feature display
@@ -377,8 +380,9 @@ def homing_hygiene_enabled() -> bool:
     """B69-v2 — default OFF; ``FAULTLINE_HOMING_HYGIENE=1`` arms the
     PF-homing hygiene family (Stage 6.99b post-UF rehome rail +
     rename-on-rehome + the bare-verb/dev-grain-token display law + the B31
-    pf-display echo-guard + same-(pf,resource) seed coalescence + the 6.7e
-    Law-A telemetry preservation). OFF ⇒ byte-identical output."""
+    pf-display echo-guard + the 6.7e Law-A telemetry preservation).
+    OFF ⇒ byte-identical output. The seed-birth pair lives under the
+    separate ``FAULTLINE_SEED_HYGIENE`` flag (split ruling)."""
     return os.environ.get(HOMING_HYGIENE_ENV, "0").strip().lower() in {
         "1", "true", "yes", "on",
     }

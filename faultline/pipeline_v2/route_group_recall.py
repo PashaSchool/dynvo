@@ -35,6 +35,7 @@ from typing import Any
 
 __all__ = [
     "route_group_seeds_enabled",
+    "seed_hygiene_enabled",
     "seed_route_group_journeys",
 ]
 
@@ -51,12 +52,32 @@ _SEED_MEMBER_CAP = 8
 #: the module's OWN routes_index data, no vocabulary.
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PAGE"})
 
+#: SEED-HYGIENE family (split out of FAULTLINE_HOMING_HYGIENE by the
+#: B69-v2 keyed-A/B ruling): the same-(pf,resource) seed coalescence and
+#: the method-derived seed intent both fire at SEED BIRTH, board-wide —
+#: a different blast radius than the surgical 6.99b rail, so they carry
+#: their OWN flag and their own cycle (seed-grain gates + own keyed A/B).
+#: This module OWNS the flag (i16-rehome precedent — a stage module owns
+#: its env); finalize reads it and passes the explicit kwargs. Default
+#: OFF; unset ⇒ both behaviours off ⇒ byte-identical.
+SEED_HYGIENE_ENV = "FAULTLINE_SEED_HYGIENE"
+
 _REASON = "route_group_recall"
 
 
 def route_group_seeds_enabled() -> bool:
     """Default ON; ``FAULTLINE_ROUTE_GROUP_SEED_UFS=0`` disables."""
     return os.environ.get("FAULTLINE_ROUTE_GROUP_SEED_UFS", "1") != "0"
+
+
+def seed_hygiene_enabled() -> bool:
+    """B69-v2 split — default OFF; ``FAULTLINE_SEED_HYGIENE=1`` arms the
+    seed-birth hygiene pair (same-(pf,resource) coalescence +
+    method-derived seed intent). Independent of
+    ``FAULTLINE_HOMING_HYGIENE`` (the 6.99b rail family)."""
+    return os.environ.get(SEED_HYGIENE_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _flow_member_id(flow: Any) -> str:
@@ -258,8 +279,9 @@ def seed_route_group_journeys(
     # PUT+DELETE CRUD group) carried intent='browse' and B31's recompose
     # ladder then minted the verb-lie 'Browse & filter faqs' over
     # manage-only members. Read-class-only groups stay 'browse' (the true
-    # browse seed anti-case). Armed by the caller (finalize passes the
-    # family flag); None/False ⇒ intent='browse' byte-identical.
+    # browse seed anti-case). Armed by the caller (finalize passes
+    # ``seed_hygiene_enabled()`` — SEED_HYGIENE family); None/False ⇒
+    # intent='browse' byte-identical.
     write_method_files: set[str] = set()
     if derive_seed_intent:
         for _route_row in routes_index or []:
@@ -352,8 +374,9 @@ def seed_route_group_journeys(
     # keeps its identity and base name; later twins fold their member flows
     # in (deduped, re-capped). Cross-PF same-noun seeds are NOT coalesced
     # (different homes = honest separate journeys). Armed by the caller
-    # (finalize passes ``homing_hygiene_enabled()`` — this module stays
-    # import-light); ``None``/False ⇒ byte-identical.
+    # (finalize passes ``seed_hygiene_enabled()`` — the SEED_HYGIENE
+    # family, split from HOMING_HYGIENE by the B69-v2 keyed-A/B ruling);
+    # ``None``/False ⇒ byte-identical.
     if coalesce_same_pf_resource and seeds:
         by_co_key: dict[tuple[str, str], Any] = {}
         kept: list[Any] = []
