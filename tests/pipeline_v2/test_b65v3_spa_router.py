@@ -148,11 +148,11 @@ _HOPP_COMMON_PAGES = [
 
 def test_seg_a_hoppscotch_pages_set(tmp_path: Path, spa_on) -> None:
     """The exact hoppscotch-common pages tree under a monorepo prefix maps
-    to its URL set: 17 page routes. Honest skips, each by a standing law:
-    root ``index.vue`` + the bare ``_.vue`` catch-all (no static segment to
-    anchor on) and ``view/_id/_version.vue`` (its only static segment
-    ``view`` is a universal noise token — the same law the stock route
-    extractor applies; a per-repo exception would be magic tuning)."""
+    to its URL set: 19 page routes (iter-3: the root ``index.vue`` emits
+    ``/`` — the flagship REST page — and ``view/_id/_version.vue`` emits
+    ``/view/:id/:version``, both via the enclosing-package slug fallback).
+    The bare ``_.vue`` catch-all stays an honest skip (pure-dynamic URL,
+    not a product surface)."""
     prefix = "packages/hoppscotch-common/src/pages/"
     files = [_vue_pkg(tmp_path, "packages/hoppscotch-common/package.json")]
     for rel in _HOPP_COMMON_PAGES:
@@ -163,6 +163,7 @@ def test_seg_a_hoppscotch_pages_set(tmp_path: Path, spa_on) -> None:
     patterns = {r[0] for r in routes}
 
     assert patterns == {
+        "/",                 # index.vue — iter-3 root fallback
         "/e/:id",
         "/enter",
         "/graphql",
@@ -179,11 +180,12 @@ def test_seg_a_hoppscotch_pages_set(tmp_path: Path, spa_on) -> None:
         "/realtime/sse",
         "/realtime/websocket",
         "/settings",
+        "/view/:id/:version",  # iter-3 noise-chain fallback
     }
-    # noise-token-only static segment -> honest skip (never an anchor)
-    assert "/view/:id/:version" not in patterns
-    # 17 file-rows (both /profile files kept — distinct (pattern, file)).
-    assert len(routes) == 17
+    # the bare catch-all is still never a surface
+    assert not any("catchAll" in p for p in patterns)
+    # 19 file-rows (both /profile files kept — distinct (pattern, file)).
+    assert len(routes) == 19
     # every route is a PAGE (the GET-equivalent client surface)
     assert {r[1] for r in routes} == {"PAGE"}
     # dynamics never leak into slugs; realtime children share the anchor
@@ -908,3 +910,68 @@ def test_mint_fence_inert_without_spa_rows(tmp_path: Path) -> None:
 
     assert "spa_fence_blocked" not in tele
     assert "mint_bar_spa_page_floor" not in tele
+
+
+# ── fix-iteration 3 — panel grammar holes (root index + noise chain) ─────────
+
+
+def test_iter3_root_index_emits_slash(tmp_path: Path, spa_on) -> None:
+    """The flagship-page hole: a TOP-LEVEL ``pages/index.vue`` emits ``/``
+    with the enclosing-package slug (hoppscotch REST page)."""
+    files = [
+        _vue_pkg(tmp_path, "packages/hoppscotch-common/package.json"),
+        _write(tmp_path,
+               "packages/hoppscotch-common/src/pages/index.vue",
+               "<template/>"),
+    ]
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    routes = _routes_of(anchors)
+    assert ("/", "PAGE",
+            "packages/hoppscotch-common/src/pages/index.vue") in routes
+    assert {a.name for a in anchors} == {"hoppscotch-common"}
+
+
+def test_iter3_noise_chain_dynamic_emits(tmp_path: Path, spa_on) -> None:
+    """The double-dynamic hole: ``view/_id/_version.vue`` emits
+    ``/view/:id/:version`` (noise-only static chain falls back to the
+    enclosing package slug; the URL keeps the real segments)."""
+    files = [
+        _vue_pkg(tmp_path, "packages/hoppscotch-common/package.json"),
+        _write(tmp_path,
+               "packages/hoppscotch-common/src/pages/view/_id/_version.vue",
+               "<template/>"),
+    ]
+    routes = _routes_of(SpaRouterExtractor().extract(_ctx(tmp_path, files)))
+    assert ("/view/:id/:version", "PAGE",
+            "packages/hoppscotch-common/src/pages/view/_id/_version.vue"
+            ) in routes
+
+
+def test_iter3_regressions_hold(tmp_path: Path, spa_on) -> None:
+    """Existing grammar unchanged: nested index keeps the directory URL
+    and its own slug; single dynamics keep their static-segment slug;
+    the bare catch-all still never emits."""
+    files = [
+        _vue_pkg(tmp_path),
+        _write(tmp_path, "src/pages/profile/index.vue", "<template/>"),
+        _write(tmp_path, "src/pages/e/_id.vue", "<template/>"),
+        _write(tmp_path, "src/pages/_.vue", "<template/>"),
+    ]
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    routes = _routes_of(anchors)
+    by_pattern = {r[0]: r for r in routes}
+    assert set(by_pattern) == {"/profile", "/e/:id"}
+    names = {a.name for a in anchors}
+    assert names == {"profile", "e"}, "fallback never overrides real slugs"
+
+
+def test_iter3_single_app_root_index_honest_skip(
+    tmp_path: Path, spa_on,
+) -> None:
+    """A single-app repo (``pages/`` at the repo root) has NO enclosing
+    package segment — the root index stays an honest skip."""
+    files = [
+        _vue_pkg(tmp_path),
+        _write(tmp_path, "pages/index.vue", "<template/>"),
+    ]
+    assert SpaRouterExtractor().extract(_ctx(tmp_path, files)) == []

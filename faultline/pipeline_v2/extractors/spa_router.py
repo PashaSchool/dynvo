@@ -296,15 +296,29 @@ def _vue_url_segment(seg: str) -> str:
 
 def _split_at_pages_root(
     segs: list[str], roots: tuple[tuple[str, ...], ...],
-) -> list[str] | None:
-    """Segments AFTER the first pages-root component run (searched anywhere
-    in the path — monorepo workspace prefixes are transparently stripped;
-    same law as ``indexes._split_at_route_root``)."""
+) -> tuple[list[str], list[str]] | None:
+    """``(before, rest)`` around the first pages-root component run
+    (searched anywhere in the path — monorepo workspace prefixes are
+    transparently stripped; same law as ``indexes._split_at_route_root``).
+    ``before`` carries the enclosing-package segments for the slugless-
+    page fallback below."""
     for i in range(len(segs)):
         for seq in roots:
             if segs[i:i + len(seq)] == list(seq):
-                return segs[i + len(seq):]
+                return segs[:i], segs[i + len(seq):]
     return None
+
+
+def _enclosing_package_slug(before: list[str]) -> str:
+    """Nearest non-noise path segment BEFORE the pages root — the
+    enclosing package dir (``packages/hoppscotch-common/src/pages/…`` →
+    ``hoppscotch-common``). The ``server_api_entries`` parent-dir
+    precedent; ``""`` when nothing qualifies (single-app repo root)."""
+    for seg in reversed(before):
+        s = slugify(seg)
+        if s and not is_noise(s):
+            return s
+    return ""
 
 
 def _nuxt_prefixes(ctx: "ScanContext") -> tuple[str, ...]:
@@ -346,9 +360,10 @@ def _collect_vue_pages(ctx: "ScanContext") -> list[_Entry]:
             continue
         if _should_skip_path(p):
             continue
-        rest = _split_at_pages_root(p.split("/"), gr.roots)
-        if not rest:
+        split = _split_at_pages_root(p.split("/"), gr.roots)
+        if split is None or not split[1]:
             continue
+        before, rest = split
         stem = rest[-1][: -len(gr.suffix)]
         url_parts = list(rest[:-1])
         if stem not in gr.index_stems:
@@ -356,9 +371,21 @@ def _collect_vue_pages(ctx: "ScanContext") -> list[_Entry]:
         pattern = "/" + "/".join(_vue_url_segment(s) for s in url_parts)
         slug = _first_static_segment(pattern)
         if not slug:
-            # Root index / pure-dynamic page (``pages/index.vue``,
-            # ``pages/_.vue``) — no static segment to anchor on. Honest
-            # skip, the same law the stock route extractor applies.
+            # Grammar iter-3 (panel 2026-07-16): a ROOT index page
+            # (``pages/index.vue`` → ``/`` — hoppscotch's flagship REST
+            # page) and a noise-only static chain
+            # (``view/_id/_version.vue`` → ``/view/:id/:version``) are
+            # REAL product surfaces; their slug falls back to the
+            # enclosing package segment (the server_api_entries
+            # parent-dir precedent). Pure catch-alls (``_.vue`` →
+            # ``/:catchAll``) still skip: not the root URL and no
+            # static segment at all.
+            has_static = any(
+                s for s in pattern.split("/") if s and not s.startswith(":")
+            )
+            if pattern == "/" or has_static:
+                slug = _enclosing_package_slug(before)
+        if not slug:
             continue
         entries.append(_Entry(slug, p, "vue-pages", [_Route(pattern, "PAGE")]))
     return entries
