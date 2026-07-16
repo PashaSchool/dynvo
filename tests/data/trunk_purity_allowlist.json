@@ -151,6 +151,20 @@
       "line": "if (d == \"trpc\" and i > 0 and dir_segs[i - 1] == \"api\"",
       "pattern": "stack-literal-cmp",
       "review": "B52 fixb52-spec Seg2(3) — operator-chosen (c)-grain: the api/trpc/<domain>/ transport-handler path lexer (_handler_ns_tokens) is detection code, same family as _ns_tokens 'routers'; generalizing to the _tenant_descend protocol set (api/rest/graphql/rpc) is a flip-window candidate, kept spec-tight here."
+    },
+    {
+      "class": "extractor-activation",
+      "file": "faultline/pipeline_v2/extractors/spa_router.py",
+      "line": "if (ws.stack or \"\").lower() == \"nuxt\":",
+      "pattern": "stack-literal-cmp",
+      "review": "B65-v3 _nuxt_prefixes — detection/exclusion code, the express/fastify activation family + the B52 lexer precedent: a nuxt-tagged WORKSPACE's pages tree is already owned by the RouteFileExtractor nuxt grammar (filesystem-routing.yaml), so the vue Seg A grammar must self-skip it (SACRED no-dup law). Folds into a profile at StackProfile Phase B like the other activation rows."
+    },
+    {
+      "class": "extractor-activation",
+      "file": "faultline/pipeline_v2/extractors/spa_router.py",
+      "line": "if (tag or \"\").lower() == \"nuxt\":",
+      "pattern": "stack-literal-cmp",
+      "review": "B65-v3 _nuxt_prefixes — same exclusion, repo-level tags (ctx.stack / audited_stack): a nuxt-tagged REPO's pages tree is the RouteFileExtractor nuxt grammar's, never the vue Seg A grammar's (SACRED no-dup law). Same Phase-B fold path as the workspace row above."
     }
   ]
 }
