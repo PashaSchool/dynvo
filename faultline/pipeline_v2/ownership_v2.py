@@ -37,11 +37,17 @@ import os
 
 OWNERSHIP_V2_ENV = "FAULTLINE_OWNERSHIP_V2"
 
-#: Falsy tokens — unset, empty, ``0``, and the usual off-words — keep every
-#: B66-v2 segment inert (byte-identical to the merged B66+B67 world).
+#: Falsy tokens — empty, ``0``, and the usual off-words — keep every
+#: B66-v2 segment inert (byte-identical to the merged B66+B67 world). Since
+#: the 2026-07-16 horizon-1 flip UNSET no longer means inert; only an
+#: explicit falsy value is the kill-switch.
 _FALSY = frozenset({"", "0", "false", "no", "off"})
 
 
 def ownership_v2_enabled() -> bool:
-    """``True`` when ``FAULTLINE_OWNERSHIP_V2`` is set truthy (default OFF)."""
-    return os.environ.get(OWNERSHIP_V2_ENV, "0").strip().lower() not in _FALSY
+    """Default **ON** since the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30;
+    keyed proof hoppscotch + cal green, B66-v2 — ghost 0-LOC drop, team
+    owned>0). ``FAULTLINE_OWNERSHIP_V2=0`` (or false/no/off) keeps every
+    segment inert, byte-identical to the merged B66+B67 world (kill-switch
+    forever; unset ≡ explicit ``1``)."""
+    return os.environ.get(OWNERSHIP_V2_ENV, "1").strip().lower() not in _FALSY

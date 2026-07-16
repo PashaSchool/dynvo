@@ -639,9 +639,10 @@ ENV_OUTPUT_FLAGS = (
     # py-dispatch so python entry surfaces stop reading as perpetual
     # Uncovered. Seg D: the tRPC collector resolves lazy handler-cache
     # routers (UNSTABLE_HANDLER_CACHE / getHandler + a relatively-imported
-    # ``router``) that the @trpc/server import gate skipped. Default OFF;
-    # =0/unset byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump
-    # rides the separate later flip commit only (flip-protocol).
+    # ``router``) that the @trpc/server import gate skipped. Default ON since
+    # the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30; keyed proof hoppscotch +
+    # cal green, B66-v2 — ghost 0-LOC drop, team owned>0). ``=0`` keeps every
+    # segment inert, byte-identical to the merged B66+B67 world (kill-switch).
     "FAULTLINE_OWNERSHIP_V2",
     # B71 Seg D (2026-07-16) — flow-grain laws T1-T4. Re-grains the flow store
     # to the journey grain at the Stage 6.7 rollup boundary (before UF, so grain

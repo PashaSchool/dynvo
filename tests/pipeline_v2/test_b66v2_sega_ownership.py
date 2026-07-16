@@ -82,7 +82,8 @@ def test_sega_off_collapses_sibling_to_zero_loc(
 ) -> None:
     """The disease, reproduced: OFF, the slug-tiebreak winner (``team``) hoards
     every file and ``user`` is a member-ful row with loc=0."""
-    monkeypatch.delenv(OWNERSHIP_V2_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv(OWNERSHIP_V2_ENV, "0")
     team, user = _run_seg_a(tmp_path)
     assert user.loc == 0
     assert team.loc == 3 + 2 + 4 + 5 + 1  # every backend file
@@ -105,7 +106,8 @@ def test_sega_conservation_each_file_counted_once(
 ) -> None:
     """SACRED: total owned LOC conserved (each file has exactly one primary
     owner) — ON only REDISTRIBUTES, never invents/drops lines."""
-    monkeypatch.delenv(OWNERSHIP_V2_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the genuine OFF world.
+    monkeypatch.setenv(OWNERSHIP_V2_ENV, "0")
     off_team, off_user = _run_seg_a(tmp_path)
     monkeypatch.setenv(OWNERSHIP_V2_ENV, "1")
     on_team, on_user = _run_seg_a(tmp_path)

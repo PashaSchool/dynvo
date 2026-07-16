@@ -74,9 +74,10 @@ _CAL_WEBHOOK_ROUTER = (
 _CAL_PATH = "packages/trpc/server/routers/viewer/webhook/_router.tsx"
 
 
-def test_segd_flag_reader_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_segd_flag_reader_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC (horizon-1 flip): unset now defaults ON.
     monkeypatch.delenv(OWNERSHIP_V2_ENV, raising=False)
-    assert ownership_v2_enabled() is False
+    assert ownership_v2_enabled() is True
     for falsy in ("", "0", "false", "no", "off", "OFF"):
         monkeypatch.setenv(OWNERSHIP_V2_ENV, falsy)
         assert ownership_v2_enabled() is False
@@ -85,13 +86,27 @@ def test_segd_flag_reader_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
         assert ownership_v2_enabled() is True
 
 
+def test_inverted_killswitch_ownership_v2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch: unset ≡ explicit ``1`` (default ON); explicit
+    ``0``/``false`` == the pre-B66-v2 merged-world OFF behaviour."""
+    monkeypatch.delenv(OWNERSHIP_V2_ENV, raising=False)
+    unset = ownership_v2_enabled()
+    monkeypatch.setenv(OWNERSHIP_V2_ENV, "1")
+    assert ownership_v2_enabled() is unset is True
+    monkeypatch.setenv(OWNERSHIP_V2_ENV, "0")
+    assert ownership_v2_enabled() is False
+    monkeypatch.setenv(OWNERSHIP_V2_ENV, "false")
+    assert ownership_v2_enabled() is False
+
+
 def test_segd_off_lazy_router_skipped_killswitch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """KILL-SWITCH: SERVER_API on but OWNERSHIP_V2 off -> cal getHandler router
     stays unseen exactly as in the B66-merged world (byte-identical)."""
+    # MECHANICAL (horizon-1 flip): explicit "0" kill-switch (unset defaults ON).
     monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "1")
-    monkeypatch.delenv(OWNERSHIP_V2_ENV, raising=False)
+    monkeypatch.setenv(OWNERSHIP_V2_ENV, "0")
     assert _extract(tmp_path, _CAL_PATH, _CAL_WEBHOOK_ROUTER) == []
 
 
@@ -152,7 +167,8 @@ def test_segd_canonical_trpc_router_unaffected_by_flag(
         "  list: publicProcedure.query(() => {}),\n"
         "});\n"
     )
-    monkeypatch.delenv(OWNERSHIP_V2_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the genuine OFF world.
+    monkeypatch.setenv(OWNERSHIP_V2_ENV, "0")
     (off,) = _extract(tmp_path, "server/routers/org.ts", body)
     monkeypatch.setenv(OWNERSHIP_V2_ENV, "1")
     (on,) = _extract(tmp_path, "server/routers/org.ts", body)
