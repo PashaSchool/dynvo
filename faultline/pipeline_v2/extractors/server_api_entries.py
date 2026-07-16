@@ -54,6 +54,7 @@ from faultline.pipeline_v2.extractors._util import (
     slugify,
 )
 from faultline.pipeline_v2.extractors.base import AnchorCandidate
+from faultline.pipeline_v2.ownership_v2 import ownership_v2_enabled
 from faultline.pipeline_v2.stage_6_9_test_strip import is_test_path
 
 if TYPE_CHECKING:
@@ -551,6 +552,7 @@ class _TrpcGrammar:
     query_method: str
     mutation_method: str
     subscription_method: str
+    lazy_handler: re.Pattern[str]
 
 
 @lru_cache(maxsize=1)
@@ -568,12 +570,30 @@ def _trpc_grammar() -> _TrpcGrammar | None:
         query_method=str(block.get("query_method") or "QUERY"),
         mutation_method=str(block.get("mutation_method") or "MUTATION"),
         subscription_method=str(block.get("subscription_method") or "SUBSCRIPTION"),
+        lazy_handler=_c(block.get("lazy_handler_re")),
     )
+
+
+def _trpc_admits(gr: _TrpcGrammar, text: str) -> bool:
+    """Whether *text* is a tRPC router file worth parsing.
+
+    Standard gate: a canonical tRPC import (``@trpc/server`` / ``initTRPC`` /
+    ``publicProcedure`` …). B66-v2 Seg D (flag-gated) adds a lazy handler-cache
+    gate: a file that BOTH constructs a router (``= router(`` / createTRPCRouter)
+    AND dispatches through a lazily-imported ``*.handler`` module — the cal.com
+    ``UNSTABLE_HANDLER_CACHE`` shape whose relative ``router`` import fails the
+    canonical gate. Both signals are required, so no stray file false-positives.
+    """
+    if gr.require.search(text):
+        return True
+    if not ownership_v2_enabled():
+        return False
+    return bool(gr.router_const.search(text) and gr.lazy_handler.search(text))
 
 
 def _collect_trpc(text: str, path: str) -> list[_Entry]:
     gr = _trpc_grammar()
-    if gr is None or not gr.require.search(text):
+    if gr is None or not _trpc_admits(gr, text):
         return []
     base = ""
     rm = gr.router_const.search(text)

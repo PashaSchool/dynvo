@@ -147,6 +147,15 @@ trpc:
   # after a procedure key, the terminating verb within a bounded window.
   verb_re: '\.\s*(query|mutation|subscription)\s*\('
   verb_window: 800
+  # B66-v2 Seg D — lazy handler-cache routers (cal.com): a router file that
+  # imports ``router`` RELATIVELY (not ``@trpc/server``) and dispatches each
+  # procedure through a lazily-imported ``*.handler`` module
+  # (``UNSTABLE_HANDLER_CACHE`` + ``await import("./x.handler")``) fails the
+  # standard ``require_import_re`` gate, so all its procedures stay unseen.
+  # Corroboration is the lazy handler import ITSELF (a structural signature,
+  # not a vocabulary) AND a router constructor — both must be present, so a
+  # stray file never false-positives. Gated on FAULTLINE_OWNERSHIP_V2.
+  lazy_handler_re: 'import\(\s*["'']\.[^"'']*\.handler["'']\s*\)'
 
 # ── Seg D — koa-router + hono ───────────────────────────────────────────────
 # koa: new Router()+router.<verb>(path|rpc-name) (outline's
