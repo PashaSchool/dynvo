@@ -517,3 +517,120 @@ def test_seg_b_determinism(tmp_path: Path, spa_on) -> None:
     ex = SpaRouterExtractor()
     ctx = _ctx(tmp_path, files)
     assert ex.extract(ctx) == ex.extract(ctx)
+
+
+# ── Seg C — routes_index kind=spa-page + downstream visibility ──────────────
+
+
+def test_seg_c_routes_index_kind_stamp(tmp_path: Path, spa_on) -> None:
+    """spa-page rows land in routes_index with kind='spa-page'; rows from
+    every other source stay byte-identical (no kind key)."""
+    from faultline.pipeline_v2.indexes import build_routes_index
+
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, _soc0_files(tmp_path)))
+    signals = {SPA_PAGE_SOURCE: anchors}
+    rows = build_routes_index([], signals)
+    assert rows, "spa candidates must populate routes_index"
+    assert all(r.get("kind") == "spa-page" for r in rows)
+    assert ("/investigations", "PAGE") in {
+        (r["pattern"], r["method"]) for r in rows
+    }
+
+
+def test_seg_c_existing_source_wins_identical_triple(tmp_path: Path) -> None:
+    """(file,path) idempotency, SACRED: a triple already emitted by an
+    EXISTING route source keeps its kind-less row byte-identical; the spa
+    duplicate folds away (Pass C runs last). Genuinely new spa rows append
+    WITH kind."""
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+    from faultline.pipeline_v2.indexes import build_routes_index
+
+    existing = AnchorCandidate(
+        name="teams", paths=("apps/web/x.ts",), source="fastapi-route",
+        confidence_self=0.9,
+        routes=(("/teams", "PAGE", "apps/web/x.ts"),),
+    )
+    spa = AnchorCandidate(
+        name="teams", paths=("apps/web/x.ts",), source=SPA_PAGE_SOURCE,
+        confidence_self=0.8,
+        routes=(
+            ("/teams", "PAGE", "apps/web/x.ts"),      # identical triple
+            ("/teams/:id", "PAGE", "apps/web/x.ts"),  # genuinely new
+        ),
+    )
+    rows = build_routes_index(
+        [], {"fastapi-route": [existing], SPA_PAGE_SOURCE: [spa]},
+    )
+    by_key = {(r["pattern"], r["method"], r["file"]): r for r in rows}
+    assert len(rows) == 2
+    dup = by_key[("/teams", "PAGE", "apps/web/x.ts")]
+    assert "kind" not in dup, "existing source's row must stay byte-identical"
+    new = by_key[("/teams/:id", "PAGE", "apps/web/x.ts")]
+    assert new.get("kind") == "spa-page"
+
+
+def test_seg_c_off_routes_index_byte_identical(tmp_path: Path,
+                                               monkeypatch) -> None:
+    """Kill-switch at the routes_index surface: flag unset -> the signals
+    dict carries no spa key (extractor unregistered+inert) and the built
+    index is byte-identical to pre-B65-v3."""
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+    from faultline.pipeline_v2.indexes import build_routes_index
+
+    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    files = [
+        _vue_pkg(tmp_path),
+        _write(tmp_path, "src/pages/settings.vue", "<template/>"),
+    ]
+    spa_off = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    assert spa_off == []
+    other = AnchorCandidate(
+        name="api", paths=("api/x.py",), source="fastapi-route",
+        confidence_self=0.9, routes=(("/api/x", "GET", "api/x.py"),),
+    )
+    rows_off = build_routes_index([], {"fastapi-route": [other]})
+    rows_pre = build_routes_index([], {"fastapi-route": [other],
+                                       SPA_PAGE_SOURCE: []})
+    assert rows_off == rows_pre
+    assert all("kind" not in r for r in rows_off)
+
+
+def test_seg_c_file_lane_surface_sees_spa_page(tmp_path: Path, spa_on) -> None:
+    """B65 partition surface-detect (S3 no-product-surface prong): a
+    spa-page routes_index row makes its entry file a PRODUCT SURFACE —
+    the B65-v2 killer (no_product_surface gasped every candidate) is
+    structurally cured for SPA repos."""
+    from faultline.pipeline_v2.file_lane import _surface_paths
+
+    routes_index = [{
+        "pattern": "/investigations", "method": "PAGE",
+        "feature_uuid": "", "file": "frontend/src/pages/InvestigationsPage.tsx",
+        "kind": "spa-page",
+    }]
+    surface = _surface_paths([], routes_index)
+    assert "frontend/src/pages/InvestigationsPage.tsx" in surface
+
+
+def test_seg_c_spine_anchor_page_evidence(tmp_path: Path, spa_on) -> None:
+    """6.86 mint chain: a spa-page row (method=PAGE) lands in the spine
+    route anchor's page_route_files — the PAGE-SURFACE rule sees SPA
+    pages with zero new wiring."""
+    from faultline.pipeline_v2.spine_anchors import (
+        _build_route_anchors,
+        load_spine_vocab,
+    )
+
+    routes_index = [{
+        "pattern": "/investigations/:investigationId", "method": "PAGE",
+        "feature_uuid": "",
+        "file": "frontend/src/pages/InvestigationDetailPage.tsx",
+        "kind": "spa-page",
+    }]
+    anchors = _build_route_anchors(routes_index, load_spine_vocab())
+    # normalize_anchor_key singularizes: investigations -> investigation
+    inv = [a for a in anchors if a.key == "investigation"]
+    assert inv, "spa route must build a route: spine anchor"
+    assert any(
+        "frontend/src/pages/InvestigationDetailPage.tsx" in a.page_route_files
+        for a in inv
+    )

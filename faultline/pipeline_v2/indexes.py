@@ -262,7 +262,9 @@ def build_routes_index(
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
 
-    def _emit(pattern: str, method: str, file_str: str) -> None:
+    def _emit(
+        pattern: str, method: str, file_str: str, kind: str | None = None,
+    ) -> None:
         key = (pattern, method, file_str)
         if key in seen:
             return
@@ -273,6 +275,14 @@ def build_routes_index(
             "feature_uuid": file_owner.get(file_str, ""),
             "file": file_str,
         }
+        # B65-v3 (Seg C): client-side SPA page rows carry an explicit
+        # ``kind`` so downstream surface consumers (partition
+        # no_product_surface, mint telemetry, census tooling) can tell a
+        # code-declared SPA page from a filesystem route. ADDITIVE — only
+        # the spa-router extractor's Pass-C rows set it; every existing
+        # source emits byte-identical entries (no ``kind`` key).
+        if kind:
+            entry["kind"] = kind
         # Product-Spine Wave 2a (spec §4.2, RC4): Next route-groups are
         # URL-invisible (correctly absent from ``pattern``) but their
         # NAME is the author's own surface declaration — carry it as
@@ -292,8 +302,13 @@ def build_routes_index(
     # the ``"route"`` extractor) so any extractor that carries explicit
     # routes contributes. ``_errors`` and non-AnchorCandidate values are
     # skipped defensively.
+    # The spa-router source folds LAST (Pass C below) so an identical
+    # (pattern, method, file) triple already emitted by an EXISTING source
+    # wins and stays byte-identical — the B65-v3/B66 idempotency law.
+    from faultline.pipeline_v2.extractors.spa_router import SPA_PAGE_SOURCE
+
     for src_name, candidates in extractor_signals.items():
-        if src_name == "_errors" or not candidates:
+        if src_name in ("_errors", SPA_PAGE_SOURCE) or not candidates:
             continue
         for cand in candidates:
             explicit = getattr(cand, "routes", None)
@@ -347,6 +362,27 @@ def build_routes_index(
                 continue
             pat, meth = derived
             _emit(pat, meth, file_str)
+
+    # Pass C — B65-v3 client-side SPA pages (vue file-based / react-router
+    # code config), folded AFTER every existing source so identical triples
+    # keep their existing (kind-less) rows byte-identical; genuinely NEW
+    # spa rows are appended with kind="spa-page". Inert when the flag is
+    # off (the source key is then never present in ``extractor_signals``).
+    from faultline.pipeline_v2.extractors.spa_router import SPA_PAGE_KIND
+
+    for cand in (extractor_signals.get(SPA_PAGE_SOURCE) or []):
+        explicit = getattr(cand, "routes", None)
+        if not explicit:
+            continue
+        for entry in explicit:
+            try:
+                pat, meth, file_str = entry
+            except (ValueError, TypeError):
+                continue
+            _emit(
+                str(pat), str(meth or "GET"), str(file_str or ""),
+                kind=SPA_PAGE_KIND,
+            )
     return out
 
 

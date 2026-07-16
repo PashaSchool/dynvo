@@ -41,6 +41,7 @@ _STACK_NAMES = [
     "rails-app",
     "rust-workspace",
     "schema-domains",
+    "spa-router",
 ]
 
 
