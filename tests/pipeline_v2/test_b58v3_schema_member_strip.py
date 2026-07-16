@@ -315,9 +315,10 @@ class TestCollateralTypebotEsve:
 
 
 class TestKillSwitch:
-    def test_default_off(self, monkeypatch):
+    def test_default_on(self, monkeypatch):
+        # SEMANTIC (horizon-1 flip): unset now defaults ON.
         monkeypatch.delenv(SMS.GRAIN_WAVE_ENV, raising=False)
-        assert grain_wave_enabled() is False
+        assert grain_wave_enabled() is True
 
     @pytest.mark.parametrize("val", ["0", "false", "off", ""])
     def test_explicit_off_values(self, monkeypatch, val):
@@ -329,12 +330,22 @@ class TestKillSwitch:
         monkeypatch.setenv(SMS.GRAIN_WAVE_ENV, val)
         assert grain_wave_enabled() is True
 
+    def test_inverted_killswitch(self, monkeypatch):
+        """Inverted kill-switch: unset ≡ explicit ``1``; ``0`` == old OFF."""
+        monkeypatch.delenv(SMS.GRAIN_WAVE_ENV, raising=False)
+        unset = grain_wave_enabled()
+        monkeypatch.setenv(SMS.GRAIN_WAVE_ENV, "1")
+        assert grain_wave_enabled() is unset is True
+        monkeypatch.setenv(SMS.GRAIN_WAVE_ENV, "0")
+        assert grain_wave_enabled() is False
+
     def test_off_world_scene_is_byte_identical(self, monkeypatch):
         """The finalize wiring only calls the pass when the flag is ON;
         the OFF contract at module level: enabled() False and the scene
         untouched when the caller honours it (the wiring test — the
         integration path is exercised by the suite's finalize tests)."""
-        monkeypatch.delenv(SMS.GRAIN_WAVE_ENV, raising=False)
+        # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+        monkeypatch.setenv(SMS.GRAIN_WAVE_ENV, "0")
         team_verify, prisma_home = _documenso_scene()
         before = (
             team_verify.model_dump_json(), prisma_home.model_dump_json(),
