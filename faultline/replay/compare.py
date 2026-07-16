@@ -61,6 +61,16 @@ _STAGE_VOLATILE: frozenset[str] = (
         # per-feature wall-clock timing in the import-tree artifact
         # (the scan normalizer covers duration_ms but not this spelling).
         "elapsed_ms",
+        # 00-intake window-rolling drift (law-№13 class): ctx.commits is
+        # a --since=<days> git-log window relative to NOW, so on a
+        # FROZEN clone the count decays as wall-clock rolls past the
+        # oldest commits (baseline 1014 → replay 1013 a few hours
+        # later). The count is run-time-scoped, not content-scoped —
+        # stage-artifact comparison only (tools/normalize_scan.py stays
+        # untouched: snapshot digests keep commits_count intact).
+        # tracked_files_count (git ls-files, wall-clock-free) stays
+        # compared.
+        "commits_count",
         # additive replay marker (scan_meta.replayed_from) — a replayed
         # stage-7 artifact differs from the original ONLY by this stamp.
         "replayed_from",

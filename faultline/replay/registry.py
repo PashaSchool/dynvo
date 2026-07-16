@@ -109,11 +109,31 @@ class StageSpec:
     # connector steps have no output artifact in a live run (input-only
     # capture); they are excluded from identity comparison.
     connector: bool = False
+    # artifact-only rows: the stage EMITS an output artifact in a live
+    # run but has NO input capture of its own — its orchestration lives
+    # inside another stage's replay unit (between that stage's input
+    # capture and the next one), so the OWNING runner emits the
+    # artifact and the chain runner skips this row. Registered so
+    # artifact-name → pipeline-order lookups (the mutation ship-gate)
+    # can place the artifact; identity replay never targets it (no
+    # input artifact exists to start from).
+    artifact_only: bool = False
     # LLM-bearing stages map to an llm-cache subdir for --fresh-llm.
     llm_cache_dir: str | None = None
 
 
 # ── Runners ─────────────────────────────────────────────────────────────
+
+
+def _artifact_only_stage(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    """Placeholder runner for ``artifact_only`` StageSpec rows — never
+    executed: the chain runner skips artifact-only rows and the owning
+    composite runner emits their artifacts (see StageSpec.artifact_only)."""
+    raise RuntimeError(
+        "artifact-only stage has no standalone runner — its artifact is "
+        "emitted by the composite runner that replicates its run.py "
+        "orchestration block",
+    )
 
 
 def _run_intake(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
@@ -359,6 +379,90 @@ def _run_flows(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
             },
             run_dir=env.run_dir,
         )
+
+    # ── B34 — lazy-import edges + dispatch-registry seeds ($0) ─────
+    # Replicates the run.py orchestration block that lives INSIDE the
+    # flows replay unit (between the stage-3 and stage-4 input
+    # captures, run.py "B34" section): Tier 1 collects lazy-import
+    # edges, Tier 2 mints dispatch-registry flow seeds by MUTATING
+    # stage3.features_with_flows in place — downstream stages must see
+    # the seeds for chain replay to stay byte-identical to a live run.
+    # Both stages are artifact-only StageSpec rows (no input capture of
+    # their own); their artifacts are emitted HERE.
+    from faultline.pipeline_v2.dispatch_registry import (
+        dispatch_registry_enabled,
+        run_dispatch_registry_stage,
+    )
+    from faultline.pipeline_v2.lazy_imports import (
+        collect_lazy_import_edges,
+        lazy_import_edges_enabled,
+    )
+    if lazy_import_edges_enabled() or dispatch_registry_enabled():
+        with StageLogger(env.run_dir, 3, "lazy_imports") as log_li:
+            try:
+                _lazy_edges = collect_lazy_import_edges(
+                    ctx.repo_path, list(ctx.tracked_files),
+                )
+                log_li.info(
+                    "lazy_imports: %d resolved repo-internal edges "
+                    "(py=%d ts=%d optional=%d)" % (
+                        len(_lazy_edges),
+                        sum(1 for e in _lazy_edges if e.lang == "py"),
+                        sum(1 for e in _lazy_edges if e.lang == "ts"),
+                        sum(1 for e in _lazy_edges if e.optional),
+                    ),
+                    feature=None,
+                )
+                if lazy_import_edges_enabled():
+                    write_stage_artifact(
+                        ctx.repo_path, stage_index=3,
+                        stage_name="lazy_imports",
+                        payload={
+                            "edges": [
+                                {
+                                    "src": e.src, "target": e.target,
+                                    "target_file": e.target_file,
+                                    "lang": e.lang, "kind": e.kind,
+                                    "optional": e.optional,
+                                } for e in _lazy_edges
+                            ],
+                        },
+                        run_dir=env.run_dir,
+                    )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                _lazy_edges = []
+                log_li.info(
+                    f"lazy_imports: FAILED ({exc}) — continuing without edges",
+                    feature=None,
+                )
+        if dispatch_registry_enabled():
+            with StageLogger(env.run_dir, 3, "dispatch_registry") as log_dr:
+                try:
+                    _dr_tele = run_dispatch_registry_stage(
+                        stage3.features_with_flows, ctx, _lazy_edges,
+                    )
+                    log_dr.info(
+                        "dispatch_registry: minted %d seeds "
+                        "(targets=%d py=%d ts=%d covered-skip=%d "
+                        "no-owner-skip=%d)" % (
+                            _dr_tele["minted"], _dr_tele["targets_total"],
+                            _dr_tele["py_targets"], _dr_tele["ts_targets"],
+                            _dr_tele["skipped_covered"],
+                            _dr_tele["skipped_no_owner"],
+                        ),
+                        feature=None,
+                    )
+                    write_stage_artifact(
+                        ctx.repo_path, stage_index=3,
+                        stage_name="dispatch_registry",
+                        payload=_dr_tele, run_dir=env.run_dir,
+                    )
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_dr.info(
+                        f"dispatch_registry: FAILED ({exc}) — no seeds minted",
+                        feature=None,
+                    )
+
     return {"stage3_features_with_flows": stage3.features_with_flows}
 
 
@@ -1664,58 +1768,63 @@ STAGES: list[StageSpec] = [
     StageSpec("reconcile", 2, 5, _run_reconcile),
     StageSpec("membership_closure", 2, 6, _run_membership_closure),
     StageSpec("flows", 3, 7, _run_flows, llm_cache_dir="flows"),
-    StageSpec("residual", 4, 8, _run_residual, llm_cache_dir="residual"),
-    StageSpec("postprocess", 5, 9, _run_postprocess),
-    StageSpec("sibling_collapse", 5, 10, _run_sibling_collapse),
-    StageSpec("cross_flow_dedup", 5, 11, _run_cross_flow_dedup),
-    StageSpec("bipartite", 5, 12, _run_bipartite),
-    StageSpec("metrics", 6, 13, _run_metrics),
-    StageSpec("product_clusterer", 6, 14, _run_product_clusterer),
-    StageSpec("import_tree", 6, 15, _run_import_tree),
-    StageSpec("framework_enrich", 6, 16, _run_framework_enrich),
-    StageSpec("branch_slicer", 6, 17, _run_branch_slicer),
+    # artifact-only: emitted by _run_flows (the run.py B34 block sits
+    # inside the flows replay unit — no input capture of its own).
+    StageSpec("lazy_imports", 3, 8, _artifact_only_stage, artifact_only=True),
+    StageSpec("dispatch_registry", 3, 9, _artifact_only_stage,
+              artifact_only=True),
+    StageSpec("residual", 4, 10, _run_residual, llm_cache_dir="residual"),
+    StageSpec("postprocess", 5, 11, _run_postprocess),
+    StageSpec("sibling_collapse", 5, 12, _run_sibling_collapse),
+    StageSpec("cross_flow_dedup", 5, 13, _run_cross_flow_dedup),
+    StageSpec("bipartite", 5, 14, _run_bipartite),
+    StageSpec("metrics", 6, 15, _run_metrics),
+    StageSpec("product_clusterer", 6, 16, _run_product_clusterer),
+    StageSpec("import_tree", 6, 17, _run_import_tree),
+    StageSpec("framework_enrich", 6, 18, _run_framework_enrich),
+    StageSpec("branch_slicer", 6, 19, _run_branch_slicer),
     StageSpec(
-        "marketing_clusterer", 8, 18, _run_marketing_clusterer,
+        "marketing_clusterer", 8, 20, _run_marketing_clusterer,
         llm_cache_dir="product-cluster",
     ),
-    StageSpec("rollup", 8, 19, _run_rollup),
-    StageSpec("member_backfill", 8, 20, _run_member_backfill),
-    StageSpec("nonsource_drop", 8, 21, _run_nonsource_drop),
-    StageSpec("scaffold_filter", 8, 22, _run_scaffold_filter),
-    StageSpec("di_attribution", 8, 23, _run_di_attribution),
-    StageSpec("anchor_desink", 8, 24, _run_anchor_desink),
-    StageSpec("shared_members", 8, 25, _run_shared_members),
-    StageSpec("anchor_subdecompose", 8, 26, _run_anchor_subdecompose),
+    StageSpec("rollup", 8, 21, _run_rollup),
+    StageSpec("member_backfill", 8, 22, _run_member_backfill),
+    StageSpec("nonsource_drop", 8, 23, _run_nonsource_drop),
+    StageSpec("scaffold_filter", 8, 24, _run_scaffold_filter),
+    StageSpec("di_attribution", 8, 25, _run_di_attribution),
+    StageSpec("anchor_desink", 8, 26, _run_anchor_desink),
+    StageSpec("shared_members", 8, 27, _run_shared_members),
+    StageSpec("anchor_subdecompose", 8, 28, _run_anchor_subdecompose),
     StageSpec(
-        "llm_component_split", 8, 27, _run_llm_component_split,
+        "llm_component_split", 8, 29, _run_llm_component_split,
         llm_cache_dir="llm-component-split",
     ),
-    StageSpec("domain_member_attribution", 8, 28, _run_domain_member_attribution),
+    StageSpec("domain_member_attribution", 8, 30, _run_domain_member_attribution),
     # optional: recorded runs that predate the stage have no input artifact
     # for it — replay chains over them must skip it silently.
-    StageSpec("vendor_connector_split", 8, 29, _run_vendor_connector_split,
+    StageSpec("vendor_connector_split", 8, 31, _run_vendor_connector_split,
               optional=True),
-    StageSpec("pf_hotspots", 8, 30, _run_pf_hotspots, connector=True),
-    StageSpec("lineage", 6, 31, _run_lineage, connector=True),
-    StageSpec("flow_expansion", 3, 32, _run_flow_expansion),
-    StageSpec("test_strip", 6, 33, _run_test_strip),
-    StageSpec("generated_strip", 6, 34, _run_generated_strip),
-    StageSpec("user_flows", 6, 35, _run_user_flows),
-    StageSpec("uf_splitter", 6, 36, _run_uf_splitter, llm_cache_dir="uf-split"),
-    StageSpec("uf_refiner", 6, 37, _run_uf_refiner, llm_cache_dir="uf-refine"),
+    StageSpec("pf_hotspots", 8, 32, _run_pf_hotspots, connector=True),
+    StageSpec("lineage", 6, 33, _run_lineage, connector=True),
+    StageSpec("flow_expansion", 3, 34, _run_flow_expansion),
+    StageSpec("test_strip", 6, 35, _run_test_strip),
+    StageSpec("generated_strip", 6, 36, _run_generated_strip),
+    StageSpec("user_flows", 6, 37, _run_user_flows),
+    StageSpec("uf_splitter", 6, 38, _run_uf_splitter, llm_cache_dir="uf-split"),
+    StageSpec("uf_refiner", 6, 39, _run_uf_refiner, llm_cache_dir="uf-refine"),
     StageSpec(
-        "journey_abstraction", 6, 38, _run_journey_abstraction,
+        "journey_abstraction", 6, 40, _run_journey_abstraction,
         optional=True, llm_cache_dir="abstraction",
     ),
-    StageSpec("dual_evidence", 6, 39, _run_dual_evidence,
+    StageSpec("dual_evidence", 6, 41, _run_dual_evidence,
               optional=True, connector=True),
-    StageSpec("history", 6, 40, _run_history),
-    StageSpec("impact", 6, 41, _run_impact),
-    StageSpec("monorepo_assembly", 6, 42, _run_monorepo_assembly),
+    StageSpec("history", 6, 42, _run_history),
+    StageSpec("impact", 6, 43, _run_impact),
+    StageSpec("monorepo_assembly", 6, 44, _run_monorepo_assembly),
     # optional: recorded runs that predate Stage 6.97 have no input
     # artifact — replay chains over them must skip it silently.
-    StageSpec("feature_loc", 6, 43, _run_feature_loc, optional=True),
-    StageSpec("output", 7, 44, _run_output),
+    StageSpec("feature_loc", 6, 45, _run_feature_loc, optional=True),
+    StageSpec("output", 7, 46, _run_output),
 ]
 
 _BY_KEY = {s.key: s for s in STAGES}

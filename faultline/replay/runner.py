@@ -23,7 +23,9 @@ Semantics (deterministic-foundation WS1):
 
 Missing input artifacts fail LOUD with the artifact name — except
 ``optional`` (env-gated) stages mid-chain, which are skipped exactly
-like the live pipeline skips them when their gate is off.
+like the live pipeline skips them when their gate is off, and
+``artifact_only`` rows, whose artifacts are emitted by their owning
+composite runner (they have no input capture and no standalone runner).
 """
 
 from __future__ import annotations
@@ -194,6 +196,12 @@ def replay(
     source_run_dir = resolve_run_dir(run)
     specs = pipeline_slice(stage, through)
     target = specs[0]
+    if target.artifact_only:
+        raise ValueError(
+            f"stage {target.key!r} is artifact-only (its artifact is "
+            f"emitted inside another stage's replay unit; it has no input "
+            f"capture) — start the replay from its owning stage instead",
+        )
 
     new_run_id = _new_run_id(source_run_dir, target.key)
     new_run_dir = source_run_dir.parent / new_run_id
@@ -230,6 +238,11 @@ def replay(
     overrides: dict[str, Any] = {}
     try:
         for spec in specs:
+            if spec.artifact_only:
+                # emitted by its owning composite runner mid-chain —
+                # nothing to load or run for this row.
+                report.stages_skipped.append(spec.key)
+                continue
             try:
                 state = load_stage_input(source_run_dir, spec.index, spec.key)
             except MissingStageInputError:
