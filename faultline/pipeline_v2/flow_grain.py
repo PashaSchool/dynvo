@@ -67,10 +67,12 @@ BARREL_BASENAMES = frozenset({
 
 
 def flow_grain_enabled() -> bool:
-    """B71 Seg D flow-grain laws. Default **OFF**; only an explicit ``1``/``true``
-    arms them — ``FAULTLINE_FLOW_GRAIN=0``/unset leaves the flow store (and every
-    channel that references it) byte-identical."""
-    return os.environ.get(FLOW_GRAIN_ENV, "0").strip().lower() in {"1", "true"}
+    """B71 Seg D flow-grain laws. Default **ON** since the 2026-07-16 horizon-1
+    flip (KEY_SCHEMA 30; keyed proof documenso + novu green — loc=0 flows -> 0).
+    Arms the flow-store re-grain (T1-T4). ``FAULTLINE_FLOW_GRAIN=0`` leaves the
+    flow store (and every channel that references it) byte-identical (the
+    kill-switch law forever; unset ≡ explicit ``1``)."""
+    return os.environ.get(FLOW_GRAIN_ENV, "1").strip().lower() in {"1", "true"}
 
 
 # ── span helpers ────────────────────────────────────────────────────────────

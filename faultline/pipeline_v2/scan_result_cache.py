@@ -653,8 +653,10 @@ ENV_OUTPUT_FLAGS = (
     # a same-entry fanout that shares an identical dominant span (documenso
     # rate-limits.ts x14). Folds union the loser's spans/paths into the winner
     # (conservation, merged_from lineage). Reshapes flows[] + feature_flow_edges[]
-    # + user_flows[] membership. Default OFF; =0/unset byte-identical (the block
-    # never runs). No KEY_SCHEMA bump (flip is a separate later commit).
+    # + user_flows[] membership. Default ON since the 2026-07-16 horizon-1 flip
+    # (KEY_SCHEMA 30; keyed proof documenso + novu green, B71 — loc=0 flows -> 0).
+    # ``=0`` keeps the flow store byte-identical (the block never runs;
+    # kill-switch).
     "FAULTLINE_FLOW_GRAIN",
     # B71 Seg A-C (2026-07-16) — the naming pack: L-A1/L-A2 PF display route-
     # grammar + provenance-tier, L-B1 leaf-collision qualification, L-C1..L-C4 UF

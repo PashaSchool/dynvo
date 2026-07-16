@@ -45,15 +45,29 @@ def _flow(
 # ── OFF byte-identity ───────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Default OFF; unset and explicit 0/false disable — the OFF path never
-    calls the planner, so output is byte-identical."""
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default ON (horizon-1 flip); explicit 0/false disable — the OFF path
+    never calls the planner, so output is byte-identical."""
+    # SEMANTIC (horizon-1 flip): unset now defaults ON.
     monkeypatch.delenv("FAULTLINE_FLOW_GRAIN", raising=False)
-    assert flow_grain_enabled() is False
+    assert flow_grain_enabled() is True
     monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "0")
     assert flow_grain_enabled() is False
     monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "1")
     assert flow_grain_enabled() is True
+
+
+def test_inverted_killswitch_flow_grain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch: unset ≡ explicit ``1`` (default ON); explicit
+    ``0``/``false`` == the pre-B71 OFF behaviour (planner never runs)."""
+    monkeypatch.delenv("FAULTLINE_FLOW_GRAIN", raising=False)
+    unset = flow_grain_enabled()
+    monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "1")
+    assert flow_grain_enabled() is unset is True
+    monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "0")
+    assert flow_grain_enabled() is False
+    monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "false")
+    assert flow_grain_enabled() is False
 
 
 # ── T1: empty span ───────────────────────────────────────────────────────────
