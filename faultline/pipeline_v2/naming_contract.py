@@ -68,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "NAMING_CONTRACT_ENV",
+    "NAMING_PACK_ENV",
+    "naming_pack_enabled",
     "HUMANIZE_ROUTE_NAMES_ENV",
     "PF_NAME_LAW_ENV",
     "UF_DEVGRAIN_NAME_ENV",
@@ -102,6 +104,11 @@ __all__ = [
 ]
 
 NAMING_CONTRACT_ENV = "FAULTLINE_NAMING_CONTRACT"
+
+#: B71 Seg A-C naming pack (default OFF). One flag gates the display-channel
+#: laws (PF route-grammar + provenance, leaf-collision qualification, UF echo/
+#: verb/family/uniqueness synth) and the degraded-scan confidence scoping.
+NAMING_PACK_ENV = "FAULTLINE_NAMING_PACK"
 
 _VOCAB_FILE = "naming-contract-vocab.yaml"
 _vocab_cache: dict[str, Any] | None = None
@@ -287,6 +294,13 @@ def naming_contract_enabled() -> bool:
     return os.environ.get(NAMING_CONTRACT_ENV, "1").strip().lower() not in {
         "0", "false",
     }
+
+
+def naming_pack_enabled() -> bool:
+    """B71 Seg A-C naming pack. Default **OFF**; only an explicit ``1``/``true``
+    arms the display + confidence laws — ``FAULTLINE_NAMING_PACK=0``/unset keeps
+    every naming channel byte-identical (the kill-switch law)."""
+    return os.environ.get(NAMING_PACK_ENV, "0").strip().lower() in {"1", "true"}
 
 
 def uf_name_laws_enabled() -> bool:

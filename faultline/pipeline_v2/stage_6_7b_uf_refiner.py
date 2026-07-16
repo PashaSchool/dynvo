@@ -936,6 +936,12 @@ def refine_user_flows(
     # sequential loop walked — preserving it is what makes the parallel run
     # byte-identical (cost-record order, telemetry accumulation, UF mutation
     # order all follow this list, NOT thread-completion order).
+    # B71 add-on — domains whose names were VALIDATED this run (cache hit or a
+    # successful pass before a mid-scan key death). Under FAULTLINE_NAMING_PACK
+    # the auth-fail degraded stamp is scoped to the COMPLEMENT of this set, so a
+    # cache-validated domain keeps its confidence verdict instead of a blanket
+    # downgrade (degraded-scan truthfulness).
+    name_validated_domains: set[str | None] = set()
     domains_sorted = sorted(by_domain.items(), key=lambda kv: str(kv[0]))
     to_compute: list[tuple[str | None, list["UserFlow"]]] = []
     for domain, ufs in domains_sorted:
@@ -945,6 +951,7 @@ def refine_user_flows(
         # presentation. Skip the call; keep the already-applied fields.
         if domain_allowlist is not None and domain not in domain_allowlist:
             domains_reused += 1
+            name_validated_domains.add(domain)  # reused -> keep prior verdict
             continue
         to_compute.append((domain, ufs))
 
@@ -1018,6 +1025,11 @@ def refine_user_flows(
                 )
             continue
 
+        # Reached only for a non-degraded domain (valid parsed) — its names were
+        # validated this run (from cache when the key is dead, or fresh). B71
+        # add-on: exempt it from the auth-fail blanket downgrade.
+        name_validated_domains.add(domain)
+
         # Name-validation telemetry + retry cost (retry already happened in
         # the worker; we only record its cost + counters here, in order).
         if res.names_invalid:
@@ -1057,10 +1069,19 @@ def refine_user_flows(
     telemetry["cost_usd"] = round(total_cost, 6)
     telemetry["domains_reused"] = domains_reused
     # Degraded-scan stamp (naming review №6): a dead key mid-scan means
-    # names were not (or only partially) LLM-validated this run.
+    # names were not (or only partially) LLM-validated this run. B71 add-on
+    # (FAULTLINE_NAMING_PACK): scope the downgrade to domains that were NOT
+    # name-validated this run — a cache-validated domain keeps its verdict.
+    # OFF/unset: the original blanket downgrade (byte-identical).
     if llm_health is not None and llm_health.auth_failed:
-        for uf in user_flows:
-            uf.name_confidence = "low"
+        from faultline.pipeline_v2.naming_contract import naming_pack_enabled
+        if naming_pack_enabled():
+            for uf in user_flows:
+                if uf.domain not in name_validated_domains:
+                    uf.name_confidence = "low"
+        else:
+            for uf in user_flows:
+                uf.name_confidence = "low"
     telemetry["intent_other_after"] = sum(
         1 for uf in user_flows if uf.intent == "other"
     )
