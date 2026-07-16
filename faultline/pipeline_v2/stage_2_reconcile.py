@@ -112,6 +112,15 @@ _SOURCE_PRIORITY: dict[str, int] = {
     # annexes a real route surface. Explicit entry required (a missing source
     # defaults to 0 and loses every file-ownership conflict).
     "jobs-entry":      4,
+    # Horizon-1 flip (2026-07-16) — SEMANTIC add-on: both sources now
+    # REGISTER BY DEFAULT (B66 / B65-v3 flipped ON, KEY_SCHEMA 30), so the
+    # priority-completeness guard demands explicit tiers. Both are declared
+    # entry points parsed from source — the ``jobs-entry``/``fastapi-route``
+    # class, tier 4. (Their B66/B65-v3 armed proofs ran at the implicit 0;
+    # ownership-conflict outcomes are adjudicated by the post-flip
+    # union-proof scans.)
+    "server-api-entry": 4,   # B66 NestJS/GraphQL/tRPC/koa/hono entries
+    "spa-page":         4,   # B65-v3 vue file-pages + react-router config
     # Profile-supplied Django app-directory anchors (Phase B #2). Same
     # code-layout tier as fastapi-domain: below declared URLConf routes
     # (the urls/views files belong to the route anchor), above schema.

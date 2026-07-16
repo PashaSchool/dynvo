@@ -221,6 +221,13 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # untouched). $0/deterministic, FAULTLINE_FLOW_NAME_V2=0 off. Runs
     # LAST, immediately before Stage 7 output.
     (7, "flow_name_v2"),
+    # SEMANTIC (horizon-1 flip, 2026-07-16) — B68 terminal 4-way
+    # classification of the coverage-gap band (Stage 6.995) is default ON
+    # since KEY_SCHEMA 30, so its telemetry artifact now appears in the
+    # default sequence. Runs after flow_name_v2 (the final gap-band pass
+    # before Stage 7 output). FAULTLINE_TERMINAL_CLASSIFICATION=0 removes
+    # this artifact (kill-switch).
+    (7, "terminal_classification"),
 ]
 
 
