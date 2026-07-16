@@ -604,8 +604,10 @@ ENV_OUTPUT_FLAGS = (
     # qualifier ('Manage links (general)' -> '(General)') so it matches the
     # proper-cased PF-display qualifier on the same recall row. The B31
     # recall-row naming (FAULTLINE_RECALL_ROW_NAMES) is itself default ON, so
-    # this display-casing fix is gated separately. Default OFF; =0/unset
-    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — flip-protocol.
+    # this display-casing fix is gated separately. Default ON since the
+    # 2026-07-16 horizon-1 flip (KEY_SCHEMA 30; keyed proof documenso + rallly
+    # green, B70 — '(term)'->'(Term)' only). ``=0`` keeps the lowercase
+    # qualifier byte-identical (kill-switch).
     "FAULTLINE_RECALL_QUAL_CASING",
     # B58-v3 (2026-07-15) — grain wave, ONE flag gates both segments (the
     # B53 precedent): Seg C Stage 6.9c schema-monolith member strip (a

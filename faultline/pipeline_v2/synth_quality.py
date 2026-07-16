@@ -222,9 +222,12 @@ RECALL_QUAL_CASING_ENV = "FAULTLINE_RECALL_QUAL_CASING"
 
 
 def recall_qual_casing_enabled() -> bool:
-    """Default OFF; ``FAULTLINE_RECALL_QUAL_CASING=1`` capitalizes the B31
-    route-terminal parenthetical qualifier to match the PF-display one."""
-    return os.environ.get(RECALL_QUAL_CASING_ENV, "0").strip().lower() \
+    """Default **ON** since the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30;
+    keyed proof documenso + rallly green, B70 — '(term)'->'(Term)' only).
+    Capitalizes the B31 route-terminal parenthetical qualifier to match the
+    PF-display one. ``FAULTLINE_RECALL_QUAL_CASING=0`` keeps the lowercase
+    qualifier byte-identical (kill-switch forever; unset ≡ explicit ``1``)."""
+    return os.environ.get(RECALL_QUAL_CASING_ENV, "1").strip().lower() \
         in {"1", "true", "yes", "on"}
 
 

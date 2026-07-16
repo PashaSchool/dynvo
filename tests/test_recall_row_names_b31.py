@@ -244,10 +244,14 @@ def test_organic_collision_without_recall_rows_untouched():
 # ── uniqueness by construction (ladder tail) ─────────────────────────────────
 
 
-def test_identical_evidence_twins_fall_to_route_terminal_then_pf():
+def test_identical_evidence_twins_fall_to_route_terminal_then_pf(monkeypatch):
     """Same (intent, resource), no authored label: route terminal breaks the
     tie; a third identical row falls to the PF qualifier; a fourth with no
     remaining rung keeps its name (honest residual, never a suffix number)."""
+    # MECHANICAL (horizon-1 flip): pin RECALL_QUAL_CASING off so this legacy
+    # ladder test keeps its lowercase-terminal assertion (the ON-world ladder
+    # is pinned by test_qual_casing_on_capitalizes_route_terminal).
+    monkeypatch.setenv(RECALL_QUAL_CASING_ENV, "0")
     pfs = [_pf("trpc", "tRPC")]
     ufs = [
         _uf("UF-001", "Manage tRPC", reason=E2E_RECALL_REASON, pf="trpc",
@@ -402,16 +406,30 @@ def _twin_quad():
     return ufs, pfs
 
 
-def test_qual_casing_default_off_keeps_lowercase(monkeypatch):
-    """Default OFF ⇒ the route-terminal qualifier stays lowercase, exactly as
-    the B31 twins test pins it (byte-identical live output)."""
-    monkeypatch.delenv(RECALL_QUAL_CASING_ENV, raising=False)
+def test_qual_casing_kill_switch_keeps_lowercase(monkeypatch):
+    """Kill-switch: explicit off ⇒ the route-terminal qualifier stays
+    lowercase, exactly as the B31 twins test pins it (byte-identical)."""
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv(RECALL_QUAL_CASING_ENV, "0")
     assert not recall_qual_casing_enabled()
     ufs, pfs = _twin_quad()
     distinct_recall_row_names(ufs, pfs, {})
     names = _names(ufs)
     assert names[1] == "Run waiting (sign)"      # lowercase terminal, unchanged
     assert names[3] == "Manage tRPC (sign)"
+
+
+def test_inverted_killswitch_recall_qual_casing(monkeypatch):
+    """Inverted kill-switch: unset ≡ explicit ``1`` (default ON); explicit
+    ``0``/``false`` == the pre-flip lowercase behaviour."""
+    monkeypatch.delenv(RECALL_QUAL_CASING_ENV, raising=False)
+    assert recall_qual_casing_enabled() is True
+    monkeypatch.setenv(RECALL_QUAL_CASING_ENV, "1")
+    assert recall_qual_casing_enabled() is True
+    monkeypatch.setenv(RECALL_QUAL_CASING_ENV, "0")
+    assert recall_qual_casing_enabled() is False
+    monkeypatch.setenv(RECALL_QUAL_CASING_ENV, "false")
+    assert recall_qual_casing_enabled() is False
 
 
 def test_qual_casing_on_capitalizes_route_terminal(monkeypatch):
