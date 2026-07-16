@@ -99,6 +99,110 @@ def test_lc1_never_folds_the_rich_canonical() -> None:
         assert u.id not in plan.fold, u.name
 
 
+# ── REFUTATION regression (live documenso census, 2026-07-16) ─────────────────
+
+
+def test_echo_predicate_never_matches_own_resource() -> None:
+    """ROOT CAUSE of the inverted fold: the UF's own ``resource`` ('user') is
+    derived from its own name, so comparing against it made EVERY 'Manage
+    <noun>' row an echo. The predicate reads the PF display ONLY."""
+    assert is_pf_echo("Manage users", "Admin", _V) is False     # was True via res
+    assert is_pf_echo("Manage users", "Users", _V) is True      # true PF echo
+    assert is_pf_echo("Manage webhooks", "Settings", _V) is False
+    assert is_pf_echo("User", "Users", _V) is True
+
+
+def test_live_documenso_rich_names_survive_by_name() -> None:
+    """MANDATE unit: the rich canonical rows the armed board LOST (live base
+    shapes: PF 'admin+' display 'Admin', PF 'settings+' display 'Settings', PF
+    't.$team-url+' display 'Team', with each row's OWN live resource) all
+    survive by name; zero folds fire on these groups."""
+    admin = [
+        _uf("UF-004", "Enterprise Feature Restrictions", pf="admin+", resource="claim", members=["a1", "a2", "a3"]),
+        _uf("UF-L-0a", "Manage documents", pf="admin+", resource="document", members=["d1", "d2", "d3"]),
+        _uf("UF-L-0f", "Manage site settings", pf="admin+", resource="site setting", members=["s1"]),
+        _uf("UF-L-52", "Manage teams", pf="admin+", resource="team id", members=["t1"]),
+        _uf("UF-L-58", "Manage email domains", pf="admin+", resource="email domain", members=["e1", "e2"]),
+        _uf("UF-L-ac", "Manage organisations", pf="admin+", resource="organisation", members=["o1", "o2", "o3", "o4"]),
+        _uf("UF-L-bb", "Manage users", pf="admin+", resource="user", members=["u1", "u2"]),
+    ]
+    settings = [
+        _uf("UF-023", "Envelope Expiration", pf="settings+", resource="billing", members=[f"b{i}" for i in range(10)]),
+        _uf("UF-L-19", "Manage webhooks", pf="settings+", resource="webhook", members=["w1", "w2"]),
+        _uf("UF-L-82", "Manage security", pf="settings+", resource="security", members=["s1", "s2", "s3", "s4", "s5"]),
+    ]
+    team = [
+        _uf("UF-022", "Manage item", pf="t.$team-url+", resource="item", members=["i1", "i2"]),
+        _uf("UF-021", "Browse & filter items", pf="t.$team-url+", resource="item", members=["i3"]),
+    ]
+    ufs = admin + settings + team
+    pfs = [_pf("admin+", "Admin"), _pf("settings+", "Settings"), _pf("t.$team-url+", "Team")]
+    # members carry DISJOINT spans (the L-C3 gate must not fire here)
+    flows = [_flow(m, [(f"{m}.ts", 10 + 100 * i, 20 + 100 * i)])
+             for i, m in enumerate(sorted({m for u in ufs for m in u.member_flow_ids}))]
+    plan = plan_uf_synth(ufs, flows, pfs, _V)
+    must_survive = [
+        "Manage documents", "Manage email domains", "Manage item",
+        "Manage organisations", "Manage security", "Manage site settings",
+        "Manage users", "Manage webhooks", "Browse & filter items",
+    ]
+    survivors = {u.name for u in plan.survivors(ufs)}
+    for nm in must_survive:
+        assert nm in survivors, nm
+    assert plan.fold == {}
+    assert plan.rename == {}   # zero '&' mutations
+
+
+def test_live_pair_bare_never_canonical() -> None:
+    """MANDATE unit (live pair shapes): {'User' (bare), 'Manage users'} under a
+    Users PF -> 'Manage users' survives; same for the 'Teams' pair — the bare
+    row is NEVER canonical while a rich rival is alive, whatever the member
+    counts."""
+    for bare_nm, rich_nm, pf_slug, disp in [
+        ("User", "Manage users", "users", "Users"),
+        ("Teams", "Manage teams", "teams", "Teams"),
+    ]:
+        # bare row gets MORE members — member count must not out-rank the mandate
+        bare = _uf("UF-1", bare_nm, pf=pf_slug, resource="x",
+                   members=[f"m{i}" for i in range(13)])
+        rich = _uf("UF-2", rich_nm, pf=pf_slug, resource="x", members=["r1"])
+        plan = plan_uf_synth([bare, rich], [], [_pf(pf_slug, disp)], _V)
+        assert plan.fold == {"UF-1": "UF-2"}, (bare_nm, rich_nm)
+        assert plan.survivors([bare, rich]) == [rich]
+
+
+def test_ampersand_verb_phrase_verbatim() -> None:
+    """MANDATE unit: 'Browse & filter emails' passes armed UNCHANGED — a
+    coordinated verb phrase is verbatim; '&' is part of the phrase, and the
+    stutter law never fires across a conjunction."""
+    assert has_verb_stutter("Browse & filter emails", _V) is False
+    assert has_verb_stutter("Browse & filter GitHub forks", _V) is False
+    assert has_verb_stutter("Create and edit templates", _V) is False
+    uf = _uf("UF-1", "Browse & filter emails", pf="emails", resource="email")
+    ufs = [uf]
+    apply_uf_synth_fold(ufs, [], [_pf("emails", "Emails")], _V)
+    assert uf.name == "Browse & filter emails"   # zero mutation
+
+
+def test_live_twins_fold_into_ampersand_canonical() -> None:
+    """Live twin shape (the 3 legal bare folds): 'GitHub forks' (bare) +
+    'Browse & filter GitHub forks' ('&'-verbful, overlapping member spans) —
+    the bare twin folds INTO the '&' canonical (never min-id, never reverse)
+    and the canonical keeps its literal '&' name."""
+    f_rich = _flow("m-rich", [("forks.tsx", 10, 60)])
+    f_bare = _flow("m-bare", [("forks.tsx", 30, 50)])  # overlaps
+    # bare twin gets the SMALLER id — the old min-id anchor would invert this
+    bare = _uf("UF-010", "GitHub forks", pf="t", resource="github", members=["m-bare"])
+    rich = _uf("UF-016", "Browse & filter GitHub forks", pf="t", resource="github", members=["m-rich"])
+    ufs = [bare, rich]
+    plan = plan_uf_synth(ufs, [f_rich, f_bare], [_pf("t", "Team")], _V)
+    assert plan.fold == {"UF-010": "UF-016"}
+    assert plan.reasons["UF-010"] == "lc3_family_overlap"
+    apply_uf_synth_fold(ufs, [f_rich, f_bare], [_pf("t", "Team")], _V)
+    assert [u.name for u in ufs] == ["Browse & filter GitHub forks"]
+    assert set(ufs[0].member_flow_ids) == {"m-rich", "m-bare"}  # conservation
+
+
 # ── L-C2 verb-phrase integrity ────────────────────────────────────────────────
 
 

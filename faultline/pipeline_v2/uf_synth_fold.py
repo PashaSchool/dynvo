@@ -97,30 +97,42 @@ def noun_phrase(name: str, verbs: frozenset[str]) -> str:
     return " ".join(words[i:]) if i < len(words) else " ".join(words)
 
 
-def is_pf_echo(
-    name: str, pf_display: str, resource: str, verbs: frozenset[str],
-) -> bool:
-    """True when ``name`` is a bare echo of its PF: its noun-phrase (verb from
-    the template set, or a bare noun) equals the PF display or the resource
-    (stem-tolerant). Carries no own content token."""
+def is_pf_echo(name: str, pf_display: str, verbs: frozenset[str]) -> bool:
+    """True when ``name`` is a bare echo of its PF IDENTITY: its noun-phrase
+    (verb from the template set, or a bare noun) equals the PF display
+    (stem-tolerant). Carries no own content token.
+
+    NEVER compared against the UF's OWN ``resource`` field — the live-documenso
+    refutation (2026-07-16): resource is derived from the UF's own name, so the
+    own-resource comparison made EVERY well-formed 'Manage <noun>' row an "echo"
+    of itself ('Manage users' res='user') and the fold inverted — 9 rich
+    canonicals died under PFs ('Admin'/'Settings') their names never echoed."""
     if not name:
         return False
     np = _tokset_stemmed(noun_phrase(name, verbs))
     if not np:
         return False
     pf = _tokset_stemmed(pf_display)
-    res = _tokset_stemmed(resource)
-    return (bool(pf) and np == pf) or (bool(res) and np == res)
+    return bool(pf) and np == pf
 
 
 def has_verb_stutter(name: str, verbs: frozenset[str]) -> bool:
-    """True when the second token is a stray verb/particle — a multiword verb was
-    split and recombined (``Browse up Slack``, ``Manage create topic``). Protected
-    multiword verbs (``set up``…) are NOT stutters."""
-    words = _toks(name)
+    """True when the second LITERAL word is a stray verb/particle — a multiword
+    verb was split and recombined (``Browse up Slack``, ``Manage create topic``).
+
+    Operates on the literal space-split words, NOT the alnum tokenizer — the
+    live-documenso refutation (2026-07-16): tokenizing dropped '&' so ``Browse &
+    filter GitHub forks`` read as (browse, filter, ...) -> "stutter" -> the
+    repair ate the literal '&' word (x5 mutations). A coordinated verb phrase
+    (``Browse & filter``, ``Create and edit``) is VERBATIM by law: a non-alpha
+    joiner or a conjunction as the second word is never a stutter. Protected
+    multiword verbs (``set up``…) are NOT stutters either."""
+    words = (name or "").split()
     if len(words) < 2:
         return False
-    lead, second = words[0], words[1]
+    lead, second = words[0].lower(), words[1].lower()
+    if not words[1].isalpha() or second in {"and", "or"}:
+        return False                       # coordinated verb phrase — verbatim
     if (lead, second) in MULTIWORD_VERBS:
         return False
     return second in verbs or second in PARTICLES
@@ -148,6 +160,18 @@ def noun_head(name: str, verbs: frozenset[str]) -> str:
     """The stemmed head noun (last noun-phrase token) — the L-C3 family key."""
     toks = [_stem(t) for t in _toks(noun_phrase(name, verbs))]
     return toks[-1] if toks else ""
+
+
+_CONJ = frozenset({"and", "or"})
+
+
+def meaning_tokens(name: str, verbs: frozenset[str]) -> set[str]:
+    """The name's meaningful (non-verb, non-particle, non-conjunction) stemmed
+    tokens — the canonical-rank currency ('значущі токени понад verb+noun')."""
+    return {
+        _stem(t) for t in _toks(name)
+        if t not in verbs and t not in PARTICLES and t not in _CONJ
+    }
 
 
 def spans_overlap(a: Any, b: Any) -> bool:
@@ -223,53 +247,69 @@ def plan_uf_synth(
         if pfid:  # a UF with no PF binding cannot echo a PF
             by_pf[pfid].append(uf)
 
+    def _has_lead_verb(name: str) -> bool:
+        toks = _toks(name)
+        return bool(toks) and toks[0] in verbs
+
+    def _canonical_of(family: list[Any]) -> Any:
+        """The live-documenso MANDATE (2026-07-16): canonical = the row with the
+        RICHEST name (most meaningful tokens beyond verb+noun; tie-break member
+        count, then name length, then id) — and a BARE row (no leading template
+        verb) is NEVER canonical while a verbful rival is alive ('User' never
+        beats 'Manage users', whatever the member counts)."""
+        pool = [u for u in family if _has_lead_verb(_uf_name(u, plan))] or family
+        return min(pool, key=lambda u: (
+            -len(meaning_tokens(_uf_name(u, plan), verbs)),
+            -len(members.get(_uf_id(u), [])),
+            -len(_uf_name(u, plan)),
+            _uf_id(u),
+        ))
+
     for pf_id, ufs in by_pf.items():
         disp = pf_disp.get(pf_id, "")
 
-        def _res(u: Any) -> str:
-            return str(getattr(u, "resource", "") or "")
+        # L-C1 — fold a PF-IDENTITY echo (noun-phrase == PF display, never the
+        # row's own resource) into the canonical of its NOUN FAMILY: the rows of
+        # the same PF whose noun-phrases contain the echo's nouns ('User' ->
+        # {'User','Manage users'}; 'View propel' -> {'View propel','Configure
+        # propel pipeline'}). Fold ALWAYS lands on the canonical (richest-name
+        # mandate) and fires ONLY when the echo is genuinely barer: the canonical
+        # is STRICTLY richer (proper noun-superset) or the echo is bare against a
+        # verbful canonical. Same-richness DISTINCT-VERB echo families ('Create /
+        # Edit / Delete routing form' under PF 'Routing Forms') are legitimate
+        # distinct journeys — they defer to L-C3's span gate, never fold by name.
+        # A lone echo (family of 1) is kept — never kill a PF's last journey.
+        echoes = [u for u in ufs if is_pf_echo(_uf_name(u, plan), disp, verbs)]
+        for e in echoes:
+            eid = _uf_id(e)
+            if eid in plan.fold:
+                continue
+            e_nouns = meaning_tokens(_uf_name(e, plan), verbs)
+            family = [
+                u for u in ufs
+                if _uf_id(u) not in plan.fold
+                and e_nouns <= meaning_tokens(_uf_name(u, plan), verbs)
+            ]
+            if len(family) < 2:
+                continue
+            canonical = _canonical_of(family)
+            wid = _uf_id(canonical)
+            if wid == eid:
+                continue
+            c_nouns = meaning_tokens(_uf_name(canonical, plan), verbs)
+            strictly_richer = e_nouns < c_nouns
+            bare_vs_verbful = (
+                not _has_lead_verb(_uf_name(e, plan))
+                and _has_lead_verb(_uf_name(canonical, plan))
+            )
+            if strictly_richer or bare_vs_verbful:
+                plan.fold[eid] = wid
+                plan.reasons.setdefault(eid, "lc1_pf_echo")
 
-        def _has_lead_verb(name: str) -> bool:
-            toks = _toks(name)
-            return bool(toks) and toks[0] in verbs
-
-        echoes = [u for u in ufs
-                  if is_pf_echo(_uf_name(u, plan), disp, _res(u), verbs)]
-        rich_nonecho = [u for u in ufs if u not in echoes
-                        and name_richness(_uf_name(u, plan), disp, verbs) > 0]
-
-        # L-C1 — fold BARE PF-echoes into a canonical survivor. Two shapes:
-        #   (a) a non-echo rich journey exists ("Configure propel pipeline") ->
-        #       EVERY echo of the PF ("View propel") folds into the richest one;
-        #   (b) all rows are echoes but a VERBFUL echo ("Manage users") coexists
-        #       with a bare-noun echo ("User") -> the bare noun folds into the
-        #       verbful one.
-        # Distinct-VERB echo families (all verbful, no rich sibling — cal routing
-        # forms) are NOT L-C1; they defer to L-C3's span gate. The winner always
-        # survives (census §4). A PF with a single lone echo keeps it.
-        winner = None
-        fold_set: list[Any] = []
-        if rich_nonecho and echoes:
-            winner = min(rich_nonecho, key=lambda u: (
-                -name_richness(_uf_name(u, plan), disp, verbs),
-                -len(members.get(_uf_id(u), [])), _uf_id(u)))
-            fold_set = echoes
-        elif echoes and len(echoes) >= 2:
-            verbful = [e for e in echoes if _has_lead_verb(_uf_name(e, plan))]
-            bare = [e for e in echoes if not _has_lead_verb(_uf_name(e, plan))]
-            if verbful and bare:
-                winner = min(verbful, key=lambda u: (
-                    -len(members.get(_uf_id(u), [])), _uf_id(u)))
-                fold_set = bare
-        if winner is not None:
-            wid = _uf_id(winner)
-            for e in fold_set:
-                eid = _uf_id(e)
-                if eid != wid:
-                    plan.fold[eid] = wid
-                    plan.reasons.setdefault(eid, "lc1_pf_echo")
-
-        # L-C3 — same-noun-head family fold, GATED by member span overlap.
+        # L-C3 — same-noun-head family fold, GATED by member span overlap. The
+        # anchor is the family CANONICAL (richest-name mandate — never min-id):
+        # the bare twin ('GitHub forks') folds INTO 'Browse & filter GitHub
+        # forks', never the reverse.
         live = [u for u in ufs if _uf_id(u) not in plan.fold]
         heads: dict[str, list[Any]] = defaultdict(list)
         for u in live:
@@ -277,7 +317,7 @@ def plan_uf_synth(
         for head, group in heads.items():
             if not head or len(group) < 2:
                 continue
-            anchor = min(group, key=_uf_id)
+            anchor = _canonical_of(group)
             am = members.get(_uf_id(anchor), [])
             for u in group:
                 if u is anchor or _uf_id(u) in plan.fold:
