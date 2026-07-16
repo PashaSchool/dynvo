@@ -31,7 +31,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from faultline.pipeline_v2.schema_member_strip import GRAIN_WAVE_ENV
+from faultline.pipeline_v2.schema_member_strip import (
+    GRAIN_WAVE_ENV,
+    grain_wave_enabled,
+)
 from faultline.pipeline_v2.technology_instruments import (
     detect_technology_instruments,
 )
@@ -118,14 +121,26 @@ def test_exhibit_twenty_apollo_fdir_name_dep(tmp_path, monkeypatch):
     assert APOLLO not in (tele.get("dirs") or [])
 
 
+def test_inverted_killswitch_grain_wave(monkeypatch):
+    """Inverted kill-switch: unset ≡ explicit ``1`` (default ON); explicit
+    ``0``/``false`` == the pre-B58-v3 OFF behaviour."""
+    monkeypatch.delenv(ENV, raising=False)
+    assert grain_wave_enabled() is True
+    monkeypatch.setenv(ENV, "1")
+    assert grain_wave_enabled() is True
+    monkeypatch.setenv(ENV, "0")
+    assert grain_wave_enabled() is False
+    monkeypatch.setenv(ENV, "false")
+    assert grain_wave_enabled() is False
+
+
 def test_exhibit_twenty_apollo_off_is_noop(tmp_path, monkeypatch):
-    """Kill-switch law: unset and =0 both leave the fdir minting — no
+    """Kill-switch law: explicit =0/false leaves the fdir minting — no
     grain-wave key anywhere in the telemetry."""
-    for off in (None, "0"):
-        if off is None:
-            monkeypatch.delenv(ENV, raising=False)
-        else:
-            monkeypatch.setenv(ENV, off)
+    # MECHANICAL (horizon-1 flip): unset now defaults ON, so only explicit
+    # off values are the kill-switch.
+    for off in ("0", "false"):
+        monkeypatch.setenv(ENV, off)
         tracked, fdirs = _twenty_apollo_repo(tmp_path)
         tele = _detect(tmp_path, tracked, fdirs=fdirs)
         tc = tele.get("transport_candidates") or {}
@@ -272,7 +287,8 @@ def test_anticase_ws_pkg_grain_off_on_identical(tmp_path, monkeypatch):
                     'import { Button } from "widgetkit";\n'))
         return tracked
 
-    monkeypatch.delenv(ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the genuine OFF world.
+    monkeypatch.setenv(ENV, "0")
     off_repo = tmp_path / "off"
     tele_off = _detect(off_repo, scene(off_repo))
     monkeypatch.setenv(ENV, "1")
@@ -395,7 +411,8 @@ def test_handoff_ignores_fdir_anchor_off(monkeypatch):
         TargetGrainIndex,
         run_transport_handoff,
     )
-    monkeypatch.delenv(ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF (ws:-only) world.
+    monkeypatch.setenv(ENV, "0")
     devs, pfs, ctx = _handoff_scene(DATAKIT)
     grain = TargetGrainIndex([], pfs, routes_index=[],
                              excluded_units=[DATAKIT],
@@ -519,7 +536,8 @@ def test_twin_off_world_inert(monkeypatch):
     unresolved (byte-identical world)."""
     unit, devs, pfs, ctx = _twin_scene(
         "fdir:apps/builder/src/features/variables")
-    tele = _run_twin(unit, devs, pfs, ctx, flag=None,
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    tele = _run_twin(unit, devs, pfs, ctx, flag="0",
                      monkeypatch=monkeypatch)
     assert tele["candidate_pfs"] == {}
     assert "twin_resolutions" not in tele
@@ -549,7 +567,8 @@ def test_abstain_telemetry_records_breadth_and_norung(tmp_path, monkeypatch):
 
 
 def test_abstain_telemetry_absent_when_off(tmp_path, monkeypatch):
-    monkeypatch.delenv(ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv(ENV, "0")
     tracked, fdirs, routes = _calcom_datakit_repo(tmp_path)
     tele = _detect(tmp_path, tracked, routes=routes, fdirs=fdirs)
     assert "b48_abstains" not in tele
@@ -582,7 +601,8 @@ def test_exhibit_midday_bot_two_unit_breadth(tmp_path, monkeypatch):
     assert (tele_on.get("transport_candidates") or {}).get(
         "packages/botkit") == "B48:library"
 
-    monkeypatch.delenv(ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF world.
+    monkeypatch.setenv(ENV, "0")
     off_repo = tmp_path / "off"
     tele_off = _detect(off_repo, scene(off_repo))
     assert "packages/botkit" not in (
@@ -639,7 +659,8 @@ def test_exhibit_novu_ee_root_container(tmp_path, monkeypatch):
     assert (tele_on.get("transport_candidates") or {}).get(
         "enterprise/packages/authkit") == "B48:library"
 
-    monkeypatch.delenv(ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF world.
+    monkeypatch.setenv(ENV, "0")
     off_repo = tmp_path / "off"
     tele_off = _detect(off_repo, scene(off_repo))
     assert "enterprise/packages/authkit" not in (
@@ -713,7 +734,8 @@ def test_exhibit_calcom_pbac_subpath_deepening(tmp_path, monkeypatch):
     assert (tele_on.get("transport_candidates") or {}).get(
         "packages/features/pbac") == "B48-fdir:library"
 
-    monkeypatch.delenv(ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF world.
+    monkeypatch.setenv(ENV, "0")
     off_repo = tmp_path / "off"
     tracked, fdirs = scene(off_repo)
     tele_off = _detect(off_repo, tracked, fdirs=fdirs)

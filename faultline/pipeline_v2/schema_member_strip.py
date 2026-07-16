@@ -82,10 +82,11 @@ _MONOLITH_FILE = "schema-monolith-files.yaml"
 
 
 def grain_wave_enabled() -> bool:
-    """B58-v3 grain wave. Default **OFF**; only an explicit ``1``/``true``
-    arms it — ``FAULTLINE_GRAIN_WAVE=0``/unset keeps every output channel
-    byte-identical (the kill-switch law)."""
-    return os.environ.get(GRAIN_WAVE_ENV, "0").strip().lower() in {
+    """B58-v3 grain wave. Default **ON** since the 2026-07-16 horizon-1 flip
+    (KEY_SCHEMA 30; keyed proof documenso green — team.verify ~200 LOC,
+    fdir-lane). ``FAULTLINE_GRAIN_WAVE=0`` keeps every output channel
+    byte-identical (the kill-switch law forever; unset ≡ explicit ``1``)."""
+    return os.environ.get(GRAIN_WAVE_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

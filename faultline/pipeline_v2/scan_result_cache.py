@@ -620,9 +620,9 @@ ENV_OUTPUT_FLAGS = (
     # handoff resolves fdir: anchors for grain-wave candidates). Reshapes
     # developer_features[] ledgers + product_features[] membership/LOC +
     # the platform lane + user_flows[].product_feature_id when candidates
-    # exist. Default OFF; =0/unset byte-identical. Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate later flip commit only
-    # (flip-protocol).
+    # exist. Default ON since the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30;
+    # keyed proof documenso green, B58-v3 — team.verify ~200 LOC, fdir-lane).
+    # ``=0`` restores the pre-B58-v3 byte-identical board (kill-switch).
     "FAULTLINE_GRAIN_WAVE",
     # B66-v2 (2026-07-16) — ownership/LOC-truth + dispatch tails, ONE flag
     # gates four segments (the B58-v3 precedent). Seg A: an entry-mint
