@@ -1658,6 +1658,23 @@ def run_synth_quality(
         coverage_gaps = emit_coverage_gaps(
             user_flows, product_features, developer_features, scan_meta,
             authored_snapshot, gap_mode)
+    # ── B71 Seg C — UF synth folds L-C1..L-C4 (FAULTLINE_NAMING_PACK, default
+    # OFF). Runs LAST over the FINAL real journeys (markers/backstops excluded):
+    # echo-fold into the rich canonical, verb-stutter repair, span-gated family
+    # fold, board uniqueness. OFF/unset never enters this block -> UF names /
+    # membership byte-identical (the B40 byte-stable-name law holds when off).
+    synth_fold_tele: dict[str, Any] = {}
+    from faultline.pipeline_v2.naming_contract import naming_pack_enabled
+    if naming_pack_enabled():
+        from faultline.pipeline_v2.naming_contract import (
+            _verb_class_tokens,
+            load_naming_vocab,
+        )
+        from faultline.pipeline_v2.uf_synth_fold import apply_uf_synth_fold
+        synth_fold_tele = apply_uf_synth_fold(
+            user_flows, flows, product_features,
+            _verb_class_tokens(vocab or load_naming_vocab()),
+        )
     tele = {
         "enabled": True,
         "backstop_renamed": name_tele["renamed"],
@@ -1675,6 +1692,10 @@ def run_synth_quality(
         # contract).
         "coverage_gaps": coverage_gaps,
     }
+    # B71 Seg C — emit only when armed (adding a key when OFF would perturb the
+    # naming telemetry and break the kill-switch byte-identity gate).
+    if synth_fold_tele:
+        tele["uf_synth_fold"] = synth_fold_tele
     sq = scan_meta.setdefault("synth_quality", {})
     sq.update({
         "backstop_renamed_count": name_tele["renamed"],
