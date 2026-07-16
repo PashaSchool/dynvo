@@ -45,6 +45,19 @@ def test_helpers_defaults(monkeypatch):
     monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
     assert homing_hygiene_enabled() is True
     assert seed_hygiene_enabled() is False
+    assert naming_law_enabled() is True  # SEMANTIC (horizon-1 flip)
+
+
+def test_inverted_killswitch_naming_law(monkeypatch):
+    """Inverted kill-switch: unset ≡ explicit ``1``; ``0``/``false`` ==
+    the pre-flip (banked-law-OFF) behaviour."""
+    monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
+    unset = naming_law_enabled()
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
+    assert naming_law_enabled() is unset is True
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
+    assert naming_law_enabled() is False
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "false")
     assert naming_law_enabled() is False
 
 
@@ -70,10 +83,10 @@ def test_inverted_killswitch_homing_hygiene(monkeypatch):
 
 
 def test_seed_flag_does_not_arm_homing_or_law(monkeypatch):
-    # MECHANICAL (horizon-1 flip): HOMING now defaults ON, so its kill-switch
-    # must be set explicitly to prove SEED=1 does not re-arm it.
+    # MECHANICAL (horizon-1 flip): HOMING + NAMING_LAW default ON, so their
+    # kill-switches must be set explicitly to prove SEED=1 does not re-arm them.
     monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
-    monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
     monkeypatch.setenv("FAULTLINE_SEED_HYGIENE", "1")
     assert seed_hygiene_enabled() is True
     assert homing_hygiene_enabled() is False
@@ -81,9 +94,11 @@ def test_seed_flag_does_not_arm_homing_or_law(monkeypatch):
 
 
 def test_homing_flag_does_not_arm_seed_or_law(monkeypatch):
+    # MECHANICAL (horizon-1 flip): NAMING_LAW defaults ON — kill it explicitly
+    # to prove HOMING=1 does not arm the law.
     monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
     monkeypatch.delenv("FAULTLINE_SEED_HYGIENE", raising=False)
-    monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
     assert homing_hygiene_enabled() is True
     assert seed_hygiene_enabled() is False
     assert naming_law_enabled() is False
@@ -126,7 +141,9 @@ def test_registry_parity_all_flags_no_schema_bump():
 
 def test_display_law_fires_only_under_naming_law(monkeypatch):
     # HOMING+SEED world (the re-convoy config): the law must NOT fire.
-    monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" kills NAMING_LAW for the
+    # unarmed half (unset now defaults ON).
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
     monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
     monkeypatch.setenv("FAULTLINE_SEED_HYGIENE", "1")
     assert "bare_verb" not in display_law_violations("Manage", VOCAB)

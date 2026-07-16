@@ -424,12 +424,14 @@ def homing_hygiene_enabled() -> bool:
 
 
 def naming_law_enabled() -> bool:
-    """B69-v2 third split — default OFF; ``FAULTLINE_NAMING_LAW=1`` arms
-    the BANKED bare-verb/dev-grain-token display law (vocabulary-driven
-    implementation kept unchanged for the B70 member-evidence redesign;
-    see :data:`NAMING_LAW_ENV`). Independent of the HOMING and SEED
-    flags."""
-    return os.environ.get(NAMING_LAW_ENV, "0").strip().lower() in {
+    """B70 member-evidence redesign — default **ON** since the 2026-07-16
+    horizon-1 flip (KEY_SCHEMA 30; keyed proof papermark + cal green —
+    law-attributed churn, zero bare names). Arms the bare-verb/dev-grain-
+    token display law (member-evidence redesign; see :data:`NAMING_LAW_ENV`).
+    ``FAULTLINE_NAMING_LAW=0`` ⇒ the law list is byte-identical to pre-B70
+    (kill-switch forever; unset ≡ explicit ``1``). Independent of the HOMING
+    and SEED flags."""
+    return os.environ.get(NAMING_LAW_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 

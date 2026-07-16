@@ -583,9 +583,11 @@ ENV_OUTPUT_FLAGS = (
     # resources ('Manage download', 'Browse webhook') and misses
     # evidence-less tokens ('View mupdf'); each ban cascades into retries/
     # collisions/B31 parentheticals (the keyed pair's entire off-rail
-    # churn). Mechanics banked unchanged. Reshapes UF display names when
-    # armed. Default OFF; =0/unset byte-identical. Appended WITHOUT a
-    # KEY_SCHEMA bump — flip-protocol.
+    # churn). B70 member-evidence redesign landed. Reshapes UF display names
+    # when armed. Default ON since the 2026-07-16 horizon-1 flip (KEY_SCHEMA
+    # 30; keyed proof papermark + cal green, B70 — law-attributed churn, zero
+    # bare names). ``=0`` restores the pre-B70 byte-identical law list
+    # (kill-switch).
     "FAULTLINE_NAMING_LAW",
     # B66 — code-first server API-entry extractor. Emits routes_index entries
     # (real HTTP methods for NestJS/koa/hono; synthetic QUERY/MUTATION/

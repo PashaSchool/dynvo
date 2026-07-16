@@ -78,7 +78,8 @@ def test_anticase_non_verb_single_word_not_bare(monkeypatch):
 
 
 def test_off_gate_byte_identical(monkeypatch):
-    monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
     for name in ("Manage", "View API", "Manage tRPC", "API"):
         got = display_law_violations(name, VOCAB)
         assert "bare_verb" not in got
@@ -97,7 +98,8 @@ def test_verifier_revert_shape_falls_to_law_clean_non_bare(monkeypatch):
             chosen = cand
             break
     assert chosen == "Browse & manage folders"
-    monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the pre-B69-v2 half.
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
     chosen_off = None
     for cand in candidates:
         if not display_law_violations(cand, VOCAB, pf_display="Datarooms"):
@@ -110,7 +112,9 @@ def test_third_split_homing_or_seed_never_arm_the_law(monkeypatch):
     """Re-convoy ruling: the law is BANKED — HOMING and SEED flags must
     never arm it (the churn cascade: ban → retry → new names → collisions
     → B31 parentheticals)."""
-    monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" kills the (now default-ON)
+    # law so we prove HOMING/SEED do not re-arm it.
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
     monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
     monkeypatch.setenv("FAULTLINE_SEED_HYGIENE", "1")
     for name in ("Manage", "View API", "Manage download", "Browse webhook"):
