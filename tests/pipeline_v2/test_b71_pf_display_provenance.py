@@ -80,6 +80,48 @@ def test_la1_documenso_p_url_glyph_free() -> None:
     assert not _GLYPH.search(out)
 
 
+# ── L-A1 anchor-kind scoping of the trailing-'+' rung (horizon-1 ruling
+# 2026-07-16, escalation #3: the older humanize law is RIGHT — in route
+# slugs '+' is Remix flat-route syntax; on ws:/fdir:/hub: anchors '+' is a
+# legitimate name character). Glyph rungs ($ : { } [ ] < > *) stay
+# text-based for every anchor kind. ──────────────────────────────────────
+
+
+def test_la1_route_anchor_trailing_plus_stripped() -> None:
+    """documenso shape: a route:-anchored display carrying the Remix
+    trailing-'+' IS residue — the law cleans it."""
+    v = resolve_pf_display(
+        "Admin+", _src(anchor_source="route", basename="admin+"))
+    assert v.display == "Admin"
+    assert v.changed is True
+
+
+def test_la1_ws_anchor_plus_is_prose_untouched() -> None:
+    """ANTI-CASE (the ruling's subject): 'Enterprise+' on a ws: anchor is a
+    plan-tier name, not router machinery — preserved verbatim."""
+    v = resolve_pf_display("Enterprise+", _src(anchor_source="ws"))
+    assert v.display == "Enterprise+"
+    assert v.changed is False
+
+
+@pytest.mark.parametrize("anchor", ["fdir", "hub", ""])
+def test_la1_nonroute_anchor_plus_preserved(anchor: str) -> None:
+    """fdir:/hub:/unknown anchors get the same preservation — only route:
+    arms the '+' rung; unknown shapes err to preservation."""
+    v = resolve_pf_display("Notepad++ Tools", _src(anchor_source=anchor))
+    assert v.display == "Notepad++ Tools"
+    assert v.changed is False
+
+
+def test_la1_glyph_rungs_stay_text_based_on_ws_anchor() -> None:
+    """The ruling scopes ONLY the '+' rung: a real param glyph on a ws:
+    anchor is still residue (those glyphs are never prose)."""
+    v = resolve_pf_display(
+        "Team $token", _src(anchor_source="ws", manifest="Teams"))
+    assert v.display == "Teams"
+    assert v.changed is True
+
+
 # ── L-A2: provenance ladder upgrades a defective display ──────────────────────
 
 

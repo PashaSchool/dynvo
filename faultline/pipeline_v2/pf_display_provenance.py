@@ -69,6 +69,13 @@ class ProvenanceSources:
     schema: str = ""
     route: str = ""
     basename: str = ""
+    #: Anchor-kind prefix of the PF's canonical anchor id ("route" / "ws" /
+    #: "fdir" / "hub" / ""). Horizon-1 ruling (2026-07-16): the trailing-'+'
+    #: residue rung arms ONLY for route: anchors — on ws:/fdir:/hub: anchors
+    #: '+' is a legitimate name character ('Enterprise+' lives). Empty
+    #: (unknown shape) errs to preservation, matching the older humanize
+    #: law's route:-scoping.
+    anchor_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -156,7 +163,10 @@ def resolve_pf_display(
     # defect lives in the leaf (a raw/typo'd basename), so grade at the leaf.
     head, sep, leaf = cur.rpartition(" — ")
     leaf = leaf.strip()
-    residue = _has_route_template_residue(cur)
+    # Horizon-1 ruling (2026-07-16): the trailing-'+' rung fires only when
+    # this PF is route:-anchored (Remix syntax); non-route '+' is prose.
+    is_route = src.anchor_source == "route"
+    residue = _has_route_template_residue(cur, route_anchor=is_route)
     basename_disp = _norm(polish_display_casing(
         src.basename.replace("-", " ").replace("_", " "), v)) if src.basename else ""
     bare = bool(basename_disp) and _norm(leaf) == basename_disp
@@ -171,7 +181,9 @@ def resolve_pf_display(
         ("nav", src.nav), ("package-manifest", src.manifest),
         ("schema-domain", src.schema), ("static-route", src.route),
     ):
-        if name and not _has_route_template_residue(name):
+        # Same anchor-kind scoping: a non-route PF's upgrade candidate may
+        # legitimately carry '+' (a manifest name like 'Enterprise+').
+        if name and not _has_route_template_residue(name, route_anchor=is_route):
             chosen = _recompose(name)
             if chosen.strip():
                 return ProvenanceVerdict(chosen, tier, changed=_norm(chosen) != _norm(cur))
@@ -207,7 +219,10 @@ def apply_pf_display_provenance(
         key = str(getattr(pf, "name", None) or getattr(pf, "id", None) or cur)
         tele["name_provenance"][key] = verdict.provenance
         if verdict.changed and verdict.display and _norm(verdict.display) != _norm(cur):
-            if _has_route_template_residue(cur) and verdict.provenance == "dir-basename":
+            # Telemetry split mirrors the verdict's anchor-kind scoping.
+            if _has_route_template_residue(
+                cur, route_anchor=src.anchor_source == "route",
+            ) and verdict.provenance == "dir-basename":
                 tele["pf_route_grammar_cleaned"] += 1
             else:
                 tele["pf_provenance_upgraded"] += 1

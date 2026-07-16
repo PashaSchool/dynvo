@@ -871,12 +871,23 @@ def _peel_edge_single_letters(text: str | None) -> str | None:
     return " ".join(words)
 
 
-def _has_route_template_residue(text: str) -> bool:
+def _has_route_template_residue(text: str, *, route_anchor: bool = True) -> bool:
     """True when a display still carries router-template machinery: a
     param glyph (``$ : { } [ ] < > *``), a word-adjacent ``+`` (Remix
-    nesting), or a leading-underscore word (layout prefix)."""
+    nesting), or a leading-underscore word (layout prefix).
+
+    Horizon-1 ruling (2026-07-16, escalation #3): the trailing-``+`` rung
+    fires ONLY for ``route:``-anchored displays — in route slugs ``+`` is
+    Remix flat-route syntax, but on ``ws:``/``fdir:``/``hub:`` anchors it
+    is a legitimate name character ('Enterprise+' lives; the older
+    humanize law's named anti-case). Callers grading a NON-route anchor
+    pass ``route_anchor=False``; the glyph and underscore rungs stay
+    text-based for every anchor kind (those glyphs are never prose).
+    Default True == the pre-ruling behaviour for text-only call sites."""
     t = text or ""
-    if _PARAM_GLYPHS.search(t) or _TRAILING_PLUS_RE.search(t):
+    if _PARAM_GLYPHS.search(t):
+        return True
+    if route_anchor and _TRAILING_PLUS_RE.search(t):
         return True
     return any(w.startswith("_") for w in t.split(" ") if w)
 
@@ -3431,6 +3442,9 @@ def run_naming_contract(
                 nav=nav_labels.get(pslug, "") or "",
                 manifest=manifest,
                 basename=_anchor_terminal_segment(aid) or "",
+                # Horizon-1 ruling (2026-07-16): anchor-kind scopes the
+                # trailing-'+' residue rung (route: only).
+                anchor_source=_anchor_path(aid)[0],
             )
 
         tele["pf_display_provenance"] = apply_pf_display_provenance(
