@@ -48,6 +48,8 @@ __all__ = [
     "repair_stutter",
     "name_richness",
     "noun_head",
+    "meaning_tokens",
+    "is_malformed_phrase",
     "spans_overlap",
     "UfSynthPlan",
     "plan_uf_synth",
@@ -135,6 +137,14 @@ def has_verb_stutter(name: str, verbs: frozenset[str]) -> bool:
         return False                       # coordinated verb phrase — verbatim
     if (lead, second) in MULTIWORD_VERBS:
         return False
+    # Coordinated VERB LIST ('Browse filter and Stripe events' ~ 'Browse,
+    # filter, and ...'): the second verb is conjoined by the THIRD word — not a
+    # stutter. The keyed-documenso refutation (2026-07-16): repairing it dropped
+    # the middle verb and left a dangling 'and' ('Browse and Stripe events').
+    if len(words) >= 3 and (
+        not words[2].isalpha() or words[2].lower() in _CONJ
+    ):
+        return False
     return second in verbs or second in PARTICLES
 
 
@@ -172,6 +182,41 @@ def meaning_tokens(name: str, verbs: frozenset[str]) -> set[str]:
         _stem(t) for t in _toks(name)
         if t not in verbs and t not in PARTICLES and t not in _CONJ
     }
+
+
+_CONJ_WORDS = frozenset({"and", "or", "&"})
+
+
+def is_malformed_phrase(name: str, verbs: frozenset[str]) -> bool:
+    """Structural phrase-integrity check (mechanism, no brand dictionary) — the
+    keyed-documenso sanitary law (2026-07-16). Malformed shapes:
+
+    * a leading or trailing coordinating conjunction;
+    * doubled conjunctions (``and and``, ``and &``);
+    * broken lead-verb coordination: ``<template-verb> and <Proper-noun> ...`` —
+      a coordinating conjunction directly after the lead verb must conjoin
+      another verb; a CAPITALIZED non-verb in that slot ('Browse and Stripe
+      events') means the verb was eaten. Lowercase third words pass ('Browse
+      and enforce server limits' — 'enforce' may simply be outside the vocab).
+    """
+    words = (name or "").split()
+    if not words:
+        return False
+    low = [w.lower() for w in words]
+    if low[0] in _CONJ_WORDS or low[-1] in _CONJ_WORDS:
+        return True
+    for a, b in zip(low, low[1:]):
+        if a in _CONJ_WORDS and b in _CONJ_WORDS:
+            return True
+    if (
+        len(words) >= 3
+        and low[0] in verbs
+        and low[1] in _CONJ_WORDS
+        and low[2] not in verbs
+        and words[2][:1].isupper()
+    ):
+        return True
+    return False
 
 
 def spans_overlap(a: Any, b: Any) -> bool:
@@ -232,12 +277,18 @@ def plan_uf_synth(
     ]
     members = index_flows_by_uf(eligible, flows)
 
-    # L-C2 — verb-phrase integrity (rename; feeds the echo test's effective name)
+    # L-C2 — verb-phrase integrity (rename; feeds the echo test's effective
+    # name). A repair whose RESULT is structurally malformed is never adopted
+    # (the sanitary guard — a rename must not eat a middle token and leave a
+    # dangling conjunction).
     for uf in eligible:
         nm = str(getattr(uf, "name", "") or "")
         if has_verb_stutter(nm, verbs):
             fixed = repair_stutter(nm, verbs)
-            if fixed and _norm(fixed) != _norm(nm):
+            if (
+                fixed and _norm(fixed) != _norm(nm)
+                and not is_malformed_phrase(fixed, verbs)
+            ):
                 plan.rename[_uf_id(uf)] = fixed
                 plan.reasons[_uf_id(uf)] = "lc2_verb_stutter"
 
@@ -376,11 +427,85 @@ def apply_uf_synth_fold(
                 prev.append(ln)
                 winner.previous_names = prev
     user_flows[:] = plan.survivors(user_flows)
+
+    # ── L-C4 FINAL pass — board uniqueness AFTER every pack fold/rename (the
+    # wave refutation, 2026-07-16: a fold/rename may land on a name an existing
+    # row already carries — twenty 'Manage profile' x2, openstatus 'locale
+    # tokens' x2). A collision is resolved by QUALIFICATION with the minimally
+    # distinguishing context in parens (PF display > domain > resource > id —
+    # the existing qualifier mechanism), NEVER a cross-PF fold. Only pack-
+    # eligible rows are ever renamed; markers/synthesized rows are untouchable
+    # (when one is in the collision, the real row takes the qualifier).
+    pf_disp: dict[str, str] = {}
+    for pf in product_features:
+        key = str(getattr(pf, "name", "") or "")
+        pf_disp[key] = str(getattr(pf, "display_name", None) or key)
+
+    def _editable(u: Any) -> bool:
+        return (
+            not getattr(u, "is_coverage_marker", False)
+            and not getattr(u, "synthesized", False)
+        )
+
+    def _cap(text: str) -> str:
+        t = (text or "").strip()
+        return (t[:1].upper() + t[1:]) if t else t
+
+    def _qual_candidates(u: Any) -> list[str]:
+        out: list[str] = []
+        pfid = str(getattr(u, "product_feature_id", "") or "")
+        disp = pf_disp.get(pfid, "")
+        if disp:
+            out.append(_cap(disp))
+        dom = str(getattr(u, "domain", "") or "")
+        if dom:
+            out.append(_cap(dom))
+        res = str(getattr(u, "resource", "") or "")
+        if res:
+            out.append(_cap(res))
+        out.append(str(getattr(u, "id", "") or ""))   # guaranteed-unique terminal
+        return [q for q in out if q]
+
+    groups: dict[str, list[Any]] = defaultdict(list)
+    for u in user_flows:
+        groups[_norm(str(getattr(u, "name", "") or ""))].append(u)
+    taken = {k for k, g in groups.items() if g}
+    lc4_qualified = 0
+    for key, group in sorted(groups.items()):
+        if len(group) < 2 or not key:
+            continue
+        editable = [u for u in group if _editable(u)]
+        if not editable:
+            continue                     # collision not pack-addressable
+        untouchable = [u for u in group if not _editable(u)]
+        if untouchable:
+            keep = untouchable[0]        # the untouchable row keeps the bare name
+        else:
+            keep = min(group, key=lambda u: (
+                -len(meaning_tokens(str(getattr(u, "name", "") or ""), verbs)),
+                -int(getattr(u, "member_count", 0) or 0),
+                -len(str(getattr(u, "name", "") or "")),
+                str(getattr(u, "id", "") or ""),
+            ))
+        for u in group:
+            if u is keep or not _editable(u):
+                continue
+            base = str(getattr(u, "name", "") or "")
+            for qual in _qual_candidates(u):
+                cand = f"{base} ({qual})"
+                nk = _norm(cand)
+                if nk not in taken:
+                    u.name = cand
+                    taken.add(nk)
+                    lc4_qualified += 1
+                    break
+
     reasons = plan.reasons
     return {
         "lc1_echo_folded": sum(1 for r in reasons.values() if r == "lc1_pf_echo"),
         "lc2_stutter_repaired": len(plan.rename),
         "lc3_family_folded": sum(1 for r in reasons.values() if r == "lc3_family_overlap"),
         "lc4_collisions": len(plan.collisions),
+        "lc4_qualified": lc4_qualified,
         "total_folded": len(plan.fold),
     }

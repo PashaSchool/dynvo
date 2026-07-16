@@ -15,6 +15,7 @@ from faultline.pipeline_v2.naming_contract import _verb_class_tokens, load_namin
 from faultline.pipeline_v2.uf_synth_fold import (
     apply_uf_synth_fold,
     has_verb_stutter,
+    is_malformed_phrase,
     is_pf_echo,
     plan_uf_synth,
     repair_stutter,
@@ -256,6 +257,130 @@ def test_spans_overlap_helper() -> None:
     assert spans_overlap(_flow("x", [("a.ts", 10, 40)]), _flow("y", [("a.ts", 30, 50)])) is True
     assert spans_overlap(_flow("x", [("a.ts", 10, 20)]), _flow("y", [("a.ts", 30, 50)])) is False
     assert spans_overlap(_flow("x", [("a.ts", 10, 40)]), _flow("y", [("b.ts", 10, 40)])) is False
+
+
+# ── PACK-BORN defect regressions (wave + keyed, 2026-07-16) ───────────────────
+
+
+def test_keyed_pair_coordinated_verb_list_never_mutilated() -> None:
+    """KEYED PAIR unit (documenso UF-045): the rename path must never build a
+    name that lost its middle verb. Both live phrase shapes stay VERBATIM:
+    'Browse and filter Stripe events' (conjunction second — protected) and
+    'Browse filter and Stripe events' (coordinated verb LIST — the third word
+    is the conjunction; the old repair dropped 'filter' and left the dangling
+    'and' -> 'Browse and Stripe events')."""
+    for nm in ("Browse and filter Stripe events",
+               "Browse filter and Stripe events"):
+        assert has_verb_stutter(nm, _V) is False, nm
+        uf = _uf("UF-1", nm, pf="api+", resource="webhook")
+        ufs = [uf]
+        apply_uf_synth_fold(ufs, [], [_pf("api+", "API")], _V)
+        assert uf.name == nm, nm    # verbatim — no middle token lost
+
+
+def test_malformed_phrase_patterns() -> None:
+    """Sanitary mechanism (no brand dictionary): the observed defect shape and
+    its structural family are flagged; every live legal coordinated name
+    passes."""
+    malformed = [
+        "Browse and Stripe events",        # the keyed defect verbatim
+        "Manage and GitHub metrics",       # verb + conj + Proper noun
+        "Browse and and filter events",    # doubled conjunction
+        "and manage documents",            # leading conjunction
+        "Manage documents and",            # trailing conjunction
+    ]
+    for nm in malformed:
+        assert is_malformed_phrase(nm, _V) is True, nm
+    legal = [
+        "Browse and filter Stripe events",             # verb-and-verb + brand
+        "Browse and enforce server limits",            # lowercase non-vocab verb
+        "Search and discover resources",
+        "Create and edit templates",
+        "Manage themes and locale",                    # noun-noun coordination
+        "Browse and manage team documents and folders",
+        "Manage organisation members and groups",
+        "Request and complete password reset",         # non-vocab lead verb
+    ]
+    for nm in legal:
+        assert is_malformed_phrase(nm, _V) is False, nm
+
+
+def test_rename_guard_never_adopts_malformed_result() -> None:
+    """Belt-and-braces: even when a stutter genuinely fires, a repair whose
+    result is malformed is skipped (name kept verbatim)."""
+    # 'Manage view and Stripe events': third word 'and' -> coordinated list ->
+    # not a stutter at all; and the hypothetical repair result
+    # 'Manage and Stripe events' is malformed -> either guard keeps the name.
+    nm = "Manage view and Stripe events"
+    uf = _uf("UF-1", nm, pf="x", resource="event")
+    plan = plan_uf_synth([uf], [], [_pf("x", "X")], _V)
+    assert plan.rename == {}
+    assert is_malformed_phrase("Manage and Stripe events", _V) is True
+
+
+def test_no_pack_output_name_is_malformed() -> None:
+    """MANDATE sanitary assert: across a representative board (every exhibit
+    class), NO name the pack emits matches a malformed pattern."""
+    ufs = [
+        _uf("UF-1", "Manage users", pf="users", resource="user"),
+        _uf("UF-2", "User", pf="users", resource="user"),
+        _uf("UF-3", "Browse up Slack notifications", pf="slack", resource="slack"),
+        _uf("UF-4", "Manage create topic", pf="topics", resource="topic"),
+        _uf("UF-5", "Browse & filter emails", pf="emails", resource="email"),
+        _uf("UF-6", "Browse filter and Stripe events", pf="api+", resource="event"),
+        _uf("UF-7", "Set up Slack integration", pf="slack", resource="slack"),
+    ]
+    pfs = [_pf("users", "Users"), _pf("slack", "Slack"), _pf("topics", "Topics"),
+           _pf("emails", "Emails"), _pf("api+", "API")]
+    apply_uf_synth_fold(ufs, [], pfs, _V)
+    for u in ufs:
+        assert not is_malformed_phrase(u.name, _V), u.name
+
+
+def test_lc4_wave_twenty_shape_qualifies_never_folds() -> None:
+    """WAVE shape (twenty): a rename lands on 'Manage profile' while an existing
+    row (mc=9, another PF) already carries it. Final L-C4 pass QUALIFIES the
+    non-canonical row with its PF display in parens — never a cross-PF fold."""
+    existing = _uf("UF-1", "Manage profile", pf="members", resource="profile",
+                   members=[f"m{i}" for i in range(9)])
+    # stutter-shaped row whose repair collides: 'Manage edit profile' -> 'Manage profile'
+    renamed = _uf("UF-2", "Manage edit profile", pf="settings", resource="profile",
+                  members=["s1", "s2"])
+    ufs = [existing, renamed]
+    tele = apply_uf_synth_fold(
+        ufs, [], [_pf("members", "Members"), _pf("settings", "Settings")], _V)
+    assert len(ufs) == 2                                  # NO fold
+    names = sorted(u.name for u in ufs)
+    assert names == ["Manage profile", "Manage profile (Settings)"]
+    # the canonical (more members) kept the bare name
+    assert existing.name == "Manage profile"
+    assert tele["lc4_qualified"] == 1
+
+
+def test_lc4_wave_openstatus_shape_two_singletons() -> None:
+    """WAVE shape (openstatus): 'locale tokens' x2 (mc=1,1) pre-existing on the
+    board — one row is qualified to uniqueness; both survive."""
+    a = _uf("UF-1", "locale tokens", pf="i18n", resource="locale", members=["a"])
+    b = _uf("UF-2", "locale tokens", pf="status-page", resource="locale", members=["b"])
+    ufs = [a, b]
+    tele = apply_uf_synth_fold(
+        ufs, [], [_pf("i18n", "I18n"), _pf("status-page", "Status Page")], _V)
+    assert len(ufs) == 2
+    assert len({u.name for u in ufs}) == 2                # unique board
+    assert tele["lc4_qualified"] == 1
+    assert any("(" in u.name for u in ufs)                # parenthetical qualifier
+
+
+def test_lc4_untouchable_partner_keeps_bare_name() -> None:
+    """A synthesized/marker collision partner is NEVER renamed — the real row
+    takes the qualifier."""
+    real = _uf("UF-1", "Documents", pf="docs", resource="document", members=["r"])
+    synth = _uf("UF-2", "Documents", pf="team", resource="document", members=["s"])
+    synth.synthesized = True
+    ufs = [real, synth]
+    apply_uf_synth_fold(ufs, [], [_pf("docs", "Docs"), _pf("team", "Team")], _V)
+    assert synth.name == "Documents"                      # untouched
+    assert real.name == "Documents (Docs)"                # qualified
 
 
 # ── L-C4 board uniqueness ──────────────────────────────────────────────────────
