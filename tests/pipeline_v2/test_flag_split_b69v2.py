@@ -127,13 +127,13 @@ def test_all_three_flags_arm_all(monkeypatch):
 # ── registry parity (union append, no schema bump) ──────────────────────
 
 
-def test_registry_parity_all_flags_no_schema_bump():
+def test_registry_parity_all_flags_schema_bumped():
     assert "FAULTLINE_HOMING_HYGIENE" in ENV_OUTPUT_FLAGS
     assert "FAULTLINE_SEED_HYGIENE" in ENV_OUTPUT_FLAGS
     assert "FAULTLINE_NAMING_LAW" in ENV_OUTPUT_FLAGS
-    # the bump rides the separate flip commit ONLY (flip-protocol);
-    # KEY_SCHEMA 29 = the B62 flip — pinned so a silent bump fails loud.
-    assert KEY_SCHEMA_VERSION == 29
+    # SEMANTIC (horizon-1 flip): the bump rides the flip commit (flip-protocol);
+    # KEY_SCHEMA 30 = the horizon-1 flip — pinned so a silent bump fails loud.
+    assert KEY_SCHEMA_VERSION == 30
 
 
 # ── behaviour matrix: HOMING observables ─────────────────────────────────

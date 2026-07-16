@@ -743,7 +743,21 @@ ENV_OUTPUT_FLAGS = (
 #: kill-switch unit per flag). B49/B51 transport flags stay OFF (superseded
 #: by B52 FLOWFUL_TRANSPORT_LANE). DISPATCH_RESOLVER (B64) NOT in this flip.
 #: scan_meta.key_schema=29 emitted so downstream rulers gate new-world logic.
-KEY_SCHEMA_VERSION = 29
+#: v30 (horizon-1 flip, 2026-07-16 — plan docs/anchor-arc/flip-pack-20260716.md):
+#: the horizon-1 pack flips 10 previously-default-OFF flags to default ON, each
+#: in its own commit (per flip-protocol), the bump riding this final commit:
+#: FAULTLINE_TERMINAL_CLASSIFICATION (B68), _SERVER_API_ENTRIES (B66),
+#: _HOMING_HYGIENE (B69-v2), _NAMING_LAW (B70), _RECALL_QUAL_CASING (B70),
+#: _GRAIN_WAVE (B58-v3), _OWNERSHIP_V2 (B66-v2), _SPA_ROUTER_ENTRIES (B65-v3),
+#: _NAMING_PACK (B71), _FLOW_GRAIN (B71). Default flips change what "unset"
+#: means, so cached entries keyed under unset must not be served across them
+#: (v16/v21/v25/v27/v28/v29 precedent). Every flag keeps its X=0 kill-switch
+#: (explicit "0"/"false"/"off" still disables — inverted-kill-switch unit per
+#: flag). NOT flipped (stay OFF): FAULTLINE_JOBS_ENTRIES (awaits B24 PF-assembly
+#: guard), _SEED_HYGIENE (no own gates), _BLOB_PARTITION (parked). B49/B51
+#: transport flags stay OFF (superseded). scan_meta.key_schema=30 emitted so
+#: downstream rulers gate new-world logic.
+KEY_SCHEMA_VERSION = 30
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
