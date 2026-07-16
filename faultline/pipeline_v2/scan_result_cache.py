@@ -590,9 +590,11 @@ ENV_OUTPUT_FLAGS = (
     # SUBSCRIPTION for GraphQL/tRPC) for decorator-/DSL-routed backends whose
     # URL lives in code, not the filesystem (NestJS controllers, GraphQL
     # code-first resolvers, tRPC procedures, koa/hono routers) so their
-    # flows/journeys mint. Default OFF; =0/unset is byte-identical. Appended
-    # WITHOUT a KEY_SCHEMA bump — the bump rides the separate later flip commit
-    # only (flip-protocol).
+    # flows/journeys mint. Default ON since the 2026-07-16 horizon-1 flip
+    # (KEY_SCHEMA 30; keyed proof twenty + hoppscotch (meter) + cal (trpc)
+    # green, B66 — nestjs/graphql/trpc/koa meter ~0). ``=0``/false/off keeps
+    # the extractor inert AND unregistered, byte-identical to pre-B66
+    # (kill-switch).
     "FAULTLINE_SERVER_API_ENTRIES",
     # B70 (2026-07-15) — capitalize the B31 route-terminal parenthetical
     # qualifier ('Manage links (general)' -> '(General)') so it matches the

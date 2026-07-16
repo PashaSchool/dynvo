@@ -67,9 +67,10 @@ def _extract(tmp_path: Path, rel: str, body: str, **kw):
 # ── flag / kill-switch ───────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC (horizon-1 flip): unset now defaults ON.
     monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
-    assert server_api_entries_enabled() is False
+    assert server_api_entries_enabled() is True
     for falsy in ("0", "false", "off", "no", ""):
         monkeypatch.setenv(SERVER_API_ENTRIES_ENV, falsy)
         assert server_api_entries_enabled() is False, falsy
@@ -78,9 +79,45 @@ def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
         assert server_api_entries_enabled() is True, truthy
 
 
-def test_off_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset flag -> zero candidates even with a real controller present."""
+def test_inverted_killswitch_server_api_entries(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch: unset ≡ explicit ``1``; ``0``/``false`` == the
+    pre-flip (old) OFF behaviour."""
     monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    unset = server_api_entries_enabled()
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "1")
+    assert server_api_entries_enabled() is unset is True
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "0")
+    assert server_api_entries_enabled() is False
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "false")
+    assert server_api_entries_enabled() is False
+
+
+def test_armed_default_preserves_twin_routes_unset(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """MECHANICAL-DEPENDENCY pair (armed_sources): the helper gates BOTH
+    registration and the per-workspace route-preservation. With the flag
+    UNSET (default ON) the coalesced twin carries the routes union — unset
+    ≡ explicit ``1`` at the armed-preservation surface."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    monkeypatch.delenv("FAULTLINE_JOBS_ENTRIES", raising=False)
+    a, b = _twin_candidates()
+    merged = _merge_anchors_across_workspaces(
+        [("srv", {SERVER_API_ENTRY_SOURCE: [a, b]})]
+    )
+    (cand,) = merged[SERVER_API_ENTRY_SOURCE]
+    assert set(cand.routes) == set(a.routes) | set(b.routes)
+
+
+def test_off_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kill-switch: explicit off -> zero candidates even with a real
+    controller present."""
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "0")
     rel = _write(
         tmp_path,
         "src/users/users.controller.ts",
@@ -99,7 +136,8 @@ def test_off_not_registered_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
         _load_default_extractors,
     )
 
-    monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF-registry assertion.
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "0")
     names_off = {e.name for e in _load_default_extractors()}
     assert SERVER_API_ENTRY_SOURCE not in names_off
 
@@ -509,7 +547,9 @@ def test_ws_merge_legacy_drop_off(monkeypatch: pytest.MonkeyPatch) -> None:
         _merge_anchors_across_workspaces,
     )
 
-    monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the legacy OFF-world
+    # (both flags off); JOBS_ENTRIES is NOT flipped, so its delenv still = OFF.
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "0")
     monkeypatch.delenv("FAULTLINE_JOBS_ENTRIES", raising=False)
     a, b = _twin_candidates()
     merged = _merge_anchors_across_workspaces(
@@ -577,7 +617,8 @@ def test_ws_merge_unarmed_route_source_dropped_even_when_b66_armed(
     assert cand_on.routes == ()
     assert set(cand_on.paths) == set(a.paths) | set(b.paths)
 
-    monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF-world half.
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "0")
     off = _merge_anchors_across_workspaces([("srv", {"route": [a, b]})])
     (cand_off,) = off["route"]
     # ON == OFF for the unarmed source (byte-for-byte on this group).
@@ -639,8 +680,10 @@ def test_ws_merge_jobs_armed_gates_by_origin(
     )
     route_a, route_b = _py_route_twins()
 
+    # MECHANICAL (horizon-1 flip): explicit "0" keeps the "B66 off"
+    # precondition (unset now defaults ON).
     monkeypatch.setenv("FAULTLINE_JOBS_ENTRIES", "1")
-    monkeypatch.delenv(SERVER_API_ENTRIES_ENV, raising=False)
+    monkeypatch.setenv(SERVER_API_ENTRIES_ENV, "0")
     merged = _merge_anchors_across_workspaces(
         [("srv", {"jobs-entry": [ja, jb], "route": [route_a, route_b]})]
     )

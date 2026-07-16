@@ -85,12 +85,13 @@ _MARKERS = (
 
 
 def server_api_entries_enabled() -> bool:
-    """``True`` when ``FAULTLINE_SERVER_API_ENTRIES`` is set truthy (default OFF).
-
-    Unset/``0`` keeps the extractor inert (``extract`` -> ``[]``) AND unregistered
-    (see :mod:`faultline.pipeline_v2.stage_1_extractors`), so every scan is
-    byte-identical to pre-B66."""
-    return os.environ.get(SERVER_API_ENTRIES_ENV, "0").strip().lower() not in {
+    """Default **ON** since the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30;
+    keyed proof twenty + hoppscotch + cal green, B66 — nestjs/graphql/trpc/koa
+    meter ~0). ``FAULTLINE_SERVER_API_ENTRIES=0`` (or false/no/off) keeps the
+    extractor inert (``extract`` -> ``[]``) AND unregistered (see
+    :mod:`faultline.pipeline_v2.stage_1_extractors`), byte-identical to pre-B66
+    — explicit off is a valid kill-switch forever; unset ≡ explicit ``1``."""
+    return os.environ.get(SERVER_API_ENTRIES_ENV, "1").strip().lower() not in {
         "", "0", "false", "no", "off",
     }
 
