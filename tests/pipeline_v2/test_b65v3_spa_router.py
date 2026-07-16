@@ -78,9 +78,10 @@ def _routes_of(anchors) -> set[tuple[str, str, str]]:
 # ── flag / kill-switch ───────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC (horizon-1 flip): unset now defaults ON.
     monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
-    assert spa_router_entries_enabled() is False
+    assert spa_router_entries_enabled() is True
     for falsy in ("0", "false", "off", "no", ""):
         monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, falsy)
         assert spa_router_entries_enabled() is False, falsy
@@ -89,9 +90,43 @@ def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
         assert spa_router_entries_enabled() is True, truthy
 
 
-def test_off_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset flag -> zero candidates even with real vue pages present."""
+def test_inverted_killswitch_spa_router_entries(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch: unset ≡ explicit ``1``; ``0``/``false`` == the
+    pre-B65-v3 OFF behaviour."""
     monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    unset = spa_router_entries_enabled()
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "1")
+    assert spa_router_entries_enabled() is unset is True
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
+    assert spa_router_entries_enabled() is False
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "false")
+    assert spa_router_entries_enabled() is False
+
+
+def test_ws_merge_armed_by_default_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MECHANICAL-DEPENDENCY pair (armed_sources): the helper gates BOTH
+    registration and the per-workspace route-preservation. With the flag
+    UNSET (default ON) the spa-page source is armed — coalesced twins keep
+    the full routes union (unset ≡ explicit ``1`` at the arming surface; the
+    SPA-mint fence in 6.86 is armed independently by the spa-page rows)."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    merged = _merge_anchors_across_workspaces(_hopp_twin_results())
+    routes = {r for c in merged[SPA_PAGE_SOURCE] for r in (c.routes or ())}
+    assert {r[0] for r in routes} == {
+        "/enter", "/profile", "/profile/teams", "/graphql",
+    }
+
+
+def test_off_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kill-switch: explicit off -> zero candidates even with real vue pages
+    present."""
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     files = [
         _vue_pkg(tmp_path),
         _write(tmp_path, "src/pages/settings.vue", "<template/>"),
@@ -108,7 +143,8 @@ def test_off_not_registered_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
         _load_default_extractors,
     )
 
-    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF-registry assertion.
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     names_off = {e.name for e in _load_default_extractors()}
     assert SPA_PAGE_SOURCE not in names_off
 
@@ -579,7 +615,8 @@ def test_seg_c_off_routes_index_byte_identical(tmp_path: Path,
     from faultline.pipeline_v2.extractors.base import AnchorCandidate
     from faultline.pipeline_v2.indexes import build_routes_index
 
-    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     files = [
         _vue_pkg(tmp_path),
         _write(tmp_path, "src/pages/settings.vue", "<template/>"),
@@ -708,7 +745,8 @@ def test_ws_merge_same_slug_twins_lose_routes_when_off(
         _merge_anchors_across_workspaces,
     )
 
-    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF (unarmed) world.
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     merged = _merge_anchors_across_workspaces(_hopp_twin_results())
     routes = {r for c in merged[SPA_PAGE_SOURCE] for r in (c.routes or ())}
     assert {r[0] for r in routes} == {"/graphql"}
