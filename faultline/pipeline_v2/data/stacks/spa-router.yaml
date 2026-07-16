@@ -1,0 +1,67 @@
+# Client-side SPA router grammar — consumed by the SpaRouterExtractor
+# (faultline/pipeline_v2/extractors/spa_router.py, B65-v3).
+#
+# Two mechanisms, one flag (FAULTLINE_SPA_ROUTER_ENTRIES), one source
+# slug (``spa-page``):
+#
+#   Seg A — vue file-based pages (vite-plugin-pages / unplugin-vue-router
+#     in a non-Nuxt Vue SPA; Nuxt-style ``_param`` AND bracket ``[param]``
+#     dynamics). Pure path arithmetic over ``pages/**/*.vue`` — the file
+#     path encodes the URL. Nuxt trees self-skip (the filesystem
+#     RouteFileExtractor's ``nuxt`` grammar already owns them).
+#   Seg B — react-router route config parsed from code: JSX
+#     ``<Route path=...>`` trees (nested paths joined) and
+#     ``createBrowserRouter``/``createHashRouter``/``createMemoryRouter``
+#     object arrays. The mounted element resolves through the file's own
+#     imports to its entry file; a ``lazy: () => import(...)`` target IS
+#     the entry (B37 lazy-dispatch bridge). Next / Remix / react-router
+#     FRAMEWORK-mode repos disqualify (their pages are already covered
+#     by filesystem extractors — SACRED no-dup law).
+#
+# "Mechanisms not vocabularies": dep markers below ACTIVATE a mechanism;
+# they are not per-repo name dictionaries. All paths POSIX. Adding a
+# convention = edit here, no Python change.
+
+confidence: 0.8
+
+# Shared artifact-class skips (mirrors server-api-entries.yaml — the
+# stories/tests/examples classes the shared test-strip predicate does
+# not fully cover). Segment match is EXACT, never a substring.
+skip_path_segments:
+  - storybook
+  - stories
+  - examples
+  - example
+  - playground
+  - demo
+  - demos
+  - sample
+  - samples
+  - generated
+skip_filename_markers:
+  - stories
+  - story
+  - test
+  - spec
+  - cy
+  - e2e
+
+# ── Seg A — vue file-based pages ─────────────────────────────────────────
+vue:
+  # ANY match in dependencies OR devDependencies of the root / any
+  # workspace / any shallow tracked package.json activates Seg A
+  # (vite-plugin-pages is conventionally a devDependency).
+  dep_markers:
+    - vue-router
+    - vite-plugin-pages
+    - unplugin-vue-router
+  # Routing-root component runs, matched ANYWHERE in the path (monorepo
+  # workspace prefixes are transparently stripped). Longest-first.
+  roots:
+    - ["src", "pages"]
+    - ["pages"]
+  suffix: ".vue"
+  # Leaf stems that carry no URL segment (the directory tree is the URL).
+  index_stems:
+    - index
+

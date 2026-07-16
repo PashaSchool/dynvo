@@ -656,6 +656,20 @@ ENV_OUTPUT_FLAGS = (
     # OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a separate later
     # commit per flip-protocol).
     "FAULTLINE_NAMING_PACK",
+    # B65-v3 (2026-07-16) — SPA router extraction, ONE flag gates both
+    # segments (the B66 precedent): Seg A vue file-based pages
+    # (vite-plugin-pages / unplugin-vue-router ``pages/**/*.vue`` in a
+    # non-Nuxt Vue SPA — hoppscotch routes_index=1 at 33 real vue pages)
+    # + Seg B react-router code config (JSX ``<Route path=...>`` trees +
+    # ``createBrowserRouter`` object arrays; lazy-import target = entry —
+    # Soc0 App.tsx 60+ routes invisible). Emits routes_index rows
+    # method=PAGE kind=spa-page, so flows/journeys mint and the B65
+    # partition surface-detect sees SPA product surfaces. Registration is
+    # flag-gated at the registry (extractor_hits key parity, B67 lesson).
+    # Default OFF; =0/unset byte-identical. Appended WITHOUT a KEY_SCHEMA
+    # bump — the bump rides the separate later flip commit only
+    # (flip-protocol).
+    "FAULTLINE_SPA_ROUTER_ENTRIES",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

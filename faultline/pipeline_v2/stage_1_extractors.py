@@ -190,6 +190,26 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     except ImportError:  # pragma: no cover — missing extractor is non-fatal
         pass
 
+    # B65-v3 — client-side SPA router extractor. Emits routes_index entries
+    # (method=PAGE, kind=spa-page) for vue file-based pages (vite-plugin-pages
+    # in non-Nuxt Vue SPAs) and react-router code configs (JSX <Route> trees /
+    # createBrowserRouter arrays, lazy target = entry), so SPA page surfaces
+    # mint flows/journeys and the partition surface-detect sees them.
+    # Registration is FLAG-GATED (FAULTLINE_SPA_ROUTER_ENTRIES, default OFF)
+    # for the same reason as B66/B67: scan_meta.extractor_hits serializes
+    # EVERY registered source key. The extract() gate is a second guard.
+    try:
+        from faultline.pipeline_v2.extractors.spa_router import (
+            spa_router_entries_enabled,
+        )
+        if spa_router_entries_enabled():
+            _try(
+                "faultline.pipeline_v2.extractors.spa_router",
+                "SpaRouterExtractor",
+            )
+    except ImportError:  # pragma: no cover — missing extractor is non-fatal
+        pass
+
     return out
 
 
