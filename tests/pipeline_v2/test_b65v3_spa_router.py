@@ -279,3 +279,241 @@ def test_seg_a_determinism(tmp_path: Path, spa_on) -> None:
     ex = SpaRouterExtractor()
     ctx = _ctx(tmp_path, files)
     assert ex.extract(ctx) == ex.extract(ctx)
+
+
+# ── Seg B — react-router code config (Soc0-shaped, live census) ─────────────
+
+
+def _rr_pkg(tmp_path: Path, rel: str = "frontend/package.json") -> str:
+    return _write(
+        tmp_path, rel,
+        '{"name": "web", "dependencies": {"react": "^18.0.0", '
+        '"react-router-dom": "^7.6.1"}}',
+    )
+
+
+_SOC0_APP_TSX = """
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { HomePage } from '@/pages/HomePage';
+import { InvestigationsPage } from '@/pages/InvestigationsPage';
+import { InvestigationDetailPage } from '@/pages/InvestigationDetailPage';
+import { CasesPage } from '@/pages/CasesPage';
+import { TrialGuard } from '@/components/TrialGuard';
+import MitreCoveragePage from '@/pages/MitreCoveragePage';
+
+export function App() {
+  return (
+    <Routes>
+      <Route
+        element={
+          <Shell />
+        }
+      >
+        <Route path="/" element={<HomePage />} />
+        <Route path="/investigations" element={<InvestigationsPage />} />
+        <Route path="/investigations/:investigationId" element={<InvestigationDetailPage />} />
+        <Route path="/cases" element={<TrialGuard><CasesPage /></TrialGuard>} />
+        <Route path="/detectors/mitre-coverage" element={<TrialGuard><MitreCoveragePage /></TrialGuard>} />
+        <Route path="/executive-brief" element={<Navigate to="/autonomous-soc/overview" replace />} />
+        <Route path="/policy" element={<TrialGuard><Navigate to="/knowledge" replace /></TrialGuard>} />
+      </Route>
+    </Routes>
+  );
+}
+"""
+
+
+def _soc0_files(tmp_path: Path) -> list[str]:
+    files = [
+        _rr_pkg(tmp_path),
+        _write(tmp_path, "frontend/src/App.tsx", _SOC0_APP_TSX),
+        _write(tmp_path, "frontend/src/pages/HomePage.tsx", "export const HomePage = () => null"),
+        _write(tmp_path, "frontend/src/pages/InvestigationsPage.tsx", "export const InvestigationsPage = () => null"),
+        _write(tmp_path, "frontend/src/pages/InvestigationDetailPage.tsx", "export const InvestigationDetailPage = () => null"),
+        _write(tmp_path, "frontend/src/pages/CasesPage.tsx", "export const CasesPage = () => null"),
+        _write(tmp_path, "frontend/src/pages/MitreCoveragePage.tsx", "export default () => null"),
+        _write(tmp_path, "frontend/src/components/TrialGuard.tsx", "export const TrialGuard = ({children}) => children"),
+    ]
+    return files
+
+
+def test_seg_b_soc0_jsx_routes(tmp_path: Path, spa_on) -> None:
+    """The Soc0 App.tsx shape POIMENNO: pathless layout wrapper transparent,
+    @/-alias entry resolution, guard-wrapped innermost component wins,
+    :param paths, Navigate redirects skipped (bare AND guard-wrapped)."""
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, _soc0_files(tmp_path)))
+    routes = _routes_of(anchors)
+
+    assert ("/", "PAGE", "frontend/src/pages/HomePage.tsx") in routes
+    assert ("/investigations", "PAGE",
+            "frontend/src/pages/InvestigationsPage.tsx") in routes
+    assert ("/investigations/:investigationId", "PAGE",
+            "frontend/src/pages/InvestigationDetailPage.tsx") in routes
+    # guard wrapper: the INNERMOST component is the entry, not TrialGuard
+    assert ("/cases", "PAGE", "frontend/src/pages/CasesPage.tsx") in routes
+    assert ("/detectors/mitre-coverage", "PAGE",
+            "frontend/src/pages/MitreCoveragePage.tsx") in routes
+    # redirects are not pages — bare Navigate AND guard-wrapped Navigate
+    assert all("/executive-brief" != r[0] for r in routes)
+    assert all("/policy" != r[0] for r in routes)
+    # slugs: URL-segment first, component fallback for "/"
+    names = {a.name for a in anchors}
+    assert {"home", "investigations", "cases", "detectors"} <= names
+
+
+def test_seg_b_component_slug_fallback(tmp_path: Path, spa_on) -> None:
+    """A '/' route has no static segment — the resolved component name
+    (suffix-stripped) is the slug: HomePage -> home."""
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, _soc0_files(tmp_path)))
+    by_name = {a.name: a for a in anchors}
+    assert "home" in by_name
+    assert by_name["home"].paths == ("frontend/src/pages/HomePage.tsx",)
+
+
+def test_seg_b_create_browser_router_with_lazy(tmp_path: Path, spa_on) -> None:
+    """createBrowserRouter object arrays: nested children join parent paths;
+    a route-level lazy(() => import(...)) target IS the entry (B37 bridge);
+    a lazy const binding resolves through the import map."""
+    router = """
+import { createBrowserRouter } from 'react-router-dom';
+import { lazy } from 'react';
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+export const router = createBrowserRouter([
+  {
+    path: '/app',
+    element: <Shell />,
+    children: [
+      { path: 'dashboard', lazy: () => import('./pages/DashboardPage') },
+      { path: 'settings', element: <SettingsPage /> },
+      { index: true, element: <SettingsPage /> },
+    ],
+  },
+]);
+"""
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(tmp_path, "src/router.tsx", router),
+        _write(tmp_path, "src/pages/DashboardPage.tsx", "export default () => null"),
+        _write(tmp_path, "src/pages/SettingsPage.tsx", "export default () => null"),
+    ]
+    routes = _routes_of(SpaRouterExtractor().extract(_ctx(tmp_path, files)))
+    assert ("/app/dashboard", "PAGE", "src/pages/DashboardPage.tsx") in routes
+    assert ("/app/settings", "PAGE", "src/pages/SettingsPage.tsx") in routes
+    # index route rides the parent path
+    assert ("/app", "PAGE", "src/pages/SettingsPage.tsx") in routes
+
+
+def test_seg_b_nested_relative_jsx_paths(tmp_path: Path, spa_on) -> None:
+    """Nested JSX <Route> with RELATIVE child paths joins through the tag
+    stack: path="settings" under path="/account" -> /account/settings."""
+    app = """
+import { Route, Routes } from 'react-router-dom';
+import { ProfilePane } from './panes/ProfilePane';
+export const App = () => (
+  <Routes>
+    <Route path="/account">
+      <Route path="settings" element={<ProfilePane />} />
+    </Route>
+  </Routes>
+);
+"""
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(tmp_path, "src/App.tsx", app),
+        _write(tmp_path, "src/panes/ProfilePane.tsx", "export const ProfilePane = () => null"),
+    ]
+    routes = _routes_of(SpaRouterExtractor().extract(_ctx(tmp_path, files)))
+    assert ("/account/settings", "PAGE", "src/panes/ProfilePane.tsx") in routes
+
+
+def test_seg_b_no_dep_is_inert(tmp_path: Path, spa_on) -> None:
+    """<Route> JSX WITHOUT a react-router(-dom) dep -> no candidates."""
+    files = [
+        _write(tmp_path, "package.json", '{"name": "x", "dependencies": {}}'),
+        _write(
+            tmp_path, "src/App.tsx",
+            'import { X } from "./X";\n'
+            '<Routes><Route path="/x" element={<X />} /></Routes>',
+        ),
+        _write(tmp_path, "src/X.tsx", "export const X = () => null"),
+    ]
+    assert SpaRouterExtractor().extract(_ctx(tmp_path, files)) == []
+
+
+def test_seg_b_next_and_framework_repos_disqualify(
+    tmp_path: Path, spa_on,
+) -> None:
+    """SACRED no-dup: a Next repo (embedded react-router widget) and a
+    react-router FRAMEWORK-mode repo (config file / @react-router/*) never
+    activate Seg B — their pages are covered by filesystem extractors."""
+    app_body = (
+        'import { W } from "./W";\n'
+        '<Routes><Route path="/widget" element={<W />} /></Routes>'
+    )
+    # Next repo with an embedded react-router widget
+    files = [
+        _write(
+            tmp_path, "package.json",
+            '{"name": "x", "dependencies": {"next": "14.0.0", '
+            '"react-router-dom": "^6.0.0"}}',
+        ),
+        _write(tmp_path, "src/App.tsx", app_body),
+        _write(tmp_path, "src/W.tsx", "export const W = () => null"),
+    ]
+    assert SpaRouterExtractor().extract(_ctx(tmp_path, files)) == []
+
+    # react-router framework mode (the Remix successor)
+    fw = tmp_path / "fw"
+    files_fw = [
+        _write(
+            fw, "package.json",
+            '{"name": "x", "dependencies": {"react-router": "^7.0.0"}, '
+            '"devDependencies": {"@react-router/dev": "^7.0.0"}}',
+        ),
+        _write(fw, "react-router.config.ts", "export default {}"),
+        _write(fw, "app/App.tsx", app_body),
+        _write(fw, "app/W.tsx", "export const W = () => null"),
+    ]
+    assert SpaRouterExtractor().extract(_ctx(fw, files_fw)) == []
+
+
+def test_seg_b_stories_and_tests_never_entries(tmp_path: Path, spa_on) -> None:
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(
+            tmp_path, "src/App.stories.tsx",
+            'import { P } from "./P";\n'
+            '<Routes><Route path="/story" element={<P />} /></Routes>',
+        ),
+        _write(
+            tmp_path, "src/__tests__/App.tsx",
+            'import { P } from "../P";\n'
+            '<Routes><Route path="/tested" element={<P />} /></Routes>',
+        ),
+        _write(tmp_path, "src/P.tsx", "export const P = () => null"),
+    ]
+    assert SpaRouterExtractor().extract(_ctx(tmp_path, files)) == []
+
+
+def test_seg_b_unresolvable_entry_falls_back_to_config_file(
+    tmp_path: Path, spa_on,
+) -> None:
+    """An element whose import cannot be resolved (external package /
+    ambiguous alias) still emits the route — entry = the config file."""
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(
+            tmp_path, "src/App.tsx",
+            'import { VendorPage } from "some-external-kit";\n'
+            '<Routes><Route path="/vendor" element={<VendorPage />} /></Routes>',
+        ),
+    ]
+    routes = _routes_of(SpaRouterExtractor().extract(_ctx(tmp_path, files)))
+    assert ("/vendor", "PAGE", "src/App.tsx") in routes
+
+
+def test_seg_b_determinism(tmp_path: Path, spa_on) -> None:
+    files = _soc0_files(tmp_path)
+    ex = SpaRouterExtractor()
+    ctx = _ctx(tmp_path, files)
+    assert ex.extract(ctx) == ex.extract(ctx)

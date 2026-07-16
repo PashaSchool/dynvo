@@ -51,6 +51,7 @@ No LLM. No network. Read-only.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -363,6 +364,517 @@ def _collect_vue_pages(ctx: "ScanContext") -> list[_Entry]:
     return entries
 
 
+# ── Seg B — react-router code config ─────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _ReactRouterGrammar:
+    dep_markers: tuple[str, ...]
+    disqualify_deps_exact: tuple[str, ...]
+    disqualify_dep_prefixes: tuple[str, ...]
+    disqualify_config_files: tuple[str, ...]
+    file_markers: tuple[str, ...]
+    extensions: tuple[str, ...]
+    local_alias_prefixes: tuple[str, ...]
+    redirect_components: frozenset[str]
+    component_suffix_strip: tuple[str, ...]
+
+
+@lru_cache(maxsize=1)
+def _rr_grammar() -> _ReactRouterGrammar | None:
+    block = _cfg().get("react_router")
+    if not isinstance(block, dict):
+        return None
+
+    def _tup(key: str) -> tuple[str, ...]:
+        return tuple(str(s) for s in (block.get(key) or ()))
+
+    return _ReactRouterGrammar(
+        dep_markers=_tup("dep_markers"),
+        disqualify_deps_exact=_tup("disqualify_deps_exact"),
+        disqualify_dep_prefixes=_tup("disqualify_dep_prefixes"),
+        disqualify_config_files=_tup("disqualify_config_files"),
+        file_markers=_tup("file_markers"),
+        extensions=_tup("extensions"),
+        local_alias_prefixes=_tup("local_alias_prefixes"),
+        redirect_components=frozenset(_tup("redirect_components")),
+        component_suffix_strip=_tup("component_suffix_strip"),
+    )
+
+
+def _rr_active(ctx: "ScanContext", gr: _ReactRouterGrammar) -> bool:
+    """Dep-corroborated activation with the framework disqualifiers."""
+    manifests = _manifests(ctx)
+    if not _has_dep(manifests, gr.dep_markers):
+        return False
+    if gr.disqualify_deps_exact and _has_dep(
+        manifests, gr.disqualify_deps_exact,
+    ):
+        return False
+    if gr.disqualify_dep_prefixes and _has_dep_prefix(
+        manifests, gr.disqualify_dep_prefixes,
+    ):
+        return False
+    for f in ctx.tracked_files:
+        base = posix(f).rsplit("/", 1)[-1]
+        if any(base.startswith(cf) for cf in gr.disqualify_config_files):
+            return False
+    return True
+
+
+# ── Seg B imports / resolution ──
+
+
+_IMPORT_DEFAULT_RE = re.compile(
+    r"import\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\})?\s+from\s*"
+    r"[\"'`]([^\"'`]+)[\"'`]",
+)
+_IMPORT_NAMED_RE = re.compile(
+    r"import\s+(?:[A-Za-z_$][\w$]*\s*,\s*)?\{([^}]*)\}\s*from\s*"
+    r"[\"'`]([^\"'`]+)[\"'`]",
+)
+_LAZY_BINDING_RE = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:React\s*\.\s*)?lazy\s*"
+    r"\(\s*\(\s*\)\s*=>\s*import\s*\(\s*[\"'`]([^\"'`]+)[\"'`]\s*\)",
+)
+_LAZY_ROUTE_RE = re.compile(
+    r"^\s*\(\s*\)\s*=>\s*import\s*\(\s*[\"'`]([^\"'`]+)[\"'`]\s*\)",
+)
+_COMPONENT_IDENT_RE = re.compile(r"<\s*([A-Z][\w.]*)|Component\s*:\s*([A-Z][\w$]*)")
+_TAG_TOKEN_RE = re.compile(r"</?\s*[A-Z][\w.]*|/>")
+
+_ENTRY_EXTS = ("", ".tsx", ".ts", ".jsx", ".js",
+               "/index.tsx", "/index.ts", "/index.jsx", "/index.js")
+
+
+def _import_map(text: str) -> dict[str, str]:
+    """Local component name → import specifier (default + named + lazy).
+
+    Lazy bindings map the LOCAL name to the imported spec directly — the
+    lazy target is the entry by the B37 bridge law."""
+    out: dict[str, str] = {}
+    for m in _IMPORT_DEFAULT_RE.finditer(text):
+        out.setdefault(m.group(1), m.group(2))
+    for m in _IMPORT_NAMED_RE.finditer(text):
+        for piece in m.group(1).split(","):
+            piece = piece.strip()
+            if not piece or piece.startswith("type "):
+                continue
+            if " as " in piece:
+                _orig, alias = (s.strip() for s in piece.split(" as ", 1))
+            else:
+                alias = piece
+            if alias.isidentifier():
+                out.setdefault(alias, m.group(2))
+    for m in _LAZY_BINDING_RE.finditer(text):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def _resolve_spec(
+    spec: str,
+    config_file: str,
+    tracked: tuple[str, ...],
+    gr: _ReactRouterGrammar,
+) -> str | None:
+    """Resolve an import specifier to a tracked repo file, or ``None``.
+
+    Relative specs resolve against the config file's directory (exact
+    match + extension/index probing). Alias-prefixed specs (``@/x`` →
+    tail ``x``) resolve by UNIQUE suffix-match against tracked files —
+    ambiguity is an honest skip (no guessing across monorepo apps).
+    Bare-package specs are external → ``None``."""
+    tracked_set = frozenset(tracked)
+    if spec.startswith("."):
+        base_dir = config_file.rsplit("/", 1)[0] if "/" in config_file else ""
+        base = posixpath.normpath(
+            (base_dir + "/" if base_dir else "") + spec
+        )
+        if base.startswith(".."):
+            return None
+        for ext in _ENTRY_EXTS:
+            cand = base + ext
+            if cand in tracked_set:
+                return cand
+        return None
+
+    tail: str | None = None
+    for prefix in gr.local_alias_prefixes:
+        if spec.startswith(prefix):
+            tail = spec[len(prefix):]
+            break
+    if tail is None or not tail:
+        return None  # bare package import — external, honest skip
+    for ext in _ENTRY_EXTS:
+        suffix = "/" + tail + ext
+        hits = [f for f in tracked if f.endswith(suffix)]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            return None  # ambiguous across workspaces — honest skip
+    return None
+
+
+def _component_candidates(body: str) -> list[str]:
+    """Capitalized component idents in an element body, innermost-last.
+
+    JSX grammar puts wrappers first (``<TrialGuard><CasesPage/></...``), so
+    candidates are returned in appearance order — callers walk them LAST-
+    first to prefer the innermost (the real page; the same law as the
+    profile-module ``_resolve_ident``)."""
+    out: list[str] = []
+    for m in _COMPONENT_IDENT_RE.finditer(body):
+        name = m.group(1) or m.group(2)
+        if name:
+            out.append(name.split(".")[0])
+    return out
+
+
+@dataclass
+class _RouteDecl:
+    """One parsed route declaration (pre-resolution)."""
+
+    pattern: str
+    element_body: str      # raw element/Component window ("" when lazy-only)
+    lazy_spec: str         # import spec of a route-level lazy, or ""
+
+
+# ── Seg B grammar 1 — JSX <Route> trees ──
+
+
+def _scan_string(text: str, i: int, quote: str) -> int:
+    """Index just past the closing ``quote`` (no escape handling — route
+    literals never embed escaped quotes; best-effort determinism)."""
+    j = text.find(quote, i)
+    return len(text) if j < 0 else j + 1
+
+
+def _find_tag_end(text: str, start: int) -> tuple[int, bool]:
+    """From just past ``<Route``, return ``(index past '>', self_closing)``.
+
+    Tracks quote state and ``{}`` depth so a ``>`` inside a JSX-expression
+    attribute (``element={<Home />}``) never terminates the tag."""
+    depth = 0
+    i = start
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in "\"'`":
+            i = _scan_string(text, i + 1, ch)
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth = max(0, depth - 1)
+        elif ch == ">" and depth == 0:
+            self_closing = text[i - 1] == "/"
+            return i + 1, self_closing
+        i += 1
+    return n, True
+
+
+_ATTR_PATH_RE = re.compile(r"\bpath\s*=\s*(?:[\"']([^\"']*)[\"']|\{)")
+_ATTR_INDEX_RE = re.compile(r"\bindex\b(?!\s*=\s*\{?\s*false)")
+_ATTR_ELEMENT_RE = re.compile(r"\b(?:element|Component)\s*=\s*\{")
+_ATTR_LAZY_RE = re.compile(r"\blazy\s*=\s*\{")
+
+
+def _balanced_brace_body(text: str, open_idx: int) -> str:
+    """Body of the ``{...}`` opening at ``open_idx`` (index OF the brace)."""
+    depth = 0
+    i = open_idx
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in "\"'`":
+            i = _scan_string(text, i + 1, ch)
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:i]
+        i += 1
+    return text[open_idx + 1:]
+
+
+def _parse_route_tag(tag_text: str) -> _RouteDecl | None:
+    """Parse one ``<Route ...`` opening-tag body into a :class:`_RouteDecl`.
+
+    Returns ``None`` for a pathless, non-index route (a layout shell)."""
+    pm = _ATTR_PATH_RE.search(tag_text)
+    pattern = ""
+    if pm:
+        if pm.group(1) is not None:
+            pattern = pm.group(1)
+        else:
+            # ``path={...}`` expression — a pure string literal inside the
+            # braces folds; anything else is an honest skip (B64 law: a
+            # non-literal path is never invented).
+            body = _balanced_brace_body(tag_text, pm.end() - 1).strip()
+            lm = re.match(r"^[\"'`]([^\"'`]*)[\"'`]$", body)
+            if lm:
+                pattern = lm.group(1)
+            else:
+                return None
+    is_index = bool(_ATTR_INDEX_RE.search(tag_text)) if not pattern else False
+    if not pattern and not is_index:
+        return None
+
+    element_body = ""
+    em = _ATTR_ELEMENT_RE.search(tag_text)
+    if em:
+        element_body = _balanced_brace_body(tag_text, em.end() - 1)
+
+    lazy_spec = ""
+    lm2 = _ATTR_LAZY_RE.search(tag_text)
+    if lm2:
+        lazy_body = _balanced_brace_body(tag_text, lm2.end() - 1)
+        am = _LAZY_ROUTE_RE.match(lazy_body.strip())
+        if am:
+            lazy_spec = am.group(1)
+
+    if not element_body and not lazy_spec:
+        return None
+    return _RouteDecl(pattern, element_body, lazy_spec)
+
+
+def _scan_jsx_routes(text: str) -> list[tuple[str, _RouteDecl]]:
+    """(full URL pattern, decl) pairs from the ``<Route>`` tag tree.
+
+    A tag stack joins nested relative paths; pathless layout wrappers
+    contribute nothing to the URL but keep the stack balanced."""
+    out: list[tuple[str, _RouteDecl]] = []
+    stack: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        lt = text.find("<", i)
+        if lt < 0:
+            break
+        if text.startswith("</Route", lt):
+            if stack:
+                stack.pop()
+            i = lt + 7
+            continue
+        if not text.startswith("<Route", lt) or (
+            lt + 6 < n and (text[lt + 6].isalnum() or text[lt + 6] in "_$.")
+        ):
+            i = lt + 1
+            continue
+        tag_end, self_closing = _find_tag_end(text, lt + 6)
+        tag_text = text[lt + 6:tag_end]
+        decl = _parse_route_tag(tag_text)
+        parent = stack[-1] if stack else ""
+        own_path = ""
+        if decl is not None:
+            full = _join_paths(parent, decl.pattern)
+            out.append((full, decl))
+            own_path = full
+        else:
+            # Layout shell — still consumes a stack slot; a literal path
+            # on a shell (element-less path route) extends the chain.
+            pm = _ATTR_PATH_RE.search(tag_text)
+            if pm and pm.group(1):
+                own_path = _join_paths(parent, pm.group(1))
+            else:
+                own_path = parent
+        if not self_closing:
+            stack.append(own_path)
+        i = tag_end
+    return out
+
+
+# ── Seg B grammar 2 — createXRouter object arrays ──
+
+
+_CREATE_ROUTER_RE = re.compile(
+    r"\b(createBrowserRouter|createHashRouter|createMemoryRouter)\s*\(",
+)
+_OBJ_PATH_RE = re.compile(r"^path\s*:\s*[\"'`]([^\"'`]*)[\"'`]")
+_OBJ_INDEX_RE = re.compile(r"^index\s*:\s*true\b")
+_OBJ_ELEMENT_RE = re.compile(r"^(?:element|Component)\s*:")
+_OBJ_LAZY_RE = re.compile(r"^lazy\s*:")
+
+
+def _balanced_paren_region(text: str, open_idx: int) -> str:
+    depth = 0
+    i = open_idx
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in "\"'`":
+            i = _scan_string(text, i + 1, ch)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:i]
+        i += 1
+    return text[open_idx + 1:]
+
+
+@dataclass
+class _ObjFrame:
+    path: str = ""
+    index: bool = False
+    element_window: str = ""
+    lazy_spec: str = ""
+
+
+def _scan_router_objects(text: str) -> list[tuple[str, _RouteDecl]]:
+    """(full URL pattern, decl) pairs from ``createXRouter([...])`` arrays.
+
+    A brace-frame stack mirrors the object nesting; ``children`` arrays
+    inherit the ancestor frames' joined path chain."""
+    out: list[tuple[str, _RouteDecl]] = []
+    for cm in _CREATE_ROUTER_RE.finditer(text):
+        region = _balanced_paren_region(text, cm.end() - 1)
+        frames: list[_ObjFrame] = []
+        i = 0
+        n = len(region)
+        while i < n:
+            ch = region[i]
+            if ch in "\"'`":
+                # Peek object keys at frame level BEFORE consuming strings:
+                # keys are unquoted in this grammar, so strings are opaque.
+                i = _scan_string(region, i + 1, ch)
+                continue
+            if ch == "{":
+                frames.append(_ObjFrame())
+                i += 1
+                continue
+            if ch == "}":
+                if frames:
+                    fr = frames.pop()
+                    if (fr.path or fr.index) and (
+                        fr.element_window or fr.lazy_spec
+                    ):
+                        parent = ""
+                        for anc in frames:
+                            if anc.path:
+                                parent = _join_paths(parent, anc.path)
+                        full = _join_paths(parent, fr.path)
+                        out.append((
+                            full,
+                            _RouteDecl(full, fr.element_window, fr.lazy_spec),
+                        ))
+                i += 1
+                continue
+            if frames and (i == 0 or not (
+                region[i - 1].isalnum() or region[i - 1] in "_$."
+            )):
+                rest = region[i:]
+                pm = _OBJ_PATH_RE.match(rest)
+                if pm:
+                    frames[-1].path = pm.group(1)
+                    i += pm.end()
+                    continue
+                if _OBJ_INDEX_RE.match(rest):
+                    frames[-1].index = True
+                elif _OBJ_ELEMENT_RE.match(rest):
+                    frames[-1].element_window = rest[:400]
+                elif _OBJ_LAZY_RE.match(rest):
+                    lm = _LAZY_ROUTE_RE.match(
+                        rest.split(":", 1)[1] if ":" in rest else "",
+                    )
+                    if lm:
+                        frames[-1].lazy_spec = lm.group(1)
+            i += 1
+    return out
+
+
+# ── Seg B assembly ──
+
+
+def _innermost_component(
+    body: str, redirect: frozenset[str],
+) -> tuple[str | None, bool]:
+    """(innermost capitalized ident, is_redirect). Innermost = the LAST
+    ident by JSX grammar (wrappers precede their children)."""
+    cands = _component_candidates(body)
+    if not cands:
+        return None, False
+    inner = cands[-1]
+    return inner, inner in redirect
+
+
+def _rr_component_slug(name: str, gr: _ReactRouterGrammar) -> str:
+    """Component-name slug fallback (``HomePage`` → ``home``)."""
+    stem = name
+    changed = True
+    while changed:
+        changed = False
+        for suf in gr.component_suffix_strip:
+            if stem.endswith(suf) and len(stem) > len(suf):
+                stem = stem[: -len(suf)]
+                changed = True
+                break
+    slug = slugify(stem)
+    return "" if not slug or is_noise(slug) else slug
+
+
+def _collect_react_router(ctx: "ScanContext") -> list[_Entry]:
+    gr = _rr_grammar()
+    if gr is None or not gr.extensions:
+        return []
+    if not _rr_active(ctx, gr):
+        return []
+
+    tracked = tuple(sorted(posix(f) for f in ctx.tracked_files))
+    exts = tuple(gr.extensions)
+    entries: list[_Entry] = []
+
+    for path in tracked:
+        if not path.endswith(exts):
+            continue
+        if _should_skip_path(path):
+            continue
+        text = read_text(Path(ctx.repo_path) / path)
+        if not text or len(text) > _MAX_BYTES:
+            continue
+        if not any(mk in text for mk in gr.file_markers):
+            continue
+        imports = _import_map(text)
+        pairs = _scan_jsx_routes(text) + _scan_router_objects(text)
+        for full, decl in pairs:
+            entry_file = path  # honest fallback: the config file itself
+            comp_name: str | None = None
+            if decl.lazy_spec:
+                resolved = _resolve_spec(decl.lazy_spec, path, tracked, gr)
+                if resolved is not None:
+                    entry_file = resolved
+            elif decl.element_body:
+                comp_name, is_redirect = _innermost_component(
+                    decl.element_body, gr.redirect_components,
+                )
+                if is_redirect:
+                    continue  # a redirect is not a page surface
+                for cand in reversed(
+                    _component_candidates(decl.element_body)
+                ):
+                    spec = imports.get(cand)
+                    if not spec:
+                        continue
+                    resolved = _resolve_spec(spec, path, tracked, gr)
+                    if resolved is not None:
+                        entry_file = resolved
+                        comp_name = cand
+                        break
+            slug = _first_static_segment(full)
+            if not slug and comp_name:
+                slug = _rr_component_slug(comp_name, gr)
+            if not slug:
+                continue  # all-dynamic path + mute component — honest skip
+            entries.append(
+                _Entry(slug, entry_file, "react-router", [_Route(full, "PAGE")]),
+            )
+    return entries
+
+
 # ── extractor ────────────────────────────────────────────────────────────────
 
 
@@ -376,6 +888,7 @@ class SpaRouterExtractor:
             return []
         entries: list[_Entry] = []
         entries.extend(_collect_vue_pages(ctx))
+        entries.extend(_collect_react_router(ctx))
         return _emit(entries)
 
 

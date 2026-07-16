@@ -65,3 +65,46 @@ vue:
   index_stems:
     - index
 
+# ── Seg B — react-router code config ─────────────────────────────────────
+react_router:
+  dep_markers:
+    - react-router-dom
+    - react-router
+  # Framework-mode / Next / Remix disqualifiers — those stacks' pages are
+  # covered by existing filesystem extractors; parsing their embedded
+  # react-router widgets would double-count (SACRED no-dup law).
+  disqualify_deps_exact:
+    - next
+  disqualify_dep_prefixes:
+    - "@react-router/"
+    - "@remix-run/"
+  disqualify_config_files:
+    - "react-router.config."
+  # Whole-file pre-filter markers — only files mentioning one of these
+  # are read + parsed (skips the bulk of a TS/JS repo cheaply).
+  file_markers:
+    - "<Route"
+    - createBrowserRouter
+    - createHashRouter
+    - createMemoryRouter
+  extensions:
+    - .tsx
+    - .jsx
+    - .ts
+    - .js
+  # Import-specifier alias prefixes that map to a repo-local module (the
+  # dominant Vite/tsconfig convention ``@/`` → ``src/``). Resolution is
+  # by unique suffix-match against tracked files, so the exact alias
+  # target dir is not needed.
+  local_alias_prefixes:
+    - "@/"
+    - "~/"
+  # Element components that are redirects, not page surfaces — a route
+  # whose INNERMOST element is one of these is skipped (not a page).
+  redirect_components:
+    - Navigate
+    - Redirect
+  # Framework-suffix strip for the component-name slug fallback
+  # ("HomePage" → "home" when the route path has no static segment).
+  component_suffix_strip:
+    - Page
