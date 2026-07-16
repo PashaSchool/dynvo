@@ -436,7 +436,12 @@ def _typed_flow(name, **kw):
     )
 
 
-def test_adapter_returns_userflow_models_and_stamps_ids():
+def test_adapter_returns_userflow_models_and_stamps_ids(monkeypatch):
+    # MECHANICAL (horizon-1 flip): _typed_flow fixtures are span-less, so
+    # FLOW_GRAIN's T1 empty-span law (default ON since KEY_SCHEMA 30) would
+    # drop them at the rollup boundary. Subject = the adapter's UserFlow
+    # models + id stamping — pin the grain laws off.
+    monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "0")
     flows = [
         _typed_flow("create-detector-flow", paths=["backend/routers/detectors.py"]),
         _typed_flow("list-detector-flow", paths=["backend/routers/detectors.py"]),
@@ -450,7 +455,10 @@ def test_adapter_returns_userflow_models_and_stamps_ids():
     assert all(f.user_flow_id in uf_ids for f in flows)
 
 
-def test_adapter_stamps_duplicate_rows_via_name_fallback():
+def test_adapter_stamps_duplicate_rows_via_name_fallback(monkeypatch):
+    # MECHANICAL (horizon-1 flip): span-less fixtures — see the pin note in
+    # test_adapter_returns_userflow_models_and_stamps_ids.
+    monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "0")
     flows = [
         _typed_flow("create-detector-flow", uuid="a", paths=["backend/routers/detectors.py"]),
         _typed_flow("create-detector-flow", uuid="b", paths=["backend/routers/detectors.py"]),

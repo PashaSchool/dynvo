@@ -543,6 +543,11 @@ def test_rollup_adapter_carries_lane_reason(monkeypatch) -> None:
         bells_fl.primary_feature = "bells"
         return [billing_fl, bells_fl], [billing, bells]
 
+    # MECHANICAL (horizon-1 flip): the fixture flows are span-less
+    # (no line_ranges), so FLOW_GRAIN's T1 empty-span law (default ON since
+    # KEY_SCHEMA 30) would drop them before the rollup. This test's subject
+    # is the ANNEXATION shared_reason carry — pin the grain laws off.
+    monkeypatch.setenv("FAULTLINE_FLOW_GRAIN", "0")
     monkeypatch.setenv("FAULTLINE_ANNEXATION_GUARD", "1")
     flows_on, feats_on = _mk()
     ufs_on, tele_on = run_user_flow_rollup(flows_on, feats_on)

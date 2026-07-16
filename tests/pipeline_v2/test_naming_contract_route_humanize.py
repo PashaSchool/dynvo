@@ -248,7 +248,14 @@ _DOCUMENSO = [
 ]
 
 
-def test_documenso_exhibits_humanized_and_slug_stable() -> None:
+def test_documenso_exhibits_humanized_and_slug_stable(monkeypatch) -> None:
+    # MECHANICAL (horizon-1 flip): this exhibits table pins the route-grammar
+    # HUMANIZE layer only. Under the (now default-ON, KEY_SCHEMA 30) B70
+    # display law a bare 'API' is a devgrain_token violation and the ladder
+    # legally qualifies it ('API (Remix)') — that ON-world behaviour is
+    # pinned by the B70 suite (test_display_law_bare_token_b69v2). Pin the
+    # law off to keep this truth table humanize-pure.
+    monkeypatch.setenv("FAULTLINE_NAMING_LAW", "0")
     pfs = [_pf(s, d, a) for s, d, a, _ in _DOCUMENSO]
     slugs_before = [p.name for p in pfs]
     anchors_before = [p.anchor_id for p in pfs]
