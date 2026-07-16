@@ -634,3 +634,105 @@ def test_seg_c_spine_anchor_page_evidence(tmp_path: Path, spa_on) -> None:
         "frontend/src/pages/InvestigationDetailPage.tsx" in a.page_route_files
         for a in inv
     )
+
+
+# ── fix-iteration 1 — delivery through the per-workspace merge ───────────────
+
+
+def _spa_cand(slug: str, file: str, pattern: str):
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+
+    return AnchorCandidate(
+        name=slug, paths=(file,), source=SPA_PAGE_SOURCE,
+        confidence_self=0.8, routes=((pattern, "PAGE", file),),
+    )
+
+
+def _hopp_twin_results():
+    """The live hoppscotch loss shape (ON forensics 2026-07-16): same-slug
+    1-path spa candidates — across workspaces ('enter') AND within one
+    workspace ('profile' — per-(file,slug) emission makes twins by
+    construction)."""
+    common = {
+        SPA_PAGE_SOURCE: [
+            _spa_cand("enter", "packages/common/src/pages/enter.vue", "/enter"),
+            _spa_cand("profile", "packages/common/src/pages/profile.vue",
+                      "/profile"),
+            _spa_cand("profile", "packages/common/src/pages/profile/teams.vue",
+                      "/profile/teams"),
+            _spa_cand("graphql", "packages/common/src/pages/graphql.vue",
+                      "/graphql"),
+        ],
+    }
+    admin = {
+        SPA_PAGE_SOURCE: [
+            _spa_cand("enter", "packages/admin/src/pages/enter.vue", "/enter"),
+        ],
+    }
+    return [("common", common), ("admin", admin)]
+
+
+def test_ws_merge_same_slug_twins_survive_when_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SPA flag ON: the spa-page source is ARMED (ce821a5/B66 origin-gate
+    pattern) — same-slug coalesced groups keep the routes UNION, so every
+    emitted row reaches routes_index."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "1")
+    merged = _merge_anchors_across_workspaces(_hopp_twin_results())
+    routes = {r for c in merged[SPA_PAGE_SOURCE] for r in (c.routes or ())}
+    assert {r[0] for r in routes} == {
+        "/enter", "/profile", "/profile/teams", "/graphql",
+    }
+    # both workspaces' /enter files survive the coalesce
+    enter_files = {r[2] for r in routes if r[0] == "/enter"}
+    assert enter_files == {
+        "packages/common/src/pages/enter.vue",
+        "packages/admin/src/pages/enter.vue",
+    }
+
+
+def test_ws_merge_same_slug_twins_lose_routes_when_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SPA flag OFF: the source is NOT armed — coalesced groups drop routes
+    exactly as pre-B65-v3 (OFF byte-identity of the merge layer). Only the
+    size-1 group ('graphql') keeps its route."""
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    merged = _merge_anchors_across_workspaces(_hopp_twin_results())
+    routes = {r for c in merged[SPA_PAGE_SOURCE] for r in (c.routes or ())}
+    assert {r[0] for r in routes} == {"/graphql"}
+
+
+def test_ws_merge_arming_is_origin_gated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The onyx lesson: arming spa-page must NOT preserve routes for
+    UNARMED sources' twins in the same merge."""
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "1")
+
+    def _route_cand(file: str) -> AnchorCandidate:
+        return AnchorCandidate(
+            name="teams", paths=(file,), source="route",
+            confidence_self=0.7, routes=(("/teams", "GET", file),),
+        )
+
+    merged = _merge_anchors_across_workspaces([
+        ("a", {"route": [_route_cand("a/teams.py")]}),
+        ("b", {"route": [_route_cand("b/teams.py")]}),
+    ])
+    routes = {r for c in merged["route"] for r in (c.routes or ())}
+    assert routes == set(), "unarmed 'route' twins must still drop routes"

@@ -391,11 +391,25 @@ def _merge_anchors_across_workspaces(
     # stacks entirely outside this flag's scope (onyx routes_index 56->208).
     # Each flag arms ONLY its own source key; both unset -> empty set ->
     # byte-identical OFF world (kill-switch law).
+    from faultline.pipeline_v2.extractors.spa_router import (
+        SPA_PAGE_SOURCE,
+        spa_router_entries_enabled,
+    )
+    # B65-v3 rides the same armed path: vue file-based pages emit ONE
+    # candidate per (file, slug), so a monorepo like hoppscotch produces
+    # same-slug 1-path twins by construction (profile.vue +
+    # profile/{index,teams,tokens}.vue -> four 'profile' candidates;
+    # 'enter'/'settings' twins across workspaces). Unarmed, the coalesce
+    # dropped their routes silently: live ON forensics = 28 emitted route
+    # rows -> 10 delivered (12 candidates coalesced into 6 route-less
+    # groups). Origin-gated like B66/B67 — arms ONLY the spa-page source.
     armed_sources: set[str] = set()
     if jobs_entries_enabled():
         armed_sources.add(JobsEntryExtractor.name)
     if server_api_entries_enabled():
         armed_sources.add(SERVER_API_ENTRY_SOURCE)
+    if spa_router_entries_enabled():
+        armed_sources.add(SPA_PAGE_SOURCE)
 
     def _routes_union(
         cands: list[AnchorCandidate],
