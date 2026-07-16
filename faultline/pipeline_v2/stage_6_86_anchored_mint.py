@@ -913,6 +913,69 @@ def run_anchored_mint(
     anchors = build_spine_anchors(
         in_scope, routes_index, ctx, extractor_signals, nav_keys)
     tele["anchors_total"] = len(anchors)
+
+    # ── B65-v3 iter-2 — SPA-mint containment fence ────────────────────────
+    # A client-side SPA page row (routes_index kind="spa-page") gives its
+    # route: anchor PAGE evidence — which lifted api_only_surface bars and
+    # let broad mixed devs annex module mass through the fold rungs
+    # (Soc0 wave refutation: 'Admin'/'Compliance'/'Settings' route: PFs,
+    # 100% member LOC outside the anchor subtree; ANNEXATION_GUARD +
+    # SAMEUNIT_CAP armed did NOT kill — different channel than the B58
+    # unit fence). LAW: a PF minted off spa-page evidence takes members
+    # ONLY from the page's own module subtree (page file + the co-located
+    # dir sharing its stem, + the page dir for index leaves) plus the
+    # anchor's NON-spa evidence files (server routes untouched). A dev
+    # with mass outside that universe never binds to the anchor — the
+    # mass stays with its otherwise-resolved owner. Inert when no
+    # spa-page rows exist (flag OFF ⇒ byte-identical, kill-switch law).
+    from faultline.pipeline_v2.extractors.spa_router import SPA_PAGE_KIND
+
+    spa_files: frozenset[str] = frozenset(
+        str(r.get("file") or "") for r in (routes_index or [])
+        if isinstance(r, dict)
+        and str(r.get("kind") or "") == SPA_PAGE_KIND
+    ) - frozenset({""})
+
+    def _spa_pages_of(a: SpineAnchor) -> frozenset[str]:
+        return (a.page_route_files & spa_files) if spa_files else frozenset()
+
+    def _spa_module_prefixes(pages: frozenset[str]) -> tuple[str, ...]:
+        prefs: list[str] = []
+        for pf_ in sorted(pages):
+            stem = pf_.rsplit(".", 1)[0]
+            prefs.append(stem + "/")
+            base = pf_.rsplit("/", 1)[-1]
+            if base.split(".")[0] == "index" and "/" in pf_:
+                prefs.append(pf_.rsplit("/", 1)[0] + "/")
+        return tuple(prefs)
+
+    def _spa_contained(a: SpineAnchor, owned: list[str]) -> bool:
+        """True when every dev-owned file sits inside the fence universe
+        of a spa-paged anchor. Anchors with no spa pages are never
+        fenced (server-route behaviour byte-identical)."""
+        pages = _spa_pages_of(a)
+        if not pages:
+            return True
+        allowed = (
+            a.files | a.api_route_files | a.page_route_files
+        ) - spa_files
+        prefs = _spa_module_prefixes(pages)
+        for p in owned:
+            if p in pages or p in allowed:
+                continue
+            if any(p.startswith(pre) for pre in prefs):
+                continue
+            # Module-OWNER page rule: an owned file that is ITSELF a spa
+            # page whose stem-dir covers one of this anchor's spa pages
+            # is the module's owner page (``settings.vue`` for the
+            # ``settings/profile.vue`` prefix-slot anchor) — same module
+            # family, never annexed mass.
+            if p in spa_files:
+                stem_pre = p.rsplit(".", 1)[0] + "/"
+                if any(pg.startswith(stem_pre) for pg in pages):
+                    continue
+            return False
+        return True
     by_src: Counter[str] = Counter(a.source for a in anchors)
     tele["anchors_by_source"] = dict(sorted(by_src.items()))
 
@@ -974,6 +1037,17 @@ def run_anchored_mint(
         owned = owned_paths_of(f)
         owned_by_dev[f.name] = owned
         winner, share, verdict, plur = _classify_dev(owned, anchors)
+        # B65-v3 iter-2 — containment fence at the lineage rung: an
+        # uncontained dev never WINS a spa-paged anchor (and never rides
+        # it as a union-plurality candidate). It reclassifies as "none"
+        # and resolves through the ordinary ladder to its real owner.
+        # Strictly inert without spa rows (kill-switch byte-identity).
+        if spa_files:
+            if winner is not None and not _spa_contained(winner, owned):
+                tele["spa_fence_blocked"] = (
+                    tele.get("spa_fence_blocked", 0) + 1)
+                winner, share, verdict = None, 0.0, "none"
+            plur = [(c, s) for c, s in plur if _spa_contained(c, owned)]
         winner_by_dev[f.name] = winner
         verdicts[f.name] = verdict
         plurality_by_dev[f.name] = plur
@@ -997,6 +1071,21 @@ def run_anchored_mint(
     anchor_by_id = {a.canonical_id: a for a in anchors}
     mint_repo_root = Path(getattr(ctx, "repo_path", "."))
     loc_cache: dict[str, int] = {}
+
+    def _spa_fence_veto(cid: str | None, dev_name: str) -> bool:
+        """B65-v3 iter-2 — fold-rung fence: ``True`` when *cid* is a
+        spa-paged anchor the (uncontained) dev must not bind to. The
+        rung then behaves as unresolved and falls through the ladder.
+        Inert without spa rows (byte-identity)."""
+        if not spa_files or cid is None:
+            return False
+        a = anchor_by_id.get(cid)
+        if a is None:
+            return False
+        if _spa_contained(a, owned_by_dev.get(dev_name) or []):
+            return False
+        tele["spa_fence_blocked"] = tele.get("spa_fence_blocked", 0) + 1
+        return True
     # Workspace-unit roots, computed ONCE — consumed by the B22a walk
     # guard below and by the B58 annexation guard (Seg A fencing + Seg B
     # dev-artifact-unit bar). Empty tuple on single-unit repos.
@@ -1042,6 +1131,30 @@ def run_anchored_mint(
                 bar_by_anchor[cid] = "dev_artifact_unit"
                 tele["mint_bar_dev_artifact_unit"] = (
                     tele.get("mint_bar_dev_artifact_unit", 0) + 1)
+    # B65-v3 iter-2 — SPA page-module mint floor (reuses the W3.1 D4 husk
+    # floor mechanism: _files_loc + _HUB_HUSK_LOC_FLOOR): a spa-paged
+    # anchor whose contained winner mass is below the floor never mints a
+    # PF — the page keeps its routes_index row (journey seed + partition
+    # surface; the Seg C value), just no PF (hoppscotch 'Enter' 96 LOC
+    # class). Winners here are contained by the Pass-1 fence, so the LOC
+    # sum IS the page-module mass.
+    if spa_files:
+        for cid in sorted(bar_by_anchor):
+            if bar_by_anchor[cid] is not None:
+                continue
+            a = anchor_by_id[cid]
+            if not _spa_pages_of(a):
+                continue
+            member_files = sorted({
+                p for f in winners_by_anchor[cid]
+                for p in owned_by_dev[f.name]})
+            code_files = [p for p in member_files if _is_code(p, code_exts)]
+            if _files_loc(
+                    mint_repo_root, code_files, loc_cache,
+            ) < _HUB_HUSK_LOC_FLOOR:
+                bar_by_anchor[cid] = "spa_page_floor"
+                tele["mint_bar_spa_page_floor"] = (
+                    tele.get("mint_bar_spa_page_floor", 0) + 1)
     for cid in sorted(bar_by_anchor):
         if bar_by_anchor[cid] and len(tele["bar_decisions"]) < 50:
             tele["bar_decisions"].append(
@@ -1522,6 +1635,9 @@ def run_anchored_mint(
                     tele["annex_guard_entry_blocked"] = (
                         tele.get("annex_guard_entry_blocked", 0) + 1)
                     ef = None
+                # B65-v3 iter-2 — spa containment fence on the entry rung.
+                if ef is not None and _spa_fence_veto(ef, f.name):
+                    ef = None
                 if ef is not None:
                     assignment[f.name] = (ef, "fold:entry->none")
                     tele["fold_entry"] = tele.get("fold_entry", 0) + 1
@@ -1541,6 +1657,9 @@ def run_anchored_mint(
         # Winner exists but cannot mint → parent fold, entry fold,
         # api-leaf fold, then import fold.
         parent = _parent_fold(w)
+        # B65-v3 iter-2 — spa containment fence on every parent-fold use.
+        if parent is not None and _spa_fence_veto(parent, f.name):
+            parent = None
         if parent is not None and w.barred in {"version_dir", "single_letter",
                                                "param_leaf"}:
             assignment[f.name] = (parent, f"fold:parent->{w.canonical_id}")
@@ -1551,6 +1670,9 @@ def run_anchored_mint(
         if ef is not None and _annex_foreign(f, ef):
             tele["annex_guard_entry_blocked"] = (
                 tele.get("annex_guard_entry_blocked", 0) + 1)
+            ef = None
+        # B65-v3 iter-2 — spa containment fence on the entry rung.
+        if ef is not None and _spa_fence_veto(ef, f.name):
             ef = None
         if ef is not None:
             assignment[f.name] = (ef, f"fold:entry->{w.canonical_id}")
@@ -1598,6 +1720,11 @@ def run_anchored_mint(
                     "entries": [str(ep) for fl in (getattr(f, "flows", None) or [])
                                 if (ep := getattr(fl, "entry_point_file", None))][:8],
                 })
+            # B65-v3 iter-2 — spa containment fence on the L1 rung: an
+            # uncontained dev never entry-route-mints a spa-paged anchor
+            # (the Soc0 'Admin' page-entry annexation channel).
+            if target is not None and _spa_fence_veto(target, f.name):
+                target = None
             if target is not None:
                 src = w.canonical_id if w is not None else "none"
                 assignment[f.name] = (target, f"mint:entry-route->{src}")
@@ -1673,7 +1800,11 @@ def run_anchored_mint(
                 # dev is a <= 3-file stub whose only content IS the
                 # import surface (the midday `i` page class W2b built
                 # this rung for).
-                if votes[best_cid] * 2 > total:
+                # B65-v3 iter-2 — spa containment fence on the import
+                # rung (the annexation class the wave named): imports
+                # pointing INTO a spa page never annex the importer.
+                if (votes[best_cid] * 2 > total
+                        and not _spa_fence_veto(best_cid, f.name)):
                     target_anchor = anchor_by_id[best_cid]
                     own_inside = sum(
                         1 for p in owned if target_anchor.matches(p))
@@ -1750,6 +1881,9 @@ def run_anchored_mint(
                 tele["annex_guard_span_blocked"] = (
                     tele.get("annex_guard_span_blocked", 0) + 1)
                 target = None
+            # B65-v3 iter-2 — spa containment fence on the span rung.
+            if target is not None and _spa_fence_veto(target, f.name):
+                target = None
             if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
                 tele.setdefault("fold_debug", []).append({
                     "dev": f.name, "rung": "span", "target": target,
@@ -1759,6 +1893,9 @@ def run_anchored_mint(
                 tele["fold_span_vote"] = tele.get("fold_span_vote", 0) + 1
                 continue
             target, guard_isolated = _ancestor_walk(f)
+            # B65-v3 iter-2 — spa containment fence on the walk rung.
+            if target is not None and _spa_fence_veto(target, f.name):
+                target = None
             if target is not None:
                 assignment[f.name] = (target, f"fold:walk->{src}")
                 tele["fold_ancestor_walk"] = (

@@ -736,3 +736,175 @@ def test_ws_merge_arming_is_origin_gated(
     ])
     routes = {r for c in merged["route"] for r in (c.routes or ())}
     assert routes == set(), "unarmed 'route' twins must still drop routes"
+
+
+# ── fix-iteration 2 — SPA-mint containment fence + floor (6.86) ──────────────
+
+
+def _mint_fixture():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from faultline.models.types import Feature, Flow, MemberFile
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def flow(name, entry):
+        return Flow(
+            name=name, entry_point_file=entry, paths=[entry], authors=["a"],
+            total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+            last_modified=now, health_score=100.0,
+        )
+
+    def dev(name, paths, flows=None):
+        return Feature(
+            name=name, paths=list(paths),
+            member_files=[
+                MemberFile(path=p, role="anchor", confidence=1.0, primary=True)
+                for p in paths
+            ],
+            flows=flows or [], product_feature_id="old-pf",
+            authors=["a"], total_commits=1, bug_fixes=0, bug_fix_ratio=0.0,
+            last_modified=now, health_score=100.0,
+        )
+
+    def ctx_of(repo_path, tracked):
+        return SimpleNamespace(
+            workspaces=None, tracked_files=tracked,
+            repo_path=Path(repo_path), monorepo=False,
+        )
+
+    return flow, dev, ctx_of
+
+
+def _write_loc(tmp_path: Path, rel: str, lines: int) -> str:
+    return _write(tmp_path, rel, "\n".join("const x%d = 1;" % i
+                                           for i in range(lines)) + "\n")
+
+
+def test_mint_fence_soc0_shape_no_annexation(tmp_path: Path) -> None:
+    """The Soc0 wave exhibit POIMENNO: a broad mixed dev (spa page +
+    foreign-module mass) must NOT bind to the spa-paged route: anchor via
+    ANY rung — the mass stays off the PF; a server-router dev (non-spa
+    evidence of the SAME anchor) binds exactly as before."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    page = "frontend/src/pages/AdminPage.tsx"
+    router = "backend/routers/admin.py"
+    chat = "frontend/src/components/chat/chart-block.tsx"
+    api = "frontend/src/api/autopilot.ts"
+    for rel, n in ((page, 200), (router, 200), (chat, 300), (api, 120)):
+        _write_loc(tmp_path, rel, n)
+
+    routes = [
+        {"pattern": "/admin", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+        # the api row shares the 'admin' chain key — the real Soc0 shape
+        # (route:admin = spa page + backend router files)
+        {"pattern": "/api/admin/migrate", "method": "POST", "file": router},
+    ]
+    broad = dev("api-admin", [page, chat, api],
+                flows=[flow("admin-flow", page)])
+    server = dev("backend-admin", [router])
+    pfs, tele = run_anchored_mint(
+        [broad, server], routes,
+        ctx_of(tmp_path, [page, router, chat, api]),
+    )
+
+    assert tele.get("spa_fence_blocked", 0) >= 1
+    admin_pfs = [p for p in pfs if p.anchor_id == "route:admin"]
+    assert admin_pfs, "server evidence still mints the anchor (anti-case)"
+    # the server dev binds; the broad dev's foreign mass stays OFF the PF
+    assert server.product_feature_id == admin_pfs[0].name
+    assert broad.product_feature_id != admin_pfs[0].name
+    member_paths = {
+        m.path for p in admin_pfs for m in (p.member_files or [])
+    } | {q for p in admin_pfs for q in (p.paths or [])}
+    assert chat not in member_paths and api not in member_paths
+
+
+def test_mint_fence_floor_kills_thin_page(tmp_path: Path) -> None:
+    """The hoppscotch 'Enter' class: a contained page dev below the husk
+    floor (96 LOC < 150) never mints a PF — but the routes_index row
+    lives on (journey seed + partition surface, the Seg C value)."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    # the REAL hoppscotch shape: TWO enter.vue twins (common + sh-admin),
+    # 96+38 LOC — above the single-file bar's reach, below the husk floor
+    page = "packages/common/src/pages/enter.vue"
+    page2 = "packages/admin/src/pages/enter.vue"
+    _write(tmp_path, page, "<template>\n" + "a\n" * 94 + "</template>\n")
+    _write(tmp_path, page2, "<template>\n" + "a\n" * 36 + "</template>\n")
+    routes = [
+        {"pattern": "/enter", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+        {"pattern": "/enter", "method": "PAGE", "file": page2,
+         "kind": "spa-page"},
+    ]
+    enter = dev("enter", [page, page2])
+    pfs, tele = run_anchored_mint([enter], list(routes),
+                                  ctx_of(tmp_path, [page, page2]))
+
+    assert tele.get("mint_bar_spa_page_floor", 0) == 1
+    assert not [p for p in pfs if p.anchor_id == "route:enter"]
+    # routes_index rows are untouched by the mint
+    assert routes[0]["file"] == page and routes[0]["kind"] == "spa-page"
+
+
+def test_mint_fence_contained_page_module_still_mints(
+    tmp_path: Path,
+) -> None:
+    """A page whose module subtree is real (page file + co-located dir,
+    over the floor) mints a normally-membered PF — the fence only blocks
+    OUTSIDE mass, never the page's own module."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    page = "src/pages/settings.vue"
+    sub = "src/pages/settings/profile.vue"
+    _write(tmp_path, page, "<template>\n" + "a\n" * 120 + "</template>\n")
+    _write(tmp_path, sub, "<template>\n" + "a\n" * 120 + "</template>\n")
+    routes = [
+        {"pattern": "/settings", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+        {"pattern": "/settings/profile", "method": "PAGE", "file": sub,
+         "kind": "spa-page"},
+    ]
+    d = dev("settings", [page, sub],
+            flows=[flow("edit-settings-flow", page)])
+    pfs, tele = run_anchored_mint([d], routes, ctx_of(tmp_path, [page, sub]))
+
+    minted = [p for p in pfs if str(p.anchor_id or "").startswith("route:")]
+    assert minted, "contained page module must still mint"
+    assert d.product_feature_id == minted[0].name
+    assert tele.get("mint_bar_spa_page_floor", 0) == 0
+
+
+def test_mint_fence_inert_without_spa_rows(tmp_path: Path) -> None:
+    """Server-route mint unchanged (anti-case + kill-switch law): with NO
+    kind=spa-page rows the fence and floor never fire — no fence
+    telemetry, no spa bars."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    router = "backend/routers/admin.py"
+    _write_loc(tmp_path, router, 200)
+    routes = [
+        {"pattern": "/api/_admin/migrate", "method": "POST", "file": router},
+    ]
+    server = dev("backend-admin", [router])
+    pfs, tele = run_anchored_mint([server], routes,
+                                  ctx_of(tmp_path, [router]))
+
+    assert "spa_fence_blocked" not in tele
+    assert "mint_bar_spa_page_floor" not in tele
