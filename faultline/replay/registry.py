@@ -669,6 +669,8 @@ def _run_branch_slicer(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
 def _run_marketing_clusterer(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     from faultline.pipeline_v2.stage_8_analyst import (
         DEFAULT_ANALYST_MODEL as _ANALYST_MODEL,
+        anchored_analyst_skip_active,
+        anchored_skip_result,
         run_stage_8_analyst,
     )
     from faultline.pipeline_v2.stage_8_marketing_clusterer import (
@@ -695,7 +697,18 @@ def _run_marketing_clusterer(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
         s8_mode = os.environ.get(
             "FAULTLINE_STAGE_8_MODE", "analyst",
         ).strip().lower() or "analyst"
-        if s8_mode == "analyst":
+        if s8_mode == "analyst" and anchored_analyst_skip_active(features):
+            # Parity with phase_layer2 (W2b debt-pack): the anchored mint
+            # in phase_finalize owns the PF layer, so the live scan takes
+            # a deterministic pass-through instead of the Sonnet call —
+            # replay must take the SAME branch or the artifact diverges.
+            log8.info(
+                "mode=analyst SKIPPED (anchored-mint path owns the PF "
+                "layer) — deterministic pass-through",
+            )
+            stage_8_result = anchored_skip_result(
+                product_features, dev_to_product_map)
+        elif s8_mode == "analyst":
             log8.info(f"mode=analyst model={_ANALYST_MODEL}")
             stage_8_result = run_stage_8_analyst(
                 ctx, features, product_features,
@@ -1027,9 +1040,35 @@ def _run_domain_member_attribution(
     return {"features": features, "product_features": product_features}
 
 
+def _replayed_repo_root(env: ReplayEnv, state: dict[str, Any]) -> Path | None:
+    """Recover the source scan's repo root for stages whose captured
+    input carries no ctx: read ``repo_path`` from the SOURCE run's
+    00-intake input (the replay run dir is minted as a sibling of the
+    source run dir, and the runner stamps ``_replayed_from`` with the
+    source dir name). ``None`` when unavailable — callers keep the
+    repo-root-less historical behavior."""
+    from faultline.replay.capture import (
+        MissingStageInputError,
+        load_stage_input,
+    )
+
+    source_name = state.get("_replayed_from")
+    if not source_name:
+        return None
+    try:
+        intake = load_stage_input(
+            env.run_dir.parent / str(source_name), 0, "intake",
+        )
+    except (MissingStageInputError, ValueError):
+        return None
+    repo_path = intake.get("repo_path")
+    return Path(repo_path) if repo_path else None
+
+
 def _run_vendor_connector_split(
     env: ReplayEnv, state: dict[str, Any],
 ) -> dict[str, Any]:
+    from faultline.pipeline_v2.hub_relation import detect_hub_relations
     from faultline.pipeline_v2.stage_8_9_7_vendor_connector_split import (
         split_vendor_connectors,
     )
@@ -1037,7 +1076,21 @@ def _run_vendor_connector_split(
     features = state["features"]
     product_features = state["product_features"]
     with StageLogger(env.run_dir, 8, "vendor_connector_split") as log8_9_7:
-        vendor_split_result = split_vendor_connectors(features)
+        # Parity with phase_layer2 (Product-Spine §4.4 + W1.1 + D4 husk
+        # floor): the live site arms hub_dirs / carve_hub_dirs from
+        # detect_hub_relations(include_memberless=True) and passes the
+        # repo root — replaying the bare stem-rule call diverges.
+        hub_relations = detect_hub_relations(features, include_memberless=True)
+        vendor_split_result = split_vendor_connectors(
+            features,
+            hub_dirs=tuple(
+                h.hub_dir for h in hub_relations if h.member_dev_names
+            ),
+            carve_hub_dirs=tuple(
+                h.hub_dir for h in hub_relations if not h.member_dev_names
+            ),
+            repo_root=_replayed_repo_root(env, state),
+        )
         log8_9_7.info(
             f"vendor_connector_split enabled={vendor_split_result.enabled}",
         )

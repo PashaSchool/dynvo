@@ -51,6 +51,13 @@ _STAGE_VOLATILE: frozenset[str] = (
     | _VOLATILE_SCAN_META
     | frozenset({
         "run_id", "run_dir", "cache_hits", "llm_calls",
+        # chunked-flow twins of cache_hits / llm_calls (Stage 3
+        # chunk_telemetry): a replay serves chunk units from the warm
+        # llm-cache where the original run paid for live calls —
+        # identical flows, shifted counters. The OTHER chunk_* keys
+        # (features_chunked / chunks_total / flows_from_chunks) are
+        # deterministic content counts and stay compared.
+        "chunk_cache_hits", "chunk_llm_calls",
         # per-feature wall-clock timing in the import-tree artifact
         # (the scan normalizer covers duration_ms but not this spelling).
         "elapsed_ms",
