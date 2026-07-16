@@ -35,13 +35,15 @@ def test_armed_preserves_scalar_law_counters(monkeypatch):
 
 
 def test_off_is_the_historical_three_key_view(monkeypatch):
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF (historical) view.
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     view = _rescore_tele_view(_RESCORE)
     assert set(view) == {"confidence_before", "confidence_after"}
 
 
 def test_skipped_key_kept_both_ways(monkeypatch):
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF half.
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     assert _rescore_tele_view({"skipped": "naming-laws-off"}) == {
         "skipped": "naming-laws-off"}
     monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")

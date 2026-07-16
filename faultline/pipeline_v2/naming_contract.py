@@ -409,13 +409,16 @@ def uf_verb_snap_enabled() -> bool:
 
 
 def homing_hygiene_enabled() -> bool:
-    """B69-v2 — default OFF; ``FAULTLINE_HOMING_HYGIENE=1`` arms the
-    PF-homing hygiene family, FINAL composition (Stage 6.99b post-UF
-    rehome rail + rename-on-rehome + the B31 pf-display echo-guard + the
-    6.7e Law-A telemetry preservation). OFF ⇒ byte-identical output.
-    Split rulings: the seed-birth pair = ``FAULTLINE_SEED_HYGIENE``; the
-    display law = ``FAULTLINE_NAMING_LAW`` (banked)."""
-    return os.environ.get(HOMING_HYGIENE_ENV, "0").strip().lower() in {
+    """B69-v2 — default **ON** since the 2026-07-16 horizon-1 flip
+    (KEY_SCHEMA 30; keyed proof papermark + cal green — pm churn=1 fold,
+    cal no-op). Arms the PF-homing hygiene family, FINAL composition
+    (Stage 6.99b post-UF rehome rail + rename-on-rehome + the B31
+    pf-display echo-guard + the 6.7e Law-A telemetry preservation).
+    ``FAULTLINE_HOMING_HYGIENE=0`` ⇒ byte-identical pre-B69-v2 output
+    (kill-switch forever; unset ≡ explicit ``1``). Split rulings: the
+    seed-birth pair = ``FAULTLINE_SEED_HYGIENE`` (unflipped); the display
+    law = ``FAULTLINE_NAMING_LAW``."""
+    return os.environ.get(HOMING_HYGIENE_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 

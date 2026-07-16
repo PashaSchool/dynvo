@@ -37,17 +37,42 @@ _RESCORE = {"confidence_before": {"high": 1}, "uf_uniqueness_qualified": 4}
 # ── helper independence ──────────────────────────────────────────────────
 
 
-def test_helpers_default_off(monkeypatch):
+def test_helpers_defaults(monkeypatch):
+    # SEMANTIC (horizon-1 flip): HOMING flips ON; SEED stays OFF (unflipped);
+    # NAMING_LAW flips ON (its own commit).
     monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
     monkeypatch.delenv("FAULTLINE_SEED_HYGIENE", raising=False)
     monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
-    assert homing_hygiene_enabled() is False
+    assert homing_hygiene_enabled() is True
     assert seed_hygiene_enabled() is False
     assert naming_law_enabled() is False
 
 
-def test_seed_flag_does_not_arm_homing_or_law(monkeypatch):
+def test_inverted_killswitch_homing_hygiene(monkeypatch):
+    """Inverted kill-switch + mechanical-dependency pair: HOMING_HYGIENE is
+    read in TWO modules (naming_contract canonical + stage_6_86 duplicate).
+    unset ≡ explicit ``1`` in BOTH (unset+unset == ON+ON); explicit ``0`` ==
+    old OFF in BOTH."""
+    from faultline.pipeline_v2.naming_contract import (
+        homing_hygiene_enabled as nc_homing,
+    )
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        homing_hygiene_enabled as mint_homing,
+    )
     monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    assert nc_homing() is mint_homing() is True
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
+    assert nc_homing() is mint_homing() is True
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
+    assert nc_homing() is mint_homing() is False
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "false")
+    assert nc_homing() is mint_homing() is False
+
+
+def test_seed_flag_does_not_arm_homing_or_law(monkeypatch):
+    # MECHANICAL (horizon-1 flip): HOMING now defaults ON, so its kill-switch
+    # must be set explicitly to prove SEED=1 does not re-arm it.
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     monkeypatch.delenv("FAULTLINE_NAMING_LAW", raising=False)
     monkeypatch.setenv("FAULTLINE_SEED_HYGIENE", "1")
     assert seed_hygiene_enabled() is True
@@ -65,7 +90,9 @@ def test_homing_flag_does_not_arm_seed_or_law(monkeypatch):
 
 
 def test_law_flag_does_not_arm_homing_or_seed(monkeypatch):
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    # MECHANICAL (horizon-1 flip): HOMING now defaults ON — set its
+    # kill-switch to prove NAMING_LAW=1 does not re-arm it.
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     monkeypatch.delenv("FAULTLINE_SEED_HYGIENE", raising=False)
     monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
     assert naming_law_enabled() is True
@@ -110,7 +137,8 @@ def test_display_law_fires_only_under_naming_law(monkeypatch):
 
 
 def test_homing_tele_view_fires_only_under_homing(monkeypatch):
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the unarmed half.
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     monkeypatch.setenv("FAULTLINE_SEED_HYGIENE", "1")
     assert "uf_uniqueness_qualified" not in _rescore_tele_view(_RESCORE)
     monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
@@ -124,7 +152,8 @@ def test_b31_echo_guard_fires_only_under_homing(monkeypatch):
 
     uf = SimpleNamespace(
         authored_label=None, resource="links", intent="browse", routes=[])
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the unarmed half.
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     monkeypatch.setenv("FAULTLINE_SEED_HYGIENE", "1")
     cands_seed_only = _recall_name_candidates(uf, "Links", "Manage links")
     assert "Browse & filter links (Links)" in cands_seed_only  # pre-split
@@ -163,7 +192,9 @@ def test_law_only_world_does_not_arm_homing_observables(monkeypatch):
 
     from faultline.pipeline_v2.synth_quality import _recall_name_candidates
 
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    # MECHANICAL (horizon-1 flip): HOMING defaults ON — explicit "0" keeps
+    # the HOMING observables unarmed in this NAMING_LAW-only world.
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     monkeypatch.delenv("FAULTLINE_SEED_HYGIENE", raising=False)
     monkeypatch.setenv("FAULTLINE_NAMING_LAW", "1")
     assert "uf_uniqueness_qualified" not in _rescore_tele_view(_RESCORE)

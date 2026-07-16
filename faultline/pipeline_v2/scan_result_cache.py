@@ -562,9 +562,11 @@ ENV_OUTPUT_FLAGS = (
     # ruler; rename-on-rehome for synthesized rows; fold-into-existing;
     # home-tie guards) + B31 pf-display echo-guard + 6.7e Law-A telemetry
     # preservation. Reshapes user_flows[] homes/names + scan_meta
-    # telemetry. Default OFF; =0/unset byte-identical. Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate flip commit only
-    # (flip-protocol).
+    # telemetry. Default ON since the 2026-07-16 horizon-1 flip (KEY_SCHEMA
+    # 30; keyed proof papermark + cal green, B69-v2 — pm churn=1 fold, cal
+    # no-op). ``=0`` restores the pre-B69-v2 byte-identical board
+    # (kill-switch). Read in TWO modules (naming_contract + stage_6_86); both
+    # defaults flip in lock-step.
     "FAULTLINE_HOMING_HYGIENE",
     # B69-v2 SPLIT ruling (2026-07-15) — seed-birth hygiene pair, banked
     # for its OWN cycle: same-(pf,resource) route-group seed coalescence +

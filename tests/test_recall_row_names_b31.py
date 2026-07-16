@@ -629,9 +629,10 @@ def test_b69v2_pf_display_non_echo_qualifier_still_available(monkeypatch):
 
 
 def test_b69v2_off_ladder_byte_identical(monkeypatch):
-    """Kill-switch: flag unset ⇒ the ladder (tautology included) is
+    """Kill-switch: flag off ⇒ the ladder (tautology included) is
     byte-identical to pre-B69-v2 behaviour."""
-    monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "0")
     pfs = [_pf("datarooms", "Datarooms"), _pf("links", "Links")]
     ufs = [
         _uf("UF-001", "Manage links", reason=ROUTE_GROUP_REASON,

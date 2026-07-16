@@ -194,9 +194,11 @@ def test_anticase_cprime_refuses_bare_render():
 
 
 def test_anticase_off_gate_and_no_registry(monkeypatch):
-    """(6) default OFF; and a missing registry is an honest no-op."""
+    """(6) default ON (horizon-1 flip); and a missing registry is an honest
+    no-op regardless of the flag."""
+    # SEMANTIC (horizon-1 flip): unset now defaults ON.
     monkeypatch.delenv("FAULTLINE_HOMING_HYGIENE", raising=False)
-    assert homing_hygiene_enabled() is False
+    assert homing_hygiene_enabled() is True
     monkeypatch.setenv("FAULTLINE_HOMING_HYGIENE", "1")
     assert homing_hygiene_enabled() is True
     registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()

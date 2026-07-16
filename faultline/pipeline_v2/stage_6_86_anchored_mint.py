@@ -371,13 +371,17 @@ def sameunit_domain_cap_enabled() -> bool:
 
 
 def homing_hygiene_enabled() -> bool:
-    """B69-v2 — default OFF; ``FAULTLINE_HOMING_HYGIENE=1`` makes the mint
+    """B69-v2 — default **ON** since the 2026-07-16 horizon-1 flip
+    (KEY_SCHEMA 30; keyed proof papermark + cal green). Makes the mint
     export its anchor registry for the Stage 6.99b post-UF rehome rail
-    (a tele side-channel the caller pops; never serialized). OFF ⇒ the
-    key is never attached ⇒ byte-identical. (Deliberate local duplicate
-    of :func:`faultline.pipeline_v2.naming_contract.homing_hygiene_enabled`
-    — the mint stays import-light, banked-branch precedent.)"""
-    return os.environ.get(HOMING_HYGIENE_ENV, "0").strip().lower() in {
+    (a tele side-channel the caller pops; never serialized).
+    ``FAULTLINE_HOMING_HYGIENE=0`` ⇒ the key is never attached ⇒
+    byte-identical (kill-switch; unset ≡ explicit ``1``). (Deliberate
+    local duplicate of
+    :func:`faultline.pipeline_v2.naming_contract.homing_hygiene_enabled`
+    — the mint stays import-light, banked-branch precedent; both read the
+    same env so their defaults flip in lock-step.)"""
+    return os.environ.get(HOMING_HYGIENE_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
