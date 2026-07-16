@@ -297,10 +297,12 @@ def naming_contract_enabled() -> bool:
 
 
 def naming_pack_enabled() -> bool:
-    """B71 Seg A-C naming pack. Default **OFF**; only an explicit ``1``/``true``
-    arms the display + confidence laws — ``FAULTLINE_NAMING_PACK=0``/unset keeps
-    every naming channel byte-identical (the kill-switch law)."""
-    return os.environ.get(NAMING_PACK_ENV, "0").strip().lower() in {"1", "true"}
+    """B71 Seg A-C naming pack. Default **ON** since the 2026-07-16 horizon-1
+    flip (KEY_SCHEMA 30; keyed proof documenso + novu green — echo-fold in the
+    rich boards, anti-cases live). Arms the display + confidence laws.
+    ``FAULTLINE_NAMING_PACK=0`` keeps every naming channel byte-identical (the
+    kill-switch law forever; unset ≡ explicit ``1``)."""
+    return os.environ.get(NAMING_PACK_ENV, "1").strip().lower() in {"1", "true"}
 
 
 def uf_name_laws_enabled() -> bool:

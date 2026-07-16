@@ -152,9 +152,10 @@ def test_authfail_scopes_downgrade_to_unvalidated(monkeypatch: pytest.MonkeyPatc
 
 
 def test_authfail_blanket_when_pack_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """NAMING_PACK OFF/unset: the original blanket downgrade — ALL low
+    """NAMING_PACK OFF: the original blanket downgrade — ALL low
     (byte-identical to the pre-B71 behaviour)."""
-    monkeypatch.delenv("FAULTLINE_NAMING_PACK", raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" (unset now defaults ON).
+    monkeypatch.setenv("FAULTLINE_NAMING_PACK", "0")
     cache = _MemCache()
     _warm(cache, "billing", "UF-B")
     _warm(cache, "auth", "UF-A")

@@ -31,13 +31,27 @@ def _src(**kw: str) -> ProvenanceSources:
 # ── flag default OFF (byte-identity is the gated call site's; here the gate) ──
 
 
-def test_naming_pack_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_naming_pack_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC (horizon-1 flip): unset now defaults ON.
     monkeypatch.delenv("FAULTLINE_NAMING_PACK", raising=False)
-    assert naming_pack_enabled() is False
+    assert naming_pack_enabled() is True
     monkeypatch.setenv("FAULTLINE_NAMING_PACK", "0")
     assert naming_pack_enabled() is False
     monkeypatch.setenv("FAULTLINE_NAMING_PACK", "1")
     assert naming_pack_enabled() is True
+
+
+def test_inverted_killswitch_naming_pack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch: unset ≡ explicit ``1`` (default ON); explicit
+    ``0``/``false`` == the pre-B71 OFF behaviour."""
+    monkeypatch.delenv("FAULTLINE_NAMING_PACK", raising=False)
+    unset = naming_pack_enabled()
+    monkeypatch.setenv("FAULTLINE_NAMING_PACK", "1")
+    assert naming_pack_enabled() is unset is True
+    monkeypatch.setenv("FAULTLINE_NAMING_PACK", "0")
+    assert naming_pack_enabled() is False
+    monkeypatch.setenv("FAULTLINE_NAMING_PACK", "false")
+    assert naming_pack_enabled() is False
 
 
 # ── L-A1: route grammar never passes to display literally ─────────────────────

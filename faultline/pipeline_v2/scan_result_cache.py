@@ -663,8 +663,10 @@ ENV_OUTPUT_FLAGS = (
     # longer blanket-downgrades cache-validated UF domains). DISPLAY + confidence
     # channels (pf.display_name / uf.name / name_confidence / name_evidence /
     # name_provenance telemetry); identity/membership/paths untouched. Default
-    # OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a separate later
-    # commit per flip-protocol).
+    # ON since the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30; keyed proof
+    # documenso + novu green, B71 — echo-fold in the rich boards, anti-cases
+    # live). ``=0`` restores the pre-B71 byte-identical naming channels
+    # (kill-switch).
     "FAULTLINE_NAMING_PACK",
     # B65-v3 (2026-07-16) — SPA router extraction, ONE flag gates both
     # segments (the B66 precedent): Seg A vue file-based pages
