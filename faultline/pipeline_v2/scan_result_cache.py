@@ -615,6 +615,25 @@ ENV_OUTPUT_FLAGS = (
     # KEY_SCHEMA bump — the bump rides the separate later flip commit only
     # (flip-protocol).
     "FAULTLINE_GRAIN_WAVE",
+    # B66-v2 (2026-07-16) — ownership/LOC-truth + dispatch tails, ONE flag
+    # gates four segments (the B58-v3 precedent). Seg A: an entry-mint
+    # (server-api-entry / jobs-entry source) exclusively owns its module
+    # subtree at the loc-attribution pass — a route-anchor dev whose members
+    # collapsed to loc=0 under primary-owner fan-in (hoppscotch 27 resolvers
+    # -> one 'team' uuid, 0 LOC, mis-parented) recovers its owned LOC without
+    # touching membership or journeys (attribution layer). Seg B: a static
+    # asset/data member (json/svg/lottie) reaching a dev feature only through
+    # import fan-in neither credits membership nor inflates the file count
+    # (genuine shared CODE survives — the documenso packages/lib anti-case).
+    # Seg C: a python-module dispatch extractor (registry/handler-map dicts,
+    # entry_points, __main__ CLI, celery tasks) emits routes_index kind
+    # py-dispatch so python entry surfaces stop reading as perpetual
+    # Uncovered. Seg D: the tRPC collector resolves lazy handler-cache
+    # routers (UNSTABLE_HANDLER_CACHE / getHandler + a relatively-imported
+    # ``router``) that the @trpc/server import gate skipped. Default OFF;
+    # =0/unset byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump
+    # rides the separate later flip commit only (flip-protocol).
+    "FAULTLINE_OWNERSHIP_V2",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

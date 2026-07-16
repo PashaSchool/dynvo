@@ -70,6 +70,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
+from faultline.pipeline_v2.ownership_v2 import ownership_v2_enabled
 from faultline.pipeline_v2.stage_6_9_test_strip import is_test_path
 from faultline.pipeline_v2.stage_6_9b_generated_strip import is_generated_path
 
@@ -309,6 +310,41 @@ def _parent_dir(rel: str) -> str:
     return rel.rsplit("/", 1)[0] if "/" in rel else ""
 
 
+def _module_dirs(feat: "Feature") -> frozenset[str]:
+    """The directories of a dev feature's ANCHOR members — its module
+    subtree roots (B66-v2 Seg A).
+
+    An entry-mint (a route-anchor dev like hoppscotch ``team``) collapsed to
+    ``loc=0`` because its members are the WHOLE backend subtree, shared with
+    ~12 sibling anchors, so a single primary-owner tiebreak winner took every
+    file. A dev owns the files inside its OWN module — the directory holding
+    its anchor (``packages/hoppscotch-backend/src/team/**`` for ``team``).
+    Root / whole-repo markers are excluded (the :func:`_is_root_marker`
+    hazard — they would claim the entire tree).
+    """
+    dirs: set[str] = set()
+    for mf in getattr(feat, "member_files", None) or []:
+        if getattr(mf, "role", None) != "anchor":
+            continue
+        p = getattr(mf, "path", "") or ""
+        if _is_root_marker(p):
+            continue
+        d = _parent_dir(p)
+        if d and not _is_root_marker(d):
+            dirs.add(d)
+    return frozenset(dirs)
+
+
+def _module_match_len(fp: str, roots: frozenset[str]) -> int:
+    """Length of the LONGEST module root in *roots* that contains *fp*
+    (an ancestor directory), else 0. Longest = most specific module wins."""
+    best = 0
+    for r in roots:
+        if len(r) > best and fp.startswith(r + "/"):
+            best = len(r)
+    return best
+
+
 def _is_root_marker(rel: str) -> bool:
     """True when a path is a repo-root / whole-repo STRUCTURAL marker
     (``.`` / ``""`` / ``./`` / ``..``) rather than an owned surface.
@@ -431,10 +467,38 @@ def apply_feature_loc(
 
     dev_is_facet = [1 if is_facet(f) else 0 for f in dev_features]
 
+    # B66-v2 Seg A (flag-gated) — module-subtree ownership. Each dev's own
+    # module subtree(s) = the directories of its anchor members. A file inside
+    # exactly one owner's module is that owner's OWNED code, so a route-anchor
+    # dev recovers loc>0 instead of losing every shared file to one fan-in
+    # winner. Attribution only: membership / journeys are untouched, and each
+    # file still has EXACTLY one primary owner (conservation preserved). OFF
+    # (unset / ``0``) skips the rung entirely -> byte-identical.
+    mod_enabled = ownership_v2_enabled()
+    dev_module_roots: list[frozenset[str]] = (
+        [_module_dirs(f) for f in dev_features] if mod_enabled else []
+    )
+
     def _primary(fp: str) -> int:
         owners = file_to_devs[fp]
         if len(owners) == 1:
             return owners[0]
+        if mod_enabled:
+            best_len = 0
+            claimants: list[int] = []
+            for i in owners:
+                if dev_is_facet[i]:
+                    continue
+                mlen = _module_match_len(fp, dev_module_roots[i])
+                if mlen > best_len:
+                    best_len = mlen
+                    claimants = [i]
+                elif mlen == best_len and mlen > 0:
+                    claimants.append(i)
+            if best_len > 0:
+                if len(claimants) == 1:
+                    return claimants[0]
+                owners = claimants  # tie among same-depth modules -> ordinary rule
         d = _parent_dir(fp)
         # Non-facet first, then max sibling-dir count, then max flow count,
         # then smallest slug.
