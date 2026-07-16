@@ -50,6 +50,7 @@ __all__ = [
     "index_flows_by_uf",
     "flow_span_loc",
     "flow_span_empty",
+    "flow_span_records",
     "flow_owned_loc",
     "is_helper_grain",
 ]
@@ -182,6 +183,14 @@ def _span_records(flow: Any) -> dict[str, list[tuple[int, int]]]:
         if by_path:
             return by_path
     return {}
+
+
+def flow_span_records(flow: Any) -> dict[str, list[tuple[int, int]]]:
+    """Public accessor for a flow's ``{path: [(start, end), ...]}`` coordinate
+    set (the FIRST populated of line_ranges / loc_symbol_attributions /
+    loc_nodes). The Seg D grain laws (T3 containment, T4 fanout) read spans
+    through this so the census and the runtime laws agree on coordinates."""
+    return _span_records(flow)
 
 
 def flow_span_empty(flow: Any) -> bool:

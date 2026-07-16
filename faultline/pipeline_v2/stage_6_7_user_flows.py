@@ -1623,6 +1623,19 @@ def run_user_flow_rollup(
     from faultline.models.types import UserFlow
     from faultline.pipeline_v2.hub_relation import detect_hub_relations
 
+    # B71 Seg D — flow-grain laws T1-T4 (FAULTLINE_FLOW_GRAIN, default OFF).
+    # Re-grain the flow store to the journey grain BEFORE the rollup so the
+    # grain disease is not amplified onto user_flows[] (the census surfacing
+    # gate). OFF/unset: the block never runs -> flows untouched -> byte-
+    # identical (the reshape mutates the caller's store only when armed).
+    grain_telemetry: dict[str, int] = {}
+    from faultline.pipeline_v2.flow_grain import (
+        apply_flow_grain,
+        flow_grain_enabled,
+    )
+    if flow_grain_enabled():
+        grain_telemetry = apply_flow_grain(flows)
+
     scan = {
         "flows": [_flow_view(f) for f in flows],
         "developer_features": [
@@ -1684,6 +1697,10 @@ def run_user_flow_rollup(
         "uf_conservation_resettled": result.get(
             "uf_conservation_resettled", 0),
     }
+    # B71 Seg D — emit flow-grain telemetry ONLY when armed (adding a key when
+    # OFF would perturb scan_meta and break the kill-switch byte-identity gate).
+    if grain_telemetry:
+        telemetry["flow_grain"] = grain_telemetry
     return user_flows, telemetry
 
 

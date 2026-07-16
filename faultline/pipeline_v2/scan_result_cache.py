@@ -634,6 +634,28 @@ ENV_OUTPUT_FLAGS = (
     # =0/unset byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump
     # rides the separate later flip commit only (flip-protocol).
     "FAULTLINE_OWNERSHIP_V2",
+    # B71 Seg D (2026-07-16) — flow-grain laws T1-T4. Re-grains the flow store
+    # to the journey grain at the Stage 6.7 rollup boundary (before UF, so grain
+    # disease is not amplified onto user_flows[]): T1 drops empty-span flows
+    # (reverse-lookup contract break), T2 re-anchors barrel/re-export entries
+    # onto their definition site, T3 folds a flow whose span-set is a subset of a
+    # same-entry sibling's (Soc0 cases.py / hopp kernel index.ts twins), T4 folds
+    # a same-entry fanout that shares an identical dominant span (documenso
+    # rate-limits.ts x14). Folds union the loser's spans/paths into the winner
+    # (conservation, merged_from lineage). Reshapes flows[] + feature_flow_edges[]
+    # + user_flows[] membership. Default OFF; =0/unset byte-identical (the block
+    # never runs). No KEY_SCHEMA bump (flip is a separate later commit).
+    "FAULTLINE_FLOW_GRAIN",
+    # B71 Seg A-C (2026-07-16) — the naming pack: L-A1/L-A2 PF display route-
+    # grammar + provenance-tier, L-B1 leaf-collision qualification, L-C1..L-C4 UF
+    # synth echo-fold / verb-phrase integrity / same-noun-head families / board
+    # name uniqueness, and the degraded-scan confidence scoping (auth-fail no
+    # longer blanket-downgrades cache-validated UF domains). DISPLAY + confidence
+    # channels (pf.display_name / uf.name / name_confidence / name_evidence /
+    # name_provenance telemetry); identity/membership/paths untouched. Default
+    # OFF; =0/unset byte-identical. No KEY_SCHEMA bump (flip is a separate later
+    # commit per flip-protocol).
+    "FAULTLINE_NAMING_PACK",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
