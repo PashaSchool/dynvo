@@ -3398,6 +3398,37 @@ def run_naming_contract(
                 uf.name = new_name
                 tele["uf_fullname_inherited"] += 1
 
+    # ── B71 Seg A — PF display route-grammar (L-A1) + provenance ladder
+    # (L-A2) (FAULTLINE_NAMING_PACK, default OFF). Runs over the FINAL PF
+    # displays: cleans router-template residue and upgrades a defective
+    # (route-residue / bare-basename) display to the highest available
+    # higher-provenance source (nav > manifest > basename). OFF/unset never
+    # enters this block -> serialized output byte-identical.
+    if naming_pack_enabled():
+        from faultline.pipeline_v2.pf_display_provenance import (
+            ProvenanceSources,
+            apply_pf_display_provenance,
+        )
+
+        def _pf_sources(pf: Any) -> ProvenanceSources:
+            pslug = str(getattr(pf, "name", "") or "")
+            aid = str(getattr(pf, "anchor_id", None) or "")
+            cur = str(getattr(pf, "display_name", None)
+                      or getattr(pf, "name", "") or "")
+            manifest = ""
+            if repo_root is not None:
+                pkg, pkg_src = _package_manifest_display(aid, vocab, repo_root, cur)
+                if pkg and pkg_src == "manifest":
+                    manifest = pkg
+            return ProvenanceSources(
+                nav=nav_labels.get(pslug, "") or "",
+                manifest=manifest,
+                basename=_anchor_terminal_segment(aid) or "",
+            )
+
+        tele["pf_display_provenance"] = apply_pf_display_provenance(
+            product_features, _pf_sources, vocab)
+
     tele["labeler_pending"] = len(pending)
     return tele
 
