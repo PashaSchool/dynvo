@@ -102,10 +102,11 @@ def _run(
 # ── flag discipline ──────────────────────────────────────────────────────
 
 
-def test_flag_default_off_and_kill_switch(
+def test_flag_default_on_and_kill_switch(
         monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC (horizon-1 flip): unset now defaults ON.
     monkeypatch.delenv(TERMINAL_CLASSIFICATION_ENV, raising=False)
-    assert terminal_classification_enabled() is False
+    assert terminal_classification_enabled() is True
     for off in ("0", "false", "off", "no", ""):
         monkeypatch.setenv(TERMINAL_CLASSIFICATION_ENV, off)
         assert terminal_classification_enabled() is False
@@ -113,10 +114,26 @@ def test_flag_default_off_and_kill_switch(
     assert terminal_classification_enabled() is True
 
 
+def test_inverted_killswitch_terminal_classification(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inverted kill-switch: unset ≡ explicit ``1`` (identical module
+    behaviour), and explicit ``0``/``false`` == the pre-flip (old) behaviour."""
+    monkeypatch.delenv(TERMINAL_CLASSIFICATION_ENV, raising=False)
+    unset = terminal_classification_enabled()
+    monkeypatch.setenv(TERMINAL_CLASSIFICATION_ENV, "1")
+    assert terminal_classification_enabled() is unset is True
+    monkeypatch.setenv(TERMINAL_CLASSIFICATION_ENV, "0")
+    assert terminal_classification_enabled() is False
+    monkeypatch.setenv(TERMINAL_CLASSIFICATION_ENV, "false")
+    assert terminal_classification_enabled() is False
+
+
 def test_off_gate_no_mutation(monkeypatch: pytest.MonkeyPatch) -> None:
     """ANTI-CASE (kill-switch): flag off → rows untouched, no scan_meta
     key, no why_unresolved stamped."""
-    monkeypatch.delenv(TERMINAL_CLASSIFICATION_ENV, raising=False)
+    # MECHANICAL (horizon-1 flip): explicit "0" for the OFF-world assertion
+    # (unset now defaults ON).
+    monkeypatch.setenv(TERMINAL_CLASSIFICATION_ENV, "0")
     gap = _gap("loc_worthy", "executor",
                files=[("tracecat/executor/config.py", 1, 85)])
     gaps = [gap]

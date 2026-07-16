@@ -552,9 +552,10 @@ ENV_OUTPUT_FLAGS = (
     # generated / artifact-ink / lane / shared-leaf); the ONLY legal
     # residue is (5) a row stamped ``why_unresolved`` naming a known lexer
     # hole (data/terminal-classification.yaml). Reshapes coverage_gaps[]
-    # (rows removed / trimmed / stamped) + scan_meta. Default OFF; =0/unset
-    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
-    # the separate later flip commit only (flip-protocol).
+    # (rows removed / trimmed / stamped) + scan_meta. Default ON since the
+    # 2026-07-16 horizon-1 flip (KEY_SCHEMA 30; keyed proof documenso + plane
+    # green, B68 — gap rows typed, zero unmapped-silence). ``=0``/false/off
+    # restores the pre-B68 byte-identical board (kill-switch).
     "FAULTLINE_TERMINAL_CLASSIFICATION",
     # B69-v2 (2026-07-15) — PF-homing hygiene family, FINAL composition
     # (re-convoy ruling): Stage 6.99b post-UF rehome rail (anchor-breadth

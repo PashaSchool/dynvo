@@ -91,12 +91,13 @@ FATE_RESIDUE = "residue"
 
 
 def terminal_classification_enabled() -> bool:
-    """``True`` when ``FAULTLINE_TERMINAL_CLASSIFICATION`` is set truthy
-    (default OFF). Unset/``0`` keeps the stage inert — every scan is
-    byte-identical to pre-B68 (no rows touched, no scan_meta key, the
-    ``why_unresolved`` field never stamped)."""
+    """Default **ON** since the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30;
+    keyed proof documenso + plane green, B68 — gap rows typed, zero
+    unmapped-silence). ``FAULTLINE_TERMINAL_CLASSIFICATION=0`` (or
+    false/no/off) restores the pre-B68 board byte-identically — explicit
+    off stays a valid kill-switch forever; unset ≡ explicit ``1``."""
     return os.environ.get(
-        TERMINAL_CLASSIFICATION_ENV, "0"
+        TERMINAL_CLASSIFICATION_ENV, "1"
     ).strip().lower() not in {"", "0", "false", "no", "off"}
 
 
