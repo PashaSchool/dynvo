@@ -912,6 +912,90 @@ def test_mint_fence_inert_without_spa_rows(tmp_path: Path) -> None:
     assert "mint_bar_spa_page_floor" not in tele
 
 
+# ── B65-v4 Seg A — spa-mint priority (spa never wins a feature-dir) ──────────
+
+
+def test_segA_detectors_shape_fdir_mass_binds_with_import_closure(
+    tmp_path: Path,
+) -> None:
+    """The Soc0 Detectors husk POIMENNO: a spa page ``/detectors`` merges
+    (same key) into the authored ``fdir:frontend/src/features/detectors``
+    anchor. The feature-dir owns the subtree, so its whole component mass
+    — INCLUDING files reached only through import-closure of shared UI —
+    binds to ``route:detector``; the spa page merely ADDS the route row.
+    Before the Seg A fix the merged anchor was spa-FENCED and orphaned
+    its own 16.8K subtree (loc=0 husk, 37 members)."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    page = "frontend/src/pages/DetectorsPage.tsx"
+    fdir = "frontend/src/features/detectors"
+    comps = [f"{fdir}/components/DetectorCard.tsx",
+             f"{fdir}/components/DetectorEditForm.tsx",
+             f"{fdir}/components/DetectorRunsTab.tsx",
+             f"{fdir}/lookback.ts"]
+    for rel in (page, *comps):
+        _write_loc(tmp_path, rel, 120)  # 4×120 fdir mass >> husk floor
+    routes = [
+        {"pattern": "/detectors", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+    ]
+    # ONE dev owns the page + the whole feature-dir subtree (the real
+    # shape: the page component pulls the feature-dir components).
+    detectors = dev("detectors-ui", [page, *comps],
+                    flows=[flow("browse-detectors", page)])
+    pfs, tele = run_anchored_mint(
+        [detectors], routes, ctx_of(tmp_path, [page, *comps]))
+
+    det = [p for p in pfs if p.anchor_id == "route:detector"]
+    assert det, "the feature-dir anchor must mint (no husk)"
+    assert detectors.product_feature_id == det[0].name
+    members = {m.path for m in (det[0].member_files or [])} | set(
+        det[0].paths or [])
+    # the fdir component mass — including the import-closure leaf — is
+    # OWNED, not orphaned (husk fixed)
+    for c in comps:
+        assert c in members, f"fdir mass {c} must bind (husk root)"
+    # the spa route row is preserved (journey seed)
+    assert routes[0]["kind"] == "spa-page"
+
+
+def test_segA_pure_spa_page_still_fenced_no_annexation(
+    tmp_path: Path,
+) -> None:
+    """Anti-case (the fence stays for PURELY spa anchors): a spa page with
+    NO authored (fdir/hub/ws/schema/pypkg/svc) backer must NOT annex a
+    broad dev's foreign import-closure mass — Seg A lifts the fence ONLY
+    where a feature-dir/hub already owns the subtree. Mirrors the iter-2
+    ``route:admin`` exhibit at the Seg A boundary."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    page = "frontend/src/pages/ReportsPage.tsx"          # spa page, no fdir
+    foreign = "frontend/src/lib/shared-charts.ts"        # import-closure
+    foreign2 = "frontend/src/api/telemetry.ts"
+    for rel, n in ((page, 200), (foreign, 300), (foreign2, 120)):
+        _write_loc(tmp_path, rel, n)
+    routes = [
+        {"pattern": "/reports", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+    ]
+    broad = dev("reports", [page, foreign, foreign2],
+                flows=[flow("reports-flow", page)])
+    pfs, tele = run_anchored_mint(
+        [broad], routes, ctx_of(tmp_path, [page, foreign, foreign2]))
+
+    assert tele.get("spa_fence_blocked", 0) >= 1, "pure-spa stays fenced"
+    minted = [p for p in pfs if p.anchor_id == "route:report"]
+    member_paths = {m.path for p in minted for m in (p.member_files or [])} | {
+        q for p in minted for q in (p.paths or [])}
+    assert foreign not in member_paths and foreign2 not in member_paths
+
+
 # ── fix-iteration 3 — panel grammar holes (root index + noise chain) ─────────
 
 

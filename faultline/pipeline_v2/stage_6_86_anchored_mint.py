@@ -272,6 +272,19 @@ _SHARED_REASON_DEV_ARTIFACT = "dev_artifact_unit"
 #: Soc0 sentinelone 1,258) stay minted.
 _HUB_HUSK_LOC_FLOOR = 150
 
+#: B65-v4 Seg A — the STRONG spine source classes that own a real
+#: subtree ("feature-dir/fdir/hub" in the spec). A spa-paged anchor
+#: whose ``sources`` intersect this set is NOT spa-only: the authored
+#: class owns the subtree and the spa page only adds a route row +
+#: journey seed, so the spa-mint containment fence never restricts its
+#: authored mass. Refinement layers (``interior``/``excav``) are absent
+#: on purpose — a page-component family with no authored backer stays
+#: fenced (no annexation).
+_SPA_AUTHORED_SOURCES = frozenset({
+    "fdir", "hub-vendor", "hub-core", "ws-pkg", "ws-app",
+    "schema", "pypkg", "svc",
+})
+
 #: B26 — bar reason for a hub child whose segment normalizes into the
 #: plumbing/stop vocabulary (cal.com ``app-store/_utils`` shape): the
 #: family's shared plumbing may not mint even with flow evidence; its
@@ -953,12 +966,42 @@ def run_anchored_mint(
                 prefs.append(pf_.rsplit("/", 1)[0] + "/")
         return tuple(prefs)
 
+    def _spa_only_anchor(a: SpineAnchor) -> bool:
+        """True when the anchor's ONLY evidence is spa-page rows — no
+        authored source (fdir/hub/ws/schema/pypkg) and no non-spa
+        route/api file claims its subtree.
+
+        B65-v4 Seg A — a spa page that MERGED into an authored anchor
+        (``route:detector`` ∪ ``fdir:…/detectors``) is NOT spa-only: the
+        feature-dir/hub owns the subtree and the spa page only ADDS a
+        route row + journey seed. Such an anchor is never spa-fenced, so
+        its authored mass binds exactly as it did with the flag OFF (the
+        Soc0 Detectors husk root: the merged anchor was spa-fenced and
+        orphaned its own 16.8K fdir subtree). Only a PURELY spa anchor
+        (a page with no authored backer) stays fenced — it mints its own
+        PF solely when no other anchor-class claims the subtree.
+
+        "Authored" is exactly the STRONG spine classes that own a real
+        DIR SUBTREE — ``fdir``/``hub-*``/``ws-*``/``schema``/``pypkg``/
+        ``svc`` (the spec's "feature-dir/fdir/hub"). A bare non-spa
+        server route/api FILE does NOT lift the fence: it names a URL,
+        not a subtree, so a broad dev whose foreign import-closure mass
+        merely rides the same route key must still be fenced (the Soc0
+        ``route:admin`` = spa page + backend router anti-annexation
+        exhibit). The refinement layers (``interior``/``excav``) never
+        lift the fence either — a page-component family with no authored
+        backer stays spa-only and fenced."""
+        return not (a.sources & _SPA_AUTHORED_SOURCES)
+
     def _spa_contained(a: SpineAnchor, owned: list[str]) -> bool:
         """True when every dev-owned file sits inside the fence universe
-        of a spa-paged anchor. Anchors with no spa pages are never
-        fenced (server-route behaviour byte-identical)."""
+        of a spa-paged anchor. Anchors with no spa pages — or spa pages
+        that merged into an AUTHORED anchor (Seg A) — are never fenced
+        (server-route / feature-dir behaviour byte-identical)."""
         pages = _spa_pages_of(a)
         if not pages:
+            return True
+        if not _spa_only_anchor(a):
             return True
         allowed = (
             a.files | a.api_route_files | a.page_route_files
