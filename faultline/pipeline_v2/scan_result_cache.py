@@ -680,10 +680,9 @@ ENV_OUTPUT_FLAGS = (
     # method=PAGE kind=spa-page, so flows/journeys mint and the B65
     # partition surface-detect sees SPA product surfaces. Registration is
     # flag-gated at the registry (extractor_hits key parity, B67 lesson).
-    # Default ON since the 2026-07-16 horizon-1 flip (KEY_SCHEMA 30; keyed
-    # proof hoppscotch green + papermark next-control, B65-v3 — hopp routes
-    # 1->29, next-repo no-op). ``=0`` keeps the extractor inert AND
-    # unregistered, byte-identical to pre-B65-v3 (kill-switch).
+    # Default OFF; =0/unset byte-identical. Appended WITHOUT a KEY_SCHEMA
+    # bump — the bump rides the separate later flip commit only
+    # (flip-protocol).
     "FAULTLINE_SPA_ROUTER_ENTRIES",
 )
 
