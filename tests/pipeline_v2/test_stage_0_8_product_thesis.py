@@ -432,6 +432,16 @@ _ALLOWED_MENTIONS = {
     Path("pipeline_v2/run.py"),
     Path("pipeline_v2/phase_finalize.py"),
     Path("pipeline_v2/personas.py"),
+    # G5 replay harness: the stage registry REPLICATES the two seams
+    # already allowlisted above, verbatim — the run.py Stage-0.8
+    # invocation (its replay row calls run_stage_0_8, which writes the
+    # artifact) and phase_finalize's persona threading
+    # (``thesis=scan_meta.get("product_thesis")`` into the PM-labeler /
+    # surface-adjudicator builders — naming/adjudication context only).
+    # The registry introduces NO new consumption seam: it never reads
+    # thesis fields for membership or any pipeline decision, and the
+    # replay identity gate pins its copies to the orchestrator sites.
+    Path("replay/registry.py"),
 }
 
 
