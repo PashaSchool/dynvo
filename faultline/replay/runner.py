@@ -14,6 +14,15 @@ Semantics (deterministic-foundation WS1):
   live scan, while state that N does not influence stays pinned to the
   recorded run — deltas appear ONLY downstream of N (the mutation
   ship-gate).
+* ``state["_chain"]`` (G5) — the full upstream-produced key set, passed
+  READ-ONLY alongside the per-key overlay. The overlay itself replaces
+  only keys the stage's capture already carries (pinning semantics
+  unchanged); ``_chain`` is the transport for the cross-unit
+  orchestrator locals the composite runners replicate (routes_index,
+  bipartite edges, mint side-channels, e2e authored names …) that no
+  capture serializes. Underscore-prefixed ⇒ never mirror-captured;
+  empty dict on a standalone (single-stage) replay, where runners fall
+  back to sibling captures of the SOURCE run (pinned world).
 * LLM stages replay against the content-keyed llm-cache by default;
   ``fresh_llm=True`` clears ONLY the target stage kind's llm-cache
   subdir (``~/.faultline/llm-cache/<kind>/`` — the align-v2 protocol,
@@ -262,6 +271,8 @@ def replay(
                     state[k] = v
             _prepare_state(state, env)
             state["_replayed_from"] = source_run_dir.name
+            # Chain side-channel (read-only; see module docstring).
+            state["_chain"] = overrides
             # Mirror-capture: the replay run dir is itself replayable.
             write_stage_input(
                 new_run_dir, spec.index, spec.key,

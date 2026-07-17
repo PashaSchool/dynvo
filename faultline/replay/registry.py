@@ -1169,6 +1169,1030 @@ def _replayed_repo_root(env: ReplayEnv, state: dict[str, Any]) -> Path | None:
     return Path(repo_path) if repo_path else None
 
 
+# ── G5 — cross-unit channel recovery ────────────────────────────────────
+# The composite runners below replicate phase_finalize / phase_layer2 /
+# run.py orchestration blocks that read ORCHESTRATOR LOCALS no capture
+# serializes (routes_index at late stages, mint side-channels, e2e
+# authored names, bipartite edges …). Two transports, in preference
+# order:
+#   1. ``state["_chain"]`` — the upstream-produced key set on a chained
+#      replay (runner.py G5); live-parity by construction.
+#   2. sibling captures of the SOURCE run (the ``_replayed_from`` dir) —
+#      the pinned recorded world, used by standalone identity replays
+#      (G3 precedent: ``_replayed_repo_root``).
+# Every consumer degrades explicitly (guarded fallback + logged) when a
+# channel is unrecoverable — a replicated block must never crash a
+# replay whose gate does not compare its artifact.
+
+
+def _chain_get(state: dict[str, Any], key: str, default: Any = None) -> Any:
+    chain = state.get("_chain") or {}
+    return chain.get(key, default)
+
+
+def _sibling_input(
+    env: ReplayEnv, state: dict[str, Any], index: int, key: str,
+) -> dict[str, Any] | None:
+    """Load another stage's recorded input from the SOURCE run dir."""
+    from faultline.replay.capture import (
+        MissingStageInputError,
+        load_stage_input,
+    )
+
+    source_name = state.get("_replayed_from")
+    if not source_name:
+        return None
+    try:
+        return load_stage_input(
+            env.run_dir.parent / str(source_name), index, key,
+        )
+    except MissingStageInputError:
+        return None
+    except Exception:  # noqa: BLE001 — sibling recovery is best-effort
+        return None
+
+
+def _replay_model_id(
+    env: ReplayEnv, state: dict[str, Any], sibling_cache: dict[str, Any],
+) -> str:
+    """The scan's model id for stages whose capture predates the G5
+    persona seams: own state → sibling uf_refiner / flows captures →
+    the CLI default (last resort; matches any default-flag baseline)."""
+    if state.get("model_id"):
+        return str(state["model_id"])
+    if "model_id" not in sibling_cache:
+        sib = (
+            _sibling_input(env, state, 6, "uf_refiner")
+            or _sibling_input(env, state, 3, "flows")
+            or {}
+        )
+        sibling_cache["model_id"] = sib.get("model_id")
+    if sibling_cache["model_id"]:
+        return str(sibling_cache["model_id"])
+    from faultline.pipeline_v2.run import DEFAULT_MODEL
+    return str(DEFAULT_MODEL)
+
+
+def _mint_nav_keys(features: list[Any], repo_path: Path | None) -> set[str]:
+    """The Stage-6.86 nav-key recipe, verbatim (confirmers are optional;
+    any failure ⇒ empty set — same as the live block)."""
+    nav_keys: set[str] = set()
+    if repo_path is None:
+        return nav_keys
+    try:
+        from faultline.pipeline_v2.product_strings import (
+            collect_product_strings,
+            normalize_href,
+        )
+        from faultline.pipeline_v2.spine_anchors import normalize_anchor_key
+        candidates: set[str] = set()
+        for f in features:
+            candidates.update(f.paths or [])
+        nav_index = collect_product_strings(repo_path, candidates)
+        for pairs in nav_index.nav_pairs_by_file.values():
+            for _label, href in pairs:
+                if not href:
+                    continue
+                norm = normalize_href(str(href)) or ""
+                for seg in norm.strip("/").split("/"):
+                    if seg and not seg.startswith(":"):
+                        nav_keys.add(normalize_anchor_key(seg))
+                        break
+    except Exception:  # noqa: BLE001 — confirmers are optional
+        return set()
+    return nav_keys
+
+
+def _mint_meta(scan_meta: dict[str, Any]) -> dict[str, Any]:
+    return dict(scan_meta.get("stage_6_86_anchored_mint") or {})
+
+
+def _anchored_mint_applied(state: dict[str, Any]) -> bool:
+    applied = _chain_get(state, "anchored_mint_applied")
+    if applied is not None:
+        return bool(applied)
+    return bool(_mint_meta(state.get("scan_meta") or {}).get("applied"))
+
+
+def _instrument_channels(
+    state: dict[str, Any],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """(instrument_dirs, dev_artifact_units) — W4.2/B28 mint channels,
+    recovered from the chain else the mint telemetry in scan_meta."""
+    dirs = _chain_get(state, "instrument_dirs")
+    units = _chain_get(state, "dev_artifact_units")
+    if dirs is None or units is None:
+        ti = _mint_meta(state.get("scan_meta") or {}).get(
+            "technology_instruments") or {}
+        if dirs is None:
+            dirs = ti.get("dirs") or []
+        if units is None:
+            units = ti.get("dev_artifact_units") or ()
+    return frozenset(dirs), frozenset(units)
+
+
+def _run_product_thesis(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    """Stage 0.8 — run.py:469, between the extract phase and the
+    reconcile capture. The stage function itself writes both the input
+    capture (into the replay dir — the mirror-capture the chain wants)
+    and the 06-stage-product_thesis artifact; it never raises."""
+    from faultline.pipeline_v2.stage_0_8_product_thesis import run_stage_0_8
+
+    ctx = prepare_ctx(state["ctx"], env)
+    run_stage_0_8(ctx, state["stage1_out"], state["repo_class_verdict"])
+    return {}
+
+
+def _run_page_interior(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    """Stage 6.55 part 1 (phase_finalize:215-248). ``features`` is not
+    in the capture: chain → threaded upstream state; standalone → the
+    lineage-input sibling (features are untouched between that capture
+    and the live 6.55 site — Stage 6.8 only stamps uuids, which the
+    span stats never read)."""
+    from faultline.pipeline_v2.stage_6_55_page_interior import (
+        degenerate_span_stats,
+        refine_flow_spans,
+        run_stage_6_55,
+    )
+
+    ctx = prepare_ctx(state["ctx"], env)
+    routes_index = state["routes_index"]
+    features = _chain_get(state, "features")
+    if features is None:
+        sib = _sibling_input(env, state, 6, "lineage") or {}
+        features = sib.get("features") or []
+    with StageLogger(env.run_dir, 6, "page_interior") as log6_55:
+        interior_result = run_stage_6_55(ctx, routes_index, log6_55)
+        interior_telemetry: dict[str, Any] = {"active": interior_result.active}
+        if interior_result.active:
+            interior_telemetry.update(interior_result.telemetry)
+            interior_telemetry["degenerate_spans_before"] = (
+                degenerate_span_stats(features)
+            )
+            interior_telemetry["span_refine"] = refine_flow_spans(
+                features, interior_result,
+            )
+        else:
+            interior_telemetry["reason"] = interior_result.reason
+        write_stage_artifact(
+            ctx.repo_path, stage_index=6, stage_name="page_interior",
+            payload=interior_telemetry, run_dir=env.run_dir,
+        )
+    # part 2 (node injection) lives after the Stage-3.5 expansion — see
+    # _run_flow_expansion; the telemetry dict + result ride the chain.
+    return {
+        "features": features,
+        "interior_result": interior_result,
+        "interior_telemetry": interior_telemetry,
+    }
+
+
+def _run_anchored_mint(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    """Stage 6.86 + the same-unit W4.3/W4 tails (phase_finalize:535-720):
+    anchored mint (artifact) → lane excavation → cross-PF flow-span
+    split. The capture is complete for the mint; the excavation's
+    ``feature_flow_edges`` are chain-only (guarded [] standalone — the
+    excavation runs after the artifact write, so identity is untouched)."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        anchored_mint_enabled,
+        run_anchored_mint,
+    )
+
+    ctx = prepare_ctx(state["ctx"], env)
+    features = state["features"]
+    product_features = state["product_features"]
+    routes_index = state["routes_index"]
+    stage1_out = state["stage1_out"]
+    scan_meta = state["scan_meta"]
+    repo_path = ctx.repo_path
+
+    anchored_mint_applied = False
+    anchored_hub_stamps: dict[str, str] = {}
+    instrument_dirs: frozenset[str] = frozenset()
+    dev_artifact_units: frozenset[str] = frozenset()
+    hh_anchor_registry: dict[str, Any] | None = None
+    nav_keys: set[str] = set()
+    if anchored_mint_enabled():
+        with StageLogger(env.run_dir, 6, "anchored_mint") as log_mint:
+            try:
+                nav_keys = _mint_nav_keys(features, repo_path)
+                mint_pfs, mint_tele = run_anchored_mint(
+                    features, routes_index, ctx,
+                    extractor_signals=stage1_out,
+                    nav_keys=frozenset(nav_keys),
+                )
+                hh_anchor_registry = mint_tele.pop(
+                    "homing_hygiene_anchor_registry", None)
+                if mint_tele.get("applied"):
+                    product_features = mint_pfs
+                    anchored_mint_applied = True
+                    anchored_hub_stamps = dict(
+                        mint_tele.get("hub_family_stamps") or {})
+                    instrument_dirs = frozenset(
+                        (mint_tele.get("technology_instruments") or {})
+                        .get("dirs") or []
+                    )
+                    dev_artifact_units = frozenset(
+                        (mint_tele.get("technology_instruments") or {})
+                        .get("dev_artifact_units") or ()
+                    )
+                scan_meta["stage_6_86_anchored_mint"] = {
+                    k: v for k, v in mint_tele.items()
+                    if k != "hub_family_stamps"
+                }
+                log_mint.info(
+                    "anchored_mint (replay): applied=%s anchors=%d pf=%d"
+                    % (
+                        mint_tele.get("applied"),
+                        mint_tele.get("anchors_total", 0),
+                        mint_tele.get("pf_minted", 0),
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path, stage_index=6, stage_name="anchored_mint",
+                    payload={k: v for k, v in mint_tele.items()
+                             if k != "hub_family_stamps"},
+                    run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"anchored-mint failed ({exc}); "
+                    f"pre-spine product layer kept"
+                )
+                log_mint.info(
+                    f"anchored_mint: FAILED ({exc}) — old product layer kept",
+                    feature=None,
+                )
+
+    # W4.3 — lane excavation (same replay unit; log-only, no artifact).
+    if anchored_mint_applied:
+        from faultline.pipeline_v2.lane_excavation import (
+            lane_excavation_enabled,
+            run_lane_excavation,
+        )
+        if lane_excavation_enabled():
+            with StageLogger(env.run_dir, 6, "lane_excavation") as log_exc:
+                try:
+                    exc_tele = run_lane_excavation(
+                        features, product_features, routes_index, ctx,
+                        extractor_signals=stage1_out,
+                        instrument_dirs=instrument_dirs,
+                        feature_flow_edges=list(
+                            _chain_get(state, "bipartite_edges") or []),
+                    )
+                    if exc_tele.get("groups"):
+                        scan_meta["lane_excavation"] = exc_tele
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    scan_meta.setdefault("warnings", []).append(
+                        f"lane-excavation failed ({exc}); lane left as-is"
+                    )
+                    log_exc.info(
+                        f"lane_excavation: FAILED ({exc}) — lane left as-is",
+                        feature=None,
+                    )
+
+    # W4 — cross-PF flow-attribution split (same replay unit).
+    from faultline.pipeline_v2.flow_span_split import (
+        flow_span_split_enabled,
+        split_cross_pf_flow_attribution,
+    )
+    if anchored_mint_applied and flow_span_split_enabled():
+        try:
+            scan_meta["flow_span_split"] = split_cross_pf_flow_attribution(
+                features, product_features,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"flow-span split failed ({exc}); unsplit flow surface kept"
+            )
+
+    return {
+        "features": features,
+        "product_features": product_features,
+        "scan_meta": scan_meta,
+        "anchored_mint_applied": anchored_mint_applied,
+        "anchored_hub_stamps": anchored_hub_stamps,
+        "instrument_dirs": instrument_dirs,
+        "dev_artifact_units": dev_artifact_units,
+        "hh_anchor_registry": hh_anchor_registry,
+        "nav_keys": nav_keys,
+    }
+
+
+def _run_journey_lattice(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    """Stage 6.88 lattice + the post-lattice window it owns in the
+    pinned corpus (phase_finalize:1478-1920): e2e_truth / e2e_orphan_uf
+    / transport_handoff / mega_pf_nav_rehome / devgrain_demote — their
+    artifacts have no input capture of their own and dual_evidence (the
+    only capture between) is gated off in the recorded world. CAVEAT: on
+    a dual-evidence-armed capture set the live order interleaves
+    dual_evidence between the lattice and e2e — this runner then emits
+    the window BEFORE the dual_evidence row runs (documented drift; the
+    identity gate never compares the window artifacts).
+
+    ``features``/``ctx``/``routes_index``/``model_id`` are not in the
+    capture: chain → threaded upstream; standalone → siblings
+    (uf_refiner-input features + the ONE features-mutating pass between
+    that capture and this one — lane_rehome — replicated below; the
+    other window passes are user_flows-only or recorded no-ops)."""
+    import re as _re
+
+    user_flows = state["user_flows"]
+    product_features = state["product_features"]
+    scan_meta = state["scan_meta"]
+    sibling_cache: dict[str, Any] = {}
+
+    refiner_sib: dict[str, Any] | None = None
+    features = _chain_get(state, "features")
+    flows = _chain_get(state, "bipartite_flows")
+    ctx = _chain_get(state, "ctx")
+    if features is None or flows is None or ctx is None:
+        refiner_sib = _sibling_input(env, state, 6, "uf_refiner") or {}
+        if features is None:
+            features = refiner_sib.get("features") or []
+        if flows is None:
+            flows = refiner_sib.get("bipartite_flows") or []
+        if ctx is None:
+            ctx = refiner_sib.get("ctx")
+    routes_index = _chain_get(state, "routes_index")
+    if routes_index is None:
+        sib_pi = _sibling_input(env, state, 6, "page_interior") or {}
+        routes_index = sib_pi.get("routes_index") or []
+        if ctx is None:
+            ctx = sib_pi.get("ctx")
+    if ctx is not None:
+        ctx = prepare_ctx(ctx, env)
+    repo_path = getattr(ctx, "repo_path", None) or _replayed_repo_root(
+        env, state) or Path(".")
+    model_id = _replay_model_id(env, state, sibling_cache)
+    anchored_mint_applied = _anchored_mint_applied(state)
+    uf_suppressed = bool(scan_meta.get("uf_suppressed_reason"))
+    nav_keys = set(_chain_get(state, "nav_keys") or (
+        _mint_nav_keys(features, repo_path) if anchored_mint_applied else set()
+    ))
+
+    # W3.2 lane_rehome — the one features-mutating pass between the
+    # uf_refiner capture and this one (phase_finalize:1233-1263); its
+    # user_flows/PF inputs are pinned by THIS stage's own capture.
+    if anchored_mint_applied and not uf_suppressed:
+        from faultline.pipeline_v2.lane_rehome import (
+            lane_rehome_enabled,
+            rehome_uf_cited_lane_devs,
+        )
+        if lane_rehome_enabled():
+            with StageLogger(env.run_dir, 6, "lane_rehome") as log_lr:
+                try:
+                    lr_tele = rehome_uf_cited_lane_devs(
+                        features, product_features, user_flows,
+                        list(flows), repo_path=repo_path,
+                    )
+                    scan_meta["lane_rehome"] = lr_tele
+                except Exception as exc:  # noqa: BLE001 — never break a scan
+                    log_lr.info(
+                        f"lane_rehome: FAILED ({exc}) — lane left as-is",
+                        feature=None,
+                    )
+
+    # ── Stage 6.88 — journey lattice (phase_finalize:1492-1613) ────────
+    from faultline.pipeline_v2.journey_lattice import (
+        dedup_lattice_journeys,
+        fold_thin_lattice_children,
+        journey_lattice_enabled,
+        run_journey_lattice,
+    )
+    from faultline.pipeline_v2.phase_finalize import _recover_uncovered_donors
+    if not uf_suppressed and journey_lattice_enabled():
+        with StageLogger(env.run_dir, 6, "journey_lattice") as log_jl:
+            try:
+                interior_result = _chain_get(state, "interior_result")
+                if interior_result is None and ctx is not None:
+                    # rebuild the 6.55 parse (deterministic, content-
+                    # hash cached) — the live object never rides a capture.
+                    try:
+                        from faultline.pipeline_v2.stage_6_55_page_interior import (
+                            run_stage_6_55,
+                        )
+                        interior_result = run_stage_6_55(
+                            ctx, routes_index, log_jl)
+                    except Exception:  # noqa: BLE001 — evidence is optional
+                        interior_result = None
+                _jl_interior = None
+                if interior_result is not None and interior_result.active:
+                    from faultline.pipeline_v2.stage_6_55_page_interior import (
+                        build_interior_evidence as _jl_evidence,
+                    )
+                    try:
+                        _jl_interior = _jl_evidence(
+                            interior_result, features, product_features,
+                        )
+                    except Exception:  # noqa: BLE001 — evidence is optional
+                        _jl_interior = None
+                _jl_labeler = None
+                _jl_verifier = None
+                try:
+                    from faultline.pipeline_v2.personas import (
+                        build_draft_verifier as _jl_bdv,
+                        build_pm_labeler as _jl_bpl,
+                    )
+                    _jl_cache = getattr(ctx, "cache_backend", None)
+                    _jl_verifier = _jl_bdv(
+                        model_id=model_id,
+                        cost_tracker=env.tracker,
+                        cache=_jl_cache,
+                        llm_health=env.llm_health,
+                        log=log_jl,
+                    )
+                    _jl_labeler = _jl_bpl(
+                        model_id=model_id,
+                        cost_tracker=env.tracker,
+                        cache=_jl_cache,
+                        llm_health=env.llm_health,
+                        log=log_jl,
+                        thesis=scan_meta.get("product_thesis"),
+                        verifier=_jl_verifier,
+                    )
+                except Exception:  # noqa: BLE001 — personas are optional
+                    _jl_labeler = None
+                    _jl_verifier = None
+                jl_tele = run_journey_lattice(
+                    user_flows, features, product_features, routes_index,
+                    interior_evidence=_jl_interior,
+                    labeler=_jl_labeler,
+                    verifier=_jl_verifier,
+                )
+                if jl_tele.get("applied"):
+                    from faultline.pipeline_v2.conservation import (
+                        apply_uf_conservation as _jl_cons,
+                    )
+                    jl_tele["conservation_after"] = _jl_cons(
+                        user_flows, features, product_features,
+                        null_shared_without_signal=True,
+                    )
+                    jl_tele["dedup_after"] = dedup_lattice_journeys(user_flows)
+                    jl_tele["thin_fold_after"] = fold_thin_lattice_children(
+                        user_flows, list(flows))
+                    _jl_donor = _recover_uncovered_donors(
+                        user_flows, features, product_features,
+                    )
+                    if _jl_donor is not None:
+                        jl_tele["donor_backstop_after"] = _jl_donor
+                scan_meta["journey_lattice"] = jl_tele
+                write_stage_artifact(
+                    repo_path, stage_index=6, stage_name="journey_lattice",
+                    payload=dict(jl_tele), run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — lattice never breaks a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"journey-lattice failed ({exc}); journeys unpartitioned"
+                )
+                log_jl.info(
+                    f"journey_lattice: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
+    # ── Stage 6.98/6.98b — e2e truth + orphan-journey synthesis ────────
+    from faultline.pipeline_v2.e2e_truth import (
+        e2e_truth_enabled, matched_authored_names, orphan_uf_enabled,
+        run_e2e_truth, scan_meta_view, synthesize_orphan_journeys,
+    )
+    e2e_authored_names: dict[str, list[str]] = {}
+    e2e_payload: dict[str, Any] | None = None
+    if e2e_truth_enabled():
+        with StageLogger(env.run_dir, 6, "e2e_truth") as log_e2e:
+            try:
+                e2e_payload = run_e2e_truth(
+                    repo_path, user_flows,
+                    routes_index=routes_index,
+                    flows=list(flows),
+                )
+                scan_meta["e2e_truth"] = scan_meta_view(e2e_payload)
+                write_stage_artifact(
+                    repo_path, 6, "e2e_truth", e2e_payload,
+                    run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_e2e.info(
+                    f"e2e_truth: FAILED ({exc}) — continuing", feature=None,
+                )
+    if (e2e_truth_enabled() and orphan_uf_enabled()
+            and e2e_payload is not None and not e2e_payload.get("e2e_absent")):
+        with StageLogger(env.run_dir, 6, "e2e_orphan_uf") as log_orph:
+            try:
+                _synth = synthesize_orphan_journeys(
+                    e2e_payload, product_features, features,
+                    routes_index, user_flows,
+                    flows=list(flows),
+                )
+                minted = _synth["minted"]
+                if minted:
+                    max_id = 0
+                    for uf in user_flows:
+                        _m = _re.match(r"^UF-(\d+)$", str(uf.id or ""))
+                        if _m:
+                            max_id = max(max_id, int(_m.group(1)))
+                    fresh = [uf for uf, _titles in minted]
+                    fresh.sort(key=lambda u: ((u.name or "").lower(),
+                                              str(u.resource or "")))
+                    for i, uf in enumerate(fresh, start=1):
+                        uf.id = f"UF-{max_id + i:03d}"
+                    for uf, _titles in minted:
+                        user_flows.append(uf)
+                        e2e_authored_names[uf.id] = [uf.name]
+                for uid, labels in matched_authored_names(e2e_payload).items():
+                    e2e_authored_names.setdefault(uid, list(labels))
+                scan_meta["e2e_orphan_uf"] = _synth["tele"]
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                log_orph.info(
+                    f"e2e_orphan_uf: FAILED ({exc}) — continuing", feature=None,
+                )
+
+    # ── Stage 6.985 — transport-lane journey-conservation handoff ──────
+    from faultline.pipeline_v2.transport_handoff import (
+        run_transport_handoff,
+        transport_handoff_enabled,
+    )
+    _transport_candidates = dict(
+        (_mint_meta(scan_meta).get("technology_instruments") or {})
+        .get("transport_candidates") or {}
+    )
+    stage1_out = _chain_get(state, "stage1_out")
+    if stage1_out is None and transport_handoff_enabled() and _transport_candidates:
+        sib_mint = _sibling_input(env, state, 6, "anchored_mint") or {}
+        stage1_out = sib_mint.get("stage1_out") or {}
+    if transport_handoff_enabled() and _transport_candidates:
+        with StageLogger(env.run_dir, 6, "transport_handoff") as log_th:
+            try:
+                th_tele = run_transport_handoff(
+                    features, product_features, user_flows,
+                    list(flows), routes_index,
+                    ctx, _transport_candidates,
+                    extractor_signals=stage1_out or {},
+                    feature_flow_edges=list(
+                        _chain_get(state, "bipartite_edges") or []),
+                    nav_keys=frozenset(nav_keys),
+                )
+                scan_meta["transport_handoff"] = th_tele
+                write_stage_artifact(
+                    repo_path, stage_index=6, stage_name="transport_handoff",
+                    payload=dict(th_tele), run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"transport-handoff failed ({exc}); "
+                    f"candidate PFs left product (no journey touched)"
+                )
+                log_th.info(
+                    f"transport_handoff: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
+    # ── Stage 6.986 — mega-PF nav-area re-home (artifact only if triggered) ──
+    from faultline.pipeline_v2.mega_pf_nav_rehome import (
+        mega_pf_nav_rehome_enabled,
+        run_mega_pf_nav_rehome,
+    )
+    if (mega_pf_nav_rehome_enabled() and anchored_mint_applied
+            and not uf_suppressed):
+        with StageLogger(env.run_dir, 6, "mega_pf_nav_rehome") as log_b24:
+            try:
+                b24_tele = run_mega_pf_nav_rehome(
+                    features, product_features, user_flows,
+                    list(flows), routes_index, ctx,
+                    extractor_signals=stage1_out or {},
+                    feature_flow_edges=list(
+                        _chain_get(state, "bipartite_edges") or []),
+                    transport_candidate_units=set(_transport_candidates),
+                )
+                if b24_tele.get("triggered"):
+                    scan_meta["mega_pf_nav_rehome"] = b24_tele
+                    write_stage_artifact(
+                        repo_path, stage_index=6,
+                        stage_name="mega_pf_nav_rehome",
+                        payload=dict(b24_tele), run_dir=env.run_dir,
+                    )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"mega-pf nav re-home failed ({exc}); "
+                    f"journeys left untouched"
+                )
+                log_b24.info(
+                    f"mega_pf_nav_rehome: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
+    # ── Stage 6.987 — devgrain-leaf PF demote (log/scan_meta only) ─────
+    from faultline.pipeline_v2.devgrain_demote import (
+        fdir_devgrain_gate_enabled,
+        run_devgrain_demote,
+    )
+    if (fdir_devgrain_gate_enabled() and anchored_mint_applied
+            and not uf_suppressed):
+        with StageLogger(env.run_dir, 6, "devgrain_demote") as log_dg:
+            try:
+                dg_tele = run_devgrain_demote(
+                    features, product_features, user_flows,
+                    nav_keys=frozenset(nav_keys),
+                )
+                scan_meta["devgrain_demote"] = dg_tele
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"devgrain demote failed ({exc}); PFs left untouched"
+                )
+                log_dg.info(
+                    f"devgrain_demote: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
+    return {
+        "user_flows": user_flows,
+        "product_features": product_features,
+        "features": features,
+        "scan_meta": scan_meta,
+        "e2e_authored_names": e2e_authored_names,
+    }
+
+
+def _run_naming_contract(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    """Stage 6.87 naming contract + the post-naming window it owns
+    (phase_finalize:2639-3131): 6.7e adjudicator → dispatch homing →
+    synth quality (coverage_gaps) → platform lane → 6.99 i16 rehome →
+    6.99b post-UF rehome → cost refresh → uf_loc → flow_loc →
+    flow_name_v2 → terminal_classification (all artifact-only rows of
+    this unit). Channels not in the capture: features/ctx/routes_index/
+    path_index ← chain else the output-input sibling (dev features are
+    untouched between this capture and Stage 7 — every pass in the
+    window mutates user_flows / PF displays / gaps only);
+    product_strings ← recomputed over the user_flows-input sibling
+    (captured 3 lines after the live index was built); authored e2e
+    names ← chain else the e2e artifact + orphan-tagged UFs;
+    ``_hh_anchor_registry`` ← chain only (live mint objects; standalone
+    passes None — post-artifact, never gate-compared)."""
+    product_features = state["product_features"]
+    user_flows = state["user_flows"]
+    flows = state["bipartite_flows"]
+    prev_scan_json = state.get("prev_scan_json")
+    scan_meta = state["scan_meta"]
+    sibling_cache: dict[str, Any] = {}
+
+    features = _chain_get(state, "features")
+    ctx = _chain_get(state, "ctx")
+    routes_index = _chain_get(state, "routes_index")
+    path_index = _chain_get(state, "path_index")
+    if features is None or ctx is None or routes_index is None or path_index is None:
+        out_sib = _sibling_input(env, state, 7, "output") or {}
+        if features is None:
+            features = out_sib.get("features") or []
+        if ctx is None:
+            ctx = out_sib.get("ctx")
+        if routes_index is None:
+            routes_index = out_sib.get("routes_index") or []
+        if path_index is None:
+            path_index = out_sib.get("path_index") or {}
+    if ctx is not None:
+        ctx = prepare_ctx(ctx, env)
+    repo_path = getattr(ctx, "repo_path", None) or _replayed_repo_root(
+        env, state) or Path(".")
+    model_id = _replay_model_id(env, state, sibling_cache)
+    anchored_mint_applied = _anchored_mint_applied(state)
+    uf_suppressed = bool(scan_meta.get("uf_suppressed_reason"))
+    instrument_dirs, dev_artifact_units = _instrument_channels(state)
+
+    # product_strings — the live index is built ONCE before Stage 6.7
+    # over the pre-UF feature/flow member sets; the user_flows capture
+    # (written 3 lines later) pins exactly that world.
+    product_strings = _chain_get(state, "product_strings")
+    if product_strings is None:
+        uf_sib = _sibling_input(env, state, 6, "user_flows") or {}
+        ps_features = uf_sib.get("features") or []
+        ps_flows = uf_sib.get("bipartite_flows") or []
+        try:
+            product_strings = _product_strings_for(
+                Path(repo_path), ps_features, ps_flows)
+        except Exception:  # noqa: BLE001 — evidence is optional
+            product_strings = None
+
+    # Track-C authored names — chain else reconstructed: matched names
+    # from the recorded e2e artifact, minted-orphan names from the
+    # synthesis_reason-tagged UFs already in THIS capture.
+    e2e_authored_names = _chain_get(state, "e2e_authored_names")
+    if e2e_authored_names is None:
+        e2e_authored_names = {}
+        try:
+            from faultline.pipeline_v2.e2e_truth import (
+                E2E_ORPHAN_REASON,
+                matched_authored_names,
+            )
+            for uf in user_flows:
+                if getattr(uf, "synthesis_reason", None) == E2E_ORPHAN_REASON:
+                    e2e_authored_names[uf.id] = [uf.name]
+            source_name = state.get("_replayed_from")
+            if source_name:
+                import json as _json
+                e2e_art = (env.run_dir.parent / str(source_name)
+                           / "06-stage-e2e_truth.json")
+                if e2e_art.exists():
+                    payload = _json.loads(e2e_art.read_text(encoding="utf-8"))
+                    for uid, labels in matched_authored_names(payload).items():
+                        e2e_authored_names.setdefault(uid, list(labels))
+        except Exception:  # noqa: BLE001 — authored channel is optional
+            pass
+
+    from faultline.pipeline_v2.naming_contract import (
+        naming_contract_enabled,
+        run_naming_contract,
+    )
+    from faultline.pipeline_v2.uf_identity_keeper import keeper_enabled
+    if naming_contract_enabled():
+        with StageLogger(env.run_dir, 7, "naming_contract") as log_nc:
+            try:
+                _nc_labeler = None
+                _nc_verifier = None
+                try:
+                    from faultline.pipeline_v2.personas import (
+                        build_draft_verifier,
+                        build_pm_labeler,
+                    )
+                    _nc_cache = getattr(ctx, "cache_backend", None)
+                    _nc_verifier = build_draft_verifier(
+                        model_id=model_id,
+                        cost_tracker=env.tracker,
+                        cache=_nc_cache,
+                        llm_health=env.llm_health,
+                        log=log_nc,
+                    )
+                    _nc_labeler = build_pm_labeler(
+                        model_id=model_id,
+                        cost_tracker=env.tracker,
+                        cache=_nc_cache,
+                        llm_health=env.llm_health,
+                        log=log_nc,
+                        thesis=scan_meta.get("product_thesis"),
+                        verifier=_nc_verifier,
+                    )
+                except Exception:  # noqa: BLE001 — persona is optional
+                    _nc_labeler = None
+                    _nc_verifier = None
+                nc_tele = run_naming_contract(
+                    product_features,
+                    user_flows,
+                    list(flows),
+                    prev_scan=prev_scan_json,
+                    keeper_on=keeper_enabled(),
+                    product_strings=product_strings,
+                    routes_index=routes_index,
+                    uf_authored_names=e2e_authored_names,
+                    labeler=_nc_labeler,
+                    verifier=_nc_verifier,
+                    repo_root=repo_path,
+                )
+                scan_meta["naming_contract"] = nc_tele
+                write_stage_artifact(
+                    repo_path, stage_index=7, stage_name="naming_contract",
+                    payload=dict(nc_tele), run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — naming must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"naming-contract failed ({exc}); displays unpolished"
+                )
+                log_nc.info(
+                    f"naming_contract: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
+    # ── Stage 6.7e — journey-evidence adjudicator (keyed-only) ─────────
+    from faultline.pipeline_v2.stage_6_7e_adjudicator import (
+        adjudicator_6_7e_enabled,
+        run_stage_6_7e,
+    )
+    adjudicated_gaps: list[Any] = []
+    if adjudicator_6_7e_enabled():
+        try:
+            adj_tele, adjudicated_gaps = run_stage_6_7e(
+                user_flows,
+                list(flows),
+                product_features,
+                repo_root=repo_path,
+                product_strings=product_strings,
+                routes_index=routes_index,
+                uf_authored_names=e2e_authored_names,
+                keeper_on=keeper_enabled(),
+                model_id=model_id,
+                cost_tracker=env.tracker,
+                cache=getattr(ctx, "cache_backend", None),
+                llm_health=env.llm_health,
+            )
+            if adj_tele.get("ran"):
+                scan_meta["adjudicator_6_7e"] = adj_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            adjudicated_gaps = []
+            scan_meta.setdefault("warnings", []).append(
+                f"stage-6.7e adjudicator failed ({exc}); journeys unchanged")
+
+    # ── Stage 6.985d — dispatch-mint homing ────────────────────────────
+    from faultline.pipeline_v2.dispatch_homing import (
+        dispatch_homing_enabled,
+        home_dispatch_mints,
+    )
+    if dispatch_homing_enabled():
+        try:
+            dh_tele = home_dispatch_mints(
+                user_flows, features, product_features,
+                path_index=path_index)
+            if dh_tele.get("rehomed"):
+                scan_meta["dispatch_homing"] = dh_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"dispatch-homing failed ({exc}); UF homes left as-is")
+
+    # ── Stage 6.98 — synth quality (+ typed coverage-gap channel) ──────
+    from faultline.pipeline_v2.synth_quality import (
+        run_synth_quality,
+        synth_quality_enabled,
+    )
+    coverage_gaps: list[Any] | None = None
+    if synth_quality_enabled():
+        try:
+            _sq_tele = run_synth_quality(
+                user_flows,
+                list(flows),
+                product_features,
+                scan_meta,
+                developer_features=features,
+            )
+            _gaps = _sq_tele.get("coverage_gaps")
+            if _gaps is not None:
+                coverage_gaps = list(_gaps)
+        except Exception as exc:  # noqa: BLE001 — quality pass never breaks a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"synth-quality pass failed ({exc}); journeys unchanged"
+            )
+    if adjudicated_gaps:
+        coverage_gaps = list(coverage_gaps or []) + list(adjudicated_gaps)
+        coverage_gaps.sort(key=lambda g: (
+            str(getattr(g, "product_feature_id", "") or ""),
+            str(getattr(g, "id", "") or ""),
+        ))
+
+    # ── platform_infrastructure[] lane ──────────────────────────────────
+    platform_infrastructure: list[dict[str, Any]] | None = None
+    if anchored_mint_applied:
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+            build_platform_infrastructure_lane,
+        )
+        try:
+            platform_infrastructure = build_platform_infrastructure_lane(
+                features, user_flows=user_flows)
+            scan_meta.setdefault("stage_6_86_anchored_mint", {})[
+                "platform_infrastructure_rows"
+            ] = len(platform_infrastructure)
+        except Exception as exc:  # noqa: BLE001 — lane must never break a scan
+            platform_infrastructure = []
+            scan_meta.setdefault("warnings", []).append(
+                f"platform-infrastructure lane failed ({exc}); lane empty"
+            )
+
+    # ── Stage 6.99 — i16 journey re-home ────────────────────────────────
+    from faultline.pipeline_v2.stage_6_99_i16_rehome import (
+        i16_rehome_enabled,
+        rehome_foreign_entry_ufs,
+    )
+    if i16_rehome_enabled():
+        try:
+            rh_tele = rehome_foreign_entry_ufs(
+                user_flows, features, product_features,
+                path_index, platform_infrastructure)
+            if rh_tele.get("rehomed"):
+                scan_meta["i16_rehome"] = rh_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"i16-rehome failed ({exc}); UF homes left as-is")
+
+    # ── Stage 6.99b — post-UF PF-homing hygiene ─────────────────────────
+    from faultline.pipeline_v2.stage_6_99b_post_uf_rehome import (
+        homing_hygiene_enabled as _hh_enabled,
+        run_post_uf_rehome,
+    )
+    if _hh_enabled():
+        try:
+            _hh_tele = run_post_uf_rehome(
+                user_flows, features, product_features,
+                _chain_get(state, "hh_anchor_registry"))
+            scan_meta["post_uf_rehome"] = _hh_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"post-uf-rehome failed ({exc}); UF homes left as-is")
+
+    # W3 rider — full-bill LLM cost refresh (fresh replay tracker).
+    scan_meta["cost_usd"] = round(env.tracker.total_cost_usd, 4)
+    scan_meta["calls"] = env.tracker.call_count
+
+    # ── Stage 6.97b — journey-level LOC ─────────────────────────────────
+    from faultline.pipeline_v2.stage_6_97b_uf_loc import (
+        apply_uf_loc,
+        uf_loc_enabled,
+    )
+    if uf_loc_enabled():
+        with StageLogger(env.run_dir, 7, "uf_loc") as log_ufloc:
+            try:
+                _uf_loc_tele = apply_uf_loc(user_flows, list(flows))
+                write_stage_artifact(
+                    repo_path, stage_index=7, stage_name="uf_loc",
+                    payload=_uf_loc_tele, run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — metric must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"uf-loc stage failed ({exc}); user_flows[].loc left unset"
+                )
+                log_ufloc.info(
+                    f"uf_loc: FAILED ({exc}) — continuing without uf loc",
+                    feature=None,
+                )
+
+    # ── Stage 6.97c — flow-level OWNED/SHARED LOC ───────────────────────
+    from faultline.pipeline_v2.stage_6_97c_flow_loc import (
+        apply_flow_loc,
+        flow_loc_enabled,
+    )
+    if flow_loc_enabled():
+        with StageLogger(env.run_dir, 7, "flow_loc") as log_flowloc:
+            try:
+                _flow_loc_tele = apply_flow_loc(list(flows))
+                write_stage_artifact(
+                    repo_path, stage_index=7, stage_name="flow_loc",
+                    payload=_flow_loc_tele, run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — metric must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"flow-loc stage failed ({exc}); flows[].loc left unset"
+                )
+                log_flowloc.info(
+                    f"flow_loc: FAILED ({exc}) — continuing without flow loc",
+                    feature=None,
+                )
+
+    # ── B30 — deterministic verb+resource flow naming ───────────────────
+    from faultline.pipeline_v2.flow_name_v2 import (
+        apply_flow_name_v2,
+        flow_name_v2_enabled,
+    )
+    if flow_name_v2_enabled():
+        with StageLogger(env.run_dir, 7, "flow_name_v2") as log_fnv2:
+            try:
+                _fnv2_tele = apply_flow_name_v2(
+                    list(flows),
+                    routes_index=routes_index,
+                    repo_path=repo_path,
+                )
+                write_stage_artifact(
+                    repo_path, stage_index=7, stage_name="flow_name_v2",
+                    payload=_fnv2_tele, run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — naming must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"flow-name-v2 stage failed ({exc}); flow names left as-is"
+                )
+                log_fnv2.info(
+                    f"flow_name_v2: FAILED ({exc}) — continuing with old names",
+                    feature=None,
+                )
+
+    # ── Stage 6.995 — B68 terminal 4-way classification ─────────────────
+    from faultline.pipeline_v2.terminal_classification import (
+        run_terminal_classification,
+        terminal_classification_enabled,
+    )
+    if terminal_classification_enabled() and coverage_gaps is not None:
+        try:
+            _tc_tele = run_terminal_classification(
+                coverage_gaps,
+                product_features,
+                features,
+                scan_meta,
+                dev_artifact_units=dev_artifact_units,
+                instrument_dirs=instrument_dirs,
+                repo_path=repo_path,
+            )
+            write_stage_artifact(
+                repo_path, stage_index=7,
+                stage_name="terminal_classification",
+                payload=_tc_tele, run_dir=env.run_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"terminal-classification stage failed ({exc}); "
+                f"coverage_gaps left as-is"
+            )
+
+    return {
+        "product_features": product_features,
+        "user_flows": user_flows,
+        "scan_meta": scan_meta,
+        "coverage_gaps": coverage_gaps,
+        "platform_infrastructure": platform_infrastructure,
+    }
+
+
 def _run_vendor_connector_split(
     env: ReplayEnv, state: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1204,7 +2228,44 @@ def _run_vendor_connector_split(
             payload=vendor_split_result.as_telemetry(),
             run_dir=env.run_dir,
         )
-    return {"features": features, "product_features": product_features}
+
+    # ── Stage 8.9.8 — hub/child PF binding (G5; phase_layer2:772-793) ──
+    # Same replay unit (between the vendor-split and pf_hotspots input
+    # captures); artifact-only row. ``dev_to_product_map`` is chain-only
+    # (nonsource_drop produces the live-parity map) — standalone falls
+    # back to the devs' stamped product_feature_id fields (the same
+    # ownership truth the finalize conservation pass reads); identity
+    # never compares this artifact.
+    from faultline.pipeline_v2.hub_relation import apply_hub_pf_binding
+
+    dev_to_product_map = _chain_get(state, "dev_to_product_map")
+    if dev_to_product_map is None:
+        dev_to_product_map = {
+            f.name: (f.product_feature_id,)
+            for f in features
+            if getattr(f, "product_feature_id", None)
+        }
+    with StageLogger(env.run_dir, 8, "hub_pf_binding") as log8_9_8:
+        hub_binding_telemetry = apply_hub_pf_binding(
+            features, product_features, dev_to_product_map,
+        )
+        log8_9_8.info(
+            f"hub_pf_binding enabled={hub_binding_telemetry['enabled']} "
+            f"hubs={hub_binding_telemetry['hubs']} "
+            f"devs_rebound={hub_binding_telemetry['devs_rebound']} "
+            f"pfs_minted={hub_binding_telemetry['pfs_minted']}",
+        )
+        write_stage_artifact(
+            Path(state.get("repo_path", ".")), stage_index=8,
+            stage_name="hub_pf_binding",
+            payload=hub_binding_telemetry,
+            run_dir=env.run_dir,
+        )
+    return {
+        "features": features,
+        "product_features": product_features,
+        "dev_to_product_map": dev_to_product_map,
+    }
 
 
 def _run_pf_hotspots(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
@@ -1299,6 +2360,29 @@ def _run_flow_expansion(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]
             run_dir=env.run_dir,
         )
     scan_meta["stage_3_5_flow_expansion"] = dict(fx.telemetry)
+
+    # ── Stage 6.55 part 2 (G5; phase_finalize:332-346) — interior nodes
+    # onto the expanded graph. ``interior_result`` is a live object the
+    # page_interior runner threads via the chain; standalone
+    # flow_expansion replay has none (the live artifact was written in
+    # part 1 — identity is untouched; only chain state fidelity gains).
+    interior_result = _chain_get(state, "interior_result")
+    interior_telemetry = _chain_get(state, "interior_telemetry")
+    if interior_result is not None and interior_result.active:
+        from faultline.pipeline_v2.stage_6_55_page_interior import (
+            degenerate_span_stats,
+            inject_interior_nodes,
+        )
+        if interior_telemetry is None:
+            interior_telemetry = {"active": True}
+        interior_telemetry["node_inject"] = inject_interior_nodes(
+            features, interior_result,
+        )
+        interior_telemetry["degenerate_spans_after"] = (
+            degenerate_span_stats(features)
+        )
+        scan_meta["stage_6_55_page_interior"] = dict(interior_telemetry)
+
     return {
         "features": features,
         "bipartite_flows": flows,
@@ -1685,7 +2769,68 @@ def _run_monorepo_assembly(env: ReplayEnv, state: dict[str, Any]) -> dict[str, A
         scan_meta["monorepo_assembly"] = {
             k: v for k, v in monorepo_view.get("stats", {}).items()
         }
-    return {"monorepo_view": monorepo_view, "scan_meta": scan_meta}
+
+    # ── G5 — same-unit tails (phase_finalize:2138-2278) ────────────────
+    # uf_identity: gated on an EXPLICIT prev_scan_json which no capture
+    # in this unit carries — a prev-scan-armed source run would need its
+    # own uf_identity capture (it has one; a registered row can join
+    # when such a baseline exists). Skipped here exactly like a live
+    # scan without --prev-scan.
+    # file_lane + B15 shared-leaf consistency: artifact-only window
+    # between this capture and feature_loc-input. product_features /
+    # routes_index are chain-only channels; standalone falls back to the
+    # history-input / page_interior-input siblings (identity never
+    # compares the file_lane artifact).
+    from faultline.pipeline_v2.file_lane import (
+        enforce_shared_leaf_consistency,
+        file_lane_enabled,
+        run_file_lane_infra,
+        shared_leaf_consistency_enabled,
+    )
+
+    anchored_mint_applied = _anchored_mint_applied(state)
+    product_features = _chain_get(state, "product_features")
+    if product_features is None:
+        product_features = (
+            _sibling_input(env, state, 6, "history") or {}
+        ).get("product_features") or []
+    routes_index = _chain_get(state, "routes_index")
+    if routes_index is None:
+        routes_index = (
+            _sibling_input(env, state, 6, "page_interior") or {}
+        ).get("routes_index") or []
+    if file_lane_enabled() and anchored_mint_applied:
+        with StageLogger(env.run_dir, 6, "file_lane") as log_fl:
+            try:
+                fl_tele = run_file_lane_infra(
+                    features, product_features, routes_index, ctx,
+                )
+                scan_meta["file_lane"] = fl_tele
+                write_stage_artifact(
+                    ctx.repo_path, stage_index=6, stage_name="file_lane",
+                    payload=dict(fl_tele), run_dir=env.run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — lane must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"file-lane failed ({exc}); no infra reclassified"
+                )
+                log_fl.info(
+                    f"file_lane: FAILED ({exc}) — continuing", feature=None)
+    if shared_leaf_consistency_enabled() and anchored_mint_applied:
+        try:
+            slc_tele = enforce_shared_leaf_consistency(
+                features, product_features, routes_index)
+            scan_meta["shared_leaf_consistency"] = slc_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"shared-leaf-consistency failed ({exc}); no roles changed")
+
+    return {
+        "monorepo_view": monorepo_view,
+        "scan_meta": scan_meta,
+        "features": features,
+        "product_features": product_features,
+    }
 
 
 def _run_feature_loc(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
@@ -1721,11 +2866,171 @@ def _run_feature_loc(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — metric must never break a scan
             scan_meta["feature_loc"] = {"enabled": False, "error": str(exc)}
             log697.info(f"feature_loc: FAILED ({exc})", feature=None)
-    return {
+
+    # ── G5 — same-unit tails (phase_finalize:2358-2625) ────────────────
+    # B15b data-leaf rail → flowless-shell resolution → surface-taxonomy
+    # emission (artifact) → W5.1 loc-worthy backstop → emission
+    # integrity (artifact) + path_index refresh + terminal home. All sit
+    # between the feature_loc and naming_contract input captures.
+    # routes_index / path_index / model_id are chain-else-sibling
+    # channels; identity compares only the feature_loc artifact above.
+    sibling_cache: dict[str, Any] = {}
+    anchored_mint_applied = _anchored_mint_applied(state)
+    uf_suppressed = bool(scan_meta.get("uf_suppressed_reason"))
+    instrument_dirs, dev_artifact_units = _instrument_channels(state)
+    routes_index = _chain_get(state, "routes_index")
+    if routes_index is None:
+        routes_index = (
+            _sibling_input(env, state, 6, "page_interior") or {}
+        ).get("routes_index") or []
+    repo_path = ctx.repo_path
+
+    from faultline.pipeline_v2.file_lane import (
+        data_leaf_enabled,
+        enforce_data_leaf_shared,
+    )
+    if data_leaf_enabled() and anchored_mint_applied:
+        try:
+            _repo_loc = (scan_meta.get("loc_accounting") or {}).get("repo_loc")
+            dl_tele = enforce_data_leaf_shared(
+                features, product_features, routes_index, _repo_loc)
+            scan_meta["data_leaf"] = dl_tele
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"data-leaf rail failed ({exc}); no roles changed")
+
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        _shell_absorb_enabled,
+        resolve_flowless_shells,
+    )
+    if (_shell_absorb_enabled()
+            and not anchored_mint_applied
+            and (scan_meta.get("stage_6_7d_journey_abstraction") or {}).get("applied")):
+        with StageLogger(env.run_dir, 6, "flowless_shells") as log_shell:
+            try:
+                product_features, shell_tele = resolve_flowless_shells(
+                    features, product_features)
+                scan_meta["flowless_shells"] = shell_tele
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"flowless-shell resolution failed ({exc}); shells left as-is")
+                log_shell.info(
+                    f"flowless_shells: FAILED ({exc}) — continuing", feature=None)
+
+    # ── Stage 6.85 — surface-taxonomy emission lane (artifact) ─────────
+    from faultline.pipeline_v2.surface_taxonomy import apply_emission_taxonomy
+    non_product_surfaces: list[dict[str, Any]] = []
+    with StageLogger(env.run_dir, 6, "surface_taxonomy") as log_st:
+        try:
+            _st_adjudicator = None
+            try:
+                from faultline.pipeline_v2.personas import (
+                    build_surface_adjudicator,
+                )
+                _st_adjudicator = build_surface_adjudicator(
+                    model_id=_replay_model_id(env, state, sibling_cache),
+                    cost_tracker=env.tracker,
+                    cache=getattr(ctx, "cache_backend", None),
+                    llm_health=env.llm_health,
+                    log=log_st,
+                    thesis=scan_meta.get("product_thesis"),
+                )
+            except Exception:  # noqa: BLE001 — persona is optional
+                _st_adjudicator = None
+            st_tele, non_product_surfaces, product_features = (
+                apply_emission_taxonomy(
+                    features, product_features, user_flows or [],
+                    list(bipartite_flows or []), routes_index,
+                    repo_path=repo_path,
+                    adjudicator=_st_adjudicator,
+                    instrument_dirs=instrument_dirs,
+                    dev_artifact_units=dev_artifact_units,
+                )
+            )
+            scan_meta["surface_taxonomy_emission"] = st_tele
+            write_stage_artifact(
+                ctx.repo_path, stage_index=6, stage_name="surface_taxonomy",
+                payload={**st_tele, "non_product_surfaces": [
+                    {k: v for k, v in e.items() if k != "user_flows"}
+                    for e in non_product_surfaces
+                ]},
+                run_dir=env.run_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 — taxonomy must never break a scan
+            non_product_surfaces = []
+            scan_meta.setdefault("warnings", []).append(
+                f"surface-taxonomy emission failed ({exc}); "
+                f"lane left empty, tags may be partial"
+            )
+            log_st.info(
+                f"surface_taxonomy: FAILED ({exc}) — continuing", feature=None,
+            )
+
+    # ── W5.1 — LOC-worthy PF backstop ───────────────────────────────────
+    from faultline.pipeline_v2.phase_finalize import _recover_uncovered_donors
+    if not uf_suppressed:
+        _lw_tele = _recover_uncovered_donors(
+            user_flows or [], features, product_features, loc_only=True,
+        )
+        if _lw_tele is not None:
+            scan_meta["loc_worthy_backstop"] = _lw_tele
+
+    # ── Emission integrity (artifact) + path_index refresh + terminal home ──
+    from faultline.pipeline_v2.emission_integrity import (
+        enforce_emission_integrity,
+    )
+    path_index = _chain_get(state, "path_index")
+    with StageLogger(env.run_dir, 7, "emission_integrity") as log_ei:
+        features, product_features, ei_result = enforce_emission_integrity(
+            features, product_features, user_flows or [],
+            list(bipartite_flows or []),
+        )
+        scan_meta["emission_integrity"] = ei_result.as_dict()
+        write_stage_artifact(
+            ctx.repo_path, stage_index=7, stage_name="emission_integrity",
+            payload=ei_result.as_dict(), run_dir=env.run_dir,
+        )
+        # W1.1 path_index emission refresh — the stale index is a chain
+        # channel (lineage runner output); standalone feature_loc replay
+        # has no index to refresh (stats skipped, artifact unaffected).
+        if path_index is not None:
+            from faultline.pipeline_v2.indexes import build_path_index
+
+            _stale_index = path_index
+            path_index = build_path_index(
+                [{"uuid": f.uuid, "paths": list(f.paths)} for f in features],
+                [{"uuid": fl.uuid, "paths": list(fl.paths)}
+                 for fl in (bipartite_flows or [])],
+            )
+            scan_meta["emission_integrity"]["path_index_refresh"] = {
+                "entries_before": len(_stale_index),
+                "entries_after": len(path_index),
+                "owners_changed": sum(
+                    1 for p, e in path_index.items()
+                    if (_stale_index.get(p) or {}).get("feature_uuid")
+                    != e.get("feature_uuid")
+                ),
+            }
+        from faultline.pipeline_v2.uf_terminal_home import (
+            assign_terminal_homes,
+            terminal_home_enabled,
+        )
+        if terminal_home_enabled():
+            th_tele = assign_terminal_homes(
+                user_flows or [], features, product_features,
+            )
+            scan_meta["uf_terminal_home"] = th_tele
+
+    out: dict[str, Any] = {
         "features": features,
         "product_features": product_features,
         "scan_meta": scan_meta,
+        "non_product_surfaces": non_product_surfaces,
+        "user_flows": user_flows,
     }
+    if path_index is not None:
+        out["path_index"] = path_index
+    return out
 
 
 def _run_output(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
@@ -1752,6 +3057,11 @@ def _run_output(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
             scan_commit=state.get("head", ""),
             engine_version=_engine_version,
             monorepo=state.get("monorepo_view") or {},
+            # G5 — the late lanes ride the capture; coverage_gaps are
+            # never captured (chain-only, from the naming-contract unit).
+            non_product_surfaces=state.get("non_product_surfaces"),
+            platform_infrastructure=state.get("platform_infrastructure"),
+            coverage_gaps=_chain_get(state, "coverage_gaps"),
         )
         log7.info(f"wrote feature map to {out}", feature=None)
     return {"out_path": out}
@@ -1765,66 +3075,107 @@ STAGES: list[StageSpec] = [
     StageSpec("shape", 6, 2, _run_shape),
     StageSpec("repo_class", 6, 3, _run_repo_class),
     StageSpec("extractors", 1, 4, _run_extractors),
-    StageSpec("reconcile", 2, 5, _run_reconcile),
-    StageSpec("membership_closure", 2, 6, _run_membership_closure),
-    StageSpec("flows", 3, 7, _run_flows, llm_cache_dir="flows"),
+    # G5 — Stage 0.8 (run.py, between the extract phase and the
+    # reconcile capture); the stage writes its own capture + artifact.
+    StageSpec("product_thesis", 6, 5, _run_product_thesis),
+    StageSpec("reconcile", 2, 6, _run_reconcile),
+    StageSpec("membership_closure", 2, 7, _run_membership_closure),
+    StageSpec("flows", 3, 8, _run_flows, llm_cache_dir="flows"),
     # artifact-only: emitted by _run_flows (the run.py B34 block sits
     # inside the flows replay unit — no input capture of its own).
-    StageSpec("lazy_imports", 3, 8, _artifact_only_stage, artifact_only=True),
-    StageSpec("dispatch_registry", 3, 9, _artifact_only_stage,
+    StageSpec("lazy_imports", 3, 9, _artifact_only_stage, artifact_only=True),
+    StageSpec("dispatch_registry", 3, 10, _artifact_only_stage,
               artifact_only=True),
-    StageSpec("residual", 4, 10, _run_residual, llm_cache_dir="residual"),
-    StageSpec("postprocess", 5, 11, _run_postprocess),
-    StageSpec("sibling_collapse", 5, 12, _run_sibling_collapse),
-    StageSpec("cross_flow_dedup", 5, 13, _run_cross_flow_dedup),
-    StageSpec("bipartite", 5, 14, _run_bipartite),
-    StageSpec("metrics", 6, 15, _run_metrics),
-    StageSpec("product_clusterer", 6, 16, _run_product_clusterer),
-    StageSpec("import_tree", 6, 17, _run_import_tree),
-    StageSpec("framework_enrich", 6, 18, _run_framework_enrich),
-    StageSpec("branch_slicer", 6, 19, _run_branch_slicer),
+    StageSpec("residual", 4, 11, _run_residual, llm_cache_dir="residual"),
+    StageSpec("postprocess", 5, 12, _run_postprocess),
+    StageSpec("sibling_collapse", 5, 13, _run_sibling_collapse),
+    StageSpec("cross_flow_dedup", 5, 14, _run_cross_flow_dedup),
+    StageSpec("bipartite", 5, 15, _run_bipartite),
+    StageSpec("metrics", 6, 16, _run_metrics),
+    StageSpec("product_clusterer", 6, 17, _run_product_clusterer),
+    StageSpec("import_tree", 6, 18, _run_import_tree),
+    StageSpec("framework_enrich", 6, 19, _run_framework_enrich),
+    StageSpec("branch_slicer", 6, 20, _run_branch_slicer),
     StageSpec(
-        "marketing_clusterer", 8, 20, _run_marketing_clusterer,
+        "marketing_clusterer", 8, 21, _run_marketing_clusterer,
         llm_cache_dir="product-cluster",
     ),
-    StageSpec("rollup", 8, 21, _run_rollup),
-    StageSpec("member_backfill", 8, 22, _run_member_backfill),
-    StageSpec("nonsource_drop", 8, 23, _run_nonsource_drop),
-    StageSpec("scaffold_filter", 8, 24, _run_scaffold_filter),
-    StageSpec("di_attribution", 8, 25, _run_di_attribution),
-    StageSpec("anchor_desink", 8, 26, _run_anchor_desink),
-    StageSpec("shared_members", 8, 27, _run_shared_members),
-    StageSpec("anchor_subdecompose", 8, 28, _run_anchor_subdecompose),
+    StageSpec("rollup", 8, 22, _run_rollup),
+    StageSpec("member_backfill", 8, 23, _run_member_backfill),
+    StageSpec("nonsource_drop", 8, 24, _run_nonsource_drop),
+    StageSpec("scaffold_filter", 8, 25, _run_scaffold_filter),
+    StageSpec("di_attribution", 8, 26, _run_di_attribution),
+    StageSpec("anchor_desink", 8, 27, _run_anchor_desink),
+    StageSpec("shared_members", 8, 28, _run_shared_members),
+    StageSpec("anchor_subdecompose", 8, 29, _run_anchor_subdecompose),
     StageSpec(
-        "llm_component_split", 8, 29, _run_llm_component_split,
+        "llm_component_split", 8, 30, _run_llm_component_split,
         llm_cache_dir="llm-component-split",
     ),
-    StageSpec("domain_member_attribution", 8, 30, _run_domain_member_attribution),
+    StageSpec("domain_member_attribution", 8, 31, _run_domain_member_attribution),
     # optional: recorded runs that predate the stage have no input artifact
     # for it — replay chains over them must skip it silently.
-    StageSpec("vendor_connector_split", 8, 31, _run_vendor_connector_split,
+    StageSpec("vendor_connector_split", 8, 32, _run_vendor_connector_split,
               optional=True),
-    StageSpec("pf_hotspots", 8, 32, _run_pf_hotspots, connector=True),
-    StageSpec("lineage", 6, 33, _run_lineage, connector=True),
-    StageSpec("flow_expansion", 3, 34, _run_flow_expansion),
-    StageSpec("test_strip", 6, 35, _run_test_strip),
-    StageSpec("generated_strip", 6, 36, _run_generated_strip),
-    StageSpec("user_flows", 6, 37, _run_user_flows),
-    StageSpec("uf_splitter", 6, 38, _run_uf_splitter, llm_cache_dir="uf-split"),
-    StageSpec("uf_refiner", 6, 39, _run_uf_refiner, llm_cache_dir="uf-refine"),
+    # G5 — artifact-only: emitted by _run_vendor_connector_split (the
+    # phase_layer2 8.9.8 block sits inside the vendor-split replay unit).
+    StageSpec("hub_pf_binding", 8, 33, _artifact_only_stage,
+              artifact_only=True),
+    StageSpec("pf_hotspots", 8, 34, _run_pf_hotspots, connector=True),
+    StageSpec("lineage", 6, 35, _run_lineage, connector=True),
+    # G5 — Stage 6.55 part 1 (between the lineage and flow_expansion
+    # captures; UPSTREAM of test_strip in the mutation gate).
+    StageSpec("page_interior", 6, 36, _run_page_interior),
+    StageSpec("flow_expansion", 3, 37, _run_flow_expansion),
+    StageSpec("test_strip", 6, 38, _run_test_strip),
+    StageSpec("generated_strip", 6, 39, _run_generated_strip),
+    # G5 — Stage 6.86 + same-unit W4.3/W4 tails; capture is flag-gated
+    # (FAULTLINE_SPINE_ANCHORED_MINT) → optional.
+    StageSpec("anchored_mint", 6, 40, _run_anchored_mint, optional=True),
+    StageSpec("user_flows", 6, 41, _run_user_flows),
+    StageSpec("uf_splitter", 6, 42, _run_uf_splitter, llm_cache_dir="uf-split"),
+    StageSpec("uf_refiner", 6, 43, _run_uf_refiner, llm_cache_dir="uf-refine"),
     StageSpec(
-        "journey_abstraction", 6, 40, _run_journey_abstraction,
+        "journey_abstraction", 6, 44, _run_journey_abstraction,
         optional=True, llm_cache_dir="abstraction",
     ),
-    StageSpec("dual_evidence", 6, 41, _run_dual_evidence,
+    # G5 — Stage 6.88 + the post-lattice window (e2e / transport / mega /
+    # devgrain emissions); capture is flag-gated → optional.
+    StageSpec("journey_lattice", 6, 45, _run_journey_lattice, optional=True),
+    # G5 — artifact-only rows of the journey_lattice replay unit.
+    StageSpec("e2e_truth", 6, 46, _artifact_only_stage, artifact_only=True),
+    StageSpec("transport_handoff", 6, 47, _artifact_only_stage,
+              artifact_only=True),
+    StageSpec("mega_pf_nav_rehome", 6, 48, _artifact_only_stage,
+              artifact_only=True),
+    StageSpec("dual_evidence", 6, 49, _run_dual_evidence,
               optional=True, connector=True),
-    StageSpec("history", 6, 42, _run_history),
-    StageSpec("impact", 6, 43, _run_impact),
-    StageSpec("monorepo_assembly", 6, 44, _run_monorepo_assembly),
+    StageSpec("history", 6, 50, _run_history),
+    StageSpec("impact", 6, 51, _run_impact),
+    StageSpec("monorepo_assembly", 6, 52, _run_monorepo_assembly),
+    # G5 — artifact-only: emitted by _run_monorepo_assembly (between the
+    # monorepo_assembly and feature_loc captures).
+    StageSpec("file_lane", 6, 53, _artifact_only_stage, artifact_only=True),
     # optional: recorded runs that predate Stage 6.97 have no input
     # artifact — replay chains over them must skip it silently.
-    StageSpec("feature_loc", 6, 45, _run_feature_loc, optional=True),
-    StageSpec("output", 7, 46, _run_output),
+    StageSpec("feature_loc", 6, 54, _run_feature_loc, optional=True),
+    # G5 — artifact-only rows of the feature_loc replay unit.
+    StageSpec("surface_taxonomy", 6, 55, _artifact_only_stage,
+              artifact_only=True),
+    StageSpec("emission_integrity", 7, 56, _artifact_only_stage,
+              artifact_only=True),
+    # G5 — Stage 6.87 + the post-naming window (uf_loc / flow_loc /
+    # flow_name_v2 / terminal_classification emissions); capture is
+    # flag-gated (FAULTLINE_NAMING_CONTRACT) → optional.
+    StageSpec("naming_contract", 7, 57, _run_naming_contract, optional=True),
+    # G5 — artifact-only rows of the naming_contract replay unit.
+    StageSpec("uf_loc", 7, 58, _artifact_only_stage, artifact_only=True),
+    StageSpec("flow_loc", 7, 59, _artifact_only_stage, artifact_only=True),
+    StageSpec("flow_name_v2", 7, 60, _artifact_only_stage,
+              artifact_only=True),
+    StageSpec("terminal_classification", 7, 61, _artifact_only_stage,
+              artifact_only=True),
+    StageSpec("output", 7, 62, _run_output),
 ]
 
 _BY_KEY = {s.key: s for s in STAGES}

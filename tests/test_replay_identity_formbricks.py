@@ -62,24 +62,10 @@ def _identity_specs():
     return out
 
 
-#: MECHANICAL (horizon-1 flip, KEY_SCHEMA 30): the ws1-baseline was recorded
-#: in the PRE-flip default world — all ten horizon-1 flags unset-as-OFF.
-#: Identity replay must reproduce the BASELINE's env, not today's defaults,
-#: so each flipped flag is pinned to its kill-switch ("0" ≡ the recorded
-#: unset world by every flag's byte-identity law). Re-warming ws1-baseline
-#: under the new defaults is a post-push item; these pins go away with it.
-_PRE_FLIP_BASELINE_PINS = (
-    "FAULTLINE_TERMINAL_CLASSIFICATION",
-    "FAULTLINE_SERVER_API_ENTRIES",
-    "FAULTLINE_HOMING_HYGIENE",
-    "FAULTLINE_NAMING_LAW",
-    "FAULTLINE_RECALL_QUAL_CASING",
-    "FAULTLINE_GRAIN_WAVE",
-    "FAULTLINE_OWNERSHIP_V2",
-    "FAULTLINE_SPA_ROUTER_ENTRIES",
-    "FAULTLINE_NAMING_PACK",
-    "FAULTLINE_FLOW_GRAIN",
-)
+# базлайн new-default 2026-07-17: ws1-baseline is re-warmed under the
+# post-horizon-1 defaults, so the pre-flip kill-switch pins
+# (_PRE_FLIP_BASELINE_PINS, ten flags = "0") are gone per the pin plan —
+# identity replay now runs the SAME default env the baseline recorded.
 
 
 @pytest.fixture(autouse=True)
@@ -88,8 +74,6 @@ def _cache_only_key(monkeypatch):
     # (so cache lookups happen) but any cache MISS costs $0 (401).
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-replay-cache-only")
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
-    for flag in _PRE_FLIP_BASELINE_PINS:
-        monkeypatch.setenv(flag, "0")
 
 
 @pytest.mark.parametrize(
