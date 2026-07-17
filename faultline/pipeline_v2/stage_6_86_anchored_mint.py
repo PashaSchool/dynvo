@@ -1240,6 +1240,42 @@ def run_anchored_mint(
                 bar_by_anchor[cid] = "spa_page_floor"
                 tele["mint_bar_spa_page_floor"] = (
                     tele.get("mint_bar_spa_page_floor", 0) + 1)
+    # B65-v4 iter-4 — spa MEMBER-TWIN mint bar (panel exhibit 'Apipage'
+    # re-claiming API Keys' components/api-keys/* members): a spa-only
+    # anchor whose winner member-set MAJORITARILY overlaps another
+    # minting anchor's member-set is a TWIN of that PF, not a new
+    # surface — per Seg A(1) the spa page may only ADD a route row /
+    # journey seed to the owner (the routes_index row survives
+    # untouched; only the duplicate mint dies). Overlap share is
+    # scale-invariant (|∩| / |spa members|, majority threshold), the
+    # comparison universe includes the counterpart's anchor-matched
+    # files. Coincidence-by-SUBTREE (Ticketing) is the Seg A authored
+    # path and never reaches here; coincidence-by-MEMBERS is this bar.
+    if spa_files:
+        _owned_union: dict[str, set[str]] = {}
+        for cid in sorted(bar_by_anchor):
+            if bar_by_anchor[cid] is None:
+                _owned_union[cid] = {
+                    p for f in winners_by_anchor[cid]
+                    for p in owned_by_dev[f.name]}
+        for cid in sorted(_owned_union):
+            a = anchor_by_id[cid]
+            if not _spa_pages_of(a) or not _spa_only_anchor(a):
+                continue
+            mine = _owned_union[cid]
+            if not mine:
+                continue
+            for cid2 in sorted(_owned_union):
+                if cid2 == cid or bar_by_anchor[cid2] is not None:
+                    continue
+                other = _owned_union[cid2] | set(
+                    anchor_by_id[cid2].matched_set(sorted(mine)))
+                share = len(mine & other) / len(mine)
+                if share > 0.5:
+                    bar_by_anchor[cid] = "spa_member_twin"
+                    tele["mint_bar_spa_member_twin"] = (
+                        tele.get("mint_bar_spa_member_twin", 0) + 1)
+                    break
     for cid in sorted(bar_by_anchor):
         if bar_by_anchor[cid] and len(tele["bar_decisions"]) < 50:
             tele["bar_decisions"].append(
@@ -2122,7 +2158,20 @@ def run_anchored_mint(
     # display keeps the author's word, the key stays out of the legacy
     # namespace.
     used_slugs: set[str] = {"platform", "shared-platform"}
-    for cid in sorted(devs_by_anchor, key=lambda c: (anchor_by_id[c].display.lower(), c)):
+    # B65-v4 iter-4 — spa slug sanitation (panel 'teams-(integration)'
+    # exhibit): (a) a spa-paged anchor never STEALS the bare slug from a
+    # same-display authored anchor — it sorts AFTER it (the tuple is
+    # identical to the legacy key when no spa rows exist: byte-safe);
+    # (b) when the QUALIFIED side of a display collision is spa-paged,
+    # the qualifier joins WITHOUT parens ("Teams Pages", slug
+    # ``teams-pages``) — canonical_slug parity holds (slug is still
+    # derived from the display verbatim), no literal parens in a
+    # spa-born name.
+    for cid in sorted(
+        devs_by_anchor,
+        key=lambda c: (anchor_by_id[c].display.lower(),
+                       bool(_spa_pages_of(anchor_by_id[c])), c),
+    ):
         a = anchor_by_id[cid]
         contrib = devs_by_anchor[cid]
         slug = _slug(a.display)
@@ -2141,11 +2190,20 @@ def run_anchored_mint(
             fam = getattr(a, "family_key", "") or ""
             qual = (fam.replace("-", " ").title() if fam
                     else re.sub(r"[^A-Za-z0-9]+", " ", cid).strip().title())
-            display = f"{a.display} ({qual})"
-            slug = _slug(display)
-            if slug in used_slugs:  # same qualified display twice — cid tail
-                display = f"{a.display} ({re.sub(r'[^A-Za-z0-9]+', ' ', cid).strip().title()})"
+            if _spa_pages_of(a):
+                # iter-4 (b) — paren-free qualifier for spa-paged anchors
+                display = f"{a.display} {qual}"
                 slug = _slug(display)
+                if slug in used_slugs:
+                    display = (f"{a.display} "
+                               f"{re.sub(r'[^A-Za-z0-9]+', ' ', cid).strip().title()}")
+                    slug = _slug(display)
+            else:
+                display = f"{a.display} ({qual})"
+                slug = _slug(display)
+                if slug in used_slugs:  # same qualified display twice — cid tail
+                    display = f"{a.display} ({re.sub(r'[^A-Za-z0-9]+', ' ', cid).strip().title()})"
+                    slug = _slug(display)
         used_slugs.add(slug)
         slug_by_anchor[cid] = slug
         desc = (

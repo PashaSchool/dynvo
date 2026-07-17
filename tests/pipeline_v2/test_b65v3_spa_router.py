@@ -1290,6 +1290,110 @@ export const router = createBrowserRouter([
     assert "/pricing" in patterns, "object-grammar literal survives"
 
 
+# ── B65-v4 iter-4 — member-twin mint bar + spa slug sanitation ───────────────
+
+
+def test_iter4_apipage_twin_mint_canceled_members_stay_with_owner(
+    tmp_path: Path,
+) -> None:
+    """The panel exhibit 'Apipage' POIMENNO: the /APIPage profile row and
+    the /api-keys spa row share one page file; the twin dev re-claims
+    the authored feature's component files as primary. The spa-only
+    ``route:apipage`` anchor's winner member-set majoritarily overlaps
+    the minting ``route:api-key`` — the twin mint is CANCELED
+    (spa_member_twin), the routes_index rows survive, and the twin dev
+    folds INTO the owner PF. Anti-case in the same world: a spa-only PF
+    with DISTINCT members ('reports') mints as before."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    page = "frontend/src/pages/APIPage.tsx"
+    comp1 = "frontend/src/features/api-keys/CreateApiKeyModal.tsx"
+    comp2 = "frontend/src/features/api-keys/OAuthConnectionsSection.tsx"
+    comp3 = "frontend/src/features/api-keys/McpConnectSection.tsx"
+    rpage = "frontend/src/pages/ReportsPage.tsx"
+    for rel in (page, comp1, comp2, comp3, rpage):
+        _write_loc(tmp_path, rel, 200)
+    routes = [
+        # the profile row (kind=None) and the spa row share the file —
+        # the real Soc0 shape
+        {"pattern": "/APIPage", "method": "PAGE", "file": page},
+        {"pattern": "/api-keys", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+        {"pattern": "/reports", "method": "PAGE", "file": rpage,
+         "kind": "spa-page"},
+    ]
+    owner = dev("api-keys", [comp1, comp2, comp3],
+                flows=[flow("manage-api-keys", comp1)])
+    twin = dev("apipage", [page],
+               flows=[flow("view-api-page", page)])
+    reports = dev("reports", [rpage],
+                  flows=[flow("view-reports", rpage)])
+    files = [page, comp1, comp2, comp3, rpage]
+    pfs, tele = run_anchored_mint(
+        [owner, twin, reports], routes, ctx_of(tmp_path, files))
+
+    assert tele.get("mint_bar_spa_member_twin", 0) >= 1
+    assert not [p for p in pfs if p.anchor_id == "route:apipage"], (
+        "the member-twin never mints")
+    keys = [p for p in pfs if p.anchor_id == "route:api-key"]
+    assert keys, "the owner PF lives"
+    assert twin.product_feature_id == keys[0].name, (
+        "the twin dev folds INTO the owner (route row + members stay)")
+    # anti-case: distinct-member spa-only PF mints as before
+    rep = [p for p in pfs if p.anchor_id == "route:report"]
+    assert rep and reports.product_feature_id == rep[0].name
+    # routes_index untouched by the mint
+    assert routes[1]["kind"] == "spa-page"
+
+
+def test_iter4_spa_slug_collision_paren_free(tmp_path: Path) -> None:
+    """The panel 'teams-(integration)' exhibit: a spa-paged anchor
+    colliding on display with an authored anchor (a) never steals the
+    bare slug (it sorts after) and (b) takes a PAREN-FREE qualified
+    display/slug — no literal parens in any spa-born name."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    hub1 = "backend/integrations/teams/client.py"
+    hub2 = "backend/integrations/teams/webhooks.py"
+    slack = "backend/integrations/slack/client.py"
+    notion = "backend/integrations/notion/client.py"
+    page = "frontend/src/pages/TeamsPage.tsx"
+    files = [hub1, hub2, slack, notion, page]
+    for rel in files:
+        _write_loc(tmp_path, rel, 200)
+    routes = [
+        {"pattern": "/teams", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+    ]
+    hubdev = dev("teams-integration", [hub1, hub2],
+                 flows=[flow("notify-teams", hub1)])
+    slackdev = dev("slack-integration", [slack],
+                   flows=[flow("notify-slack", slack)])
+    notiondev = dev("notion-integration", [notion],
+                    flows=[flow("notify-notion", notion)])
+    pagedev = dev("teams", [page],
+                  flows=[flow("browse-teams", page)])
+    pfs, tele = run_anchored_mint(
+        [hubdev, slackdev, notiondev, pagedev], routes,
+        ctx_of(tmp_path, files))
+
+    names = {p.name for p in pfs}
+    displays = {p.display_name for p in pfs}
+    assert not any("(" in n or ")" in n for n in names), names
+    assert len([n for n in names if n.startswith("team")]) >= 2, (
+        f"both Teams PFs mint under distinct slugs: {names}")
+    # the authored (hub) side keeps the bare slug
+    hub_pf = [p for p in pfs
+              if str(p.anchor_id or "").endswith("integrations/teams")]
+    assert hub_pf and hub_pf[0].name == "teams", (names, displays)
+
+
 # ── fix-iteration 3 — panel grammar holes (root index + noise chain) ─────────
 
 
