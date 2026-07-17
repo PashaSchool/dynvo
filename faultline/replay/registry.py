@@ -41,10 +41,44 @@ from faultline.pipeline_v2.stage_7_output import write_stage_artifact
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ReplayEnv", "StageSpec", "STAGES", "stage_by_key", "pipeline_slice"]
+__all__ = [
+    "ReplayEnv", "SentinelMissHealth", "StageSpec", "STAGES",
+    "stage_by_key", "pipeline_slice",
+]
 
 
 # ── Replay environment ──────────────────────────────────────────────────
+
+
+class SentinelMissHealth(LlmHealth):
+    """Replay-only LLM health: sentinel-key 401s are cache-miss noise.
+
+    Under the $0 replay model every LLM unit is served from the warm
+    llm-cache; a MISS goes out with the never-authenticating sentinel
+    key and 401s. That 401 is a HARNESS artifact, not a scan-world auth
+    death — flipping the sticky scan-wide flag on it mutates a
+    live-degraded-but-auth-healthy world (json-parse degrades, credit-
+    wall 400s — degrades are never cached, so their units always miss)
+    into an auth-dead world, which takes DIFFERENT code paths (the B71
+    naming-pack confidence downgrade; the llm_degraded stamp — G5
+    forensics on the pinned formbricks corpus). Swallow the organic
+    auth flip: the missed unit still degrades per-call exactly like a
+    live in-flight failure (``_call_haiku``-family returns empty text →
+    the stage's own degrade path). A RECORDED auth death is restored
+    explicitly via :meth:`LlmHealth.seed_auth_failure`, which still
+    arms the sticky short-circuit.
+    """
+
+    def record_failure(self, exc: BaseException, *, stage: str) -> bool:
+        from faultline.pipeline_v2.llm_health import is_auth_error
+
+        if is_auth_error(exc):
+            logger.debug(
+                "replay: sentinel-key auth miss at %s (cache-miss noise; "
+                "health flag not flipped)", stage,
+            )
+            return False
+        return super().record_failure(exc, stage=stage)
 
 
 @dataclass
@@ -54,7 +88,7 @@ class ReplayEnv:
     run_dir: Path
     run_id: str
     tracker: CostTracker = field(default_factory=lambda: CostTracker(max_cost=None))
-    llm_health: LlmHealth = field(default_factory=LlmHealth)
+    llm_health: LlmHealth = field(default_factory=SentinelMissHealth)
 
     def cache_backend(self) -> Any:
         from faultline.cache import get_cache_backend

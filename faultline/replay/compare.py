@@ -58,6 +58,13 @@ _STAGE_VOLATILE: frozenset[str] = (
         # (features_chunked / chunks_total / flows_from_chunks) are
         # deterministic content counts and stay compared.
         "chunk_cache_hits", "chunk_llm_calls",
+        # persona-call warmth twins (G5; journey_lattice / naming_contract
+        # ``labeler`` telemetry): same class as above — the original run
+        # paid the PM-labeler call (cache_hit=False, real token counts),
+        # the replay serves it from the entry that call wrote
+        # (cache_hit=True, 0 tokens). The labeler's deterministic content
+        # keys (accepted/rejected rows) stay compared.
+        "cache_hit", "input_tokens", "output_tokens",
         # per-feature wall-clock timing in the import-tree artifact
         # (the scan normalizer covers duration_ms but not this spelling).
         "elapsed_ms",
