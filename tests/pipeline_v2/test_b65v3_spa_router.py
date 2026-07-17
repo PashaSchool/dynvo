@@ -996,6 +996,167 @@ def test_segA_pure_spa_page_still_fenced_no_annexation(
     assert foreign not in member_paths and foreign2 not in member_paths
 
 
+# ── B65-v4 iter-2 — authored-fdir floor gate + barrel-hop (Ticketing) ────────
+
+
+def test_iter2_ticketing_shape_authored_fdir_survives_floor(
+    tmp_path: Path,
+) -> None:
+    """The Soc0 Ticketing census exhibit POIMENNO: a TINY authored
+    feature-dir (68 LOC — under the 150 spa floor) whose page also rides
+    a coincident spa route. The merged anchor (route:ticketing = fdir +
+    spa page) is AUTHORED, so the spa_page_floor never fires: the PF
+    mints exactly as in the flag-OFF world, BOTH devs (the authored
+    sub-domain dev + the spa echo dev) bind to it, zero
+    sub_mint_bar_surface lanes, zero dev twins left laned, and no
+    member-ful 0-LOC husk row (LOC doctrine)."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    page = "frontend/src/features/ticketing/TicketingPage.tsx"
+    barrel = "frontend/src/features/ticketing/index.ts"
+    _write_loc(tmp_path, page, 68)   # < 150 — the floor would kill it
+    _write(tmp_path, barrel,
+           "export { TicketingPage } from './TicketingPage';\n")
+    routes = [
+        # post-barrel-hop world: the spa row rides the REAL page file
+        {"pattern": "/ticketing", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+    ]
+    fdir_dev = dev("ticketing", [page, barrel])       # authored sub-domain
+    spa_dev = dev("ticketing-2", [page])              # spa echo dev
+    pfs, tele = run_anchored_mint(
+        [fdir_dev, spa_dev], routes, ctx_of(tmp_path, [page, barrel]))
+
+    tick = [p for p in pfs if p.anchor_id == "route:ticketing"]
+    assert tick, "authored fdir PF must survive the spa floor (iter-2)"
+    assert tele.get("mint_bar_spa_page_floor", 0) == 0
+    # both devs bind — no sub_mint_bar_surface lane demotes, no twins
+    # stranded in the lane
+    assert fdir_dev.product_feature_id == tick[0].name
+    assert spa_dev.product_feature_id == tick[0].name
+    assert fdir_dev.shared_reason is None
+    assert spa_dev.shared_reason is None
+
+
+def test_iter2_spa_only_thin_anchor_still_floors(tmp_path: Path) -> None:
+    """Anti-case (the floor survives for PURELY spa anchors): the
+    hoppscotch 'Enter' class — a thin page with NO authored backer —
+    still never mints. The iter-2 gate must not lift the floor
+    wholesale."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    # NOT under a feature-dir container — no fdir anchor forms; two thin
+    # twins (the real hoppscotch shape) get past the single-file bar so
+    # the FLOOR is the deciding rung.
+    page = "packages/common/src/views/enter.vue"
+    page2 = "packages/admin/src/views/enter.vue"
+    _write(tmp_path, page, "<template>\n" + "a\n" * 60 + "</template>\n")
+    _write(tmp_path, page2, "<template>\n" + "a\n" * 30 + "</template>\n")
+    routes = [
+        {"pattern": "/enter", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+        {"pattern": "/enter", "method": "PAGE", "file": page2,
+         "kind": "spa-page"},
+    ]
+    enter = dev("enter", [page, page2])
+    pfs, tele = run_anchored_mint([enter], routes,
+                                  ctx_of(tmp_path, [page, page2]))
+
+    assert tele.get("mint_bar_spa_page_floor", 0) == 1
+    assert not [p for p in pfs if p.anchor_id == "route:enter"]
+
+
+def test_iter2_barrel_hop_entry_is_real_page(tmp_path: Path, spa_on) -> None:
+    """The 0-LOC husk root POIMENNO: the router element resolves to the
+    1-line re-export barrel ``features/ticketing/index.ts`` — the entry
+    must hop THROUGH it to the real page file (TicketingPage.tsx), so
+    no member-ful 0-LOC dev row is ever seeded and the route row rides
+    the page surface."""
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(tmp_path, "src/App.tsx", """
+import { Routes, Route } from 'react-router-dom';
+import { TicketingPage } from '@/features/ticketing';
+export const App = () => (
+  <Routes>
+    <Route path="/ticketing" element={<TicketingPage />} />
+  </Routes>
+);
+"""),
+        _write(tmp_path, "src/features/ticketing/index.ts",
+               "export { TicketingPage } from './TicketingPage';\n"),
+        _write(tmp_path, "src/features/ticketing/TicketingPage.tsx",
+               "export const TicketingPage = () => <div>tickets</div>;\n"),
+    ]
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    routes = _routes_of(anchors)
+    assert ("/ticketing", "PAGE",
+            "src/features/ticketing/TicketingPage.tsx") in routes
+    barrel_paths = [a for a in anchors
+                    if "index.ts" in "".join(a.paths)]
+    assert not barrel_paths, "a pure barrel is never the entry"
+
+
+def test_iter2_barrel_multi_target_no_hop(tmp_path: Path, spa_on) -> None:
+    """Anti-case: a MULTI-target feature index (re-exports from two
+    files) is not a page echo — the entry honestly stays the barrel
+    (no guessing which target is the page)."""
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(tmp_path, "src/App.tsx", """
+import { Routes, Route } from 'react-router-dom';
+import { CasesPage } from '@/features/cases';
+export const App = () => (
+  <Routes>
+    <Route path="/cases" element={<CasesPage />} />
+  </Routes>
+);
+"""),
+        _write(tmp_path, "src/features/cases/index.ts",
+               "export { CasesPage } from './CasesPage';\n"
+               "export { CaseCard } from './CaseCard';\n"),
+        _write(tmp_path, "src/features/cases/CasesPage.tsx",
+               "export const CasesPage = () => <div>cases</div>;\n"),
+        _write(tmp_path, "src/features/cases/CaseCard.tsx",
+               "export const CaseCard = () => <div>card</div>;\n"),
+    ]
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    routes = _routes_of(anchors)
+    assert ("/cases", "PAGE", "src/features/cases/index.ts") in routes
+
+
+def test_iter2_barrel_chain_and_cycle_guard(tmp_path: Path, spa_on) -> None:
+    """A barrel chaining to another barrel hops the chain (bounded); a
+    self-cycle terminates honestly at the last non-cyclic file."""
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(tmp_path, "src/App.tsx", """
+import { Routes, Route } from 'react-router-dom';
+import { DeepPage } from '@/features/deep';
+export const App = () => (
+  <Routes>
+    <Route path="/deep" element={<DeepPage />} />
+  </Routes>
+);
+"""),
+        _write(tmp_path, "src/features/deep/index.ts",
+               "export { DeepPage } from './inner';\n"),
+        _write(tmp_path, "src/features/deep/inner.ts",
+               "export { DeepPage } from './DeepPage';\n"),
+        _write(tmp_path, "src/features/deep/DeepPage.tsx",
+               "export const DeepPage = () => <div>deep</div>;\n"),
+    ]
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    routes = _routes_of(anchors)
+    assert ("/deep", "PAGE", "src/features/deep/DeepPage.tsx") in routes
+
+
 # ── fix-iteration 3 — panel grammar holes (root index + noise chain) ─────────
 
 

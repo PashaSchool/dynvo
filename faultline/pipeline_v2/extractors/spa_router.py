@@ -542,6 +542,72 @@ def _resolve_spec(
     return None
 
 
+#: One pure re-export statement — the only line class allowed in a
+#: barrel (``export { X } from '...'`` / ``export { default } from`` /
+#: ``export * from`` / ``export * as ns from``). Line-based on purpose:
+#: a multi-line export or any local logic fails the predicate and the
+#: file honestly stays the entry.
+_REEXPORT_LINE_RE = re.compile(
+    r"^\s*export\s+(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)\s*from\s*"
+    r"[\"'`]([^\"'`]+)[\"'`]\s*;?\s*$",
+)
+
+#: Barrel-chain bound (a barrel re-exporting another barrel) — purely a
+#: cycle/pathology guard, not a tuning knob.
+_MAX_BARREL_HOPS = 3
+
+
+def _hop_reexport_barrel(
+    entry: str,
+    repo_root: Path,
+    tracked: tuple[str, ...],
+    gr: _ReactRouterGrammar,
+) -> str:
+    """Resolve THROUGH pure re-export barrels to the real page file.
+
+    B65-v4 iter-2 (the Soc0 Ticketing 0-LOC husk root): the router
+    element imports ``~/features/ticketing`` which resolves to the
+    1-line barrel ``index.ts`` (``export { TicketingPage } from
+    './TicketingPage'``). The barrel is module PLUMBING, never the page
+    surface — stamping it as the entry mints a member-ful 0-LOC dev row
+    (the LOC-doctrine violation) while the real page file carries the
+    mass. STRUCTURAL predicate, no dictionaries: a file is a barrel iff
+    EVERY non-empty, non-``//``-comment line is a re-export statement;
+    it hops iff its re-exports resolve to exactly ONE distinct tracked
+    file (a multi-target feature index is not a page echo — honest
+    no-hop). Bounded chain, cycle-safe, deterministic."""
+    seen = {entry}
+    for _ in range(_MAX_BARREL_HOPS):
+        text = read_text(repo_root / entry)
+        if not text or len(text) > _MAX_BYTES:
+            break
+        specs: list[str] = []
+        pure = True
+        for line in text.splitlines():
+            s = line.strip()
+            if not s or s.startswith("//"):
+                continue
+            m = _REEXPORT_LINE_RE.match(s)
+            if m is None:
+                pure = False
+                break
+            specs.append(m.group(1))
+        if not pure or not specs:
+            break
+        targets = {
+            r for spec in specs
+            if (r := _resolve_spec(spec, entry, tracked, gr)) is not None
+        }
+        if len(targets) != 1:
+            break  # unresolvable or multi-target barrel — honest no-hop
+        nxt = next(iter(targets))
+        if nxt in seen:
+            break  # cycle guard
+        seen.add(nxt)
+        entry = nxt
+    return entry
+
+
 def _component_candidates(body: str) -> list[str]:
     """Capitalized component idents in an element body, innermost-last.
 
@@ -873,7 +939,8 @@ def _collect_react_router(ctx: "ScanContext") -> list[_Entry]:
             if decl.lazy_spec:
                 resolved = _resolve_spec(decl.lazy_spec, path, tracked, gr)
                 if resolved is not None:
-                    entry_file = resolved
+                    entry_file = _hop_reexport_barrel(
+                        resolved, Path(ctx.repo_path), tracked, gr)
             elif decl.element_body:
                 comp_name, is_redirect = _innermost_component(
                     decl.element_body, gr.redirect_components,
@@ -888,7 +955,8 @@ def _collect_react_router(ctx: "ScanContext") -> list[_Entry]:
                         continue
                     resolved = _resolve_spec(spec, path, tracked, gr)
                     if resolved is not None:
-                        entry_file = resolved
+                        entry_file = _hop_reexport_barrel(
+                            resolved, Path(ctx.repo_path), tracked, gr)
                         comp_name = cand
                         break
             slug = _first_static_segment(full)

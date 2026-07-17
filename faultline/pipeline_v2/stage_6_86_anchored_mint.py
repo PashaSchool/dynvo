@@ -1185,12 +1185,23 @@ def run_anchored_mint(
     # surface; the Seg C value), just no PF (hoppscotch 'Enter' 96 LOC
     # class). Winners here are contained by the Pass-1 fence, so the LOC
     # sum IS the page-module mass.
+    #
+    # B65-v4 iter-2 — the floor is gated by the SAME _spa_only_anchor
+    # predicate as the Seg A fence (symmetry law): an AUTHORED anchor
+    # (fdir/hub/ws/schema/pypkg/svc) with a coincident spa page is never
+    # floor-barred — the flag-OFF world minted it at any mass, and the
+    # spa page only ADDS a route row (the Soc0 Ticketing exhibit: the
+    # merged route:ticketing = fdir 68 LOC < 150 floor died and BOTH its
+    # devs laned as sub_mint_bar_surface, one a 0-LOC spa-echo husk).
+    # A purely-spa thin page (hoppscotch 'Enter') still floors.
     if spa_files:
         for cid in sorted(bar_by_anchor):
             if bar_by_anchor[cid] is not None:
                 continue
             a = anchor_by_id[cid]
             if not _spa_pages_of(a):
+                continue
+            if not _spa_only_anchor(a):
                 continue
             member_files = sorted({
                 p for f in winners_by_anchor[cid]
