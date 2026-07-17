@@ -983,15 +983,21 @@ def run_anchored_mint(
 
         "Authored" is exactly the STRONG spine classes that own a real
         DIR SUBTREE — ``fdir``/``hub-*``/``ws-*``/``schema``/``pypkg``/
-        ``svc`` (the spec's "feature-dir/fdir/hub"). A bare non-spa
-        server route/api FILE does NOT lift the fence: it names a URL,
-        not a subtree, so a broad dev whose foreign import-closure mass
-        merely rides the same route key must still be fenced (the Soc0
-        ``route:admin`` = spa page + backend router anti-annexation
-        exhibit). The refinement layers (``interior``/``excav``) never
-        lift the fence either — a page-component family with no authored
-        backer stays spa-only and fenced."""
-        return not (a.sources & _SPA_AUTHORED_SOURCES)
+        ``svc`` (the spec's "feature-dir/fdir/hub") — AND the merged
+        anchor must actually CARRY ≥1 dir prefix (iter-3, the Soc0
+        Compliance annexation exhibit): a bare schema/model FILE that
+        merged by key (``route:compliance`` = spa page + backend
+        ``models/compliance.py``, prefixes=()) names a resource, not a
+        subtree — the spec's literal "фіча, чиє ПІДДЕРЕВО перекриває
+        сторінку" demands a subtree, so a prefix-less anchor stays
+        spa-only and fenced (the wave-17 route:compliance 14.5K
+        100%-outside mass rode exactly this hole through the guarded
+        fold rungs). A bare non-spa server route/api FILE does not lift
+        the fence either: it names a URL, not a subtree (the Soc0
+        ``route:admin`` anti-annexation exhibit). The refinement layers
+        (``interior``/``excav``) never lift the fence — a page-component
+        family with no authored backer stays spa-only and fenced."""
+        return not (a.sources & _SPA_AUTHORED_SOURCES and a.prefixes)
 
     def _spa_contained(a: SpineAnchor, owned: list[str]) -> bool:
         """True when every dev-owned file sits inside the fence universe
@@ -1021,6 +1027,27 @@ def run_anchored_mint(
                 stem_pre = p.rsplit(".", 1)[0] + "/"
                 if any(pg.startswith(stem_pre) for pg in pages):
                     continue
+            return False
+        return True
+
+    def _spa_universe_contained(a: SpineAnchor, owned: list[str]) -> bool:
+        """B65-v4 iter-3 — the MASS-fence universe test: every dev-owned
+        file sits inside the anchor's OWN claim area — its spa pages +
+        their module dirs + its non-spa evidence files + its dir-subtree
+        PREFIXES (an authored subtree is legitimate ownership, unlike
+        the Seg-A fence universe which guards spa-only anchors). Used by
+        the spa-BORN plurality-rung fence, never by Pass-1."""
+        pages = _spa_pages_of(a)
+        allowed = (
+            a.files | a.api_route_files | a.page_route_files
+        ) - spa_files
+        prefs = _spa_module_prefixes(pages) + tuple(
+            pr.rstrip("/") + "/" for pr in a.prefixes)
+        for p in owned:
+            if p in pages or p in allowed:
+                continue
+            if any(p.startswith(pre) for pre in prefs):
+                continue
             return False
         return True
     by_src: Counter[str] = Counter(a.source for a in anchors)
@@ -1220,6 +1247,58 @@ def run_anchored_mint(
                  "devs": [f.name for f in winners_by_anchor[cid][:5]]})
 
     mintable = {cid for cid, bar in bar_by_anchor.items() if bar is None}
+
+    # B65-v4 iter-3 — SPA-BORN mint census (the wave-17 'Compliance'
+    # 14.5K/100%-outside annexation family, reborn as 'findings' after
+    # the compliance fence): a minted anchor is SPA-BORN when no winner
+    # dev would keep its θ-majority against the anchor STRIPPED of its
+    # spa-page evidence — i.e. the mint exists only because of the spa
+    # page rows (the flag-OFF world never minted it). Terminal PLURALITY
+    # rungs (span-vote / ancestor-walk) are neighborhood votes with no
+    # per-dev evidence link, so they may never pour an uncontained dev
+    # into a spa-born PF — the walk RE-VOTES without the fenced target
+    # (landing the dev on its flag-OFF-world plurality home) instead of
+    # laning it. Entry/import folds carry a real evidence link (flow
+    # entry files / resolved imports — the mandate's "явний
+    # евіденс-лінк") and stay open. Empty without spa rows (kill-switch
+    # byte-identity).
+    spa_born: frozenset[str] = frozenset()
+    if spa_files:
+        import dataclasses as _dc
+
+        # The counterfactual anchor FIELD: every anchor stripped of its
+        # spa-page evidence (files + page rows). Winner FORMATION is the
+        # honest test (the Soc0 api-findings exhibit: OFF-world its
+        # winner was the ws:frontend shell — the spa pages flipped the
+        # specificity/dominance outcome, not a θ-retention).
+        _cf_anchors = [
+            _dc.replace(
+                a,
+                files=a.files - spa_files,
+                page_route_files=a.page_route_files - spa_files,
+            ) if (a.files & spa_files or a.page_route_files & spa_files)
+            else a
+            for a in anchors
+        ]
+        _born: set[str] = set()
+        for cid in sorted(mintable):
+            a = anchor_by_id[cid]
+            if not _spa_pages_of(a):
+                continue
+            keeps = False
+            for _wdev in winners_by_anchor.get(cid) or []:
+                owned_w = owned_by_dev.get(_wdev.name) or []
+                if not owned_w:
+                    continue
+                cf_w, _cs, _cv, _cp = _classify_dev(owned_w, _cf_anchors)
+                if cf_w is not None and cf_w.canonical_id == cid:
+                    keeps = True
+                    break
+            if not keeps:
+                _born.add(cid)
+        spa_born = frozenset(_born)
+        if spa_born:
+            tele["spa_born_anchors"] = sorted(spa_born)
 
     # Pass 3 — assignment + fold ladder.
     #   assignment: dev name → (anchor canonical_id, provenance)
@@ -1574,10 +1653,16 @@ def run_anchored_mint(
         tgt = _canonical_anchor_unit(target_cid)
         return tgt is not None and tgt != home
 
-    def _ancestor_walk(f: "Feature") -> tuple[str | None, bool]:
+    def _ancestor_walk(
+        f: "Feature", skip_cids: frozenset[str] = frozenset(),
+    ) -> tuple[str | None, bool]:
         """W2b.1 law rung L3 — nearest-ancestor plurality: walk UP from
         the dev's owned files' common dir; the first level where ANY
         assigned dev owns files decides by plurality of their anchors.
+
+        ``skip_cids`` (B65-v4 iter-3) — spa-born anchors this dev may
+        not fold into: the walk RE-VOTES without them, landing the dev
+        on the plurality target the flag-OFF world would have chosen.
         Total whenever ≥1 dev is assigned (the repo-root level sees
         every assigned file).
 
@@ -1635,19 +1720,19 @@ def run_anchored_mint(
         guard_units = _fold_guard_units or (
             _ws_unit_roots if _annex_on else ())
         if not guard_units:
-            return _walk(frozenset()), False
+            return _walk(skip_cids), False
         dev_units = frozenset(
             u for p in owned
             if (u := _unit_of(p, guard_units)) is not None)
         if not dev_units:
-            return _walk(frozenset()), False
+            return _walk(skip_cids), False
         unit_fn = _canonical_anchor_unit if _annex_on else _anchor_unit
         foreign = frozenset(
             cid for cid in set(assigned_file_cid.values())
             if (au := unit_fn(cid)) is not None and au not in dev_units)
         if not foreign:
-            return _walk(frozenset()), False
-        guarded = _walk(foreign)
+            return _walk(skip_cids), False
+        guarded = _walk(foreign | skip_cids)
         if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
             tele.setdefault("fold_debug", []).append({
                 "dev": f.name, "rung": "walk-guard",
@@ -1658,7 +1743,7 @@ def run_anchored_mint(
                                  if guarded is not None else None),
             })
         if guarded is not None:
-            if guarded != _walk(frozenset()):
+            if guarded != _walk(skip_cids):
                 # the annexation fix: the dev re-homes inside a unit it
                 # actually lives in instead of the foreign plurality.
                 tele["fold_walk_crossunit_rehomed"] = (
@@ -1666,7 +1751,7 @@ def run_anchored_mint(
             return guarded, False
         # every reachable target is cross-unit ⇒ the dev is ISOLATED in
         # a unit with no minted anchor; annexing it is the B22a disease.
-        return None, _walk(frozenset()) is not None
+        return None, _walk(skip_cids) is not None
 
     fold_pending: list[tuple["Feature", SpineAnchor | None, str]] = []
     for f in sorted(in_scope, key=lambda x: x.name):
@@ -1942,6 +2027,16 @@ def run_anchored_mint(
             # B65-v3 iter-2 — spa containment fence on the span rung.
             if target is not None and _spa_fence_veto(target, f.name):
                 target = None
+            # B65-v4 iter-3 — spa-born mass fence: a plurality vote never
+            # binds an uncontained dev to a spa-born PF; the dev falls
+            # through to the guarded walk (which re-votes without it).
+            if (target is not None and target in spa_born
+                    and not _spa_universe_contained(
+                        anchor_by_id[target],
+                        owned_by_dev.get(f.name) or [])):
+                tele["spa_born_span_blocked"] = (
+                    tele.get("spa_born_span_blocked", 0) + 1)
+                target = None
             if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
                 tele.setdefault("fold_debug", []).append({
                     "dev": f.name, "rung": "span", "target": target,
@@ -1950,7 +2045,14 @@ def run_anchored_mint(
                 assignment[f.name] = (target, f"fold:span->{src}")
                 tele["fold_span_vote"] = tele.get("fold_span_vote", 0) + 1
                 continue
-            target, guard_isolated = _ancestor_walk(f)
+            _walk_skips = frozenset(
+                cid for cid in spa_born
+                if not _spa_universe_contained(
+                    anchor_by_id[cid], owned_by_dev.get(f.name) or []))
+            if _walk_skips:
+                tele["spa_born_walk_skips"] = (
+                    tele.get("spa_born_walk_skips", 0) + 1)
+            target, guard_isolated = _ancestor_walk(f, _walk_skips)
             # B65-v3 iter-2 — spa containment fence on the walk rung.
             if target is not None and _spa_fence_veto(target, f.name):
                 target = None

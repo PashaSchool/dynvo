@@ -700,14 +700,20 @@ def _parse_route_tag(tag_text: str) -> _RouteDecl | None:
     pattern = ""
     if pm:
         if pm.group(1) is not None:
+            if "${" in pm.group(1):
+                return None  # interpolated — never a literal (B64 law)
             pattern = pm.group(1)
         else:
             # ``path={...}`` expression — a pure string literal inside the
             # braces folds; anything else is an honest skip (B64 law: a
-            # non-literal path is never invented).
+            # non-literal path is never invented). iter-3 (the twenty
+            # SettingsRoutes wave exhibit): an INTERPOLATED template
+            # literal (``path={`${SettingsPath.GraphQLPlayground}`}``)
+            # is NOT a literal — the raw ``/${…}`` garbage minted
+            # parent-root settings anchors — so ``${`` rejects.
             body = _balanced_brace_body(tag_text, pm.end() - 1).strip()
             lm = re.match(r"^[\"'`]([^\"'`]*)[\"'`]$", body)
-            if lm:
+            if lm and "${" not in lm.group(1):
                 pattern = lm.group(1)
             else:
                 return None
@@ -769,7 +775,7 @@ def _scan_jsx_routes(text: str) -> list[tuple[str, _RouteDecl]]:
             # Layout shell — still consumes a stack slot; a literal path
             # on a shell (element-less path route) extends the chain.
             pm = _ATTR_PATH_RE.search(tag_text)
-            if pm and pm.group(1):
+            if pm and pm.group(1) and "${" not in pm.group(1):
                 own_path = _join_paths(parent, pm.group(1))
             else:
                 own_path = parent
@@ -863,7 +869,8 @@ def _scan_router_objects(text: str) -> list[tuple[str, _RouteDecl]]:
                 rest = region[i:]
                 pm = _OBJ_PATH_RE.match(rest)
                 if pm:
-                    frames[-1].path = pm.group(1)
+                    if "${" not in pm.group(1):
+                        frames[-1].path = pm.group(1)
                     i += pm.end()
                     continue
                 if _OBJ_INDEX_RE.match(rest):

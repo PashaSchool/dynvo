@@ -1157,6 +1157,139 @@ export const App = () => (
     assert ("/deep", "PAGE", "src/features/deep/DeepPage.tsx") in routes
 
 
+# ── B65-v4 iter-3 — spa-born mass fence + template-literal honest skip ───────
+
+
+def test_iter3_compliance_shape_schema_file_merge_stays_fenced(
+    tmp_path: Path,
+) -> None:
+    """The wave-17 Soc0 'Compliance' annexation POIMENNO: a spa page
+    merges (same key) with a bare backend MODEL file
+    (``backend/models/compliance.py`` — schema source, prefixes=()). A
+    file names a resource, not a subtree, so the anchor stays SPA-ONLY
+    and fenced: a broad dev carrying foreign api mass never binds — the
+    14.5K/100%-outside PF never forms."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    page = "frontend/src/pages/CompliancePage.tsx"
+    model = "backend/models/compliance.py"
+    api1 = "frontend/src/api/audit-events.ts"
+    api2 = "frontend/src/api/event-routing.ts"
+    for rel, n in ((page, 150), (model, 40), (api1, 200), (api2, 180)):
+        _write_loc(tmp_path, rel, n)
+    routes = [
+        {"pattern": "/compliance", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+    ]
+    broad = dev("api-compliance", [page, model, api1, api2],
+                flows=[flow("compliance-flow", page)])
+    pfs, tele = run_anchored_mint(
+        [broad], routes, ctx_of(tmp_path, [page, model, api1, api2]))
+
+    assert tele.get("spa_fence_blocked", 0) >= 1
+    comp = [p for p in pfs if p.anchor_id == "route:compliance"]
+    member_paths = {m.path for p in comp for m in (p.member_files or [])} | {
+        q for p in comp for q in (p.paths or [])}
+    assert api1 not in member_paths and api2 not in member_paths, (
+        "a schema FILE merge must not lift the fence (no subtree)")
+
+
+def test_iter3_spa_born_walk_rehomes_neighborhood(tmp_path: Path) -> None:
+    """The wave-17 'findings' cascade POIMENNO: a spa page births a PF
+    (winner formed only WITH the spa row — spa-BORN by the
+    counterfactual), and a flowful NEIGHBOR dev's ancestor-walk
+    plurality would pour into it. The walk must RE-VOTE without the
+    spa-born target and land the neighbor on its flag-OFF-world home."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        run_anchored_mint,
+    )
+
+    flow, dev, ctx_of = _mint_fixture()
+    core1 = "frontend/src/features/billing/a.tsx"
+    core2 = "frontend/src/features/billing/b.tsx"
+    core3 = "frontend/src/features/billing/c.tsx"
+    page = "frontend/src/pages/WidgetsPage.tsx"
+    stray1 = "frontend/src/pages/util-a.ts"
+    stray2 = "frontend/src/pages/util-b.ts"
+    for rel in (core1, core2, core3, page, stray1, stray2):
+        _write_loc(tmp_path, rel, 200)
+    routes = [
+        {"pattern": "/widgets", "method": "PAGE", "file": page,
+         "kind": "spa-page"},
+    ]
+    files = [core1, core2, core3, page, stray1, stray2]
+    core = dev("billing", [core1, core2, core3],
+               flows=[flow("billing-flow", core1)])
+    widgets = dev("widgets", [page],
+                  flows=[flow("browse-widgets", page)])
+    stray = dev("api-stray", [stray1, stray2],
+                flows=[flow("stray-flow", stray1)])
+    pfs, tele = run_anchored_mint(
+        [core, widgets, stray], routes, ctx_of(tmp_path, files))
+
+    assert "route:widget" in (tele.get("spa_born_anchors") or []), (
+        "the widgets mint exists only through the spa row — spa-born")
+    by_name = {p.name: p for p in pfs}
+    assert widgets.product_feature_id in by_name, (
+        "the spa-born PF itself lives (its OWN winner binds)")
+    # the neighbor re-homes to the OFF-world plurality target (core),
+    # never the spa-born PF
+    assert stray.product_feature_id == core.product_feature_id, (
+        f"stray must re-home to core, got {stray.product_feature_id!r}")
+    assert stray.product_feature_id != widgets.product_feature_id
+    assert tele.get("spa_born_walk_skips", 0) >= 1
+
+
+def test_iter3_template_literal_paths_honest_skip(
+    tmp_path: Path, spa_on,
+) -> None:
+    """The wave-17 twenty SettingsRoutes exhibit POIMENNO: an
+    INTERPOLATED template-literal path (JSX
+    ``path={`${SettingsPath.GraphQLPlayground}`}`` and object
+    ``path: `${ROUTES.SIGN_IN}/*```) is never a literal — the raw
+    ``/${…}`` garbage minted parent-root settings anchors. Both
+    grammars skip; a SIBLING literal route (the novu ``/onboarding``
+    shape) survives."""
+    files = [
+        _rr_pkg(tmp_path, "package.json"),
+        _write(tmp_path, "src/App.tsx", """
+import { Routes, Route } from 'react-router-dom';
+import { PlaygroundPage } from '@/pages/PlaygroundPage';
+import { OnboardingPage } from '@/pages/OnboardingPage';
+export const App = () => (
+  <Routes>
+    <Route path={`${SettingsPath.GraphQLPlayground}`} element={<PlaygroundPage />} />
+    <Route path="/onboarding" element={<OnboardingPage />} />
+  </Routes>
+);
+"""),
+        _write(tmp_path, "src/router.ts", """
+import { createBrowserRouter } from 'react-router-dom';
+import { SignInPage } from '@/pages/SignInPage';
+export const router = createBrowserRouter([
+  { path: `${ROUTES.SIGN_IN}/*`, element: SignInPage },
+  { path: '/pricing', element: SignInPage },
+]);
+"""),
+        _write(tmp_path, "src/pages/PlaygroundPage.tsx",
+               "export const PlaygroundPage = () => <div>p</div>;\n"),
+        _write(tmp_path, "src/pages/OnboardingPage.tsx",
+               "export const OnboardingPage = () => <div>o</div>;\n"),
+        _write(tmp_path, "src/pages/SignInPage.tsx",
+               "export const SignInPage = () => <div>s</div>;\n"),
+    ]
+    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    routes = _routes_of(anchors)
+    patterns = {r[0] for r in routes}
+    assert not any("${" in p for p in patterns), (
+        "interpolated template literals must never become routes")
+    assert "/onboarding" in patterns, "sibling literal survives (novu)"
+    assert "/pricing" in patterns, "object-grammar literal survives"
+
+
 # ── fix-iteration 3 — panel grammar holes (root index + noise chain) ─────────
 
 
