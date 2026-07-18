@@ -2978,6 +2978,26 @@ def run_finalize_phase(
     scan_meta["cost_usd"] = round(tracker.total_cost_usd, 4)
     scan_meta["calls"] = tracker.call_count
 
+    # ── S2 Seg D — degradation-honesty stamp (flag-gated, additive) ──────
+    # The refiner (6.7b) and journey abstraction (6.7d) telemetry blocks are
+    # both in scan_meta by now. A fail-open scan (the whole fresh refiner batch
+    # failing at cost==0 = a dead key mid-scan, or 6.7d applied=False with real
+    # candidates) currently self-reports healthy (degradations[]==[] in BOTH the
+    # good and bad Soc0 board — probe 2026-07-18). Under FAULTLINE_DEGRADATION_
+    # STAMP, append the typed FATAL records so validate_scan / keyed_proof FAIL
+    # the proof gate. Default OFF → nothing appended → degradations[] byte-ident.
+    from faultline.pipeline_v2.degradations import (
+        degradation_stamp_enabled,
+        detect_finalize_degradations,
+    )
+    if degradation_stamp_enabled():
+        _stamped = detect_finalize_degradations(
+            refiner=scan_meta.get("stage_6_7b_uf_refiner"),
+            journey_abstraction=scan_meta.get("stage_6_7d_journey_abstraction"),
+        )
+        if _stamped:
+            scan_meta.setdefault("degradations", []).extend(_stamped)
+
     # ── Stage 6.97b — journey-level LOC (B3, $0, deterministic, additive) ─
     # Operator bug B3: ``user_flows[].loc`` was ``None`` for EVERY journey
     # (the engine never emitted a UF-level LOC), so the dashboard LOC column

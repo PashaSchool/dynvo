@@ -708,6 +708,16 @@ ENV_OUTPUT_FLAGS = (
     # restores the first-claimant resolutions byte-identically. No KEY_SCHEMA
     # bump (the path_index-consumer shift rides the separate later flip commit).
     "FAULTLINE_OWNER_ORACLE",
+    # S2 Seg D (2026-07-18) — degradation-honesty stamp: a scan that finished in
+    # a visibly-degraded LLM state (the refiner's whole fresh batch failing at
+    # cost==0 = a dead key mid-scan, or the 6.7d journey abstraction leaving
+    # applied=False with real candidates) records typed records in
+    # scan_meta.degradations[] with severity="failed" so validate_scan /
+    # keyed_proof FAIL the proof gate instead of scoring a fail-open board that
+    # self-reports healthy (264->78 Soc0 fail-open, probe 2026-07-18). Default
+    # OFF; =0/unset appends nothing → degradations[] byte-identical. No
+    # KEY_SCHEMA bump (append-only per wave convention — reconciled at merge).
+    "FAULTLINE_DEGRADATION_STAMP",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
