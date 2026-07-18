@@ -731,6 +731,29 @@ def merge_same_object_siblings(
     return tele
 
 
+def _member_ui_reachable(fl: Any) -> bool:
+    """A member flow anchored in the USER-FACING surface: a ``ui``-layer
+    participant, a ``frontend/`` path, a ``/components/`` path, or a
+    ``*Page.tsx`` entry — the same signals the refiner's ``_has_ui`` trusts
+    plus the page-file tell. Universal conventions, not repo paths."""
+    if fl is None:
+        return False
+    paths = [str(getattr(fl, "entry_point_file", "") or "")]
+    paths.extend(str(p or "") for p in (getattr(fl, "paths", None) or []))
+    for p in (getattr(fl, "participants", None) or []):
+        if (str(getattr(p, "layer", "") or "")) == "ui":
+            return True
+        paths.append(str(getattr(p, "path", "") or ""))
+    for p in paths:
+        if not p:
+            continue
+        if "frontend/" in p or "/components/" in p:
+            return True
+        if p.rsplit("/", 1)[-1].endswith("Page.tsx"):
+            return True
+    return False
+
+
 def reclassify_service_internals(
     user_flows: list["UserFlow"],
     flows_by_id: dict[str, Any],
@@ -743,8 +766,16 @@ def reclassify_service_internals(
     families are HETEROGENEOUS (no family holds half the members = no single
     product surface). Such a row is service internals, not a product
     journey: category="system" + an honest 'Internal <domain> operations'
-    name. Conservation: members untouched, fate recorded by id."""
-    tele: dict[str, Any] = {"reclassified": 0, "fate": {}}
+    name. Conservation: members untouched, fate recorded by id.
+
+    it6 USER-REACHABLE VETO (panel round 3; failure-archaeology doctrine —
+    a post-UF demote must never eat user-facing): a row with ANY member
+    anchored in the user-facing surface (ui participant / frontend path /
+    components path / *Page.tsx entry) is NEVER reclassified, regardless of
+    root dispersion or routelessness. The it7 overshoot exhibit: 'Configure
+    and manage integrations' — 20 frontend/src/features config flows — is a
+    CORE product capability, not internals."""
+    tele: dict[str, Any] = {"reclassified": 0, "ui_vetoed": 0, "fate": {}}
     for u in user_flows:
         if u.is_coverage_marker or u.synthesis_reason:
             continue
@@ -753,6 +784,9 @@ def reclassify_service_internals(
             continue
         if u.routes:
             continue                      # any route surface -> a product row
+        if any(_member_ui_reachable(flows_by_id.get(m)) for m in members):
+            tele["ui_vetoed"] += 1        # user-facing -> never internals
+            continue
         names = [
             str(getattr(flows_by_id.get(m), "name", "") or m) for m in members
         ]

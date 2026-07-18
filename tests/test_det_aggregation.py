@@ -724,3 +724,61 @@ def test_different_route_objects_stay_separate() -> None:
         ufs, {f.uuid: f for f in fl_a + fl_b}, _verbs(),
     )
     assert tele["merged_rows"] == 0 and len(ufs) == 2
+
+
+# ── it6 (panel round 3) — user-reachable veto on internals reclassify ───────
+
+
+def test_integrations_frontend_shape_never_reclassified() -> None:
+    """it6-1: the panel overshoot exhibit — 20 user-facing config flows
+    anchored in frontend/src/features (+ *Page.tsx) form a CORE product
+    capability; routeless + heterogeneous-root or not, the row is NEVER
+    reclassified to system (post-UF demote must not eat user-facing)."""
+    vendor = ["crowdstrike", "defender", "sentinel", "zscaler", "aws",
+              "servicenow", "cortex", "deepseas", "claroty", "okta"]
+    names = [f"configure-{v}-integration-flow" for v in vendor] \
+        + [f"load-{v}-integrations-flow" for v in vendor[:9]] \
+        + ["load-integrations-flow"]
+    flows = [
+        _mkflow(n, entry=f"frontend/src/features/integrations/dialogs/D{i}.tsx")
+        for i, n in enumerate(names)
+    ]
+    flows[-1] = _mkflow(names[-1], entry="frontend/src/features/integrations/IntegrationsPage.tsx")
+    uf = UserFlow(
+        id="UF-020", name="Configure and manage integrations",
+        domain="features_integration", product_feature_id="integrations",
+        intent="manage", resource="integration",
+        member_flow_ids=[f.uuid for f in flows], member_count=len(flows),
+        routes=[],
+    )
+    fbid = {f.uuid: f for f in flows}
+    tele = reclassify_service_internals([uf], fbid, _verbs())
+    assert tele["reclassified"] == 0
+    assert tele["ui_vetoed"] == 1
+    assert uf.category == "interactive"
+    assert uf.name == "Configure and manage integrations"   # name untouched
+
+
+def test_handles_backend_shape_still_reclassifies_post_veto() -> None:
+    """it6-1 anti-case: the handles black hole (backend/services roots,
+    zero UI anchors) STILL reclassifies to system after the veto."""
+    names = [
+        "handle-genai-queries-flow", "handle-filter-queries-flow",
+        "handle-inventory-queries-flow", "fetch-threat-intelligence-flow",
+        "analyze-ai-signals-flow", "run-focus-agent-flow",
+        "tune-detector-beam-flow", "adopt-mitre-pack-flow",
+    ]
+    flows = [
+        _mkflow(n, entry=f"backend/services/sub{i}/impl.py")
+        for i, n in enumerate(names)
+    ]
+    uf = UserFlow(
+        id="UF-051", name="Manage handles", domain="service",
+        product_feature_id="insights", intent="manage", resource="handle",
+        member_flow_ids=[f.uuid for f in flows], member_count=len(flows),
+        routes=[],
+    )
+    tele = reclassify_service_internals([uf], {f.uuid: f for f in flows}, _verbs())
+    assert tele["reclassified"] == 1 and tele["ui_vetoed"] == 0
+    assert uf.category == "system"
+    assert uf.name == "Internal service operations"
