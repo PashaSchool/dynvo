@@ -2570,11 +2570,44 @@ def run_finalize_phase(
         # contract as everything else in this block.
         from faultline.pipeline_v2.indexes import build_path_index
 
+        # ── S1 owner-oracle (flag-gated, default OFF) ───────────────────
+        # Compute the deterministic owner election ONCE here — post-devgrain,
+        # post-emission-integrity, so it runs over the SETTLED final dev
+        # membership — and feed it to the path_index refresh (R1) and the
+        # terminal-home conservation votes (R2) below. i16 / dispatch read the
+        # refreshed path_index, so they inherit the same owner transitively.
+        # OFF (unset / ``0``) → ``_owner_election`` is None → every consumer
+        # keeps first-claimant → byte-identical.
+        from faultline.pipeline_v2.owner_oracle import (
+            build_owner_election_from,
+            owner_oracle_enabled,
+        )
+        _owner_election = None
+        _owner_file_uuid: dict[str, str] | None = None
+        if owner_oracle_enabled():
+            try:
+                _owner_election = build_owner_election_from(
+                    features, ctx.repo_path,
+                )
+                _owner_file_uuid = _owner_election.file_owner_uuid_map()
+                scan_meta["emission_integrity"]["owner_oracle"] = {
+                    "enabled": True,
+                    "files_elected": len(_owner_file_uuid),
+                }
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                _owner_election = None
+                _owner_file_uuid = None
+                scan_meta.setdefault("warnings", []).append(
+                    f"owner-oracle election failed ({exc}); "
+                    f"first-claimant owners kept"
+                )
+
         _stale_index = lineage_result.path_index
         lineage_result.path_index = build_path_index(
             [{"uuid": f.uuid, "paths": list(f.paths)} for f in features],
             [{"uuid": fl.uuid, "paths": list(fl.paths)}
              for fl in bipartite.flows],
+            file_owner=_owner_file_uuid,
         )
         _refresh_stats = {
             "entries_before": len(_stale_index),
@@ -2609,6 +2642,7 @@ def run_finalize_phase(
         if terminal_home_enabled():
             th_tele = assign_terminal_homes(
                 user_flows, features, product_features,
+                owner_election=_owner_election,
             )
             scan_meta["uf_terminal_home"] = th_tele
             log_ei.info(

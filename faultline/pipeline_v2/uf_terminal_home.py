@@ -132,11 +132,19 @@ def assign_terminal_homes(
     user_flows: list["UserFlow"],
     developer_features: list["Feature"],
     product_features: list["Feature"],
+    owner_election: Any = None,
 ) -> dict[str, Any]:
     """Assign every null-``product_feature_id`` journey a real PF, in place.
 
     Runs AFTER emission integrity — assigns only keys present in the
     surviving ``product_features`` list. Returns telemetry.
+
+    S1 owner-oracle: when ``owner_election`` (an
+    :class:`owner_oracle.OwnerElection`) is provided
+    (``FAULTLINE_OWNER_ORACLE`` on) the file→PF ownership index votes with
+    the deterministic election instead of the order-sensitive first-claimant
+    tally — the "terminal dir-vote" reads the SAME owner as the path_index /
+    conservation. ``None`` (default / flag off) → first-claimant → identical.
     """
     tele: dict[str, Any] = {
         "enabled": terminal_home_enabled(), "orphans": 0,
@@ -163,8 +171,13 @@ def assign_terminal_homes(
         and str(getattr(pf, "surface_scope", "") or "") == "system"
     )
 
+    _oracle_owner = (
+        owner_election.file_pf_owner_map(real_pf_keys)
+        if owner_election is not None else None
+    )
     file_pf_owner = build_file_pf_owner(
         dev_views_for(developer_features), real_pf_keys=real_pf_keys,
+        file_owner=_oracle_owner,
     )
 
     # Ancestor-directory ownership index: dir → {pf_key: owned files}.
