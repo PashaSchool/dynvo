@@ -1169,12 +1169,68 @@ def run_mega_pf_nav_rehome(
                                 {"cid": cid, "scope": verdict})
             except Exception:  # noqa: BLE001 — fail-open (no classifier)
                 refused_scope = set()
-            if refused_scope:
+            # it2 a-lite ruling (2026-07-18) — the EXISTING 6.86
+            # ``api_only_surface`` mint-bar doctrine applied at birth
+            # grain, zero new constants: in a repo that HAS a page
+            # surface, a birth candidate whose planned residents carry
+            # NO page/nav surface (the W2a page/api split,
+            # ``_is_api_route``) is internal plumbing (novu
+            # bridge/change/support/tenant) and never mints; a candidate
+            # holding a real UI surface (inbox/integrations) lives by
+            # evidence.
+            refused_api: set[str] = set()
+            try:
+                from faultline.pipeline_v2.spine_anchors import (
+                    _is_api_route,
+                    load_spine_vocab,
+                )
+                vocab_a = load_spine_vocab()
+                page_files: set[str] = set()
+                for e in (routes_index or []):
+                    if not isinstance(e, Mapping):
+                        continue
+                    if e.get("surface_scope") not in (None, "", "product"):
+                        continue
+                    fpath = str(e.get("file") or "")
+                    if fpath and not _is_api_route(
+                            str(e.get("pattern") or ""),
+                            str(e.get("method") or ""), vocab_a):
+                        page_files.add(fpath)
+                if page_files:  # the repo HAS a page surface
+                    for cid in sorted(live_mint_ufs):
+                        if cid in refused_scope:
+                            continue
+                        # resident evidence = planned carve ∪ the paths of
+                        # source devs whose IDENTITY echoes the group (the
+                        # Seg E dev-identity axis — those devs whole-rehome
+                        # at apply, so their UI files are birth residents).
+                        evidence = set(carved_into.get(cid) or set())
+                        gtok = _grain_token_norm("new", cid)
+                        for f in _src_devs_e:
+                            if gtok and gtok in _dev_identity_tokens(
+                                    f, _stoplist_e):
+                                evidence.update(
+                                    str(p) for p in (_attr(f, "paths") or []))
+                        pref = cid.split(":", 1)[1] if ":" in cid else cid
+                        has_page = any(p in page_files for p in evidence) \
+                            or any(pp == pref or pp.startswith(pref + "/")
+                                   for pp in page_files)
+                        if not has_page:
+                            refused_api.add(cid)
+                            tele.setdefault(
+                                "mint_api_only_refused", []).append(
+                                {"cid": cid})
+            except Exception:  # noqa: BLE001 — fail-open
+                refused_api = set()
+            if refused_scope or refused_api:
                 for u, kind, key in list(moves):
-                    if kind == "mint" and key in refused_scope:
+                    if kind == "mint" and (key in refused_scope
+                                           or key in refused_api):
                         moves.remove((u, kind, key))
                         carved_into.pop(key, None)
-                        _stay(u, "mint_nonproduct_refused")
+                        _stay(u, "mint_nonproduct_refused"
+                              if key in refused_scope
+                              else "mint_api_only_refused")
                 live_mint_ufs = Counter(
                     key for _u, kind, key in moves if kind == "mint")
 

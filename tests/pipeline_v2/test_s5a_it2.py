@@ -354,6 +354,75 @@ def test_generated_gate_blocks_majority_generated_foreign(tmp_path):
     assert homes["UF-an"] == homes["UF-su"] == "netsec"   # nothing moved
 
 
+def test_alite_api_only_birth_refused_ui_birth_lives():
+    """a-lite ruling: in a repo WITH a page surface, an API-only birth
+    (bridge/change/support/tenant shape) is refused; a birth holding a
+    real UI page surface (inbox/integrations shape) lives by evidence."""
+    os.environ[MEGA_DECOMP_ARM_ENV] = "1"
+    BR = "apps/api/src/app/bridge"
+    IN = "apps/api/src/app/inbox"
+    INUI = "apps/dashboard/src/pages/inbox-page.tsx"
+    ri = [
+        # api-class entries (method GET → _is_api_route True)
+        {"file": f"{BR}/bridge.controller.ts", "pattern": "/bridge",
+         "method": "GET", "surface_scope": "product"},
+        {"file": f"{BR}/bridge.service.ts", "pattern": "/bridge/x",
+         "method": "POST", "surface_scope": "product"},
+        {"file": f"{IN}/inbox.controller.ts", "pattern": "/inbox",
+         "method": "GET", "surface_scope": "product"},
+        {"file": f"{IN}/inbox.service.ts", "pattern": "/inbox/x",
+         "method": "POST", "surface_scope": "product"},
+        {"file": f"{IN}/inbox.gateway.ts", "pattern": "/inbox/y",
+         "method": "POST", "surface_scope": "product"},
+        # PAGE surface: repo_has_pages + inbox UI resident (the UI file
+        # rides into the birth via the 'inbox' dev-identity carve)
+        {"file": INUI, "pattern": "/inbox-page", "method": "PAGE",
+         "surface_scope": "product"},
+        {"file": "apps/dashboard/src/pages/home.tsx", "pattern": "/home",
+         "method": "PAGE", "surface_scope": "product"},
+    ]
+    flows = [Fl("f-b1", f"{BR}/bridge.controller.ts"),
+             Fl("f-b2", f"{BR}/bridge.service.ts"),
+             Fl("f-b3", f"{BR}/bridge.controller.ts"),
+             Fl("f-i1", f"{IN}/inbox.controller.ts"),
+             Fl("f-i2", f"{IN}/inbox.service.ts"),
+             Fl("f-i3", f"{IN}/inbox.gateway.ts"),
+             Fl("f-c1", "apps/api/src/app/core.ts"),
+             Fl("f-h1", "apps/dashboard/src/pages/home.tsx"),
+             Fl("f-h2", "apps/dashboard/src/pages/home.tsx")]
+    ufs = [UF("UF-b1", "Manage bridge", "agents", ["f-b1"]),
+           UF("UF-b2", "Get bridge", "agents", ["f-b2"]),
+           UF("UF-b3", "Post bridge", "agents", ["f-b3"]),
+           UF("UF-i1", "Manage inbox", "agents", ["f-i1"]),
+           UF("UF-i2", "Get inbox", "agents", ["f-i2"]),
+           UF("UF-i3", "View inbox page", "agents", ["f-i3"]),
+           UF("UF-c1", "Agents core", "agents", ["f-c1"]),
+           UF("UF-h1", "Home one", "home", ["f-h1"]),
+           UF("UF-h2", "Home two", "home", ["f-h2"])]
+    devs = [Dev("bridge", "agents",
+                [f"{BR}/bridge.controller.ts", f"{BR}/bridge.service.ts"]),
+            Dev("inbox", "agents",
+                [f"{IN}/inbox.controller.ts", f"{IN}/inbox.service.ts",
+                 f"{IN}/inbox.gateway.ts", INUI]),
+            Dev("agents-core", "agents", ["apps/api/src/app/core.ts"]),
+            Dev("home", "home", ["apps/dashboard/src/pages/home.tsx"])]
+    pfs = [PF("agents", "route:apps/api/src/app/agents"),
+           PF("home", "route:apps/dashboard/src/pages/home")]
+    grain = _grain([], pfs, ri)
+    tele = run_mega_pf_nav_rehome(devs, pfs, ufs, flows, ri, Ctx(),
+                                  grain_index=grain)
+    minted = {m["cid"] for m in tele["mints"]}
+    # bridge = api-only residents → REFUSED by the a-lite bar
+    assert "route:apps/api/src/app/bridge" not in minted
+    assert any(r["cid"].endswith("/bridge")
+               for r in tele.get("mint_api_only_refused") or [])
+    homes = {u.id: u.product_feature_id for u in ufs}
+    assert homes["UF-b1"] == homes["UF-b2"] == homes["UF-b3"] == "agents"
+    # inbox holds a real UI page resident → LIVES by evidence
+    assert "route:apps/api/src/app/inbox" in minted
+    assert homes["UF-i1"] != "agents"
+
+
 def test_mass_oracle_nongen_channel(tmp_path):
     gen = _wfile(tmp_path, "sdk/a.ts", SPEAKEASY, n=50)
     hand = _wfile(tmp_path, "app/b.ts", PLAIN, n=30)
