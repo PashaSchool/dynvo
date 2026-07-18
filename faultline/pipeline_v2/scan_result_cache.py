@@ -769,6 +769,20 @@ ENV_OUTPUT_FLAGS = (
     # per wave convention — reconciled at merge; the trigger-shape Seg D/E
     # ride a separate mandate).
     "FAULTLINE_MEGA_DECOMP_ARM",
+    # S5a-it2 (2026-07-18) — generated-code CONTENT-marker probe inside the
+    # existing Stage 6.9b channel (the module docstring's promised
+    # follow-up): a file whose head banner carries the universal codegen
+    # markers (Go-spec "Code generated … DO NOT EDIT" line class /
+    # @generated marker / generated-declaration + do-not-edit admonition
+    # pair — Speakeasy/orval/openapi-generator/graphql-codegen classes)
+    # strips like a filename-convention match. Kills the novu
+    # libs/internal-sdk react-query client (923 hand-named .ts, ~107K LOC)
+    # at the SOURCE: its flows/UF garbage never survive 6.9b. Reshapes
+    # developer_features[]/flows[]/user_flows[] on repos vendoring codegen
+    # output. Default OFF; =0/unset -> filename-only predicate,
+    # byte-identical. No KEY_SCHEMA bump (append-only — reconciled at
+    # merge).
+    "FAULTLINE_GENERATED_CONTENT_MARKER",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

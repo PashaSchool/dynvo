@@ -425,6 +425,7 @@ def run_finalize_phase(
         if stage_6_9b_enabled():
             generated_strip_telemetry = strip_generated_paths(
                 features, bipartite.flows,
+                repo_root=getattr(ctx, "repo_path", None),
             )
             log6_9b.info(
                 "generated_strip: paths_removed=%d features_dropped=%d "

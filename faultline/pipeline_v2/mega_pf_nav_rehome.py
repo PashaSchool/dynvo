@@ -210,6 +210,8 @@ class _MassOracle:
                 self._root = p
         self._cache: dict[str, int] = {}
         self._memo: dict[int, int] = {}
+        self._gen_memo: dict[int, int] = {}
+        self._probe: Any = None
         self._loc_channel = False
         if self._root is not None:
             for d in devs:
@@ -222,6 +224,13 @@ class _MassOracle:
     def channel(self) -> str:
         return "loc" if self._loc_channel else "fallback"
 
+    def _file_map(self, d: Any) -> dict[str, int]:
+        from faultline.pipeline_v2.stage_6_97_feature_loc import (
+            _expand_feature_files,
+        )
+        return _expand_feature_files(
+            self._root, _attr(d, "paths") or [], self._cache)
+
     def dev_mass(self, d: Any) -> int:
         k = id(d)
         got = self._memo.get(k)
@@ -230,13 +239,50 @@ class _MassOracle:
         if not self._loc_channel:
             m = int(_dev_mass(d))
         else:
-            from faultline.pipeline_v2.stage_6_97_feature_loc import (
-                _expand_feature_files,
-            )
-            m = sum(_expand_feature_files(
-                self._root, _attr(d, "paths") or [], self._cache).values())
+            m = sum(self._file_map(d).values())
         self._memo[k] = m
         return m
+
+    def _generated(self, rel: str) -> bool:
+        """S5a-it2 item-4 predicate: filename convention OR content banner
+        (the 6.9b probe — ONE definition across strip and trigger)."""
+        if self._probe is None:
+            from faultline.pipeline_v2.stage_6_9b_generated_strip import (
+                GeneratedContentProbe,
+            )
+            self._probe = GeneratedContentProbe(self._root)
+        return self._probe.is_generated(rel)
+
+    def generated_mass(self, d: Any) -> int:
+        """The GENERATED portion of a dev's mass (loc channel: banner/
+        filename-classified file loc; fallback channel: generated path
+        count via the filename predicate — no I/O without a tree)."""
+        k = id(d)
+        got = self._gen_memo.get(k)
+        if got is not None:
+            return got
+        if not self._loc_channel:
+            from faultline.pipeline_v2.stage_6_9b_generated_strip import (
+                is_generated_path,
+            )
+            loc = _attr(d, "loc")
+            ps = [str(p) for p in (_attr(d, "paths") or [])]
+            gen_ps = sum(1 for p in ps if is_generated_path(p))
+            if loc:  # apportion the loc field by generated path share
+                m = int(int(loc) * gen_ps / len(ps)) if ps else 0
+            else:
+                m = gen_ps
+        else:
+            m = sum(v for rel, v in self._file_map(d).items()
+                    if self._generated(rel))
+        self._gen_memo[k] = m
+        return m
+
+    def nongen_mass(self, d: Any) -> int:
+        """Dev mass EXCLUDING generated files — the Seg E mint-mass channel
+        (cutting generated is pointless; generated mass must not buy mint
+        right)."""
+        return max(0, self.dev_mass(d) - self.generated_mass(d))
 
 
 def _dev_identity_tokens(d: Any, layer_vocab: frozenset[str]) -> set[str]:
@@ -434,22 +480,30 @@ def _armed_group_qual(
 def _armed_foreign_share(
     core: set[str], grain: TargetGrainIndex, mydevs: list[Any],
     tok2pf: dict[str, str], stoplist: frozenset[str],
-    foreignable: Any, mass_of: Any,
-) -> float:
+    foreignable: Any, oracle: Any,
+) -> tuple[float, float]:
     """S5a Seg D foreign_share axis: strict-majority-of-mass over member
-    devs (core / sibling-echo / route-subtree home), on the ``mass_of``
-    channel (the on-demand 6.97 LOC oracle live — S5a channel ruling)."""
+    devs (core / sibling-echo / route-subtree home), on the oracle's
+    channel (the on-demand 6.97 LOC oracle live — S5a channel ruling).
+    Returns ``(foreign_share, generated_share_of_foreign)`` — the second
+    number feeds the it2 item-4 gate (a trigger must not fire on a
+    majority-GENERATED foreign mass: cutting codegen output is pointless,
+    the 6.9b strip is its cure)."""
     group_toks = {t for t in grain.allowed_group_tokens if foreignable(t)}
     sib_toks = {t for t in tok2pf if foreignable(t)}
     foreign_toks = sib_toks | group_toks
+    mass_of = oracle.dev_mass
+    gen_of = oracle.generated_mass
     tot = sum(mass_of(d) for d in mydevs)
     foreign = 0.0
+    foreign_gen = 0.0
     for d in mydevs:
         dt = _dev_identity_tokens(d, stoplist)
         if dt & core:
             continue  # core mass
         if dt & foreign_toks:
             foreign += mass_of(d)
+            foreign_gen += gen_of(d)
             continue
         ps = [str(p) for p in (_attr(d, "paths") or [])]
         gc: Counter = Counter()
@@ -460,7 +514,9 @@ def _armed_foreign_share(
         nc = sum(c for t, c in gc.items() if foreignable(t))
         if len(ps) >= 4 and nc * 2 > len(ps):
             foreign += mass_of(d)   # route-subtree foreign evidence
-    return foreign / tot if tot else 0.0
+            foreign_gen += gen_of(d)
+    return (foreign / tot if tot else 0.0,
+            foreign_gen / foreign if foreign else 0.0)
 
 
 def _foreignable_fn(core: set[str], stoplist: frozenset[str]) -> Any:
@@ -481,7 +537,7 @@ def _select_armed_sources(
     product_features: list[Any], pf_by_key: Mapping[str, Any],
     transport_pf_keys: set[str], is_product_home: Any,
     grain: TargetGrainIndex, devs: list[Any], user_flows: list[Any],
-    flow_by_uuid: Mapping[str, Any], mass_of: Any,
+    flow_by_uuid: Mapping[str, Any], oracle: Any,
     source_rows: list[dict[str, Any]],
 ) -> list[tuple[str, Any, int, str]]:
     """S5a Seg D — the ORDERED F4-p50 decomposition sources. P1 (dominant
@@ -526,23 +582,34 @@ def _select_armed_sources(
                                foreignable, flow_by_uuid)
         share = ct / total_homed
         fs: float | None = None
+        fgen: float | None = None
         if gq >= _P2_MIN_GROUPS:
             # the ONLY consumers of mass — P2 candidates (containment:
             # on-demand LOC runs for these PFs' member devs, nothing else).
-            fs = _armed_foreign_share(core, grain, devs_by_pf.get(key, []),
-                                      tok2pf, stoplist, foreignable, mass_of)
+            fs, fgen = _armed_foreign_share(
+                core, grain, devs_by_pf.get(key, []),
+                tok2pf, stoplist, foreignable, oracle)
+        # it2 item-4 gate — a majority-GENERATED foreign mass never fires
+        # EITHER prong: decomposing codegen output is pointless (the 6.9b
+        # content-marker strip is that mass's cure, not the mega).
+        gen_blocked = bool(fgen is not None and fgen > 0.5)
         prong: str | None = None
-        if (rank == 1 and strict_top and share >= _TRIGGER_SHARE
+        if gen_blocked:
+            pass
+        elif (rank == 1 and strict_top and share >= _TRIGGER_SHARE
                 and gq >= _TRIGGER_MIN_GROUPS):
             prong = "P1"
             fired.append((0, -share, key, pf, _TRIGGER_MIN_GROUPS, "P1"))
         elif fs is not None and fs >= _FOREIGN_MASS_SHARE:
             prong = "P2"
             fired.append((1, -share, key, pf, _P2_MIN_GROUPS, "P2"))
-        if gq or prong:
+        if gq or prong or gen_blocked:
             source_rows.append({
                 "pf": key, "share": round(share, 3), "gq": gq,
                 **({"foreign_share": round(fs, 3)} if fs is not None else {}),
+                **({"foreign_generated_share": round(fgen, 3)}
+                   if fgen else {}),
+                **({"generated_blocked": True} if gen_blocked else {}),
                 **({"prong": prong} if prong else {}),
             })
     fired.sort(key=lambda c: (c[0], c[1], c[2]))
@@ -692,6 +759,10 @@ def run_mega_pf_nav_rehome(
     # scenes (no on-disk files) fall back to _dev_mass wholesale.
     mass_oracle = _MassOracle(ctx, devs) if armed else None
     _mass_of = mass_oracle.dev_mass if mass_oracle is not None else _dev_mass
+    # Seg E mint-mass channel = NON-GENERATED mass (it2 item 4: generated
+    # mass must never buy mint right).
+    _nongen_of = (mass_oracle.nongen_mass if mass_oracle is not None
+                  else _dev_mass)
     if armed:
         # S5a Seg D — two-prong UNION: P1 (strict-top dominant umbrella) OR
         # P2 (hollow-core: majority-FOREIGN member mass + >=2 nav groups —
@@ -701,7 +772,7 @@ def run_mega_pf_nav_rehome(
         sources = _select_armed_sources(
             ranked_homes, total_homed, product_features, pf_by_key,
             transport_pf_keys, _is_product_home, grain_index, devs,
-            user_flows, flow_by_uuid, _mass_of, source_rows)
+            user_flows, flow_by_uuid, mass_oracle, source_rows)
         if mass_oracle is not None:
             tele["mass_channel"] = mass_oracle.channel
         if source_rows:
@@ -831,23 +902,89 @@ def run_mega_pf_nav_rehome(
         def _median_dev_mass() -> float:
             # lazy: the full-board on-demand LOC count runs ONLY when the
             # mass rung is actually consulted (sub-UF-floor group with a
-            # full flow lattice on an armed, fired board).
+            # full flow lattice on an armed, fired board). NON-GENERATED
+            # channel on both sides of the ratio (it2 item 4).
             if not _median_memo:
-                ms = [m for f in devs if (m := _mass_of(f)) > 0]
+                ms = [m for f in devs if (m := _nongen_of(f)) > 0]
                 _median_memo.append(
                     float(statistics.median(ms)) if ms else 0.0)
             return _median_memo[0]
 
+        # it2 item-3 dup-bar state: existing PF identity tokens (numeric-
+        # twin folded) — a birth may never twin an existing capability.
+        _dup_tok2pf: dict[str, str] = {}
+        _dup_trailing: dict[str, str] = {}
+        if armed:
+            for p in sorted(product_features,
+                            key=lambda x: str(_attr(x, "name"))):
+                pk = str(_attr(p, "id") or _attr(p, "name") or "")
+                if not pk:
+                    continue
+                for t in _core_identity(p):
+                    _dup_tok2pf.setdefault(t, pk)
+                    tail = t.rsplit("-", 1)[-1]
+                    if tail and tail not in _stoplist_e:
+                        _dup_trailing.setdefault(tail, pk)
+
+        def _dup_fold_token(cid: str) -> str:
+            """Birth token with the version/numeric-twin suffix folded and
+            re-normalized (``topics-v2``/``topics-2`` → ``topic`` — the
+            SAME singularized key space as ``_core_identity``)."""
+            import re as _re
+
+            from faultline.pipeline_v2.spine_anchors import (
+                normalize_anchor_key,
+            )
+            tok = _grain_token_norm("new", cid)
+            parts = tok.split("-")
+            while len(parts) > 1 and _re.match(r"^v?\d+$", parts[-1]):
+                parts = parts[:-1]
+            return normalize_anchor_key("-".join(parts))
+
         mass_rung_cids: set[str] = set()
         for cid in sorted(mint_groups):
             g = mint_groups[cid]
+            # ── it2 item-3 dup-bar (BEFORE any mint decision) ───────────
+            if armed:
+                tok = _dup_fold_token(cid)
+                dup_pf = _dup_tok2pf.get(tok)
+                if dup_pf is None and "-" in tok:
+                    # head-noun twin (environment-variables ↔ variables):
+                    # trailing component matches an existing capability.
+                    dup_pf = _dup_trailing.get(tok.rsplit("-", 1)[-1])
+                    if dup_pf is not None:
+                        # weaker evidence → REFUSE the mint (stay honest,
+                        # never guess a merge).
+                        for u in g["ufs"]:
+                            _stay(u, f"mint_dup_refused({dup_pf})")
+                        tele.setdefault("dup_refused", []).append(
+                            {"cid": cid, "existing": dup_pf})
+                        continue
+                elif dup_pf is not None:
+                    # exact identity twin (topics-v2 ↔ topics) → MERGE:
+                    # the journeys move to the existing PF through the
+                    # same pf-move rails (re-checked at plan level).
+                    tpf = pf_by_key.get(dup_pf)
+                    if (tpf is not None and dup_pf not in transport_pf_keys
+                            and _is_product_home(dup_pf)):
+                        for u in g["ufs"]:
+                            raw_moves.append((u, "pf", dup_pf))
+                        tele.setdefault("dup_merged", []).append(
+                            {"cid": cid, "into": dup_pf,
+                             "ufs": len(g["ufs"])})
+                    else:
+                        for u in g["ufs"]:
+                            _stay(u, f"mint_dup_refused({dup_pf})")
+                        tele.setdefault("dup_refused", []).append(
+                            {"cid": cid, "existing": dup_pf})
+                    continue
             mass_ok = False
             if armed and g["flows"] >= _MINT_MIN_FLOWS \
                     and len(g["ufs"]) < _MINT_MIN_UFS:
                 med = _median_dev_mass()
                 if med:
                     gmass = _group_apportioned_mass(
-                        cid, _src_devs_e, _stoplist_e, _mass_of)
+                        cid, _src_devs_e, _stoplist_e, _nongen_of)
                     mass_ok = gmass >= _MINT_MASS_K * med
                     if mass_ok:
                         mass_rung_cids.add(cid)
@@ -990,6 +1127,57 @@ def run_mega_pf_nav_rehome(
             live_mint_ufs = Counter(
                 key for _u, kind, key in moves if kind == "mint")
 
+        # ── it2 item-3 non-product birth bar (pre-apply, plan-level) ────
+        # The EXISTING emission family (SurfaceScopeClassifier) judges every
+        # birth CANDIDATE before any carve executes: a candidate whose
+        # planned resident set classifies off the product board (internal
+        # plumbing — the novu bridge/change/storage/support class) never
+        # mints; its journeys stay. Fail-open: classifier unavailable →
+        # candidates proceed (no new behavior without evidence).
+        if armed and live_mint_ufs:
+            refused_scope: set[str] = set()
+            try:
+                from types import SimpleNamespace
+
+                from faultline.pipeline_v2.surface_taxonomy import (
+                    SurfaceScopeClassifier,
+                    _route_by_file,
+                    taxonomy_enabled,
+                )
+                if taxonomy_enabled():
+                    clf = SurfaceScopeClassifier(
+                        None, repo_path=_attr(ctx, "repo_path", None),
+                        routes_index=routes_index)
+                    rbf = _route_by_file(routes_index)
+                    for cid in sorted(live_mint_ufs):
+                        cand_files = sorted(carved_into.get(cid) or set())
+                        if not cand_files:
+                            continue
+                        cand = SimpleNamespace(
+                            name=_grain_token_norm("new", cid),
+                            display_name=grain_index.display_of(cid),
+                            anchor_id=cid, paths=cand_files,
+                            member_files=[], layer="product",
+                            surface_scope=None)
+                        try:
+                            verdict = clf.classify_feature(cand, rbf)
+                        except Exception:  # noqa: BLE001 — fail-open
+                            verdict = "product"
+                        if verdict != "product":
+                            refused_scope.add(cid)
+                            tele.setdefault("mint_scope_refused", []).append(
+                                {"cid": cid, "scope": verdict})
+            except Exception:  # noqa: BLE001 — fail-open (no classifier)
+                refused_scope = set()
+            if refused_scope:
+                for u, kind, key in list(moves):
+                    if kind == "mint" and key in refused_scope:
+                        moves.remove((u, kind, key))
+                        carved_into.pop(key, None)
+                        _stay(u, "mint_nonproduct_refused")
+                live_mint_ufs = Counter(
+                    key for _u, kind, key in moves if kind == "mint")
+
         if not moves:
             return
 
@@ -1018,6 +1206,11 @@ def run_mega_pf_nav_rehome(
         # per-target carve execution (chunks / whole-dev re-homes)
         contrib_by_target: dict[str, list[Any]] = defaultdict(list)
         rehomed_whole: dict[str, str] = {}   # dev name → target key
+        # it2 item-2 ledger law: EVERY path leaving with a whole-rehomed
+        # dev is RELEASED from the source PF row too (the +29.6K/−13.4K
+        # double-count: departed devs' paths stayed on the source row
+        # while the births also claimed them).
+        released_dev_paths: set[str] = set()
         for key in sorted(carved_into):
             files = carved_into[key]
             if not files:
@@ -1035,6 +1228,8 @@ def run_mega_pf_nav_rehome(
                     # (6.985 discipline; keeps every flowful dev pathful).
                     rehomed_whole[name] = key
                     contrib_by_target[key].append(f)
+                    released_dev_paths.update(
+                        str(p) for p in (_attr(f, "paths") or []))
                     continue
                 chunk = _carve_chunk(f, key, mine, marker=_B24_MARKER)
                 _move_carved_flows(f, chunk, set(mine), edges_by_flow_id)
@@ -1094,6 +1289,20 @@ def run_mega_pf_nav_rehome(
             pf.layer = "product"
             pf.anchor_id = key
             pf.surface_scope = _attr(source_pf, "surface_scope")
+            # it2 item-2 birth-path law: a born PF MUST carry its real
+            # residents (member_files) + split lineage; loc>0 with
+            # member_files==0 is forbidden (LOC doctrine, unit-locked).
+            # ``aggregate_product_feature`` returns a REAL Feature model,
+            # so the typed MemberFile ledger always applies.
+            from faultline.models.types import MemberFile
+            pf.member_files = [
+                MemberFile(
+                    path=str(p), role="anchor", confidence=1.0,
+                    evidence=f"{_B24_MARKER} carve of '{source_key}'",
+                    primary=True)
+                for p in sorted({str(x) for x in (pf.paths or [])})
+            ]
+            pf.split_from = source_key
             product_features.append(pf)
             pf_by_key[slug] = pf
             minted_key[key] = slug
@@ -1117,9 +1326,12 @@ def run_mega_pf_nav_rehome(
         # the source PF row sheds the carved files (its scope must not keep
         # claiming mass that now belongs to the targets — I23 body truth;
         # unlike 6.985 the source PERSISTS, so this is explicit here).
+        # it2 item-2: the shed INCLUDES every path of a whole-rehomed dev —
+        # released == claimed, single-point (zero double-counting).
         all_carved: set[str] = set()
         for files in carved_into.values():
             all_carved |= files
+        all_carved |= released_dev_paths
         if all_carved:
             src_paths = [p for p in (_attr(source_pf, "paths") or [])
                          if str(p) not in all_carved]
@@ -1161,6 +1373,35 @@ def run_mega_pf_nav_rehome(
                                   f"{after.get(k, 0)}")
         if after.get(source_key, 0) < 1:
             violations.append(f"source '{source_key}' stripped to zero journeys")
+        # ── it2 item-2: single-point ledger law (released == claimed) ───
+        # Every file a BIRTH row claims must have been released from the
+        # source ledgers in THIS apply (carve plan ∪ whole-rehomed dev
+        # paths), and none may remain on the source row — zero double
+        # counting (the panel's +29.6K claimed vs −13.4K released class).
+        if minted_key:
+            birth_claimed: set[str] = set()
+            for slug in minted_key.values():
+                bpf = pf_by_key.get(slug)
+                birth_claimed |= {str(p)
+                                  for p in (_attr(bpf, "paths") or [])}
+            src_after = {str(p) for p in (_attr(source_pf, "paths") or [])}
+            double = sorted(birth_claimed & src_after)
+            unreleased = sorted(birth_claimed - all_carved)
+            tele["birth_ledger"] = {
+                "released": len(all_carved),
+                "claimed": len(birth_claimed),
+                "double_counted": len(double),
+                "unreleased_claims": len(unreleased),
+            }
+            if double:
+                violations.append(
+                    f"birth double-count: {len(double)} files on both the "
+                    f"source row and a birth row (e.g. {double[:3]})")
+            if unreleased:
+                violations.append(
+                    f"birth unreleased claims: {len(unreleased)} files "
+                    f"claimed without a source release (e.g. "
+                    f"{unreleased[:3]})")
         if violations:
             tele["conservation_violations"] = violations
             if strict:

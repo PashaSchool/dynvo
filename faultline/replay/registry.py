@@ -2482,7 +2482,8 @@ def _run_generated_strip(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any
     }
     with StageLogger(env.run_dir, 6, "generated_strip") as log6_9b:
         if stage_6_9b_enabled():
-            generated_strip_telemetry = strip_generated_paths(features, flows)
+            generated_strip_telemetry = strip_generated_paths(
+                features, flows, repo_root=state.get("repo_path"))
         else:
             generated_strip_telemetry["disabled"] = True
             log6_9b.info(
