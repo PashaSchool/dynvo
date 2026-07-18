@@ -1798,7 +1798,10 @@ def _run_journey_lattice(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any
                         _chain_get(state, "bipartite_edges") or []),
                     transport_candidate_units=set(_transport_candidates),
                 )
-                if b24_tele.get("triggered"):
+                # S5a: armed_sources exists only in the ARMED world (see
+                # phase_finalize) — no-fire armed boards still emit the
+                # selection census; unarmed inertness untouched.
+                if b24_tele.get("triggered") or b24_tele.get("armed_sources"):
                     scan_meta["mega_pf_nav_rehome"] = b24_tele
                     write_stage_artifact(
                         repo_path, stage_index=6,

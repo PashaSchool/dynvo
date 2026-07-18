@@ -1954,7 +1954,11 @@ def run_finalize_phase(
                     feature_flow_edges=list(bipartite.edges),
                     transport_candidate_units=set(_transport_candidates),
                 )
-                if b24_tele.get("triggered"):
+                # S5a: ``armed_sources`` exists only in the ARMED world —
+                # emitting the selection census there keeps the unarmed
+                # inertness convention byte-identical while making the
+                # armed trigger numbers observable even on no-fire boards.
+                if b24_tele.get("triggered") or b24_tele.get("armed_sources"):
                     scan_meta["mega_pf_nav_rehome"] = b24_tele
                     write_stage_artifact(
                         ctx.repo_path,
