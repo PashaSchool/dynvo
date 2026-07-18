@@ -389,6 +389,143 @@ def test_seg_e_mass_rung_holds_below_k4_storage_lock():
     assert "route:backend/routers/admin" in minted
 
 
+# ════════════════════════════════════════════════════════════════════════
+# S5a channel ruling — on-demand LOC mass oracle (the 6.97 counter)
+# ════════════════════════════════════════════════════════════════════════
+
+
+def _write(root, rel, n_lines):
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("".join(f"x{i} = {i}\n" for i in range(n_lines)))
+    return rel
+
+
+def test_mass_oracle_byte_exact_vs_697_counter(tmp_path):
+    """The trigger's LOC channel == THE 6.97 counter, byte-exact: the
+    oracle's dev mass equals a direct count_file_loc sum over the same
+    files (same exclusions — a test-path file counts 0)."""
+    from pathlib import Path
+
+    from faultline.pipeline_v2.mega_pf_nav_rehome import _MassOracle
+    from faultline.pipeline_v2.stage_6_97_feature_loc import count_file_loc
+
+    rels = [
+        _write(tmp_path, "backend/routers/admin.py", 17),
+        _write(tmp_path, "backend/routers/chat.py", 5),
+        _write(tmp_path, "frontend/pages/comp/index.ts", 9),
+        _write(tmp_path, "backend/tests/test_admin.py", 40),  # excluded → 0
+    ]
+
+    class C:
+        repo_path = str(tmp_path)
+
+    dev = Dev("api-admin", "netsec", rels)
+    oracle = _MassOracle(C(), [dev])
+    assert oracle.channel == "loc"
+    direct = sum(count_file_loc(Path(tmp_path) / r, r) for r in rels)
+    assert oracle.dev_mass(dev) == direct
+    assert direct == 17 + 5 + 9  # the test file counted 0 by the counter
+    # memoised second read — same number
+    assert oracle.dev_mass(dev) == direct
+
+
+def test_mass_oracle_synthetic_scene_falls_back(tmp_path):
+    from faultline.pipeline_v2.mega_pf_nav_rehome import _MassOracle
+
+    class C:
+        repo_path = str(tmp_path)
+
+    dev = Dev("ghost", "x", ["no/such/file.py", "nor/this.ts"])
+    oracle = _MassOracle(C(), [dev])
+    assert oracle.channel == "fallback"
+    assert oracle.dev_mass(dev) == 2   # path count
+
+
+def test_seg_d_p2_loc_channel_fires_where_paths_would_not(tmp_path):
+    """The netsec class (channel ruling): FOREIGN mass lives in FEW BIG
+    files, core mass in MANY TINY files — path-count fs = 3/13 (< 0.5)
+    would NOT fire; the on-demand LOC channel (600 vs 30) fires P2."""
+    AN = "src/app/analytics"
+    SUB = "src/app/subscribers"
+    core_files = [_write(tmp_path, f"src/core/c{i}.ts", 2) for i in range(10)]
+    an_files = [_write(tmp_path, f"{AN}/big{i}.ts", 200) for i in range(3)]
+    su_files = [_write(tmp_path, f"{SUB}/big{i}.ts", 200) for i in range(3)]
+    ri = _ri([f"{AN}/big0.ts", f"{AN}/big1.ts", f"{AN}/big2.ts",
+              f"{SUB}/big0.ts", f"{SUB}/big1.ts", f"{SUB}/big2.ts",
+              "src/app/agents/index.ts"])
+    flows = [Fl("f-a1", f"{AN}/big0.ts"), Fl("f-a2", f"{AN}/big1.ts"),
+             Fl("f-a3", f"{AN}/big2.ts"),
+             Fl("f-s1", f"{SUB}/big0.ts"), Fl("f-s2", f"{SUB}/big1.ts"),
+             Fl("f-s3", f"{SUB}/big2.ts"),
+             Fl("f-g1", "src/app/agents/index.ts"),
+             Fl("f-g2", "src/app/agents/index.ts"),
+             Fl("f-g3", "src/app/agents/index.ts"),
+             Fl("f-c1", "src/core/c0.ts")]
+    ufs = [UF("UF-g1", "View agents", "agents", ["f-g1"]),
+           UF("UF-g2", "Run agents", "agents", ["f-g2"]),
+           UF("UF-g3", "Edit agents", "agents", ["f-g3"]),
+           UF("UF-an", "Browse analytics", "netsec",
+              ["f-a1", "f-a2", "f-a3"]),
+           UF("UF-su", "Manage subscribers", "netsec",
+              ["f-s1", "f-s2", "f-s3"]),
+           UF("UF-core", "Run net sec", "netsec", ["f-c1"])]
+    devs = [Dev("agents", "agents", ["src/app/agents/index.ts"]),
+            Dev("analytics", "netsec", an_files),   # foreign: 600 LOC / 3p
+            Dev("subscribers", "netsec", su_files),  # foreign: 600 LOC / 3p
+            Dev("netsec-core", "netsec", core_files)]  # core: 20 LOC / 10p
+    pfs = [PF("agents", "route:src/app/agents"),
+           PF("netsec", "route:src/core"),
+           PF("analytics", "route:src/app/analytics"),
+           PF("subscribers", "route:src/app/subscribers")]
+
+    class C:
+        repo_path = str(tmp_path)
+        tracked_files: list[str] = []
+
+    grain = _grain([], pfs, ri)
+    tele = run_mega_pf_nav_rehome(devs, pfs, ufs, flows, ri, C(),
+                                  grain_index=grain)
+    assert tele.get("mass_channel") == "loc"
+    rows = {r["pf"]: r for r in tele.get("armed_sources") or []}
+    assert rows["netsec"]["foreign_share"] >= 0.5   # LOC channel number
+    assert "netsec" in tele["triggered"]
+    uf_an = next(u for u in ufs if u.id == "UF-an")
+    assert uf_an.product_feature_id == "analytics"
+
+
+def test_seg_d_source_iteration_two_sources():
+    """Iteration (channel-ruling follow-up): a P1 umbrella AND a P2
+    hollow-core on ONE board both decompose, P1 first."""
+    devs1, pfs1, ufs1, flows1, ri1, _g = _supabase_p1_scene()
+    devs2, pfs2, ufs2, flows2, ri2, _g2 = _dupwf_scene()
+    devs = devs1 + devs2
+    pfs = pfs1 + pfs2
+    ufs = ufs1 + ufs2
+    flows = flows1 + flows2
+    ri = ri1 + ri2
+    anchors = [_anchor("route:apps/studio/pages/project/[ref]/settings",
+                       "apps/studio/pages/project/[ref]/settings",
+                       "Settings"),
+               _anchor("route:apps/studio/pages/project/[ref]/logs",
+                       "apps/studio/pages/project/[ref]/logs", "Logs"),
+               _anchor("route:apps/studio/pages/api/platform/projects",
+                       "apps/studio/pages/api/platform/projects",
+                       "Projects"),
+               _anchor("route:src/app/agents", "src/app/agents", "Agents")]
+    grain = _grain(anchors, pfs, ri)
+    tele = _run(devs, pfs, ufs, flows, ri, grain)
+    # both sources fired and decomposed, P1 (projects) first
+    assert tele["triggered"] == ["projects", "duplicate-workflow"]
+    prongs = {r["pf"]: r.get("prong") for r in tele["armed_sources"]}
+    assert prongs.get("projects") == "P1"
+    assert prongs.get("duplicate-workflow") == "P2"
+    homes = {u.id: u.product_feature_id for u in ufs}
+    assert homes["UF-s1"] == "settings"          # P1 move
+    assert homes["UF-an"] == "analytics"         # P2 move
+    assert homes["UF-su"] == "subscribers"       # P2 move
+
+
 def test_seg_e_off_pure_uf_floor():
     # unarmed: the mass rung is inert; the 1-UF chat can NEVER mint even at
     # x4.4 (byte-identical B24 floor: ufs>=3 AND flows>=3).

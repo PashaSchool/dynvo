@@ -177,11 +177,66 @@ def _grain_token_norm(kind: str, key: str) -> str:
 
 
 def _dev_mass(d: Any) -> int:
-    """Runtime mass of a dev — LOC when the board already carries owned LOC
-    (Stage 6.97 has run; sims / post-hoc boards), else PATH COUNT. At Stage
-    6.986 (pre-6.97) LOC is unset ⇒ path count; a board is ONE channel."""
+    """Fallback mass of a dev — LOC when the board already carries owned LOC
+    (sims / post-hoc boards), else PATH COUNT. Live at Stage 6.986 the
+    :class:`_MassOracle` supersedes this with the on-demand 6.97 counter
+    (S5a channel ruling); this fallback serves loc-less synthetic scenes."""
     loc = _attr(d, "loc")
     return int(loc) if loc else len(_attr(d, "paths") or [])
+
+
+class _MassOracle:
+    """S5a — run-scoped ON-DEMAND LOC for the Seg D/E trigger metrics
+    (channel ruling 2026-07-18: mass = real LOC everywhere; path-count
+    proxies drift). Reuses THE 6.97 counter verbatim
+    (``count_file_loc`` via ``_expand_feature_files`` — same exclusions,
+    same dir-walk discipline, same executable-line rule), memoised per
+    file and per dev within the run. NO pass reorder: 6.97 still runs
+    later and stays authoritative for emitted ``loc``.
+
+    Channel decision (deterministic, per run): the LOC channel is used
+    iff the repo tree is present AND at least one member path of the
+    probed devs exists on disk — synthetic unit scenes (fixture paths
+    that exist nowhere) fall back to :func:`_dev_mass` wholesale, so a
+    board is always ONE mass channel, never mixed."""
+
+    def __init__(self, ctx: Any, devs: list[Any]) -> None:
+        from pathlib import Path
+        self._root: Any = None
+        rp = _attr(ctx, "repo_path", None)
+        if rp:
+            p = Path(str(rp))
+            if p.is_dir():
+                self._root = p
+        self._cache: dict[str, int] = {}
+        self._memo: dict[int, int] = {}
+        self._loc_channel = False
+        if self._root is not None:
+            for d in devs:
+                if any((self._root / str(pp)).exists()
+                       for pp in (_attr(d, "paths") or [])):
+                    self._loc_channel = True
+                    break
+
+    @property
+    def channel(self) -> str:
+        return "loc" if self._loc_channel else "fallback"
+
+    def dev_mass(self, d: Any) -> int:
+        k = id(d)
+        got = self._memo.get(k)
+        if got is not None:
+            return got
+        if not self._loc_channel:
+            m = int(_dev_mass(d))
+        else:
+            from faultline.pipeline_v2.stage_6_97_feature_loc import (
+                _expand_feature_files,
+            )
+            m = sum(_expand_feature_files(
+                self._root, _attr(d, "paths") or [], self._cache).values())
+        self._memo[k] = m
+        return m
 
 
 def _dev_identity_tokens(d: Any, layer_vocab: frozenset[str]) -> set[str]:
@@ -355,19 +410,60 @@ def _product_home_fn(product_features: list[Any],
     return _is_product
 
 
-def _armed_trigger_metrics(
-    source_key: str, source_pf: Any, myufs: list[Any],
-    grain: TargetGrainIndex, mydevs: list[Any],
-    tok2pf: dict[str, str], stoplist: frozenset[str],
+def _armed_group_qual(
+    source_key: str, core: set[str], myufs: list[Any],
+    grain: TargetGrainIndex, foreignable: Any,
     flow_by_uuid: Mapping[str, Any],
-) -> tuple[int, float]:
-    """S5a Seg D axes for a candidate source: ``(groups_qual,
-    foreign_share)``. ``groups_qual`` = distinct FOREIGN qualifying non-core
-    nav groups (journey-candidate floor + the _foreignable filter);
-    ``foreign_share`` = the strict-majority-of-mass metric over member devs
-    (core / sibling-echo / route-subtree home), on the runtime mass
-    channel. Mirrors the finalized experimenter vector."""
-    core = _core_identity(source_pf)
+) -> int:
+    """S5a Seg D gq axis: distinct FOREIGN qualifying non-core nav groups
+    (journey-candidate floor + the _foreignable filter). Cheap — no mass."""
+    gstats: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: {"ufs": 0, "flows": 0})
+    for u in myufs:
+        tgt = _resolve_uf(u, flow_by_uuid, grain, source_key, core)[0]
+        if tgt is None or tgt[0] == "core":
+            continue
+        gstats[tgt]["ufs"] += 1
+        gstats[tgt]["flows"] += len(_attr(u, "member_flow_ids") or [])
+    return sum(
+        1 for g, s in gstats.items()
+        if (s["ufs"] >= _GROUP_QUALIFY_UFS or s["flows"] >= _GROUP_QUALIFY_FLOWS)
+        and foreignable(_grain_token_norm(*g)))
+
+
+def _armed_foreign_share(
+    core: set[str], grain: TargetGrainIndex, mydevs: list[Any],
+    tok2pf: dict[str, str], stoplist: frozenset[str],
+    foreignable: Any, mass_of: Any,
+) -> float:
+    """S5a Seg D foreign_share axis: strict-majority-of-mass over member
+    devs (core / sibling-echo / route-subtree home), on the ``mass_of``
+    channel (the on-demand 6.97 LOC oracle live — S5a channel ruling)."""
+    group_toks = {t for t in grain.allowed_group_tokens if foreignable(t)}
+    sib_toks = {t for t in tok2pf if foreignable(t)}
+    foreign_toks = sib_toks | group_toks
+    tot = sum(mass_of(d) for d in mydevs)
+    foreign = 0.0
+    for d in mydevs:
+        dt = _dev_identity_tokens(d, stoplist)
+        if dt & core:
+            continue  # core mass
+        if dt & foreign_toks:
+            foreign += mass_of(d)
+            continue
+        ps = [str(p) for p in (_attr(d, "paths") or [])]
+        gc: Counter = Counter()
+        for p in ps:
+            g = grain.group_cid_of(p)
+            if g is not None:
+                gc[_grain_token_norm("new", g)] += 1
+        nc = sum(c for t, c in gc.items() if foreignable(t))
+        if len(ps) >= 4 and nc * 2 > len(ps):
+            foreign += mass_of(d)   # route-subtree foreign evidence
+    return foreign / tot if tot else 0.0
+
+
+def _foreignable_fn(core: set[str], stoplist: frozenset[str]) -> Any:
     core_comp: set[str] = set()
     for t in core:
         core_comp |= _tok_components(t)
@@ -377,57 +473,25 @@ def _armed_trigger_metrics(
                 and not (_tok_components(tok) & core_comp)
                 and tok not in stoplist)
 
-    gstats: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: {"ufs": 0, "flows": 0})
-    for u in myufs:
-        tgt = _resolve_uf(u, flow_by_uuid, grain, source_key, core)[0]
-        if tgt is None or tgt[0] == "core":
-            continue
-        gstats[tgt]["ufs"] += 1
-        gstats[tgt]["flows"] += len(_attr(u, "member_flow_ids") or [])
-    groups_qual = sum(
-        1 for g, s in gstats.items()
-        if (s["ufs"] >= _GROUP_QUALIFY_UFS or s["flows"] >= _GROUP_QUALIFY_FLOWS)
-        and _foreignable(_grain_token_norm(*g)))
-
-    group_toks = {t for t in grain.allowed_group_tokens if _foreignable(t)}
-    sib_toks = {t for t in tok2pf if _foreignable(t)}
-    foreign_toks = sib_toks | group_toks
-    tot = sum(_dev_mass(d) for d in mydevs)
-    foreign = 0.0
-    for d in mydevs:
-        dt = _dev_identity_tokens(d, stoplist)
-        if dt & core:
-            continue  # core mass
-        if dt & foreign_toks:
-            foreign += _dev_mass(d)
-            continue
-        ps = [str(p) for p in (_attr(d, "paths") or [])]
-        gc: Counter = Counter()
-        for p in ps:
-            g = grain.group_cid_of(p)
-            if g is not None:
-                gc[_grain_token_norm("new", g)] += 1
-        nc = sum(c for t, c in gc.items() if _foreignable(t))
-        if len(ps) >= 4 and nc * 2 > len(ps):
-            foreign += _dev_mass(d)   # route-subtree foreign evidence
-    return groups_qual, (foreign / tot if tot else 0.0)
+    return _foreignable
 
 
-def _select_armed_source(
+def _select_armed_sources(
     ranked_homes: list[tuple[str, int]], total_homed: int,
     product_features: list[Any], pf_by_key: Mapping[str, Any],
     transport_pf_keys: set[str], is_product_home: Any,
     grain: TargetGrainIndex, devs: list[Any], user_flows: list[Any],
-    flow_by_uuid: Mapping[str, Any],
-) -> tuple[str, Any, int, str] | None:
-    """S5a Seg D — the highest-priority F4-p50 decomposition source, or
-    ``None``. P1 (dominant umbrella: strict-top ∧ share≥0.25 ∧ gq≥3) OUTRANKS
-    P2 (hollow-core: foreign_share≥0.5 ∧ gq≥2); ties break by share desc then
-    key. SINGLE best source: the runtime (path-count) census yields ≤1 firing
-    source per board — the loc-channel 2/board case (Soc0 network-security +
-    findings) needs LOC, unavailable at Stage 6.986 (surfaced deviation).
-    Transport-candidate PFs are excluded (karakeep ``web`` class)."""
+    flow_by_uuid: Mapping[str, Any], mass_of: Any,
+    source_rows: list[dict[str, Any]],
+) -> list[tuple[str, Any, int, str]]:
+    """S5a Seg D — the ORDERED F4-p50 decomposition sources. P1 (dominant
+    umbrella: strict-top ∧ share≥0.25 ∧ gq≥3) outranks P2 (hollow-core:
+    foreign_share≥0.5 ∧ gq≥2); within a prong, share desc then key.
+    Iterated in order (channel ruling: the LOC channel can yield 2/board —
+    Soc0 network-security + findings). foreign_share (and thus on-demand
+    LOC) is computed ONLY for P2-candidate PFs (gq >= 2) — containment.
+    Transport-candidate PFs are excluded (karakeep ``web`` class);
+    ``source_rows`` receives the per-candidate telemetry."""
     stoplist = _s5a_stoplist()
     devs_by_pf: dict[str, list[Any]] = defaultdict(list)
     for d in devs:
@@ -449,6 +513,8 @@ def _select_armed_source(
         if not is_product_home(key):
             continue
         pf = pf_by_key[key]
+        core = _core_identity(pf)
+        foreignable = _foreignable_fn(core, stoplist)
         tok2pf: dict[str, str] = {}
         for p in sorted(product_features, key=lambda x: str(_attr(x, "name"))):
             pk = str(_attr(p, "id") or _attr(p, "name") or "")
@@ -456,41 +522,54 @@ def _select_armed_source(
                 continue
             for t in _core_identity(p):
                 tok2pf.setdefault(t, pk)
-        gq, fs = _armed_trigger_metrics(
-            key, pf, ufs_by_pf.get(key, []), grain,
-            devs_by_pf.get(key, []), tok2pf, stoplist, flow_by_uuid)
+        gq = _armed_group_qual(key, core, ufs_by_pf.get(key, []), grain,
+                               foreignable, flow_by_uuid)
         share = ct / total_homed
+        fs: float | None = None
+        if gq >= _P2_MIN_GROUPS:
+            # the ONLY consumers of mass — P2 candidates (containment:
+            # on-demand LOC runs for these PFs' member devs, nothing else).
+            fs = _armed_foreign_share(core, grain, devs_by_pf.get(key, []),
+                                      tok2pf, stoplist, foreignable, mass_of)
+        prong: str | None = None
         if (rank == 1 and strict_top and share >= _TRIGGER_SHARE
                 and gq >= _TRIGGER_MIN_GROUPS):
+            prong = "P1"
             fired.append((0, -share, key, pf, _TRIGGER_MIN_GROUPS, "P1"))
-        elif fs >= _FOREIGN_MASS_SHARE and gq >= _P2_MIN_GROUPS:
+        elif fs is not None and fs >= _FOREIGN_MASS_SHARE:
+            prong = "P2"
             fired.append((1, -share, key, pf, _P2_MIN_GROUPS, "P2"))
-    if not fired:
-        return None
+        if gq or prong:
+            source_rows.append({
+                "pf": key, "share": round(share, 3), "gq": gq,
+                **({"foreign_share": round(fs, 3)} if fs is not None else {}),
+                **({"prong": prong} if prong else {}),
+            })
     fired.sort(key=lambda c: (c[0], c[1], c[2]))
-    _prio, _s, key, pf, min_groups, prong = fired[0]
-    return key, pf, min_groups, prong
+    return [(key, pf, mg, prong) for _p, _s, key, pf, mg, prong in fired]
 
 
 def _group_apportioned_mass(
     cid: str, source_devs: list[Any], stoplist: frozenset[str],
+    mass_of: Any,
 ) -> float:
     """S5a Seg E — the source PF's mass claimed by a NEW nav group: whole
     dev-identity mass (dev token echoes the group) + path-apportioned mass
-    of remaining source devs under the group's cid prefix (vectors.py)."""
+    of remaining source devs under the group's cid prefix (vectors.py).
+    ``mass_of`` = the run's mass oracle (on-demand 6.97 LOC live)."""
     pref = cid.split(":", 1)[1] if ":" in cid else cid
     gtok = _grain_token_norm("new", cid)
     mass = 0.0
     for d in source_devs:
         if gtok and gtok in _dev_identity_tokens(d, stoplist):
-            mass += _dev_mass(d)
+            mass += mass_of(d)
             continue
         ps = [str(p) for p in (_attr(d, "paths") or [])]
         if not ps:
             continue
         inn = sum(1 for p in ps if p == pref or p.startswith(pref + "/"))
         if inn:
-            mass += _dev_mass(d) * inn / len(ps)
+            mass += mass_of(d) * inn / len(ps)
     return mass
 
 
@@ -606,20 +685,30 @@ def run_mega_pf_nav_rehome(
         )
     roots = grain_index.routes_roots
 
-    # ── source selection ────────────────────────────────────────────
+    # ── mass oracle + source selection ──────────────────────────────
+    # S5a channel ruling (2026-07-18): trigger mass = ON-DEMAND LOC via
+    # THE 6.97 counter (run-scoped cache, no pass reorder — 6.97 stays
+    # authoritative for emitted loc). Built only when armed; synthetic
+    # scenes (no on-disk files) fall back to _dev_mass wholesale.
+    mass_oracle = _MassOracle(ctx, devs) if armed else None
+    _mass_of = mass_oracle.dev_mass if mass_oracle is not None else _dev_mass
     if armed:
         # S5a Seg D — two-prong UNION: P1 (strict-top dominant umbrella) OR
         # P2 (hollow-core: majority-FOREIGN member mass + >=2 nav groups —
-        # a non-top source). Single best source (runtime path-count census
-        # yields <=1 firing/board; the loc-channel 2/board case is surfaced).
-        sel = _select_armed_source(
+        # a non-top source). Sources ITERATE in priority order (the LOC
+        # channel can fire 2/board: Soc0 network-security + findings).
+        source_rows: list[dict[str, Any]] = []
+        sources = _select_armed_sources(
             ranked_homes, total_homed, product_features, pf_by_key,
             transport_pf_keys, _is_product_home, grain_index, devs,
-            user_flows, flow_by_uuid)
-        if sel is None:
+            user_flows, flow_by_uuid, _mass_of, source_rows)
+        if mass_oracle is not None:
+            tele["mass_channel"] = mass_oracle.channel
+        if source_rows:
+            tele["armed_sources"] = source_rows
+        if not sources:
             return tele
-        source_key, source_pf, min_groups, fired_prong = sel
-        tele["fired_prong"] = fired_prong
+        tele["fired_prong"] = sources[0][3]
     else:
         # B24 P1 gate — the board's strict-top dominant umbrella only.
         top_key, top_count = ranked_homes[0]
@@ -629,434 +718,457 @@ def run_mega_pf_nav_rehome(
             return tele
         if top_key in transport_pf_keys or top_key not in pf_by_key:
             return tele
-        source_key = top_key
-        source_pf = pf_by_key[source_key]
-        min_groups = _TRIGGER_MIN_GROUPS
+        sources = [(top_key, pf_by_key[top_key], _TRIGGER_MIN_GROUPS, "P1")]
 
-    core = _core_identity(source_pf)
+    # ── per-source decomposition (iterated in priority order) ───────
+    def _decompose_source(source_key: str, source_pf: Any,
+                          min_groups: int) -> None:
+        core = _core_identity(source_pf)
 
-    homed = sorted(
-        (u for u in user_flows
-         if str(_attr(u, "product_feature_id") or "") == source_key),
-        key=lambda u: str(_attr(u, "id") or ""))
-    resolutions: list[tuple[Any, tuple[str, str] | None]] = [
-        (u, _resolve_uf(u, flow_by_uuid, grain_index, source_key, core)[0])
-        for u in homed
-    ]
+        homed = sorted(
+            (u for u in user_flows
+             if str(_attr(u, "product_feature_id") or "") == source_key),
+            key=lambda u: str(_attr(u, "id") or ""))
+        resolutions: list[tuple[Any, tuple[str, str] | None]] = [
+            (u, _resolve_uf(u, flow_by_uuid, grain_index, source_key, core)[0])
+            for u in homed
+        ]
 
-    # ── T1: qualifying non-core nav-group census ────────────────────
-    group_stats: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: {"ufs": 0, "flows": 0})
-    for u, tgt in resolutions:
-        if tgt is None or tgt[0] == "core":
-            continue
-        group_stats[tgt]["ufs"] += 1
-        group_stats[tgt]["flows"] += len(_attr(u, "member_flow_ids") or [])
-    qualifying = {g for g, s in group_stats.items()
-                  if s["ufs"] >= _GROUP_QUALIFY_UFS
-                  or s["flows"] >= _GROUP_QUALIFY_FLOWS}
-    tele["qualifying_groups"] = sorted(f"{k}:{v}" for k, v in qualifying)
-    # ``min_groups`` = 3 (B24 P1 / unarmed) or 2 (S5a Seg D P2 hollow-core).
-    if len(qualifying) < min_groups:
-        return tele
-
-    tele["triggered"] = [source_key]
-    owner_map, neutral_files = _build_owner_map(devs)
-    # duck-typed for _i16_flagged (it reads only .in_lane) — cast keeps
-    # the B22 signature untouched.
-    lane_shim = cast(Any, _NeutralLane(neutral_files))
-    uf_count_before = len(user_flows)
-    uf_home_before = dict(home_counter)
-
-    # ── plan: raw moves + mint demand ───────────────────────────────
-    def _stay(u: Any, reason: str) -> None:
-        tele["stays"].append({"uf": str(_attr(u, "id") or ""),
-                              "name": str(_attr(u, "name") or ""),
-                              "reason": reason})
-
-    raw_moves: list[tuple[Any, str, str]] = []   # (uf, kind, key)
-    mint_groups: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"ufs": [], "flows": 0})
-    for u, tgt in resolutions:
-        if tgt is None:
-            _stay(u, "no_strict_majority")
-            continue
-        kind, key = tgt
-        if kind == "core":
-            _stay(u, "core_group")
-            continue
-        if kind == "pf":
-            tpf = pf_by_key.get(key)
-            if tpf is None or key in transport_pf_keys:
-                _stay(u, "target_unavailable")
+        # ── T1: qualifying non-core nav-group census ────────────────────
+        group_stats: dict[tuple[str, str], dict[str, int]] = defaultdict(
+            lambda: {"ufs": 0, "flows": 0})
+        for u, tgt in resolutions:
+            if tgt is None or tgt[0] == "core":
                 continue
-            if str(_attr(u, "surface_scope") or "product") != \
-                    str(_attr(tpf, "surface_scope") or "product"):
-                _stay(u, "surface_scope_mismatch")
+            group_stats[tgt]["ufs"] += 1
+            group_stats[tgt]["flows"] += len(_attr(u, "member_flow_ids") or [])
+        qualifying = {g for g, s in group_stats.items()
+                      if s["ufs"] >= _GROUP_QUALIFY_UFS
+                      or s["flows"] >= _GROUP_QUALIFY_FLOWS}
+        tele["qualifying_groups"] = sorted(f"{k}:{v}" for k, v in qualifying)
+        # ``min_groups`` = 3 (B24 P1 / unarmed) or 2 (S5a Seg D P2 hollow-core).
+        if len(qualifying) < min_groups:
+            return
+
+        tele["triggered"].append(source_key)
+        owner_map, neutral_files = _build_owner_map(devs)
+        # duck-typed for _i16_flagged (it reads only .in_lane) — cast keeps
+        # the B22 signature untouched.
+        lane_shim = cast(Any, _NeutralLane(neutral_files))
+        uf_count_before = len(user_flows)
+        uf_home_before = dict(Counter(
+            str(_attr(u, "product_feature_id"))
+            for u in user_flows
+            if _attr(u, "product_feature_id")
+            and (_attr(u, "member_flow_ids") or [])
+            and _is_product_home(str(_attr(u, "product_feature_id")))))
+
+        # ── plan: raw moves + mint demand ───────────────────────────────
+        def _stay(u: Any, reason: str) -> None:
+            tele["stays"].append({"uf": str(_attr(u, "id") or ""),
+                                  "name": str(_attr(u, "name") or ""),
+                                  "reason": reason})
+
+        raw_moves: list[tuple[Any, str, str]] = []   # (uf, kind, key)
+        mint_groups: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"ufs": [], "flows": 0})
+        for u, tgt in resolutions:
+            if tgt is None:
+                _stay(u, "no_strict_majority")
                 continue
-            if not _is_product_home(key):
-                # the emission partitioner will move this PF off the
-                # board — a product journey never re-homes onto a
-                # leaving surface (stage-time tags are still None, so
-                # the tag-equality rail above is vacuous live; THIS is
-                # the real surface rail).
-                _stay(u, "target_not_product_surface")
+            kind, key = tgt
+            if kind == "core":
+                _stay(u, "core_group")
                 continue
-            taid = str(_attr(tpf, "anchor_id") or "")
-            tpath = taid.split(":", 1)[-1] if ":" in taid else ""
-            troot = _root_of(tpath, roots)
-            eroots: Counter = Counter()
-            for fid in (_attr(u, "member_flow_ids") or []):
-                fl = flow_by_uuid.get(fid)
-                ep = _attr(fl, "entry_point_file") if fl is not None else None
-                if ep:
-                    eroots[_root_of(str(ep), roots)] += 1
-            eroot = eroots.most_common(1)[0][0] if eroots else None
-            if troot is None or eroot is None or troot != eroot:
-                _stay(u, "cross_app_target")
-                continue
-            raw_moves.append((u, "pf", key))
-        else:  # NEW group → mint demand
-            g = mint_groups[key]
-            g["ufs"].append(u)
-            g["flows"] += len(_attr(u, "member_flow_ids") or [])
-
-    # S5a Seg E — mint mass-rung. Armed, a sub-UF-floor NEW group still mints
-    # when its apportioned source mass clears k * the board's median dev mass
-    # (the chat-14.1K one-massive-domain class). The ``flows>=3`` lattice
-    # floor is UNCHANGED; only the ``ufs>=3`` leg gains the mass alternative.
-    # loc-less boards → median 0 → the rung is inert (fail closed). Unarmed →
-    # the pure B24 floor (``ufs>=3 AND flows>=3``), byte-identical.
-    _stoplist_e = _s5a_stoplist() if armed else frozenset()
-    _src_devs_e = ([f for f in devs
-                    if str(_attr(f, "product_feature_id") or "") == source_key]
-                   if armed else [])
-    _dev_masses = [m for f in devs if (m := _dev_mass(f)) > 0]
-    _median_dev = statistics.median(_dev_masses) if _dev_masses else 0
-    mass_rung_cids: set[str] = set()
-    for cid in sorted(mint_groups):
-        g = mint_groups[cid]
-        mass_ok = False
-        if armed and _median_dev and g["flows"] >= _MINT_MIN_FLOWS \
-                and len(g["ufs"]) < _MINT_MIN_UFS:
-            gmass = _group_apportioned_mass(cid, _src_devs_e, _stoplist_e)
-            mass_ok = gmass >= _MINT_MASS_K * _median_dev
-            if mass_ok:
-                mass_rung_cids.add(cid)
-        if (len(g["ufs"]) >= _MINT_MIN_UFS
-                or mass_ok) and g["flows"] >= _MINT_MIN_FLOWS:
-            for u in g["ufs"]:
-                raw_moves.append((u, "mint", cid))
-        else:
-            for u in g["ufs"]:
-                _stay(u, f"below_mint_floor({len(g['ufs'])}ufs/"
-                         f"{g['flows']}flows)")
-
-    if not raw_moves:
-        return tele
-
-    # ── plan: carve + attach floor + I16 rail (fixed point) ─────────
-    uf_ffiles = {id(u): _uf_flow_files(u, flow_by_uuid) for u, _t in
-                 resolutions}
-
-    def _touch_targets(planned: Mapping[int, str]) -> dict[str, set[str]]:
-        touch: dict[str, set[str]] = defaultdict(set)
-        for u in user_flows:
-            tgt = planned.get(
-                id(u), str(_attr(u, "product_feature_id") or "") or None)
-            if not tgt:
-                continue
-            ff = uf_ffiles.get(id(u))
-            if ff is None:
-                ff = _uf_flow_files(u, flow_by_uuid)
-                uf_ffiles[id(u)] = ff
-            for p in ff:
-                touch[p].add(tgt)
-        return touch
-
-    moves = list(raw_moves)
-    carved_into: dict[str, set[str]] = {}
-    residual_claimed: set[str] = set()
-    for _round in range(len(raw_moves) + 1):
-        planned = {id(u): key for u, _k, key in moves}
-        touch = _touch_targets(planned)
-        carved_into = defaultdict(set)
-        residual_claimed = set()
-        moved_targets_of: dict[str, set[str]] = defaultdict(set)
-        for u, _kind, key in moves:
-            for p in uf_ffiles[id(u)]:
-                moved_targets_of[p].add(key)
-        for u, kind, key in moves:
-            for p in sorted(uf_ffiles[id(u)]):
-                if p in owner_map:
-                    if owner_map[p] is not None \
-                            and str(owner_map[p]) == source_key \
-                            and moved_targets_of[p] == {key}:
-                        carved_into[key].add(p)     # source-owned follows
-                elif touch.get(p) == {key}:
-                    carved_into[key].add(p)         # uniquely-owned residual
-                    residual_claimed.add(p)
-            if kind == "mint":  # the group's own route subtree follows
-                pref = key.split(":", 1)[1]
-                for p, o in owner_map.items():
-                    if o is not None and str(o) == source_key and (
-                            p == pref or p.startswith(pref + "/")):
-                        carved_into[key].add(p)
-
-        # projected scopes (validator I15 view: pf.paths + FULL dev paths)
-        planned_scope: dict[str, set[str]] = defaultdict(set)
-        for pf in product_features:
-            k = str(_attr(pf, "id") or _attr(pf, "name") or "")
-            if k:
-                planned_scope[k].update(
-                    str(p) for p in (_attr(pf, "paths") or []))
-        for f in devs:
-            pfid = _attr(f, "product_feature_id")
-            if pfid:
-                planned_scope[str(pfid)].update(_full_paths(f))
-        for key, files in carved_into.items():
-            planned_scope[key].update(files)
-            planned_scope[source_key] -= files
-
-        # planned owner map (for the I16 rail)
-        planned_owner = dict(owner_map)
-        for key, files in carved_into.items():
-            for p in files:
-                planned_owner[p] = key
-
-        dropped: list[tuple[Any, str, str, str, float | None]] = []
-        kept: list[tuple[Any, str, str]] = []
-        for u, kind, key in moves:
-            eff = uf_ffiles[id(u)] - neutral_files
-            attach: float | None = None
-            if len(_attr(u, "member_flow_ids") or []) >= 2 and eff:
-                attach = len(eff & planned_scope[key]) / len(eff)
-                if attach < _ATTACH_FLOOR:
-                    dropped.append((u, kind, key, "attach_floor", attach))
+            if kind == "pf":
+                tpf = pf_by_key.get(key)
+                if tpf is None or key in transport_pf_keys:
+                    _stay(u, "target_unavailable")
                     continue
-            pre = _i16_flagged(u, source_key, flow_by_uuid, owner_map,
-                               lane_shim)
-            post = _i16_flagged(u, key, flow_by_uuid, planned_owner,
-                                lane_shim)
-            if post and not pre:
-                dropped.append((u, kind, key, "i16_rail", attach))
-                continue
-            kept.append((u, kind, key))
-        if not dropped:
+                if str(_attr(u, "surface_scope") or "product") != \
+                        str(_attr(tpf, "surface_scope") or "product"):
+                    _stay(u, "surface_scope_mismatch")
+                    continue
+                if not _is_product_home(key):
+                    # the emission partitioner will move this PF off the
+                    # board — a product journey never re-homes onto a
+                    # leaving surface (stage-time tags are still None, so
+                    # the tag-equality rail above is vacuous live; THIS is
+                    # the real surface rail).
+                    _stay(u, "target_not_product_surface")
+                    continue
+                taid = str(_attr(tpf, "anchor_id") or "")
+                tpath = taid.split(":", 1)[-1] if ":" in taid else ""
+                troot = _root_of(tpath, roots)
+                eroots: Counter = Counter()
+                for fid in (_attr(u, "member_flow_ids") or []):
+                    fl = flow_by_uuid.get(fid)
+                    ep = _attr(fl, "entry_point_file") if fl is not None else None
+                    if ep:
+                        eroots[_root_of(str(ep), roots)] += 1
+                eroot = eroots.most_common(1)[0][0] if eroots else None
+                if troot is None or eroot is None or troot != eroot:
+                    _stay(u, "cross_app_target")
+                    continue
+                raw_moves.append((u, "pf", key))
+            else:  # NEW group → mint demand
+                g = mint_groups[key]
+                g["ufs"].append(u)
+                g["flows"] += len(_attr(u, "member_flow_ids") or [])
+
+        # S5a Seg E — mint mass-rung. Armed, a sub-UF-floor NEW group still mints
+        # when its apportioned source mass clears k * the board's median dev mass
+        # (the chat-14.1K one-massive-domain class). The ``flows>=3`` lattice
+        # floor is UNCHANGED; only the ``ufs>=3`` leg gains the mass alternative.
+        # loc-less boards → median 0 → the rung is inert (fail closed). Unarmed →
+        # the pure B24 floor (``ufs>=3 AND flows>=3``), byte-identical.
+        _stoplist_e = _s5a_stoplist() if armed else frozenset()
+        _src_devs_e = ([f for f in devs
+                        if str(_attr(f, "product_feature_id") or "") == source_key]
+                       if armed else [])
+        _median_memo: list[float] = []
+
+        def _median_dev_mass() -> float:
+            # lazy: the full-board on-demand LOC count runs ONLY when the
+            # mass rung is actually consulted (sub-UF-floor group with a
+            # full flow lattice on an armed, fired board).
+            if not _median_memo:
+                ms = [m for f in devs if (m := _mass_of(f)) > 0]
+                _median_memo.append(
+                    float(statistics.median(ms)) if ms else 0.0)
+            return _median_memo[0]
+
+        mass_rung_cids: set[str] = set()
+        for cid in sorted(mint_groups):
+            g = mint_groups[cid]
+            mass_ok = False
+            if armed and g["flows"] >= _MINT_MIN_FLOWS \
+                    and len(g["ufs"]) < _MINT_MIN_UFS:
+                med = _median_dev_mass()
+                if med:
+                    gmass = _group_apportioned_mass(
+                        cid, _src_devs_e, _stoplist_e, _mass_of)
+                    mass_ok = gmass >= _MINT_MASS_K * med
+                    if mass_ok:
+                        mass_rung_cids.add(cid)
+            if (len(g["ufs"]) >= _MINT_MIN_UFS
+                    or mass_ok) and g["flows"] >= _MINT_MIN_FLOWS:
+                for u in g["ufs"]:
+                    raw_moves.append((u, "mint", cid))
+            else:
+                for u in g["ufs"]:
+                    _stay(u, f"below_mint_floor({len(g['ufs'])}ufs/"
+                             f"{g['flows']}flows)")
+
+        if not raw_moves:
+            return
+
+        # ── plan: carve + attach floor + I16 rail (fixed point) ─────────
+        uf_ffiles = {id(u): _uf_flow_files(u, flow_by_uuid) for u, _t in
+                     resolutions}
+
+        def _touch_targets(planned: Mapping[int, str]) -> dict[str, set[str]]:
+            touch: dict[str, set[str]] = defaultdict(set)
+            for u in user_flows:
+                tgt = planned.get(
+                    id(u), str(_attr(u, "product_feature_id") or "") or None)
+                if not tgt:
+                    continue
+                ff = uf_ffiles.get(id(u))
+                if ff is None:
+                    ff = _uf_flow_files(u, flow_by_uuid)
+                    uf_ffiles[id(u)] = ff
+                for p in ff:
+                    touch[p].add(tgt)
+            return touch
+
+        moves = list(raw_moves)
+        carved_into: dict[str, set[str]] = {}
+        residual_claimed: set[str] = set()
+        for _round in range(len(raw_moves) + 1):
+            planned = {id(u): key for u, _k, key in moves}
+            touch = _touch_targets(planned)
+            carved_into = defaultdict(set)
+            residual_claimed = set()
+            moved_targets_of: dict[str, set[str]] = defaultdict(set)
+            for u, _kind, key in moves:
+                for p in uf_ffiles[id(u)]:
+                    moved_targets_of[p].add(key)
+            for u, kind, key in moves:
+                for p in sorted(uf_ffiles[id(u)]):
+                    if p in owner_map:
+                        if owner_map[p] is not None \
+                                and str(owner_map[p]) == source_key \
+                                and moved_targets_of[p] == {key}:
+                            carved_into[key].add(p)     # source-owned follows
+                    elif touch.get(p) == {key}:
+                        carved_into[key].add(p)         # uniquely-owned residual
+                        residual_claimed.add(p)
+                if kind == "mint":  # the group's own route subtree follows
+                    pref = key.split(":", 1)[1]
+                    for p, o in owner_map.items():
+                        if o is not None and str(o) == source_key and (
+                                p == pref or p.startswith(pref + "/")):
+                            carved_into[key].add(p)
+
+            # projected scopes (validator I15 view: pf.paths + FULL dev paths)
+            planned_scope: dict[str, set[str]] = defaultdict(set)
+            for pf in product_features:
+                k = str(_attr(pf, "id") or _attr(pf, "name") or "")
+                if k:
+                    planned_scope[k].update(
+                        str(p) for p in (_attr(pf, "paths") or []))
+            for f in devs:
+                pfid = _attr(f, "product_feature_id")
+                if pfid:
+                    planned_scope[str(pfid)].update(_full_paths(f))
+            for key, files in carved_into.items():
+                planned_scope[key].update(files)
+                planned_scope[source_key] -= files
+
+            # planned owner map (for the I16 rail)
+            planned_owner = dict(owner_map)
+            for key, files in carved_into.items():
+                for p in files:
+                    planned_owner[p] = key
+
+            dropped: list[tuple[Any, str, str, str, float | None]] = []
+            kept: list[tuple[Any, str, str]] = []
+            for u, kind, key in moves:
+                eff = uf_ffiles[id(u)] - neutral_files
+                attach: float | None = None
+                if len(_attr(u, "member_flow_ids") or []) >= 2 and eff:
+                    attach = len(eff & planned_scope[key]) / len(eff)
+                    if attach < _ATTACH_FLOOR:
+                        dropped.append((u, kind, key, "attach_floor", attach))
+                        continue
+                pre = _i16_flagged(u, source_key, flow_by_uuid, owner_map,
+                                   lane_shim)
+                post = _i16_flagged(u, key, flow_by_uuid, planned_owner,
+                                    lane_shim)
+                if post and not pre:
+                    dropped.append((u, kind, key, "i16_rail", attach))
+                    continue
+                kept.append((u, kind, key))
+            if not dropped:
+                moves = kept
+                break
+            for u, kind, key, why, attach in dropped:
+                row = {"uf": str(_attr(u, "id") or ""),
+                       "name": str(_attr(u, "name") or ""),
+                       "kind": kind, "to": key,
+                       **({"attach": round(attach, 3)}
+                          if attach is not None else {})}
+                (tele["floor_drops"] if why == "attach_floor"
+                 else tele["i16_rail_drops"]).append(row)
+                _stay(u, why)
             moves = kept
-            break
-        for u, kind, key, why, attach in dropped:
-            row = {"uf": str(_attr(u, "id") or ""),
-                   "name": str(_attr(u, "name") or ""),
-                   "kind": kind, "to": key,
-                   **({"attach": round(attach, 3)}
-                      if attach is not None else {})}
-            (tele["floor_drops"] if why == "attach_floor"
-             else tele["i16_rail_drops"]).append(row)
-            _stay(u, why)
-        moves = kept
 
-    # mint groups that lost their floor quorum to drops fold back; a
-    # mint with no source-owned carved mass would be a PHANTOM (the
-    # 6.985 contributing-dev rule) and folds back too.
-    live_mint_ufs: Counter = Counter(
-        key for _u, kind, key in moves if kind == "mint")
-    # S5a Seg E — a mass-rung mint is quorum-exempt (it earned mint right by
-    # mass, not UF count); the phantom (no source-owned carve) check below
-    # still guards it.
-    demoted = {cid for cid, ct in live_mint_ufs.items()
-               if ct < _MINT_MIN_UFS and cid not in mass_rung_cids}
-    for cid in live_mint_ufs:
-        if cid in demoted:
-            continue
-        files = carved_into.get(cid) or set()
-        if not any(p in owner_map and owner_map[p] is not None
-                   and str(owner_map[p]) == source_key for p in files):
-            demoted.add(cid)
-    if demoted:
-        for u, kind, key in list(moves):
-            if kind == "mint" and key in demoted:
-                moves.remove((u, kind, key))
-                carved_into.pop(key, None)
-                _stay(u, "mint_quorum_lost")
-        live_mint_ufs = Counter(
+        # mint groups that lost their floor quorum to drops fold back; a
+        # mint with no source-owned carved mass would be a PHANTOM (the
+        # 6.985 contributing-dev rule) and folds back too.
+        live_mint_ufs: Counter = Counter(
             key for _u, kind, key in moves if kind == "mint")
-
-    if not moves:
-        return tele
-
-    # orphan guard (B20/I8): the source must keep >= 1 journey.
-    if len(moves) >= len(homed):
-        tele["stays"].append({"uf": None, "name": None,
-                              "reason": "orphan_guard_all_would_leave"})
-        return tele
-
-    # ── apply (verified plan only) ──────────────────────────────────
-    from faultline.pipeline_v2.nav_taxonomy import aggregate_product_feature
-    from faultline.pipeline_v2.stage_6_86_anchored_mint import _slug
-
-    strict = _strict_conservation()
-    edges_by_flow_id: dict[str, list[Any]] = defaultdict(list)
-    for e in (feature_flow_edges or []):
-        edges_by_flow_id[str(_attr(e, "flow_id") or "")].append(e)
-
-    source_devs = sorted(
-        (f for f in devs
-         if str(_attr(f, "product_feature_id") or "") == source_key),
-        key=lambda x: str(_attr(x, "name") or ""))
-    dev_owned = {str(_attr(f, "name") or ""): set(_owned_of(f))
-                 for f in source_devs}
-
-    # per-target carve execution (chunks / whole-dev re-homes)
-    contrib_by_target: dict[str, list[Any]] = defaultdict(list)
-    rehomed_whole: dict[str, str] = {}   # dev name → target key
-    for key in sorted(carved_into):
-        files = carved_into[key]
-        if not files:
-            continue
-        residual_here = sorted(p for p in files if p not in owner_map)
-        for f in source_devs:
-            name = str(_attr(f, "name") or "")
-            if name in rehomed_whole:
+        # S5a Seg E — a mass-rung mint is quorum-exempt (it earned mint right by
+        # mass, not UF count); the phantom (no source-owned carve) check below
+        # still guards it.
+        demoted = {cid for cid, ct in live_mint_ufs.items()
+                   if ct < _MINT_MIN_UFS and cid not in mass_rung_cids}
+        for cid in live_mint_ufs:
+            if cid in demoted:
                 continue
-            mine = sorted(files & dev_owned[name])
-            if not mine:
+            files = carved_into.get(cid) or set()
+            if not any(p in owner_map and owner_map[p] is not None
+                       and str(owner_map[p]) == source_key for p in files):
+                demoted.add(cid)
+        if demoted:
+            for u, kind, key in list(moves):
+                if kind == "mint" and key in demoted:
+                    moves.remove((u, kind, key))
+                    carved_into.pop(key, None)
+                    _stay(u, "mint_quorum_lost")
+            live_mint_ufs = Counter(
+                key for _u, kind, key in moves if kind == "mint")
+
+        if not moves:
+            return
+
+        # orphan guard (B20/I8): the source must keep >= 1 journey.
+        if len(moves) >= len(homed):
+            tele["stays"].append({"uf": None, "name": None,
+                                  "reason": "orphan_guard_all_would_leave"})
+            return
+
+        # ── apply (verified plan only) ──────────────────────────────────
+        from faultline.pipeline_v2.nav_taxonomy import aggregate_product_feature
+        from faultline.pipeline_v2.stage_6_86_anchored_mint import _slug
+
+        strict = _strict_conservation()
+        edges_by_flow_id: dict[str, list[Any]] = defaultdict(list)
+        for e in (feature_flow_edges or []):
+            edges_by_flow_id[str(_attr(e, "flow_id") or "")].append(e)
+
+        source_devs = sorted(
+            (f for f in devs
+             if str(_attr(f, "product_feature_id") or "") == source_key),
+            key=lambda x: str(_attr(x, "name") or ""))
+        dev_owned = {str(_attr(f, "name") or ""): set(_owned_of(f))
+                     for f in source_devs}
+
+        # per-target carve execution (chunks / whole-dev re-homes)
+        contrib_by_target: dict[str, list[Any]] = defaultdict(list)
+        rehomed_whole: dict[str, str] = {}   # dev name → target key
+        for key in sorted(carved_into):
+            files = carved_into[key]
+            if not files:
                 continue
-            if len(mine) >= len(dev_owned[name]):
-                # carve would EMPTY the dev → the whole dev re-homes
-                # (6.985 discipline; keeps every flowful dev pathful).
-                rehomed_whole[name] = key
-                contrib_by_target[key].append(f)
-                continue
-            chunk = _carve_chunk(f, key, mine, marker=_B24_MARKER)
-            _move_carved_flows(f, chunk, set(mine), edges_by_flow_id)
-            _strip_carved_files(f, set(mine))
-            developer_features.append(chunk)
-            devs.append(chunk)
-            contrib_by_target[key].append(chunk)
-            tele["devs_carved"] += 1
-        if residual_here:
-            # residual mass rides the target's first chunk; if none, a
-            # dedicated chunk minted off the largest source dev template.
-            hosts = [c for c in contrib_by_target[key]
-                     if str(_attr(c, "name") or "") not in rehomed_whole]
-            if hosts:
-                host = hosts[0]
-                host.paths = sorted(set(_attr(host, "paths") or [])
-                                    | set(residual_here))
-            elif source_devs:
-                template = max(
-                    source_devs,
-                    key=lambda x: (len(_attr(x, "paths") or []),
-                                   str(_attr(x, "name") or "")))
-                chunk = _carve_chunk(template, key, residual_here,
-                                     marker=_B24_MARKER)
+            residual_here = sorted(p for p in files if p not in owner_map)
+            for f in source_devs:
+                name = str(_attr(f, "name") or "")
+                if name in rehomed_whole:
+                    continue
+                mine = sorted(files & dev_owned[name])
+                if not mine:
+                    continue
+                if len(mine) >= len(dev_owned[name]):
+                    # carve would EMPTY the dev → the whole dev re-homes
+                    # (6.985 discipline; keeps every flowful dev pathful).
+                    rehomed_whole[name] = key
+                    contrib_by_target[key].append(f)
+                    continue
+                chunk = _carve_chunk(f, key, mine, marker=_B24_MARKER)
+                _move_carved_flows(f, chunk, set(mine), edges_by_flow_id)
+                _strip_carved_files(f, set(mine))
                 developer_features.append(chunk)
                 devs.append(chunk)
                 contrib_by_target[key].append(chunk)
                 tele["devs_carved"] += 1
-            tele["residual_claimed"] += len(residual_here)
+            if residual_here:
+                # residual mass rides the target's first chunk; if none, a
+                # dedicated chunk minted off the largest source dev template.
+                hosts = [c for c in contrib_by_target[key]
+                         if str(_attr(c, "name") or "") not in rehomed_whole]
+                if hosts:
+                    host = hosts[0]
+                    host.paths = sorted(set(_attr(host, "paths") or [])
+                                        | set(residual_here))
+                elif source_devs:
+                    template = max(
+                        source_devs,
+                        key=lambda x: (len(_attr(x, "paths") or []),
+                                       str(_attr(x, "name") or "")))
+                    chunk = _carve_chunk(template, key, residual_here,
+                                         marker=_B24_MARKER)
+                    developer_features.append(chunk)
+                    devs.append(chunk)
+                    contrib_by_target[key].append(chunk)
+                    tele["devs_carved"] += 1
+                tele["residual_claimed"] += len(residual_here)
 
-    # mints (aggregate_product_feature — the 6.985 excavator shape)
-    used_slugs = set(pf_by_key) | {"platform", "shared-platform"}
-    minted_key: dict[str, str] = {}
-    for u, kind, key in moves:
-        if kind != "mint" or key in minted_key:
-            continue
-        display = grain_index.display_of(key)
-        slug = _slug(display) or _slug(key.rsplit(":", 1)[-1])
-        if slug in used_slugs:
-            n = 2
-            base = slug
-            while slug in used_slugs:
-                slug = _slug(f"{base} {n}")
-                n += 1
-        used_slugs.add(slug)
-        contrib = contrib_by_target.get(key) or []
-        pf = aggregate_product_feature(
-            name=slug,
-            display_name=display,
-            description=(
-                f"Capability anchored at {key} "
-                f"({len(contrib)} developer feature(s); "
-                f"{_B24_MARKER} carve of '{source_key}')."
-            ),
-            contrib=contrib,
-        )
-        pf.layer = "product"
-        pf.anchor_id = key
-        pf.surface_scope = _attr(source_pf, "surface_scope")
-        product_features.append(pf)
-        pf_by_key[slug] = pf
-        minted_key[key] = slug
-        tele["pfs_minted"] += 1
-        tele["mints"].append({"cid": key, "pf": slug,
-                              "ufs": live_mint_ufs.get(key, 0)})
+        # mints (aggregate_product_feature — the 6.985 excavator shape)
+        used_slugs = set(pf_by_key) | {"platform", "shared-platform"}
+        minted_key: dict[str, str] = {}
+        for u, kind, key in moves:
+            if kind != "mint" or key in minted_key:
+                continue
+            display = grain_index.display_of(key)
+            slug = _slug(display) or _slug(key.rsplit(":", 1)[-1])
+            if slug in used_slugs:
+                n = 2
+                base = slug
+                while slug in used_slugs:
+                    slug = _slug(f"{base} {n}")
+                    n += 1
+            used_slugs.add(slug)
+            contrib = contrib_by_target.get(key) or []
+            pf = aggregate_product_feature(
+                name=slug,
+                display_name=display,
+                description=(
+                    f"Capability anchored at {key} "
+                    f"({len(contrib)} developer feature(s); "
+                    f"{_B24_MARKER} carve of '{source_key}')."
+                ),
+                contrib=contrib,
+            )
+            pf.layer = "product"
+            pf.anchor_id = key
+            pf.surface_scope = _attr(source_pf, "surface_scope")
+            product_features.append(pf)
+            pf_by_key[slug] = pf
+            minted_key[key] = slug
+            tele["pfs_minted"] += 1
+            tele["mints"].append({"cid": key, "pf": slug,
+                                  "ufs": live_mint_ufs.get(key, 0)})
 
-    def _final_key(kind: str, key: str) -> str:
-        return minted_key[key] if kind == "mint" else key
+        def _final_key(kind: str, key: str) -> str:
+            return minted_key[key] if kind == "mint" else key
 
-    # stamp carved chunks / whole re-homed devs
-    for key, contrib in sorted(contrib_by_target.items()):
-        fkey = minted_key.get(key, key)
-        for c in contrib:
-            propose_pf_now(c, fkey, rung="mega")
-            c.anchor_id = f"fold:{_B24_MARKER}->{key}"
-            if _attr(c, "shared_reason"):
-                c.shared_reason = None
-    tele["devs_rehomed"] = len(rehomed_whole)
+        # stamp carved chunks / whole re-homed devs
+        for key, contrib in sorted(contrib_by_target.items()):
+            fkey = minted_key.get(key, key)
+            for c in contrib:
+                propose_pf_now(c, fkey, rung="mega")
+                c.anchor_id = f"fold:{_B24_MARKER}->{key}"
+                if _attr(c, "shared_reason"):
+                    c.shared_reason = None
+        tele["devs_rehomed"] = len(rehomed_whole)
 
-    # the source PF row sheds the carved files (its scope must not keep
-    # claiming mass that now belongs to the targets — I23 body truth;
-    # unlike 6.985 the source PERSISTS, so this is explicit here).
-    all_carved: set[str] = set()
-    for files in carved_into.values():
-        all_carved |= files
-    if all_carved:
-        src_paths = [p for p in (_attr(source_pf, "paths") or [])
-                     if str(p) not in all_carved]
-        source_pf.paths = src_paths
-        kept_members = []
-        for m in (_attr(source_pf, "member_files") or []):
-            mp = m.get("path") if isinstance(m, dict) else \
-                getattr(m, "path", None)
-            if mp not in all_carved:
-                kept_members.append(m)
-        source_pf.member_files = kept_members
+        # the source PF row sheds the carved files (its scope must not keep
+        # claiming mass that now belongs to the targets — I23 body truth;
+        # unlike 6.985 the source PERSISTS, so this is explicit here).
+        all_carved: set[str] = set()
+        for files in carved_into.values():
+            all_carved |= files
+        if all_carved:
+            src_paths = [p for p in (_attr(source_pf, "paths") or [])
+                         if str(p) not in all_carved]
+            source_pf.paths = src_paths
+            kept_members = []
+            for m in (_attr(source_pf, "member_files") or []):
+                mp = m.get("path") if isinstance(m, dict) else \
+                    getattr(m, "path", None)
+                if mp not in all_carved:
+                    kept_members.append(m)
+            source_pf.member_files = kept_members
 
-    # journey re-homes
-    for u, kind, key in sorted(
-            moves, key=lambda m: str(_attr(m[0], "id") or "")):
-        fkey = _final_key(kind, key)
-        propose_pf_now(u, fkey, rung="mega")
-        tele["ufs_rehomed"] += 1
-        if len(tele["moves"]) < 60:
-            tele["moves"].append({
-                "uf": str(_attr(u, "id") or ""),
-                "name": str(_attr(u, "name") or ""),
-                "kind": kind, "to": fkey,
-            })
+        # journey re-homes
+        for u, kind, key in sorted(
+                moves, key=lambda m: str(_attr(m[0], "id") or "")):
+            fkey = _final_key(kind, key)
+            propose_pf_now(u, fkey, rung="mega")
+            tele["ufs_rehomed"] += 1
+            if len(tele["moves"]) < 60:
+                tele["moves"].append({
+                    "uf": str(_attr(u, "id") or ""),
+                    "name": str(_attr(u, "name") or ""),
+                    "kind": kind, "to": fkey,
+                })
 
-    # ── hard conservation invariant (source persists) ───────────────
-    violations: list[str] = []
-    if len(user_flows) != uf_count_before:
-        violations.append(
-            f"uf_count {uf_count_before} -> {len(user_flows)}")
-    after: Counter = Counter(
-        str(_attr(u, "product_feature_id"))
-        for u in user_flows if _attr(u, "product_feature_id"))
-    for k, before in sorted(uf_home_before.items()):
-        if k == source_key:
-            continue
-        if after.get(k, 0) < before:
-            violations.append(f"pf '{k}' journeys {before} -> "
-                              f"{after.get(k, 0)}")
-    if after.get(source_key, 0) < 1:
-        violations.append(f"source '{source_key}' stripped to zero journeys")
-    if violations:
-        tele["conservation_violations"] = violations
-        if strict:
-            raise AssertionError(
-                "mega_pf_nav_rehome conservation violated: "
-                + "; ".join(violations))
+        # ── hard conservation invariant (source persists) ───────────────
+        violations: list[str] = []
+        if len(user_flows) != uf_count_before:
+            violations.append(
+                f"uf_count {uf_count_before} -> {len(user_flows)}")
+        after: Counter = Counter(
+            str(_attr(u, "product_feature_id"))
+            for u in user_flows if _attr(u, "product_feature_id"))
+        for k, before in sorted(uf_home_before.items()):
+            if k == source_key:
+                continue
+            if after.get(k, 0) < before:
+                violations.append(f"pf '{k}' journeys {before} -> "
+                                  f"{after.get(k, 0)}")
+        if after.get(source_key, 0) < 1:
+            violations.append(f"source '{source_key}' stripped to zero journeys")
+        if violations:
+            tele["conservation_violations"] = violations
+            if strict:
+                raise AssertionError(
+                    "mega_pf_nav_rehome conservation violated: "
+                    + "; ".join(violations))
+
+    for src_key, src_pf, src_min_groups, _prong in sources:
+        _decompose_source(src_key, src_pf, src_min_groups)
+
     return tele
