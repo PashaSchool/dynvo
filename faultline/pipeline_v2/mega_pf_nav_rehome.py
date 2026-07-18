@@ -94,6 +94,7 @@ from __future__ import annotations
 from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 
 import os
+import statistics
 from collections import Counter, defaultdict
 from typing import Any, Iterable, Mapping, cast
 
@@ -136,6 +137,77 @@ _GROUP_QUALIFY_FLOWS = 3
 #: Mint floor: a NEW capability is its own small journey lattice.
 _MINT_MIN_UFS = 3
 _MINT_MIN_FLOWS = 3
+
+# ── S5a Seg D/E — armed trigger union + mint mass-rung (FAULTLINE_MEGA_DECOMP_ARM)
+#: Seg D P2 prong (hollow-core): a PF whose member MASS is strict-majority
+#: FOREIGN (>= this share resolves to non-core nav domains) is a decomposition
+#: source EVEN WHEN it is not the board's dominant umbrella — the strict-
+#: majority-of-mass ruler class; 0.5 sits in the corpus gap [0.446, 0.523].
+_FOREIGN_MASS_SHARE = 0.5
+#: … with >= this many qualifying non-core groups (the journey-candidate PAIR
+#: floor — one level below the P1 catch-all bar).
+_P2_MIN_GROUPS = 2
+#: Seg E mint mass-rung: a sub-UF-floor NEW group still mints when its
+#: apportioned source mass >= k * the board's median dev mass (k=4 sits in the
+#: gap [x3.1, x4.4]; loc-less boards fail closed — median 0 → rung inert).
+_MINT_MASS_K = 4
+
+
+def _s5a_stoplist() -> frozenset[str]:
+    """The canonical structural / plumbing vocabulary (data, not code —
+    ``spine-anchor-vocab.yaml``). A group / dev token in the stoplist is
+    presentation/transport scaffolding, never FOREIGN capability evidence
+    (the Seg D _foreignable rule; also the dev-token layer-strip)."""
+    from faultline.pipeline_v2.spine_anchors import load_spine_vocab
+    return frozenset(str(s) for s in
+                     (load_spine_vocab().get("structural_stoplist") or []))
+
+
+def _tok_components(tok: str) -> set[str]:
+    return set(t for t in str(tok).split("-") if t)
+
+
+def _grain_token_norm(kind: str, key: str) -> str:
+    """Normalized area token of a resolution target (``_resolve_uf`` shape)."""
+    from faultline.pipeline_v2.spine_anchors import normalize_anchor_key
+    if kind == "new":
+        return normalize_anchor_key(
+            key.rsplit("/", 1)[-1].rsplit(".", 1)[0])
+    return normalize_anchor_key(str(key))
+
+
+def _dev_mass(d: Any) -> int:
+    """Runtime mass of a dev — LOC when the board already carries owned LOC
+    (Stage 6.97 has run; sims / post-hoc boards), else PATH COUNT. At Stage
+    6.986 (pre-6.97) LOC is unset ⇒ path count; a board is ONE channel."""
+    loc = _attr(d, "loc")
+    return int(loc) if loc else len(_attr(d, "paths") or [])
+
+
+def _dev_identity_tokens(d: Any, layer_vocab: frozenset[str]) -> set[str]:
+    """Dev capability tokens (name + api-strip + fold-target + numeric-twin +
+    single trailing layer-word strip) — the Seg B sibling-bridge identity
+    used to classify a dev's mass as core / foreign."""
+    from faultline.pipeline_v2.spine_anchors import normalize_anchor_key
+    toks: set[str] = set()
+    n = str(_attr(d, "name") or "")
+    toks.add(normalize_anchor_key(n))
+    if n.startswith("api-"):
+        toks.add(normalize_anchor_key(n[4:]))
+    aid = str(_attr(d, "anchor_id") or "")
+    if "->" in aid:
+        toks.add(normalize_anchor_key(
+            aid.split("->", 1)[1].split(":")[-1].rsplit("/", 1)[-1]))
+    for t in list(toks):
+        parts = t.split("-")
+        if len(parts) > 1 and parts[-1].isdigit():
+            toks.add("-".join(parts[:-1]))
+    for t in list(toks):
+        parts = t.split("-")
+        if len(parts) > 1 and parts[-1] in layer_vocab:
+            toks.add(normalize_anchor_key("-".join(parts[:-1])))
+    toks.discard("")
+    return toks
 
 
 def mega_pf_nav_rehome_enabled() -> bool:
@@ -283,6 +355,145 @@ def _product_home_fn(product_features: list[Any],
     return _is_product
 
 
+def _armed_trigger_metrics(
+    source_key: str, source_pf: Any, myufs: list[Any],
+    grain: TargetGrainIndex, mydevs: list[Any],
+    tok2pf: dict[str, str], stoplist: frozenset[str],
+    flow_by_uuid: Mapping[str, Any],
+) -> tuple[int, float]:
+    """S5a Seg D axes for a candidate source: ``(groups_qual,
+    foreign_share)``. ``groups_qual`` = distinct FOREIGN qualifying non-core
+    nav groups (journey-candidate floor + the _foreignable filter);
+    ``foreign_share`` = the strict-majority-of-mass metric over member devs
+    (core / sibling-echo / route-subtree home), on the runtime mass
+    channel. Mirrors the finalized experimenter vector."""
+    core = _core_identity(source_pf)
+    core_comp: set[str] = set()
+    for t in core:
+        core_comp |= _tok_components(t)
+
+    def _foreignable(tok: str) -> bool:
+        return (bool(tok) and tok not in core
+                and not (_tok_components(tok) & core_comp)
+                and tok not in stoplist)
+
+    gstats: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: {"ufs": 0, "flows": 0})
+    for u in myufs:
+        tgt = _resolve_uf(u, flow_by_uuid, grain, source_key, core)[0]
+        if tgt is None or tgt[0] == "core":
+            continue
+        gstats[tgt]["ufs"] += 1
+        gstats[tgt]["flows"] += len(_attr(u, "member_flow_ids") or [])
+    groups_qual = sum(
+        1 for g, s in gstats.items()
+        if (s["ufs"] >= _GROUP_QUALIFY_UFS or s["flows"] >= _GROUP_QUALIFY_FLOWS)
+        and _foreignable(_grain_token_norm(*g)))
+
+    group_toks = {t for t in grain.allowed_group_tokens if _foreignable(t)}
+    sib_toks = {t for t in tok2pf if _foreignable(t)}
+    foreign_toks = sib_toks | group_toks
+    tot = sum(_dev_mass(d) for d in mydevs)
+    foreign = 0.0
+    for d in mydevs:
+        dt = _dev_identity_tokens(d, stoplist)
+        if dt & core:
+            continue  # core mass
+        if dt & foreign_toks:
+            foreign += _dev_mass(d)
+            continue
+        ps = [str(p) for p in (_attr(d, "paths") or [])]
+        gc: Counter = Counter()
+        for p in ps:
+            g = grain.group_cid_of(p)
+            if g is not None:
+                gc[_grain_token_norm("new", g)] += 1
+        nc = sum(c for t, c in gc.items() if _foreignable(t))
+        if len(ps) >= 4 and nc * 2 > len(ps):
+            foreign += _dev_mass(d)   # route-subtree foreign evidence
+    return groups_qual, (foreign / tot if tot else 0.0)
+
+
+def _select_armed_source(
+    ranked_homes: list[tuple[str, int]], total_homed: int,
+    product_features: list[Any], pf_by_key: Mapping[str, Any],
+    transport_pf_keys: set[str], is_product_home: Any,
+    grain: TargetGrainIndex, devs: list[Any], user_flows: list[Any],
+    flow_by_uuid: Mapping[str, Any],
+) -> tuple[str, Any, int, str] | None:
+    """S5a Seg D — the highest-priority F4-p50 decomposition source, or
+    ``None``. P1 (dominant umbrella: strict-top ∧ share≥0.25 ∧ gq≥3) OUTRANKS
+    P2 (hollow-core: foreign_share≥0.5 ∧ gq≥2); ties break by share desc then
+    key. SINGLE best source: the runtime (path-count) census yields ≤1 firing
+    source per board — the loc-channel 2/board case (Soc0 network-security +
+    findings) needs LOC, unavailable at Stage 6.986 (surfaced deviation).
+    Transport-candidate PFs are excluded (karakeep ``web`` class)."""
+    stoplist = _s5a_stoplist()
+    devs_by_pf: dict[str, list[Any]] = defaultdict(list)
+    for d in devs:
+        pid = _attr(d, "product_feature_id")
+        if pid:
+            devs_by_pf[str(pid)].append(d)
+    ufs_by_pf: dict[str, list[Any]] = defaultdict(list)
+    for u in user_flows:
+        k = str(_attr(u, "product_feature_id") or "")
+        if k and (_attr(u, "member_flow_ids") or []):
+            ufs_by_pf[k].append(u)
+    top_count = ranked_homes[0][1]
+    strict_top = not (len(ranked_homes) > 1
+                      and ranked_homes[1][1] == top_count)
+    fired: list[tuple[int, float, str, Any, int, str]] = []
+    for rank, (key, ct) in enumerate(ranked_homes, 1):
+        if key in transport_pf_keys or key not in pf_by_key:
+            continue
+        if not is_product_home(key):
+            continue
+        pf = pf_by_key[key]
+        tok2pf: dict[str, str] = {}
+        for p in sorted(product_features, key=lambda x: str(_attr(x, "name"))):
+            pk = str(_attr(p, "id") or _attr(p, "name") or "")
+            if not pk or pk == key:
+                continue
+            for t in _core_identity(p):
+                tok2pf.setdefault(t, pk)
+        gq, fs = _armed_trigger_metrics(
+            key, pf, ufs_by_pf.get(key, []), grain,
+            devs_by_pf.get(key, []), tok2pf, stoplist, flow_by_uuid)
+        share = ct / total_homed
+        if (rank == 1 and strict_top and share >= _TRIGGER_SHARE
+                and gq >= _TRIGGER_MIN_GROUPS):
+            fired.append((0, -share, key, pf, _TRIGGER_MIN_GROUPS, "P1"))
+        elif fs >= _FOREIGN_MASS_SHARE and gq >= _P2_MIN_GROUPS:
+            fired.append((1, -share, key, pf, _P2_MIN_GROUPS, "P2"))
+    if not fired:
+        return None
+    fired.sort(key=lambda c: (c[0], c[1], c[2]))
+    _prio, _s, key, pf, min_groups, prong = fired[0]
+    return key, pf, min_groups, prong
+
+
+def _group_apportioned_mass(
+    cid: str, source_devs: list[Any], stoplist: frozenset[str],
+) -> float:
+    """S5a Seg E — the source PF's mass claimed by a NEW nav group: whole
+    dev-identity mass (dev token echoes the group) + path-apportioned mass
+    of remaining source devs under the group's cid prefix (vectors.py)."""
+    pref = cid.split(":", 1)[1] if ":" in cid else cid
+    gtok = _grain_token_norm("new", cid)
+    mass = 0.0
+    for d in source_devs:
+        if gtok and gtok in _dev_identity_tokens(d, stoplist):
+            mass += _dev_mass(d)
+            continue
+        ps = [str(p) for p in (_attr(d, "paths") or [])]
+        if not ps:
+            continue
+        inn = sum(1 for p in ps if p == pref or p.startswith(pref + "/"))
+        if inn:
+            mass += _dev_mass(d) * inn / len(ps)
+    return mass
+
+
 def run_mega_pf_nav_rehome(
     developer_features: list[Any],
     product_features: list[Any],
@@ -375,15 +586,7 @@ def run_mega_pf_nav_rehome(
         {"pf": k, "ufs": c, "share": round(c / total_homed, 3)}
         for k, c in ranked_homes[:5]
     ]
-    top_key, top_count = ranked_homes[0]
-    if len(ranked_homes) > 1 and ranked_homes[1][1] == top_count:
-        return tele  # no STRICT maximum — no umbrella to arbitrate
-    if top_count / total_homed < _TRIGGER_SHARE:
-        return tele
-    if top_key in transport_pf_keys or top_key not in pf_by_key:
-        return tele
-    source_key = top_key
-    source_pf = pf_by_key[source_key]
+    armed = mega_decomp_armed()
 
     # ── THE grain oracle (shared class, tenant-descent rung ON) ─────
     # S5a: when armed, the same oracle also derives population roots
@@ -391,7 +594,6 @@ def run_mega_pf_nav_rehome(
     # core-identity token (Seg B). unset/=0 → both OFF → B24-identical.
     if grain_index is None:
         from faultline.pipeline_v2.spine_anchors import build_spine_anchors
-        armed = mega_decomp_armed()
         anchors = build_spine_anchors(
             devs, routes_index, ctx, extractor_signals, frozenset())
         grain_index = TargetGrainIndex(
@@ -403,6 +605,34 @@ def run_mega_pf_nav_rehome(
             sibling_tokens=armed,
         )
     roots = grain_index.routes_roots
+
+    # ── source selection ────────────────────────────────────────────
+    if armed:
+        # S5a Seg D — two-prong UNION: P1 (strict-top dominant umbrella) OR
+        # P2 (hollow-core: majority-FOREIGN member mass + >=2 nav groups —
+        # a non-top source). Single best source (runtime path-count census
+        # yields <=1 firing/board; the loc-channel 2/board case is surfaced).
+        sel = _select_armed_source(
+            ranked_homes, total_homed, product_features, pf_by_key,
+            transport_pf_keys, _is_product_home, grain_index, devs,
+            user_flows, flow_by_uuid)
+        if sel is None:
+            return tele
+        source_key, source_pf, min_groups, fired_prong = sel
+        tele["fired_prong"] = fired_prong
+    else:
+        # B24 P1 gate — the board's strict-top dominant umbrella only.
+        top_key, top_count = ranked_homes[0]
+        if len(ranked_homes) > 1 and ranked_homes[1][1] == top_count:
+            return tele  # no STRICT maximum — no umbrella to arbitrate
+        if top_count / total_homed < _TRIGGER_SHARE:
+            return tele
+        if top_key in transport_pf_keys or top_key not in pf_by_key:
+            return tele
+        source_key = top_key
+        source_pf = pf_by_key[source_key]
+        min_groups = _TRIGGER_MIN_GROUPS
+
     core = _core_identity(source_pf)
 
     homed = sorted(
@@ -426,7 +656,8 @@ def run_mega_pf_nav_rehome(
                   if s["ufs"] >= _GROUP_QUALIFY_UFS
                   or s["flows"] >= _GROUP_QUALIFY_FLOWS}
     tele["qualifying_groups"] = sorted(f"{k}:{v}" for k, v in qualifying)
-    if len(qualifying) < _TRIGGER_MIN_GROUPS:
+    # ``min_groups`` = 3 (B24 P1 / unarmed) or 2 (S5a Seg D P2 hollow-core).
+    if len(qualifying) < min_groups:
         return tele
 
     tele["triggered"] = [source_key]
@@ -490,9 +721,30 @@ def run_mega_pf_nav_rehome(
             g["ufs"].append(u)
             g["flows"] += len(_attr(u, "member_flow_ids") or [])
 
+    # S5a Seg E — mint mass-rung. Armed, a sub-UF-floor NEW group still mints
+    # when its apportioned source mass clears k * the board's median dev mass
+    # (the chat-14.1K one-massive-domain class). The ``flows>=3`` lattice
+    # floor is UNCHANGED; only the ``ufs>=3`` leg gains the mass alternative.
+    # loc-less boards → median 0 → the rung is inert (fail closed). Unarmed →
+    # the pure B24 floor (``ufs>=3 AND flows>=3``), byte-identical.
+    _stoplist_e = _s5a_stoplist() if armed else frozenset()
+    _src_devs_e = ([f for f in devs
+                    if str(_attr(f, "product_feature_id") or "") == source_key]
+                   if armed else [])
+    _dev_masses = [m for f in devs if (m := _dev_mass(f)) > 0]
+    _median_dev = statistics.median(_dev_masses) if _dev_masses else 0
+    mass_rung_cids: set[str] = set()
     for cid in sorted(mint_groups):
         g = mint_groups[cid]
-        if len(g["ufs"]) >= _MINT_MIN_UFS and g["flows"] >= _MINT_MIN_FLOWS:
+        mass_ok = False
+        if armed and _median_dev and g["flows"] >= _MINT_MIN_FLOWS \
+                and len(g["ufs"]) < _MINT_MIN_UFS:
+            gmass = _group_apportioned_mass(cid, _src_devs_e, _stoplist_e)
+            mass_ok = gmass >= _MINT_MASS_K * _median_dev
+            if mass_ok:
+                mass_rung_cids.add(cid)
+        if (len(g["ufs"]) >= _MINT_MIN_UFS
+                or mass_ok) and g["flows"] >= _MINT_MIN_FLOWS:
             for u in g["ufs"]:
                 raw_moves.append((u, "mint", cid))
         else:
@@ -609,8 +861,11 @@ def run_mega_pf_nav_rehome(
     # 6.985 contributing-dev rule) and folds back too.
     live_mint_ufs: Counter = Counter(
         key for _u, kind, key in moves if kind == "mint")
+    # S5a Seg E — a mass-rung mint is quorum-exempt (it earned mint right by
+    # mass, not UF count); the phantom (no source-owned carve) check below
+    # still guards it.
     demoted = {cid for cid, ct in live_mint_ufs.items()
-               if ct < _MINT_MIN_UFS}
+               if ct < _MINT_MIN_UFS and cid not in mass_rung_cids}
     for cid in live_mint_ufs:
         if cid in demoted:
             continue

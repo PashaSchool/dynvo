@@ -527,6 +527,17 @@ class TargetGrainIndex:
         (B24 same-app rail)."""
         return tuple(self._roots)
 
+    @property
+    def allowed_group_tokens(self) -> frozenset[str]:
+        """S5a Seg D — normalized terminal tokens of every ALLOWED route
+        group on the board (the population's nav-domain vocabulary). Used
+        to classify a source dev's mass as FOREIGN when its identity echoes
+        a board nav-domain it does not own."""
+        from faultline.pipeline_v2.spine_anchors import normalize_anchor_key
+        return frozenset(
+            normalize_anchor_key(cid.rsplit("/", 1)[-1].rsplit(".", 1)[0])
+            for cid in self._allowed_groups)
+
     def grain_of_file(self, path: str) -> GrainTarget | None:
         if path in self._memo:
             return self._memo[path]
