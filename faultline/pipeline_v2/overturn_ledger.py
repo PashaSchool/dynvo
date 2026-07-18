@@ -60,6 +60,10 @@ __all__ = [
     "rung_for_frames",
     "PASS_MAP",
     "POST_FREEZE_RUNGS",
+    "propose_pf",
+    "propose_pf_now",
+    "void_noop_pf",
+    "flush_pending",
 ]
 
 OVERTURN_ARBITER_ENV = "FAULTLINE_OVERTURN_ARBITER"
@@ -148,6 +152,14 @@ class OverturnEntry:
     new: str | None
     rung: str
     writer: str          # "basename.py:func:lineno" of the writing frame
+    # S3 slice-2 (deferred core): proposal lifecycle. ``deferred`` marks a
+    # proposal recorded by a converted site whose write is applied later by
+    # :meth:`OverturnLedger.flush_pending` (real deferral); ``suppressed``
+    # marks a Seg-C void-writer proposal that is NEVER applied (the probe
+    # proved the write is void — recorded for the "who wanted to throw"
+    # forensic only). Both default False → v1 observer entries unchanged.
+    deferred: bool = False
+    suppressed: bool = False
 
 
 class OverturnLedger:
@@ -162,6 +174,18 @@ class OverturnLedger:
         self.entries: list[OverturnEntry] = []
         self._serial_by_id: dict[int, int] = {}
         self._keep: list[Any] = []
+        # S3 slice-2 — deferred-proposal machinery. ``pending`` holds
+        # entry indexes awaiting application (in propose order == pass
+        # order == rung priority); ``_pending_by_key`` maps
+        # (kind, serial) → entry index so a chained proposal in the same
+        # window journals the true old value; ``_applying`` suppresses
+        # the setattr observer while the flush performs the real write
+        # (the propose already journaled it — no double record).
+        self.pending: list[int] = []
+        self._pending_by_key: dict[tuple[str, int], int] = {}
+        self._applying: bool = False
+        self.flush_log: list[dict[str, Any]] = []
+        self.i8_violations: int = 0
 
     # -- recording -------------------------------------------------------
     def _serial(self, obj: Any) -> int:
@@ -190,6 +214,81 @@ class OverturnLedger:
             writer=frames[0] if frames else "<unknown>",
         ))
 
+    # -- converted-site proposals (S3 slice-2) ---------------------------
+    def propose(
+        self, kind: str, obj: Any, new: str | None, *, rung: str,
+        writer: str, defer: bool, suppress: bool = False,
+    ) -> None:
+        """Journal a converted site's proposal.
+
+        ``defer=True`` queues the write for :meth:`flush_pending`
+        (real deferral); ``defer=False`` (immediate/chokepoint mode)
+        journals only — the caller applies via :func:`propose_pf_now`.
+        ``suppress=True`` (Seg C void writers) journals and never
+        applies. The journaled ``old`` chains through any pending
+        proposal for the same entity so the ledger view == the cascade
+        view.
+        """
+        serial = self._serial(obj)
+        key = (kind, serial)
+        pend_idx = self._pending_by_key.get(key)
+        if pend_idx is not None:
+            old = self.entries[pend_idx].new
+        else:
+            old = getattr(obj, "__dict__", {}).get("product_feature_id")
+        if old == new:
+            return  # no-op write — cascade parity (observer skips these too)
+        d = getattr(obj, "__dict__", {})
+        self.entries.append(OverturnEntry(
+            kind=kind, serial=serial,
+            eid=d.get("id") or d.get("name"),
+            ename=d.get("name"), layer=d.get("layer"),
+            old=old, new=new, rung=rung, writer=writer,
+            deferred=defer, suppressed=suppress,
+        ))
+        if defer and not suppress:
+            idx = len(self.entries) - 1
+            self.pending.append(idx)
+            self._pending_by_key[key] = idx
+
+    def flush_pending(
+        self, product_features: list[Any] | None = None, *, note: str = "",
+    ) -> int:
+        """THE single application routine (arbiter apply, rung-priority).
+
+        Applies every pending proposal in propose order — which equals
+        the current pass order, so the cascade result is reproduced
+        byte-for-byte. Runs the unified I8-guard ONCE per application
+        (proposed home must be an existing PF key or None — telemetry,
+        never a block: blocking would diverge from the cascade under the
+        pre-flip byte-identity law). The real setattr happens here with
+        the observer suppressed (the proposal already journaled it).
+        """
+        if not self.pending:
+            return 0
+        pf_keys: set[str] | None = None
+        if product_features is not None:
+            pf_keys = {
+                str(getattr(pf, "name", "") or "") for pf in product_features
+            }
+        applied = 0
+        self._applying = True
+        try:
+            for idx in self.pending:
+                e = self.entries[idx]
+                obj = self._keep[e.serial]
+                obj.product_feature_id = e.new
+                applied += 1
+                if (pf_keys is not None and e.new is not None
+                        and e.new not in pf_keys):
+                    self.i8_violations += 1
+        finally:
+            self._applying = False
+        self.pending = []
+        self._pending_by_key = {}
+        self.flush_log.append({"note": note, "applied": applied})
+        return applied
+
     # -- grouping --------------------------------------------------------
     def _by_entity(self, kind: str) -> dict[int, list[OverturnEntry]]:
         out: dict[int, list[OverturnEntry]] = {}
@@ -207,7 +306,7 @@ class OverturnLedger:
         """
         final: dict[int, str | None] = {}
         for e in self.entries:
-            if e.kind == kind:
+            if e.kind == kind and not e.suppressed:
                 final[e.serial] = e.new
         return final
 
@@ -261,7 +360,7 @@ class OverturnLedger:
         clears = [e for e in overturns if e.new is None]
         per_writer = Counter(e.rung for e in writes)
         per_writer_ot = Counter(e.rung for e in overturns)
-        return {
+        out = {
             "entities_written": len(ents),
             "writes": len(writes),
             "fills(None->X)": len(fills),
@@ -270,6 +369,16 @@ class OverturnLedger:
             "per_writer_all": dict(per_writer.most_common()),
             "per_writer_overturns": dict(per_writer_ot.most_common()),
         }
+        # S3 slice-2 — proposal-lifecycle counters (0/absent in pure
+        # observer mode → v1 payload shape preserved).
+        deferred = [e for e in writes if e.deferred]
+        suppressed = [e for e in writes if e.suppressed]
+        if deferred:
+            out["deferred_applied"] = len(deferred)
+        if suppressed:
+            out["void_noops_by_writer"] = dict(Counter(
+                e.rung for e in suppressed).most_common())
+        return out
 
     def exhibits(self, kind: str, limit: int = 12) -> list[dict[str, Any]]:
         """Longest overturn chains — the forensic exhibits (probe shape)."""
@@ -348,7 +457,7 @@ def _install_class_patch() -> None:
         def traced(self: Any, name: str, value: Any) -> None:
             if name == "product_feature_id":
                 led = _current_ledger()
-                if led is not None:
+                if led is not None and not led._applying:
                     old = self.__dict__.get("product_feature_id")
                     if old != value:
                         led.record(kind, self, old, value, _frames())
@@ -374,6 +483,91 @@ def uninstall_ledger() -> None:
     _active.ledger = None
 
 
+# ── Converted-site helpers (S3 slice-2) ──────────────────────────────────
+# The 7 keyless + 4 keyed post-freeze writers call these instead of
+# assigning ``product_feature_id`` directly. OFF (no active ledger) →
+# plain assignment, byte-identical to main. ON → the write is journaled
+# as a proposal; deferral semantics per site class:
+#
+#   propose_pf      — REAL deferral: journal now, write at the next
+#                     ``flush_pending`` (pass-boundary flush placed by
+#                     the orchestrator). Only for passes verified free
+#                     of post-write reads (lane_rehome, 6.88, devgrain,
+#                     terminal-home, dispatch, i16).
+#   propose_pf_now  — chokepoint-immediate: journal + write in place.
+#                     For passes with measured in-pass read-backs
+#                     (transport tail sweep L2757, mega L783, 6.99b
+#                     fold-target search L370, emission-integrity block
+#                     chaining L617←L532) and construction-time carve
+#                     inits — deferring those would change what the
+#                     pass itself reads → byte divergence.
+#   void_noop_pf    — Seg C: journal, never write (probe-proven void
+#                     writers). OFF still writes.
+
+_KIND_CLASSES: tuple[tuple[type, str], ...] | None = None
+
+
+def _kind_of(obj: Any) -> str | None:
+    global _KIND_CLASSES
+    if _KIND_CLASSES is None:
+        from faultline.models.types import Feature, UserFlow
+        _KIND_CLASSES = ((UserFlow, "uf"), (Feature, "dev"))
+    for cls, kind in _KIND_CLASSES:
+        if isinstance(obj, cls):
+            return kind
+    return None
+
+
+def _site(rung: str) -> str:
+    return f"{rung}:converted-site"
+
+
+def propose_pf(obj: Any, value: Any, *, rung: str) -> None:
+    """Deferred proposal — applied by the next :func:`flush_pending`."""
+    led = _current_ledger()
+    kind = _kind_of(obj) if led is not None else None
+    if led is None or kind is None:
+        obj.product_feature_id = value
+        return
+    led.propose(kind, obj, value, rung=rung, writer=_site(rung), defer=True)
+
+
+def propose_pf_now(obj: Any, value: Any, *, rung: str) -> None:
+    """Chokepoint-immediate proposal — journal + write in place."""
+    led = _current_ledger()
+    kind = _kind_of(obj) if led is not None else None
+    if led is None or kind is None:
+        obj.product_feature_id = value
+        return
+    led.propose(kind, obj, value, rung=rung, writer=_site(rung), defer=False)
+    led._applying = True
+    try:
+        obj.product_feature_id = value
+    finally:
+        led._applying = False
+
+
+def void_noop_pf(obj: Any, value: Any, *, rung: str) -> None:
+    """Seg C — void-writer no-op: journal the intent, never write (ON)."""
+    led = _current_ledger()
+    kind = _kind_of(obj) if led is not None else None
+    if led is None or kind is None:
+        obj.product_feature_id = value
+        return
+    led.propose(kind, obj, value, rung=rung, writer=_site(rung),
+                defer=False, suppress=True)
+
+
+def flush_pending(
+    product_features: list[Any] | None = None, *, note: str = "",
+) -> int:
+    """Orchestrator-facing flush — no-op when the arbiter is OFF."""
+    led = _current_ledger()
+    if led is None:
+        return 0
+    return led.flush_pending(product_features, note=note)
+
+
 # ── Arbiter — single application point ───────────────────────────────────
 
 
@@ -382,13 +576,23 @@ def finalize_arbiter(
     features: list[Any],
     user_flows: list[Any],
     scan_meta: dict[str, Any],
+    product_features: list[Any] | None = None,
 ) -> None:
     """Run the arbiter once (after the last proposer, before Stage 7).
 
-    Emits the census forensic + post-freeze conflict census. Rung-priority
-    replay == current pass order → byte-identical cascade result (verified
-    by ``replay_mismatches`` and the ON==OFF gate). Telemetry only — the
-    two keys are stripped by ``normalize_scan``.
+    Flushes any straggler proposals (belt-and-braces for exception paths —
+    every converted pass has its own boundary flush), then emits the census
+    forensic + post-freeze conflict census + the unified I8-guard count.
+    Rung-priority replay == current pass order → byte-identical cascade
+    result (verified by ``replay_mismatches`` and the ON==OFF gate).
+    Telemetry only — the keys are stripped by ``normalize_scan``.
     """
-    scan_meta["overturns"] = ledger.scan_meta_payload(features, user_flows)
+    straggler = ledger.flush_pending(product_features, note="arbiter-final")
+    payload = ledger.scan_meta_payload(features, user_flows)
+    if ledger.flush_log:
+        payload["flushes"] = list(ledger.flush_log)
+    if straggler:
+        payload["straggler_applied"] = straggler
+    payload["i8_violations"] = ledger.i8_violations
+    scan_meta["overturns"] = payload
     scan_meta["overturn_conflicts"] = ledger.conflicts()

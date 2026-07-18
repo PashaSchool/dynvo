@@ -98,6 +98,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from faultline.pipeline_v2.overturn_ledger import propose_pf_now
+
 __all__ = [
     "TRANSPORT_HANDOFF_ENV",
     "TRANSPORT_HANDOFF_PLURALITY_ENV",
@@ -1518,7 +1520,7 @@ def _carve_chunk(src: Any, cid: str, files: list[str],
         for p in sorted(files)
     ]
     ch.flows = []
-    ch.product_feature_id = None
+    propose_pf_now(ch, None, rung="transport")
     ch.shared_reason = None
     ch.anchor_id = None
     for k in ("authors", "total_commits", "bug_fixes", "coverage_pct",
@@ -1840,7 +1842,7 @@ def _router_decomp(
         chunk.display_name = name
         _move_group_flows(src, chunk, gflows, edges_by_flow_id)
         _strip_carved_files(src, cset)
-        chunk.product_feature_id = pf_key
+        propose_pf_now(chunk, pf_key, rung="transport")
         chunk.anchor_id = f"fold:{_ROUTER_DECOMP_MARKER}->pf:{pf_key}"
         chunk.shared_reason = None
         developer_features.append(chunk)
@@ -2440,7 +2442,7 @@ def run_transport_handoff(
             for u in sorted(homed, key=lambda x: str(_attr(x, "id") or "")):
                 r = res_by_id[str(_attr(u, "id") or "")]
                 if r.target is not None:  # kind == "pf" by construction
-                    u.product_feature_id = r.target.key
+                    propose_pf_now(u, r.target.key, rung="transport")
                     lane_rungs[r.rung or "?"] += 1
                     tele["ufs_rehomed"] += 1
                     if len(tele["moves"]) < 60:
@@ -2462,13 +2464,13 @@ def run_transport_handoff(
             for f in sorted(cand_devs, key=lambda x: str(_attr(x, "name"))):
                 t = dev_plan.get(str(_attr(f, "name")))
                 if t is not None and t.kind == "pf":
-                    f.product_feature_id = t.key
+                    propose_pf_now(f, t.key, rung="transport")
                     f.anchor_id = f"fold:{_HANDOFF_MARKER}->pf:{t.key}"
                     if _attr(f, "shared_reason"):
                         f.shared_reason = None
                     tele["devs_rehomed"] += 1
                 else:
-                    f.product_feature_id = None
+                    propose_pf_now(f, None, rung="transport")
                     f.shared_reason = _INSTRUMENT
                     if (_attr(f, "flows") or []):
                         # B52 provenance: only THIS branch ever lanes a
@@ -2510,7 +2512,7 @@ def run_transport_handoff(
                     top_uuid, ct = ranked[0]
                     if ct * 2 > sum(lane_votes.values()):
                         anchor = str(top_uuid)
-                u.product_feature_id = None
+                propose_pf_now(u, None, rung="transport")
                 u.lane_ref = anchor
                 u.surface_scope = "platform_infrastructure"
                 lane_rungs["lane"] += 1
@@ -2661,7 +2663,7 @@ def run_transport_handoff(
             # every contributor here (whole devs get the identical
             # stamp again there; idempotent).
             for c in contrib:
-                c.product_feature_id = slug
+                propose_pf_now(c, slug, rung="transport")
                 c.anchor_id = f"fold:{_HANDOFF_MARKER}->{cid}"
                 if _attr(c, "shared_reason"):
                     c.shared_reason = None
@@ -2674,14 +2676,14 @@ def run_transport_handoff(
             t = dev_plan[str(_attr(f, "name"))]
             if (t is not None and (t.kind == "pf"
                                    or t.key in minted_key)):
-                f.product_feature_id = _final_key(t)
+                propose_pf_now(f, _final_key(t), rung="transport")
                 f.anchor_id = f"fold:{_HANDOFF_MARKER}->" + (
                     t.key if t.kind == "new" else f"pf:{t.key}")
                 if _attr(f, "shared_reason"):
                     f.shared_reason = None
                 tele["devs_rehomed"] += 1
             else:
-                f.product_feature_id = None
+                propose_pf_now(f, None, rung="transport")
                 f.shared_reason = _SHARED_REASON_INSTRUMENT
                 tele["devs_laned"] += 1
 
@@ -2690,7 +2692,7 @@ def run_transport_handoff(
         for u in sorted(homed, key=lambda x: str(_attr(x, "id") or "")):
             r = res_by_id[str(_attr(u, "id") or "")]
             assert r.target is not None  # gate invariant
-            u.product_feature_id = _final_key(r.target)
+            propose_pf_now(u, _final_key(r.target), rung="transport")
             rung_counter[r.rung or "?"] += 1
             tele["ufs_rehomed"] += 1
             if len(tele["moves"]) < 60:

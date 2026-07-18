@@ -75,6 +75,7 @@ byte-identical output. $0 — deterministic, no LLM, no I/O.
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 
 import re
 from collections import Counter
@@ -405,7 +406,7 @@ def run_post_uf_rehome(
                 "from": pfid, "to": target,
             })
             continue
-        uf.product_feature_id = target
+        propose_pf_now(uf, target, rung="6.99b")
         uf_count[pfid] -= 1
         uf_count[target] += 1
         tele["rehomed"] += 1

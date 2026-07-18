@@ -52,6 +52,7 @@ Deterministic, $0 LLM, scale-invariant. Kill-switch:
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 
 import hashlib
 import os
@@ -654,7 +655,7 @@ def run_lane_excavation(
             pf_by_anchor[cid] = pf
             tele["pfs_minted"] += 1
         for c in contrib:
-            c.product_feature_id = slug
+            propose_pf_now(c, slug, rung="excavation")
             c.anchor_id = f"fold:excavation->{cid}"
             if getattr(c, "shared_reason", None):
                 c.shared_reason = None

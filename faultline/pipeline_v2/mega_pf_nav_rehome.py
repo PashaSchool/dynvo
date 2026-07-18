@@ -91,6 +91,7 @@ key, no output change (the 6.985 inertness convention).
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 
 import os
 from collections import Counter, defaultdict
@@ -737,7 +738,7 @@ def run_mega_pf_nav_rehome(
     for key, contrib in sorted(contrib_by_target.items()):
         fkey = minted_key.get(key, key)
         for c in contrib:
-            c.product_feature_id = fkey
+            propose_pf_now(c, fkey, rung="mega")
             c.anchor_id = f"fold:{_B24_MARKER}->{key}"
             if _attr(c, "shared_reason"):
                 c.shared_reason = None
@@ -765,7 +766,7 @@ def run_mega_pf_nav_rehome(
     for u, kind, key in sorted(
             moves, key=lambda m: str(_attr(m[0], "id") or "")):
         fkey = _final_key(kind, key)
-        u.product_feature_id = fkey
+        propose_pf_now(u, fkey, rung="mega")
         tele["ufs_rehomed"] += 1
         if len(tele["moves"]) < 60:
             tele["moves"].append({

@@ -57,6 +57,7 @@ the membership of phantom rows.
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 
 import os
 import re
@@ -514,13 +515,13 @@ def _drop_anchored_husks(
         aid = str(getattr(pf, "anchor_id", None) or "")
         for dev in devs_by_pf.get(key, []):
             if getattr(dev, "flows", None) and fallback:
-                dev.product_feature_id = fallback
+                propose_pf_now(dev, fallback, rung="emission-I12")
                 dev.anchor_id = f"fold:anchored-husk->{aid}"
                 if getattr(dev, "shared_reason", None):
                     dev.shared_reason = None
                 result.anchored_husk_devs_rebound += 1
             else:
-                dev.product_feature_id = None
+                propose_pf_now(dev, None, rung="emission-I12")
                 dev.anchor_id = None
                 dev.shared_reason = ANCHORED_HUSK_REASON
                 result.anchored_husk_devs_unbound += 1
@@ -529,7 +530,7 @@ def _drop_anchored_husks(
         return product_features
 
     for uf, target in uf_moves:
-        uf.product_feature_id = target
+        propose_pf_now(uf, target, rung="emission-I12")
         result.anchored_husk_ufs_rehomed += 1
     if uf_drops:
         gone = {id(u) for u in uf_drops}
@@ -614,10 +615,10 @@ def _reconcile_uf_pf_refs(
             continue
         relinked = canon_to_key.get(canonical_slug(ref))
         if relinked is not None:
-            uf.product_feature_id = relinked
+            propose_pf_now(uf, relinked, rung="emission-I12")
             result.uf_pf_refs_relinked += 1
         else:
-            uf.product_feature_id = None
+            propose_pf_now(uf, None, rung="emission-I12")
             result.uf_pf_refs_nulled += 1
 
 

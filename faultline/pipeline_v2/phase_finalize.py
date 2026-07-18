@@ -35,6 +35,9 @@ from faultline.pipeline_v2.stage_7_output import (
     stage_7_output,
     write_stage_artifact,
 )
+from faultline.pipeline_v2.overturn_ledger import (
+    flush_pending as _arb_flush,
+)
 
 
 def _recover_uncovered_donors(
@@ -1324,6 +1327,10 @@ def run_finalize_phase(
                         feature=None,
                     )
 
+    # S3 arbiter — apply deferred proposals at this pass boundary
+    # (rung-priority == pass order; no-op when the flag is OFF).
+    _arb_flush(product_features, note="post-lane-rehome")
+
     # ── Track-A A1 — provenance re-home (import-graph channel) ─────────
     # Complements lane_rehome's UF-CITATION channel with the ts_ast
     # IMPORT-GRAPH channel: a lane entry file re-homes to the journey PF it
@@ -1382,6 +1389,10 @@ def run_finalize_phase(
             except Exception as exc:  # noqa: BLE001 — never break a scan
                 scan_meta.setdefault("warnings", []).append(
                     f"sibling-unify failed ({exc}); PFs left separate")
+
+    # S3 arbiter — apply deferred proposals at this pass boundary
+    # (rung-priority == pass order; no-op when the flag is OFF).
+    _arb_flush(product_features, note="post-6.88-unify")
 
     # ── W3.2 D9 — system journeys survive the keyed rewrite (BOTH paths) ──
     # wave31: 6.8b stamped system routes on 6/10 repos yet output carried
@@ -2023,6 +2034,10 @@ def run_finalize_phase(
                     f"devgrain_demote: FAILED ({exc}) — continuing",
                     feature=None,
                 )
+
+    # S3 arbiter — apply deferred proposals at this pass boundary
+    # (rung-priority == pass order; no-op when the flag is OFF).
+    _arb_flush(product_features, note="post-devgrain")
 
     # ── Perf wave 2 (R5b) — 6.97 LOC prefetch overlaps the 6.95→6.96 chain ──
     # DAG verified at this base: Stage 6.97 feature-LOC reads only
@@ -2763,6 +2778,10 @@ def run_finalize_phase(
                 feature=None,
             )
 
+    # S3 arbiter — apply deferred proposals at this pass boundary
+    # (rung-priority == pass order; no-op when the flag is OFF).
+    _arb_flush(product_features, note="post-terminal-home")
+
     # ── Stage 6.87 — display-name contract (Product-Spine §4.8, W3) ────
     # SELECTION-not-generation display polish on the FINAL product list:
     # laws (single-letter / param / file-stem / PF==UF twin / acronym
@@ -2937,6 +2956,10 @@ def run_finalize_phase(
             scan_meta.setdefault("warnings", []).append(
                 f"dispatch-homing failed ({exc}); UF homes left as-is")
 
+    # S3 arbiter — apply deferred proposals at this pass boundary
+    # (rung-priority == pass order; no-op when the flag is OFF).
+    _arb_flush(product_features, note="post-dispatch")
+
     # ── B4 synthesized-journey quality (Stage 6.98) ────────────────────
     # Runs AFTER the naming contract (so demoted seeds/regrounded backstops
     # carry their final display names) and BEFORE the lane + Stage-7 write.
@@ -3044,6 +3067,10 @@ def run_finalize_phase(
         except Exception as exc:  # noqa: BLE001 — never break a scan
             scan_meta.setdefault("warnings", []).append(
                 f"i16-rehome failed ({exc}); UF homes left as-is")
+
+    # S3 arbiter — apply deferred proposals at this pass boundary
+    # (rung-priority == pass order; no-op when the flag is OFF).
+    _arb_flush(product_features, note="post-i16")
 
     # ── Stage 6.99b — B69-v2 post-UF PF-homing hygiene rehome ──────────
     # Anchor-breadth ruler over member entries (mint-time structural truth,
@@ -3327,6 +3354,7 @@ def run_finalize_phase(
         try:
             finalize_arbiter(
                 _overturn_ledger, features, user_flows, scan_meta,
+                product_features,
             )
         except Exception as exc:  # noqa: BLE001 — telemetry never breaks a scan
             scan_meta.setdefault("warnings", []).append(

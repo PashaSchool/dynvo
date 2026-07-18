@@ -31,6 +31,7 @@ path_index'd and I23-read as ONE PF. Kill-switch ``FAULTLINE_PF_SIBLING_UNIFY=0`
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf
 
 import os
 import re
@@ -146,10 +147,10 @@ def unify_sibling_anchors(
 
     for f in features:
         if str(getattr(f, "product_feature_id", "") or "") in remap:
-            f.product_feature_id = remap[f.product_feature_id]
+            propose_pf(f, remap[f.product_feature_id], rung="6.88-unify")
     for uf in user_flows:
         if str(getattr(uf, "product_feature_id", "") or "") in remap:
-            uf.product_feature_id = remap[uf.product_feature_id]
+            propose_pf(uf, remap[uf.product_feature_id], rung="6.88-unify")
     product_features[:] = [
         pf for pf in product_features
         if str(getattr(pf, "name", "") or "") not in remap

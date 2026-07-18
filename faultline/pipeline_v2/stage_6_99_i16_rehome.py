@@ -20,6 +20,7 @@ Kill-switch ``FAULTLINE_I16_REHOME_B20=0`` → byte-identical.
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf
 
 import os
 from collections import Counter
@@ -134,7 +135,7 @@ def rehome_foreign_entry_ufs(
             continue  # no strict-majority PF target -> distributed/lane residual
         if uf_count[pfid] <= 1:
             continue  # orphan guard — do NOT strip the source PF's last journey (I8)
-        uf.product_feature_id = top_owner
+        propose_pf(uf, top_owner, rung="i16")
         uf_count[pfid] -= 1
         uf_count[top_owner] += 1
         tele["rehomed"] += 1

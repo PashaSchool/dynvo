@@ -43,6 +43,7 @@ Kill-switch: ``FAULTLINE_SPINE_LANE_REHOME=0``.
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf
 
 import os
 import re
@@ -234,7 +235,7 @@ def rehome_uf_cited_lane_devs(
         if would >= _CAP_LOC and would >= _CAP_BODY_MULT * pf_body_cache[best]:
             tele["blocked_cap"] += 1
             continue
-        d.product_feature_id = best
+        propose_pf(d, best, rung="lane_rehome")
         d.anchor_id = UF_EVIDENCE_NOTE
         d.shared_reason = None
         moved_loc_by_pf[best] = would

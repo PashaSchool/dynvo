@@ -46,6 +46,7 @@ Deterministic, $0 LLM. Kill-switch: ``FAULTLINE_SPINE_UF_TERMINAL_HOME=0``
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf
 
 import os
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
@@ -267,7 +268,7 @@ def assign_terminal_homes(
             tele["unhomed"] += 1  # pragma: no cover — real_pf_keys guard
             continue
 
-        uf.product_feature_id = chosen
+        propose_pf(uf, chosen, rung="terminal-home")
         uf.binding_confidence = "low"
         tele[how] += 1
         if len(tele["sample"]) < 20:

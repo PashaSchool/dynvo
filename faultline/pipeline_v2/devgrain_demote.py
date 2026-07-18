@@ -52,6 +52,7 @@ byte-identical to pre-B33.
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf
 
 import os
 from collections import Counter, defaultdict
@@ -329,7 +330,7 @@ def run_devgrain_demote(
         for m in sorted(devs_by_pf.get(key, ()),
                         key=lambda d: str(getattr(d, "name", "") or "")):
             if target is not None:
-                m.product_feature_id = str(getattr(target, "name", "") or "")
+                propose_pf(m, str(getattr(target, "name", "") or ""), rung="devgrain")
                 m.anchor_id = f"fold:devgrain-demote->{aid}"
                 if getattr(m, "shared_reason", None):
                     m.shared_reason = None
@@ -342,7 +343,7 @@ def run_devgrain_demote(
                     # I9 rider — a flowful demoted dev homes to its
                     # target-owner PF (never the platform lane; lane =
                     # flowless plumbing only).
-                    m.product_feature_id = owner_key
+                    propose_pf(m, owner_key, rung="devgrain")
                     m.anchor_id = f"fold:devgrain-i9->{aid}"
                     if getattr(m, "shared_reason", None):
                         m.shared_reason = None
@@ -350,7 +351,7 @@ def run_devgrain_demote(
                 elif _i9_on and getattr(m, "flows", None):
                     # Flowful but no owner PF — keep L1/unowned but OUT of the
                     # lane (I9: a flowful dev is never a lane resident).
-                    m.product_feature_id = None
+                    propose_pf(m, None, rung="devgrain")
                     m.anchor_id = None
                     m.shared_reason = None
                     tele["devs_flowful_unowned"] += 1
@@ -358,7 +359,7 @@ def run_devgrain_demote(
                     # No minting ancestor — L1/unowned, exactly as a
                     # never-minted anchor's devs would be (natural demotion,
                     # never a silent deletion; the devs keep their files).
-                    m.product_feature_id = None
+                    propose_pf(m, None, rung="devgrain")
                     m.anchor_id = None
                     m.shared_reason = _SHARED_REASON_BAR
                     tele["devs_unowned"] += 1

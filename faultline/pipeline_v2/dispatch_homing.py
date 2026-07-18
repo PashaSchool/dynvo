@@ -58,6 +58,7 @@ Flag ``FAULTLINE_DISPATCH_HOMING_B37P2`` — default ON since the
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.overturn_ledger import propose_pf
 
 import os
 from collections import Counter
@@ -279,7 +280,7 @@ def home_dispatch_mints(
             # Orphan guard — do NOT strip the source PF's last journey (I8).
             tele["skipped_orphan_guard"] += 1
             continue
-        uf.product_feature_id = top_owner
+        propose_pf(uf, top_owner, rung="dispatch")
         if pfid:
             uf_count[pfid] -= 1
         uf_count[top_owner] += 1

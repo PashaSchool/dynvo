@@ -264,3 +264,105 @@ def test_scan_meta_telemetry_keys_are_stripped_by_normalize():
         "overturn_conflicts": [{"kind": "dev", "ename": "x"}],
     }}
     assert normalize_scan(off) == normalize_scan(on)
+
+
+# ═══ S3 slice-2 — deferred core: propose / flush / void-noop ═══════════════
+
+from faultline.pipeline_v2.overturn_ledger import (  # noqa: E402
+    flush_pending,
+    propose_pf,
+    propose_pf_now,
+    void_noop_pf,
+)
+def _pf(name: str) -> Feature:
+    pf = _feat(name)
+    pf.layer = "product"
+    return pf
+
+
+def test_propose_pf_defers_until_flush(ledger):
+    f = _feat("auth", pf="old-home")
+    propose_pf(f, "new-home", rung="lane_rehome")
+    # REAL deferral: the live attribute is untouched until the flush
+    assert f.product_feature_id == "old-home"
+    assert len(ledger.pending) == 1
+    n = flush_pending([], note="post-lane-rehome")
+    assert n == 1
+    assert f.product_feature_id == "new-home"      # applied at the boundary
+    assert ledger.pending == []
+    # journal: exactly ONE entry (no observer double-record on apply)
+    assert len(ledger.entries) == 1
+    e = ledger.entries[0]
+    assert (e.old, e.new, e.rung, e.deferred) == \
+        ("old-home", "new-home", "lane_rehome", True)
+
+
+def test_propose_pf_off_is_direct_write():
+    uninstall_ledger()
+    f = _feat("billing", pf=None)
+    propose_pf(f, "X", rung="devgrain")
+    assert f.product_feature_id == "X"             # OFF == today's write
+
+
+def test_propose_pf_now_immediate_single_record(ledger):
+    f = _feat("api", pf="A")
+    propose_pf_now(f, "B", rung="transport")
+    assert f.product_feature_id == "B"             # applied in place
+    assert len(ledger.entries) == 1                # no observer double
+    e = ledger.entries[0]
+    assert (e.old, e.new, e.rung, e.deferred) == ("A", "B", "transport", False)
+
+
+def test_void_noop_pf_on_suppresses_off_writes(ledger):
+    f = _feat("cases", pf=None)
+    void_noop_pf(f, "AI", rung="phase_enrich")
+    assert f.product_feature_id is None            # Seg C: never written ON
+    assert len(ledger.entries) == 1
+    assert ledger.entries[0].suppressed is True
+    assert ledger.pending == []                    # never queued
+    # replay excludes suppressed → live state still reconciles
+    assert ledger.verify_replay([f], []) == 0
+    uninstall_ledger()
+    g = _feat("cases2", pf=None)
+    void_noop_pf(g, "AI", rung="phase_enrich")
+    assert g.product_feature_id == "AI"            # OFF: writes as today
+
+
+def test_chained_old_within_window(ledger):
+    f = _feat("chain", pf="v0")
+    propose_pf(f, "v1", rung="devgrain")
+    propose_pf(f, "v2", rung="devgrain")
+    assert [(e.old, e.new) for e in ledger.entries] == \
+        [("v0", "v1"), ("v1", "v2")]               # cascade-view chain
+    flush_pending([])
+    assert f.product_feature_id == "v2"            # last proposal wins
+    assert ledger.verify_replay([f], []) == 0
+
+
+def test_i8_guard_once_at_flush(ledger):
+    f = _feat("x", pf=None)
+    propose_pf(f, "ghost-pf", rung="dispatch")
+    flush_pending([_pf("real-pf")], note="post-dispatch")
+    assert ledger.i8_violations == 1               # ghost home counted
+    g = _feat("y", pf="a")
+    propose_pf(g, "real-pf", rung="i16")
+    flush_pending([_pf("real-pf")])
+    assert ledger.i8_violations == 1               # real home / None: clean
+
+
+def test_finalize_arbiter_flushes_stragglers(ledger):
+    f = _feat("straggle", pf="a")
+    propose_pf(f, "b", rung="terminal-home")
+    sm: dict = {}
+    finalize_arbiter(ledger, [f], [], sm, [_pf("b")])
+    assert f.product_feature_id == "b"             # belt-and-braces apply
+    ov = sm["overturns"]
+    assert ov["straggler_applied"] == 1
+    assert ov["i8_violations"] == 0
+    assert ov["replay_mismatches"] == 0
+    assert ov["dev"]["deferred_applied"] == 1
+
+
+def test_flush_pending_off_is_noop():
+    uninstall_ledger()
+    assert flush_pending([], note="off") == 0
