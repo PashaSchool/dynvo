@@ -799,6 +799,25 @@ ENV_OUTPUT_FLAGS = (
     # keeps the extractor unregistered (extractor_hits byte-identical — the B67
     # kill-switch lesson). No KEY_SCHEMA bump (the flip rides its own commit).
     "FAULTLINE_APPROUTER_KEYLESS",
+    # S4b (2026-07-18) — Go extraction repair. On real Go repos the shipped
+    # go-router extractor mints HTTP-header names and JSON/struct keys as
+    # "features": the chi/gin/echo ``route_call`` patterns match any bare
+    # ``.Get("s")`` / ``.Set("s")`` and Go code is saturated with
+    # ``req.Header.Get("Content-Type")`` etc. (traefik VERIFIED: 19/19
+    # go-router anchors were header garbage, 0 real routes), while its actual
+    # ``/api/**`` + ``/debug/**`` surface — registered via the gorilla/mux
+    # fluent chain ``router.Methods(..).Path("/x").HandlerFunc(..)`` — is
+    # invisible (no gorilla signature). Armed, the extractor (a) adds the
+    # gorilla/mux registration signature and (b) requires every matched string
+    # to be a URL PATH (``route_must_be_path``: starts with ``/`` or a
+    # method-prefixed ``"GET /x"`` ServeMux pattern), dropping the header/key
+    # false positives with no per-repo vocabulary, plus excludes testdata/
+    # example fixtures (dev-artifact law). Reshapes go-router anchors only —
+    # go-package directory anchors are untouched. Default OFF; the flag is
+    # read at collect time so the cached pattern bundle serves OFF and ON
+    # alike — unset / ``0`` restores the shipped board byte-identically. No
+    # KEY_SCHEMA bump (the default flip rides its own later commit).
+    "FAULTLINE_GO_EXTRACTION",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

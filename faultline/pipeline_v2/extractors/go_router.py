@@ -29,6 +29,7 @@ No LLM. No network. Pure file-system scan + regex.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
@@ -50,6 +51,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ── Armed-extraction flag ──────────────────────────────────────────────────
+
+GO_EXTRACTION_ENV = "FAULTLINE_GO_EXTRACTION"
+
+
+def go_extraction_enabled() -> bool:
+    """Default **OFF**. ``FAULTLINE_GO_EXTRACTION`` in ``{1,true,on,yes}``
+    arms the ``armed:`` YAML block: the gorilla/mux registration signature
+    plus the ``route_must_be_path`` filter that drops the header-name / JSON-
+    key false positives the bare ``.Get("...")`` patterns pick up on real Go
+    code. Unset / ``0`` / any falsy token keeps the shipped extractor
+    byte-identical (the flag is read at COLLECT time, so the compiled bundle
+    is shared across OFF/ON — no cache staleness)."""
+    return os.environ.get(GO_EXTRACTION_ENV, "0").strip().lower() in {
+        "1", "true", "on", "yes",
+    }
+
+
+# HTTP method tokens that may prefix a Go 1.22 net/http ServeMux pattern
+# (``"GET /items/{id}"``). Used to recognise a method-prefixed route PATH and
+# to strip the token before slugifying.
+_METHOD_TOKENS = frozenset({
+    "GET", "POST", "PUT", "PATCH", "DELETE",
+    "HEAD", "OPTIONS", "CONNECT", "TRACE",
+})
+
+
 # ── YAML config loader ─────────────────────────────────────────────────────
 
 
@@ -58,22 +86,26 @@ def _load_config() -> dict:
     return load_stack_yaml("go-http-router")
 
 
+_RouterTable = tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...]
+
 _CompiledTables = tuple[
-    tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...],
-    tuple[str, ...],
-    tuple[str, ...],
-    dict[str, float],
+    _RouterTable,          # [0] base routers (used when flag OFF)
+    tuple[str, ...],       # [1] path-prefix excludes
+    tuple[str, ...],       # [2] suffix excludes
+    dict[str, float],      # [3] confidence map
+    _RouterTable,          # [4] armed routers = base + armed.router_patterns
+    bool,                  # [5] route_must_be_path (armed policy)
+    frozenset[str],        # [6] armed extra exclude segments (testdata/…)
 ]
 
 
-def _compile(config: dict) -> _CompiledTables:
-    """Compile router regex pairs + extract path excludes + confidence map.
-
-    Returns ``(routers, excludes, exclude_suffixes, confidence_map)``.
-    Caching is handled by :class:`PatternExtractor`.
-    """
-    routers_raw = config.get("router_patterns") or {}
+def _compile_routers(
+    routers_raw: object,
+) -> _RouterTable:
+    """Compile a ``{name: {router_constructor, route_call}}`` mapping."""
     routers: list[tuple[str, re.Pattern[str], re.Pattern[str]]] = []
+    if not isinstance(routers_raw, dict):
+        return ()
     for router_name, block in routers_raw.items():
         if not isinstance(block, dict):
             continue
@@ -90,7 +122,23 @@ def _compile(config: dict) -> _CompiledTables:
                 router_name, exc,
             )
             continue
-        routers.append((router_name, ctor_re, call_re))
+        routers.append((str(router_name), ctor_re, call_re))
+    return tuple(routers)
+
+
+def _compile(config: dict) -> _CompiledTables:
+    """Compile router regex pairs + path excludes + confidence map + the
+    armed (flag-gated) additions.
+
+    Returns
+    ``(base_routers, excludes, exclude_suffixes, confidence_map,
+       armed_routers, route_must_be_path, armed_exclude_segments)``.
+    The armed fields are consulted at collect time ONLY when
+    ``FAULTLINE_GO_EXTRACTION`` is on, so the same cached bundle serves both
+    OFF and ON with no staleness. Caching is handled by
+    :class:`PatternExtractor`.
+    """
+    base_routers = _compile_routers(config.get("router_patterns"))
 
     excludes = tuple(
         str(p) for p in (config.get("excludes") or []) if isinstance(p, str)
@@ -109,7 +157,28 @@ def _compile(config: dict) -> _CompiledTables:
         ),
     }
 
-    return (tuple(routers), excludes, exclude_suffixes, confidence)
+    # Armed additions — the base routers stay active (now filtered by the
+    # path policy) and the armed router signatures are appended.
+    armed_raw = config.get("armed") or {}
+    if not isinstance(armed_raw, dict):
+        armed_raw = {}
+    armed_extra = _compile_routers(armed_raw.get("router_patterns"))
+    armed_routers = base_routers + armed_extra
+    route_must_be_path = bool(armed_raw.get("route_must_be_path", False))
+    armed_exclude_segments = frozenset(
+        str(s) for s in (armed_raw.get("exclude_segments") or [])
+        if isinstance(s, str)
+    )
+
+    return (
+        base_routers,
+        excludes,
+        exclude_suffixes,
+        confidence,
+        armed_routers,
+        route_must_be_path,
+        armed_exclude_segments,
+    )
 
 
 # ── Activation gate ────────────────────────────────────────────────────────
@@ -165,6 +234,44 @@ def _is_excluded(path: str, prefixes: tuple[str, ...],
     return False
 
 
+def _has_excluded_segment(path: str, segments: frozenset[str]) -> bool:
+    """``True`` if any path segment is in ``segments`` (armed exclude —
+    ``testdata/`` fixtures, ``examples/`` demos never mint routes)."""
+    if not segments:
+        return False
+    return any(seg in segments for seg in posix(path).split("/"))
+
+
+def _method_prefix(route: str) -> str | None:
+    """Return the leading HTTP-method token of a ``"METHOD /path"`` mux
+    pattern (Go 1.22 net/http), else ``None``. ``"GET /items"`` → ``"GET"``;
+    ``"/items"`` → ``None``; ``"Content-Type"`` → ``None``."""
+    head, sep, rest = route.partition(" ")
+    if sep and head in _METHOD_TOKENS and rest.startswith("/"):
+        return head
+    return None
+
+
+def _is_route_path(route: str) -> bool:
+    """``True`` iff ``route`` is a URL PATH — starts with ``/`` OR is a
+    method-prefixed ServeMux pattern (``"GET /items/{id}"``).
+
+    A header name (``Content-Type``), a JSON/struct key (``status``), or a
+    query-param name (``search``) is NOT a path — this is the scale-invariant
+    discriminator that kills the bare-``.Get("s")`` false positives without
+    any per-repo vocabulary.
+    """
+    return route.startswith("/") or _method_prefix(route) is not None
+
+
+def _strip_method_prefix(route: str) -> str:
+    """Drop the leading ``"METHOD "`` from a ServeMux pattern so the slug is
+    keyed on the path alone (``"GET /items/{id}"`` → ``"/items/{id}"``)."""
+    if _method_prefix(route) is not None:
+        return route.split(" ", 1)[1]
+    return route
+
+
 # ── Extractor ──────────────────────────────────────────────────────────────
 
 
@@ -188,7 +295,14 @@ class GoRouterExtractor(PatternExtractor):
     def collect(
         self, ctx: "ScanContext", compiled: _CompiledTables,
     ) -> dict[str, dict]:
-        routers, excludes, exclude_suffixes, _confidence = compiled
+        (base_routers, excludes, exclude_suffixes, _confidence,
+         armed_routers, route_must_be_path, armed_segments) = compiled
+
+        # Flag is read HERE (collect time), not at compile time, so the
+        # cached bundle is shared across OFF/ON with no staleness. OFF keeps
+        # the shipped base routers + no path filter → byte-identical board.
+        armed = go_extraction_enabled()
+        routers = armed_routers if armed else base_routers
         if not routers:
             return {}
 
@@ -201,6 +315,8 @@ class GoRouterExtractor(PatternExtractor):
             if not rel_path.endswith(".go"):
                 continue
             if _is_excluded(rel_path, excludes, exclude_suffixes):
+                continue
+            if armed and _has_excluded_segment(rel_path, armed_segments):
                 continue
 
             abs_path = ctx.repo_path / rel_path
@@ -216,7 +332,12 @@ class GoRouterExtractor(PatternExtractor):
                     route = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
                     if not route:
                         continue
-                    slug = _route_to_slug(route)
+                    # Armed: a route must be a URL PATH — drops header
+                    # names / JSON keys that bare ``.Get("s")`` picks up.
+                    if armed and route_must_be_path and not _is_route_path(route):
+                        continue
+                    slug_route = _strip_method_prefix(route) if armed else route
+                    slug = _route_to_slug(slug_route)
                     if not slug:
                         continue
                     bucket = anchors[slug]
@@ -253,4 +374,4 @@ class GoRouterExtractor(PatternExtractor):
         )
 
 
-__all__ = ["GoRouterExtractor"]
+__all__ = ["GO_EXTRACTION_ENV", "GoRouterExtractor", "go_extraction_enabled"]

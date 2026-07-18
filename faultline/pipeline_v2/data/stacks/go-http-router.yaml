@@ -51,3 +51,41 @@ router_patterns:
 confidence:
   with_constructor_in_file: 0.9
   without_constructor_in_file: 0.7
+
+# ── ARMED Go extraction (FAULTLINE_GO_EXTRACTION, default OFF) ───────────────
+# This whole block is consulted ONLY when the flag is ON. With it OFF the
+# extractor uses exactly the ``router_patterns`` above (byte-identical to the
+# shipped board), so unset is a no-op.
+#
+# The armed block fixes two shipped defects on real Go repos (traefik VERIFIED):
+#
+#  1. FALSE POSITIVES — the chi/gin/echo ``route_call`` patterns match any bare
+#     ``.Get("s")`` / ``.Set("s")`` / ``.Handle("s")``. Go code is saturated
+#     with ``req.Header.Get("Content-Type")``, ``h.Set("X-Forwarded-For")``,
+#     ``vals.Get("status")`` — so header names and JSON keys mint as
+#     "features" (traefik: 19/19 go-router anchors were header garbage). The
+#     ``route_must_be_path`` policy requires every matched string to be a URL
+#     PATH: it starts with ``/`` OR with an HTTP-method token then a space and
+#     ``/`` (the Go 1.22 net/http ServeMux pattern ``"GET /items/{id}"``). A
+#     header name or JSON key is NOT a path — scale-invariant, no vocabulary.
+#
+#  2. MISSING ROUTER — gorilla/mux (and its ``containous/mux`` fork, traefik's
+#     router) registers via a fluent chain ``router.Methods(..).Path("/x").
+#     HandlerFunc(..)`` / ``.PathPrefix("/x")``; the path lives in ``.Path`` /
+#     ``.PathPrefix``, never in a verb method. Without this signature traefik's
+#     entire ``/api/**`` + ``/debug/**`` surface is invisible.
+#
+# dev-artifact law: fixtures / examples never mint product routes.
+armed:
+  route_must_be_path: true
+  exclude_segments:
+    - testdata
+    - examples
+    - example
+  # Router signatures trusted ONLY under the flag. These are ADDED to the
+  # base ``router_patterns`` above (the base set stays active, now filtered
+  # by ``route_must_be_path`` so its header false positives are dropped).
+  router_patterns:
+    gorilla_mux:
+      router_constructor: 'mux\.NewRouter\(\)'
+      route_call: '\.(Path|PathPrefix|HandleFunc|Handle)\(\s*"(/[^"]*)"'
