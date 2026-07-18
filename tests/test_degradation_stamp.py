@@ -247,3 +247,87 @@ def test_stamp_flag_registered_in_env_output_flags() -> None:
     """Cache-key correctness: the flag shapes output → must be keyed
     (append-only, no KEY_SCHEMA bump — reconciled at merge)."""
     assert "FAULTLINE_DEGRADATION_STAMP" in ENV_OUTPUT_FLAGS
+
+
+# ── S5a-it3 — the credit-400 class gap (2026-07-18 keyed pair) ─────────────
+# The degraded novu-on scan carried 85 credit-400 fresh fails (64 refiner +
+# 10 splitter + 4 6.7e + 3 6.7d) at $0 yet degradations == []. The refiner
+# and 6.7d WOULD have stamped had the flag been armed (process lesson); the
+# splitter and 6.7e had NO classifier — the class gap closed by
+# classify_llm_stage_zero_cost (the "live key never whitens $0" law
+# generalized to ANY LLM stage). Blocks below are the EXACT measured
+# telemetry of that scan (/private/tmp/s5a-work/keyed-it2/novu-on.json).
+
+_SPLITTER_400 = {
+    "enabled": True, "model": "claude-sonnet-4-6", "mega_detected": 12,
+    "mega_split": 2, "sub_ufs_created": 15, "members_moved": 46,
+    "cost_usd": 0, "fallback_reason": None, "cache_hits": 2, "llm_calls": 10,
+}
+_ADJUDICATOR_400 = {
+    "ran": True, "model": "claude-sonnet-4-6", "selected": 56, "batches": 4,
+    "llm_calls": 4, "cache_hits": 0, "batches_rejected_parse": 4,
+    "cost_usd": 0,
+}
+_REFINER_400 = {
+    "enabled": True, "domains_total": 70, "domains_refined": 6,
+    "domains_degraded": 64, "cost_usd": 0.0, "llm_calls": 64,
+}
+_S67D_400 = {
+    "enabled": True, "applied": False,
+    "degraded_reason": "abstraction_parse_failed", "cost_usd": 0.0,
+    "llm_calls": 3,
+}
+
+
+def test_it3_splitter_credit400_signature_stamps() -> None:
+    rec = deg.classify_llm_stage_zero_cost(
+        "stage_6_7c_uf_splitter", _SPLITTER_400)
+    assert rec is not None
+    assert rec["severity"] == "failed"
+    assert rec["metrics"]["cost_signature"] == "zero_cost_fresh_fail"
+    assert rec["metrics"]["llm_calls"] == 10
+
+
+def test_it3_adjudicator_credit400_signature_stamps() -> None:
+    rec = deg.classify_llm_stage_zero_cost(
+        "adjudicator_6_7e", _ADJUDICATOR_400)
+    assert rec is not None
+    assert rec["severity"] == "failed"
+    assert rec["metrics"]["llm_calls"] == 4
+
+
+def test_it3_refiner_and_67d_would_have_stamped() -> None:
+    """(a)-verdict lock: the EXISTING classifiers catch the measured
+    refiner/6.7d blocks — the flag being unset was the only reason they
+    slipped."""
+    assert deg.classify_refiner_degradation(_REFINER_400) is not None
+    assert deg.classify_journey_abstraction_degradation(_S67D_400) is not None
+
+
+def test_it3_anticase_cache_served_stage_never_stamps() -> None:
+    # all-cache splitter: llm_calls == 0, cost 0 → healthy, no stamp
+    block = dict(_SPLITTER_400, llm_calls=0, cache_hits=12)
+    assert deg.classify_llm_stage_zero_cost(
+        "stage_6_7c_uf_splitter", block) is None
+
+
+def test_it3_anticase_billed_stage_never_stamps() -> None:
+    block = dict(_SPLITTER_400, cost_usd=0.41)
+    assert deg.classify_llm_stage_zero_cost(
+        "stage_6_7c_uf_splitter", block) is None
+
+
+def test_it3_detect_finalize_aggregates_all_four() -> None:
+    out = deg.detect_finalize_degradations(
+        refiner=_REFINER_400,
+        journey_abstraction=_S67D_400,
+        llm_stages={
+            "stage_6_7c_uf_splitter": _SPLITTER_400,
+            "adjudicator_6_7e": _ADJUDICATOR_400,
+        },
+    )
+    stages = sorted(r["stage"] for r in out)
+    assert stages == ["adjudicator_6_7e", "stage_6_7b_uf_refiner",
+                      "stage_6_7c_uf_splitter",
+                      "stage_6_7d_journey_abstraction"]
+    assert all(r["severity"] == "failed" for r in out)

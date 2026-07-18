@@ -286,16 +286,55 @@ def classify_journey_abstraction_degradation(
     )
 
 
+def classify_llm_stage_zero_cost(
+    stage_name: str, block: dict[str, Any],
+) -> Degradation | None:
+    """S5a-it3 Seg D widening — the "live key never whitens $0" law
+    generalized to ANY LLM stage: a telemetry block that ISSUED fresh
+    calls (``llm_calls > 0``) yet closed at ``cost_usd == 0`` means every
+    fresh call died on the auth/credit/transport class (the 2026-07-18
+    credit-400 keyed pair: uf_splitter 10 calls/$0 + 6.7e 4 batches
+    rejected/$0 slipped the stamp because only the refiner/6.7d had
+    classifiers). Structural floor (>=1 fresh call), no tuned constants;
+    cache-served stages (``llm_calls == 0``) and billed stages never trip.
+    """
+    if not block or not (block.get("enabled") or block.get("ran")):
+        return None
+    calls = int(block.get("llm_calls") or 0)
+    cost = float(block.get("cost_usd") or 0.0)
+    if calls <= 0 or cost != 0.0:
+        return None
+    return make(
+        TYPE_LLM_BATCH_DEGRADED,
+        stage=stage_name,
+        severity=SEVERITY_FAILED,
+        detail=(
+            f"{stage_name}: {calls} fresh LLM call(s) at $0.0000 "
+            f"(zero_cost_fresh_fail) — the auth/credit/transport class "
+            f"killed every fresh call; this stage's LLM layer did not "
+            f"land this scan"
+        ),
+        llm_calls=calls,
+        cost_usd=0.0,
+        cost_signature="zero_cost_fresh_fail",
+    )
+
+
 def detect_finalize_degradations(
     *,
     refiner: dict[str, Any] | None = None,
     journey_abstraction: dict[str, Any] | None = None,
+    llm_stages: dict[str, dict[str, Any] | None] | None = None,
 ) -> list[Degradation]:
     """Aggregate the finalize-phase fail-open degradations (Seg D).
 
-    Pure function of the two scan_meta telemetry blocks; the caller (phase
+    Pure function of the scan_meta telemetry blocks; the caller (phase
     finalize) appends the result to ``scan_meta.degradations[]`` ONLY when
     :func:`degradation_stamp_enabled`. Empty list on a healthy scan.
+    ``llm_stages`` (it3 widening) maps additional stage names → telemetry
+    blocks judged by the generic zero-cost-fresh-fail law (uf_splitter /
+    6.7e adjudicator / any future LLM stage); the refiner and 6.7d keep
+    their richer specific classifiers.
     """
     out: list[Degradation] = []
     rec = classify_refiner_degradation(refiner or {})
@@ -304,6 +343,11 @@ def detect_finalize_degradations(
     rec = classify_journey_abstraction_degradation(journey_abstraction or {})
     if rec is not None:
         out.append(rec)
+    for stage_name in sorted(llm_stages or {}):
+        rec = classify_llm_stage_zero_cost(
+            stage_name, (llm_stages or {}).get(stage_name) or {})
+        if rec is not None:
+            out.append(rec)
     return out
 
 
@@ -328,6 +372,7 @@ __all__ = [
     "journey_abstraction_failed",
     "classify_refiner_degradation",
     "classify_journey_abstraction_degradation",
+    "classify_llm_stage_zero_cost",
     "detect_finalize_degradations",
     "degradation_stamp_enabled",
 ]

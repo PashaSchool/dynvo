@@ -3131,6 +3131,14 @@ def run_finalize_phase(
         _stamped = detect_finalize_degradations(
             refiner=scan_meta.get("stage_6_7b_uf_refiner"),
             journey_abstraction=scan_meta.get("stage_6_7d_journey_abstraction"),
+            # it3 widening — the generic zero-cost-fresh-fail law over the
+            # other finalize LLM stages (the 2026-07-18 credit-400 pair:
+            # splitter + 6.7e slipped the stamp).
+            llm_stages={
+                "stage_6_7c_uf_splitter":
+                    scan_meta.get("stage_6_7c_uf_splitter"),
+                "adjudicator_6_7e": scan_meta.get("adjudicator_6_7e"),
+            },
         )
         if _stamped:
             scan_meta.setdefault("degradations", []).extend(_stamped)
