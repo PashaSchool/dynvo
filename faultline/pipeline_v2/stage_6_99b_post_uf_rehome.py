@@ -76,6 +76,7 @@ byte-identical output. $0 — deterministic, no LLM, no I/O.
 
 from __future__ import annotations
 from faultline.pipeline_v2.overturn_ledger import propose_pf_now
+from faultline.pipeline_v2.transport_handoff import mega_decomp_armed
 
 import re
 from collections import Counter
@@ -324,14 +325,13 @@ def run_post_uf_rehome(
                 tele["signal_no_target"] += 1
             continue
         if not bool(_attr(uf, "synthesized")):
-            # ACTION SCOPE = synthesized rows only (the mandate's disease
-            # class: PF-noun seed machinery mis-homed by the mint fold).
-            # An organic/lattice row tripping the same ruler is recorded
-            # as a telemetry-only candidate — the cal.com control drive
-            # showed 5 such rows (an echo-PF 'features' debt class), and
-            # moving LLM-drawn journeys belongs to the I16/B24 family, not
-            # this rail (strict-no-op control gate; B49: never invent a
-            # move outside the proven exhibit class).
+            # ACTION SCOPE (B69-v2) = synthesized rows only (the mandate's
+            # disease class: PF-noun seed machinery mis-homed by the mint
+            # fold). An organic/lattice row tripping the same ruler is
+            # recorded as a candidate — the cal.com control drive showed 5
+            # such rows (an echo-PF 'features' debt class); moving LLM-drawn
+            # journeys belongs to the I16/B24 family, not this rail's own
+            # disease class.
             tele["organic_candidates"] = (
                 tele.get("organic_candidates", 0) + 1)
             if len(tele.setdefault("organic_candidate_rows", [])) < 10:
@@ -342,11 +342,28 @@ def run_post_uf_rehome(
                     "home_share": round(home_share, 3),
                     "rival_share": round(rival_share, 3),
                 })
+            if not mega_decomp_armed():
+                # B69-v2 default: telemetry-only debt (strict-no-op control
+                # gate; B49: never invent a move outside the proven class).
+                continue
+            # S5a Seg C (FAULTLINE_MEGA_DECOMP_ARM) — the organic candidate
+            # IS a B24-family move (an LLM-drawn journey re-home to the PF
+            # whose anchor structurally owns its members). Armed, it becomes
+            # an actual proposal routed through the S3 overturn ledger at
+            # rung ``mega`` so I8/conservation is adjudicated at the single
+            # arbiter point (S5a = the first real client of the arbiter).
+            # Rename-on-rehome stays synthesized-only downstream, so the
+            # organic row keeps its LLM-drawn name.
+            plans.append({
+                "uf": uf, "from": pfid, "to": rival_key,
+                "home_share": round(home_share, 3),
+                "rival_share": round(rival_share, 3), "b24_class": True,
+            })
             continue
         plans.append({
             "uf": uf, "from": pfid, "to": rival_key,
             "home_share": round(home_share, 3),
-            "rival_share": round(rival_share, 3),
+            "rival_share": round(rival_share, 3), "b24_class": False,
         })
 
     for plan in plans:
@@ -406,15 +423,22 @@ def run_post_uf_rehome(
                 "from": pfid, "to": target,
             })
             continue
-        propose_pf_now(uf, target, rung="6.99b")
+        # S5a Seg C — an armed organic candidate journals as a B24-class
+        # proposal (rung ``mega``); the synthesized disease-class rows keep
+        # the native 6.99b rung. Both route through the SAME ledger helper.
+        propose_pf_now(uf, target,
+                       rung="mega" if plan.get("b24_class") else "6.99b")
         uf_count[pfid] -= 1
         uf_count[target] += 1
         tele["rehomed"] += 1
+        if plan.get("b24_class"):
+            tele["organic_rehomed"] = tele.get("organic_rehomed", 0) + 1
         tele["moves"].append({
             "uf": uid, "name": str(_attr(uf, "name") or ""),
             "from": pfid, "to": target,
             "home_share": plan["home_share"],
             "rival_share": plan["rival_share"],
+            **({"b24_class": True} if plan.get("b24_class") else {}),
         })
         # C′ — rename-on-rehome, SYNTHESIZED rows only (the PF-noun-named
         # seed class); organic rows keep their LLM-drawn names.

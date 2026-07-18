@@ -750,6 +750,25 @@ ENV_OUTPUT_FLAGS = (
     # prompts and keys byte-identical. No KEY_SCHEMA bump (append-only —
     # reconciled at merge).
     "FAULTLINE_LLM_BATCH_CANON",
+    # S5a (2026-07-18) — mega-PF decomposition ARMING, ONE flag gates the
+    # three ship-grade grain segments (the B53/B58-v3 precedent). Seg A: the
+    # B24 TargetGrainIndex derives ADDITIONAL route roots from the
+    # routes_index population (a non-dialect central/backend router file —
+    # Soc0 backend/routers/admin.py — contributes its parent dir as a root
+    # when >=2 distinct product route files cluster there; the flat-leaf
+    # stem rule keys each nav group). Seg B: a route-GROUP target with no
+    # exact-anchor PF resolves to the SIBLING PF whose core-identity token
+    # it UNIQUELY echoes (compliance group -> compliance-page) instead of
+    # minting a twin. Seg C: the Stage 6.99b organic re-home candidates
+    # (telemetry-only under B69-v2) become B24-class moves routed through
+    # the S3 overturn ledger (rung mega). Reshapes user_flows[].
+    # product_feature_id + product_features[] (mints/feeds) +
+    # developer_features[] carve chunks on repos where B24 fires. Default
+    # OFF; =0/unset -> both grain params False + the 6.99b organic branch
+    # stays a continue -> byte-identical. No KEY_SCHEMA bump (append-only
+    # per wave convention — reconciled at merge; the trigger-shape Seg D/E
+    # ride a separate mandate).
+    "FAULTLINE_MEGA_DECOMP_ARM",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

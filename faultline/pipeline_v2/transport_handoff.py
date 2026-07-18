@@ -106,11 +106,13 @@ __all__ = [
     "TRANSPORT_NAMESPACE_ECHO_ENV",
     "TRANSPORT_ROUTER_DECOMP_ENV",
     "FLOWFUL_TRANSPORT_LANE_ENV",
+    "MEGA_DECOMP_ARM_ENV",
     "transport_handoff_enabled",
     "transport_plurality_enabled",
     "transport_namespace_echo_enabled",
     "transport_router_decomp_enabled",
     "flowful_transport_lane_enabled",
+    "mega_decomp_armed",
     "hub_cutoff",
     "GrainTarget",
     "TargetGrainIndex",
@@ -129,6 +131,29 @@ TRANSPORT_ROUTER_DECOMP_ENV = "FAULTLINE_TRANSPORT_ROUTER_DECOMP"
 #: cycle switch: it also drives the B51 decomposition pass (in
 #: drain-then-lane mode) without needing the B51 flag.
 FLOWFUL_TRANSPORT_LANE_ENV = "FAULTLINE_FLOWFUL_TRANSPORT_LANE"
+
+#: S5a (2026-07-18) — mega-PF decomposition ARMING. The ONE flag gating
+#: the ship-grade S5a segments that widen the B24 decomposition grain:
+#:   Seg A — the ``TargetGrainIndex`` derives ADDITIONAL route roots from
+#:           the routes_index file POPULATION (a product route file
+#:           matching no ``_ROUTE_ROOT_SEQS`` dialect still contributes its
+#:           parent dir as a root when >=2 distinct product route files
+#:           live there — the class's own "roots derived from the
+#:           routes_index population, dialect-blind" declaration, no new
+#:           vocabulary; Soc0 ``backend/routers`` → admin/chat/oauth
+#:           groups become mint-able).
+#:   Seg B — a route-GROUP target with NO exact-anchor PF resolves to a
+#:           SIBLING PF whose core-identity token it echoes (unique match
+#:           only; ``compliance`` group → the ``compliance-page`` PF),
+#:           feeding hungry siblings instead of minting a twin.
+#:   Seg C — the Stage 6.99b organic re-home candidates (telemetry-only
+#:           today) become B24-class moves routed through the S3 overturn
+#:           ledger (rung ``mega`` — I8/conservation adjudicated once).
+#: Default OFF; unset/=0 → byte-identical (the two grain params default
+#: False at every construction site; the 6.99b organic branch stays a
+#: ``continue``). No KEY_SCHEMA bump (append-only per wave convention —
+#: reconciled at merge; the trigger-shape Seg D/E ride a separate mandate).
+MEGA_DECOMP_ARM_ENV = "FAULTLINE_MEGA_DECOMP_ARM"
 
 #: Provenance marker stamped on re-homed / minted rows (I22
 #: explainability + idempotence).
@@ -232,6 +257,39 @@ def flowful_transport_lane_enabled() -> bool:
     ).strip().lower() in {"1", "true"}
 
 
+def mega_decomp_armed() -> bool:
+    """S5a mega-PF decomposition arming — default OFF. See
+    :data:`MEGA_DECOMP_ARM_ENV`. unset/=0/false/off → byte-identical
+    (the grain oracle keeps the B24-ratified roots + exact-anchor group
+    matching; the 6.99b organic candidates stay telemetry-only)."""
+    return os.environ.get(
+        MEGA_DECOMP_ARM_ENV, "0",
+    ).strip().lower() in {"1", "true"}
+
+
+def _pf_identity_tokens(pf: Any) -> set[str]:
+    """S5a Seg B — a PF's capability-identity tokens (anchor terminal +
+    name, ``normalize_anchor_key``-normalized), the SAME shape as
+    :func:`mega_pf_nav_rehome._core_identity` (kept local to avoid the
+    mega→transport import cycle). A route-GROUP target whose area token
+    echoes exactly ONE PF's identity resolves to THAT sibling."""
+    from faultline.pipeline_v2.spine_anchors import (
+        _DYNAMIC_RE,
+        normalize_anchor_key,
+    )
+
+    out: set[str] = set()
+    aid = str(_attr(pf, "anchor_id") or "")
+    if ":" in aid:
+        segs = [s for s in aid.split(":", 1)[1].split("/")
+                if s and not _DYNAMIC_RE.match(s)]
+        if segs:
+            out.add(normalize_anchor_key(segs[-1]))
+    out.add(normalize_anchor_key(str(_attr(pf, "name") or "")))
+    out.discard("")
+    return out
+
+
 def _strict_conservation() -> bool:
     """Raise (instead of warn) on a conservation-invariant violation —
     always under pytest, or with ``FAULTLINE_STRICT_CONSERVATION=1``."""
@@ -313,6 +371,8 @@ class TargetGrainIndex:
         excluded_units: Iterable[str] = (),
         candidate_pf_keys: Iterable[str] = (),
         tenant_descent: bool = False,
+        population_roots: bool = False,
+        sibling_tokens: bool = False,
     ) -> None:
         #: B24 (Stage 6.986) opt-in rung: the route-GROUP grain descends
         #: through tenant-address pairs (``project/[ref]/database`` keys
@@ -320,9 +380,15 @@ class TargetGrainIndex:
         #: Default OFF: 6.985 callers keep the ratified B22 grain
         #: byte-identically.
         self._tenant_descent = bool(tenant_descent)
+        #: S5a Seg A/B opt-in rungs (FAULTLINE_MEGA_DECOMP_ARM). Both
+        #: default OFF so every non-armed construction site keeps the
+        #: B24-ratified grain byte-identically.
+        self._population_roots = bool(population_roots)
+        self._sibling_tokens = bool(sibling_tokens)
         self._excluded = tuple(sorted(str(u).strip("/")
                                       for u in excluded_units if u))
         self._cand_keys = frozenset(candidate_pf_keys)
+        product_features = list(product_features)
         pf_by_anchor: dict[str, Any] = {}
         pf_keys: set[str] = set()
         for pf in product_features:
@@ -334,6 +400,22 @@ class TargetGrainIndex:
                 pf_by_anchor.setdefault(str(aid), str(key))
         self._pf_by_anchor = pf_by_anchor
         self.pf_keys = frozenset(pf_keys)
+        # S5a Seg B — sibling core-identity token → PF key (UNIQUE match
+        # only; ambiguous tokens abstain, mirroring the B49/B51
+        # NamespaceEcho doctrine). Built only when armed; empty otherwise
+        # so ``grain_of_file`` skips the branch.
+        self._pf_by_token: dict[str, str] = {}
+        if self._sibling_tokens:
+            by_token: dict[str, set[str]] = defaultdict(set)
+            for pf in product_features:
+                k = str(_attr(pf, "id") or _attr(pf, "name") or "")
+                if not k:
+                    continue
+                for tok in _pf_identity_tokens(pf):
+                    by_token[tok].add(k)
+            self._pf_by_token = {
+                t: next(iter(ks)) for t, ks in by_token.items()
+                if len(ks) == 1}
         # Only PF-BACKED anchors participate in matching — the NEW grain
         # is the route-GROUP channel below, never a per-page anchor.
         self._anchors: list[Any] = []
@@ -356,6 +438,7 @@ class TargetGrainIndex:
         from faultline.pipeline_v2.spine_anchors import _route_root_end
         roots: set[str] = set()
         route_files: list[str] = []
+        orphan_files: list[str] = []
         for e in (routes_index or []):
             if not isinstance(e, Mapping):
                 continue
@@ -368,6 +451,31 @@ class TargetGrainIndex:
             if end is not None and end < len(segs):
                 roots.add("/".join(segs[:end]))
                 route_files.append(f)
+            elif self._population_roots and len(segs) > 1:
+                # No _ROUTE_ROOT_SEQS dialect run keys a root inside this
+                # product route file (a central/backend router: FastAPI
+                # ``backend/routers/admin.py``, a flat handler tree). Held
+                # as an ORPHAN — its parent dir becomes a root below iff
+                # the routes_index POPULATION puts >=2 distinct product
+                # route files there.
+                orphan_files.append(f)
+        if self._population_roots and orphan_files:
+            # S5a Seg A — population-derived roots. The class already
+            # DECLARES "roots derived from the routes_index file
+            # population — dialect-blind"; this makes it honest for
+            # non-dialect routers WITHOUT adding vocabulary: a parent dir
+            # is a root only where the population itself clusters >=2
+            # distinct product route files (Soc0 ``backend/routers`` holds
+            # admin/chat/oauth/... → each stem keys its own nav group via
+            # the flat-leaf stem rule; a lone orphan file never mints a
+            # root). Never overrides an already-derived dialect root.
+            by_dir: dict[str, set[str]] = defaultdict(set)
+            for f in orphan_files:
+                by_dir[f.rsplit("/", 1)[0]].add(f)
+            for d, fs in sorted(by_dir.items()):
+                if len(fs) >= 2 and d not in roots:
+                    roots.add(d)
+                    route_files.extend(sorted(fs))
         self._roots = sorted(roots, key=len, reverse=True)
         self._display: dict[str, str] = {}
         self._memo: dict[str, GrainTarget | None] = {}
@@ -459,9 +567,33 @@ class TargetGrainIndex:
                 if pf_key not in self._cand_keys:
                     out = GrainTarget("pf", pf_key, display=display)
             else:
-                out = GrainTarget("new", cid, display=display)
+                sib = self._sibling_pf_for(cid)
+                if sib is not None:
+                    # S5a Seg B — no exact-anchor PF at this grain, but a
+                    # SIBLING PF uniquely echoes the group's area token
+                    # (``compliance`` group → the hungry ``compliance-page``
+                    # PF): answer that sibling instead of minting a twin.
+                    out = GrainTarget("pf", sib, display=display)
+                else:
+                    out = GrainTarget("new", cid, display=display)
         self._memo[path] = out
         return out
+
+    def _sibling_pf_for(self, cid: str) -> str | None:
+        """S5a Seg B — the sibling PF key whose core identity uniquely
+        matches the route-GROUP *cid*'s area token, or ``None`` (not
+        armed / no unique sibling / the match is a candidate lane unit).
+        """
+        if not self._sibling_tokens or not self._pf_by_token:
+            return None
+        from faultline.pipeline_v2.spine_anchors import normalize_anchor_key
+        tok = normalize_anchor_key(cid.rsplit(":", 1)[-1].rsplit("/", 1)[-1])
+        if not tok:
+            return None
+        sib = self._pf_by_token.get(tok)
+        if sib is None or sib in self._cand_keys:
+            return None
+        return sib
 
     def display_of(self, canonical_id: str) -> str:
         return self._display.get(

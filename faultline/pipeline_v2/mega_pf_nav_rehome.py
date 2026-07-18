@@ -109,6 +109,7 @@ from faultline.pipeline_v2.transport_handoff import (
     _strict_conservation,
     _strip_carved_files,
     _uf_flow_files,
+    mega_decomp_armed,
 )
 
 __all__ = [
@@ -385,8 +386,12 @@ def run_mega_pf_nav_rehome(
     source_pf = pf_by_key[source_key]
 
     # ── THE grain oracle (shared class, tenant-descent rung ON) ─────
+    # S5a: when armed, the same oracle also derives population roots
+    # (Seg A) and resolves route-GROUP targets to sibling PFs by
+    # core-identity token (Seg B). unset/=0 → both OFF → B24-identical.
     if grain_index is None:
         from faultline.pipeline_v2.spine_anchors import build_spine_anchors
+        armed = mega_decomp_armed()
         anchors = build_spine_anchors(
             devs, routes_index, ctx, extractor_signals, frozenset())
         grain_index = TargetGrainIndex(
@@ -394,6 +399,8 @@ def run_mega_pf_nav_rehome(
             routes_index=routes_index,
             candidate_pf_keys=transport_pf_keys,
             tenant_descent=True,
+            population_roots=armed,
+            sibling_tokens=armed,
         )
     roots = grain_index.routes_roots
     core = _core_identity(source_pf)
