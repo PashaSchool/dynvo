@@ -132,8 +132,11 @@ def test_registry_parity_all_flags_schema_bumped():
     assert "FAULTLINE_SEED_HYGIENE" in ENV_OUTPUT_FLAGS
     assert "FAULTLINE_NAMING_LAW" in ENV_OUTPUT_FLAGS
     # SEMANTIC (horizon-1 flip): the bump rides the flip commit (flip-protocol);
-    # KEY_SCHEMA 30 = the horizon-1 flip — pinned so a silent bump fails loud.
-    assert KEY_SCHEMA_VERSION == 30
+    # pinned so a silent bump fails loud. 30 = the horizon-1 flip;
+    # 31 = the B65-v4 SPA_ROUTER_ENTRIES re-flip (2026-07-18 — the R1
+    # revert had returned unset=OFF under 30, so re-flipping unset=ON
+    # demands its own bump; see the v31 changelog line).
+    assert KEY_SCHEMA_VERSION == 31
 
 
 # ── behaviour matrix: HOMING observables ─────────────────────────────────

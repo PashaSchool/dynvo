@@ -37,10 +37,12 @@ existing sources and stamps ``kind="spa-page"`` (Seg C): an identical
 ``(pattern, method, file)`` triple emitted by an existing source wins and
 stays byte-identical; spa rows only ADD.
 
-Flag ``FAULTLINE_SPA_ROUTER_ENTRIES`` — default OFF. Unset/``0`` ->
-``extract`` returns ``[]`` AND the registry does not even register the
-source (``scan_meta.extractor_hits`` serializes every registered key — the
-B67 kill-switch lesson), so every scan is byte-identical to pre-B65-v3.
+Flag ``FAULTLINE_SPA_ROUTER_ENTRIES`` — default **ON** since the B65-v4
+re-flip (2026-07-18, KEY_SCHEMA 31). Explicit ``0`` -> ``extract``
+returns ``[]`` AND the registry does not even register the source
+(``scan_meta.extractor_hits`` serializes every registered key — the
+B67 kill-switch lesson), so the kill-switch scan is byte-identical to
+pre-B65-v3; unset ≡ explicit ``1``.
 
 Grammar vocabulary lives in ``stacks/spa-router.yaml`` (authoring mirror
 ``eval/stacks/spa-router.yaml``) — mechanisms, not per-repo dictionaries.
@@ -91,12 +93,16 @@ _MAX_MANIFEST_READS = 40
 
 
 def spa_router_entries_enabled() -> bool:
-    """``True`` when ``FAULTLINE_SPA_ROUTER_ENTRIES`` is set truthy (default OFF).
-
-    Unset/``0`` keeps the extractor inert (``extract`` -> ``[]``) AND
-    unregistered (see :mod:`faultline.pipeline_v2.stage_1_extractors`), so
-    every scan is byte-identical to pre-B65-v3."""
-    return os.environ.get(SPA_ROUTER_ENTRIES_ENV, "0").strip().lower() not in {
+    """Default **ON** since the 2026-07-18 B65-v4 re-flip (KEY_SCHEMA 31;
+    full convoy2 on f38760e + operator panel PASS — R1 healed: mint
+    priority/floor gated by the authored-subtree predicate, spa-born
+    mass fence, member-twin bar, barrel-hop, template-literal honest
+    skip). ``FAULTLINE_SPA_ROUTER_ENTRIES=0`` (or false/no/off) keeps
+    the extractor inert (``extract`` -> ``[]``) AND unregistered (see
+    :mod:`faultline.pipeline_v2.stage_1_extractors`), restoring the
+    pre-B65-v3 scan byte-identically — explicit off stays a valid
+    kill-switch forever; unset ≡ explicit ``1``."""
+    return os.environ.get(SPA_ROUTER_ENTRIES_ENV, "1").strip().lower() not in {
         "", "0", "false", "no", "off",
     }
 

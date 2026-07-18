@@ -680,9 +680,14 @@ ENV_OUTPUT_FLAGS = (
     # method=PAGE kind=spa-page, so flows/journeys mint and the B65
     # partition surface-detect sees SPA product surfaces. Registration is
     # flag-gated at the registry (extractor_hits key parity, B67 lesson).
-    # Default OFF; =0/unset byte-identical. Appended WITHOUT a KEY_SCHEMA
-    # bump — the bump rides the separate later flip commit only
-    # (flip-protocol).
+    # Default **ON** since the B65-v4 re-flip (2026-07-18, KEY_SCHEMA 31;
+    # first flip v30 was R1-reverted at f6bd5d6 — route-page anchors won
+    # mint/ownership off feature-dirs; re-landed with the mint-priority
+    # fix chain: authored-subtree fence+floor predicate, spa-born mass
+    # fence, member-twin bar, barrel-hop, template-literal honest skip.
+    # Proof: full convoy2 on f38760e + operator panel PASS 2026-07-18).
+    # Explicit =0 restores pre-B65-v3 byte-identically (kill-switch
+    # forever); unset ≡ explicit "1".
     "FAULTLINE_SPA_ROUTER_ENTRIES",
 )
 
@@ -756,7 +761,18 @@ ENV_OUTPUT_FLAGS = (
 #: guard), _SEED_HYGIENE (no own gates), _BLOB_PARTITION (parked). B49/B51
 #: transport flags stay OFF (superseded). scan_meta.key_schema=30 emitted so
 #: downstream rulers gate new-world logic.
-KEY_SCHEMA_VERSION = 30
+#: v31 (B65-v4 re-flip, 2026-07-18): FAULTLINE_SPA_ROUTER_ENTRIES default
+#: OFF -> ON again — the R1 revert (f6bd5d6) had returned its unset
+#: semantics to OFF under schema 30, so 21 cold boards are cached with
+#: unset=OFF; the re-flip changes what "unset" means and cached entries
+#: keyed under it must not be served across (v16/v21/v25/v27/v28/v29/v30
+#: precedent). Re-land proof: B65-v4 mint-priority fix chain (authored-
+#: subtree fence+floor predicate, spa-born mass fence, member-twin bar,
+#: barrel-hop, template-literal honest skip), full convoy2 on f38760e +
+#: operator panel PASS (2026-07-18). Explicit "0"/"false"/"off" stays a
+#: valid kill-switch forever (inverted-kill-switch unit: unset ≡
+#: explicit "1" byte-identical).
+KEY_SCHEMA_VERSION = 31
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

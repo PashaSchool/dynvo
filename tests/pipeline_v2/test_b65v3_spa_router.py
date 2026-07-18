@@ -78,9 +78,11 @@ def _routes_of(anchors) -> set[tuple[str, str, str]]:
 # ── flag / kill-switch ───────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SEMANTIC flip migration (B65-v4 re-flip, KEY_SCHEMA 31): unset is
+    ON; explicit falsy stays the forever kill-switch."""
     monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
-    assert spa_router_entries_enabled() is False
+    assert spa_router_entries_enabled() is True
     for falsy in ("0", "false", "off", "no", ""):
         monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, falsy)
         assert spa_router_entries_enabled() is False, falsy
@@ -90,8 +92,9 @@ def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_off_is_inert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset flag -> zero candidates even with real vue pages present."""
-    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    """Kill-switch "0" -> zero candidates even with real vue pages present
+    (MECHANICAL pin post-re-flip: unset is now ON)."""
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     files = [
         _vue_pkg(tmp_path),
         _write(tmp_path, "src/pages/settings.vue", "<template/>"),
@@ -103,12 +106,13 @@ def test_off_not_registered_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
     """OFF byte-identity at the REGISTRY surface: scan_meta.extractor_hits
     serializes every registered source key, so with the flag unset the
     extractor must not even REGISTER (B67 kill-switch lesson). With the
-    flag set it must appear, and nothing else changes."""
+    flag set it must appear, and nothing else changes. (MECHANICAL pin
+    post-re-flip: the OFF side is the explicit "0" kill-switch.)"""
     from faultline.pipeline_v2.stage_1_extractors import (
         _load_default_extractors,
     )
 
-    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     names_off = {e.name for e in _load_default_extractors()}
     assert SPA_PAGE_SOURCE not in names_off
 
@@ -575,11 +579,12 @@ def test_seg_c_off_routes_index_byte_identical(tmp_path: Path,
                                                monkeypatch) -> None:
     """Kill-switch at the routes_index surface: flag unset -> the signals
     dict carries no spa key (extractor unregistered+inert) and the built
-    index is byte-identical to pre-B65-v3."""
+    index is byte-identical to pre-B65-v3. (MECHANICAL pin post-re-flip:
+    the OFF side is the explicit "0" kill-switch.)"""
     from faultline.pipeline_v2.extractors.base import AnchorCandidate
     from faultline.pipeline_v2.indexes import build_routes_index
 
-    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     files = [
         _vue_pkg(tmp_path),
         _write(tmp_path, "src/pages/settings.vue", "<template/>"),
@@ -703,12 +708,13 @@ def test_ws_merge_same_slug_twins_lose_routes_when_off(
 ) -> None:
     """SPA flag OFF: the source is NOT armed — coalesced groups drop routes
     exactly as pre-B65-v3 (OFF byte-identity of the merge layer). Only the
-    size-1 group ('graphql') keeps its route."""
+    size-1 group ('graphql') keeps its route. (MECHANICAL pin
+    post-re-flip: the OFF side is the explicit "0" kill-switch.)"""
     from faultline.pipeline_v2.stage_1_per_workspace import (
         _merge_anchors_across_workspaces,
     )
 
-    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
     merged = _merge_anchors_across_workspaces(_hopp_twin_results())
     routes = {r for c in merged[SPA_PAGE_SOURCE] for r in (c.routes or ())}
     assert {r[0] for r in routes} == {"/graphql"}
@@ -910,6 +916,41 @@ def test_mint_fence_inert_without_spa_rows(tmp_path: Path) -> None:
 
     assert "spa_fence_blocked" not in tele
     assert "mint_bar_spa_page_floor" not in tele
+
+
+# ── B65-v4 re-flip — inverted kill-switch (KEY_SCHEMA 31) ────────────────────
+
+
+def test_reflip_inverted_killswitch_unset_equals_explicit_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-flip law: unset ≡ explicit ``"1"`` byte-identical — at the
+    flag helper, at the REGISTRY surface (extractor_hits key parity),
+    and at the extractor output on a real vue fixture."""
+    from faultline.pipeline_v2.stage_1_extractors import (
+        _load_default_extractors,
+    )
+
+    files = [
+        _vue_pkg(tmp_path),
+        _write(tmp_path, "src/pages/settings.vue", "<template/>"),
+        _write(tmp_path, "src/pages/settings/profile.vue", "<template/>"),
+    ]
+
+    monkeypatch.delenv(SPA_ROUTER_ENTRIES_ENV, raising=False)
+    assert spa_router_entries_enabled() is True
+    names_unset = sorted(e.name for e in _load_default_extractors())
+    out_unset = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "1")
+    assert spa_router_entries_enabled() is True
+    names_one = sorted(e.name for e in _load_default_extractors())
+    out_one = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+
+    assert names_unset == names_one
+    assert SPA_PAGE_SOURCE in names_unset
+    assert out_unset == out_one
+    assert out_unset, "the armed world extracts (default ON is live)"
 
 
 # ── B65-v4 Seg A — spa-mint priority (spa never wins a feature-dir) ──────────
