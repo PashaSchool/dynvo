@@ -1683,7 +1683,9 @@ def run_synth_quality(
         # as FOLD SOURCES in the Seg A world only; unset -> empty set ->
         # byte-identical planning.
         _fold_exempt: frozenset[str] = frozenset()
+        _fold_bar: int | None = None
         from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+            READABILITY_MC_BAR as _RG_BAR,
             det_aggregation_enabled as _det_agg_on,
         )
         if _det_agg_on():
@@ -1692,11 +1694,34 @@ def run_synth_quality(
                 str(_get(u, "id", "") or "") for u in user_flows
                 if _is_lattice_born(u)
             )
+            # it5-1a: folds are bar-aware in the Seg A world — the regrain's
+            # readability split runs BEFORE this fold, so a bar-blind fold
+            # could silently rebuild an unreadable giant (UF-058 19->32).
+            _fold_bar = _RG_BAR
         synth_fold_tele = apply_uf_synth_fold(
             user_flows, flows, product_features,
             _verb_class_tokens(vocab or load_naming_vocab()),
             fold_exempt_ids=_fold_exempt,
+            max_winner_members=_fold_bar,
         )
+        # it5-3 LATE same-object dedup (Seg A world only): membership settles
+        # only after the folds — the B31 dup pair ('Manage detectors' x2:
+        # misfiled action residual + regrain family child) shows one object
+        # root only HERE, not at regrain time. Same bar-capped merge, final
+        # coordinates, raw flow names (flow_name_v2 runs later).
+        if _det_agg_on():
+            from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+                merge_same_object_siblings as _late_merge,
+            )
+            _fbid = {}
+            for _f in flows:
+                _k = str(getattr(_f, "uuid", "") or getattr(_f, "name", "") or "")
+                if _k:
+                    _fbid[_k] = _f
+            synth_fold_tele["same_object_merge_late"] = _late_merge(
+                user_flows, _fbid,
+                _verb_class_tokens(vocab or load_naming_vocab()),
+            )
     tele = {
         "enabled": True,
         "backstop_renamed": name_tele["renamed"],

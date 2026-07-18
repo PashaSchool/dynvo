@@ -578,3 +578,149 @@ def test_threat_hunt_single_family_deepens_to_workflow_grain() -> None:
     assert "article" in low and "hypothes" in low and "phase" in low
     # the qualifier path survives in the child names ('threat hunt …')
     assert "threat hunt article" in low
+
+
+# ── it5 (panel re-spot, 2026-07-18) — three named punch-list items ──────────
+
+from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+    merge_same_object_siblings,
+    reclassify_service_internals,
+    rename_raw_resource_rows,
+)
+
+
+def test_mc32_shape_forensics_fold_respects_readability_bar() -> None:
+    """it5-1a forensics lock: UF-058 was a readable 19 at regrain time and
+    grew to 32 via bar-blind B71 folds AFTER the split had run. Under the
+    Seg A world apply_uf_synth_fold refuses any fold whose union crosses
+    READABILITY_MC_BAR — the loser survives, no post-regrain giant."""
+    from faultline.pipeline_v2.uf_synth_fold import apply_uf_synth_fold
+    from faultline.pipeline_v2.naming_contract import (
+        _verb_class_tokens, load_naming_vocab,
+    )
+    verbs = _verb_class_tokens(load_naming_vocab())
+    big = UserFlow(
+        id="UF-058", name="Manage threat hunts", product_feature_id="threat-hunts",
+        intent="manage", resource="threat-hunt",
+        member_flow_ids=[f"th-{i}" for i in range(19)], member_count=19,
+    )
+    echo = UserFlow(
+        id="UF-070", name="Threat hunts", product_feature_id="threat-hunts",
+        intent="manage", resource="threat-hunt",
+        member_flow_ids=[f"da-{i}" for i in range(13)], member_count=13,
+    )
+    from types import SimpleNamespace
+    pf = SimpleNamespace(name="threat-hunts", display_name="Threat hunts")
+    ufs = [big, echo]
+    tele = apply_uf_synth_fold(ufs, [], [pf], verbs,
+                               max_winner_members=READABILITY_MC_BAR)
+    assert tele["folds_refused_readability_bar"] == 1
+    assert {u.id for u in ufs} == {"UF-058", "UF-070"}     # both survive
+    assert big.member_count == 19                          # no giant re-mint
+    # unlimited (non-Seg-A callers): byte-identical legacy fold
+    ufs2 = [
+        big.model_copy(deep=True), echo.model_copy(deep=True),
+    ]
+    tele2 = apply_uf_synth_fold(ufs2, [], [pf], verbs)
+    assert tele2["folds_refused_readability_bar"] == 0
+    assert len(ufs2) == 1 and ufs2[0].member_count == 32   # the it4 defect shape
+
+
+def test_raw_route_resource_renames_from_all_members() -> None:
+    """it5-1b: a row whose resource is a raw deep route id (the tell that ONE
+    member captured the identity) is renamed from ALL members —
+    'Manage threat hunts, <top-fam> & <top-fam>' class."""
+    names = (
+        [f"create-threat-hunts-feed-poll-{i}-flow" for i in range(5)]
+        + [f"browse-threat-hunts-feeds-{i}-flow" for i in range(4)]
+        + [f"browse-threat-hunts-articles-{i}-flow" for i in range(5)]
+        + [f"create-threat-hunts-hunt-run-{i}-flow" for i in range(3)]
+        + ["create-threat-hunts-article-adopt-detectors-flow"]
+    )
+    uf, flows = _big_cluster("UF-058", "Create detectors from threat hunt articles",
+                             names, pf="threat-hunts", domain="threat_hunt")
+    uf.resource = "api-threat-hunt-article-article-id-adopt-detector"
+    fbid = {f.uuid: f for f in flows}
+    tele = rename_raw_resource_rows([uf], fbid, _verbs())
+    assert tele["renamed"] == 1
+    assert uf.resource == "threat-hunts"                # compound object root
+    # THE panel-requested shape, verbatim class:
+    assert uf.name == "Manage threat hunts, feeds & articles"
+    low = uf.name.lower()
+    assert "adopt" not in low and "detector" not in low  # the ONE member lost the title
+
+
+def test_handles_internals_reclassified_with_fate() -> None:
+    """it5-2: a sizeable ROUTELESS row spanning heterogeneous service
+    subsystems (the 'Manage handles' black hole) reclassifies to
+    category=system with an honest 'Internal <domain> operations' name;
+    members conserved, fate recorded."""
+    names = [
+        "handle-genai-queries-flow", "handle-filter-queries-flow",
+        "handle-inventory-queries-flow", "fetch-threat-intelligence-flow",
+        "analyze-ai-signals-flow", "run-focus-agent-flow",
+        "tune-detector-beam-flow", "adopt-mitre-pack-flow",
+    ]
+    uf, flows = _big_cluster("UF-056", "Manage handles", names,
+                             pf="insights", domain="service")
+    uf.routes = []
+    fbid = {f.uuid: f for f in flows}
+    before = set(uf.member_flow_ids)
+    tele = reclassify_service_internals([uf], fbid, _verbs())
+    assert tele["reclassified"] == 1
+    assert tele["fate"] == {"UF-056": "system-internals"}
+    assert uf.category == "system" and uf.ui_tier == "no-ui"
+    assert uf.name == "Internal service operations"
+    assert set(uf.member_flow_ids) == before             # conservation
+    # anti-case: a ROUTE-backed row of one dominant surface is untouched
+    uf2, flows2 = _big_cluster("UF-007", "Browse cases",
+                               ["browse-cases-1-flow", "browse-cases-2-flow",
+                                "view-cases-3-flow", "list-cases-4-flow"])
+    uf2.routes = ["/api/cases"]
+    tele2 = reclassify_service_internals([uf2], {f.uuid: f for f in flows2}, _verbs())
+    assert tele2["reclassified"] == 0 and uf2.category == "interactive"
+
+
+def test_same_object_siblings_collapse_b31() -> None:
+    """it5-3: two lattice-born rows of one PF whose members share ONE object
+    root (the 'Manage detectors' + 'Manage detectors (Findings)' byte-dup)
+    merge into a single 'Manage detectors' row — no collision remains for
+    naming to qualify with a suffix."""
+    a_names = [f"create-detector-item-{i}-flow" for i in range(8)]
+    b_names = [f"view-detector-thing-{i}-flow" for i in range(6)]
+    uf_a, fl_a = _big_cluster("UF-L-361956e671", "Manage findings", a_names,
+                              pf="findings", domain="finding")
+    uf_a.resource = "detector"          # the late-time truth (post-fold state)
+    uf_b, fl_b = _big_cluster("UF-L-raa7821d504", "Manage detectors", b_names,
+                              pf="findings", domain="detector")
+    # a qualifier-family child of the same object must NOT join the merge:
+    uf_c, fl_c = _big_cluster("UF-L-r7e4988deb5", "Manage detector coverages",
+                              ["view-detector-coverage-1-flow",
+                               "view-detector-coverage-2-flow"],
+                              pf="findings", domain="detector")
+    uf_c.resource = "coverage"
+    ufs = [uf_a, uf_b, uf_c]
+    fbid = {f.uuid: f for f in fl_a + fl_b + fl_c}
+    tele = merge_same_object_siblings(ufs, fbid, _verbs())
+    assert tele["merged_rows"] == 1
+    ids = {u.id for u in ufs}
+    assert "UF-L-r7e4988deb5" in ids                     # child untouched
+    assert len(ufs) == 2
+    merged = next(u for u in ufs if u.id != "UF-L-r7e4988deb5")
+    assert merged.name == "Manage detectors" and "(" not in merged.name
+    assert merged.member_count == 14                     # union, conserved
+
+
+def test_different_route_objects_stay_separate() -> None:
+    """it5-3 anti-case: lattice siblings over DIFFERENT objects never merge."""
+    uf_a, fl_a = _big_cluster("UF-L-obj1", "Manage cases",
+                              [f"create-case-{i}-flow" for i in range(4)],
+                              pf="ops", domain="case")
+    uf_b, fl_b = _big_cluster("UF-L-obj2", "Manage findings",
+                              [f"view-finding-{i}-flow" for i in range(4)],
+                              pf="ops", domain="finding")
+    ufs = [uf_a, uf_b]
+    tele = merge_same_object_siblings(
+        ufs, {f.uuid: f for f in fl_a + fl_b}, _verbs(),
+    )
+    assert tele["merged_rows"] == 0 and len(ufs) == 2

@@ -411,17 +411,47 @@ def apply_uf_synth_fold(
     product_features: list[Any],
     verbs: frozenset[str],
     fold_exempt_ids: frozenset[str] = frozenset(),
+    max_winner_members: int | None = None,
 ) -> dict[str, Any]:
     """Apply the plan IN PLACE: rename (L-C2), fold echoes/families into the
     winner (union member_flow_ids — conservation), drop folded rows. Only ever
     called behind ``naming_pack_enabled`` -> OFF path never runs -> byte-identical.
     ``fold_exempt_ids`` — see :func:`plan_uf_synth` (never fold sources).
+    ``max_winner_members`` (S2 Seg A it5-1a): a fold whose union would push
+    the winner OVER this bar is REFUSED — the it4 panel refutation: UF-058
+    was a readable 19 at regrain time, then bar-blind folds grew it to an
+    unreadable 32 AFTER the split pass had already run. ``None`` (every
+    caller outside the Seg A world) = unlimited, byte-identical behavior.
     Returns telemetry."""
     plan = plan_uf_synth(
         user_flows, flows, product_features, verbs,
         fold_exempt_ids=fold_exempt_ids,
     )
     by_id = {_uf_id(u): u for u in user_flows}
+    folds_refused_bar = 0
+    if max_winner_members is not None and plan.fold:
+        # Readability-bar guard: refuse (drop from the plan) every fold whose
+        # member union would exceed the bar; the loser row simply survives.
+        # Winner unions are evaluated incrementally in the deterministic plan
+        # order so chained folds onto one winner respect the bar cumulatively.
+        union_sizes: dict[str, set[str]] = {}
+        kept_folds: dict[str, str] = {}
+        for loser_id, winner_id in plan.fold.items():
+            loser, winner = by_id.get(loser_id), by_id.get(winner_id)
+            if loser is None or winner is None:
+                kept_folds[loser_id] = winner_id
+                continue
+            acc = union_sizes.setdefault(
+                winner_id, set(getattr(winner, "member_flow_ids", None) or []),
+            )
+            lm = set(getattr(loser, "member_flow_ids", None) or [])
+            if len(acc | lm) > max_winner_members:
+                folds_refused_bar += 1
+                plan.reasons.pop(loser_id, None)
+                continue
+            acc |= lm
+            kept_folds[loser_id] = winner_id
+        plan.fold = kept_folds
     for uid, new_name in plan.rename.items():
         u = by_id.get(uid)
         if u is not None and _uf_id(u) not in plan.fold:
@@ -527,4 +557,5 @@ def apply_uf_synth_fold(
         "lc4_collisions": len(plan.collisions),
         "lc4_qualified": lc4_qualified,
         "total_folded": len(plan.fold),
+        "folds_refused_readability_bar": folds_refused_bar,
     }

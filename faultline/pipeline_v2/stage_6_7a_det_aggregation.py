@@ -290,7 +290,7 @@ def _clean_flow_tokens(name: str, verbs: frozenset[str]) -> tuple[list[str], str
     if toks and toks[-1] == "flow":
         toks = toks[:-1]
     verb = ""
-    while toks and toks[0] in verbs:
+    while toks and (toks[0] in verbs or toks[0] in _HTTP_METHOD_TOKENS):
         verb = verb or toks[0]
         toks = toks[1:]
     while toks and toks[0] in _PREFIX_TOKENS:
@@ -312,6 +312,14 @@ _CONNECTOR_TOKENS = frozenset({"by", "id", "ids", "all", "of", "for"})
 #: time (flow_name_v2 renames AFTER this pass). 'api' is path scaffolding,
 #: never the object root ('api-admin-chat…' roots at 'admin').
 _PREFIX_TOKENS = frozenset({"api"})
+
+#: HTTP-method verb tokens — raw route-derived names lead with the METHOD
+#: ('post-api-detectors-…', 'get-api-detectors-overview…'); protocol
+#: grammar, consumed like verbs (it5-3 forensics: unconsumed 'post' roots
+#: split one detector surface into two majority-root worlds).
+_HTTP_METHOD_TOKENS = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options"}
+)
 
 
 def _family_of(tokens: list[str], root: str, depth: int = 0) -> str:
@@ -359,7 +367,11 @@ def _title(s: str) -> str:
 
 
 def _plural(tok: str) -> str:
-    return tok if tok.endswith("s") else tok + "s"
+    if not tok or tok.endswith("s"):
+        return tok
+    if tok.endswith("y") and len(tok) > 2 and tok[-2] not in "aeiou":
+        return tok[:-1] + "ies"          # entry -> entries, policy -> policies
+    return tok + "s"
 
 
 def _entry_of(fl: Any) -> str:
@@ -572,6 +584,198 @@ def split_oversized_ufs(
     return tele
 
 
+def _is_raw_route_resource(res: str) -> bool:
+    """A resource that is a RAW deep route id ('api-threat-hunt-article-
+    article-id-adopt-detector') — the it5-1b tell: a single member's route
+    id captured the cluster identity. Structural: connector tokens inside,
+    or a path-grammar depth no product noun-phrase reaches (>= 5 segments
+    after scaffolding)."""
+    toks = [t for t in str(res or "").lower().split("-") if t]
+    while toks and toks[0] in _PREFIX_TOKENS:
+        toks = toks[1:]
+    if any(t in _CONNECTOR_TOKENS for t in toks):
+        return True
+    return len(toks) >= 5
+
+
+def rename_raw_resource_rows(
+    user_flows: list["UserFlow"],
+    flows_by_id: dict[str, Any],
+    verbs: frozenset[str],
+) -> dict[str, Any]:
+    """it5-1b — a row whose RESOURCE is a raw deep route id was named by ONE
+    member's route (panel refutation exhibit: UF-058 'Create detectors from
+    threat hunt articles' over the WHOLE threat-hunt surface). Rebuild name
+    + resource from ALL members: majority verb-class + root + the top
+    qualifier families -> 'Manage threat hunts, feeds & articles'."""
+    tele = {"renamed": 0}
+    for u in user_flows:
+        if u.is_coverage_marker or u.synthesis_reason:
+            continue
+        members = list(u.member_flow_ids or [])
+        if len(members) < READABILITY_MC_BAR // 2:   # small rows: refiner's call
+            continue
+        if not _is_raw_route_resource(u.resource or ""):
+            continue
+        names = [
+            str(getattr(flows_by_id.get(m), "name", "") or m) for m in members
+        ]
+        root = _majority_root(names, verbs)
+        if not root:
+            continue
+
+        def _fam_counts(depth: int) -> dict[str, int]:
+            out: dict[str, int] = defaultdict(int)
+            for nm in names:
+                toks, _ = _clean_flow_tokens(nm, verbs)
+                fam = _family_of(toks, root, depth)
+                if fam:
+                    out[fam] += 1
+            return out
+
+        vlist = [_clean_flow_tokens(nm, verbs)[1] for nm in names]
+        fams = _fam_counts(0)
+        root_disp = _plural(root)
+        depth_used = 0
+        if fams:
+            dom_fam, dom_n = sorted(
+                fams.items(), key=lambda kv: (-kv[1], kv[0]),
+            )[0]
+            if dom_n * 2 > len(members):
+                # A dominant depth-0 family is part of the object COMPOUND
+                # ('threat'+'hunt' -> 'threat hunts'); real qualifier
+                # families live one token deeper (feeds / articles).
+                root_disp = f"{_sing(root)} {_plural(dom_fam)}"
+                fams = _fam_counts(1)
+                depth_used = 1
+        # Families echoing a token already in the object display are noise
+        # ('Manage org knowledges, … & knowledges').
+        _shown = {_sing(t) for t in root_disp.split()}
+        top = [
+            f for f, _ in sorted(fams.items(), key=lambda kv: (-kv[1], kv[0]))
+            if _sing(f) not in _shown
+        ][:2]
+        base = f"{_title(_family_verb(vlist))} {root_disp}"
+        if len(top) == 2:
+            u.name = f"{base}, {_plural(top[0])} & {_plural(top[1])}"
+        elif len(top) == 1:
+            u.name = f"{base} & {_plural(top[0])}"
+        else:
+            u.name = base
+        u.resource = root if depth_used == 0 else root_disp.replace(" ", "-")
+        tele["renamed"] += 1
+    return tele
+
+
+def merge_same_object_siblings(
+    user_flows: list["UserFlow"],
+    flows_by_id: dict[str, Any],
+    verbs: frozenset[str],
+) -> dict[str, Any]:
+    """it5-3 — B31 dup class: two lattice-born rows of one PF covering the
+    SAME OBJECT (their members' majority name-root is equal — the it4 pair:
+    a misfiled action child whose members are detector flows + the regrain's
+    detector family child, byte-identical route lists) merge into one
+    'Manage <object>s' row. Bar-capped (never re-mints a giant); rows of
+    DIFFERENT objects never merge (anti-case)."""
+    tele = {"groups": 0, "merged_rows": 0}
+    groups: dict[tuple[str, str], list["UserFlow"]] = defaultdict(list)
+    for u in user_flows:
+        if u.is_coverage_marker or u.synthesis_reason:
+            continue
+        if not str(u.id or "").startswith("UF-L-"):
+            continue
+        members = list(u.member_flow_ids or [])
+        if not members:
+            continue
+        names = [
+            str(getattr(flows_by_id.get(m), "name", "") or m) for m in members
+        ]
+        root = _majority_root(names, verbs)
+        if not root:
+            continue
+        # Only GENERIC rows of the object join a merge group: a row whose own
+        # resource is a specific qualifier family ('coverage' under root
+        # 'detector' — a regrain child) is a distinct sub-surface, never a
+        # dup. The B31 pair are both resource=='detector' == root.
+        res = _sing(str(u.resource or "").strip())
+        if res and res != _sing(root) and _sing(root) not in res.split("-"):
+            continue
+        groups[(str(u.product_feature_id or ""), root)].append(u)
+
+    dead: set[str] = set()
+    for (pf, root), rows in sorted(groups.items()):
+        if len(rows) < 2:
+            continue
+        union: set[str] = set()
+        for r in rows:
+            union.update(r.member_flow_ids or [])
+        if len(union) > READABILITY_MC_BAR:
+            continue                       # never rebuild a giant
+        tele["groups"] += 1
+        rows = sorted(rows, key=lambda r: (-(r.member_count or 0), r.id or ""))
+        canon = rows[0]
+        routes: set[str] = set(canon.routes or [])
+        for r in rows[1:]:
+            routes.update(r.routes or [])
+            dead.add(r.id)
+            tele["merged_rows"] += 1
+        canon.member_flow_ids = sorted(union)
+        canon.member_count = len(union)
+        canon.routes = sorted(routes)
+        canon.name = f"Manage {_plural(root)}"
+        canon.resource = root
+        canon.intent = "manage"
+    if dead:
+        user_flows[:] = [u for u in user_flows if u.id not in dead]
+    return tele
+
+
+def reclassify_service_internals(
+    user_flows: list["UserFlow"],
+    flows_by_id: dict[str, Any],
+    verbs: frozenset[str],
+) -> dict[str, Any]:
+    """it5-2 — the dev-artifact black hole ('Manage handles' mc=22: mock-data
+    query generators + tuning loops + vendor clients under a scraped
+    'handle-*' prefix). Structural signature: a sizeable row with ZERO route
+    evidence (routes[] empty — the engine's own routelessness signal) whose
+    families are HETEROGENEOUS (no family holds half the members = no single
+    product surface). Such a row is service internals, not a product
+    journey: category="system" + an honest 'Internal <domain> operations'
+    name. Conservation: members untouched, fate recorded by id."""
+    tele: dict[str, Any] = {"reclassified": 0, "fate": {}}
+    for u in user_flows:
+        if u.is_coverage_marker or u.synthesis_reason:
+            continue
+        members = list(u.member_flow_ids or [])
+        if len(members) < MIN_FAMILY_MEMBERS * 2:
+            continue
+        if u.routes:
+            continue                      # any route surface -> a product row
+        names = [
+            str(getattr(flows_by_id.get(m), "name", "") or m) for m in members
+        ]
+        # Heterogeneity = ROOT-token dispersion: a product row is one object
+        # family ('detector' 13/13 — homogeneous, keep); the internals black
+        # hole spans many unrelated roots (genai/filter/inventory/mitre/…).
+        roots: dict[str, int] = defaultdict(int)
+        for nm in names:
+            toks, _ = _clean_flow_tokens(nm, verbs)
+            if toks:
+                roots[_sing(toks[0])] += 1
+        root_share = max(roots.values()) / len(members) if roots else 0.0
+        if root_share >= 0.5:
+            continue                      # one dominant object -> keep as-is
+        dom = str(u.domain or "").replace("_", " ").strip() or "service"
+        u.category = "system"
+        u.name = f"Internal {dom} operations"
+        u.ui_tier = "no-ui"
+        tele["reclassified"] += 1
+        tele["fate"][u.id] = "system-internals"
+    return tele
+
+
 def sanitize_lattice_domains(user_flows: list["UserFlow"]) -> int:
     """B2 display law — the raw 'lattice:*' token never ships in the domain
     field: replace with the row's resource (or None). The lattice-born
@@ -618,6 +822,15 @@ def readability_regrain(
     tele["oversplit_pass2"] = split_oversized_ufs(
         user_flows, flows_by_id, verbs,
     )
+    tele["same_object_merge"] = merge_same_object_siblings(
+        user_flows, flows_by_id, verbs,
+    )
+    tele["raw_resource_rename"] = rename_raw_resource_rows(
+        user_flows, flows_by_id, verbs,
+    )
+    tele["service_internals"] = reclassify_service_internals(
+        user_flows, flows_by_id, verbs,
+    )
     tele["domains_sanitized"] = sanitize_lattice_domains(user_flows)
     after: set[str] = set()
     for u in user_flows:
@@ -635,7 +848,10 @@ __all__ = [
     "aggregate_user_flows",
     "collapse_crud_action_children",
     "det_aggregation_enabled",
+    "merge_same_object_siblings",
     "readability_regrain",
+    "reclassify_service_internals",
+    "rename_raw_resource_rows",
     "sanitize_lattice_domains",
     "split_oversized_ufs",
 ]
