@@ -74,6 +74,13 @@ _VOLATILE_IN_SCAN_META = frozenset(
         "stage_6_3_cache_hits",
         "stage_6_55_page_interior",
         "router_files_parsed",
+        # S3 overturn arbiter (FAULTLINE_OVERTURN_ARBITER=1) — pure
+        # run-forensics: the ledger census + post-freeze conflict census
+        # "who wanted to throw". Present only when the flag is ON; stripped
+        # so the ON==OFF byte-identity comparison sees content only (the
+        # arbiter is byte-identical to OFF by construction — write-through).
+        "overturns",
+        "overturn_conflicts",
     }
 )
 
