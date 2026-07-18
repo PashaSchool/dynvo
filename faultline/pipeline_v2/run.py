@@ -398,6 +398,24 @@ def run_pipeline_v2(
     from faultline.pipeline_v2.shared_source import SharedSourceState
     ctx.shared_source = SharedSourceState(ctx)
 
+    # ── S3 overturn ledger — install the arbiter observer (opt-in) ─────
+    # Records every ``product_feature_id`` overturn (dev→PF link + UF-home)
+    # across the ~13-pass cascade when FAULTLINE_OVERTURN_ARBITER=1. The
+    # observer is write-through (the original setattr ALWAYS runs) so scan
+    # output stays byte-identical to OFF; the recorded ledger feeds
+    # ``scan_meta.overturns`` + the post-freeze conflict census via the
+    # arbiter's single application point (phase_finalize, before Stage 7).
+    # Default OFF → observer never installed, byte-identical to main.
+    from faultline.pipeline_v2.overturn_ledger import (
+        OverturnLedger as _OverturnLedger,
+        install_ledger as _install_overturn_ledger,
+        overturn_arbiter_enabled as _overturn_arbiter_enabled,
+    )
+    ctx.overturn_ledger = None
+    if _overturn_arbiter_enabled():
+        ctx.overturn_ledger = _OverturnLedger()
+        _install_overturn_ledger(ctx.overturn_ledger)
+
     # ── Phase-0 LLM decision logging (Wave 2a) — open the scan bracket ──
     # Every LLM call from here on appends one JSONL record to
     # ``<training dir>/decisions-<run_id>.jsonl`` via the CostTracker
@@ -1054,6 +1072,15 @@ def run_pipeline_v2(
         repo_class_result=repo_class_result,
         prev_scan_json=prev_scan_json,
     )
+
+    # ── S3 overturn ledger — deactivate the observer for this scan ─────
+    # The arbiter already consumed the ledger inside the finalize phase
+    # (before Stage 7). Revert this thread's setattr wrapper to passthrough
+    # so a later scan on the same thread is unaffected. No-op when OFF.
+    from faultline.pipeline_v2.overturn_ledger import (
+        uninstall_ledger as _uninstall_overturn_ledger,
+    )
+    _uninstall_overturn_ledger()
 
     # ── Flush queued replay-capture writes (perf wave R1) ───────────
     # The finalize phase queued the last stage-input documents; block

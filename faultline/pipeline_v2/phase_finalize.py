@@ -3313,6 +3313,26 @@ def run_finalize_phase(
                 f"coverage_gaps left as-is"
             )
 
+    # ── S3 arbiter — single application point (before Stage 7 output) ──
+    # Every product_feature_id proposal for this scan has now been recorded
+    # by the observer. Run the arbiter ONCE: its rung-priority replay ==
+    # the current pass order, so it reproduces the cascade byte-for-byte
+    # (record order == execution order → last-writer-wins), and it emits
+    # the overturn census + the post-freeze conflict census into scan_meta
+    # (both keys are stripped by normalize_scan — run-forensics, never
+    # content). No-op unless FAULTLINE_OVERTURN_ARBITER=1.
+    _overturn_ledger = getattr(ctx, "overturn_ledger", None)
+    if _overturn_ledger is not None:
+        from faultline.pipeline_v2.overturn_ledger import finalize_arbiter
+        try:
+            finalize_arbiter(
+                _overturn_ledger, features, user_flows, scan_meta,
+            )
+        except Exception as exc:  # noqa: BLE001 — telemetry never breaks a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"overturn-arbiter failed ({exc}); census skipped"
+            )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {
