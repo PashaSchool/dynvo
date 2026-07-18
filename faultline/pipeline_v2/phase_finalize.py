@@ -828,6 +828,56 @@ def run_finalize_phase(
             )
         scan_meta["stage_6_7_user_flows"] = dict(uf_telemetry)
 
+        # ── Stage 6.7a — deterministic UF pre-clustering (S2 Seg A, OFF) ─
+        # Under FAULTLINE_UF_DET_AGGREGATION the journey STRUCTURE is folded
+        # deterministically (one cluster per rollup domain, conservation-
+        # complete member unions) and the LLM layer may ONLY NAME it: the
+        # 6.7b refiner still refines presentation per domain (its contract
+        # forbids membership changes), while the structural LLM stages —
+        # 6.7c mega-split and the 6.7d journey rewrite — are SKIPPED below.
+        # Consequence (probe 2026-07-18): UF-COUNT invariant to LLM death
+        # (fail-open 264-vs-78 class dies structurally) and to resampling
+        # (−26% whole-batch class). Default OFF → byte-identical.
+        from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+            aggregate_user_flows as _det_aggregate,
+            det_aggregation_enabled as _det_agg_on,
+        )
+        if _det_agg_on() and user_flows:
+            write_stage_input(run_dir, 6, "det_aggregation", {
+                "user_flows": user_flows,
+                "scan_meta": scan_meta,
+            })
+            with StageLogger(run_dir, 6, "det_aggregation") as log6_7a:
+                user_flows, det_agg_telemetry = _det_aggregate(user_flows)
+                log6_7a.info(
+                    "det_aggregation: %d rollup UFs -> %d domain clusters "
+                    "(%d merged, %d singleton; members %d -> %d; "
+                    "scattered=%d)" % (
+                        det_agg_telemetry["input_ufs"],
+                        det_agg_telemetry["clusters"],
+                        det_agg_telemetry["merged_clusters"],
+                        det_agg_telemetry["singleton_clusters"],
+                        det_agg_telemetry["members_in"],
+                        det_agg_telemetry["members_out"],
+                        det_agg_telemetry["scattered"],
+                    ),
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=6,
+                    stage_name="det_aggregation",
+                    payload={
+                        **det_agg_telemetry,
+                        "user_flows": [uf.model_dump() for uf in user_flows],
+                    },
+                    run_dir=run_dir,
+                )
+            # The fate map is per-input-UF detail — artifact-only; scan_meta
+            # carries the counters (lean output law).
+            scan_meta["stage_6_7a_det_aggregation"] = {
+                k: v for k, v in det_agg_telemetry.items() if k != "fate"
+            }
+
         # ── Stage 6.7c — Mega-UF semantic split (additive Sonnet) ──────
         # 6.7's deterministic clusterer over-merges genuinely-distinct journeys
         # into a few mega-UFs (cal.com: one 'availability' UF spanned 33
@@ -836,6 +886,8 @@ def run_finalize_phase(
         # residual sub-UF, no flow dropped). Runs BEFORE 6.7b so the refiner
         # names the split UFs. Shared CostTracker; graceful degrade keeps the
         # mega-UF on any LLM failure. Measured F1 64→74 on cal.com vs uf-golden.
+        # S2 Seg A: skipped under FAULTLINE_UF_DET_AGGREGATION — the split is a
+        # STRUCTURAL LLM decision; under det-aggregation the LLM only names.
         from faultline.pipeline_v2.stage_6_7c_uf_splitter import split_mega_user_flows
         # Content-hash LLM cache for the UF-path stages (6.7c split + 6.7b
         # refine): same backend Stage 3 / Stage 8 use (threaded on the scan
@@ -844,32 +896,33 @@ def run_finalize_phase(
         # per-stage env opt-outs) behaves exactly as pre-cache. Best-effort —
         # any cache fault inside the stages degrades to a live call.
         _uf_llm_cache = getattr(ctx, "cache_backend", None)
-        write_stage_input(run_dir, 6, "uf_splitter", {
-            "user_flows": user_flows,
-            "bipartite_flows": list(bipartite.flows),
-            "ctx": ctx,
-            "scan_meta": scan_meta,
-        })
-        with StageLogger(run_dir, 6, "uf_splitter") as log6_7c:
-            user_flows, uf_split_telemetry = split_mega_user_flows(
-                user_flows,
-                bipartite.flows,
-                cost_tracker=tracker,
-                log=log6_7c,
-                llm_health=llm_health,
-                cache=_uf_llm_cache,
-            )
-            write_stage_artifact(
-                ctx.repo_path,
-                stage_index=6,
-                stage_name="uf_splitter",
-                payload={
-                    **uf_split_telemetry,
-                    "user_flows": [uf.model_dump() for uf in user_flows],
-                },
-                run_dir=run_dir,
-            )
-        scan_meta["stage_6_7c_uf_splitter"] = dict(uf_split_telemetry)
+        if not _det_agg_on():
+            write_stage_input(run_dir, 6, "uf_splitter", {
+                "user_flows": user_flows,
+                "bipartite_flows": list(bipartite.flows),
+                "ctx": ctx,
+                "scan_meta": scan_meta,
+            })
+            with StageLogger(run_dir, 6, "uf_splitter") as log6_7c:
+                user_flows, uf_split_telemetry = split_mega_user_flows(
+                    user_flows,
+                    bipartite.flows,
+                    cost_tracker=tracker,
+                    log=log6_7c,
+                    llm_health=llm_health,
+                    cache=_uf_llm_cache,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=6,
+                    stage_name="uf_splitter",
+                    payload={
+                        **uf_split_telemetry,
+                        "user_flows": [uf.model_dump() for uf in user_flows],
+                    },
+                    run_dir=run_dir,
+                )
+            scan_meta["stage_6_7c_uf_splitter"] = dict(uf_split_telemetry)
 
         # ── Stage 6.7b — User-Flow LLM refiner (additive Haiku) ─────────
         # One Haiku call per domain over the deterministic 6.7 UF clusters:
@@ -935,8 +988,15 @@ def run_finalize_phase(
     from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
         is_enabled as _s67d_enabled_probe,
     )
+    from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+        det_aggregation_enabled as _det_agg_probe,
+    )
+    # S2 Seg A: with det-aggregation ON the 6.7d rewrite is skipped even on
+    # the keyed channel, so the §4.5 conservation law must run HERE against
+    # the deterministic clusters (same law the keyless path enforces).
     if (anchored_mint_applied and not uf_suppressed
-            and not _s67d_enabled_probe() and user_flows):
+            and (not _s67d_enabled_probe() or _det_agg_probe())
+            and user_flows):
         from faultline.pipeline_v2.conservation import apply_uf_conservation
         with StageLogger(run_dir, 6, "spine_conservation") as log_sc:
             try:
@@ -967,7 +1027,10 @@ def run_finalize_phase(
         is_enabled as _s67d_enabled,
         run_journey_abstraction,
     )
-    if _s67d_enabled() and not uf_suppressed:
+    # S2 Seg A: under FAULTLINE_UF_DET_AGGREGATION the 6.7d structural rewrite
+    # is skipped — the journey structure is the deterministic 6.7a clusters and
+    # the LLM layer (6.7b refiner) only NAMES them (fit = output-layer law).
+    if _s67d_enabled() and not uf_suppressed and not _det_agg_probe():
         write_stage_input(run_dir, 6, "journey_abstraction", {
             "user_flows": user_flows,
             "product_features": product_features,

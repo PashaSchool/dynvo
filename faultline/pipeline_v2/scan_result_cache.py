@@ -729,6 +729,16 @@ ENV_OUTPUT_FLAGS = (
     # only. Default OFF; =0/unset -> max_tokens==DEFAULT + cache key unchanged ->
     # byte-identical. No KEY_SCHEMA bump (append-only — reconciled at merge).
     "FAULTLINE_UF_REFINE_TOKEN_SCALE",
+    # S2 Seg A (2026-07-18) — deterministic UF pre-clustering: journey STRUCTURE
+    # is computed deterministically (Stage 6.7a: one conservation-complete
+    # cluster per rollup domain) and the LLM layer only NAMES it (6.7b refiner);
+    # the structural LLM stages (6.7c mega-split, 6.7d journey rewrite) are
+    # skipped. UF-COUNT becomes invariant to LLM death (fail-open 264-vs-78
+    # class) and to resampling (−26% whole-batch class) — probe 2026-07-18.
+    # Reshapes user_flows[] (membership/grain/ids) + downstream homes. Default
+    # OFF; =0/unset restores the LLM-structured path byte-identically. No
+    # KEY_SCHEMA bump (append-only — reconciled at merge).
+    "FAULTLINE_UF_DET_AGGREGATION",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
