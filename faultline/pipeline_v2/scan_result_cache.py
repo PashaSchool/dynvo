@@ -689,6 +689,25 @@ ENV_OUTPUT_FLAGS = (
     # Explicit =0 restores pre-B65-v3 byte-identically (kill-switch
     # forever); unset ≡ explicit "1".
     "FAULTLINE_SPA_ROUTER_ENTRIES",
+    # S1 (2026-07-18) — owner-oracle: ONE deterministic file→owner election
+    # (owner_oracle.elect_primary_owners — the Stage 6.97 rule: module-subtree
+    # > non-facet > dir-count > flows > slug) replaces the two ORDER-SENSITIVE
+    # first-claimant owner resolutions (indexes.build_path_index R1 by
+    # features-list order + conservation.build_file_pf_owner R2 by dev-path
+    # order). The census probe measured their split at PF grain 0.85%
+    # documenso / 1.23% cal / 3.08% novu (dev grain 6.47/2.55/19.14) — the
+    # inter-version "spilling" a feature insert/reorder caused with no change
+    # in evidence. The oracle is computed ONCE post-devgrain (before the
+    # emission path_index rebuild) and consumed by the path_index refresh (R1),
+    # the terminal-home conservation votes (R2), and transitively i16 / dispatch
+    # (they read the refreshed path_index). Facet/shared exclusion survives as
+    # a COVERAGE VIEW over the election — same owner, filtered visibility, not
+    # a separate rule. The oracle NEVER moves membership (READ-resolution only;
+    # conservation ladder untouched). Reshapes path_index[].feature_uuid on
+    # contested files + the UF homes those owners drive. Default OFF; =0/unset
+    # restores the first-claimant resolutions byte-identically. No KEY_SCHEMA
+    # bump (the path_index-consumer shift rides the separate later flip commit).
+    "FAULTLINE_OWNER_ORACLE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

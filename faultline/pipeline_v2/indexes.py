@@ -178,6 +178,8 @@ def _derive_route_from_path(path: str) -> tuple[str, str] | None:
 def build_path_index(
     features: list[dict[str, Any]],
     flows: list[dict[str, Any]] | None = None,
+    *,
+    file_owner: dict[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build ``{path: {feature_uuid, flow_uuids}}`` from features + flows.
 
@@ -186,6 +188,16 @@ def build_path_index(
             by lineage assignment) and ``paths``.
         flows: optional list of flow dicts; each carries ``uuid`` and
             ``paths``.
+        file_owner: OPTIONAL S1 owner-oracle override — ``{path: owning-dev
+            uuid}`` from the deterministic election
+            (:func:`owner_oracle.OwnerElection.file_owner_uuid_map`). When
+            provided (``FAULTLINE_OWNER_ORACLE`` on), a path the oracle owns
+            takes the elected owner REGARDLESS of features-list order (the
+            order-sensitivity S1 kills); a path the oracle does not own (a
+            directory path, or a file no dev's expansion reached) falls back
+            to the shipped first-claimant rule. ``None`` (default / flag off)
+            → pure first-claimant → byte-identical. The key set of the index
+            is unchanged either way — only the owner VALUE can differ.
 
     Returns:
         A dict keyed by path. Stable order via sorted keys is left to
@@ -202,6 +214,18 @@ def build_path_index(
             entry = index.setdefault(
                 path, {"feature_uuid": "", "flow_uuids": []},
             )
+            if file_owner is not None:
+                elected = file_owner.get(path)
+                if elected:
+                    # Oracle owns this path: the election wins deterministically
+                    # (idempotent — re-visiting sets the same uuid).
+                    entry["feature_uuid"] = elected
+                    continue
+                # Unelected path (dir / unreached file) — first-claimant fallback
+                # so the flag never DROPS an owner the shipped path would set.
+                if not entry["feature_uuid"]:
+                    entry["feature_uuid"] = f_uuid
+                continue
             if entry["feature_uuid"] and entry["feature_uuid"] != f_uuid:
                 logger.debug(
                     "path_index: %s already owned by %s; ignoring %s",

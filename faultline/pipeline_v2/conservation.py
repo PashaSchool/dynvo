@@ -107,6 +107,8 @@ def _norm(path: str) -> str:
 def build_file_pf_owner(
     dev_views: Iterable[dict[str, Any]],
     real_pf_keys: frozenset[str] | None = None,
+    *,
+    file_owner: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """``{file: pf_key}`` over the developer features' OWNED paths.
 
@@ -116,7 +118,18 @@ def build_file_pf_owner(
     their files must not vote. When ``real_pf_keys`` is given, only PFs
     in that set count (guards against stale pfids). First claimant wins
     on the rare shared path (input order is stable upstream).
+
+    S1 owner-oracle: when ``file_owner`` is provided
+    (``FAULTLINE_OWNER_ORACLE`` on) it IS the file→PF map — the SAME
+    deterministic election Stage 6.97 runs, already carrying the facet /
+    shared / stale-pfid coverage view
+    (:func:`owner_oracle.OwnerElection.file_pf_owner_map`). It replaces the
+    order-sensitive first-claimant tally so a contested file votes for its
+    ELECTED owner's PF, not the first-listed dev's. ``None`` (default / flag
+    off) → the shipped first-claimant tally → byte-identical.
     """
+    if file_owner is not None:
+        return file_owner
     out: dict[str, str] = {}
     for dev in dev_views:
         get = dev.get if isinstance(dev, dict) else (

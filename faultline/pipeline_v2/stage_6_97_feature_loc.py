@@ -70,6 +70,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
+from faultline.pipeline_v2.owner_oracle import elect_primary_owners
 from faultline.pipeline_v2.ownership_v2 import ownership_v2_enabled
 from faultline.pipeline_v2.stage_6_9_test_strip import is_test_path
 from faultline.pipeline_v2.stage_6_9b_generated_strip import is_generated_path
@@ -479,40 +480,22 @@ def apply_feature_loc(
         [_module_dirs(f) for f in dev_features] if mod_enabled else []
     )
 
-    def _primary(fp: str) -> int:
-        owners = file_to_devs[fp]
-        if len(owners) == 1:
-            return owners[0]
-        if mod_enabled:
-            best_len = 0
-            claimants: list[int] = []
-            for i in owners:
-                if dev_is_facet[i]:
-                    continue
-                mlen = _module_match_len(fp, dev_module_roots[i])
-                if mlen > best_len:
-                    best_len = mlen
-                    claimants = [i]
-                elif mlen == best_len and mlen > 0:
-                    claimants.append(i)
-            if best_len > 0:
-                if len(claimants) == 1:
-                    return claimants[0]
-                owners = claimants  # tie among same-depth modules -> ordinary rule
-        d = _parent_dir(fp)
-        # Non-facet first, then max sibling-dir count, then max flow count,
-        # then smallest slug.
-        return min(
-            owners,
-            key=lambda i: (
-                dev_is_facet[i],
-                -dev_dircount[i].get(d, 0),
-                -dev_flowcount[i],
-                dev_slug[i],
-            ),
-        )
-
-    primary_of: dict[str, int] = {fp: _primary(fp) for fp in file_to_devs}
+    # S1 owner-oracle (2026-07-18) — the primary-owner election is now a
+    # SHARED service: ``owner_oracle.elect_primary_owners`` is THE single
+    # implementation, and this call is the "thin wrapper" the S1 spec names.
+    # BYTE-IDENTICAL to the former inline ``_primary`` closure — same
+    # algorithm, same per-dev signals, same tiebreak order — so Stage 6.97's
+    # output does not change; the oracle simply lets R1 (path_index) and R2
+    # (conservation votes) elect the SAME owner instead of first-claimant.
+    primary_of: dict[str, int] = elect_primary_owners(
+        file_to_devs,
+        dev_is_facet,
+        dev_module_roots,
+        dev_dircount,
+        dev_flowcount,
+        dev_slug,
+        mod_enabled,
+    )
 
     # ── B59 artifact-ink accounting drain (flag-gated, default OFF) ──────
     # When enabled, a feature's OWNED non-authorial "ink" files (locale
