@@ -1675,6 +1675,48 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── S2 Seg A iter-3 — readability regrain (panel-spot blockers) ─────
+    # Deterministic, $0, right after the lattice, ONLY under
+    # FAULTLINE_UF_DET_AGGREGATION: (B2) lattice ACTION-axis CRUD leaves of
+    # one (pf, resource) collapse into 'Manage <resource>' unless a leaf is
+    # route-anchored; (B1/B3) any journey over READABILITY_MC_BAR splits by
+    # member name-token families, children named from their OWN members (the
+    # 'Send cases' mc=33 misname class dies; buried spine families resurface
+    # as first-class rows); (B2 display) the raw 'lattice:*' token never
+    # ships in the domain field. Unset -> pass never runs -> byte-identical.
+    if _det_agg_probe() and user_flows:
+        from faultline.pipeline_v2.naming_contract import (
+            _verb_class_tokens as _rg_verbs,
+            load_naming_vocab as _rg_vocab,
+        )
+        from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+            readability_regrain,
+        )
+        with StageLogger(run_dir, 6, "readability_regrain") as log_rg:
+            try:
+                _rg_tele = readability_regrain(
+                    user_flows, list(bipartite.flows), _rg_verbs(_rg_vocab()),
+                )
+                scan_meta["stage_6_7a_readability_regrain"] = _rg_tele
+                log_rg.info(
+                    "readability_regrain: crud collapsed %d, %d parents "
+                    "split -> %d children (%d members), domains sanitized "
+                    "%d, members_lost=%d" % (
+                        _rg_tele["crud_collapse"]["collapsed_children"],
+                        _rg_tele["oversplit"]["parents_split"],
+                        _rg_tele["oversplit"]["children_minted"],
+                        _rg_tele["oversplit"]["members_moved"],
+                        _rg_tele["domains_sanitized"],
+                        _rg_tele["members_lost"],
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — regrain never breaks a scan
+                log_rg.info(
+                    f"readability_regrain: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Phase 3 — DUAL-EVIDENCE + confidence (OPT-IN, deterministic, $0 LLM) ──
     # Attach code + product-source anchor corroboration + a confidence score to
     # the final product features / user flows. Anchors are EVIDENCE here (a match

@@ -482,7 +482,7 @@ def _uf_payload(
     routes = list(uf.routes)[:MAX_ROUTES]
     ui_labels = _ui_surface(members)
     tested = [m.name for m in members if getattr(m, "test_files", None)]
-    return {
+    payload = {
         "id": uf.id,
         "deterministic_name": uf.name,
         "intent": uf.intent,
@@ -494,6 +494,27 @@ def _uf_payload(
         "tested_member_count": len(tested),
         "default_ui_tier": _default_ui_tier(members),
     }
+    # S2 Seg A iter-3 (panel B1 — a cluster named by ONE member): under
+    # FAULTLINE_UF_DET_AGGREGATION a UF is a whole-domain cluster, so the
+    # namer must see the WHOLE member set, not the first 24 names. Add the
+    # aggregated verb histogram + total member count over ALL members
+    # (deterministic, sorted) so the journey title reflects the dominant
+    # verbs/resources of the full set. Unset -> keys absent -> payload,
+    # prompt and cache keys byte-identical.
+    from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+        det_aggregation_enabled as _det_agg_on,
+    )
+    if _det_agg_on():
+        verb_hist: dict[str, int] = {}
+        for m in members:
+            tok = (str(m.name or "").split("-", 1) or [""])[0].lower()
+            if tok:
+                verb_hist[tok] = verb_hist.get(tok, 0) + 1
+        payload["member_total"] = len(members)
+        payload["member_verb_histogram"] = dict(
+            sorted(verb_hist.items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+    return payload
 
 
 def _uf_evidence_bundle(

@@ -240,8 +240,402 @@ def aggregate_user_flows(
     return out, telemetry
 
 
+# ── S2 Seg A iter-3 — readability regrain (panel-spot blockers, 2026-07-18) ─
+#
+# The keyed panel CONDITIONAL-PASSED stability but blocked the merge on three
+# VERIFIED classes, all fixed here deterministically under the same flag:
+#
+# B1 — a cluster named by ONE member hides the rest ('Send cases' mc=33 = the
+#      whole cases router incl. bulk/export/group — no "send" there) and any
+#      mc >= ~25 row is unreadable regardless of its name. Fix: rows over the
+#      READABILITY bar SPLIT by member NAME-TOKEN FAMILIES (flow names are
+#      engine-derived from route paths — route-grounded transitively); child
+#      names are built from the family's OWN members (majority verb-class +
+#      family tokens), never from a single row.
+# B2 — CRUD oversplit: the lattice action axis ships 'Create/Update/Delete
+#      <resource>' dev-grain leaves as journeys (ON=28 vs OFF=0). Fix: action
+#      siblings of one (pf, resource) COLLAPSE into 'Manage <resource>' UNLESS
+#      a sibling carries its own route anchor (member entry files disjoint
+#      from the rest — the B4/B6/B50 family rule); plus the raw 'lattice:*'
+#      token never ships in the displayed domain field.
+# B3 — buried spine ('Configure autonomous SOC …'): a small journey family
+#      swallowed by a big cluster resurfaces via the same family split (its
+#      distinct name-token family mints a first-class child).
+#
+# Everything below is pure + deterministic ($0, no LLM, no I/O); the wiring in
+# phase_finalize runs it right after the journey lattice, ONLY under
+# FAULTLINE_UF_DET_AGGREGATION. Regrain children carry the lattice id prefix
+# ("UF-L-r…") so the uf_synth_fold exemption + gauntlet treat them as
+# sanctioned partition rows.
+
+#: The panel-sanctioned readability bar (operator ruling 2026-07-18): a journey
+#: over ~25 members is unreadable whatever its name. An explicit product
+#: constant (like flows_per_feature_cap=12), not a tuned detection threshold.
+READABILITY_MC_BAR = 25
+
+#: Structural floor for a mintable family — mirrors the lattice's _MIN_MINTABLE
+#: (>= 2 members; a 1-member family is not a journey).
+MIN_FAMILY_MEMBERS = 2
+
+_REGRAIN_ID_PREFIX = "UF-L-r"   # lattice-family prefix -> fold-exempt + born
+
+
+def _clean_flow_tokens(name: str, verbs: frozenset[str]) -> tuple[list[str], str]:
+    """``('create-case-bulk-flow') -> (['case','bulk'], 'create')``.
+
+    Splits a flow name on '-', drops the trailing 'flow', consumes the
+    leading verb-class tokens (the engine's OWN template vocab — mechanism,
+    not a new dictionary). Returns (object tokens, leading verb or '')."""
+    toks = [t for t in str(name or "").lower().split("-") if t]
+    if toks and toks[-1] == "flow":
+        toks = toks[:-1]
+    verb = ""
+    while toks and toks[0] in verbs:
+        verb = verb or toks[0]
+        toks = toks[1:]
+    while toks and toks[0] in _PREFIX_TOKENS:
+        toks = toks[1:]
+    return toks, verb
+
+
+def _sing(tok: str) -> str:
+    return tok[:-1] if tok.endswith("s") and len(tok) > 3 else tok
+
+
+#: Route-grammar CONNECTOR tokens — structural glue in engine flow names
+#: ('view-case-by-case-id'), never an object family. Grammar of the engine's
+#: own name templates, not a per-repo vocabulary.
+_CONNECTOR_TOKENS = frozenset({"by", "id", "ids", "all", "of", "for"})
+
+#: Route-scaffold PREFIX tokens — the engine derives raw flow names from
+#: route paths, so every '/api/…' route yields an 'api-…' name at regrain
+#: time (flow_name_v2 renames AFTER this pass). 'api' is path scaffolding,
+#: never the object root ('api-admin-chat…' roots at 'admin').
+_PREFIX_TOKENS = frozenset({"api"})
+
+
+def _family_of(tokens: list[str], root: str, depth: int = 0) -> str:
+    """The member's family key inside a cluster rooted at ``root``:
+    same-root members family on their qualifier token at ``depth``
+    ('case-comments' -> 'comments'); foreign-rooted members family on their
+    own root ('detector-bulk' under root 'finding' -> 'detector' — the
+    misfile class surfaces under its honest object name). A CONNECTOR
+    qualifier ('case-by-case-id') is core CRUD, not a family. ``depth``
+    advances when a partition is DEGENERATE (one family == the whole
+    cluster): 'threat-hunt-article/adopt/phase…' all family at 'hunt' on
+    depth 0; depth 1 surfaces article/adopt/phase — the buried workflow."""
+    if not tokens:
+        return ""
+    if _sing(tokens[0]) == _sing(root):
+        pos = 1 + depth
+        if len(tokens) > pos and tokens[pos] not in _CONNECTOR_TOKENS:
+            return _sing(tokens[pos])
+        return ""
+    return _sing(tokens[depth]) if depth < len(tokens) else ""
+
+
+def _majority_root(member_names: list[str], verbs: frozenset[str]) -> str:
+    counts: dict[str, int] = defaultdict(int)
+    for nm in member_names:
+        toks, _ = _clean_flow_tokens(nm, verbs)
+        if toks:
+            counts[_sing(toks[0])] += 1
+    if not counts:
+        return ""
+    return sorted(counts, key=lambda t: (-counts[t], t))[0]
+
+
+def _family_verb(verbs_seen: list[str]) -> str:
+    """One verb-class for the family name: unanimous verb keeps it; any mix
+    is 'manage' (the CRUD umbrella)."""
+    distinct = {v for v in verbs_seen if v}
+    if len(distinct) == 1:
+        return next(iter(distinct))
+    return "manage"
+
+
+def _title(s: str) -> str:
+    return s[:1].upper() + s[1:] if s else s
+
+
+def _plural(tok: str) -> str:
+    return tok if tok.endswith("s") else tok + "s"
+
+
+def _entry_of(fl: Any) -> str:
+    return str(getattr(fl, "entry_point_file", "") or "")
+
+
+def collapse_crud_action_children(
+    user_flows: list["UserFlow"],
+    flows_by_id: dict[str, Any],
+    verbs: frozenset[str],
+) -> dict[str, Any]:
+    """B2 — collapse the lattice ACTION-axis CRUD leaves of one (pf, resource)
+    into one 'Manage <resource>' row, UNLESS a leaf carries its own route
+    anchor (its member ENTRY FILES are disjoint from every sibling's — a
+    genuinely separate surface survives). Mutates in place; conservation by
+    member union."""
+    tele = {"groups": 0, "collapsed_children": 0, "route_anchored_kept": 0}
+    groups: dict[tuple[str, str], list["UserFlow"]] = defaultdict(list)
+    for u in user_flows:
+        dom = str(u.domain or "")
+        if not str(u.id or "").startswith("UF-L-"):
+            continue
+        if not dom.startswith("lattice:action:"):
+            continue
+        key = dom.split(":", 2)[2]
+        root = _sing(key.split("-")[0]) if key else ""
+        pf = str(u.product_feature_id or "")
+        if root:
+            groups[(pf, root)].append(u)
+
+    dead: set[str] = set()
+    for (pf, root), kids in sorted(groups.items()):
+        if len(kids) < 2:
+            continue
+        tele["groups"] += 1
+        kids = sorted(kids, key=lambda u: (-(u.member_count or 0), u.id or ""))
+        entry_sets = {
+            u.id: {
+                _entry_of(flows_by_id[m]) for m in (u.member_flow_ids or [])
+                if m in flows_by_id and _entry_of(flows_by_id[m])
+            }
+            for u in kids
+        }
+        mergeable: list["UserFlow"] = []
+        for u in kids:
+            others: set[str] = set()
+            for v in kids:
+                if v is not u:
+                    others |= entry_sets.get(v.id, set())
+            mine = entry_sets.get(u.id, set())
+            if mine and others and not (mine & others):
+                tele["route_anchored_kept"] += 1     # own surface — survives
+                continue
+            mergeable.append(u)
+        if len(mergeable) < 2:
+            continue
+        canon = mergeable[0]
+        union: set[str] = set()
+        routes: set[str] = set()
+        for u in mergeable:
+            union.update(u.member_flow_ids or [])
+            routes.update(u.routes or [])
+            if u is not canon:
+                dead.add(u.id)
+                tele["collapsed_children"] += 1
+        canon.member_flow_ids = sorted(union)
+        canon.member_count = len(union)
+        canon.routes = sorted(routes)
+        canon.name = f"Manage {_plural(root)}"
+        canon.resource = root
+        canon.intent = "manage"
+    if dead:
+        user_flows[:] = [u for u in user_flows if u.id not in dead]
+    return tele
+
+
+def split_oversized_ufs(
+    user_flows: list["UserFlow"],
+    flows_by_id: dict[str, Any],
+    verbs: frozenset[str],
+) -> dict[str, Any]:
+    """B1/B3 — any journey over READABILITY_MC_BAR splits by member
+    name-token FAMILIES; each qualifying family (>= MIN_FAMILY_MEMBERS) mints
+    a first-class child NAMED FROM ITS OWN MEMBERS (majority verb-class +
+    family token); the residual keeps the parent. Deterministic ids from
+    content (pf|parent|family). Conservation: members partition exactly."""
+    import hashlib as _h
+
+    tele = {"parents_split": 0, "children_minted": 0, "members_moved": 0}
+    new_rows: list["UserFlow"] = []
+    for u in user_flows:
+        # Channel rows (markers / synthesized recall) keep their identity —
+        # never partitioned here (same law as the 6.7a fold passthrough).
+        if u.is_coverage_marker or u.synthesis_reason:
+            continue
+        members = list(u.member_flow_ids or [])
+        if len(members) < READABILITY_MC_BAR:
+            continue
+        names = {
+            m: str(getattr(flows_by_id.get(m), "name", "") or m)
+            for m in members
+        }
+        root = _majority_root(list(names.values()), verbs)
+        # Depth ladder: a DEGENERATE partition (one family holding the whole
+        # over-bar cluster — 'threat-hunt-*' all family at 'hunt') carries no
+        # information; advance one token deeper (max 3 — flow-name grammar
+        # depth) until the partition separates something.
+        qualifying: dict[str, list[str]] = {}
+        fams: dict[str, list[str]] = {}
+        fam_verbs: dict[str, list[str]] = {}
+        fam_kind: dict[str, str] = {}
+        fam_repr: dict[str, list[str]] = {}
+        fam_depth = 0
+        for depth in range(3):
+            fams = defaultdict(list)
+            fam_verbs = defaultdict(list)
+            fam_kind = {}   # 'qual' (root's qualifier) | 'foreign'
+            fam_repr = {}
+            fam_depth = depth
+            for m in members:
+                toks, verb = _clean_flow_tokens(names[m], verbs)
+                fam = _family_of(toks, root, depth)
+                kind = (
+                    "qual" if toks and _sing(toks[0]) == _sing(root)
+                    else "foreign"
+                )
+                fams[fam].append(m)
+                fam_verbs[fam].append(verb)
+                fam_kind.setdefault(fam, kind)
+                fam_repr.setdefault(fam, toks)
+            qualifying = {
+                f: ms for f, ms in fams.items()
+                if f and len(ms) >= MIN_FAMILY_MEMBERS
+            }
+            degenerate = (
+                len(qualifying) == 1
+                and len(next(iter(qualifying.values()))) >= len(members)
+            )
+            if qualifying and not degenerate:
+                break
+            qualifying = {} if degenerate else qualifying
+        if not qualifying:
+            continue
+        tele["parents_split"] += 1
+        residual: list[str] = [
+            m for f, ms in fams.items() if f not in qualifying for m in ms
+        ]
+        for fam in sorted(qualifying):
+            ms = sorted(qualifying[fam])
+            verb = _family_verb(fam_verbs[fam])
+            # Child name from the family's OWN members (panel B1): a
+            # qualifier family reads under its root object + the full
+            # qualifier path at the split depth ('Manage case comments';
+            # depth-1: 'Manage threat hunt articles'); a FOREIGN-rooted
+            # family reads under its own honest object path ('Manage
+            # detectors' — the misfile class surfaces).
+            repr_toks = fam_repr.get(fam) or []
+            if fam_kind.get(fam) == "qual":
+                mid = [t for t in repr_toks[1:1 + fam_depth]
+                       if t not in _CONNECTOR_TOKENS]
+                parts = [_sing(root)] + mid + [_plural(fam)]
+            else:
+                mid = [t for t in repr_toks[:fam_depth]
+                       if t not in _CONNECTOR_TOKENS and _sing(t) != _sing(fam)]
+                parts = mid + [_plural(fam)]
+            fam_disp = " ".join(parts)
+            child = u.model_copy(update={
+                "id": _REGRAIN_ID_PREFIX + _h.sha1(
+                    f"{u.product_feature_id}|{u.id}|{fam}".encode()
+                ).hexdigest()[:10],
+                "name": f"{_title(verb)} {fam_disp}",
+                "resource": fam,
+                "member_flow_ids": ms,
+                "member_count": len(ms),
+                "routes": sorted(u.routes or []),
+                "acceptance": [],
+                "ac_draft_count": 0,
+                "refined": False,
+            })
+            new_rows.append(child)
+            tele["children_minted"] += 1
+            tele["members_moved"] += len(ms)
+        u.member_flow_ids = sorted(residual)
+        u.member_count = len(residual)
+        # Panel B1: the residual parent must not keep a one-member misname
+        # ('Send cases' over core case-CRUD). Rename it from its OWN
+        # remaining members: majority verb-class over the residual + the
+        # cluster's root object.
+        if residual and root:
+            res_verbs = [
+                _clean_flow_tokens(names.get(m, m), verbs)[1]
+                for m in residual
+            ]
+            u.name = f"{_title(_family_verb(res_verbs))} {_plural(root)}"
+            u.resource = root
+    if new_rows:
+        # A parent whose members ALL moved into children dissolves (channel
+        # rows are untouched by construction — they are never over the bar
+        # as splittable journeys with families).
+        gone = {
+            u.id for u in user_flows
+            if not (u.member_flow_ids or [])
+            and not u.is_coverage_marker and not u.synthesis_reason
+            and u.id not in {n.id for n in new_rows}
+        }
+        user_flows[:] = [
+            u for u in user_flows if u.id not in gone
+        ] + new_rows
+        tele["parents_dissolved"] = len(gone)
+    return tele
+
+
+def sanitize_lattice_domains(user_flows: list["UserFlow"]) -> int:
+    """B2 display law — the raw 'lattice:*' token never ships in the domain
+    field: replace with the row's resource (or None). The lattice-born
+    predicate downstream keys on the ID prefix, which is untouched."""
+    n = 0
+    for u in user_flows:
+        if str(u.domain or "").startswith("lattice:"):
+            res = str(u.resource or "")
+            # A resource that itself carries the raw token is no substitute.
+            u.domain = res if res and not res.startswith("lattice:") else None
+            n += 1
+    return n
+
+
+def readability_regrain(
+    user_flows: list["UserFlow"],
+    flows: list[Any],
+    verbs: frozenset[str],
+) -> dict[str, Any]:
+    """The full iter-3 pass: CRUD collapse -> oversized split -> domain
+    sanitation. Mutates ``user_flows`` in place; returns telemetry with a
+    conservation check (member universe before == after)."""
+    flows_by_id: dict[str, Any] = {}
+    for f in flows:
+        key = str(getattr(f, "uuid", "") or getattr(f, "name", "") or "")
+        if key:
+            flows_by_id[key] = f
+        nm = str(getattr(f, "name", "") or "")
+        if nm:
+            flows_by_id.setdefault(nm, f)
+    before: set[str] = set()
+    for u in user_flows:
+        before.update(u.member_flow_ids or [])
+    tele: dict[str, Any] = {"enabled": True}
+    tele["crud_collapse"] = collapse_crud_action_children(
+        user_flows, flows_by_id, verbs,
+    )
+    tele["oversplit"] = split_oversized_ufs(user_flows, flows_by_id, verbs)
+    # Second (final) pass: a minted child can itself exceed the bar when a
+    # FOREIGN-rooted family is large (a 28-member 'team' family); it re-splits
+    # once by ITS OWN root's qualifier families. Two passes are the fixpoint
+    # for name-token grammar (root -> qualifier); deeper nesting has no
+    # further token axis, so a still-large row after pass 2 stays honestly.
+    tele["oversplit_pass2"] = split_oversized_ufs(
+        user_flows, flows_by_id, verbs,
+    )
+    tele["domains_sanitized"] = sanitize_lattice_domains(user_flows)
+    after: set[str] = set()
+    for u in user_flows:
+        after.update(u.member_flow_ids or [])
+    tele["members_before"] = len(before)
+    tele["members_after"] = len(after)
+    tele["members_lost"] = len(before - after)   # conservation: MUST be 0
+    return tele
+
+
 __all__ = [
     "DET_AGGREGATION_ENV",
+    "MIN_FAMILY_MEMBERS",
+    "READABILITY_MC_BAR",
     "aggregate_user_flows",
+    "collapse_crud_action_children",
     "det_aggregation_enabled",
+    "readability_regrain",
+    "sanitize_lattice_domains",
+    "split_oversized_ufs",
 ]
