@@ -461,6 +461,135 @@ def test_method_prefix_only_strips_real_method_tokens() -> None:
     assert _method_prefix("Content-Type") is None
 
 
+# ── it2: explicit routes → routes_index (product-layer delivery) ─────────
+
+
+def test_armed_emits_explicit_route_triples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ARMED candidates carry ``routes`` (pattern, method, file) triples —
+    the DSL-routed delivery ``build_routes_index`` Pass A consumes (Go
+    routers put the URL in the SOURCE, not the filesystem; without this
+    the spine has no Go route anchors and 6.86 sees no lineage — the
+    traefik PF=0 root #1)."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    _write(tmp_path / "pkg" / "api" / "handler.go", _traefik_shape_src())
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["pkg/api/handler.go"])
+
+    cands = GoRouterExtractor().extract(ctx)
+    all_routes = {r for c in cands for r in c.routes}
+    assert ("/api/rawdata", "GET", "pkg/api/handler.go") in all_routes
+    assert ("/api/http/routers/{routerID}", "GET",
+            "pkg/api/handler.go") in all_routes
+    # gorilla verbs carry no method in the matched call → honest GET default.
+    assert all(m == "GET" for (_p, m, _f) in all_routes)
+
+
+def test_armed_servemux_method_prefix_becomes_route_method(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Go 1.22 ``"POST /items"`` → method=POST, pattern=/items (token moves
+    from the pattern into the method column)."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    src = """
+    package main
+    func main() {
+        mux := http.NewServeMux()
+        mux.HandleFunc("POST /items", createItem)
+        mux.HandleFunc("/healthz", healthz)
+    }
+    """.strip()
+    _write(tmp_path / "main.go", src)
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["main.go"])
+    all_routes = {r for c in GoRouterExtractor().extract(ctx)
+                  for r in c.routes}
+    assert ("/items", "POST", "main.go") in all_routes
+    assert ("/healthz", "GET", "main.go") in all_routes
+
+
+def test_off_candidates_carry_no_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KILL-SWITCH: OFF candidates keep ``routes == ()`` — Pass A skips
+    them, routes_index stays byte-identical to the shipped board."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "0")
+    _write(tmp_path / "pkg" / "api" / "handler.go", _traefik_shape_src())
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["pkg/api/handler.go"])
+    for c in GoRouterExtractor().extract(ctx):
+        assert c.routes == ()
+
+
+def test_armed_routes_reach_routes_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end delivery: armed go-router candidates → ``build_routes_index``
+    rows (Pass A). OFF → zero go rows (byte-ident)."""
+    from faultline.pipeline_v2.indexes import build_routes_index
+
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    _write(tmp_path / "pkg" / "api" / "handler.go", _traefik_shape_src())
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["pkg/api/handler.go"])
+    cands = GoRouterExtractor().extract(ctx)
+    rows = build_routes_index([], {"go-router": cands})
+    patterns = {r["pattern"] for r in rows}
+    assert {"/api/rawdata", "/api/http/routers",
+            "/api/http/routers/{routerID}", "/debug/pprof/"} <= patterns
+
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "0")
+    cands_off = GoRouterExtractor().extract(ctx)
+    assert build_routes_index([], {"go-router": cands_off}) == []
+
+
+def test_ws_merge_go_router_origin_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B66 ce821a5 law: armed go-router twins keep their routes union through
+    a per-workspace coalesce; a co-present UNARMED ``route`` group in the
+    SAME merge still drops its routes (no blanket preservation)."""
+    from faultline.pipeline_v2.extractors.base import AnchorCandidate
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        _merge_anchors_across_workspaces,
+    )
+
+    ga = AnchorCandidate(
+        name="status", paths=("svc-a/server.go",),
+        source="go-router", confidence_self=0.9,
+        routes=(("/status", "GET", "svc-a/server.go"),),
+    )
+    gb = AnchorCandidate(
+        name="status", paths=("svc-b/server.go",),
+        source="go-router", confidence_self=0.9,
+        routes=(("/v2/status", "GET", "svc-b/server.go"),),
+    )
+    ra = AnchorCandidate(
+        name="users", paths=("backend/a/users.py",),
+        source="route", confidence_self=0.9,
+        routes=(("/users", "GET", "backend/a/users.py"),),
+    )
+    rb = AnchorCandidate(
+        name="users", paths=("backend/b/users.py",),
+        source="route", confidence_self=0.9,
+        routes=(("/b/users", "GET", "backend/b/users.py"),),
+    )
+
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    merged = _merge_anchors_across_workspaces(
+        [("srv", {"go-router": [ga, gb], "route": [ra, rb]})]
+    )
+    (go_cand,) = merged["go-router"]
+    (route_cand,) = merged["route"]
+    assert set(go_cand.routes) == set(ga.routes) | set(gb.routes)
+    assert route_cand.routes == ()
+
+    # OFF: go-router twins drop routes at coalesce like any unarmed source.
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "0")
+    merged_off = _merge_anchors_across_workspaces(
+        [("srv", {"go-router": [ga, gb]})]
+    )
+    (go_off,) = merged_off["go-router"]
+    assert go_off.routes == ()
+
+
 def test_flag_default_off() -> None:
     """Belt-and-braces: the flag reader defaults OFF and honours truthy set."""
     import os

@@ -155,6 +155,49 @@ def test_facets_are_out_of_scope():
 # ── Mint bar ─────────────────────────────────────────────────────────────
 
 
+def test_go_dsl_routes_mint_on_pageless_repo_and_fold_with_page_surface():
+    """S4b it2 — the Go arm of the pageless-mint law (traefik/ollama shape).
+
+    DSL-routed Go registrations (gorilla ``.Path("/api/...")``) enter
+    ``routes_index`` as non-PAGE rows. On a PAGELESS Go server the API IS
+    the product → the route anchor mints (ollama VERIFIED: PF 0→2 armed).
+    The moment ANY page surface exists (SPA webui shell), the same
+    api-only anchor is barred ``api_only_surface`` and the flowful api dev
+    FOLDS into the page capability (traefik VERIFIED: route:debug /
+    route:version barred; /api family reached PF only through the
+    page+api certificates union). This is the PAGES-REPO ANTI-CASE: the
+    bar STANDS — S4b changed route *delivery*, never the mint bars."""
+    go_routes = [
+        {"pattern": "/api/http/routers", "method": "GET",
+         "file": "pkg/api/handler.go"},
+        {"pattern": "/api/overview", "method": "GET",
+         "file": "pkg/api/handler.go"},
+        {"pattern": "/api/rawdata", "method": "GET", "file": "pkg/api/rest.go"},
+    ]
+    d = dev("api-http-routers", ["pkg/api/handler.go", "pkg/api/rest.go"],
+            flows=[flow("inspect-routers-flow", "pkg/api/handler.go")])
+    pfs, tele = mint([d], go_routes)
+    assert tele["repo_has_pages"] is False
+    assert [p.name for p in pfs] == ["http"]
+    assert d.product_feature_id == "http"
+    assert d.shared_reason is None
+
+    # Pages-repo anti-case: same Go api surface + one SPA page row.
+    page_route = {"pattern": "/dashboard", "method": "PAGE",
+                  "file": "webui/src/App.tsx"}
+    page_dev = dev("dashboard", ["webui/src/App.tsx"],
+                   flows=[flow("view-dashboard-flow", "webui/src/App.tsx")])
+    d2 = dev("api-http-routers", ["pkg/api/handler.go", "pkg/api/rest.go"],
+             flows=[flow("inspect-routers-flow", "pkg/api/handler.go")])
+    pfs2, tele2 = mint([d2, page_dev], go_routes + [page_route])
+    assert tele2["repo_has_pages"] is True
+    assert [p.name for p in pfs2] == ["dashboard"]
+    assert d2.product_feature_id == "dashboard"  # folds, no standalone mint
+    assert {(b["anchor"], b["bar"]) for b in tele2["bar_decisions"]} >= {
+        ("route:http", "api_only_surface"),
+    }
+
+
 def test_api_only_anchor_folds_in_page_repo_but_mints_in_pure_api_repo():
     api_route = {"pattern": "/context-items", "method": "GET",
                  "file": "backend/routers/context_items.py"}
