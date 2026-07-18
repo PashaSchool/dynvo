@@ -739,6 +739,17 @@ ENV_OUTPUT_FLAGS = (
     # OFF; =0/unset restores the LLM-structured path byte-identically. No
     # KEY_SCHEMA bump (append-only — reconciled at merge).
     "FAULTLINE_UF_DET_AGGREGATION",
+    # S2 Seg C (2026-07-18) — canonical LLM batch composition: volatile pure
+    # counts leave the 6.7d prompt canon (digest n_dev_features; Call-2 per-row
+    # n_files) and the digest's UF ordering uses log2 weight-buckets instead of
+    # raw member_count, so a count-only drift (the 1-of-980 resample trigger)
+    # no longer flips the whole-batch cache key; real content changes still do.
+    # Adds the flag-gated scan_meta.llm_batch_canon hit-rate telemetry.
+    # Reshapes the 6.7d prompts (hence keyed user_flows[]/product_features[]
+    # composition on cache-miss worlds). Default OFF; =0/unset keeps digest,
+    # prompts and keys byte-identical. No KEY_SCHEMA bump (append-only —
+    # reconciled at merge).
+    "FAULTLINE_LLM_BATCH_CANON",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

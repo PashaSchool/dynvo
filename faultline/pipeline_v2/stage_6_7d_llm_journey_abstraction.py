@@ -240,6 +240,38 @@ def is_enabled() -> bool:
     return os.environ.get(ENV_FLAG, "0") != "0"
 
 
+# ── S2 Seg C — canonical LLM batch composition (flag OFF) ───────────────────
+#
+# The probe (2026-07-18) measured the resample class: 1 drifting flow of 980
+# flipped the WHOLE-batch cache key (sha256 over model+prompt) and the full
+# resample cost −26% UF. Part of the key's surface is VOLATILE — pure counts
+# that change without any semantic content change: ``n_dev_features`` (a
+# global count; a feature past the digest cap changes ONLY this number),
+# ``n_files`` per dev row in the Call-2 re-attribution prompt, and the raw
+# ``member_count`` sort rank in the digest's UF ordering (a ±1 member drift
+# reorders the list and re-cuts the cap). Under FAULTLINE_LLM_BATCH_CANON
+# those volatile fields leave the prompt canon and the weight ordering uses
+# log2 BUCKETS (scale-invariant; a ±1 drift almost never crosses a power-of-2
+# boundary), so a pure count drift no longer invalidates the key. A REAL
+# content change (names/routes/resources) still flips it — content-keyed law.
+# Default OFF → digest/prompts byte-identical.
+
+BATCH_CANON_ENV = "FAULTLINE_LLM_BATCH_CANON"
+
+
+def batch_canon_enabled() -> bool:
+    """Default OFF — set ``FAULTLINE_LLM_BATCH_CANON=1`` to arm the canon."""
+    return os.environ.get(BATCH_CANON_ENV, "0").strip().lower() not in {
+        "0", "false", "no", "off", "",
+    }
+
+
+def _weight_bucket(count: int) -> int:
+    """log2 bucket of a member count — the canon's stable ordering rank.
+    Scale-invariant (no tuned threshold): 0→0, 1→1, 2-3→2, 4-7→3, 8-15→4 …"""
+    return int(count).bit_length() if count > 0 else 0
+
+
 def resolve_abstraction_model() -> str:
     """Model for Call 1 (the grain-lift). Read from
     :data:`ABSTRACTION_MODEL_ENV`, defaulting to :data:`DEFAULT_ABSTRACTION_MODEL`
@@ -681,7 +713,16 @@ def _build_digest(
     # member_count so a large repo (dub: 222 UFs) can't blow the prompt/output
     # budget and force a degrade. The heaviest journeys carry the most signal;
     # the rest are redundant CRUD variants the model would coarsen away anyway.
-    ufs_by_weight = sorted(user_flows, key=lambda u: (-(u.member_count or 0), u.id or ""))
+    # S2 Seg C: under the batch canon the weight rank is the log2 BUCKET of
+    # member_count, so a ±1 member drift no longer reorders the digest (and
+    # re-cuts the cap) — a volatile-count key flip. OFF: raw count, unchanged.
+    if batch_canon_enabled():
+        ufs_by_weight = sorted(
+            user_flows,
+            key=lambda u: (-_weight_bucket(u.member_count or 0), u.id or ""),
+        )
+    else:
+        ufs_by_weight = sorted(user_flows, key=lambda u: (-(u.member_count or 0), u.id or ""))
     uf_lines = [
         {"id": u.id, "name": u.name, "resource": u.resource,
          "domain": u.domain, "intent": u.intent}
@@ -697,13 +738,44 @@ def _build_digest(
         routes.append({"p": r.get("pattern"), "m": r.get("method"), "t": r.get("trigger")})
         if len(routes) >= MAX_ROUTES_DIGEST:
             break
-    return {
+    digest = {
         "n_dev_features": len(developer_features),
         "developer_features": dev_lines,
         "current_product_features": pf_lines,
         "current_user_flows": uf_lines,
         "routes": routes,
     }
+    if batch_canon_enabled():
+        # S2 Seg C: ``n_dev_features`` is a VOLATILE global count — a feature
+        # past the digest cap changes ONLY this number and flips the whole-
+        # batch key with zero semantic content change. The canon drops it from
+        # the digest (prompt + key). OFF keeps it byte-identically.
+        digest.pop("n_dev_features")
+    return digest
+
+
+def _reattrib_dev_items(dev_view: list["Feature"]) -> tuple[list[dict[str, Any]], str]:
+    """Call-2 re-attribution rows + their prompt header.
+
+    OFF (default): rows carry ``n_files`` and sort by descending file count —
+    byte-identical to the pre-canon prompt. S2 Seg C ON: ``n_files`` is a
+    VOLATILE count (any file add/drop in a feature flips the whole Call-2
+    prompt with no attribution-relevant change) — the canon drops it and
+    sorts by the stable name key only.
+    """
+    rows: list[dict[str, Any]]
+    if batch_canon_enabled():
+        rows = [
+            {"name": _dev_key(f), "where": _top_dirs(_paths_of(f))}
+            for f in sorted(dev_view, key=lambda f: f.name or "")
+        ]
+        return rows, "Developer features (name, dir):\n"
+    rows = [
+        {"name": _dev_key(f), "where": _top_dirs(_paths_of(f)),
+         "n_files": len(_paths_of(f))}
+        for f in sorted(dev_view, key=lambda f: (-len(_paths_of(f)), f.name or ""))
+    ]
+    return rows, "Developer features (name, dir, file count):\n"
 
 
 def _digest_resource_keys(digest: dict[str, Any]) -> set[str]:
@@ -3709,13 +3781,9 @@ def run_journey_abstraction(
     # ── Call 2 — dev → capability re-attribution (Haiku / passed model) ─
     caps = [s.get("name", "").strip() for s in pf_specs if s.get("name", "").strip()]
     caps_with_residual = caps + [_RESIDUAL_CAP]
-    dev_items = [
-        {"name": _dev_key(f), "where": _top_dirs(_paths_of(f)),
-         "n_files": len(_paths_of(f))}
-        for f in sorted(dev_view, key=lambda f: (-len(_paths_of(f)), f.name or ""))
-    ]
+    dev_items, dev_items_header = _reattrib_dev_items(dev_view)
     user2 = ("Product capabilities:\n" + json.dumps(caps_with_residual) +
-             "\n\nDeveloper features (name, dir, file count):\n" +
+             "\n\n" + dev_items_header +
              json.dumps(dev_items, ensure_ascii=False) +
              "\n\nReturn the full map now (every dev feature mapped).")
     in2_hash = _dhash(_REATTRIB_SYSTEM, user2)

@@ -3061,6 +3061,30 @@ def run_finalize_phase(
         if _stamped:
             scan_meta.setdefault("degradations", []).extend(_stamped)
 
+    # ── S2 Seg C — LLM batch-canon cache-hit-rate telemetry (flag-gated) ──
+    # One rollup ratio over the finalize-phase LLM batch stages (6.7c split /
+    # 6.7b refine / 6.7d abstraction) so the canon's effect — volatile-count
+    # drifts no longer invalidating keys — is measurable per scan. Additive
+    # key, emitted ONLY under FAULTLINE_LLM_BATCH_CANON (OFF → byte-ident).
+    from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+        batch_canon_enabled as _batch_canon_on,
+    )
+    if _batch_canon_on():
+        _r = scan_meta.get("stage_6_7b_uf_refiner") or {}
+        _s = scan_meta.get("stage_6_7c_uf_splitter") or {}
+        _j = scan_meta.get("stage_6_7d_journey_abstraction") or {}
+        _hits = (int(_r.get("cache_hits") or 0) + int(_s.get("cache_hits") or 0)
+                 + (1 if _j.get("cache_hit") else 0))
+        _calls = (int(_r.get("llm_calls") or 0) + int(_s.get("llm_calls") or 0)
+                  + int(_j.get("llm_calls") or 0))
+        _total = _hits + _calls
+        scan_meta["llm_batch_canon"] = {
+            "enabled": True,
+            "cache_hits": _hits,
+            "llm_calls": _calls,
+            "hit_rate": round(_hits / _total, 4) if _total else None,
+        }
+
     # ── Stage 6.97b — journey-level LOC (B3, $0, deterministic, additive) ─
     # Operator bug B3: ``user_flows[].loc`` was ``None`` for EVERY journey
     # (the engine never emitted a UF-level LOC), so the dashboard LOC column
