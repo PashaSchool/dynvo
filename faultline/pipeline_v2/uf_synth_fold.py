@@ -260,9 +260,22 @@ def plan_uf_synth(
     flows: list[Any],
     product_features: list[Any],
     verbs: frozenset[str],
+    fold_exempt_ids: frozenset[str] = frozenset(),
 ) -> UfSynthPlan:
     """Compute the L-C1..L-C4 plan. Deterministic (input order + stable winner
-    tiebreaks). Applies at most one fold per UF."""
+    tiebreaks). Applies at most one fold per UF.
+
+    ``fold_exempt_ids`` (S2 Seg A rider, wave-gauntlet Class 2 2026-07-18):
+    rows that must never be FOLD SOURCES (they can still be fold TARGETS and
+    L-C2 rename-repaired). The caller passes the lattice-born partition rows
+    when det-aggregation is armed: the lattice's verifier-approved action
+    children ('Browse findings' / 'View findings' / 'Create findings') are a
+    SANCTIONED same-noun-head family over the same files — exactly the shape
+    L-C3's span gate reads as a dup family. Without the exemption the fold
+    quietly UNDOES the lattice split and re-mints the giant catch-all
+    (Soc0 UF-022 7 -> 47, giant-catchall 2 -> 5). Empty set (every caller
+    outside the Seg A world) = byte-identical planning.
+    """
     plan = UfSynthPlan()
     pf_disp: dict[str, str] = {}
     for pf in product_features:
@@ -333,7 +346,7 @@ def plan_uf_synth(
         echoes = [u for u in ufs if is_pf_echo(_uf_name(u, plan), disp, verbs)]
         for e in echoes:
             eid = _uf_id(e)
-            if eid in plan.fold:
+            if eid in plan.fold or eid in fold_exempt_ids:
                 continue
             e_nouns = meaning_tokens(_uf_name(e, plan), verbs)
             family = [
@@ -371,7 +384,8 @@ def plan_uf_synth(
             anchor = _canonical_of(group)
             am = members.get(_uf_id(anchor), [])
             for u in group:
-                if u is anchor or _uf_id(u) in plan.fold:
+                if (u is anchor or _uf_id(u) in plan.fold
+                        or _uf_id(u) in fold_exempt_ids):
                     continue
                 um = members.get(_uf_id(u), [])
                 if any(spans_overlap(a, b) for a in am for b in um):
@@ -396,12 +410,17 @@ def apply_uf_synth_fold(
     flows: list[Any],
     product_features: list[Any],
     verbs: frozenset[str],
+    fold_exempt_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Apply the plan IN PLACE: rename (L-C2), fold echoes/families into the
     winner (union member_flow_ids — conservation), drop folded rows. Only ever
     called behind ``naming_pack_enabled`` -> OFF path never runs -> byte-identical.
+    ``fold_exempt_ids`` — see :func:`plan_uf_synth` (never fold sources).
     Returns telemetry."""
-    plan = plan_uf_synth(user_flows, flows, product_features, verbs)
+    plan = plan_uf_synth(
+        user_flows, flows, product_features, verbs,
+        fold_exempt_ids=fold_exempt_ids,
+    )
     by_id = {_uf_id(u): u for u in user_flows}
     for uid, new_name in plan.rename.items():
         u = by_id.get(uid)

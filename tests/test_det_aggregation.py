@@ -206,6 +206,98 @@ def test_empty_input_is_clean() -> None:
     assert clusters == [] and tele["clusters"] == 0 and tele["scattered"] == 0
 
 
+# ── Class 1 (wave-gauntlet, 2026-07-18) — channel rows pass through ─────────
+#
+# The rollup input carries member-less system seeds
+# (synthesis_reason="system_flow_recall", 'Run <domain>'), coverage markers
+# and other synthesized rows. Folding them stripped synthesis_reason so the
+# downstream demote/gap machinery went blind: the board shipped mc=0 rows
+# without is_coverage_marker (B23-contract violation, Soc0 wave 0->9).
+# Channel rows are NOT journey structure — they pass through verbatim.
+
+
+def _seed(uf_id: str, domain: str) -> UserFlow:
+    return UserFlow(
+        id=uf_id, name=f"Run {domain}", domain=domain,
+        product_feature_id="pf-a", intent="execute", resource=domain,
+        member_flow_ids=[], member_count=0,
+        category="system", trigger="queue",
+        synthesized=True, synthesis_reason="system_flow_recall",
+    )
+
+
+def test_memberless_system_seed_passes_through_with_channel_fields() -> None:
+    """The 'Run <domain>' seed survives UNFOLDED with synthesis_reason,
+    category and trigger intact — the synth-quality demote recognises it."""
+    ufs = _fixture() + [_seed("UF-142", "articles")]
+    out, tele = aggregate_user_flows(ufs)
+    assert tele["passthrough_channel_rows"] == 1
+    seeds = [u for u in out if u.synthesis_reason == "system_flow_recall"]
+    assert len(seeds) == 1
+    s = seeds[0]
+    assert s.name == "Run articles" and s.member_count == 0
+    assert s.category == "system" and s.trigger == "queue"
+    assert s.synthesized is True
+    # its domain minted NO cluster (it was the domain's only row)
+    assert not any(
+        c.domain == "articles" and c.synthesis_reason is None for c in out
+    )
+
+
+def test_marker_row_passes_through_flagged() -> None:
+    marker = UserFlow(
+        id="UF-090", name="Uncovered: alpha routes", domain="alpha",
+        product_feature_id="pf-a", intent="other", resource="alpha",
+        member_flow_ids=[], member_count=0,
+        synthesized=True, is_coverage_marker=True,
+    )
+    out, tele = aggregate_user_flows(_fixture() + [marker])
+    kept = [u for u in out if u.is_coverage_marker]
+    assert len(kept) == 1 and kept[0].member_count == 0
+    assert tele["passthrough_channel_rows"] == 1
+
+
+def test_no_memberless_cluster_can_exist() -> None:
+    """A seed sharing a domain with organic UFs: the organics cluster, the
+    seed passes through — every emitted cluster has members (mc=0 in
+    user_flows[] can only be a flagged/tagged channel row)."""
+    ufs = _fixture() + [_seed("UF-143", "alpha")]
+    out, _ = aggregate_user_flows(ufs)
+    for u in out:
+        if not (u.synthesis_reason or u.is_coverage_marker):
+            assert u.member_count > 0 and u.member_flow_ids
+
+
+def test_synthesized_memberful_row_passes_through_intact() -> None:
+    """A member-FUL synthesized row (e2e recall class) is a channel row too —
+    its members and reason survive verbatim (never absorbed)."""
+    recall = UserFlow(
+        id="UF-150", name="Sign up and onboard", domain="alpha",
+        product_feature_id="pf-a", intent="author", resource="onboarding",
+        member_flow_ids=["e1", "e2"], member_count=2,
+        synthesized=True, synthesis_reason="e2e_journey_recall",
+    )
+    out, _ = aggregate_user_flows(_fixture() + [recall])
+    kept = [u for u in out if u.synthesis_reason == "e2e_journey_recall"]
+    assert len(kept) == 1
+    assert set(kept[0].member_flow_ids) == {"e1", "e2"}
+    # alpha's organic cluster did NOT absorb the recall members
+    alpha = next(u for u in out
+                 if u.domain == "alpha" and not u.synthesis_reason)
+    assert not ({"e1", "e2"} & set(alpha.member_flow_ids))
+
+
+def test_passthrough_ids_unique_and_canonical() -> None:
+    ufs = _fixture() + [_seed("UF-142", "articles"), _seed("UF-143", "zeta")]
+    out, tele = aggregate_user_flows(ufs)
+    ids = [u.id for u in out]
+    assert len(ids) == len(set(ids))                    # no collisions
+    assert all(i.startswith("UF-") for i in ids)        # canonical format
+    # fate covers EVERY input row (clusters + passthrough)
+    assert set(tele["fate"]) == {u.id for u in ufs}
+    assert tele["scattered"] == 0
+
+
 # ── kill-switch + registration ──────────────────────────────────────────────
 
 

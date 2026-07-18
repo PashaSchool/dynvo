@@ -1674,9 +1674,28 @@ def run_synth_quality(
             load_naming_vocab,
         )
         from faultline.pipeline_v2.uf_synth_fold import apply_uf_synth_fold
+        # S2 Seg A rider (wave-gauntlet Class 2, 2026-07-18): under
+        # FAULTLINE_UF_DET_AGGREGATION the lattice's action children are the
+        # deterministic anti-giant split of the domain clusters — they share a
+        # noun-head + files with their sibling cluster BY DESIGN, and L-C1/
+        # L-C3 read exactly that shape as a foldable dup family, silently
+        # undoing the split (Soc0 UF-022 7->47). Lattice-born rows are exempt
+        # as FOLD SOURCES in the Seg A world only; unset -> empty set ->
+        # byte-identical planning.
+        _fold_exempt: frozenset[str] = frozenset()
+        from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+            det_aggregation_enabled as _det_agg_on,
+        )
+        if _det_agg_on():
+            from faultline.pipeline_v2.journey_lattice import _is_lattice_born
+            _fold_exempt = frozenset(
+                str(_get(u, "id", "") or "") for u in user_flows
+                if _is_lattice_born(u)
+            )
         synth_fold_tele = apply_uf_synth_fold(
             user_flows, flows, product_features,
             _verb_class_tokens(vocab or load_naming_vocab()),
+            fold_exempt_ids=_fold_exempt,
         )
     tele = {
         "enabled": True,

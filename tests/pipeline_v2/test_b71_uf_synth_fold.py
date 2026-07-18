@@ -409,3 +409,58 @@ def test_apply_unions_members_and_drops_loser() -> None:
     assert set(rich.member_flow_ids) == {"m1", "m2"}   # members unioned
     assert tele["lc1_echo_folded"] == 1
     assert tele["total_folded"] == 1
+
+
+# ── S2 Seg A rider — lattice-partition fold exemption (wave-gauntlet C2) ──────
+#
+# Under FAULTLINE_UF_DET_AGGREGATION the lattice's action children ('Browse
+# findings' / 'View findings' / 'Create findings') share a noun-head + files
+# with their sibling domain cluster BY DESIGN — L-C1/L-C3 read that shape as
+# a foldable dup family and silently UNDO the split (Soc0 wave forensics:
+# UF-022 7 -> 47, giant-catchall 2 -> 5). ``fold_exempt_ids`` bars them as
+# fold SOURCES; an empty set is byte-identical planning (the OFF worlds).
+
+
+def _lattice_family():
+    """A domain cluster + two lattice action children over the SAME file
+    (overlapping spans — the exact wave shape)."""
+    parent = _uf("UF-022", "Browse & filter API findings", pf="findings",
+                 resource="finding", members=["p1", "p2"])
+    kid_b = _uf("UF-L-aaa1", "Browse findings", pf="findings",
+                resource="finding", members=["k1", "k2"])
+    kid_v = _uf("UF-L-bbb2", "View findings", pf="findings",
+                resource="finding", members=["k3", "k4"])
+    flows = [
+        _flow("p1", [("backend/routers/findings.py", 1, 40)]),
+        _flow("p2", [("backend/routers/findings.py", 45, 80)]),
+        _flow("k1", [("backend/routers/findings.py", 10, 30)]),
+        _flow("k2", [("backend/routers/findings.py", 50, 70)]),
+        _flow("k3", [("backend/routers/findings.py", 15, 25)]),
+        _flow("k4", [("backend/routers/findings.py", 60, 75)]),
+    ]
+    return parent, kid_b, kid_v, flows
+
+
+def test_lattice_children_exempt_are_never_fold_sources() -> None:
+    """With the exemption set (the Seg A world), the action children survive
+    and the parent keeps its own members — the lattice split is not undone."""
+    parent, kid_b, kid_v, flows = _lattice_family()
+    ufs = [parent, kid_b, kid_v]
+    exempt = frozenset({"UF-L-aaa1", "UF-L-bbb2"})
+    plan = plan_uf_synth(ufs, flows, [_pf("findings", "Findings")], _V,
+                         fold_exempt_ids=exempt)
+    assert not (set(plan.fold) & exempt)       # children never fold away
+    tele = apply_uf_synth_fold(ufs, flows, [_pf("findings", "Findings")], _V,
+                               fold_exempt_ids=exempt)
+    ids = {u.id for u in ufs}
+    assert {"UF-L-aaa1", "UF-L-bbb2"} <= ids   # split intact
+    assert set(parent.member_flow_ids) == {"p1", "p2"}  # no giant re-mint
+
+
+def test_without_exemption_the_fold_eats_the_children_regression_lock() -> None:
+    """The empty-set call (every OFF world) reproduces the wave defect shape —
+    locked so the exemption's purpose stays measurable."""
+    parent, kid_b, kid_v, flows = _lattice_family()
+    ufs = [parent, kid_b, kid_v]
+    plan = plan_uf_synth(ufs, flows, [_pf("findings", "Findings")], _V)
+    assert set(plan.fold) & {"UF-L-aaa1", "UF-L-bbb2"}  # children folded away

@@ -63,6 +63,31 @@ def det_aggregation_enabled() -> bool:
     }
 
 
+def _is_channel_row(u: "UserFlow") -> bool:
+    """A NON-journey channel row that must pass through the fold UNTOUCHED.
+
+    Wave-gauntlet Class 1 (2026-07-18, marker-flag-contract 0->9 on Soc0):
+    the rollup input carries member-less SYSTEM SEEDS
+    (``synthesis_reason="system_flow_recall"``, 'Run <domain>') and other
+    synthesized/marker rows. Folding them into a domain cluster STRIPPED
+    ``synthesis_reason`` — so the downstream synth-quality demote / B45
+    gap-channel machinery no longer recognised them and the board shipped
+    mc=0 rows without ``is_coverage_marker`` (a B23-contract violation:
+    a marker is FLAGGED, never judged by name). Channel rows are not
+    journey STRUCTURE: they keep their identity, flags and members (if
+    any) verbatim, and the LLM-path channel machinery handles them
+    exactly as on the OFF path. Consequence: no member-less cluster can
+    exist (every clustered constituent has >= 1 member).
+    """
+    if not (u.member_flow_ids or []):
+        return True
+    if getattr(u, "synthesized", False) or getattr(u, "synthesis_reason", None):
+        return True
+    if getattr(u, "is_coverage_marker", False):
+        return True
+    return False
+
+
 def _dominant(ufs: list["UserFlow"]) -> "UserFlow":
     """The cluster's representative constituent: largest member_count, then
     smallest id — a deterministic, evidence-grounded choice (the heaviest
@@ -115,16 +140,26 @@ def aggregate_user_flows(
         "members_out": 0,
         "singleton_clusters": 0,
         "merged_clusters": 0,
+        "passthrough_channel_rows": 0,
         "scattered": 0,          # conservation law: MUST stay 0
-        "fate": {},              # input UF id -> cluster id (every input named)
+        "fate": {},              # input UF id -> output id (every input named)
     }
     if not user_flows:
         return [], telemetry
 
     from faultline.models.types import UserFlow
 
-    by_domain: dict[str, list["UserFlow"]] = defaultdict(list)
+    # Channel rows (member-less / synthesized / markers) are NOT journey
+    # structure — they pass through verbatim (Class 1 fix, see
+    # :func:`_is_channel_row`); only member-ful organic journeys cluster.
+    journey_rows: list["UserFlow"] = []
+    channel_rows: list["UserFlow"] = []
     for u in user_flows:
+        (channel_rows if _is_channel_row(u) else journey_rows).append(u)
+    telemetry["passthrough_channel_rows"] = len(channel_rows)
+
+    by_domain: dict[str, list["UserFlow"]] = defaultdict(list)
+    for u in journey_rows:
         by_domain[str(u.domain) if u.domain is not None else ""].append(u)
 
     telemetry["domains"] = len(by_domain)
@@ -182,13 +217,27 @@ def aggregate_user_flows(
         else:
             telemetry["merged_clusters"] += 1
 
+    # ── channel-row passthrough (renumbered AFTER the clusters so ids stay
+    # unique in the canonical "UF-NNN" format; every field — synthesis_reason,
+    # is_coverage_marker, members, category/trigger — is preserved verbatim;
+    # the emission I14 backpointer rewrite re-syncs flow.user_flow_id).
+    out: list["UserFlow"] = list(clusters)
+    next_n = len(clusters)
+    for u in sorted(channel_rows, key=lambda r: r.id or ""):
+        next_n += 1
+        new_id = f"UF-{next_n:03d}"
+        fate[u.id] = new_id
+        u = u.model_copy(update={"id": new_id})
+        out.append(u)
+        members_out += len(set(u.member_flow_ids or []))
+
     telemetry["clusters"] = len(clusters)
     telemetry["members_out"] = members_out
     telemetry["fate"] = fate
     telemetry["scattered"] = sum(
         1 for u in user_flows if u.id not in fate
     )
-    return clusters, telemetry
+    return out, telemetry
 
 
 __all__ = [
