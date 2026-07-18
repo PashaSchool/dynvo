@@ -403,6 +403,15 @@ def _merge_anchors_across_workspaces(
     # dropped their routes silently: live ON forensics = 28 emitted route
     # rows -> 10 delivered (12 candidates coalesced into 6 route-less
     # groups). Origin-gated like B66/B67 — arms ONLY the spa-page source.
+    # S4-a rides the same armed path: an app-router keyless candidate carries
+    # its route in ``.routes`` with the page/route file as its single path, so
+    # two same-slug pages across workspaces (or a slug shared with the leftover
+    # scope) coalesce to a route-less group unless the source is armed. Arms
+    # ONLY the approuter source; unset -> not in the set -> byte-identical OFF.
+    from faultline.pipeline_v2.extractors.approuter_keyless import (
+        APPROUTER_SOURCE,
+        approuter_keyless_enabled,
+    )
     armed_sources: set[str] = set()
     if jobs_entries_enabled():
         armed_sources.add(JobsEntryExtractor.name)
@@ -410,6 +419,8 @@ def _merge_anchors_across_workspaces(
         armed_sources.add(SERVER_API_ENTRY_SOURCE)
     if spa_router_entries_enabled():
         armed_sources.add(SPA_PAGE_SOURCE)
+    if approuter_keyless_enabled():
+        armed_sources.add(APPROUTER_SOURCE)
 
     def _routes_union(
         cands: list[AnchorCandidate],

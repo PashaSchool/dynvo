@@ -210,6 +210,29 @@ def _load_default_extractors() -> list[AnchorExtractor]:
     except ImportError:  # pragma: no cover — missing extractor is non-fatal
         pass
 
+    # S4-a — App-Router keyless route extractor. Emits routes_index entries
+    # (explicit routes) for app/**/page.tsx + app/**/route.ts trees whose
+    # scope is not cleanly next-app-router-tagged — the monorepo residue
+    # (cal apps/web, composite replaces the stock route source) and the
+    # polyglot leftover (onyx web/, leftover pass runs stock route with the
+    # js-generic root tag). Registration is FLAG-GATED
+    # (FAULTLINE_APPROUTER_KEYLESS, default OFF) for the same reason as
+    # B65-v3/B66/B67: scan_meta.extractor_hits serializes EVERY registered
+    # source key, so an unconditionally-registered-but-inert extractor would
+    # still grow the OFF board by one key. The extract() gate is a second
+    # guard.
+    try:
+        from faultline.pipeline_v2.extractors.approuter_keyless import (
+            approuter_keyless_enabled,
+        )
+        if approuter_keyless_enabled():
+            _try(
+                "faultline.pipeline_v2.extractors.approuter_keyless",
+                "AppRouterKeylessExtractor",
+            )
+    except ImportError:  # pragma: no cover — missing extractor is non-fatal
+        pass
+
     return out
 
 

@@ -783,6 +783,22 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. No KEY_SCHEMA bump (append-only — reconciled at
     # merge).
     "FAULTLINE_GENERATED_CONTENT_MARKER",
+    # S4-a (2026-07-18) — App-Router keyless route extractor: emits
+    # routes_index entries for app/**/page.tsx + app/**/route.ts trees whose
+    # scope is not cleanly next-app-router-tagged (the monorepo residue where
+    # the composite replaced the stock route source — cal apps/web 0/939 — and
+    # the polyglot leftover scanned with the js-generic root tag — onyx
+    # web/src/app 0/114). Keys on the App-Router CONVENTION (page/route leaf
+    # under an app/ or src/app/ root run, matched anywhere) via its own source
+    # name (route-approuter), so Stage-1 replace-by-name never narrows it and
+    # the js-generic leftover tag never suppresses it. Contained: emits ONLY
+    # explicit routes_index rows (the App-Router profile already anchors the
+    # files' features/flows via the same first-segment slug — same-slug merge,
+    # no twin); build_routes_index folds them LAST so a clean next-app-router
+    # repo's stock rows win the dedup byte-identically. Default OFF; unset / =0
+    # keeps the extractor unregistered (extractor_hits byte-identical — the B67
+    # kill-switch lesson). No KEY_SCHEMA bump (the flip rides its own commit).
+    "FAULTLINE_APPROUTER_KEYLESS",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
