@@ -9,10 +9,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from faultline.pipeline_v2 import ScanContext
 from faultline.pipeline_v2.extractors.go_router import (
+    GO_EXTRACTION_ENV,
     GoRouterExtractor,
+    _is_route_path,
+    _method_prefix,
     _route_to_slug,
+    go_extraction_enabled,
 )
 
 
@@ -248,3 +254,226 @@ def test_low_confidence_when_no_constructor_in_file(tmp_path: Path) -> None:
     assert "posts" in names
     posts = [c for c in cands if c.name == "posts"][0]
     assert posts.confidence_self == 0.7
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# S4b — FAULTLINE_GO_EXTRACTION armed extraction (default OFF)
+#
+# Root defect (traefik VERIFIED): the chi/gin/echo ``route_call`` patterns
+# match any bare ``.Get("s")`` / ``.Set("s")``, so ``req.Header.Get(
+# "Content-Type")`` mints "content-type" as a feature (19/19 traefik
+# go-router anchors were header garbage), while traefik's real ``/api/**``
+# surface — gorilla/mux ``router.Methods(..).Path("/x").HandlerFunc(..)`` —
+# is invisible. Armed = gorilla signature + ``route_must_be_path`` filter.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+# The exact false-positive class harvested off traefik's real code — bare
+# ``.Get`` / ``.Set`` on ``http.Header`` / ``url.Values``. These are the
+# named survivors that armed extraction MUST drop.
+_TRAEFIK_HEADER_GARBAGE = frozenset({
+    "content-type", "x-forwarded-for", "accept", "vary", "origin",
+    "x-request-id", "status", "search",
+})
+
+
+def _traefik_shape_src() -> str:
+    """A synthetic slice of traefik ``pkg/api/handler.go``: a gorilla/mux
+    fluent router registering real ``/api/**`` + ``/debug/**`` routes,
+    interleaved with the header/JSON-key ``.Get``/``.Set`` calls that the
+    shipped patterns mis-mint."""
+    return """
+    package api
+
+    import (
+        "net/http"
+        "github.com/gorilla/mux"
+    )
+
+    func (h *Handler) createRouter() *mux.Router {
+        router := mux.NewRouter().UseEncodedPath()
+        router.Methods(http.MethodGet).Path("/api/rawdata").HandlerFunc(h.getRuntimeConfiguration)
+        router.Methods(http.MethodGet).Path("/api/http/routers").HandlerFunc(h.getRouters)
+        router.Methods(http.MethodGet).Path("/api/http/routers/{routerID}").HandlerFunc(h.getRouter)
+        router.Methods(http.MethodGet).PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+
+        // Header / JSON-key access — NOT routes. Shipped patterns mis-mint
+        // these off the bare ``.Get("s")``; armed extraction must drop them.
+        ct := req.Header.Get("Content-Type")
+        prior := req.Header.Get("X-Forwarded-For")
+        accept := req.Header.Get("Accept")
+        vals.Get("status")
+        vals.Get("search")
+        return router
+    }
+    """.strip()
+
+
+def test_armed_traefik_shape_drops_headers_and_finds_gorilla_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ARMED: gorilla/mux routes surface; header/JSON-key garbage is gone."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    _write(tmp_path / "pkg" / "api" / "handler.go", _traefik_shape_src())
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["pkg/api/handler.go"])
+
+    names = {c.name for c in GoRouterExtractor().extract(ctx)}
+    # Real routes (the survivors that must appear):
+    assert {
+        "api-rawdata",
+        "api-http-routers",
+        "api-http-routers-router-id",
+        "debug-pprof",
+    }.issubset(names)
+    # Header / key garbage (the named anti-case) must be absent:
+    assert names.isdisjoint(_TRAEFIK_HEADER_GARBAGE)
+
+
+def test_off_traefik_shape_keeps_shipped_header_garbage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KILL-SWITCH PAIR (OFF half): with the flag OFF the board is byte-
+    identical to the shipped extractor — the header false positives are
+    STILL minted and the gorilla routes are STILL invisible. This locks
+    ``=0`` as a forever kill-switch and documents the pre-fix defect."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "0")
+    _write(tmp_path / "pkg" / "api" / "handler.go", _traefik_shape_src())
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["pkg/api/handler.go"])
+
+    names = {c.name for c in GoRouterExtractor().extract(ctx)}
+    # Shipped behaviour: header garbage present …
+    assert "content-type" in names
+    assert "x-forwarded-for" in names
+    # … and gorilla routes NOT found (no gorilla signature in base set).
+    assert "api-rawdata" not in names
+
+
+def test_unset_matches_explicit_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset ≡ explicit ``0`` — the shipped board, byte-for-byte."""
+    _write(tmp_path / "pkg" / "api" / "handler.go", _traefik_shape_src())
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["pkg/api/handler.go"])
+
+    monkeypatch.delenv(GO_EXTRACTION_ENV, raising=False)
+    unset = sorted(
+        (c.name, c.paths, c.confidence_self)
+        for c in GoRouterExtractor().extract(ctx)
+    )
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "0")
+    off = sorted(
+        (c.name, c.paths, c.confidence_self)
+        for c in GoRouterExtractor().extract(ctx)
+    )
+    assert unset == off
+
+
+def test_armed_nethttp_go122_method_pattern(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ARMED: Go 1.22 net/http ServeMux ``"GET /items/{id}"`` patterns are
+    recognised as PATHS (method token stripped before slugifying)."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    src = """
+    package main
+    func main() {
+        mux := http.NewServeMux()
+        mux.HandleFunc("GET /items/{id}", getItem)
+        mux.HandleFunc("/healthz", healthz)
+    }
+    """.strip()
+    _write(tmp_path / "main.go", src)
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["main.go"])
+    names = {c.name for c in GoRouterExtractor().extract(ctx)}
+    assert {"items-id", "healthz"}.issubset(names)
+
+
+# ── anti-cases ───────────────────────────────────────────────────────────
+
+
+def test_armed_non_go_repo_stays_inert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ANTI-CASE: even armed, a non-Go stack (rust) mints nothing — the
+    flag arms Go extraction, it never activates the extractor elsewhere."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    _write(tmp_path / "main.go", _traefik_shape_src())
+    ctx = _ctx(
+        repo_path=tmp_path,
+        tracked_files=["main.go"],
+        audited_stack="rust-workspace",
+        stack="rust",
+    )
+    assert GoRouterExtractor().extract(ctx) == []
+
+
+def test_armed_testdata_fixtures_not_minted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ANTI-CASE (dev-artifact law): a real gorilla route living under
+    ``testdata/`` is a fixture, never a product route — armed excludes it."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    _write(tmp_path / "pkg" / "api" / "testdata" / "fixture.go",
+           _traefik_shape_src())
+    ctx = _ctx(
+        repo_path=tmp_path,
+        tracked_files=["pkg/api/testdata/fixture.go"],
+    )
+    assert GoRouterExtractor().extract(ctx) == []
+
+
+def test_armed_examples_dir_not_minted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ANTI-CASE (dev-artifact law): ``examples/`` demo code is not a route
+    surface."""
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    _write(tmp_path / "examples" / "demo.go", _traefik_shape_src())
+    ctx = _ctx(repo_path=tmp_path, tracked_files=["examples/demo.go"])
+    assert GoRouterExtractor().extract(ctx) == []
+
+
+# ── path-mechanism units ─────────────────────────────────────────────────
+
+
+def test_is_route_path_mechanism() -> None:
+    # URL paths — accepted:
+    assert _is_route_path("/api/rawdata")
+    assert _is_route_path("/")
+    assert _is_route_path("GET /items/{id}")
+    assert _is_route_path("POST /users")
+    # Non-paths (header names / JSON keys / query params) — rejected:
+    assert not _is_route_path("Content-Type")
+    assert not _is_route_path("X-Forwarded-For")
+    assert not _is_route_path("status")
+    assert not _is_route_path("search")
+    # A method token WITHOUT a following path is not a route:
+    assert not _is_route_path("GET")
+    assert not _is_route_path("GETTER")
+
+
+def test_method_prefix_only_strips_real_method_tokens() -> None:
+    assert _method_prefix("GET /x") == "GET"
+    assert _method_prefix("DELETE /x/{id}") == "DELETE"
+    assert _method_prefix("/x") is None
+    # A word that merely starts with a method token is not a method prefix:
+    assert _method_prefix("GETTER /x") is None
+    assert _method_prefix("Content-Type") is None
+
+
+def test_flag_default_off() -> None:
+    """Belt-and-braces: the flag reader defaults OFF and honours truthy set."""
+    import os
+    saved = os.environ.pop(GO_EXTRACTION_ENV, None)
+    try:
+        assert go_extraction_enabled() is False
+        for on in ("1", "true", "on", "yes", "TRUE"):
+            os.environ[GO_EXTRACTION_ENV] = on
+            assert go_extraction_enabled() is True
+        for off in ("0", "false", "off", "no", ""):
+            os.environ[GO_EXTRACTION_ENV] = off
+            assert go_extraction_enabled() is False
+    finally:
+        os.environ.pop(GO_EXTRACTION_ENV, None)
+        if saved is not None:
+            os.environ[GO_EXTRACTION_ENV] = saved
