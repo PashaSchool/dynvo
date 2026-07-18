@@ -272,6 +272,25 @@ def _strip_method_prefix(route: str) -> str:
     return route
 
 
+def _http_method_of(verb_group: str, route: str) -> str:
+    """Best-effort HTTP method for a matched registration.
+
+    Priority: the matched verb group when it IS an HTTP method name
+    (chi ``.Get`` / gin ``.GET``), else the Go 1.22 ServeMux method
+    prefix (``"GET /x"``), else ``"GET"`` — the ``build_routes_index``
+    default. gorilla/mux verbs (``Path``/``PathPrefix``/``Handle*``)
+    carry no method in the matched call (it lives in a separate
+    ``.Methods(...)`` link of the fluent chain), so they take the
+    honest default rather than a guessed parse."""
+    verb = (verb_group or "").upper()
+    if verb in _METHOD_TOKENS:
+        return verb
+    prefix = _method_prefix(route)
+    if prefix is not None:
+        return prefix
+    return "GET"
+
+
 # ── Extractor ──────────────────────────────────────────────────────────────
 
 
@@ -306,9 +325,17 @@ class GoRouterExtractor(PatternExtractor):
         if not routers:
             return {}
 
-        # slug → {paths_set, with_ctor_flag, rationale_set}
+        # slug → {paths_set, with_ctor_flag, rationale_set, routes_set}
+        # ``routes`` is filled ONLY when armed: explicit (pattern, method,
+        # file) triples for ``build_routes_index`` Pass A — Go routers are
+        # DSL-routed (the URL lives in the source, not the filesystem), the
+        # exact class ``AnchorCandidate.routes`` was designed for (FastAPI
+        # precedent). OFF leaves ``routes=()`` → Pass A skips → byte-ident.
         anchors: dict[str, dict] = defaultdict(
-            lambda: {"paths": set(), "with_ctor": False, "rationales": set()},
+            lambda: {
+                "paths": set(), "with_ctor": False, "rationales": set(),
+                "routes": set(),
+            },
         )
 
         for rel_path in ctx.tracked_files:
@@ -347,6 +374,12 @@ class GoRouterExtractor(PatternExtractor):
                     bucket["rationales"].add(
                         f"{router_name}:{route}",
                     )
+                    if armed:
+                        bucket["routes"].add((
+                            slug_route,
+                            _http_method_of(match.group(1) or "", route),
+                            posix(rel_path),
+                        ))
 
         return anchors
 
@@ -371,6 +404,8 @@ class GoRouterExtractor(PatternExtractor):
             source=self.name,
             confidence_self=conf,
             rationale=f"go-router routes: {rationale_sample}",
+            # Armed-only (empty set OFF): sorted for determinism.
+            routes=tuple(sorted(bucket["routes"])),
         )
 
 

@@ -421,6 +421,16 @@ def _merge_anchors_across_workspaces(
         armed_sources.add(SPA_PAGE_SOURCE)
     if approuter_keyless_enabled():
         armed_sources.add(APPROUTER_SOURCE)
+    # S4b rides the same origin-gated path: armed go-router candidates carry
+    # explicit DSL routes (gorilla/chi/gin/ServeMux) that a same-slug
+    # coalesce on a Go monorepo would otherwise drop before routes_index.
+    # Arms ONLY the go-router source key (ce821a5 law).
+    from faultline.pipeline_v2.extractors.go_router import (
+        GoRouterExtractor,
+        go_extraction_enabled,
+    )
+    if go_extraction_enabled():
+        armed_sources.add(GoRouterExtractor.name)
 
     def _routes_union(
         cands: list[AnchorCandidate],
