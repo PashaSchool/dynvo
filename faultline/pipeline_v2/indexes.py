@@ -175,6 +175,84 @@ def _derive_route_from_path(path: str) -> tuple[str, str] | None:
     return pattern, method
 
 
+# App-Router root component runs — the ordered segment form of the
+# ``next-app-router`` entry in ``filesystem-routing.yaml`` (roots ``app/``
+# + ``src/app/``). Longest-first so ``src/app`` wins over a bare ``app``.
+# The convention lives in YAML (the extractor gates file matches on the
+# YAML suffixes); this is the segment form the App-Router-ONLY deriver
+# needs so a Pages-Router / Remix file (a DIFFERENT root) never matches
+# here. No per-repo path.
+_APP_ROUTER_ROOT_SEQS: tuple[tuple[str, ...], ...] = (
+    ("src", "app"),
+    ("app",),
+)
+
+
+def _route_from_app_rest(dir_segs: list[str], fname: str) -> tuple[str, str]:
+    """``(pattern, method)`` from the directory segments + leaf filename
+    UNDER an App-Router root. Identical leaf rules to
+    :func:`_derive_route_from_path` (page/route markers, per-verb leaves,
+    dynamic segments, URL-invisible route groups) — the App-Router deriver
+    reuses them so the two paths stamp byte-identical ``(pattern, method)``
+    for the same file."""
+    stem = re.sub(r"\.[A-Za-z0-9+]+$", "", fname)
+    method = "PAGE"
+    is_marker_leaf = stem in _PAGE_MARKERS or stem in _API_MARKERS
+    if stem in _API_MARKERS:
+        method = "GET"  # App-Router route.ts — verb unknown; read default
+    verb_m = _VERB_LEAF_RE.match(stem)
+    if verb_m:
+        method = verb_m.group("verb").upper()
+        is_marker_leaf = True
+    url_segs = list(dir_segs)
+    if stem and not is_marker_leaf:
+        url_segs.append(stem)
+    out_segs: list[str] = []
+    for seg in url_segs:
+        if not seg or _GROUP_RE.match(seg):
+            continue  # route groups are URL-invisible
+        m = _FS_DYNAMIC_RE.match(seg)
+        if m:
+            out_segs.append(":" + (m.group("name") or "param"))
+        else:
+            out_segs.append(seg)
+    return "/" + "/".join(out_segs), method
+
+
+def derive_app_router_route(path: str) -> tuple[str, str] | None:
+    """Map an App-Router ``page``/``route`` file to ``(pattern, method)``.
+
+    Locates the App-Router root run (``app`` or ``src/app``) ANYWHERE in the
+    path so a monorepo workspace prefix (``apps/web/app/…``) or a
+    non-workspace subtree (``web/src/app/…``) is transparent. Derives the URL
+    from the directory tree after the root. Returns ``None`` when the path is
+    NOT under an App-Router root — so a Pages-Router (``pages/``) or Remix
+    (``app/routes/``) file (a DIFFERENT root) never resolves here.
+
+    This is the App-Router-ONLY companion to :func:`_derive_route_from_path`
+    (which matches every routing root, longest-first): it exists for the
+    keyless App-Router extractor, whose scopes carry a ``js-generic`` /
+    absent stack tag (monorepo residue / polyglot leftover) where the stock
+    filesystem route pass never fired.
+    """
+    p = path.replace("\\", "/")
+    all_segs = [s for s in p.split("/") if s]
+    if len(all_segs) < 2:
+        return None
+    dir_segs, fname = all_segs[:-1], all_segs[-1]
+    for i in range(len(dir_segs)):
+        for seq in _APP_ROUTER_ROOT_SEQS:
+            if dir_segs[i:i + len(seq)] == list(seq):
+                before = dir_segs[:i]
+                # A ``pages`` / ``routes`` ancestor means this ``app`` sits
+                # INSIDE a Pages-Router / Remix tree — that router owns it,
+                # not App Router. Honest non-match.
+                if "pages" in before or "routes" in before:
+                    return None
+                return _route_from_app_rest(dir_segs[i + len(seq):], fname)
+    return None
+
+
 def build_path_index(
     features: list[dict[str, Any]],
     flows: list[dict[str, Any]] | None = None,
@@ -329,10 +407,18 @@ def build_routes_index(
     # The spa-router source folds LAST (Pass C below) so an identical
     # (pattern, method, file) triple already emitted by an EXISTING source
     # wins and stays byte-identical — the B65-v3/B66 idempotency law.
+    from faultline.pipeline_v2.extractors.approuter_keyless import (
+        APPROUTER_SOURCE,
+    )
     from faultline.pipeline_v2.extractors.spa_router import SPA_PAGE_SOURCE
 
     for src_name, candidates in extractor_signals.items():
-        if src_name in ("_errors", SPA_PAGE_SOURCE) or not candidates:
+        # The spa-router (Pass C) and app-router-keyless (Pass D) sources fold
+        # LAST so an identical (pattern, method, file) triple already emitted
+        # by an existing source wins and stays byte-identical.
+        if src_name in ("_errors", SPA_PAGE_SOURCE, APPROUTER_SOURCE) or (
+            not candidates
+        ):
             continue
         for cand in candidates:
             explicit = getattr(cand, "routes", None)
@@ -407,6 +493,25 @@ def build_routes_index(
                 str(pat), str(meth or "GET"), str(file_str or ""),
                 kind=SPA_PAGE_KIND,
             )
+
+    # Pass D — S4-a App-Router keyless route rows, folded AFTER every existing
+    # source (Pass A/B/C) so an identical (pattern, method, file) triple a
+    # CLEAN next-app-router repo's stock ``route`` pass already emitted wins
+    # and stays byte-identical (route_groups + feature_uuid preserved); rows
+    # for App-Router trees the stock pass MISSED (cal residue / onyx leftover)
+    # are genuinely NEW and ADD. No ``kind`` — an approuter row is shaped
+    # exactly like a filesystem route row (the source it stands in for).
+    # Inert when the flag is off (the source key is then never present).
+    for cand in (extractor_signals.get(APPROUTER_SOURCE) or []):
+        explicit = getattr(cand, "routes", None)
+        if not explicit:
+            continue
+        for entry in explicit:
+            try:
+                pat, meth, file_str = entry
+            except (ValueError, TypeError):
+                continue
+            _emit(str(pat), str(meth or "GET"), str(file_str or ""))
     return out
 
 
