@@ -87,6 +87,60 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 # UF in the domain); 1500 tokens covers a large domain (~7 UFs) with
 # names + descriptions + AC drafts.
 DEFAULT_MAX_TOKENS = 1500
+
+# ── S2 Seg B' — scale-invariant per-UF output-token budget ──────────────────
+#
+# A large domain's structured JSON response (one record per UF: name +
+# description + intent + ui_tier + acceptance[]) exceeds the fixed
+# DEFAULT_MAX_TOKENS ceiling and is truncated mid-object -> json_parse_failed ->
+# the WHOLE domain degrades to its deterministic Stage-6.7 verdict. VERIFIED on
+# Soc0 (logs 20260717T132518Z, live key): the 3 degraded domains were EXACTLY
+# the 3 largest — network 26 / service 18 / detector 17 UFs; the next-largest
+# domain (admin, 11 UFs) refined cleanly. A deterministic size cliff, not a
+# model quirk.
+#
+# The fix scales max_tokens by a per-UF allowance (structural, scale-invariant —
+# NOT a per-repo tuned number: the output per UF is bounded by the prompt spec,
+# one JSON record per UF) floored at the legacy DEFAULT and ceilinged well below
+# the model's 64k output cap AND below the ~16k non-streaming-timeout line (this
+# stage uses a non-streaming create()). Flag-gated FAULTLINE_UF_REFINE_TOKEN_
+# SCALE; OFF/unset -> max_tokens == DEFAULT_MAX_TOKENS (byte-identical).
+#
+# The allowance is grounded in the measured per-row output distribution over
+# 6,189 multi-row cached uf-refine responses (~/.faultline/llm-cache/uf-refine,
+# parsed-JSON chars/4): median ~74, p90 ~106, max ~235 tokens/row — at p90 only
+# ~14 rows fit the old 1500 ceiling (the observed cliff: 17-26-UF domains
+# degrade, 11 passes). 300/UF covers the observed max with raw-format headroom;
+# a domain past the ceiling (>27 UFs at max verbosity) still degrades honestly
+# (and Seg D stamps the scan under its own flag).
+TOKENS_PER_UF = 300
+MAX_OUTPUT_TOKENS_CEILING = 8192
+UF_REFINE_TOKEN_SCALE_ENV = "FAULTLINE_UF_REFINE_TOKEN_SCALE"
+
+
+def _token_scale_enabled() -> bool:
+    """Default OFF — set ``FAULTLINE_UF_REFINE_TOKEN_SCALE=1`` to arm the
+    per-UF budget. OFF/unset -> DEFAULT_MAX_TOKENS for every domain (the fixed
+    1500 ceiling), i.e. byte-identical to pre-fix output."""
+    return os.environ.get(UF_REFINE_TOKEN_SCALE_ENV, "0").strip().lower() not in {
+        "0", "false", "no", "off", "",
+    }
+
+
+def _effective_max_tokens(n_ufs: int) -> int:
+    """Output-token ceiling for a domain's refinement call.
+
+    OFF/unset (or a domain small enough that the scaled value doesn't exceed the
+    floor): returns DEFAULT_MAX_TOKENS, so the cache key and the request stay
+    byte-identical to the pre-fix path. ON + a large domain: a per-UF allowance
+    floored at DEFAULT and ceilinged below the non-streaming timeout line.
+    """
+    if not _token_scale_enabled():
+        return DEFAULT_MAX_TOKENS
+    return min(
+        MAX_OUTPUT_TOKENS_CEILING,
+        max(DEFAULT_MAX_TOKENS, TOKENS_PER_UF * max(0, n_ufs)),
+    )
 # Per-DOMAIN defensive cost cap. A domain with many UFs + members can
 # inflate input tokens; $0.05/domain keeps even a 40-domain repo under
 # ~$2 total while catching a runaway malformed response. Exceeding it
@@ -144,7 +198,9 @@ def _cache_enabled() -> bool:
     }
 
 
-def _refine_cache_key(model: str, user: str) -> str:
+def _refine_cache_key(
+    model: str, user: str, max_tokens: int = DEFAULT_MAX_TOKENS,
+) -> str:
     """Content-hash key for one per-domain refinement (or retry) call.
 
     Components: cache version + canonical model id (pre-gateway) + the
@@ -152,17 +208,24 @@ def _refine_cache_key(model: str, user: str) -> str:
     deterministically-built UF payload batch — the exact structured input).
     Deliberately EXCLUDED: run_id, timestamps, thread identity, or any other
     run-varying value.
+
+    S2 Seg B': ``max_tokens`` is folded in ONLY when it differs from
+    DEFAULT_MAX_TOKENS. A larger budget can turn a previously-truncated
+    (uncached) response into a parseable one — a genuinely different answer that
+    must not collide with, or be served to, a DEFAULT-budget scan. Excluding it
+    at the default keeps every OFF-flag and small-domain key byte-identical to
+    the pre-fix key, so existing cache entries still hit and OFF stays
+    byte-identical.
     """
-    payload = json.dumps(
-        {
-            "version": STAGE_6_7B_CACHE_VERSION,
-            "model": model,
-            "system": _SYSTEM_PROMPT,
-            "user": user,
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-    )
+    body: dict[str, Any] = {
+        "version": STAGE_6_7B_CACHE_VERSION,
+        "model": model,
+        "system": _SYSTEM_PROMPT,
+        "user": user,
+    }
+    if max_tokens != DEFAULT_MAX_TOKENS:
+        body["max_tokens"] = max_tokens
+    payload = json.dumps(body, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
@@ -680,12 +743,15 @@ def _compute_domain(
         for uf in ufs
     ]
     user_prompt = _build_user_prompt(domain, payloads)
+    # S2 Seg B' — one budget per domain (its whole batch shares one call). OFF/
+    # unset (or a small domain) -> DEFAULT_MAX_TOKENS -> key + request unchanged.
+    max_tokens = _effective_max_tokens(len(ufs))
 
     # ── Cache lookup for call #1 ──
     key1: str | None = None
     cached_call1: dict[str, dict] | None = None
     if cache is not None:
-        key1 = _refine_cache_key(model, user_prompt)
+        key1 = _refine_cache_key(model, user_prompt, max_tokens)
         cached_call1 = _cache_get_parsed(cache, key1)
 
     if cached_call1 is not None:
@@ -700,7 +766,7 @@ def _compute_domain(
             model=model,
             system=_SYSTEM_PROMPT,
             user=user_prompt,
-            max_tokens=DEFAULT_MAX_TOKENS,
+            max_tokens=max_tokens,
             llm_health=llm_health,
         )
         # Cost of call #1 — derived from the pricing table (pure), identical to
@@ -779,7 +845,7 @@ def _compute_domain(
             key2: str | None = None
             cached_retry: dict[str, dict] | None = None
             if cache is not None:
-                key2 = _refine_cache_key(model, retry_user)
+                key2 = _refine_cache_key(model, retry_user, max_tokens)
                 cached_retry = _cache_get_parsed(cache, key2)
             if cached_retry is not None:
                 result.cache_hits += 1
@@ -790,7 +856,7 @@ def _compute_domain(
                     model=model,
                     system=_SYSTEM_PROMPT,
                     user=retry_user,
-                    max_tokens=DEFAULT_MAX_TOKENS,
+                    max_tokens=max_tokens,
                     llm_health=llm_health,
                 )
                 result.llm_calls += 1
@@ -1116,7 +1182,11 @@ def _apply_deterministic_ui_tiers(
 
 __all__ = [
     "COST_CAP_USD_PER_DOMAIN",
+    "DEFAULT_MAX_TOKENS",
     "DEFAULT_MODEL",
+    "MAX_OUTPUT_TOKENS_CEILING",
     "STAGE_6_7B_CACHE_VERSION",
+    "TOKENS_PER_UF",
+    "UF_REFINE_TOKEN_SCALE_ENV",
     "refine_user_flows",
 ]

@@ -718,6 +718,17 @@ ENV_OUTPUT_FLAGS = (
     # OFF; =0/unset appends nothing → degradations[] byte-identical. No
     # KEY_SCHEMA bump (append-only per wave convention — reconciled at merge).
     "FAULTLINE_DEGRADATION_STAMP",
+    # S2 Seg B' (2026-07-18) — uf_refiner per-UF output-token budget: the fixed
+    # 1500-token DEFAULT truncates a large domain's structured JSON response
+    # mid-object -> json_parse_failed -> the whole domain keeps deterministic
+    # names (Soc0 13:25Z: the 3 degraded domains were EXACTLY the 3 largest —
+    # network 26 / service 18 / detector 17 UFs; next-largest admin 11 refined
+    # cleanly). ON scales max_tokens by a structural per-UF allowance floored at
+    # DEFAULT so large domains parse. Reshapes user_flows[].name/description/
+    # intent/ui_tier/acceptance on the previously-degraded (largest) domains
+    # only. Default OFF; =0/unset -> max_tokens==DEFAULT + cache key unchanged ->
+    # byte-identical. No KEY_SCHEMA bump (append-only — reconciled at merge).
+    "FAULTLINE_UF_REFINE_TOKEN_SCALE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
