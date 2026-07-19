@@ -558,13 +558,50 @@ def _cohort_of(dev: Any, page_paths: list[str]) -> set[str]:
     return cohort
 
 
+class _LocProbe:
+    """On-demand owned-LOC over the repo tree (mega ``_MassOracle`` shape):
+    a birth may only mint a surface that carries REAL owned source (the S5a
+    birth-law no-husk rule — a member-ful 0-LOC PF is a trust bug). The
+    channel is live iff the tree exists AND at least one probed path is on
+    disk; a synthetic unit scene (fixture paths that exist nowhere) has NO
+    channel → the gate is vacuously open (tests birth freely)."""
+
+    def __init__(self, ctx: Any, sample_paths: list[str]) -> None:
+        from pathlib import Path
+        self._root: Any = None
+        rp = _attr(ctx, "repo_path", None)
+        if rp and Path(str(rp)).is_dir():
+            self._root = Path(str(rp))
+        self._cache: dict[str, int] = {}
+        self.channel = False
+        if self._root is not None:
+            for p in sample_paths[:400]:
+                if (self._root / str(p)).exists():
+                    self.channel = True
+                    break
+
+    def loc_of(self, paths: set[str]) -> int:
+        if self._root is None:
+            return 0
+        from faultline.pipeline_v2.stage_6_97_feature_loc import (
+            _expand_feature_files,
+        )
+        files = _expand_feature_files(self._root, sorted(paths), self._cache)
+        return sum(files.values())
+
+    def ok(self, cohort: set[str]) -> bool:
+        # no channel (synthetic) → open; live channel → require owned LOC > 0.
+        return (not self.channel) or self.loc_of(cohort) > 0
+
+
 def _promote_resident(
     dev: Any, cohort: set[str], page_paths: list[str],
     developer_features: list[Any], product_features: list[Any],
     pf_by_key: dict[str, Any], sib_tok: dict[str, str],
     used_slugs: set[str], surface_scope: str, tele: dict[str, Any],
-    kind: str, absorbed: set[str] | None = None,
-) -> None:
+    kind: str, loc_probe: "_LocProbe | None" = None,
+    absorbed: set[str] | None = None,
+) -> bool:
     """Merge the cohort into a token-matching sibling (the notifications class,
     ~2 %) else birth a PF. ``cohort`` is the EXACT resident set of the promoted
     surface; ``absorbed`` are cohort paths NOT already on ``dev`` (P2 bridged
@@ -604,7 +641,17 @@ def _promote_resident(
         tele["merged"].append({"dev": _attr(dev, "name"), "into": merge_key,
                                "kind": kind, "paths": len(move)})
         tele["devs_merged"] += 1
-        return
+        return True
+
+    # BIRTH — the S5a birth-law no-husk gate: the cohort must carry REAL
+    # owned source (else the born PF is a member-ful 0-LOC trust bug — Soc0
+    # i18n/notifications/home husks). Vacuously open on synthetic scenes.
+    if loc_probe is not None and not loc_probe.ok(cohort):
+        if whole and absorbed:
+            dev.paths = sorted(dev_paths)  # undo the pre-emptive absorb
+        tele.setdefault("birth_husk_held", []).append(
+            {"dev": _attr(dev, "name"), "kind": kind})
+        return False
 
     anchor = f"promote:{_MARKER}/{_attr(dev, 'name')}"
     if whole:
@@ -624,6 +671,7 @@ def _promote_resident(
     tele["births"].append({"dev": _attr(dev, "name"), "pf": slug, "kind": kind,
                            "pages": len(page_paths), "paths": len(pf.paths)})
     tele["pfs_born"] += 1
+    return True
 
 
 def _pf_key_of_lane(dev: Any) -> str:
@@ -633,7 +681,7 @@ def _pf_key_of_lane(dev: Any) -> str:
 def _seg_c_promote(
     developer_features: list[Any], product_features: list[Any],
     page_ri_files: set[str], freed_pages: list[tuple[str, str, Any]],
-    surface_scope: str, tele: dict[str, Any],
+    surface_scope: str, tele: dict[str, Any], loc_probe: "_LocProbe | None",
 ) -> None:
     """P1 (page evidence in a lane resident) ∪ P2 (lane token ↔ a freed /
     mis-homed product-PAGE). ``freed_pages`` = ``(page_path, leaf_key,
@@ -659,10 +707,11 @@ def _seg_c_promote(
         if not pages:
             continue
         cohort = _cohort_of(dev, pages)
-        _promote_resident(dev, cohort, pages, developer_features,
-                          product_features, pf_by_key, sib_tok, used_slugs,
-                          surface_scope, tele, kind="P1")
-        promoted.add(id(dev))
+        if _promote_resident(dev, cohort, pages, developer_features,
+                             product_features, pf_by_key, sib_tok, used_slugs,
+                             surface_scope, tele, kind="P1",
+                             loc_probe=loc_probe):
+            promoted.add(id(dev))
 
     # ── P2 — lane token ↔ freed / mis-homed product-PAGE ───────────────────
     # each freed page's component tokens (len>3); a lane resident whose token
@@ -692,7 +741,15 @@ def _seg_c_promote(
                    if pp not in claimed and (dtoks & pt)]
         if not bridged:
             continue
-        claimed.update(pp for pp, _lk, _o in bridged)
+        bridged_paths = [pp for pp, _lk, _o in bridged]
+        cohort = ({str(p) for p in (_attr(dev, "paths") or [])}
+                  | set(bridged_paths))
+        # no-husk gate BEFORE any shed, so a held husk never strands a page.
+        if loc_probe is not None and not loc_probe.ok(cohort):
+            tele.setdefault("birth_husk_held", []).append(
+                {"dev": _attr(dev, "name"), "kind": "P2"})
+            continue
+        claimed.update(bridged_paths)
         # carve each bridged page off the leaf hole AND its owning dev.
         for pp, lk, owner in bridged:
             lpf = pf_by_key.get(lk)
@@ -700,17 +757,14 @@ def _seg_c_promote(
                 _shed_paths(lpf, {pp})
             if owner is not None and owner is not dev:
                 _shed_paths_dev(owner, {pp})
-        bridged_paths = [pp for pp, _lk, _o in bridged]
         # the born PF's residents = the lane resident's own paths + the
         # bridged freed pages (the buried surface reunited with its pages).
-        cohort = ({str(p) for p in (_attr(dev, "paths") or [])}
-                  | set(bridged_paths))
-        _promote_resident(dev, cohort, bridged_paths, developer_features,
-                          product_features, pf_by_key, sib_tok, used_slugs,
-                          surface_scope, tele, kind="P2",
-                          absorbed=set(bridged_paths))
-        promoted.add(id(dev))
-        tele["p2_pages_bridged"] += len(bridged_paths)
+        if _promote_resident(dev, cohort, bridged_paths, developer_features,
+                             product_features, pf_by_key, sib_tok, used_slugs,
+                             surface_scope, tele, kind="P2",
+                             loc_probe=loc_probe, absorbed=set(bridged_paths)):
+            promoted.add(id(dev))
+            tele["p2_pages_bridged"] += len(bridged_paths)
 
 
 # ── entrypoint ──────────────────────────────────────────────────────────────
@@ -768,9 +822,15 @@ def run_leafroute_promotion(
             page_ri_files, tele))
 
     # ── Seg C — promote buried surfaces (consumes Seg B's freed pages) ─────
+    # The no-husk LOC probe samples lane-resident paths to decide its channel.
     surface_scope = "product"
+    lane_sample: list[str] = []
+    for d in devs:
+        if _attr(d, "product_feature_id") is None:
+            lane_sample.extend(str(p) for p in (_attr(d, "paths") or []))
+    loc_probe = _LocProbe(ctx, lane_sample)
     _seg_c_promote(developer_features, product_features, page_ri_files,
-                   freed_pages, surface_scope, tele)
+                   freed_pages, surface_scope, tele, loc_probe)
 
     # ── LOC re-truth (the LOC-doctrine: member-ful 0-LOC = trust bug) ──────
     # The wave ran AFTER Stage 6.97 froze loc, so path moves + births carry

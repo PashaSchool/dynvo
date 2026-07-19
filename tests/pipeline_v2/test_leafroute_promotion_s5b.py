@@ -323,6 +323,30 @@ def test_seg_c_notifications_merges_into_sibling():
 # ── flag OFF byte-no-op + determinism ───────────────────────────────────────
 
 
+def test_no_husk_birth_gate(tmp_path):
+    # a lane resident whose page cohort carries REAL owned LOC promotes; one
+    # whose cohort is empty-source (0 LOC) is HELD (Soc0 i18n/notifications
+    # husk class — member-ful 0-LOC is a trust bug).
+    from faultline.pipeline_v2.leafroute_promotion import _LocProbe
+    real = tmp_path / "src" / "pages" / "reports.tsx"
+    real.parent.mkdir(parents=True)
+    real.write_text("export default function Reports(){\n  return <div/>;\n}\n")
+    empty = tmp_path / "src" / "pages" / "blank.tsx"
+    empty.write_text("")  # 0 LOC
+
+    class C:
+        repo_path = str(tmp_path)
+
+    probe = _LocProbe(C(), ["src/pages/reports.tsx"])
+    assert probe.channel is True, "tree present → channel live"
+    assert probe.ok({"src/pages/reports.tsx"}) is True, "real LOC → birth ok"
+    assert probe.ok({"src/pages/blank.tsx"}) is False, "0-LOC cohort → husk held"
+    # a synthetic scene (no disk) → channel off → gate vacuously open.
+    probe2 = _LocProbe(Ctx(), ["nowhere/ghost.tsx"])
+    assert probe2.channel is False
+    assert probe2.ok({"nowhere/ghost.tsx"}) is True
+
+
 def test_flag_default_off():
     assert leafroute_promotion_enabled() is False
 
