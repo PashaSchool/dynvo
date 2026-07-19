@@ -69,6 +69,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "NAMING_CONTRACT_ENV",
     "NAMING_PACK_ENV",
+    "NAMING_WAVE_R5_ENV",
+    "naming_wave_r5_enabled",
     "naming_pack_enabled",
     "HUMANIZE_ROUTE_NAMES_ENV",
     "PF_NAME_LAW_ENV",
@@ -120,6 +122,22 @@ NAMING_PACK_ENV = "FAULTLINE_NAMING_PACK"
 #: channel only — feeds ``ProvenanceSources.nav``; the B40 nav-pinning rung and
 #: the B57 nav-cluster rung read the ungated votes and are untouched.
 PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
+
+#: R5 corpus naming-wave master flag (default OFF). One flag gates the five
+#: R5 segments' NEW display-channel behaviors as one wave:
+#:   * R5-1 identity-parity — a PF display that folds to ANOTHER live PF's
+#:     canonical slug (or shares a folded display) is reject/qualified at the
+#:     existing display-collision gate (the ``general`` -> 'Settings' remnant
+#:     the merged display-cross-gate leaves grounded);
+#:   * R5-2 own-resource templating (echo-hub siblings);
+#:   * R5-3 member-evidence display derivation (dir-token humanization);
+#:   * R5-4 compose-joint qualifier normalizer (all paren sites);
+#:   * R5-5 negative confidence rungs (census-shape caps).
+#: Segments may read their own sub-flags, but all fold under this master.
+#: Unset/``0`` restores the pre-R5 emission byte-identically (KS 4-way gate).
+#: Appended to ENV_OUTPUT_FLAGS WITHOUT a KEY_SCHEMA bump — the bump rides the
+#: separate flip commit (flip-protocol).
+NAMING_WAVE_R5_ENV = "FAULTLINE_NAMING_WAVE_R5"
 
 _VOCAB_FILE = "naming-contract-vocab.yaml"
 _vocab_cache: dict[str, Any] | None = None
@@ -328,6 +346,16 @@ def pf_display_evidence_gate_enabled() -> bool:
     identical (the kill-switch law)."""
     return os.environ.get(
         PF_DISPLAY_EVIDENCE_GATE_ENV, "0"
+    ).strip().lower() in {"1", "true"}
+
+
+def naming_wave_r5_enabled() -> bool:
+    """R5 corpus naming-wave master (default OFF). ``FAULTLINE_NAMING_WAVE_R5``
+    ``=1``/``true`` arms every R5 segment; unset/``0``/``false``/``off`` keeps
+    each segment inert ⇒ display + telemetry byte-identical to pre-R5 (the
+    inverted kill-switch survives the later default flip)."""
+    return os.environ.get(
+        NAMING_WAVE_R5_ENV, "0"
     ).strip().lower() in {"1", "true"}
 
 
@@ -1405,6 +1433,57 @@ def _apply_pf_devgrain_law(
         return chosen, False
     tele["pf_devgrain_stripped"] = tele.get("pf_devgrain_stripped", 0) + 1
     return stripped, True
+
+
+def _ident_fold(s: str) -> str:
+    """Identity fold used by the R5-1 parity law: lowercase + drop every
+    non-alphanumeric glyph, so a display ('Status Pages') and a canonical
+    slug ('status-pages') compare equal ('statuspages'). Distinct from the
+    ``taken`` display fold (which keeps internal spaces) — this axis is
+    identity, not display uniqueness."""
+    return re.sub(r"[^a-z0-9]+", "", (s or "").strip().lower())
+
+
+def _identity_parity_repair(
+    chosen: str,
+    anchor_id: str,
+    slug: str,
+    vocab: Mapping[str, Any],
+    taken: Mapping[str, str],
+    pf_slug_idents: set[str],
+) -> str | None:
+    """R5-1 — replace an identity-parity-colliding PF display with a lawful,
+    non-colliding one.
+
+    A PF display whose identity-fold equals ANOTHER live PF's canonical slug
+    ('Settings' on the ``general`` PF == the ``settings`` PF's identity) or a
+    display already claimed by an earlier PF wears another feature's identity
+    — trust-breaking. The repair prefers the humanized OWN-slug word (the
+    honest identity — always non-colliding since slugs are unique), then the
+    anchor ``"<Base> (<Qualifier>)"`` form, then the bare anchor base. Returns
+    ``None`` when no lawful non-colliding repair exists (caller keeps the
+    current as never-worse debt). Display channel only."""
+    own = _ident_fold(slug)
+
+    def _ok(cand: str | None) -> bool:
+        if not cand or display_law_violations(cand, vocab):
+            return False
+        low = cand.strip().lower()
+        if low in taken and taken.get(low) != slug:
+            return False
+        ci = _ident_fold(cand)
+        return not (bool(ci) and ci != own and ci in pf_slug_idents)
+
+    from_slug = _display_word(slug, vocab) if slug else None
+    if _ok(from_slug):
+        return from_slug
+    base, qual = humanize_anchor_display(anchor_id, vocab)
+    bq = f"{base} ({qual})" if base and qual else None
+    if _ok(bq):
+        return bq
+    if _ok(base):
+        return base
+    return None
 
 
 def _strip_uf_devgrain_suffix(
@@ -3198,6 +3277,18 @@ def run_naming_contract(
     # ── Pass 1: product features (pin > candidates; laws gate both) ──
     taken: dict[str, str] = {}  # case-folded display -> pf slug
     pf_by_slug: dict[str, Any] = {}
+    # R5-1 identity-parity (FAULTLINE_NAMING_WAVE_R5, default OFF) — the
+    # identity-fold of EVERY live PF slug, computed once so the guard is
+    # order-independent (a display grabbing a not-yet-processed PF's identity
+    # is caught). Empty work when the wave is off ⇒ byte-identical.
+    _wave_r5 = naming_wave_r5_enabled()
+    _pf_slug_idents: set[str] = (
+        {_ident_fold(str(getattr(p, "name", "") or "")) for p in product_features}
+        - {""}
+        if _wave_r5 else set()
+    )
+    if _wave_r5:
+        tele["pf_identity_parity_qualified"] = 0
     for pf in sorted(product_features,
                      key=lambda p: str(getattr(p, "name", "") or "")):
         slug = str(getattr(pf, "name", "") or "")
@@ -3741,6 +3832,44 @@ def run_naming_contract(
 
         tele["pf_display_provenance"] = apply_pf_display_provenance(
             product_features, _pf_sources, vocab)
+
+    # ── R5-1: identity-parity law (FAULTLINE_NAMING_WAVE_R5, default OFF) ──
+    # THE authoritative last word on PF displays. The B71 provenance ladder
+    # (above) re-derives each display independently from the RAW nav channel
+    # with no cross-PF check, so it re-introduces the identity-parity remnant
+    # the merged display-cross-gate leaves grounded: a display whose
+    # identity-fold equals ANOTHER live PF's canonical slug ('Monitors' on
+    # ``checker`` == the ``monitors`` PF; openstatus ``general`` -> 'Settings'
+    # == the ``settings`` PF) — trust-breaking, a feature wearing another
+    # feature's identity. Runs AFTER every prior PF-display pass (Pass-1,
+    # labeler, uniqueness re-check, provenance ladder) so nothing reverts it;
+    # repairs to the honest own-slug word (else the anchor qualifier) and also
+    # closes a residual shared-display twin. Flag OFF ⇒ the whole block is
+    # skipped ⇒ byte-identical.
+    if _wave_r5:
+        _seen_ident: dict[str, str] = {}
+        for pf in sorted(product_features,
+                         key=lambda p: str(getattr(p, "name", "") or "")):
+            disp = str(getattr(pf, "display_name", None) or "")
+            folded = disp.strip().lower()
+            if not folded:
+                continue
+            slug = str(getattr(pf, "name", "") or "")
+            ci = _ident_fold(disp)
+            foreign_slug = (
+                bool(ci) and ci != _ident_fold(slug) and ci in _pf_slug_idents
+            )
+            twin = folded in _seen_ident and _seen_ident.get(folded) != slug
+            if foreign_slug or twin:
+                repaired = _identity_parity_repair(
+                    disp, str(getattr(pf, "anchor_id", None) or ""),
+                    slug, vocab, _seen_ident, _pf_slug_idents)
+                if repaired is not None and repaired != disp:
+                    pf.display_name = repaired
+                    tele["pf_identity_parity_qualified"] += 1
+                    _seen_ident[repaired.strip().lower()] = slug
+                    continue
+            _seen_ident.setdefault(folded, slug)
 
     tele["labeler_pending"] = len(pending)
     return tele

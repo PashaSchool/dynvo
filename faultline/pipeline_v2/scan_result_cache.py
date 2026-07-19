@@ -862,6 +862,18 @@ ENV_OUTPUT_FLAGS = (
     # restores the shipped display byte-identically. Appended WITHOUT a
     # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
     "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE",
+    # R5 corpus naming-wave master (2026-07-19) — one flag gates the five R5
+    # naming segments' NEW display-channel behaviors: identity-parity
+    # reject/qualify (a PF display folding to ANOTHER live PF's canonical slug),
+    # own-resource echo-hub templating, member-evidence dir-token humanization,
+    # the compose-joint qualifier normalizer, and the negative confidence rungs
+    # (census-shape name_confidence caps + name_evidence stamps). Reshapes
+    # product_features[].display_name + user_flows[].name/name_confidence/
+    # name_evidence + scan_meta.naming_contract telemetry only — canonical
+    # identity untouched. Default OFF; =0/unset restores the pre-R5 emission
+    # byte-identically (KS 4-way). Appended WITHOUT a KEY_SCHEMA bump — the
+    # bump rides the separate default-flip commit (flip-protocol).
+    "FAULTLINE_NAMING_WAVE_R5",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
