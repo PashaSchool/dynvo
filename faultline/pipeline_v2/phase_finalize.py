@@ -3153,8 +3153,21 @@ def run_finalize_phase(
     )
     if _hh_enabled():
         try:
+            # B73 it2 guard 2 (prior-hold) — rows the B24 nav-rehome stage
+            # already adjudicated (stays[] holds + its own moves); consumed
+            # ONLY by the flag-gated organic-move lane, inert otherwise.
+            _b24_tele = scan_meta.get("mega_pf_nav_rehome") or {}
+            _mega_holds: dict[str, str] = {}
+            for _s in (_b24_tele.get("stays") or []):
+                if isinstance(_s, dict) and _s.get("uf"):
+                    _mega_holds[str(_s["uf"])] = str(_s.get("reason") or "held")
+            for _mv in (_b24_tele.get("moves") or []):
+                if isinstance(_mv, dict) and _mv.get("uf"):
+                    _mega_holds.setdefault(
+                        str(_mv["uf"]), f"moved:{_mv.get('to') or ''}")
             _hh_tele = run_post_uf_rehome(
-                user_flows, features, product_features, _hh_anchor_registry)
+                user_flows, features, product_features, _hh_anchor_registry,
+                mega_holds=_mega_holds or None)
             scan_meta["post_uf_rehome"] = _hh_tele
         except Exception as exc:  # noqa: BLE001 — never break a scan
             scan_meta.setdefault("warnings", []).append(

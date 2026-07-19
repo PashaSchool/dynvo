@@ -106,6 +106,28 @@ Unset/``0`` ⇒ byte-identical (the branch is never entered; the mega-armed
 path behaves exactly as before). Flag flip is its own pack (4-gate
 protocol) — the flip's target metric is the un-burial of the two
 direction-blocked exhibits.
+
+B73 it2 (Soc0 UF-051 keyed panel refutation, mandate 2026-07-19) — two
+guards INSIDE the strict gate, both mechanisms:
+
+* PRIOR-HOLD — a row the B24 nav-rehome stage already adjudicated (its
+  ``stays[]`` reasons — ``cross_app_target`` — or its own moves) is never
+  re-adjudicated here (``blocked reason='prior-hold'``): UF-051 was HELD
+  by the nav stage and the organic lane overrode that hold with weaker
+  evidence.
+* ANCHOR-OVERLAP FALSE-ZERO — ``home_share == 0`` is a registry-anchor
+  prefix measurement; when a journey member entry IS one of the home PF's
+  own ``role='anchor'`` member files (UF-051: all 34 member flows enter
+  ``backend/routers/admin.py`` — network-security's PRIMARY anchor file,
+  confidence 1.0), the zero is FALSE and the row is blocked
+  (``reason='anchor-overlap-false-zero'``). The right fate of such rows is
+  NOT a move (dev-demote territory of other cycles) — only the block is in
+  scope.
+
+Guard order: strict floor → prior-hold → anchor-overlap → direction-gate
+(first hit wins; one reason per row). The chrestomathic movers (typebot
+UF-046 family, cal UF-107 dev→dev, kan UF-017) carry no holds and no
+entry∩anchor-file overlap — the guards cannot touch them (unit-pinned).
 """
 
 from __future__ import annotations
@@ -172,6 +194,24 @@ def _ws_shell_roots() -> frozenset[str]:
         return frozenset(str(s).lower() for s in roots)
     except Exception:  # noqa: BLE001 — vocab faults degrade to the shipped set
         return frozenset({"apps", "app"})
+
+
+def _home_anchor_files(pf: Any) -> set[str]:
+    """The home PF's own ANCHOR member files (``member_files`` entries with
+    ``role == 'anchor'``) — the it2 guard-1 evidence set. A member entry of
+    a journey that IS such a file falsifies a registry-anchor
+    ``home_share == 0`` (the Soc0 UF-051 ``backend/routers/admin.py``
+    exhibit: role='anchor', confidence 1.0, primary — yet outside every
+    ``route:network-security`` registry prefix)."""
+    out: set[str] = set()
+    for m in (_attr(pf, "member_files") or []) if pf is not None else []:
+        role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+        if str(role or "") != "anchor":
+            continue
+        p = m.get("path") if isinstance(m, dict) else getattr(m, "path", None)
+        if p:
+            out.add(str(p))
+    return out
 
 
 def _pf_layer(pf: Any, shell_roots: frozenset[str]) -> str:
@@ -320,12 +360,19 @@ def run_post_uf_rehome(
     features: list[Any],
     product_features: list[Any],
     anchor_registry: Mapping[str, Any] | None,
+    mega_holds: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Re-home anchor-breadth-foreign journeys to their structurally wider
     home; fold into an organic receiver twin when one exists. Mutates
     ``user_flows`` (``product_feature_id`` / ``name`` / membership; may
     remove folded rows) in place. Returns telemetry (always — the cal.com
-    strict-no-op gate needs proof the rail evaluated and stayed inert)."""
+    strict-no-op gate needs proof the rail evaluated and stayed inert).
+
+    ``mega_holds`` (B73 it2 guard 2) — ``{uf_id: reason}`` of rows the B24
+    nav-rehome stage already adjudicated (its ``stays[]`` holds + its own
+    moves), fed by the finalize wiring from
+    ``scan_meta.mega_pf_nav_rehome``; consumed ONLY by the flag-gated
+    organic-move lane (prior-hold priority), inert otherwise."""
     tele: dict[str, Any] = {
         "enabled": True, "checked": 0, "rehomed": 0, "folded": 0,
         "renamed": 0, "rename_kept": 0, "orphan_guarded": 0,
@@ -439,12 +486,49 @@ def run_post_uf_rehome(
                 # organic-move rule REPLACES the S5a mega-organic handling
                 # of this rail's candidates (mega's decomposition elsewhere
                 # is untouched). See the module docstring §B73.
+                uid = str(_attr(uf, "id") or "")
                 if not (home_share <= _ORGANIC_HOME_MAX
                         and rival_share >= _ORGANIC_RIVAL_MIN):
                     # 0.34 ≤ rival < 0.8 band — the mega rung would have
                     # moved this; the ratified strict floor does not.
                     tele["organic_below_strict"] = (
                         tele.get("organic_below_strict", 0) + 1)
+                    continue
+                # it2 guard 2 — PRIOR-HOLD (Soc0 UF-051 refutation): a row
+                # the B24 nav-rehome stage already adjudicated (held with a
+                # reason — cross_app_target — or moved itself) is NEVER
+                # re-adjudicated by the organic lane; nav-stage authority
+                # outranks the breadth ruler's weaker evidence.
+                hold = (mega_holds or {}).get(uid)
+                if hold:
+                    tele["organic_blocked_prior_hold"] = (
+                        tele.get("organic_blocked_prior_hold", 0) + 1)
+                    tele.setdefault("organic_blocked_rows", []).append({
+                        "uf": uid,
+                        "name": str(_attr(uf, "name") or ""),
+                        "from": pfid, "to": rival_key,
+                        "reason": "prior-hold", "hold": str(hold),
+                    })
+                    continue
+                # it2 guard 1 — ANCHOR-OVERLAP false-zero (Soc0 UF-051
+                # refutation): ``home_share == 0`` is measured by the home
+                # REGISTRY anchor's prefix match — but a member entry that
+                # IS one of the home PF's own ANCHOR member files
+                # (role='anchor'; backend/routers/admin.py under
+                # network-security) falsifies the zero: the home structurally
+                # owns the entry even though the registry prefix never
+                # matches it. Such a row is NOT annexed booty — it is
+                # dev-demote territory of other cycles; only BLOCK here.
+                if entries and (set(entries)
+                               & _home_anchor_files(pf_by_key.get(pfid))):
+                    tele["organic_blocked_anchor_overlap"] = (
+                        tele.get("organic_blocked_anchor_overlap", 0) + 1)
+                    tele.setdefault("organic_blocked_rows", []).append({
+                        "uf": uid,
+                        "name": str(_attr(uf, "name") or ""),
+                        "from": pfid, "to": rival_key,
+                        "reason": "anchor-overlap-false-zero",
+                    })
                     continue
                 shell_roots = _ws_shell_roots()
                 from_layer = _pf_layer(pf_by_key.get(pfid), shell_roots)
@@ -456,10 +540,11 @@ def run_post_uf_rehome(
                     tele["organic_blocked_direction"] = (
                         tele.get("organic_blocked_direction", 0) + 1)
                     tele.setdefault("organic_blocked_rows", []).append({
-                        "uf": str(_attr(uf, "id") or ""),
+                        "uf": uid,
                         "name": str(_attr(uf, "name") or ""),
                         "from": pfid, "to": rival_key,
                         "from_layer": from_layer, "to_layer": to_layer,
+                        "reason": "direction",
                     })
                     continue
                 organic_plans.append({

@@ -337,6 +337,7 @@ def test_direction_gate_blocks_hoppscotch_uf012(monkeypatch):
         "uf": "UF-012", "name": "Manage and serve mock servers",
         "from": "teams", "to": "hoppscotch-backend",
         "from_layer": "product", "to_layer": "platform",
+        "reason": "direction",
     }]
 
 
@@ -487,6 +488,129 @@ def test_determinism_two_runs_and_sorted_apply(monkeypatch):
     # sorted uf-id apply order (board order was reversed):
     assert [m["uf"] for m in tele_a["organic_moves"]] == ["UF-046", "UF-075"]
     assert tele_a["organic_moved"] == 2
+
+
+# ── it2 guards (Soc0 UF-051 keyed panel refutation, mandate 2026-07-19) ──
+
+
+def _soc0_uf051_scene():
+    """The refutation shape, minimal: ALL member flows of the organic row
+    enter ``backend/routers/admin.py`` — which is the home PF
+    network-security's OWN role='anchor' member file (confidence 1.0,
+    primary) yet sits OUTSIDE every ``route:network-security`` registry
+    prefix, so the breadth ruler reads home_share=0.0 (FALSE ZERO); the
+    rival 'chat' registry anchor covers backend/routers/ → rival=1.0."""
+    UF._n = 0
+    registry = {
+        "route:network-security": _anchor(
+            "route:network-security",
+            ["frontend/src/pages/network-security"]),
+        "route:chat": _anchor("route:chat", ["backend/routers"]),
+    }
+    pf_home = PF("network-security", "route:network-security")
+    pf_home.member_files = [
+        {"path": "backend/routers/admin.py", "role": "anchor",
+         "confidence": 1.0, "primary": True},
+        {"path": "frontend/src/api/admin.ts", "role": "closure",
+         "confidence": 0.5, "primary": True},
+    ]
+    pf_chat = PF("chat", "route:chat")
+    fls = [
+        Fl("f-a1", "backend/routers/admin.py", "admin-mock-data-flow"),
+        Fl("f-a2", "backend/routers/admin.py", "admin-migrate-flow"),
+        Fl("f-a3", "backend/routers/admin.py", "admin-chats-flow"),
+        Fl("f-ns", "frontend/src/pages/network-security/index.tsx",
+           "browse-network-security-flow"),
+    ]
+    devs = [Dev("d1", fls)]
+    sick = UF("Manage admin operations and mock data", "network-security",
+              ["f-a1", "f-a2", "f-a3"], uid="UF-051")
+    keeper = UF("Browse network security", "network-security", ["f-ns"],
+                uid="UF-900")
+    return registry, [pf_home, pf_chat], devs, sick, keeper
+
+
+def test_it2_uf051_prior_hold_blocks(monkeypatch):
+    """Guard 2 — PRIOR-HOLD: the B24 nav stage held UF-051
+    (cross_app_target); the organic lane must NOT override the hold with
+    its weaker breadth evidence. First-hit-wins: prior-hold fires before
+    the anchor-overlap check."""
+    _on(monkeypatch)
+    registry, pfs, devs, sick, keeper = _soc0_uf051_scene()
+    tele = run_post_uf_rehome(
+        [sick, keeper], devs, pfs, registry,
+        mega_holds={"UF-051": "cross_app_target"})
+    assert sick.product_feature_id == "network-security"   # NOT moved
+    assert tele.get("organic_moved", 0) == 0
+    assert tele["organic_blocked_prior_hold"] == 1
+    assert tele["organic_blocked_rows"] == [{
+        "uf": "UF-051", "name": "Manage admin operations and mock data",
+        "from": "network-security", "to": "chat",
+        "reason": "prior-hold", "hold": "cross_app_target",
+    }]
+
+
+def test_it2_uf051_anchor_overlap_blocks(monkeypatch):
+    """Guard 1 — ANCHOR-OVERLAP FALSE-ZERO: no hold, but the row's member
+    entry IS the home PF's own role='anchor' member file → home_share=0 is
+    invalid; block, never move (dev-demote territory of other cycles)."""
+    _on(monkeypatch)
+    registry, pfs, devs, sick, keeper = _soc0_uf051_scene()
+    tele = run_post_uf_rehome([sick, keeper], devs, pfs, registry)
+    assert sick.product_feature_id == "network-security"   # NOT moved
+    assert tele.get("organic_moved", 0) == 0
+    assert tele["organic_blocked_anchor_overlap"] == 1
+    assert tele["organic_blocked_rows"] == [{
+        "uf": "UF-051", "name": "Manage admin operations and mock data",
+        "from": "network-security", "to": "chat",
+        "reason": "anchor-overlap-false-zero",
+    }]
+
+
+def test_it2_hold_from_mega_moves_blocks(monkeypatch):
+    """Guard 2 also covers rows the B24 stage MOVED itself (`оброблений`):
+    a moves-derived hold (reason 'moved:<to>') blocks re-adjudication."""
+    _on(monkeypatch)
+    registry, pfs, devs, sick, keeper = _soc0_uf051_scene()
+    tele = run_post_uf_rehome(
+        [sick, keeper], devs, pfs, registry,
+        mega_holds={"UF-051": "moved:chat"})
+    assert sick.product_feature_id == "network-security"
+    assert tele["organic_blocked_prior_hold"] == 1
+    assert tele["organic_blocked_rows"][0]["hold"] == "moved:chat"
+
+
+def test_it2_guards_spare_chrestomathic_movers(monkeypatch):
+    """The guards MUST NOT kill the census movers: typebot UF-046 still
+    moves when (a) its home PF carries a NON-overlapping role='anchor'
+    member file, and (b) a hold exists for a DIFFERENT uf-id. (typebot's
+    real board has ZERO mega stays/moves — probe-verified.)"""
+    _on(monkeypatch)
+    registry, pfs, devs, mover, keeper = _typebot_scene()
+    pfs[0].member_files = [
+        {"path": "packages/schemas/features/space/schema.ts",
+         "role": "anchor", "confidence": 1.0, "primary": True},
+    ]
+    tele = run_post_uf_rehome(
+        [mover, keeper], devs, pfs, registry,
+        mega_holds={"UF-999": "cross_app_target"})
+    assert mover.product_feature_id == "typebots"          # still moves
+    assert tele["organic_moved"] == 1
+    assert tele.get("organic_blocked_prior_hold", 0) == 0
+    assert tele.get("organic_blocked_anchor_overlap", 0) == 0
+
+
+def test_it2_direction_gate_survives_guards(monkeypatch):
+    """UF-012 shape still direction-blocks (reason='direction') with the
+    it2 guards armed and inert (no holds, no overlap)."""
+    _on(monkeypatch)
+    registry, pfs, devs, buried, other, teams_native = _burial_scene()
+    tele = run_post_uf_rehome(
+        [buried, other, teams_native], devs, pfs, registry,
+        mega_holds={"UF-999": "cross_app_target"})
+    assert buried.product_feature_id == "teams"
+    assert tele["organic_blocked_direction"] == 1
+    assert tele["organic_blocked_rows"][0]["reason"] == "direction"
 
 
 # ── Arbiter-client contract (S3 ledger journals rung 'organic-move') ─────
