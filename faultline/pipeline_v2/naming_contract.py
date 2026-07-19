@@ -69,6 +69,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "NAMING_CONTRACT_ENV",
     "NAMING_PACK_ENV",
+    "NAMING_WAVE_R5_ENV",
+    "naming_wave_r5_enabled",
     "naming_pack_enabled",
     "HUMANIZE_ROUTE_NAMES_ENV",
     "PF_NAME_LAW_ENV",
@@ -120,6 +122,22 @@ NAMING_PACK_ENV = "FAULTLINE_NAMING_PACK"
 #: channel only — feeds ``ProvenanceSources.nav``; the B40 nav-pinning rung and
 #: the B57 nav-cluster rung read the ungated votes and are untouched.
 PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
+
+#: R5 corpus naming-wave master flag (default OFF). One flag gates the five
+#: R5 segments' NEW display-channel behaviors as one wave:
+#:   * R5-1 identity-parity — a PF display that folds to ANOTHER live PF's
+#:     canonical slug (or shares a folded display) is reject/qualified at the
+#:     existing display-collision gate (the ``general`` -> 'Settings' remnant
+#:     the merged display-cross-gate leaves grounded);
+#:   * R5-2 own-resource templating (echo-hub siblings);
+#:   * R5-3 member-evidence display derivation (dir-token humanization);
+#:   * R5-4 compose-joint qualifier normalizer (all paren sites);
+#:   * R5-5 negative confidence rungs (census-shape caps).
+#: Segments may read their own sub-flags, but all fold under this master.
+#: Unset/``0`` restores the pre-R5 emission byte-identically (KS 4-way gate).
+#: Appended to ENV_OUTPUT_FLAGS WITHOUT a KEY_SCHEMA bump — the bump rides the
+#: separate flip commit (flip-protocol).
+NAMING_WAVE_R5_ENV = "FAULTLINE_NAMING_WAVE_R5"
 
 _VOCAB_FILE = "naming-contract-vocab.yaml"
 _vocab_cache: dict[str, Any] | None = None
@@ -328,6 +346,16 @@ def pf_display_evidence_gate_enabled() -> bool:
     identical (the kill-switch law)."""
     return os.environ.get(
         PF_DISPLAY_EVIDENCE_GATE_ENV, "0"
+    ).strip().lower() in {"1", "true"}
+
+
+def naming_wave_r5_enabled() -> bool:
+    """R5 corpus naming-wave master (default OFF). ``FAULTLINE_NAMING_WAVE_R5``
+    ``=1``/``true`` arms every R5 segment; unset/``0``/``false``/``off`` keeps
+    each segment inert ⇒ display + telemetry byte-identical to pre-R5 (the
+    inverted kill-switch survives the later default flip)."""
+    return os.environ.get(
+        NAMING_WAVE_R5_ENV, "0"
     ).strip().lower() in {"1", "true"}
 
 
@@ -589,6 +617,34 @@ def _degrime_display(text: str) -> str:
     out = re.sub(r"\s+([)\]])", r"\1", out)     # space before a close bracket
     out = re.sub(r"\s{2,}", " ", out).strip(" -–—&")
     return out or text
+
+
+#: R5-5 census-shape detectors — a camelCase boundary or a snake_case
+#: boundary inside a displayed token means a code identifier leaked into the
+#: display (C4 / C1raw / C8pf). Mechanistic (no dictionary — the census used
+#: /usr/share/dict/words as an INSTRUMENT only; a fix may not).
+_R5_CAMEL_BOUNDARY = re.compile(r"[a-z][A-Z]")
+_R5_SNAKE_BOUNDARY = re.compile(r"[A-Za-z0-9]_[A-Za-z0-9]")
+
+
+def _name_disease_shape(name: str) -> str | None:
+    """R5-5 — the census disease shape a display name exhibits, or ``None``.
+
+    Conservative + mechanistic (no dictionary, no per-repo list):
+      * ``paren-qualifier`` — a ``(…)`` qualifier tail (C5);
+      * ``raw-identifier`` — a camelCase / snake_case boundary, i.e. a code
+        identifier leaked into display (C4 / C1raw / C8pf).
+
+    A healthy verb-led journey phrase ('Analyze cohort retention', 'Manage
+    API keys') carries NEITHER shape and is never flagged — the census
+    false-positive lesson."""
+    if not name:
+        return None
+    if "(" in name or ")" in name:
+        return "paren-qualifier"
+    if _R5_CAMEL_BOUNDARY.search(name) or _R5_SNAKE_BOUNDARY.search(name):
+        return "raw-identifier"
+    return None
 
 
 def _qualifier_echoes_base(base: str, qual: str) -> bool:
@@ -1407,6 +1463,57 @@ def _apply_pf_devgrain_law(
     return stripped, True
 
 
+def _ident_fold(s: str) -> str:
+    """Identity fold used by the R5-1 parity law: lowercase + drop every
+    non-alphanumeric glyph, so a display ('Status Pages') and a canonical
+    slug ('status-pages') compare equal ('statuspages'). Distinct from the
+    ``taken`` display fold (which keeps internal spaces) — this axis is
+    identity, not display uniqueness."""
+    return re.sub(r"[^a-z0-9]+", "", (s or "").strip().lower())
+
+
+def _identity_parity_repair(
+    chosen: str,
+    anchor_id: str,
+    slug: str,
+    vocab: Mapping[str, Any],
+    taken: Mapping[str, str],
+    pf_slug_idents: set[str],
+) -> str | None:
+    """R5-1 — replace an identity-parity-colliding PF display with a lawful,
+    non-colliding one.
+
+    A PF display whose identity-fold equals ANOTHER live PF's canonical slug
+    ('Settings' on the ``general`` PF == the ``settings`` PF's identity) or a
+    display already claimed by an earlier PF wears another feature's identity
+    — trust-breaking. The repair prefers the humanized OWN-slug word (the
+    honest identity — always non-colliding since slugs are unique), then the
+    anchor ``"<Base> (<Qualifier>)"`` form, then the bare anchor base. Returns
+    ``None`` when no lawful non-colliding repair exists (caller keeps the
+    current as never-worse debt). Display channel only."""
+    own = _ident_fold(slug)
+
+    def _ok(cand: str | None) -> bool:
+        if not cand or display_law_violations(cand, vocab):
+            return False
+        low = cand.strip().lower()
+        if low in taken and taken.get(low) != slug:
+            return False
+        ci = _ident_fold(cand)
+        return not (bool(ci) and ci != own and ci in pf_slug_idents)
+
+    from_slug = _display_word(slug, vocab) if slug else None
+    if _ok(from_slug):
+        return from_slug
+    base, qual = humanize_anchor_display(anchor_id, vocab)
+    bq = f"{base} ({qual})" if base and qual else None
+    if _ok(bq):
+        return bq
+    if _ok(base):
+        return base
+    return None
+
+
 def _strip_uf_devgrain_suffix(
     name: str, home_anchor: str, vocab: Mapping[str, Any],
 ) -> str | None:
@@ -2057,6 +2164,7 @@ def build_uf_candidates(
     vocab: Mapping[str, Any],
     member_flow_names: Iterable[str] = (),
     authored: Iterable[str] = (),
+    own_resource: bool = False,
 ) -> list[str]:
     """Ranked display candidates for one user flow. Journey templates
     (verb-led, actor+intent+outcome shape) lead when the current name is
@@ -2068,7 +2176,16 @@ def build_uf_candidates(
     literally named this journey, which outranks any derived template. Each
     is still polished + law-gated by the caller like any candidate, so an
     unlawful authored string simply falls through to the derived set.
-    Empty (the default) ⇒ byte-identical to the pre-Track-C ranking."""
+    Empty (the default) ⇒ byte-identical to the pre-Track-C ranking.
+
+    ``own_resource`` (R5-2 echo-hub, ``FAULTLINE_NAMING_WAVE_R5``) — the
+    generic template joins on the UF's OWN resource instead of the PF
+    display. The D9 system-seed hand (below) already does this for
+    flow-less SYSTEM seeds; R5-2 extends it to ORGANIC siblings when ≥2
+    UFs of one PF would otherwise mint the identical "<verb> <PF-display>"
+    row (twenty ``twenty-server`` -> 'Manage twenty server' ×24). The
+    caller sets it only for those hub members; False (the default) ⇒
+    byte-identical to the pre-R5-2 template."""
     current = str(getattr(uf, "name", "") or "")
     pf_display = (
         str(getattr(pf, "display_name", None) or getattr(pf, "name", "") or "")
@@ -2110,8 +2227,16 @@ def build_uf_candidates(
         template_name = tmpl.replace("{v}", vendor_disp)
     else:
         tmpl = (templates.get("generic") or {}).get(verdict) or "Manage {r}"
-        template_name = tmpl.replace(
-            "{r}", _resource_phrase(pf_display or current, vocab))
+        # R5-2 — an echo-hub organic sibling joins on its OWN resource so the
+        # row surfaces the job's identity, not the shared PF home (kills the
+        # 'Manage twenty server' ×24 echo + its qualifier-spray). Falls back
+        # to the PF-display join when the UF has no distinct resource.
+        _r_src = pf_display or current
+        if own_resource and getattr(uf, "resource", None):
+            _own = re.sub(r"[-_]+", " ", str(uf.resource)).strip()
+            if _own:
+                _r_src = _own
+        template_name = tmpl.replace("{r}", _resource_phrase(_r_src, vocab))
 
     # B50 Seg1 — a template whose verb duplicates the leading resource token
     # ('Ingest ingest', 'View views', 'Send send test email') collapses at
@@ -2146,6 +2271,137 @@ def build_uf_candidates(
         _add(polished_current)
         _add(template_name)
     return out
+
+
+def _uf_member_count(uf: Any) -> int:
+    """Member count of a UF row (``member_count`` else the id list)."""
+    mc = getattr(uf, "member_count", None)
+    if mc is None:
+        mc = len(getattr(uf, "member_flow_ids", None) or [])
+    try:
+        return int(mc or 0)
+    except (TypeError, ValueError):  # pragma: no cover — defensive
+        return 0
+
+
+def _echo_own_resource_uf_ids(
+    user_flows: Iterable[Any],
+    pf_by_slug: Mapping[str, Any],
+) -> set[str]:
+    """R5-2 — the UF ids that must template on their OWN resource because
+    their PF is a multi-resource hub whose PF-display template would
+    collapse them into one echoed row.
+
+    A UF qualifies when: it is ORGANIC (``category != 'system'`` — the D9
+    hand already owns system seeds), THIN (``member_count`` ≤ 2 — a
+    many-member aggregate like twenty 'Connect twenty server' ×8 carries
+    real breadth and keeps its PF-display name; keyed-refutation iter-2
+    anti-case), carries a ``resource`` DISTINCT from its PF's identity,
+    and shares that PF with ≥2 such UFs spanning ≥2 distinct resources
+    (twenty ``twenty-server`` hosts 22+). Scale-invariant (a ratio-free
+    ≥2/≥2 shape rule, no per-repo numbers); a single-resource PF or a PF
+    whose UFs echo its own identity is never touched."""
+    from collections import defaultdict
+
+    by_pf: dict[str, list[Any]] = defaultdict(list)
+    for uf in user_flows:
+        if str(getattr(uf, "category", "") or "") == "system":
+            continue
+        if not str(getattr(uf, "resource", "") or "").strip():
+            continue
+        if _uf_member_count(uf) > 2:
+            continue
+        by_pf[str(getattr(uf, "product_feature_id", "") or "")].append(uf)
+    out: set[str] = set()
+    for pfid, ufs in by_pf.items():
+        pf = pf_by_slug.get(pfid)
+        pf_ident = _ident_fold(
+            str(getattr(pf, "display_name", None) or getattr(pf, "name", "") or "")
+        ) if pf is not None else ""
+        distinct = [
+            u for u in ufs
+            if _ident_fold(str(getattr(u, "resource", "") or ""))
+            not in ("", pf_ident)
+        ]
+        res_idents = {
+            _ident_fold(str(getattr(u, "resource", "") or "")) for u in distinct
+        }
+        res_idents.discard("")
+        if len(distinct) >= 2 and len(res_idents) >= 2:
+            for u in distinct:
+                out.add(str(getattr(u, "id", "") or ""))
+    return out
+
+
+def _spray_sibling_uf_ids(
+    user_flows: Iterable[Any],
+    pf_by_slug: Mapping[str, Any],
+) -> set[str]:
+    """R5-2 iter-2 — qualifier-SPRAY ids: same-PF siblings whose
+    paren-stripped folded BASE is identical across ≥2 THIN rows
+    (``member_count`` ≤ 2, non-empty resource) AND wears the PF's own
+    identity ('Manage twenty server (billing)/(dpa)/…' ×22 — the base
+    names the HOME, not the job; the fresh-keyed live disease form).
+
+    These rows must ADOPT the own-resource template even though the
+    sprayed current name is law-clean (the ranking otherwise keeps it).
+    A base that names a real resource ('Manage invoices (drafts)' /
+    '(sent)') does NOT wear the PF identity and is never flagged —
+    the qualifier there is legit disambiguation."""
+    from collections import defaultdict
+
+    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for uf in user_flows:
+        if str(getattr(uf, "category", "") or "") == "system":
+            continue
+        if not str(getattr(uf, "resource", "") or "").strip():
+            continue
+        if _uf_member_count(uf) > 2:
+            continue
+        nm = str(getattr(uf, "name", "") or "")
+        base = re.sub(r"\s*\([^)]*\)+\s*$", "", nm).strip()
+        base = re.sub(r"\s*\([^)]*\)+\s*$", "", base).strip()
+        if not base:
+            continue
+        pfid = str(getattr(uf, "product_feature_id", "") or "")
+        pf = pf_by_slug.get(pfid)
+        pf_ident = _ident_fold(
+            str(getattr(pf, "display_name", None)
+                or getattr(pf, "name", "") or "")
+        ) if pf is not None else ""
+        if not pf_ident or pf_ident not in _ident_fold(base):
+            continue
+        groups[(pfid, base.lower())].append(str(getattr(uf, "id", "") or ""))
+    out: set[str] = set()
+    for _key, ids in groups.items():
+        if len(ids) >= 2:
+            out.update(ids)
+    return out
+
+
+def _r5_sibling_name_dup(
+    uf: Any, cand: str, user_flows: Iterable[Any],
+) -> bool:
+    """R5-2 iter-2 no-new-dup guard — True when ANOTHER live UF of the
+    SAME PF already wears ``cand`` (case-folded). No R5 rename may mint a
+    name identical to a live sibling (the keyed-refutation collateral:
+    'Manage twenty server (application development)' -> bare 'Manage
+    twenty server' duplicating an existing row); the caller keeps the old
+    name instead — a kept diseased name is then demoted by the R5-5
+    shape cap, never duplicated."""
+    fld = (cand or "").strip().lower()
+    if not fld:
+        return False
+    uid = str(getattr(uf, "id", "") or "")
+    pfid = str(getattr(uf, "product_feature_id", "") or "")
+    for other in user_flows:
+        if str(getattr(other, "id", "") or "") == uid:
+            continue
+        if str(getattr(other, "product_feature_id", "") or "") != pfid:
+            continue
+        if str(getattr(other, "name", "") or "").strip().lower() == fld:
+            return True
+    return False
 
 
 # ── Pin channel (keeper — content-derived prev-scan join) ───────────────
@@ -3042,6 +3298,9 @@ def _apply_uf_name_laws(
                 if not verb_grounded:
                     miss.append("missing:verb")
                 uf.name_evidence = miss
+    # R5-5 — cap census-shape 'high' rows to 'medium' over the FULL set (both
+    # this pass and the adjudicator's rescore re-run it; OFF ⇒ no-op).
+    _apply_r5_confidence_caps(user_flows, tele, rungs_on=rungs_on)
     tele["confidence_after"] = _conf_hist(user_flows)
 
 
@@ -3198,6 +3457,18 @@ def run_naming_contract(
     # ── Pass 1: product features (pin > candidates; laws gate both) ──
     taken: dict[str, str] = {}  # case-folded display -> pf slug
     pf_by_slug: dict[str, Any] = {}
+    # R5-1 identity-parity (FAULTLINE_NAMING_WAVE_R5, default OFF) — the
+    # identity-fold of EVERY live PF slug, computed once so the guard is
+    # order-independent (a display grabbing a not-yet-processed PF's identity
+    # is caught). Empty work when the wave is off ⇒ byte-identical.
+    _wave_r5 = naming_wave_r5_enabled()
+    _pf_slug_idents: set[str] = (
+        {_ident_fold(str(getattr(p, "name", "") or "")) for p in product_features}
+        - {""}
+        if _wave_r5 else set()
+    )
+    if _wave_r5:
+        tele["pf_identity_parity_qualified"] = 0
     for pf in sorted(product_features,
                      key=lambda p: str(getattr(p, "name", "") or "")):
         slug = str(getattr(pf, "name", "") or "")
@@ -3373,6 +3644,21 @@ def run_naming_contract(
     # pass: targets first, then only non-colliding renames land (a template
     # already worn by a sibling never duplicates). Flag OFF ⇒ byte-identical.
     degrime_p2_proposals: dict[str, str] = {}
+    # R5-2 echo-hub members that template on their own resource (empty set
+    # when the wave is off ⇒ every build_uf_candidates call keeps
+    # own_resource=False ⇒ byte-identical).
+    _echo_own_res_ids: set[str] = (
+        _echo_own_resource_uf_ids(user_flows, pf_by_slug) if _wave_r5 else set()
+    )
+    # R5-2 iter-2 — spray-form ids (identical PF-identity base + paren qual
+    # across ≥2 thin siblings): these adopt the own-resource template even
+    # over a law-clean sprayed current. Empty when the wave is off.
+    _spray_ids: set[str] = (
+        _spray_sibling_uf_ids(user_flows, pf_by_slug) if _wave_r5 else set()
+    )
+    if _wave_r5:
+        tele["uf_own_resource_templated"] = len(_echo_own_res_ids)
+        tele["uf_spray_retemplated"] = len(_spray_ids & _echo_own_res_ids)
     for uf in user_flows:
         pf = pf_by_slug.get(str(getattr(uf, "product_feature_id", None) or ""))
         pf_display = (
@@ -3384,11 +3670,37 @@ def run_naming_contract(
             flow_name_by_id.get(str(m), str(m))
             for m in (getattr(uf, "member_flow_ids", None) or [])
         ]
+        _uid = str(getattr(uf, "id", "") or "")
+        _own_res = _uid in _echo_own_res_ids
         candidates = build_uf_candidates(
-            uf, pf, vocab, member_names, authored=_authored_for(uf))
+            uf, pf, vocab, member_names, authored=_authored_for(uf),
+            own_resource=_own_res)
         violations = display_law_violations(
             polish_display_casing(current, vocab), vocab,
             pf_display=pf_display or None)
+        # R5-2 iter-2 — ranking within a flagged hub member is decided by
+        # whether the CURRENT base wears the PF's identity:
+        #   * spray/echo form ('Manage twenty server (billing)', bare
+        #     'Manage twenty server') — the base names the HOME, not the
+        #     job: the own-resource template must lead even over a
+        #     law-clean current (move polished current to the END);
+        #   * a healthy job-named current ('Manage invoices (drafts)',
+        #     'Browse & manage billing') — the base names a real resource:
+        #     the current leads even for a synthesized row (move it to the
+        #     FRONT; no churn of good names onto their bare resource).
+        if _own_res:
+            _pc = polish_display_casing(current, vocab)
+            _base_cur = re.sub(r"\s*\([^)]*\)+\s*$", "", current).strip()
+            _base_cur = re.sub(r"\s*\([^)]*\)+\s*$", "", _base_cur).strip()
+            _pf_ident = _ident_fold(pf_display)
+            _wears_pf = bool(_pf_ident) and _pf_ident in _ident_fold(_base_cur)
+            if _uid in _spray_ids or _wears_pf:
+                _rest = [c for c in candidates if c != _pc]
+                if _rest:
+                    candidates = _rest + (
+                        [_pc] if _pc in candidates else [])
+            elif not violations and _pc in candidates:
+                candidates = [_pc] + [c for c in candidates if c != _pc]
         pinned = bool(
             keeper_on and isinstance(getattr(uf, "identity", None), dict)
             and (uf.identity or {}).get("pinned_from")
@@ -3405,6 +3717,16 @@ def run_naming_contract(
                 break
         if chosen is None:
             chosen = polish_display_casing(current, vocab)
+
+        # R5-2 iter-2 no-new-dup guard — an own-resource-influenced rename
+        # never mints a name a live same-PF sibling already wears; keep the
+        # old name instead (a kept diseased name is demoted by the R5-5
+        # shape cap, never duplicated). OFF ⇒ _own_res is always False.
+        if (_own_res and chosen
+                and chosen != polish_display_casing(current, vocab)
+                and _r5_sibling_name_dup(uf, chosen, user_flows)):
+            chosen = polish_display_casing(current, vocab)
+            tele["uf_r5_dup_blocked"] = tele.get("uf_r5_dup_blocked", 0) + 1
 
         # B50 — pure degrime-induced adoption (no law violation, organic
         # journey, no authored label, current only unclean via the echo
@@ -3575,16 +3897,22 @@ def run_naming_contract(
                 flow_name_by_id.get(str(m), str(m))
                 for m in (getattr(uf, "member_flow_ids", None) or [])
             ]
+            # R5-2 iter-2 — same own-resource threading + no-new-dup guard
+            # as the verifier re-derive (OFF ⇒ byte-identical).
+            _t_own = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
             for cand in build_uf_candidates(
                     uf, live_pf, vocab, member_names,
-                    authored=_authored_for(uf)):
-                if not display_law_violations(
+                    authored=_authored_for(uf), own_resource=_t_own):
+                if display_law_violations(
                     cand, vocab, pf_display=live_disp,
                 ):
-                    uf.name = cand
-                    tele["uf_twins_resolved"] += 1
-                    _law_fix("pf_uf_twin")
-                    break
+                    continue
+                if _wave_r5 and _r5_sibling_name_dup(uf, cand, user_flows):
+                    continue
+                uf.name = cand
+                tele["uf_twins_resolved"] += 1
+                _law_fix("pf_uf_twin")
+                break
 
     # ── Pass 4: Draft Verifier over backstop-synthesized UFs (§4.7) ──
     # The chain4 'schema.json'-class guard: a synthesized journey whose
@@ -3637,12 +3965,25 @@ def run_naming_contract(
                     flow_name_by_id.get(str(m), str(m))
                     for m in (getattr(uf, "member_flow_ids", None) or [])
                 ]
-                for cand in build_uf_candidates(uf, pf, vocab, member_names):
-                    if not display_law_violations(
+                # R5-2 iter-2 — the reject re-derive threads the SAME
+                # own-resource membership as Pass 2 (the keyed-refutation
+                # leak: 52 rejects re-derived WITHOUT it, minting 'Manage
+                # twenty server' ×22 that Law A spray-qualified back), and
+                # the no-new-dup guard skips a candidate a live sibling
+                # already wears. OFF ⇒ set empty + guard never consulted ⇒
+                # byte-identical.
+                _v_own = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
+                for cand in build_uf_candidates(
+                        uf, pf, vocab, member_names, own_resource=_v_own):
+                    if display_law_violations(
                         cand, vocab, pf_display=pf_display or None,
                     ):
-                        uf.name = cand
-                        break
+                        continue
+                    if _wave_r5 and _r5_sibling_name_dup(
+                            uf, cand, user_flows):
+                        continue
+                    uf.name = cand
+                    break
             tele["verifier_synth_reviewed"] = len(drafts)
             tele["verifier_synth_rejected"] = rejected
 
@@ -3742,8 +4083,81 @@ def run_naming_contract(
         tele["pf_display_provenance"] = apply_pf_display_provenance(
             product_features, _pf_sources, vocab)
 
+    # ── R5-1: identity-parity law (FAULTLINE_NAMING_WAVE_R5, default OFF) ──
+    # THE authoritative last word on PF displays. The B71 provenance ladder
+    # (above) re-derives each display independently from the RAW nav channel
+    # with no cross-PF check, so it re-introduces the identity-parity remnant
+    # the merged display-cross-gate leaves grounded: a display whose
+    # identity-fold equals ANOTHER live PF's canonical slug ('Monitors' on
+    # ``checker`` == the ``monitors`` PF; openstatus ``general`` -> 'Settings'
+    # == the ``settings`` PF) — trust-breaking, a feature wearing another
+    # feature's identity. Runs AFTER every prior PF-display pass (Pass-1,
+    # labeler, uniqueness re-check, provenance ladder) so nothing reverts it;
+    # repairs to the honest own-slug word (else the anchor qualifier) and also
+    # closes a residual shared-display twin. Flag OFF ⇒ the whole block is
+    # skipped ⇒ byte-identical.
+    if _wave_r5:
+        _seen_ident: dict[str, str] = {}
+        for pf in sorted(product_features,
+                         key=lambda p: str(getattr(p, "name", "") or "")):
+            disp = str(getattr(pf, "display_name", None) or "")
+            folded = disp.strip().lower()
+            if not folded:
+                continue
+            slug = str(getattr(pf, "name", "") or "")
+            ci = _ident_fold(disp)
+            foreign_slug = (
+                bool(ci) and ci != _ident_fold(slug) and ci in _pf_slug_idents
+            )
+            twin = folded in _seen_ident and _seen_ident.get(folded) != slug
+            if foreign_slug or twin:
+                repaired = _identity_parity_repair(
+                    disp, str(getattr(pf, "anchor_id", None) or ""),
+                    slug, vocab, _seen_ident, _pf_slug_idents)
+                if repaired is not None and repaired != disp:
+                    pf.display_name = repaired
+                    tele["pf_identity_parity_qualified"] += 1
+                    _seen_ident[repaired.strip().lower()] = slug
+                    continue
+            _seen_ident.setdefault(folded, slug)
+
     tele["labeler_pending"] = len(pending)
     return tele
+
+
+def _apply_r5_confidence_caps(
+    user_flows: Iterable[Any], tele: dict[str, Any], *, rungs_on: bool,
+) -> None:
+    """R5-5 negative confidence rungs (``FAULTLINE_NAMING_WAVE_R5``, default
+    OFF). A FINAL sweep over EVERY user flow — placed inside
+    :func:`_apply_uf_name_laws` so BOTH the naming-contract pass AND the
+    6.7e adjudicator's ``rescore_uf_confidence`` re-run it (else the
+    adjudicator re-grades a capped row back to 'high'). The Law C rubric
+    only re-grades the ``ordered`` subset; a UF graded 'high' upstream
+    (stage 6.7b refiner / 6.7d journey abstraction) never reaches it.
+
+    A census disease shape (paren qualifier, raw camel/snake identifier)
+    caps a 'high' grade to 'medium' and stamps a ``shape:<class>`` evidence
+    tag — 87% of the census-flagged rows shipped 'high', blinding the
+    boards. NAME is never touched (display laws own it); only the
+    confidence grade + audit trail move. Flag OFF ⇒ no-op ⇒ byte-identical."""
+    if not naming_wave_r5_enabled():
+        return
+    capped = 0
+    for uf in user_flows:
+        if str(getattr(uf, "name_confidence", "") or "") != "high":
+            continue
+        shape = _name_disease_shape(str(getattr(uf, "name", "") or ""))
+        if not shape:
+            continue
+        uf.name_confidence = "medium"
+        if rungs_on:
+            ev = list(getattr(uf, "name_evidence", None) or [])
+            if f"shape:{shape}" not in ev:
+                ev.append(f"shape:{shape}")
+            uf.name_evidence = ev
+        capped += 1
+    tele["uf_shape_capped"] = tele.get("uf_shape_capped", 0) + capped
 
 
 def rescore_uf_confidence(
