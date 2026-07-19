@@ -934,7 +934,20 @@ class Feature(BaseModel):
     # structurally poor, or when the scan ran LLM-degraded (see
     # ``scan_meta.llm_degraded``). Defaults to "high" so old JSONs
     # rehydrate unchanged — "low" is an explicit degradation marker.
-    name_confidence: Literal["high", "low"] = "high"
+    # "medium" (R5 phase-2, 2026-07-19, FAULTLINE_NAMING_WAVE_R5) marks a
+    # product feature whose display carries an UNRESOLVED dir-token (zero
+    # const-guarded symbol evidence — 'Htmltopdf' class): the name is kept
+    # but never ships fully-confident. Additive tier — downstream consumers
+    # that only special-case "low" read "medium" as confident (same
+    # contract as ``UserFlow.name_confidence``).
+    name_confidence: Literal["high", "medium", "low"] = "high"
+    # R5 phase-2 (2026-07-19) — provenance audit trail mirroring
+    # ``UserFlow.name_evidence``: the ``shape:<class>`` stamp explaining a
+    # confidence cap (only ``shape:unresolved-dir-token`` today). Stamped
+    # only under ``FAULTLINE_NAME_EVIDENCE_RUNGS``; ``None`` is OMITTED
+    # from the serialized JSON (see ``_omit_unset_spine_fields``) so
+    # default output stays byte-identical to engines predating the field.
+    name_evidence: list[str] | None = None
     # Phase 3 dual-evidence (2026-07): {"code": [paths], "anchors": [{text,source,
     # locator}], "confidence": 0-1} — code + product-source corroboration, attached
     # deterministically by dual_evidence.py. Additive/optional; None when not computed.
@@ -1031,7 +1044,11 @@ class Feature(BaseModel):
         if isinstance(data, dict):
             for key in ("role", "loc_flow", "loc_flow_shared",
                         "artifact_ink_loc",
-                        "surface_scope", "shared_reason", "anchor_id"):
+                        "surface_scope", "shared_reason", "anchor_id",
+                        # R5 phase-2 — stamped only under
+                        # FAULTLINE_NAME_EVIDENCE_RUNGS; a None dump is
+                        # byte-identical to pre-R5 output.
+                        "name_evidence"):
                 if data.get(key) is None:
                     data.pop(key, None)
         return data

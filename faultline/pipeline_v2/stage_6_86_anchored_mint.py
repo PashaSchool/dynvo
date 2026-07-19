@@ -399,6 +399,29 @@ def homing_hygiene_enabled() -> bool:
     }
 
 
+def _r5_canonical_compose(display: str) -> str:
+    """R5-4 (``FAULTLINE_NAMING_WAVE_R5``, default OFF) — compose site 3/3.
+
+    The anchored-mint ``"<display> (<qualifier>)"`` joint runs through the
+    ONE compose canonicalizer (whitespace residue, internal parens, double
+    joints, scaffold-verb inversion ``Edit (Monitors)`` -> ``Monitors —
+    Edit``). The slug still derives from the (canonical) display verbatim,
+    so canonical_slug parity holds. Flag OFF ⇒ passthrough ⇒ byte-identical.
+    Imports are lazy — this stage stays import-light and the wave check
+    costs one cached env read per call."""
+    from faultline.pipeline_v2.naming_contract import (
+        load_naming_vocab,
+        naming_wave_r5_enabled,
+    )
+    from faultline.pipeline_v2.naming_wave_r5 import (
+        canonicalize_compose,
+        r5_vocab_sets,
+    )
+    if not naming_wave_r5_enabled():
+        return display
+    return canonicalize_compose(display, r5_vocab_sets(load_naming_vocab()))[0]
+
+
 def _workspace_unit_roots(ctx: Any) -> tuple[str, ...]:
     """Workspace-unit roots (an app or a workspace package), derived from
     the repo's OWN manifests — never from directory-name vocabulary.
@@ -2199,10 +2222,12 @@ def run_anchored_mint(
                                f"{re.sub(r'[^A-Za-z0-9]+', ' ', cid).strip().title()}")
                     slug = _slug(display)
             else:
-                display = f"{a.display} ({qual})"
+                display = _r5_canonical_compose(f"{a.display} ({qual})")
                 slug = _slug(display)
                 if slug in used_slugs:  # same qualified display twice — cid tail
-                    display = f"{a.display} ({re.sub(r'[^A-Za-z0-9]+', ' ', cid).strip().title()})"
+                    display = _r5_canonical_compose(
+                        f"{a.display} "
+                        f"({re.sub(r'[^A-Za-z0-9]+', ' ', cid).strip().title()})")
                     slug = _slug(display)
         used_slugs.add(slug)
         slug_by_anchor[cid] = slug
