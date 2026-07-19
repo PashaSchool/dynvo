@@ -715,8 +715,9 @@ ENV_OUTPUT_FLAGS = (
     # scan_meta.degradations[] with severity="failed" so validate_scan /
     # keyed_proof FAIL the proof gate instead of scoring a fail-open board that
     # self-reports healthy (264->78 Soc0 fail-open, probe 2026-07-18). Default
-    # OFF; =0/unset appends nothing → degradations[] byte-identical. No
-    # KEY_SCHEMA bump (append-only per wave convention — reconciled at merge).
+    # ON (flipped 2026-07-19, S*-pack, KEY_SCHEMA 32 — telemetry-only, 4-stage
+    # live-fire stamp proof); =0/false/off appends nothing → degradations[]
+    # byte-identical — explicit off stays a valid kill-switch forever.
     "FAULTLINE_DEGRADATION_STAMP",
     # S2 Seg B' (2026-07-18) — uf_refiner per-UF output-token budget: the fixed
     # 1500-token DEFAULT truncates a large domain's structured JSON response
@@ -901,7 +902,27 @@ ENV_OUTPUT_FLAGS = (
 #: operator panel PASS (2026-07-18). Explicit "0"/"false"/"off" stays a
 #: valid kill-switch forever (inverted-kill-switch unit: unset ≡
 #: explicit "1" byte-identical).
-KEY_SCHEMA_VERSION = 31
+#: v32 (S*-pack flip, 2026-07-19 — plan
+#: docs/anchor-arc/flip-pack-s-strategy-20260718.md, operator-ratified):
+#: the S* strategy pack flips 10 previously-default-OFF flags to default ON,
+#: each flag/group in its own commit (per flip-protocol), the ONE bump riding
+#: the FIRST commit of the pack: FAULTLINE_DEGRADATION_STAMP (S2-D,
+#: telemetry-only, safest first), _OWNER_ORACLE (S1, panel ON >= OFF strict),
+#: _UF_DET_AGGREGATION + _UF_REFINE_TOKEN_SCALE + _LLM_BATCH_CANON (S2
+#: quartet — designed as a stack; keyless obstacle baselines re-recorded for
+#: the S2 regrain 141->85 class), _OVERTURN_ARBITER (S3 — byte-ident x3
+#: pre-flip, the flip is the overturns telemetry), _APPROUTER_KEYLESS (S4a,
+#: cal 0->249 / onyx 0->106), _GO_EXTRACTION (S4b, traefik 0->1 PF/51
+#: routes, ollama 0->2/76), _MEGA_DECOMP_ARM + _GENERATED_CONTENT_MARKER
+#: (S5a, healthy novu pair + re-panel). Default flips change what "unset"
+#: means, so cached entries keyed under unset must not be served across them
+#: (v16/v21/v25/v27/v28/v29/v30/v31 precedent). Every flag keeps its X=0
+#: kill-switch (explicit "0"/"false"/"off" still disables — inverted-
+#: kill-switch unit per flag: unset ≡ explicit "1" byte-identical). NOT
+#: flipped (stay OFF): S4c (precondition: the shards-orphan rule) and S4d
+#: (precondition: its own keyed UF-proof) — each rides a later cycle.
+#: scan_meta.key_schema=32 emitted so downstream rulers gate new-world logic.
+KEY_SCHEMA_VERSION = 32
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

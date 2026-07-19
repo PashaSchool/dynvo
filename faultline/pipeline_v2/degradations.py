@@ -163,11 +163,14 @@ _S67D_STRUCTURAL_REASONS = frozenset(
 
 
 def degradation_stamp_enabled() -> bool:
-    """Default OFF — set ``FAULTLINE_DEGRADATION_STAMP=1`` to arm the stamp.
+    """Default ON since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32; 4-stage
+    live-fire stamp proof — telemetry-only, zero board risk).
 
-    OFF/unset appends nothing to ``scan_meta.degradations[]`` (byte-identical).
+    ``FAULTLINE_DEGRADATION_STAMP=0`` (or false/no/off) appends nothing to
+    ``scan_meta.degradations[]`` (pre-S2-D byte-identical) — explicit off
+    stays a valid kill-switch forever.
     """
-    return os.environ.get(DEGRADATION_STAMP_ENV, "0").strip().lower() not in {
+    return os.environ.get(DEGRADATION_STAMP_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

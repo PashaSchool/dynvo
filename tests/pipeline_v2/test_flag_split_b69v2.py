@@ -136,7 +136,9 @@ def test_registry_parity_all_flags_schema_bumped():
     # 31 = the B65-v4 SPA_ROUTER_ENTRIES re-flip (2026-07-18 — the R1
     # revert had returned unset=OFF under 30, so re-flipping unset=ON
     # demands its own bump; see the v31 changelog line).
-    assert KEY_SCHEMA_VERSION == 31
+    # 32 = the S*-pack flip (2026-07-19 — 10 flags default ON, one bump on
+    # the pack's first commit; see the v32 changelog line).
+    assert KEY_SCHEMA_VERSION == 32
 
 
 # ── behaviour matrix: HOMING observables ─────────────────────────────────

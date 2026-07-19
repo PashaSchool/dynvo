@@ -222,12 +222,13 @@ def test_67d_nonzero_cost_failure_carries_cost_signature() -> None:
     assert rec["metrics"]["cost_signature"] == "nonzero_cost"
 
 
-# ── kill-switch: flag default OFF, registered, honest values ────────────────
+# ── kill-switch: flag default ON (flip32), registered, honest values ────────
 
 
-def test_stamp_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stamp_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset ⇒ ON.
     monkeypatch.delenv(deg.DEGRADATION_STAMP_ENV, raising=False)
-    assert deg.degradation_stamp_enabled() is False
+    assert deg.degradation_stamp_enabled() is True
 
 
 @pytest.mark.parametrize("val", ["0", "false", "no", "off", ""])
