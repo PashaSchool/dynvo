@@ -57,7 +57,15 @@ from typing import Any
 #: its time budget — so it drifts under CPU load between otherwise
 #: identical runs (B5 kill-switch gate calibration, 2026-07-08); it is
 #: scrubbed at any depth like the per-linker ``sample_links`` /
-#: ``*_sample`` debug fields. The scrub is deliberately
+#: ``*_sample`` debug fields. ``mutation_sites_found`` (nested per-linker
+#: at ``stage_6_4/per_linker/store-mutation/``) is the same class: Stage
+#: 6.4 runs (feature × linker) units on a ThreadPoolExecutor and the
+#: store-mutation linker replays cached per-file outcomes into a shared
+#: telemetry object, so the counter varies with worker scheduling under
+#: CPU load while the deduped link set — and every content array — stays
+#: byte-identical (cal.com 4-way calibration, 2026-07-19: 2118 vs 2310
+#: in a simultaneous same-code pair with all content layers identical).
+#: The scrub is deliberately
 #: scoped to the ``scan_meta`` subtree so a same-named CONTENT field
 #: elsewhere could never be masked.
 _VOLATILE_IN_SCAN_META = frozenset(
@@ -74,6 +82,7 @@ _VOLATILE_IN_SCAN_META = frozenset(
         "stage_6_3_cache_hits",
         "stage_6_55_page_interior",
         "router_files_parsed",
+        "mutation_sites_found",
         # S3 overturn arbiter (FAULTLINE_OVERTURN_ARBITER=1) — pure
         # run-forensics: the ledger census + post-freeze conflict census
         # "who wanted to throw". Present only when the flag is ON; stripped

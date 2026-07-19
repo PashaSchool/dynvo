@@ -64,13 +64,13 @@
       "path": "/Users/pkuzina/workspace/_faultlines-tier1/dittofeed",
       "commit_sha": "52b2bee909744d07dd5d409fd3974d4b95c66766",
       "profile": "next-pages-react",
-      "digest": "sha256:e28f2f8266b005985178d88e69ed85449c44e74f809b245e4426fb36610015fa"
+      "digest": "sha256:fcc770e2a5c562fa81ac4d5683f2f78018fa18706940d94734a933bcb1c9fad8"
     },
     "opensign": {
       "path": "/Users/pkuzina/workspace/_faultlines-freshblood/opensign",
       "commit_sha": "f2ada473027e9b36e0af7a459ebe703b83bc2e25",
       "profile": "next-pages-react",
-      "digest": "sha256:d8f7f69cac205c167047ce5dacd296bb8580cd93e3aaf80f049f2627a489e5c0"
+      "digest": "sha256:50463b86f9af77b7bdac8300a81f82d7b24a1ae27ae6716366b3458b3d5e5e64"
     }
   }
 }

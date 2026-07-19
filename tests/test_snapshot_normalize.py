@@ -38,7 +38,12 @@ def _doc(**overrides):
                         "sample_links": [{"source": "x.ts:1"}],
                         "unmatched_sample": [{"file": "y.ts"}],
                         "router_files_parsed": 7,
-                    }
+                    },
+                    "store-mutation": {
+                        "links_emitted": 2441,
+                        "mutation_sites_found": 2118,
+                        "read_sites_found": 131,
+                    },
                 }
             },
         },
@@ -67,6 +72,10 @@ def test_volatile_fields_are_stripped() -> None:
     assert "unmatched_sample" not in linker
     assert "router_files_parsed" not in linker  # CPU-load-volatile budget counter
     assert linker["matched"] == 10  # content survives
+    store = meta["stage_6_4"]["per_linker"]["store-mutation"]
+    assert "mutation_sites_found" not in store  # scheduler-volatile counter
+    assert store["links_emitted"] == 2441  # content survives
+    assert store["read_sites_found"] == 131
 
 
 def test_wall_clock_decayed_health_stripped_everywhere() -> None:
@@ -92,6 +101,23 @@ def test_digest_stable_across_volatile_churn() -> None:
     b["scan_meta"]["stage_6_3_cache_hits"] = 1
     b["features"][0]["health_score"] = 95.4  # decayed a tick
     assert scan_digest(a) == scan_digest(b)
+
+
+def test_digest_identical_across_mutation_sites_found_drift() -> None:
+    """The cal.com 4-way calibration shape (2026-07-19): two boards from a
+    simultaneous same-code pair differed ONLY in the store-mutation
+    linker's scheduler-volatile ``mutation_sites_found`` counter (2118 vs
+    2310) while every content array was byte-identical. Such boards must
+    digest identically."""
+    a = _doc()
+    b = _doc()
+    b["scan_meta"]["stage_6_4"]["per_linker"]["store-mutation"] = {
+        "links_emitted": 2441,
+        "mutation_sites_found": 2310,
+        "read_sites_found": 131,
+    }
+    assert scan_digest(a) == scan_digest(b)
+    assert canonical_json(normalize_scan(a)) == canonical_json(normalize_scan(b))
 
 
 def test_digest_moves_on_content_change() -> None:
