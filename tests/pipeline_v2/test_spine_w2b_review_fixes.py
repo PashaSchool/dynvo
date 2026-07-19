@@ -139,6 +139,12 @@ def test_f1_f5_keyed_full_sequence_never_resurrects_shared_platform(
     'shared-platform'/'platform' keys in product_features[]; the large
     flowless anchored PF survives with its lineage intact (F5: its dev
     is not re-homed); the flowless_shells stage did not run."""
+    # MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the
+    # scripted keyed sequence REQUIRES the 6.7d structural rewrite to APPLY
+    # (its own validity guard); under the flipped FAULTLINE_UF_DET_AGGREGATION
+    # default the structural LLM stages are skipped by design. Pin the
+    # pre-S2 world (kill-switch stays valid forever).
+    monkeypatch.setenv("FAULTLINE_UF_DET_AGGREGATION", "0")
     fake_home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
     _flowful_stage_3(monkeypatch)

@@ -41,10 +41,25 @@ from faultline.pipeline_v2.stage_6_7b_uf_refiner import (
 # ── budget arithmetic ───────────────────────────────────────────────────────
 
 
-def test_off_unset_budget_is_default_1500(
+def test_unset_budget_scales_like_explicit_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset now
+    # arms the per-UF budget (unset ≡ explicit-1); the fixed-1500 world is
+    # the explicit kill-switch below.
     monkeypatch.delenv(UF_REFINE_TOKEN_SCALE_ENV, raising=False)
+    for n in (1, 5, 11, 17, 18, 26, 100):
+        assert _effective_max_tokens(n) == min(
+            max(n * TOKENS_PER_UF, DEFAULT_MAX_TOKENS),
+            MAX_OUTPUT_TOKENS_CEILING,
+        )
+
+
+def test_explicit_zero_budget_is_default_1500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The pre-fix fixed ceiling stays reachable via the kill-switch forever.
+    monkeypatch.setenv(UF_REFINE_TOKEN_SCALE_ENV, "0")
     for n in (1, 5, 11, 17, 18, 26, 100):
         assert _effective_max_tokens(n) == DEFAULT_MAX_TOKENS
 
@@ -231,7 +246,8 @@ def test_on_large_domain_call_carries_scaled_max_tokens(
 def test_off_large_domain_call_carries_default_max_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(UF_REFINE_TOKEN_SCALE_ENV, raising=False)
+    # MECHANICAL flip migration (flip32): OFF world = explicit kill-switch.
+    monkeypatch.setenv(UF_REFINE_TOKEN_SCALE_ENV, "0")
     captured: list[dict[str, Any]] = []
     ufs, flows = _big_domain(17)
     refine_user_flows(

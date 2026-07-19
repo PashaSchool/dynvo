@@ -119,10 +119,13 @@ UF_REFINE_TOKEN_SCALE_ENV = "FAULTLINE_UF_REFINE_TOKEN_SCALE"
 
 
 def _token_scale_enabled() -> bool:
-    """Default OFF — set ``FAULTLINE_UF_REFINE_TOKEN_SCALE=1`` to arm the
-    per-UF budget. OFF/unset -> DEFAULT_MAX_TOKENS for every domain (the fixed
-    1500 ceiling), i.e. byte-identical to pre-fix output."""
-    return os.environ.get(UF_REFINE_TOKEN_SCALE_ENV, "0").strip().lower() not in {
+    """Default ON since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32; 3 domains
+    refine clean, no truncation — S2 Seg B').
+    ``FAULTLINE_UF_REFINE_TOKEN_SCALE=0`` (or false/no/off) ->
+    DEFAULT_MAX_TOKENS for every domain (the fixed 1500 ceiling), i.e.
+    byte-identical to pre-fix output — explicit off stays a valid
+    kill-switch forever."""
+    return os.environ.get(UF_REFINE_TOKEN_SCALE_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

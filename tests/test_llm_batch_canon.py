@@ -52,9 +52,10 @@ def _uf(uf_id: str, members: int, *, resource: str = "thing") -> UserFlow:
 # ── kill-switch: OFF is byte-identical ──────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset ⇒ ON.
     monkeypatch.delenv(BATCH_CANON_ENV, raising=False)
-    assert batch_canon_enabled() is False
+    assert batch_canon_enabled() is True
 
 
 @pytest.mark.parametrize("val", ["0", "false", "no", "off", ""])
@@ -68,7 +69,9 @@ def test_flag_kill_switch_values(
 def test_off_digest_carries_legacy_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(BATCH_CANON_ENV, raising=False)
+    # MECHANICAL flip migration (flip32): unset no longer means OFF —
+    # the OFF world is now the explicit kill-switch.
+    monkeypatch.setenv(BATCH_CANON_ENV, "0")
     d = _build_digest([_feat("alpha", ["a/x.ts"])], [], [_uf("UF-001", 3)], [])
     assert d["n_dev_features"] == 1
     rows, header = _reattrib_dev_items([_feat("alpha", ["a/x.ts", "a/y.ts"])])
@@ -98,7 +101,8 @@ def test_dev_count_drift_beyond_cap_does_not_flip_key_on(
     assert "n_dev_features" not in d_on_a
     assert _cache_key(d_on_a, "m1", "m2") == _cache_key(d_on_b, "m1", "m2")
 
-    monkeypatch.delenv(BATCH_CANON_ENV, raising=False)
+    # MECHANICAL flip migration (flip32): OFF leg = explicit kill-switch.
+    monkeypatch.setenv(BATCH_CANON_ENV, "0")
     d_off_a = _build_digest(devs, [], [], [])
     d_off_b = _build_digest(devs + [extra], [], [], [])
     assert d_off_a["n_dev_features"] == MAX_DEV_FEATURES_DIGEST
@@ -119,7 +123,8 @@ def test_member_count_drift_within_bucket_keeps_digest_stable_on(
     d2 = _build_digest([], [], [a, b_drift], [])
     assert _cache_key(d1, "m1", "m2") == _cache_key(d2, "m1", "m2")
 
-    monkeypatch.delenv(BATCH_CANON_ENV, raising=False)
+    # MECHANICAL flip migration (flip32): OFF leg = explicit kill-switch.
+    monkeypatch.setenv(BATCH_CANON_ENV, "0")
     d3 = _build_digest([], [], [a, b], [])
     d4 = _build_digest([], [], [a, b_drift], [])
     assert _cache_key(d3, "m1", "m2") != _cache_key(d4, "m1", "m2")

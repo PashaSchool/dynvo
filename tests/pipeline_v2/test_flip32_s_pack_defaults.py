@@ -31,15 +31,30 @@ from faultline.pipeline_v2.owner_oracle import (
     OWNER_ORACLE_ENV,
     owner_oracle_enabled,
 )
+from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+    DET_AGGREGATION_ENV,
+    det_aggregation_enabled,
+)
+from faultline.pipeline_v2.stage_6_7b_uf_refiner import (
+    UF_REFINE_TOKEN_SCALE_ENV,
+    _token_scale_enabled,
+)
+from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+    BATCH_CANON_ENV,
+    batch_canon_enabled,
+)
 
 # (env-var name, helper) for every S*-pack flag flipped default OFF -> ON.
 _FLIPPED = [
     (DEGRADATION_STAMP_ENV, degradation_stamp_enabled),
     (OWNER_ORACLE_ENV, owner_oracle_enabled),
+    (DET_AGGREGATION_ENV, det_aggregation_enabled),
+    (UF_REFINE_TOKEN_SCALE_ENV, _token_scale_enabled),
+    (BATCH_CANON_ENV, batch_canon_enabled),
 ]
 
 # Sanity: grows commit-by-commit with the pack; no duplicate env names.
-assert len(_FLIPPED) == 2
+assert len(_FLIPPED) == 5
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

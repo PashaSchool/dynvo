@@ -1059,9 +1059,17 @@ def test_split_subfeatures_inherit_parent_capability() -> None:
     assert "apps/web/components/issues/a.tsx" in it.paths
 
 
-def test_digest_invariant_to_split_depth() -> None:
+def test_digest_invariant_to_split_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The 6.7d digest must be IDENTICAL whether the container was split or
     not — the split-invariance contract."""
+    # MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the
+    # assertions reference the legacy n_dev_features digest field, which the
+    # flipped FAULTLINE_LLM_BATCH_CANON default omits by design. Pin the
+    # legacy digest world (kill-switch stays valid forever); ON-world
+    # invariance is covered by tests/test_llm_batch_canon.py.
+    monkeypatch.setenv("FAULTLINE_LLM_BATCH_CANON", "0")
     from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
         _build_digest, _rollup_split_view,
     )

@@ -260,8 +260,12 @@ BATCH_CANON_ENV = "FAULTLINE_LLM_BATCH_CANON"
 
 
 def batch_canon_enabled() -> bool:
-    """Default OFF — set ``FAULTLINE_LLM_BATCH_CANON=1`` to arm the canon."""
-    return os.environ.get(BATCH_CANON_ENV, "0").strip().lower() not in {
+    """Default ON since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32;
+    cache-hit-rate on the 1/980 drift — S2 Seg C).
+    ``FAULTLINE_LLM_BATCH_CANON=0`` (or false/no/off) keeps digest, prompts
+    and keys byte-identical to pre-fix — explicit off stays a valid
+    kill-switch forever."""
+    return os.environ.get(BATCH_CANON_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

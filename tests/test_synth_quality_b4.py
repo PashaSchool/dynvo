@@ -30,6 +30,17 @@ from faultline.pipeline_v2.synth_quality import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_pre_s2_world(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the
+    duck-typed SimpleNamespace fixtures exercise run_synth_quality in the
+    pre-S2 world; under the flipped FAULTLINE_UF_DET_AGGREGATION default the
+    S2 late same-object merge would receive them (AttributeError — it
+    requires UserFlow rows). Kill-switch keeps the pre-S2 world reachable
+    forever; the S2-world behavior is covered by the S2 convoy proofs."""
+    monkeypatch.setenv("FAULTLINE_UF_DET_AGGREGATION", "0")
+
+
 # ── fixture builders (duck-typed namespaces — the helpers use getattr) ──
 
 

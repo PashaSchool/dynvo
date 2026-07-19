@@ -729,8 +729,10 @@ ENV_OUTPUT_FLAGS = (
     # cleanly). ON scales max_tokens by a structural per-UF allowance floored at
     # DEFAULT so large domains parse. Reshapes user_flows[].name/description/
     # intent/ui_tier/acceptance on the previously-degraded (largest) domains
-    # only. Default OFF; =0/unset -> max_tokens==DEFAULT + cache key unchanged ->
-    # byte-identical. No KEY_SCHEMA bump (append-only — reconciled at merge).
+    # only. Default ON (flipped 2026-07-19, S*-pack, KEY_SCHEMA 32 — 3 domains
+    # refine clean, no truncation); =0/false/off -> max_tokens==DEFAULT + cache
+    # key unchanged -> byte-identical — explicit off stays a valid kill-switch
+    # forever.
     "FAULTLINE_UF_REFINE_TOKEN_SCALE",
     # S2 Seg A (2026-07-18) — deterministic UF pre-clustering: journey STRUCTURE
     # is computed deterministically (Stage 6.7a: one conservation-complete
@@ -739,8 +741,10 @@ ENV_OUTPUT_FLAGS = (
     # skipped. UF-COUNT becomes invariant to LLM death (fail-open 264-vs-78
     # class) and to resampling (−26% whole-batch class) — probe 2026-07-18.
     # Reshapes user_flows[] (membership/grain/ids) + downstream homes. Default
-    # OFF; =0/unset restores the LLM-structured path byte-identically. No
-    # KEY_SCHEMA bump (append-only — reconciled at merge).
+    # ON (flipped 2026-07-19, S*-pack, KEY_SCHEMA 32 — stability 100/0/1.00,
+    # panel 4 circles; keyless obstacle baselines re-recorded for the S2
+    # regrain 141->85 class); =0/false/off restores the LLM-structured path
+    # byte-identically — explicit off stays a valid kill-switch forever.
     "FAULTLINE_UF_DET_AGGREGATION",
     # S2 Seg C (2026-07-18) — canonical LLM batch composition: volatile pure
     # counts leave the 6.7d prompt canon (digest n_dev_features; Call-2 per-row
@@ -749,9 +753,10 @@ ENV_OUTPUT_FLAGS = (
     # no longer flips the whole-batch cache key; real content changes still do.
     # Adds the flag-gated scan_meta.llm_batch_canon hit-rate telemetry.
     # Reshapes the 6.7d prompts (hence keyed user_flows[]/product_features[]
-    # composition on cache-miss worlds). Default OFF; =0/unset keeps digest,
-    # prompts and keys byte-identical. No KEY_SCHEMA bump (append-only —
-    # reconciled at merge).
+    # composition on cache-miss worlds). Default ON (flipped 2026-07-19,
+    # S*-pack, KEY_SCHEMA 32 — cache-hit-rate on the 1/980 drift); =0/false/
+    # off keeps digest, prompts and keys byte-identical — explicit off stays
+    # a valid kill-switch forever.
     "FAULTLINE_LLM_BATCH_CANON",
     # S5a (2026-07-18) — mega-PF decomposition ARMING, ONE flag gates the
     # three ship-grade grain segments (the B53/B58-v3 precedent). Seg A: the

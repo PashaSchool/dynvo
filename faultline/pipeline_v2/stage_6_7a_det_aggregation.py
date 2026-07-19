@@ -57,8 +57,12 @@ _INTENT_ORDER = (
 
 
 def det_aggregation_enabled() -> bool:
-    """Default OFF — set ``FAULTLINE_UF_DET_AGGREGATION=1`` to arm."""
-    return os.environ.get(DET_AGGREGATION_ENV, "0").strip().lower() not in {
+    """Default ON since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32;
+    stability 100/0/1.00, panel 4 circles — S2 Seg A).
+    ``FAULTLINE_UF_DET_AGGREGATION=0`` (or false/no/off) restores the
+    LLM-structured path byte-identically — explicit off stays a valid
+    kill-switch forever."""
+    return os.environ.get(DET_AGGREGATION_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

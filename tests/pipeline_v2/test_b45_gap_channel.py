@@ -45,6 +45,18 @@ from faultline.pipeline_v2.synth_quality import (
 
 
 @pytest.fixture(autouse=True)
+def _pin_pre_s2_world(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): this
+    module's dict-shaped UF fixtures exercise the B45 gap-channel contract in
+    the pre-S2 (LLM-structured) world; under the flipped
+    FAULTLINE_UF_DET_AGGREGATION default the S2 late same-object merge would
+    receive the dict fixtures (AttributeError — it requires UserFlow rows).
+    The pre-S2 world stays reachable via the kill-switch forever; the B45
+    contract in the S2 world is covered by the S2 convoy proofs."""
+    monkeypatch.setenv("FAULTLINE_UF_DET_AGGREGATION", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_gap_env() -> Any:
     """Several helpers below set the gap-channel / marker env directly; restore
     both after every test so the mutation never leaks into unrelated tests (a

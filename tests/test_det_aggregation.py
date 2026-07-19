@@ -301,9 +301,10 @@ def test_passthrough_ids_unique_and_canonical() -> None:
 # ── kill-switch + registration ──────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset ⇒ ON.
     monkeypatch.delenv(DET_AGGREGATION_ENV, raising=False)
-    assert det_aggregation_enabled() is False
+    assert det_aggregation_enabled() is True
 
 
 @pytest.mark.parametrize("val", ["0", "false", "no", "off", ""])

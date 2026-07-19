@@ -39,6 +39,20 @@ pytestmark = [
     ),
 ]
 
+
+@pytest.fixture(autouse=True)
+def _pin_ws1_baseline_world(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the
+    ws1-baseline was recorded with DEFAULT env BEFORE the flip — mutation
+    replay must run in the baseline's recorded world, so the flipped
+    defaults are pinned back to the recorded (unset≡OFF) semantics via the
+    kill-switch. Lift these pins when the baseline is re-recorded under
+    the new default world."""
+    monkeypatch.setenv("FAULTLINE_UF_DET_AGGREGATION", "0")
+    monkeypatch.setenv("FAULTLINE_UF_REFINE_TOKEN_SCALE", "0")
+    monkeypatch.setenv("FAULTLINE_LLM_BATCH_CANON", "0")
+
+
 MUTATED_STAGE = "test_strip"
 
 

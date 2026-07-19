@@ -248,6 +248,12 @@ def test_finalize_refreshes_scan_meta_cost_with_full_bill(
     finalize phase (stage 3/4 are $0 fakes): the output scan_meta must
     carry the tracker's full bill, not the stale pre-finalize $0
     snapshot (chain4: CLI cost line = $0 while 6.7d cost_usd = 0.147)."""
+    # MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the
+    # scripted keyed run REQUIRES the 6.7d structural rewrite to APPLY (its
+    # own validity guard); under the flipped FAULTLINE_UF_DET_AGGREGATION
+    # default the structural LLM stages are skipped by design. Pin the
+    # pre-S2 world (kill-switch stays valid forever).
+    monkeypatch.setenv("FAULTLINE_UF_DET_AGGREGATION", "0")
     fake_home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
     _flowful_stage_3(monkeypatch)
