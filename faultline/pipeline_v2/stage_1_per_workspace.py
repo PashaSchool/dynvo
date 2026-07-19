@@ -51,6 +51,7 @@ No LLM calls. No network calls.
 from __future__ import annotations
 
 import logging
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,6 +138,29 @@ class WorkspaceExtractionReport:
 
 
 _NOISE_STACKS = {"js-generic", "python-lib", "ruby", "unknown", ""}
+
+# Declared-workspace UNION gate (onyx shape, 2026-07-19).
+# Default OFF. When armed, ``run_stage_1_per_workspace`` unions declared
+# workspaces that span only a MINORITY of tracked files with the
+# non-overlapping results of :func:`synthesise_workspaces`. See
+# :func:`workspace_union_enabled` / :func:`_declared_covers_minority`.
+WORKSPACE_UNION_ENV = "FAULTLINE_WORKSPACE_UNION"
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def workspace_union_enabled() -> bool:
+    """Return True when the declared-workspace union gate is armed.
+
+    Default **OFF** — ``FAULTLINE_WORKSPACE_UNION`` unset (or any value
+    outside ``{1, true, yes, on}``) leaves Stage 1 byte-identical to the
+    pre-gate behaviour. Set ``FAULTLINE_WORKSPACE_UNION=1`` to arm it.
+
+    New behaviour is env-flag-gated per the operator law: the union only
+    fires when this returns True AND the declared workspaces span a
+    minority of tracked files (:func:`_declared_covers_minority`).
+    """
+    return os.environ.get(WORKSPACE_UNION_ENV, "0").strip().lower() in _TRUTHY
 
 
 def _distinct_interesting_stacks(workspaces: list[Workspace]) -> int:
@@ -258,6 +282,71 @@ def synthesise_workspaces(ctx: ScanContext) -> list[Workspace]:
         _emit(name, child)
 
     return out
+
+
+# ── Declared-workspace union gate ─────────────────────────────────────────
+
+
+def _dir_overlaps(a: str, b: str) -> bool:
+    """True when two workspace paths are the same dir or one nests the
+    other (directory-prefix overlap). Used to keep the union disjoint."""
+    a = a.rstrip("/")
+    b = b.rstrip("/")
+    if a == b:
+        return True
+    return a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def _declared_covers_minority(
+    workspaces: list[Workspace], tracked_files: list[str],
+) -> bool:
+    """True when declared workspaces span a strict MINORITY of tracked files.
+
+    The onyx shape: the root ``package.json`` enumerates peripheral
+    packages (``widget/``, ``desktop/`` — ~1.6% of tracked) while the
+    product bulk (``web/``, ``cli/``) is undeclared and would otherwise
+    fall into the js-generic leftover pass.
+
+    Scale-invariant ratio gate — ``covered * 2 < total`` (no magic
+    number, no per-repo threshold). Returns False when there is nothing
+    to measure or no declared paths exist (callers must not union in
+    those cases).
+    """
+    if not tracked_files:
+        return False
+    prefixes = tuple(
+        w.path.rstrip("/") + "/" for w in workspaces if w.path
+    )
+    if not prefixes:
+        return False
+    covered = sum(
+        1
+        for f in tracked_files
+        if any(f == p[:-1] or f.startswith(p) for p in prefixes)
+    )
+    return covered * 2 < len(tracked_files)
+
+
+def _union_synthesised(
+    declared: list[Workspace], ctx: ScanContext,
+) -> list[Workspace]:
+    """Synthesised workspaces whose path is disjoint from every declared
+    workspace — the non-overlapping union additions.
+
+    Reuses :func:`synthesise_workspaces` (the infisical synthesis
+    mechanism) verbatim; introduces NO new extractors. A synthesised
+    workspace whose directory equals or nests/​is-nested-by any declared
+    workspace is dropped so the merged list stays path-disjoint.
+    """
+    declared_paths = [w.path for w in declared if w.path]
+    additions: list[Workspace] = []
+    for w in synthesise_workspaces(ctx):
+        if not w.path:
+            continue
+        if any(_dir_overlaps(w.path, d) for d in declared_paths):
+            continue
+        additions.append(w)
+    return additions
 
 
 # ── Scoped ScanContext construction ───────────────────────────────────────
@@ -574,6 +663,22 @@ def run_stage_1_per_workspace(
     if not workspaces:
         workspaces = synthesise_workspaces(ctx)
         synthesised = bool(workspaces)
+    elif workspace_union_enabled() and _declared_covers_minority(
+        workspaces, ctx.tracked_files,
+    ):
+        # Declared workspaces span a minority of tracked files (the onyx
+        # shape — root package.json enumerates widget/ + desktop/ while
+        # the product bulk in web/ + cli/ is undeclared). Union the
+        # declared list with the non-overlapping synthesised workspaces
+        # (reuse of the infisical synthesis mechanism; no new extractors)
+        # so the bulk is scoped to its own stack instead of dissolving in
+        # the js-generic leftover pass. Flag-gated
+        # (FAULTLINE_WORKSPACE_UNION, default OFF); unset ⇒ byte-identical
+        # to base because this branch never runs.
+        additions = _union_synthesised(workspaces, ctx)
+        if additions:
+            workspaces = workspaces + additions
+            synthesised = True
 
     if not workspaces:
         # No workspaces at all — return an empty result so caller can
@@ -714,4 +819,5 @@ __all__ = [
     "run_stage_1_per_workspace",
     "should_activate_per_workspace",
     "synthesise_workspaces",
+    "workspace_union_enabled",
 ]
