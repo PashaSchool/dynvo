@@ -430,11 +430,66 @@ def test_composite_keep_blocks_dash_flatten_when_armed(
         paths=["packages/providers/src/lib/chat/chat-webhook/webhook.provider.ts"],
     )
     _run_with_labeler(pf, {"chat-webhook": "Chat Webhook"})
-    # The composite shape survives: the pick's words == the composition's
-    # words, so the flatten is rejected whatever separator form the
-    # composition pass produced.
-    assert pf.display_name != "Chat Webhook"
-    assert " — " in pf.display_name
+    # The composite RECOMPOSES canonically (family-echo stripped),
+    # whatever separator form the upstream passes produced.
+    assert pf.display_name == "Chat — Webhook"
+
+
+def test_composite_keep_sendgrid_degrime_mangle_recomposes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """novu it4 calibration: at Pass-3 sendgrid's live display was the
+    degrime-truncated 'Email — sendgr', so a cur-string compare missed
+    the flatten (the it3 leak). The recomposer grounds the compare in
+    the ANCHOR's vendor segment and repairs the mangle."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "1")
+    from faultline.pipeline_v2.naming_contract import (
+        _hub_composite_recompose,
+        load_naming_vocab,
+    )
+
+    out = _hub_composite_recompose(
+        "hub:packages/providers/src/lib/email/sendgrid",
+        "Email — sendgr",           # the mangled live display
+        "SendGrid",                  # the persona's vendor pick
+        load_naming_vocab(),
+    )
+    assert out == "Email — SendGrid"
+
+
+@pytest.mark.parametrize("anchor_vendor, pick, family, expected", [
+    # camelCase vendor segment folds to the pick (the it4 edge class)
+    ("msTeams", "Ms Teams", "chat", "Chat — Ms Teams"),
+    # brand-cased single-slug vendor
+    ("sendgrid", "SendGrid", "email", "Email — SendGrid"),
+    # multi-word slug vendor
+    ("grafana-on-call", "Grafana On Call", "chat", "Chat — Grafana On Call"),
+    # family-echo vendor slug
+    ("chat-webhook", "Chat Webhook", "chat", "Chat — Webhook"),
+])
+def test_composite_recompose_camelcase_vendor_classes(
+    anchor_vendor: str, pick: str, family: str, expected: str,
+) -> None:
+    from faultline.pipeline_v2.naming_contract import (
+        _hub_composite_recompose,
+        load_naming_vocab,
+    )
+
+    aid = f"hub:packages/providers/src/lib/{family}/{anchor_vendor}"
+    cur = f"{family.title()} — {anchor_vendor}"  # any composition shape
+    assert _hub_composite_recompose(aid, cur, pick, load_naming_vocab()) == expected
+
+
+def test_composite_recompose_none_for_real_correction() -> None:
+    from faultline.pipeline_v2.naming_contract import (
+        _hub_composite_recompose,
+        load_naming_vocab,
+    )
+
+    assert _hub_composite_recompose(
+        "hub:packages/providers/src/lib/chat/discord",
+        "Chat — Discord", "Discord Notifications", load_naming_vocab(),
+    ) is None
 
 
 def test_composite_keep_allows_real_correction_when_armed(
