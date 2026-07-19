@@ -131,6 +131,18 @@ _WEAK_TITLES = {
     "should work properly", "should work correctly",
 }
 
+#: it3 (S*-pack, 2026-07-19) — universal test-VOCABULARY honesty filter for
+#: the authored naming channel (audit P1, cal e2e leak). A maintainer label
+#: carrying test-bench vocabulary ("Should Google Login button", "SAML
+#: tests", "Buy Credits E2E Tests") is a TEST title, not a product journey
+#: name — feeding it through ``matched_authored_names`` renames a real UF
+#: after the test suite. Latent since the channel shipped; the S4a route
+#: river detonated it (route matches handed test-suite titles to healthy
+#: UFs). Universal-only tokens (``e2e``/``test(s)``/``spec`` + the
+#: lead-'Should' bench phrasing) — the ``_WEAK_TITLES`` class, no repo
+#: vocabulary.
+_TESTY_LABEL_RE = re.compile(r"(?i)(?:\b(?:e2e|tests?|spec)\b|^\s*should\b)")
+
 _ASSET_EXT_RE = re.compile(
     r"\.(?:png|jpe?g|svg|gif|ico|css|js|mjs|json|pdf|webp|mp4|woff2?|zip)$",
     re.IGNORECASE,
@@ -1273,6 +1285,13 @@ def matched_authored_names(payload: dict[str, Any]) -> dict[str, list[str]]:
             continue
         lbl = _label_to_name(_journey_label(chain))
         if not lbl or lbl.strip().lower() in _WEAK_TITLES:
+            continue
+        # it3 — universal test-vocabulary honesty filter (audit P1): a
+        # test-bench label never names a product UF; the route match falls
+        # to the next honest candidate or the synthesized template. The
+        # mint path and the terminal are untouched — this filters ONLY the
+        # authored NAMING channel for matched journeys.
+        if _TESTY_LABEL_RE.search(lbl):
             continue
         labels = per_uf.setdefault(uid, [])
         if lbl not in labels:

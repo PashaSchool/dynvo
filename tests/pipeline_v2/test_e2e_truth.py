@@ -582,6 +582,35 @@ def test_matched_authored_names_route_only():
     assert "UF-003" not in out          # negative excluded
 
 
+def test_matched_authored_names_testy_labels_dropped():
+    """it3 (audit P1, cal-shape): test-bench vocabulary never names a
+    product UF — the route match falls to the next honest candidate or
+    stays with the synthesized template. Anti-case: a real authored
+    journey label lives."""
+    payload = {"matched": [
+        # cal-shape exhibits (route-river handed test-suite titles):
+        {"via": "route", "uf_id": "UF-010",
+         "title_chain": ["Should Google Login button"]},   # lead-Should
+        {"via": "route", "uf_id": "UF-011",
+         "title_chain": ["SAML tests"]},                   # \btests\b
+        {"via": "route", "uf_id": "UF-012",
+         "title_chain": ["Buy Credits E2E Tests"]},        # \be2e\b
+        {"via": "route", "uf_id": "UF-013",
+         "title_chain": ["auth spec"]},                    # \bspec\b
+        # next-honest-candidate: the testy row dies, the honest one names
+        {"via": "route", "uf_id": "UF-014",
+         "title_chain": ["Reschedule Tests"]},
+        {"via": "route", "uf_id": "UF-014",
+         "title_chain": ["Reschedule booking"]},           # ANTI-CASE lives
+    ], "uf_e2e_evidence": {}}
+    out = matched_authored_names(payload)
+    assert "UF-010" not in out
+    assert "UF-011" not in out
+    assert "UF-012" not in out
+    assert "UF-013" not in out
+    assert out["UF-014"] == ["Reschedule booking"]
+
+
 # -- Track C: cross-process (PYTHONHASHSEED) determinism -------------------
 
 import os as _os          # noqa: E402
