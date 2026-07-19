@@ -376,3 +376,21 @@ route_addressing_suffixes:
 # Compose bounds for labeler-composed displays (grammar hard limits).
 compose_max_words: 8
 compose_max_chars: 60
+
+# R5-4 (2026-07-19) — dev-scaffold route words that may lead a composed
+# "<base> (<qual>)" display only as the TRAILING qualifier: a single
+# scaffold-word base with a non-verb noun qualifier inverts to noun-lead
+# ("New (Webhooks)" -> "Webhooks — New"; "Edit (Monitors)" ->
+# "Monitors — Edit"). Universal CRUD-scaffold vocabulary, never
+# repo-specific. Anti-cases (must NOT invert): a multi-word base
+# ("Upload File (upload)"), a verb-led qualifier ("List (View data)").
+scaffold_lead_words:
+  - add
+  - create
+  - detail
+  - details
+  - edit
+  - index
+  - list
+  - new
+  - view
