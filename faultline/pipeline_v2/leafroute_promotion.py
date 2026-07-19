@@ -671,6 +671,11 @@ def _promote_resident(
     tele["births"].append({"dev": _attr(dev, "name"), "pf": slug, "kind": kind,
                            "pages": len(page_paths), "paths": len(pf.paths)})
     tele["pfs_born"] += 1
+    # register the promoted member for the post-LOC-truth OWNED-loc husk check
+    # (the raw-file gate above passes a page whose owned loc is 0 because it is
+    # primary-owned by another dev — the shared-file husk class).
+    tele.setdefault("_born_registry", []).append(
+        {"pf": pf, "slug": slug, "member": dev if whole else chunk})
     return True
 
 
@@ -838,21 +843,53 @@ def run_leafroute_promotion(
     # dev→PF attribution: births get real loc, the leaf shrinks, targets grow,
     # untouched PFs stay identical (idempotent, ``sum_pf_owned <= repo_loc`` by
     # construction). Only when the wave changed something and a tree exists.
+    # Re-truth + husk-drop only when the LOC channel is LIVE (real repo tree
+    # with on-disk paths). A synthetic unit scene (no on-disk paths) has no
+    # channel → skip both (its 0-loc is a fixture artifact, not a husk).
     moved_anything = (tele["paths_dissolved"] or tele["pfs_born"]
                       or tele["devs_merged"])
-    if moved_anything:
+    if moved_anything and loc_probe.channel:
         try:
-            from pathlib import Path
-
             from faultline.pipeline_v2.stage_6_97_feature_loc import (
                 apply_feature_loc,
             )
-            rp = _attr(ctx, "repo_path", None)
-            if rp and Path(str(rp)).is_dir():
-                apply_feature_loc(
-                    developer_features, product_features, str(rp),
-                    user_flows=user_flows, flows=flows)
-                tele["loc_retruthed"] = True
+            apply_feature_loc(
+                developer_features, product_features, str(_attr(ctx, "repo_path")),
+                user_flows=user_flows, flows=flows)
+            tele["loc_retruthed"] = True
+            _drop_owned_loc_husks(product_features, tele)
         except Exception as exc:  # noqa: BLE001 — never break a scan
             tele["loc_retruth_error"] = str(exc)
+    tele.pop("_born_registry", None)
     return tele
+
+
+def _drop_owned_loc_husks(
+    product_features: list[Any], tele: dict[str, Any],
+) -> None:
+    """After the LOC re-truth, a born PF whose OWNED loc is still 0 (its page is
+    primary-owned by another dev — the shared-file husk) is a member-ful 0-LOC
+    trust bug. Drop it and re-lane its member (never leave a phantom for the
+    downstream I2 backstop to silently sweep; keep the telemetry honest)."""
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        _SHARED_REASON_SHELL,
+    )
+    registry = tele.get("_born_registry") or []
+    drop_pfs = {id(r["pf"]) for r in registry if not (_attr(r["pf"], "loc") or 0)}
+    if not drop_pfs:
+        return
+    dropped_slugs: set[str] = set()
+    for r in registry:
+        if id(r["pf"]) not in drop_pfs:
+            continue
+        member = r["member"]
+        propose_pf_now(member, None, rung="leafroute")
+        member.shared_reason = _SHARED_REASON_SHELL
+        member.anchor_id = f"fold:{_MARKER}->lane"
+        dropped_slugs.add(r["slug"])
+    product_features[:] = [pf for pf in product_features
+                           if id(pf) not in drop_pfs]
+    tele["births"] = [b for b in tele["births"]
+                      if b["pf"] not in dropped_slugs]
+    tele["pfs_born"] -= len(drop_pfs)
+    tele["births_dropped_husk"] = sorted(dropped_slugs)
