@@ -580,6 +580,62 @@ def test_it2_hold_from_mega_moves_blocks(monkeypatch):
     assert tele["organic_blocked_rows"][0]["hold"] == "moved:chat"
 
 
+def test_it2_overlap_with_rival_identity_moves(monkeypatch):
+    """Guard-1 v2 counter-shape (keyless-typebot UF-008 'workspace
+    typebots' — the census-gate refutation of the any-hit form): the sole
+    entry IS a home ('folders') role='anchor' member file, but the file
+    itself wears the RIVAL's name (typebots.tsx) — the home's anchor-claim
+    on a rival-named file is the annexation being cured: the move STANDS."""
+    _on(monkeypatch)
+    UF._n = 0
+    registry = {
+        "fdir:folders": _anchor(
+            "fdir:folders", ["apps/builder/src/features/folders"]),
+        "route:typebots": _anchor(
+            "route:typebots", ["apps/builder/src/pages/w"]),
+    }
+    pf_folders = PF("folders", "fdir:folders")
+    pf_folders.member_files = [
+        {"path": "apps/builder/src/pages/w/[workspaceId]/typebots.tsx",
+         "role": "anchor", "confidence": 1.0, "primary": True},
+        {"path": "apps/builder/src/features/folders/components/FolderPage.tsx",
+         "role": "anchor", "confidence": 1.0, "primary": True},
+    ]
+    pf_typebots = PF("typebots", "route:typebots")
+    fls = [
+        Fl("f-w1", "apps/builder/src/pages/w/[workspaceId]/typebots.tsx",
+           "workspace-typebots-flow"),
+        Fl("f-fp", "apps/builder/src/features/folders/components/FolderPage.tsx",
+           "folder-page-flow"),
+    ]
+    devs = [Dev("d1", fls)]
+    mover = UF("workspace typebots", "folders", ["f-w1"], uid="UF-008")
+    keeper = UF("Manage folders", "folders", ["f-fp"], uid="UF-901")
+    tele = run_post_uf_rehome([mover, keeper], devs, pfs := [pf_folders,
+                              pf_typebots], registry)
+    assert mover.product_feature_id == "typebots"          # MOVES
+    assert tele["organic_moved"] == 1
+    assert tele.get("organic_blocked_anchor_overlap", 0) == 0
+
+
+def test_it2_partial_overlap_moves(monkeypatch):
+    """Guard-1 v2 counter-shape (keyless-typebot UF-004): only SOME
+    entries sit inside the home's anchor-file claim — the home does not
+    own the whole evidence set, the zero is not falsified: the move
+    STANDS."""
+    _on(monkeypatch)
+    registry, pfs, devs, sick, keeper = _soc0_uf051_scene()
+    # a second member whose entry is OUTSIDE the home anchor-file set:
+    devs[0].flows.append(
+        Fl("f-x1", "backend/routers/other.py", "other-admin-flow"))
+    sick.member_flow_ids = list(sick.member_flow_ids) + ["f-x1"]
+    sick.member_count += 1
+    tele = run_post_uf_rehome([sick, keeper], devs, pfs, registry)
+    assert sick.product_feature_id == "chat"               # MOVES
+    assert tele["organic_moved"] == 1
+    assert tele.get("organic_blocked_anchor_overlap", 0) == 0
+
+
 def test_it2_guards_spare_chrestomathic_movers(monkeypatch):
     """The guards MUST NOT kill the census movers: typebot UF-046 still
     moves when (a) its home PF carries a NON-overlapping role='anchor'

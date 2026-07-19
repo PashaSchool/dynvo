@@ -115,19 +115,27 @@ guards INSIDE the strict gate, both mechanisms:
   re-adjudicated here (``blocked reason='prior-hold'``): UF-051 was HELD
   by the nav stage and the organic lane overrode that hold with weaker
   evidence.
-* ANCHOR-OVERLAP FALSE-ZERO — ``home_share == 0`` is a registry-anchor
-  prefix measurement; when a journey member entry IS one of the home PF's
-  own ``role='anchor'`` member files (UF-051: all 34 member flows enter
-  ``backend/routers/admin.py`` — network-security's PRIMARY anchor file,
-  confidence 1.0), the zero is FALSE and the row is blocked
-  (``reason='anchor-overlap-false-zero'``). The right fate of such rows is
-  NOT a move (dev-demote territory of other cycles) — only the block is in
-  scope.
+* ANCHOR-OVERLAP FALSE-ZERO (v2 form — the any-hit form over-fired on
+  keyless typebot and was refuted by the census gate) — ``home_share == 0``
+  is a registry-anchor prefix measurement; the zero is FALSE only when
+  BOTH hold: (a) the home structurally owns the WHOLE evidence set —
+  EVERY unique member entry is one of the home PF's own ``role='anchor'``
+  member files (overlap share == 1.0, the natural band edge — ratio, no
+  magic constant; UF-051: all 34 member flows enter
+  ``backend/routers/admin.py``, network-security's PRIMARY anchor file,
+  confidence 1.0); and (b) NO entry file itself wears the RIVAL's
+  identity (singular-folded stem/dir tokens). Counter-shapes that must
+  keep moving: UF-008 'workspace typebots' (full overlap BUT the entry
+  ``…/typebots.tsx`` wears rival 'typebots' — the home's anchor-claim on
+  a rival-named file IS the annexation being cured) and UF-004 (partial
+  overlap — home does not own the whole evidence set). Blocked rows are
+  never moved and never re-fated here (dev-demote territory of other
+  cycles) — ``reason='anchor-overlap-false-zero'``.
 
 Guard order: strict floor → prior-hold → anchor-overlap → direction-gate
 (first hit wins; one reason per row). The chrestomathic movers (typebot
 UF-046 family, cal UF-107 dev→dev, kan UF-017) carry no holds and no
-entry∩anchor-file overlap — the guards cannot touch them (unit-pinned).
+qualifying overlap — the guards cannot touch them (unit-pinned).
 """
 
 from __future__ import annotations
@@ -212,6 +220,34 @@ def _home_anchor_files(pf: Any) -> set[str]:
         if p:
             out.add(str(p))
     return out
+
+
+def _rival_identity_on_files(entries: list[str], rival_pf: Any) -> bool:
+    """it2 guard-1 v2 discriminator: does ANY member entry file itself WEAR
+    the rival PF's identity (singular-folded token of the rival's name /
+    display present in the entry's stem or dir segments)?
+
+    The keyless-typebot refutation of the any-hit overlap form: UF-008's
+    sole entry ``pages/w/[workspaceId]/typebots.tsx`` is inside home
+    'folders' anchor-file claim — but the file wears the RIVAL's name
+    (``typebots``): the home's anchor-claim on it IS the annexation being
+    cured, so the move is right. UF-051's ``admin.py`` carries NEITHER
+    home nor rival ('chat') identity — the rival's 1.0 was a broad-prefix
+    coincidence and the zero is false."""
+    if rival_pf is None:
+        return False
+    rtoks = _sing_tokens(
+        str(_attr(rival_pf, "name") or ""), _pf_display(rival_pf))
+    if not rtoks:
+        return False
+    for e in entries:
+        segs = [s for s in str(e).split("/") if s]
+        if not segs:
+            continue
+        stem = segs[-1].rsplit(".", 1)[0]
+        if rtoks & _sing_tokens(stem, *segs[:-1]):
+            return True
+    return False
 
 
 def _pf_layer(pf: Any, shell_roots: frozenset[str]) -> str:
@@ -511,16 +547,23 @@ def run_post_uf_rehome(
                     })
                     continue
                 # it2 guard 1 — ANCHOR-OVERLAP false-zero (Soc0 UF-051
-                # refutation): ``home_share == 0`` is measured by the home
-                # REGISTRY anchor's prefix match — but a member entry that
-                # IS one of the home PF's own ANCHOR member files
-                # (role='anchor'; backend/routers/admin.py under
-                # network-security) falsifies the zero: the home structurally
-                # owns the entry even though the registry prefix never
-                # matches it. Such a row is NOT annexed booty — it is
-                # dev-demote territory of other cycles; only BLOCK here.
-                if entries and (set(entries)
-                               & _home_anchor_files(pf_by_key.get(pfid))):
+                # refutation, v2 form after the keyless-typebot over-fire):
+                # ``home_share == 0`` is a registry-prefix measurement; the
+                # zero is FALSE only when the home structurally owns the
+                # WHOLE evidence set — EVERY unique member entry is one of
+                # the home PF's own role='anchor' member files (overlap
+                # share == 1.0, the natural band edge; UF-051: all 34 flows
+                # enter admin.py) — AND no entry file itself wears the
+                # rival's identity (UF-008 'typebots.tsx' under 'folders':
+                # the home's anchor-claim on a rival-named file IS the
+                # annexation being cured — move stands). Blocked rows are
+                # NOT moved and NOT re-fated here (dev-demote territory of
+                # other cycles).
+                entry_set = set(entries)
+                overlap = entry_set & _home_anchor_files(pf_by_key.get(pfid))
+                if (entry_set and overlap == entry_set
+                        and not _rival_identity_on_files(
+                            entries, pf_by_key.get(rival_key))):
                     tele["organic_blocked_anchor_overlap"] = (
                         tele.get("organic_blocked_anchor_overlap", 0) + 1)
                     tele.setdefault("organic_blocked_rows", []).append({
