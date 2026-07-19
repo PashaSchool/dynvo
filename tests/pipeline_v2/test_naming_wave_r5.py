@@ -346,3 +346,110 @@ def test_r5_2_off_byte_identical(monkeypatch: pytest.MonkeyPatch) -> None:
     tele = _run(pfs, ufs)
     # OFF: no own-resource telemetry key, echo template preserved.
     assert "uf_own_resource_templated" not in tele
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Segment R5-5 — negative confidence rungs (census-shape caps)
+# ══════════════════════════════════════════════════════════════════════
+
+from faultline.pipeline_v2.naming_contract import _name_disease_shape  # noqa: E402
+
+
+def test_shape_detector_paren_qualifier() -> None:
+    assert _name_disease_shape("Manage item (Assistant)") == "paren-qualifier"
+    assert _name_disease_shape("Settings (Dashboard)") == "paren-qualifier"
+
+
+def test_shape_detector_raw_identifier() -> None:
+    assert _name_disease_shape("Connect apiKeys") == "raw-identifier"
+    assert _name_disease_shape("Manage api_keys") == "raw-identifier"
+    assert _name_disease_shape("Htmltopdf") is None  # single glued word not caught (no dict)
+
+
+def test_shape_detector_healthy_names_none() -> None:
+    # The census false-positive class + honest journey phrases carry NO shape.
+    for healthy in (
+        "Analyze cohort retention",
+        "Manage API keys",
+        "Browse and filter monitors",
+        "Create monitor",
+        "View incidents",
+    ):
+        assert _name_disease_shape(healthy) is None, healthy
+
+
+def _uf_high(uid: str, name: str, pfid: str, members: list[str]) -> UserFlow:
+    return UserFlow(
+        id=uid, name=name, resource="widget", domain=None,
+        product_feature_id=pfid, intent="manage",
+        member_flow_ids=members, member_count=len(members),
+        name_confidence="high",
+    )
+
+
+def test_r5_5_off_byte_identical(monkeypatch: pytest.MonkeyPatch) -> None:
+    # OFF: no shape cap, no telemetry key, confidence untouched.
+    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    pfs = [_pf("widget", "Widget", "route:app/widget")]
+    ufs = [_uf_high("u1", "Manage widget (Legacy)", "widget", [])]
+    tele = _run(pfs, ufs)
+    assert "uf_shape_capped" not in tele
+
+
+# ── R5-5 cap function (direct — the rubric-high path is grounding-fragile) ──
+
+from faultline.pipeline_v2.naming_contract import _apply_r5_confidence_caps  # noqa: E402
+
+
+def _uf_conf(name: str, conf: str) -> UserFlow:
+    return UserFlow(
+        id="u1", name=name, resource="r", domain=None,
+        product_feature_id="pf", intent="manage",
+        member_flow_ids=[], member_count=0, name_confidence=conf,
+    )
+
+
+def test_r5_5_caps_high_paren_uf(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    uf = _uf_conf("Manage status pages (dashboard)", "high")
+    tele: dict = {}
+    _apply_r5_confidence_caps([uf], tele, rungs_on=True)
+    assert uf.name_confidence == "medium"
+    assert "shape:paren-qualifier" in (uf.name_evidence or [])
+    assert tele["uf_shape_capped"] == 1
+
+
+def test_r5_5_caps_high_raw_identifier_uf(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    uf = _uf_conf("Connect apiKeys", "high")
+    tele: dict = {}
+    _apply_r5_confidence_caps([uf], tele, rungs_on=True)
+    assert uf.name_confidence == "medium"
+    assert "shape:raw-identifier" in (uf.name_evidence or [])
+
+
+def test_r5_5_keeps_high_clean_uf(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ANTI-CASE: a clean verb-led journey stays 'high'.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    for clean in ("Browse and filter monitors", "Analyze cohort retention",
+                  "Manage API keys"):
+        uf = _uf_conf(clean, "high")
+        _apply_r5_confidence_caps([uf], {}, rungs_on=True)
+        assert uf.name_confidence == "high", clean
+
+
+def test_r5_5_only_caps_high_not_medium(monkeypatch: pytest.MonkeyPatch) -> None:
+    # a medium/low diseased row is left as-is (the cap only lowers 'high').
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    uf = _uf_conf("Manage item (Assistant)", "medium")
+    _apply_r5_confidence_caps([uf], {}, rungs_on=True)
+    assert uf.name_confidence == "medium"
+
+
+def test_r5_5_cap_noop_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    uf = _uf_conf("Manage x (y)", "high")
+    tele: dict = {}
+    _apply_r5_confidence_caps([uf], tele, rungs_on=True)
+    assert uf.name_confidence == "high"
+    assert "uf_shape_capped" not in tele

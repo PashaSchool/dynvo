@@ -619,6 +619,34 @@ def _degrime_display(text: str) -> str:
     return out or text
 
 
+#: R5-5 census-shape detectors — a camelCase boundary or a snake_case
+#: boundary inside a displayed token means a code identifier leaked into the
+#: display (C4 / C1raw / C8pf). Mechanistic (no dictionary — the census used
+#: /usr/share/dict/words as an INSTRUMENT only; a fix may not).
+_R5_CAMEL_BOUNDARY = re.compile(r"[a-z][A-Z]")
+_R5_SNAKE_BOUNDARY = re.compile(r"[A-Za-z0-9]_[A-Za-z0-9]")
+
+
+def _name_disease_shape(name: str) -> str | None:
+    """R5-5 — the census disease shape a display name exhibits, or ``None``.
+
+    Conservative + mechanistic (no dictionary, no per-repo list):
+      * ``paren-qualifier`` — a ``(…)`` qualifier tail (C5);
+      * ``raw-identifier`` — a camelCase / snake_case boundary, i.e. a code
+        identifier leaked into display (C4 / C1raw / C8pf).
+
+    A healthy verb-led journey phrase ('Analyze cohort retention', 'Manage
+    API keys') carries NEITHER shape and is never flagged — the census
+    false-positive lesson."""
+    if not name:
+        return None
+    if "(" in name or ")" in name:
+        return "paren-qualifier"
+    if _R5_CAMEL_BOUNDARY.search(name) or _R5_SNAKE_BOUNDARY.search(name):
+        return "raw-identifier"
+    return None
+
+
 def _qualifier_echoes_base(base: str, qual: str) -> bool:
     """True when EVERY singular-folded token of a candidate qualifier is
     already present (singular-folded) in the base display — the tautological
@@ -3183,6 +3211,9 @@ def _apply_uf_name_laws(
                 if not verb_grounded:
                     miss.append("missing:verb")
                 uf.name_evidence = miss
+    # R5-5 — cap census-shape 'high' rows to 'medium' over the FULL set (both
+    # this pass and the adjudicator's rescore re-run it; OFF ⇒ no-op).
+    _apply_r5_confidence_caps(user_flows, tele, rungs_on=rungs_on)
     tele["confidence_after"] = _conf_hist(user_flows)
 
 
@@ -3945,6 +3976,41 @@ def run_naming_contract(
 
     tele["labeler_pending"] = len(pending)
     return tele
+
+
+def _apply_r5_confidence_caps(
+    user_flows: Iterable[Any], tele: dict[str, Any], *, rungs_on: bool,
+) -> None:
+    """R5-5 negative confidence rungs (``FAULTLINE_NAMING_WAVE_R5``, default
+    OFF). A FINAL sweep over EVERY user flow — placed inside
+    :func:`_apply_uf_name_laws` so BOTH the naming-contract pass AND the
+    6.7e adjudicator's ``rescore_uf_confidence`` re-run it (else the
+    adjudicator re-grades a capped row back to 'high'). The Law C rubric
+    only re-grades the ``ordered`` subset; a UF graded 'high' upstream
+    (stage 6.7b refiner / 6.7d journey abstraction) never reaches it.
+
+    A census disease shape (paren qualifier, raw camel/snake identifier)
+    caps a 'high' grade to 'medium' and stamps a ``shape:<class>`` evidence
+    tag — 87% of the census-flagged rows shipped 'high', blinding the
+    boards. NAME is never touched (display laws own it); only the
+    confidence grade + audit trail move. Flag OFF ⇒ no-op ⇒ byte-identical."""
+    if not naming_wave_r5_enabled():
+        return
+    capped = 0
+    for uf in user_flows:
+        if str(getattr(uf, "name_confidence", "") or "") != "high":
+            continue
+        shape = _name_disease_shape(str(getattr(uf, "name", "") or ""))
+        if not shape:
+            continue
+        uf.name_confidence = "medium"
+        if rungs_on:
+            ev = list(getattr(uf, "name_evidence", None) or [])
+            if f"shape:{shape}" not in ev:
+                ev.append(f"shape:{shape}")
+            uf.name_evidence = ev
+        capped += 1
+    tele["uf_shape_capped"] = tele.get("uf_shape_capped", 0) + capped
 
 
 def rescore_uf_confidence(
