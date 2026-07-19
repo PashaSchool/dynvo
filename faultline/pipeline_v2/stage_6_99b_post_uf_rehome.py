@@ -72,12 +72,47 @@ NAMED GUARDS (unit anti-cases, phase-1 §4 + v2 forensics):
 
 Default OFF (``FAULTLINE_HOMING_HYGIENE`` unset) ⇒ the rail never runs ⇒
 byte-identical output. $0 — deterministic, no LLM, no I/O.
+
+B73 ORGANIC-MOVE (``FAULTLINE_ORGANIC_MOVE``, default OFF; operator
+ratification 2026-07-17 + fork-A ruling 2026-07-19): when armed, the
+ratified STRICT+GATED rule REPLACES the S5a mega-organic handling of this
+rail's organic candidates (mega's own decomposition elsewhere is untouched):
+
+* STRICT thresholds (ratified constants, never env-parameterized;
+  scale-invariant shares): ``home_share == 0.0`` AND ``rival_share >= 0.8``
+  (boundary INCLUSIVE). Candidates below strict stay telemetry-only
+  (``organic_below_strict``) — the mega rung's looser ``>= 0.34`` move is
+  exactly what this rule supersedes.
+* DIRECTION-GATE: a move whose ``from`` is a product-layer PF and whose
+  ``to`` is a dev/platform-layer PF is BLOCKED (``organic_blocked_rows``
+  telemetry) — a product journey never demotes into a ws-package blob
+  (the hoppscotch teams→hoppscotch-backend burial exhibit). The layer is
+  judged by the PF's anchor source kind (see :func:`_pf_layer`) — the only
+  channel that encodes the split (``layer``/``surface_scope`` are both
+  "product" for every minted PF). dev→dev / dev→product moves pass.
+* PURE move: ``product_feature_id`` only, via the S3 arbiter
+  (``propose_pf_now`` rung ``organic-move``) — NO rename (R5 naming queue),
+  NO fold, NO feature merge/split; the row keeps its LLM-drawn name.
+* NO I8 orphan-guard — EXPLICIT exception (fork-A ruling 2026-07-19):
+  7/14 census moves are the SOLE UF of their from-PF; the disease IS a
+  mis-homed sole journey, so orphan-guarding would drop half the class.
+  Conservation holds — the UF lives on in its new home (union(base) ==
+  armed, per-name).
+* ONE wave, no second-order cascade: plans are drawn over the stable
+  pre-move board and applied in sorted uf-id order (determinism law);
+  arrivals never re-enter the ruler within the scan.
+
+Unset/``0`` ⇒ byte-identical (the branch is never entered; the mega-armed
+path behaves exactly as before). Flag flip is its own pack (4-gate
+protocol) — the flip's target metric is the un-burial of the two
+direction-blocked exhibits.
 """
 
 from __future__ import annotations
 from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 from faultline.pipeline_v2.transport_handoff import mega_decomp_armed
 
+import os
 import re
 from collections import Counter
 from typing import Any, Mapping
@@ -102,10 +137,64 @@ _UNION_FLOOR = 0.34
 #: safety margin while staying scale-invariant).
 _BREADTH_RATIO = 3.0
 
+#: B73 organic-move kill-switch (default OFF; registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS`` — no KEY_SCHEMA bump).
+ORGANIC_MOVE_ENV = "FAULTLINE_ORGANIC_MOVE"
+#: B73 ratified strict thresholds (operator ratification 2026-07-17) —
+#: constants by law, never env-parameterized; scale-invariant shares over
+#: the row's own member set. Boundary INCLUSIVE (``>= 0.8`` as ratified).
+_ORGANIC_HOME_MAX = 0.0
+_ORGANIC_RIVAL_MIN = 0.8
+
 __all__ = [
     "homing_hygiene_enabled",
+    "organic_move_enabled",
     "run_post_uf_rehome",
 ]
+
+
+def organic_move_enabled() -> bool:
+    """B73 — default **OFF** (unset/``0`` ⇒ the organic-move branch is never
+    entered and the scan is byte-identical to main, including the mega-armed
+    organic path). Flipped only by its own pack per the 4-gate protocol."""
+    return os.environ.get(ORGANIC_MOVE_ENV, "").strip().lower() in {
+        "1", "true",
+    }
+
+
+def _ws_shell_roots() -> frozenset[str]:
+    """Workspace shell-root first-segments (``apps``/``app``) from the spine
+    anchor vocabulary — the SAME data ``spine_anchors._build_workspace_anchors``
+    uses for its ws-app/ws-pkg class split (YAML-versioned; never hardcoded)."""
+    try:
+        from faultline.pipeline_v2.spine_anchors import load_spine_vocab
+        roots = load_spine_vocab().get("workspace_shell_roots") or ()
+        return frozenset(str(s).lower() for s in roots)
+    except Exception:  # noqa: BLE001 — vocab faults degrade to the shipped set
+        return frozenset({"apps", "app"})
+
+
+def _pf_layer(pf: Any, shell_roots: frozenset[str]) -> str:
+    """``"product" | "platform"`` — the B73 direction-gate discriminant,
+    judged by the PF's anchor source kind (the current-world census probe:
+    ``layer``/``surface_scope`` are ``"product"`` for EVERY minted PF, so the
+    anchor kind is the only channel that encodes the dev/platform split):
+
+    * ``route:`` / ``fdir:`` / ``schema:`` (and any unknown kind) → product;
+    * ``hub:`` → platform (vendor/infra hub);
+    * ``ws:`` → product iff the first path segment is a workspace shell root
+      (``ws:apps/web`` — the spine ``ws-app`` class); else platform
+      (``ws:packages/*`` and top-level backend units — the
+      hoppscotch-backend burial shape the ratified gate names).
+    """
+    kind, _, tail = str(_attr(pf, "anchor_id") or "").partition(":")
+    tail = tail.strip("/")
+    if kind == "hub":
+        return "platform"
+    if kind == "ws":
+        first = tail.split("/", 1)[0].lower() if tail else ""
+        return "product" if first in shell_roots else "platform"
+    return "product"
 
 
 def _attr(o: Any, name: str) -> Any:
@@ -277,6 +366,9 @@ def run_post_uf_rehome(
     # Pass 1 — plan (pure); Pass 2 — apply. Planning over a stable board
     # keeps the rail deterministic and side-effect-ordered.
     plans: list[dict[str, Any]] = []
+    # B73 — organic-move plans (separate lane: pure moves, own apply pass).
+    organic_plans: list[dict[str, Any]] = []
+    organic_armed = organic_move_enabled()
     for uf in user_flows:
         pfid = str(_attr(uf, "product_feature_id") or "")
         if not pfid:
@@ -342,6 +434,40 @@ def run_post_uf_rehome(
                     "home_share": round(home_share, 3),
                     "rival_share": round(rival_share, 3),
                 })
+            if organic_armed:
+                # B73 (fork-A ruling 2026-07-19): the ratified STRICT+GATED
+                # organic-move rule REPLACES the S5a mega-organic handling
+                # of this rail's candidates (mega's decomposition elsewhere
+                # is untouched). See the module docstring §B73.
+                if not (home_share <= _ORGANIC_HOME_MAX
+                        and rival_share >= _ORGANIC_RIVAL_MIN):
+                    # 0.34 ≤ rival < 0.8 band — the mega rung would have
+                    # moved this; the ratified strict floor does not.
+                    tele["organic_below_strict"] = (
+                        tele.get("organic_below_strict", 0) + 1)
+                    continue
+                shell_roots = _ws_shell_roots()
+                from_layer = _pf_layer(pf_by_key.get(pfid), shell_roots)
+                to_layer = _pf_layer(pf_by_key.get(rival_key), shell_roots)
+                if from_layer == "product" and to_layer == "platform":
+                    # DIRECTION-GATE: a product journey never demotes into
+                    # a dev/platform blob (teams→hoppscotch-backend,
+                    # builder→docx — the ratified blocked shapes).
+                    tele["organic_blocked_direction"] = (
+                        tele.get("organic_blocked_direction", 0) + 1)
+                    tele.setdefault("organic_blocked_rows", []).append({
+                        "uf": str(_attr(uf, "id") or ""),
+                        "name": str(_attr(uf, "name") or ""),
+                        "from": pfid, "to": rival_key,
+                        "from_layer": from_layer, "to_layer": to_layer,
+                    })
+                    continue
+                organic_plans.append({
+                    "uf": uf, "from": pfid, "to": rival_key,
+                    "home_share": round(home_share, 3),
+                    "rival_share": round(rival_share, 3),
+                })
+                continue
             if not mega_decomp_armed():
                 # B69-v2 default: telemetry-only debt (strict-no-op control
                 # gate; B49: never invent a move outside the proven class).
@@ -454,4 +580,27 @@ def run_post_uf_rehome(
                     {"uf": uid, "before": old, "after": new})
             else:
                 tele["rename_kept"] += 1
+
+    # ── B73 organic-move apply (fork-A ruling 2026-07-19) — ONE wave ─────
+    # PURE moves in sorted uf-id order (determinism law): the arbiter
+    # proposal (rung ``organic-move``) is the ONLY write — no fold, no
+    # rename, and DELIBERATELY no I8 orphan-guard (explicit ruling: 7/14
+    # census moves are the sole UF of their from-PF — the disease IS a
+    # mis-homed sole journey; conservation holds because the UF lives on
+    # in its new home). Plans were drawn over the stable pre-move board,
+    # so arrivals never re-trigger the ruler (no second-order cascade).
+    for plan in sorted(organic_plans,
+                       key=lambda p: str(_attr(p["uf"], "id") or "")):
+        uf = plan["uf"]
+        propose_pf_now(uf, plan["to"], rung="organic-move")
+        uf_count[plan["from"]] -= 1
+        uf_count[plan["to"]] += 1
+        tele["organic_moved"] = tele.get("organic_moved", 0) + 1
+        tele.setdefault("organic_moves", []).append({
+            "uf": str(_attr(uf, "id") or ""),
+            "name": str(_attr(uf, "name") or ""),
+            "from": plan["from"], "to": plan["to"],
+            "home_share": plan["home_share"],
+            "rival_share": plan["rival_share"],
+        })
     return tele
