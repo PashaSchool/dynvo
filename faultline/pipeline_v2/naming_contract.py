@@ -1668,6 +1668,47 @@ def _nav_anchor_page_labels(
     return out
 
 
+def _hub_composite_recompose(
+    anchor_id: str, cur: str, pick: str, vocab: Mapping[str, Any],
+) -> str | None:
+    """Display-cross it3/it4 composite-KEEP for one labeler PF pick.
+
+    ``None`` — the pick is NOT the information-loss class (apply it
+    verbatim). Otherwise the canonical ``<Family> — <Vendor>``
+    recomposition: equal to ``cur`` for a pure keep, different when it
+    also REPAIRS a degrimed composition (novu it4 calibration: at Pass-3
+    sendgrid's live display was 'Email — sendgr' — an upstream degrime
+    truncation — so a cur-string compare missed the flatten; the anchor's
+    OWN vendor segment is the mangle-proof ground).
+
+    The flatten test is a JOIN-FOLD compare (concatenated alnum words,
+    lowered) — camelCase ('msTeams'), separators and brand casing
+    ('SendGrid') all fold away — against the hub anchor's vendor segment,
+    the current leaf, and the whole current composition. A pick with any
+    OTHER word content is a real correction and applies untouched."""
+    src, path = _anchor_path(anchor_id or "")
+    if src != "hub" or " — " not in (cur or ""):
+        return None
+
+    def _j(text: str) -> str:
+        return "".join(w for w in _GATE_SPLIT.split((text or "").lower()) if w)
+
+    _head, _sep, leaf = cur.rpartition(" — ")
+    vendor_seg = (path or "").rstrip("/").rsplit("/", 1)[-1]
+    if _j(pick) not in {_j(vendor_seg), _j(leaf), _j(cur)}:
+        return None
+    comp = hub_composition_display(anchor_id, pick, vocab)
+    if not comp:
+        return cur  # malformed hub id — plain keep
+    # Family-echo strip: composing vendor 'Chat Webhook' under family
+    # 'Chat' yields 'Chat — Chat Webhook' — the echo word drops.
+    fam, sep2, vend = comp.partition(" — ")
+    vwords = vend.split()
+    if len(vwords) > 1 and vwords[0].lower() == fam.strip().lower():
+        comp = f"{fam}{sep2}{' '.join(vwords[1:])}"
+    return comp
+
+
 def gated_nav_labels_for_pfs(
     product_features: Iterable[Any],
     product_strings: Any,
@@ -3462,7 +3503,32 @@ def run_naming_contract(
             pick = " ".join(pick.split())
             if display_law_violations(pick, vocab):
                 continue
-            if pick != str(getattr(item.obj, "display_name", "") or ""):
+            cur = str(getattr(item.obj, "display_name", "") or "")
+            # Display-cross it3/it4 composite-KEEP (same flag): a
+            # hub-family composition's channel prefix ("Chat — Discord",
+            # "Email — Mailgun") is evidenced structure — the family word
+            # IS the hub dir the vendor package lives under. A persona
+            # pick that is just the vendor word (prefix-drop / dash-
+            # flatten, join-fold compared against the ANCHOR's vendor
+            # segment — mangle- and camelCase-proof) never flattens the
+            # composite; instead the family prefix is RE-COMPOSED over
+            # the persona's vendor word, which also repairs a degrimed
+            # composition ('Email — sendgr' -> 'Email — SendGrid', novu
+            # it4). Real corrections (other word content) still apply.
+            # OFF path never enters — byte-identical.
+            if display_gate_on and cur:
+                recomposed = _hub_composite_recompose(
+                    str(getattr(item.obj, "anchor_id", None) or ""),
+                    cur, pick, vocab)
+                if recomposed is not None:
+                    tele["labeler_composite_keep"] = (
+                        tele.get("labeler_composite_keep", 0) + 1)
+                    if (recomposed != cur
+                            and not display_law_violations(recomposed, vocab)):
+                        item.obj.display_name = recomposed
+                        applied += 1
+                    continue
+            if pick != cur:
                 item.obj.display_name = pick
                 applied += 1
         for item in pending:
