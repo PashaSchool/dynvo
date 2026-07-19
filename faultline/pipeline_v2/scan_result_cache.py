@@ -850,6 +850,18 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
     # the separate flip commit (flip-protocol).
     "FAULTLINE_LEAFROUTE_PROMOTION",
+    # display-cross gate (2026-07-19) — B71 provenance-ladder consumer. Armed,
+    # the nav authored label feeding a PF's display is kept only on identity
+    # evidence (tokens intersect the PF name/anchor OR its member-dominant path
+    # tokens); a foreign label (cal ``insights`` display 'Bookings',
+    # ``organization`` -> 'directory_sync') is reverted to the honest basename,
+    # equal-vote ties prefer the PF's own anchor-page self-link, and the
+    # survivor is title-cased. Reshapes product_features[].display_name +
+    # scan_meta.naming_contract.pf_display_provenance only. Default OFF; the
+    # cached bundle serves OFF and ON alike (read at emit time) — unset/=0
+    # restores the shipped display byte-identically. Appended WITHOUT a
+    # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
+    "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

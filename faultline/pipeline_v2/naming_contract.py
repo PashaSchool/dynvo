@@ -97,6 +97,7 @@ __all__ = [
     "humanize_anchor_display",
     "nav_labels_for_pfs",
     "nav_label_sets_for_pfs",
+    "gated_nav_labels_for_pfs",
     "route_verb_indexes",
     "member_verb_composition",
     "run_naming_contract",
@@ -109,6 +110,16 @@ NAMING_CONTRACT_ENV = "FAULTLINE_NAMING_CONTRACT"
 #: laws (PF route-grammar + provenance, leaf-collision qualification, UF echo/
 #: verb/family/uniqueness synth) and the degraded-scan confidence scoping.
 NAMING_PACK_ENV = "FAULTLINE_NAMING_PACK"
+
+#: Display-cross evidence gate (B71 provenance-ladder consumer; default OFF).
+#: A foreign authored nav label — one whose tokens are absent from BOTH the
+#: PF's own name/anchor identity AND its member-dominant path tokens (cal
+#: ``insights`` display 'Bookings', ``organization`` -> 'directory_sync') is
+#: reverted so the ladder falls through to the honest basename; the surviving
+#: label wins an anchor-page tie-break before alpha and is title-cased. DISPLAY
+#: channel only — feeds ``ProvenanceSources.nav``; the B40 nav-pinning rung and
+#: the B57 nav-cluster rung read the ungated votes and are untouched.
+PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
 
 _VOCAB_FILE = "naming-contract-vocab.yaml"
 _vocab_cache: dict[str, Any] | None = None
@@ -303,6 +314,21 @@ def naming_pack_enabled() -> bool:
     ``FAULTLINE_NAMING_PACK=0`` keeps every naming channel byte-identical (the
     kill-switch law forever; unset ≡ explicit ``1``)."""
     return os.environ.get(NAMING_PACK_ENV, "1").strip().lower() in {"1", "true"}
+
+
+def pf_display_evidence_gate_enabled() -> bool:
+    """Display-cross evidence gate over the PF provenance ladder's nav
+    channel (B71 consumer). Default **OFF** (new behavior): armed, an
+    authored nav label only becomes a PF display when its tokens intersect
+    the PF's name/anchor-terminal identity OR its member-dominant path
+    tokens; equal-vote ties prefer the label whose href lands on the PF's
+    own anchor page before alpha; the surviving label is title-cased.
+    ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE=1``/``true`` arms; unset/``0`` keeps
+    ``ProvenanceSources.nav`` — and therefore the emitted display — byte
+    identical (the kill-switch law)."""
+    return os.environ.get(
+        PF_DISPLAY_EVIDENCE_GATE_ENV, "0"
+    ).strip().lower() in {"1", "true"}
 
 
 def uf_name_laws_enabled() -> bool:
@@ -1521,6 +1547,181 @@ def nav_label_sets_for_pfs(
     channel is untouched."""
     votes = _nav_label_votes(product_features, product_strings, routes_index)
     return {slug: sorted(labs) for slug, labs in sorted(votes.items())}
+
+
+# ── Display-cross evidence gate (B71 provenance-ladder consumer) ────────
+#
+# A NEW consumer of the SAME ungated ``_nav_label_votes`` machinery — the
+# B40 nav-pinning rung (:func:`nav_labels_for_pfs`) and the B57 nav-cluster
+# rung (:func:`nav_label_sets_for_pfs`) are untouched. Only armed behind
+# ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE`` (default OFF): the raw top-voted
+# label can be a FOREIGN capability (a nav link whose href first-come-owns a
+# borrowed route file — cal ``insights`` display 'Bookings'), which the
+# provenance ladder then installs as the PF display. The gate keeps a label
+# only on identity evidence, tie-breaks equal votes toward the PF's own
+# anchor page, and title-cases the survivor.
+
+_GATE_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_GATE_SPLIT = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _gate_stem(token: str) -> str:
+    """Light plural stem ('features'->'featur', 'apps'->'app') — the census
+    predicate's stem, so the gate and the forensic agree token-for-token."""
+    t = token.lower()
+    if len(t) > 3 and t.endswith("es"):
+        return t[:-2]
+    if len(t) > 2 and t.endswith("s"):
+        return t[:-1]
+    return t
+
+
+def _gate_tokens(text: str) -> set[str]:
+    """Stemmed identity tokens of a string: camelCase + non-alnum split,
+    len>=2, no pure-digit tokens. The evidence unit of the display-cross
+    gate (matches the forensic census tokenizer)."""
+    out: set[str] = set()
+    for seg in _GATE_SPLIT.split(text or ""):
+        for word in _GATE_CAMEL.sub(" ", seg).split():
+            if len(word) >= 2 and not word.isdigit():
+                out.add(_gate_stem(word))
+    return out
+
+
+def _member_dominant_tokens(
+    paths: Iterable[str], ratio: float = 0.5,
+) -> set[str]:
+    """Path tokens present in >= ``ratio`` of the PF's member file paths —
+    the member-majoritarian evidence that legitimizes an authored label
+    even when it is absent from the slug (cal ``flags`` PF, label
+    'features', member files under ``.../flags/`` and the feature-flag
+    lib)."""
+    files = [str(p) for p in (paths or [])]
+    n = len(files)
+    if n == 0:
+        return set()
+    counts: dict[str, int] = {}
+    for f in files:
+        for tok in _gate_tokens(f):
+            counts[tok] = counts.get(tok, 0) + 1
+    need = ratio * n
+    return {tok for tok, k in counts.items() if k >= need}
+
+
+def _nav_anchor_page_labels(
+    product_features: Iterable[Any],
+    product_strings: Any,
+    routes_index: Iterable[Mapping[str, Any]] | None,
+) -> dict[str, set[str]]:
+    """``{pf_slug: {labels whose href lands on the PF's OWN anchor page}}``.
+
+    The tie-break signal: for a ``route:<dir>`` anchored PF, the anchor
+    INDEX page is ``<dir>/page.<ext>``; a nav pair whose normalized href
+    resolves to that exact file is the PF's canonical self-link (cal
+    ``insights``: 'Insights' -> ``.../insights/page.tsx``), which must beat
+    a child-tab collision ('Bookings') that merely first-come-owns a
+    sub-route file. Empty on keyless-suppressed / route-less scans."""
+    pairs_by_file: Mapping[str, list[tuple[str, str | None]]] = (
+        getattr(product_strings, "nav_pairs_by_file", None) or {}
+    )
+    if not pairs_by_file or not routes_index:
+        return {}
+    try:
+        from faultline.pipeline_v2.product_strings import normalize_href
+    except ImportError:  # pragma: no cover — same package
+        return {}
+
+    file_by_pattern: dict[str, str] = {}
+    for r in routes_index:
+        pat = str(r.get("pattern") or "").strip()
+        f = str(r.get("file") or "").strip()
+        if pat and f and pat not in file_by_pattern:
+            file_by_pattern[pat] = f
+
+    # anchor index page file -> owning PF slug (first-come, list order)
+    slug_by_anchor_page: dict[str, str] = {}
+    for pf in product_features:
+        slug = str(getattr(pf, "name", "") or "")
+        src, path = _anchor_path(str(getattr(pf, "anchor_id", None) or ""))
+        if src != "route" or not path:
+            continue
+        prefix = path.rstrip("/") + "/page."
+        for f in file_by_pattern.values():
+            if f.startswith(prefix) and "/" not in f[len(prefix):]:
+                slug_by_anchor_page.setdefault(f, slug)
+    if not slug_by_anchor_page:
+        return {}
+
+    out: dict[str, set[str]] = {}
+    for pairs in pairs_by_file.values():
+        for label, href in pairs:
+            if not label or not href:
+                continue
+            lab = " ".join(str(label).split())
+            norm = normalize_href(str(href)) or ""
+            if not norm:
+                continue
+            route_file = file_by_pattern.get(norm)
+            owner = slug_by_anchor_page.get(route_file) if route_file else None
+            if owner:
+                out.setdefault(owner, set()).add(lab)
+    return out
+
+
+def gated_nav_labels_for_pfs(
+    product_features: Iterable[Any],
+    product_strings: Any,
+    routes_index: Iterable[Mapping[str, Any]] | None,
+    vocab: Mapping[str, Any],
+) -> dict[str, str]:
+    """``{pf_slug: display-ready nav label}`` — the display-cross gate's
+    replacement for :func:`nav_labels_for_pfs` on the gated provenance path
+    ONLY (``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE``). Three additive laws over
+    the SAME ungated votes:
+
+    * **tie-break** — equal-vote labels are ordered anchor-page-first
+      before ``len``/alpha, so a PF's own self-link beats a child-tab href
+      collision (cal ``insights``: 'Insights' over 'Bookings');
+    * **gate** — the top label survives only when its tokens intersect the
+      PF's name/anchor-terminal identity OR its member-dominant path tokens;
+      a foreign label is dropped (omitted from the map) so the ladder falls
+      through to the honest basename;
+    * **casing** — the surviving raw authored label / i18n key is
+      title-cased (``directory_sync`` -> 'Directory Sync'; ``features`` ->
+      'Features').
+
+    Omitting a slug (no surviving label) is the revert: the caller reads
+    ``get(slug, "")`` and the ladder uses manifest/basename instead.
+    """
+    pfs = list(product_features)
+    votes = _nav_label_votes(pfs, product_strings, routes_index)
+    if not votes:
+        return {}
+    anchor_labels = _nav_anchor_page_labels(pfs, product_strings, routes_index)
+    pf_by_slug = {str(getattr(p, "name", "") or ""): p for p in pfs}
+    out: dict[str, str] = {}
+    for slug, labs in votes.items():
+        pf = pf_by_slug.get(slug)
+        if pf is None:
+            continue
+        anchor_hits = anchor_labels.get(slug, set())
+        # Anchor-page preference is inserted BEFORE alpha but AFTER the vote
+        # plurality — it only ever changes the winner at a vote TIE, so a
+        # label the authors clearly favored is never overridden.
+        best = sorted(
+            labs.items(),
+            key=lambda kv: (-kv[1], 0 if kv[0] in anchor_hits else 1,
+                            len(kv[0]), kv[0]),
+        )[0][0]
+        aid = str(getattr(pf, "anchor_id", None) or "")
+        identity = _gate_tokens(str(getattr(pf, "name", "") or "")) | _gate_tokens(
+            _anchor_terminal_segment(aid) or "")
+        toks = _gate_tokens(best)
+        if toks & identity or toks & _member_dominant_tokens(
+            getattr(pf, "paths", None) or []
+        ):
+            out[slug] = _display_word(best, vocab)
+    return out
 
 
 # ── B57 Seg1 rung-source extractors (flag-gated; Law C consumers) ───────
@@ -3428,6 +3629,19 @@ def run_naming_contract(
             apply_pf_display_provenance,
         )
 
+        # Display-cross evidence gate (default OFF): when armed, the nav
+        # channel feeding the provenance ladder is the GATED map (foreign
+        # labels reverted, anchor-page tie-break, title-cased) instead of
+        # the raw B40 top-vote label. OFF/unset ⇒ ``_gated_nav`` is empty
+        # and the ``else`` branch reproduces the pre-gate ``nav`` byte for
+        # byte.
+        _gate_on = pf_display_evidence_gate_enabled()
+        _gated_nav = (
+            gated_nav_labels_for_pfs(
+                product_features, product_strings, routes_index, vocab)
+            if _gate_on else {}
+        )
+
         def _pf_sources(pf: Any) -> ProvenanceSources:
             pslug = str(getattr(pf, "name", "") or "")
             aid = str(getattr(pf, "anchor_id", None) or "")
@@ -3438,8 +3652,12 @@ def run_naming_contract(
                 pkg, pkg_src = _package_manifest_display(aid, vocab, repo_root, cur)
                 if pkg and pkg_src == "manifest":
                     manifest = pkg
+            nav = (
+                _gated_nav.get(pslug, "") if _gate_on
+                else nav_labels.get(pslug, "") or ""
+            )
             return ProvenanceSources(
-                nav=nav_labels.get(pslug, "") or "",
+                nav=nav,
                 manifest=manifest,
                 basename=_anchor_terminal_segment(aid) or "",
                 # Horizon-1 ruling (2026-07-16): anchor-kind scopes the
