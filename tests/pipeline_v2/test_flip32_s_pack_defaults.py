@@ -55,6 +55,14 @@ from faultline.pipeline_v2.extractors.go_router import (
     GO_EXTRACTION_ENV,
     go_extraction_enabled,
 )
+from faultline.pipeline_v2.stage_6_9b_generated_strip import (
+    GENERATED_CONTENT_ENV_FLAG,
+    generated_content_marker_enabled,
+)
+from faultline.pipeline_v2.transport_handoff import (
+    MEGA_DECOMP_ARM_ENV,
+    mega_decomp_armed,
+)
 
 # (env-var name, helper) for every S*-pack flag flipped default OFF -> ON.
 _FLIPPED = [
@@ -66,10 +74,12 @@ _FLIPPED = [
     (OVERTURN_ARBITER_ENV, overturn_arbiter_enabled),
     (APPROUTER_KEYLESS_ENV, approuter_keyless_enabled),
     (GO_EXTRACTION_ENV, go_extraction_enabled),
+    (MEGA_DECOMP_ARM_ENV, mega_decomp_armed),
+    (GENERATED_CONTENT_ENV_FLAG, generated_content_marker_enabled),
 ]
 
-# Sanity: grows commit-by-commit with the pack; no duplicate env names.
-assert len(_FLIPPED) == 8
+# Sanity: the complete S*-pack (10 flags); no duplicate env names.
+assert len(_FLIPPED) == 10
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

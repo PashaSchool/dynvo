@@ -772,10 +772,11 @@ ENV_OUTPUT_FLAGS = (
     # the S3 overturn ledger (rung mega). Reshapes user_flows[].
     # product_feature_id + product_features[] (mints/feeds) +
     # developer_features[] carve chunks on repos where B24 fires. Default
-    # OFF; =0/unset -> both grain params False + the 6.99b organic branch
-    # stays a continue -> byte-identical. No KEY_SCHEMA bump (append-only
-    # per wave convention — reconciled at merge; the trigger-shape Seg D/E
-    # ride a separate mandate).
+    # ON (flipped 2026-07-19, S*-pack, KEY_SCHEMA 32 — healthy novu pair +
+    # re-panel after the K2 final); =0/false/off -> both grain params False
+    # + the 6.99b organic branch stays a continue -> byte-identical —
+    # explicit off stays a valid kill-switch forever. (The trigger-shape
+    # Seg D/E ride a separate mandate.)
     "FAULTLINE_MEGA_DECOMP_ARM",
     # S5a-it2 (2026-07-18) — generated-code CONTENT-marker probe inside the
     # existing Stage 6.9b channel (the module docstring's promised
@@ -787,9 +788,10 @@ ENV_OUTPUT_FLAGS = (
     # libs/internal-sdk react-query client (923 hand-named .ts, ~107K LOC)
     # at the SOURCE: its flows/UF garbage never survive 6.9b. Reshapes
     # developer_features[]/flows[]/user_flows[] on repos vendoring codegen
-    # output. Default OFF; =0/unset -> filename-only predicate,
-    # byte-identical. No KEY_SCHEMA bump (append-only — reconciled at
-    # merge).
+    # output. Default ON (flipped 2026-07-19, S*-pack, KEY_SCHEMA 32 —
+    # healthy novu pair + re-panel); =0/false/off -> filename-only
+    # predicate, byte-identical — explicit off stays a valid kill-switch
+    # forever.
     "FAULTLINE_GENERATED_CONTENT_MARKER",
     # S4-a (2026-07-18) — App-Router keyless route extractor: emits
     # routes_index entries for app/**/page.tsx + app/**/route.ts trees whose

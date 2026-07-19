@@ -104,12 +104,15 @@ def stage_6_9b_enabled() -> bool:
 
 
 def generated_content_marker_enabled() -> bool:
-    """S5a-it2 — default OFF; ``FAULTLINE_GENERATED_CONTENT_MARKER=1`` arms
-    the content-marker banner probe inside the existing 6.9b channel.
-    unset/=0 keeps the v1 filename-only predicate byte-identically."""
+    """S5a-it2 — default ON since the 2026-07-19 S*-pack flip (KEY_SCHEMA
+    32; healthy novu pair + re-panel — the content-marker banner probe
+    rides the existing 6.9b channel).
+    ``FAULTLINE_GENERATED_CONTENT_MARKER=0`` (or false/no/off) keeps the
+    v1 filename-only predicate byte-identically — explicit off stays a
+    valid kill-switch forever."""
     return os.environ.get(
-        GENERATED_CONTENT_ENV_FLAG, "0",
-    ).strip().lower() in {"1", "true"}
+        GENERATED_CONTENT_ENV_FLAG, "1",
+    ).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
 # ── Content-marker probe (the docstring's "thorough follow-up") ──────────────

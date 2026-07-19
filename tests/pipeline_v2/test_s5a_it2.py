@@ -132,7 +132,10 @@ def test_strip_armed_kills_sdk_flows_off_keeps_them(tmp_path):
     fl_h = _Fl("f-hand", [hand])
     sdk_dev = _F("internal-sdk", gen, [fl_g])
     api_dev = _F("agents-api", [hand], [fl_h])
-    # OFF (flag unset): nothing stripped — hand-named .ts never matches v1
+    # OFF leg — MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA
+    # 32): the v1 filename-only world is now the explicit kill-switch
+    # (unset arms the content-marker probe).
+    os.environ[GENERATED_CONTENT_ENV_FLAG] = "0"
     feats = [sdk_dev, api_dev]
     flows = [fl_g, fl_h]
     stats = strip_generated_paths(feats, flows, repo_root=str(tmp_path))

@@ -258,13 +258,16 @@ def flowful_transport_lane_enabled() -> bool:
 
 
 def mega_decomp_armed() -> bool:
-    """S5a mega-PF decomposition arming — default OFF. See
-    :data:`MEGA_DECOMP_ARM_ENV`. unset/=0/false/off → byte-identical
+    """S5a mega-PF decomposition arming — default ON since the 2026-07-19
+    S*-pack flip (KEY_SCHEMA 32; healthy novu pair + re-panel after the K2
+    final). See :data:`MEGA_DECOMP_ARM_ENV`.
+    ``FAULTLINE_MEGA_DECOMP_ARM=0`` (or false/no/off) → byte-identical
     (the grain oracle keeps the B24-ratified roots + exact-anchor group
-    matching; the 6.99b organic candidates stay telemetry-only)."""
+    matching; the 6.99b organic candidates stay telemetry-only) — explicit
+    off stays a valid kill-switch forever."""
     return os.environ.get(
-        MEGA_DECOMP_ARM_ENV, "0",
-    ).strip().lower() in {"1", "true"}
+        MEGA_DECOMP_ARM_ENV, "1",
+    ).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
 def _pf_identity_tokens(pf: Any) -> set[str]:

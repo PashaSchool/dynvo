@@ -469,9 +469,12 @@ def _organic_scene():
 
 
 def test_seg_c_off_organic_telemetry_only():
+    # MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the OFF
+    # world is now the explicit kill-switch (unset arms Seg C).
+    os.environ[MEGA_DECOMP_ARM_ENV] = "0"
     run, reg, devs, booty, keeper = _organic_scene()
     pfs = [PF("network", "route:network"), PF("admin", "route:admin")]
-    tele = run([booty, keeper], devs, pfs, reg)   # flag unset
+    tele = run([booty, keeper], devs, pfs, reg)   # explicit kill-switch
     assert tele.get("organic_candidates") == 1
     assert tele["rehomed"] == 0
     assert booty.product_feature_id == "network"   # NOT moved
@@ -568,8 +571,10 @@ def test_arm_off_grain_oracle_byte_identical():
            [off.grain_of_file(p) for p in probe]
 
 
-def test_flag_helper_default_off():
-    assert mega_decomp_armed() is False
+def test_flag_helper_default_on():
+    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset ⇒ ON
+    # (the _clean_flag autouse fixture guarantees the unset precondition).
+    assert mega_decomp_armed() is True
     os.environ[MEGA_DECOMP_ARM_ENV] = "1"
     assert mega_decomp_armed() is True
     os.environ[MEGA_DECOMP_ARM_ENV] = "0"

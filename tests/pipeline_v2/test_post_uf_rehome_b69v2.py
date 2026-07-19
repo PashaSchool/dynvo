@@ -23,6 +23,7 @@ determinism ×2.
 from __future__ import annotations
 
 import copy
+import os
 
 from faultline.pipeline_v2.spine_anchors import SpineAnchor
 from faultline.pipeline_v2.stage_6_99b_post_uf_rehome import (
@@ -298,11 +299,19 @@ def test_anticase_organic_rows_telemetry_only():
     ruler is a telemetry-only candidate — never moved (the rail's action
     scope is the synthesized seed class; organic mis-homes belong to the
     I16/B24 family)."""
-    registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()
-    organic_sick = UF("Reset forgotten password", "faqs",
-                      ["f-list", "f-view"])  # organic, zero home tie
-    ufs = [organic_sick, real_faqs, keeper]
-    tele = run_post_uf_rehome(ufs, devs, pfs, registry)
+    # MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the
+    # telemetry-only law holds in the UNARMED world — under the flipped
+    # FAULTLINE_MEGA_DECOMP_ARM default the organic candidates become
+    # S5a Seg C ledger moves by design; pin the kill-switch.
+    os.environ["FAULTLINE_MEGA_DECOMP_ARM"] = "0"
+    try:
+        registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()
+        organic_sick = UF("Reset forgotten password", "faqs",
+                          ["f-list", "f-view"])  # organic, zero home tie
+        ufs = [organic_sick, real_faqs, keeper]
+        tele = run_post_uf_rehome(ufs, devs, pfs, registry)
+    finally:
+        os.environ.pop("FAULTLINE_MEGA_DECOMP_ARM", None)
     assert organic_sick.product_feature_id == "faqs"  # untouched
     assert tele["rehomed"] == 0 and tele["folded"] == 0
     assert tele["organic_candidates"] == 1
