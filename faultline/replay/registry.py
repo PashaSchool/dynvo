@@ -2632,6 +2632,7 @@ def _run_journey_abstraction(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
     product_features = state["product_features"]
     scan_meta = state["scan_meta"]
     repo_path = Path(state["repo_path"])
+    anchored_mint_applied = _anchored_mint_applied(state)
     with StageLogger(env.run_dir, 6, "journey_abstraction") as log6_7d:
         _anchors = None
         try:
@@ -2642,6 +2643,42 @@ def _run_journey_abstraction(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
                 _anchors = build_alignment_pool(extract_raw_anchors(repo_path))
         except Exception:  # noqa: BLE001 — anchors are optional
             _anchors = None
+        # G-class parity (phase_finalize:1077-1108): the live site passes
+        # ``anchored=anchored_mint_applied`` + the W4 §4.6 interior
+        # evidence. Omitting them here made a 6.7d replay degrade to the
+        # Call-2-era path (constrained Call-1 cache misses; anchored maps
+        # never applied). Interior recovery mirrors _run_journey_lattice:
+        # chain object first, else rebuild the deterministic 6.55 parse.
+        _s67d_interior = None
+        if anchored_mint_applied:
+            interior_result = _chain_get(state, "interior_result")
+            if interior_result is None:
+                ctx = state.get("ctx")
+                if ctx is None:
+                    sib_pi = _sibling_input(
+                        env, state, 6, "page_interior") or {}
+                    ctx = sib_pi.get("ctx")
+                if ctx is not None:
+                    try:
+                        from faultline.pipeline_v2.stage_6_55_page_interior import (  # noqa: E501
+                            run_stage_6_55,
+                        )
+                        interior_result = run_stage_6_55(
+                            prepare_ctx(ctx, env), state["routes_index"],
+                            log6_7d)
+                    except Exception:  # noqa: BLE001 — evidence is optional
+                        interior_result = None
+            if interior_result is not None and getattr(
+                    interior_result, "active", False):
+                try:
+                    from faultline.pipeline_v2.stage_6_55_page_interior import (
+                        build_interior_evidence,
+                    )
+                    _s67d_interior = build_interior_evidence(
+                        interior_result, features, product_features,
+                    )
+                except Exception:  # noqa: BLE001 — evidence is optional
+                    _s67d_interior = None
         (
             user_flows,
             product_features,
@@ -2658,6 +2695,8 @@ def _run_journey_abstraction(env: ReplayEnv, state: dict[str, Any]) -> dict[str,
             cache=env.cache_backend(),
             log=log6_7d,
             llm_health=env.llm_health,
+            anchored=anchored_mint_applied,
+            interior_evidence=_s67d_interior,
         )
         if s67d_dev_map:
             for _dev in features:
