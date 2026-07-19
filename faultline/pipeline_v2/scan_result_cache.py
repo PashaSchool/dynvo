@@ -704,9 +704,11 @@ ENV_OUTPUT_FLAGS = (
     # a COVERAGE VIEW over the election — same owner, filtered visibility, not
     # a separate rule. The oracle NEVER moves membership (READ-resolution only;
     # conservation ladder untouched). Reshapes path_index[].feature_uuid on
-    # contested files + the UF homes those owners drive. Default OFF; =0/unset
-    # restores the first-claimant resolutions byte-identically. No KEY_SCHEMA
-    # bump (the path_index-consumer shift rides the separate later flip commit).
+    # contested files + the UF homes those owners drive. Default ON (flipped
+    # 2026-07-19, S*-pack, KEY_SCHEMA 32 — census-disagreement 0, UF-057
+    # rehome, keyed A/B novu, panel ON >= OFF strict); =0/false/off restores
+    # the first-claimant resolutions byte-identically — explicit off stays a
+    # valid kill-switch forever.
     "FAULTLINE_OWNER_ORACLE",
     # S2 Seg D (2026-07-18) — degradation-honesty stamp: a scan that finished in
     # a visibly-degraded LLM state (the refiner's whole fresh batch failing at

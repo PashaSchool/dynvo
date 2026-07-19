@@ -261,12 +261,13 @@ def test_election_is_pythonhashseed_independent() -> None:
 # ── Flag default + kill-switch ───────────────────────────────────────────
 
 
-def test_flag_defaults_off_and_kill_switch(
+def test_flag_defaults_on_and_kill_switch(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset ⇒ ON.
     monkeypatch.delenv(OWNER_ORACLE_ENV, raising=False)
-    assert owner_oracle_enabled() is False  # unset → OFF
+    assert owner_oracle_enabled() is True  # unset → ON (flip32)
     monkeypatch.setenv(OWNER_ORACLE_ENV, "0")
-    assert owner_oracle_enabled() is False  # explicit 0 → OFF
+    assert owner_oracle_enabled() is False  # explicit 0 → kill-switch forever
     monkeypatch.setenv(OWNER_ORACLE_ENV, "1")
     assert owner_oracle_enabled() is True

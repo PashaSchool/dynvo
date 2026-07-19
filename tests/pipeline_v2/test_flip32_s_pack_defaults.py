@@ -27,14 +27,19 @@ from faultline.pipeline_v2.degradations import (
     DEGRADATION_STAMP_ENV,
     degradation_stamp_enabled,
 )
+from faultline.pipeline_v2.owner_oracle import (
+    OWNER_ORACLE_ENV,
+    owner_oracle_enabled,
+)
 
 # (env-var name, helper) for every S*-pack flag flipped default OFF -> ON.
 _FLIPPED = [
     (DEGRADATION_STAMP_ENV, degradation_stamp_enabled),
+    (OWNER_ORACLE_ENV, owner_oracle_enabled),
 ]
 
 # Sanity: grows commit-by-commit with the pack; no duplicate env names.
-assert len(_FLIPPED) == 1
+assert len(_FLIPPED) == 2
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

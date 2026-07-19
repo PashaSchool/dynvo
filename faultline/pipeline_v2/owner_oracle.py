@@ -66,11 +66,13 @@ _SHARED_PF_KEYS = frozenset(("shared-platform", "platform"))
 
 
 def owner_oracle_enabled() -> bool:
-    """Default **OFF**. ``FAULTLINE_OWNER_ORACLE`` in ``{1,true,on,yes}``
-    arms the unified election; unset / ``0`` / any falsy token keeps every
-    consumer on its shipped first-claimant path (byte-identical)."""
-    return os.environ.get(OWNER_ORACLE_ENV, "0").strip().lower() in {
-        "1", "true", "on", "yes",
+    """Default **ON** since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32;
+    census-disagreement 0, UF-057 rehome, keyed A/B novu — panel ON >= OFF
+    strictly). ``FAULTLINE_OWNER_ORACLE=0`` (or false/no/off) keeps every
+    consumer on its shipped first-claimant path (pre-S1 byte-identical) —
+    explicit off stays a valid kill-switch forever."""
+    return os.environ.get(OWNER_ORACLE_ENV, "1").strip().lower() not in {
+        "0", "false", "no", "off", "",
     }
 
 
