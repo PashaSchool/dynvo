@@ -883,6 +883,21 @@ ENV_OUTPUT_FLAGS = (
     # byte-identically (KS 4-way). Appended WITHOUT a KEY_SCHEMA bump — the
     # bump rides the separate default-flip commit (flip-protocol).
     "FAULTLINE_NAMING_WAVE_R5",
+    # S2-A-v3 (2026-07-19) — spray-generalization: the generalized R5-2 spray
+    # predicate over the UNPARENTHESIZED tech-dir-suffix form the
+    # det-aggregation regrain channel mints ('Manage setting AI components/
+    # constants/…' — twenty-b exhibit): >=3 same-PF siblings sharing a
+    # >=2-token prefix (G1) whose tail token names the members' own leaf
+    # directory (singular(tail)==singular(leaf-dir) on >=50% member paths)
+    # collapse — whole group, structural misses ride along — into ONE
+    # own-resource parent row ('Manage AI settings' form; member-union
+    # conservation, I14 repoint). Paren-tail rows are R5-2's class and are
+    # never touched (G0). Reshapes user_flows[] (row count/names/membership)
+    # + scan_meta.naming_contract telemetry on armed worlds only. Default
+    # OFF; unset/=0 keeps the pass un-entered, byte-identical. Appended
+    # WITHOUT a KEY_SCHEMA bump — the bump rides the separate flip commit
+    # (flip-protocol).
+    "FAULTLINE_SPRAY_GENERALIZED",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

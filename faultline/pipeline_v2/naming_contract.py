@@ -80,7 +80,9 @@ __all__ = [
     "NAMING_CONTRACT_ENV",
     "NAMING_PACK_ENV",
     "NAMING_WAVE_R5_ENV",
+    "SPRAY_GENERALIZED_ENV",
     "naming_wave_r5_enabled",
+    "spray_generalized_enabled",
     "naming_pack_enabled",
     "HUMANIZE_ROUTE_NAMES_ENV",
     "PF_NAME_LAW_ENV",
@@ -148,6 +150,24 @@ PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
 #: Appended to ENV_OUTPUT_FLAGS WITHOUT a KEY_SCHEMA bump — the bump rides the
 #: separate flip commit (flip-protocol).
 NAMING_WAVE_R5_ENV = "FAULTLINE_NAMING_WAVE_R5"
+
+#: S2-A-v3 spray-generalization (default OFF). Generalizes the R5-2 spray
+#: predicate to the UNPARENTHESIZED tech-dir-suffix form the det-aggregation
+#: regrain channel mints ('Manage setting AI components/constants/graphqls/
+#: hooks/types/utils' — twenty-b exhibit, settings-PF 36 rows): same-PF
+#: siblings sharing a >=2-token name prefix (G1) whose TAIL token names the
+#: member paths' own leaf DIRECTORY (singular(tail) == singular(leaf-dir) on
+#: >=50% member paths) are a dir-listing spray, not journeys. >=3 tail-matching
+#: siblings fire the whole (PF, prefix) group — group-absorption also carries
+#: the structural misses (graphqls/news) — into ONE own-resource parent row
+#: ('Manage AI settings' form: intent + shared-subdir tokens + pluralized
+#: root-dir token, never the bare prefix). Conservation by member union
+#: (zero flow loss; I14 backpointer repoint). Class boundary: a paren-tail row
+#: is R5-2's qualifier-spray class and is NEVER touched here (G0).
+#: Unset/``0`` keeps the pass un-entered ⇒ user_flows[] + telemetry
+#: byte-identical (KS 4-way gate). Appended to ENV_OUTPUT_FLAGS WITHOUT a
+#: KEY_SCHEMA bump — the bump rides the separate flip commit (flip-protocol).
+SPRAY_GENERALIZED_ENV = "FAULTLINE_SPRAY_GENERALIZED"
 
 _VOCAB_FILE = "naming-contract-vocab.yaml"
 _vocab_cache: dict[str, Any] | None = None
@@ -366,6 +386,17 @@ def naming_wave_r5_enabled() -> bool:
     inverted kill-switch survives the later default flip)."""
     return os.environ.get(
         NAMING_WAVE_R5_ENV, "0"
+    ).strip().lower() in {"1", "true"}
+
+
+def spray_generalized_enabled() -> bool:
+    """S2-A-v3 spray-generalization (default OFF).
+    ``FAULTLINE_SPRAY_GENERALIZED`` ``=1``/``true`` arms the generalized
+    R5-2 spray predicate + group-absorption pass; unset/``0``/``false``/
+    ``off`` keeps the pass un-entered ⇒ user_flows[] + telemetry
+    byte-identical (the KS 4-way gate)."""
+    return os.environ.get(
+        SPRAY_GENERALIZED_ENV, "0"
     ).strip().lower() in {"1", "true"}
 
 
@@ -2414,6 +2445,261 @@ def _r5_sibling_name_dup(
     return False
 
 
+# ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ─────
+#
+# The generalized R5-2 spray predicate over the UNPARENTHESIZED form (probe
+# canon, 2026-07-19: 15/17 direct + 17/17 with group-absorption on the
+# twenty-b exhibit; 0/55 boards false at K=2 AND K=3):
+#
+#   G0  paren-tail -> R5-2's qualifier-spray class, skip (class boundary —
+#       without it the predicate annexes the paren families R5-2 owns).
+#   G1  prefix >= 2 tokens (kills healthy bare 'Manage billing/members/
+#       security' families structurally — their prefix is the intent alone).
+#   Match  singular(tail) == singular(leaf-dir) on >= _SPRAY_LEAF_RATIO of
+#       the row's member paths (the row lists a DIRECTORY, not a journey).
+#   Fire  >= _SPRAY_MIN_SIBLINGS matching siblings on one (PF, prefix)
+#       group -> the WHOLE group collapses (group-absorption: the
+#       structural misses — twenty 'graphqls'/'news' — ride along) into one
+#       minted own-resource parent row. NO member-count clause: the spray
+#       carries 2-23 members; the discriminator is tail==leaf-dir, never
+#       member count (probe ruling — the R5-2 thin-row clause REFUTED here).
+
+#: Probe-canon scale-invariant thresholds (ratio + sibling count — shape
+#: rules, no per-repo numbers).
+_SPRAY_LEAF_RATIO = 0.5
+_SPRAY_MIN_SIBLINGS = 3
+
+
+def _spray_sing(tok: str) -> str:
+    """Probe-canon singular fold: alnum-only lowercase, trailing 's'
+    stripped past 3 chars ('components' -> 'component', 'AI' -> 'ai')."""
+    t = re.sub(r"[^a-z0-9]", "", (tok or "").lower())
+    if len(t) > 3 and t.endswith("s"):
+        t = t[:-1]
+    return t
+
+
+def _spray_leaf_dir(path: str) -> str:
+    """Last directory segment of a member file path ('' when root-level)."""
+    parts = str(path or "").replace("\\", "/").split("/")
+    if len(parts) < 2:
+        return ""
+    return parts[-2]
+
+
+def _spray_plural(tok: str) -> str:
+    """Display plural for the parent's root-dir token (the det-aggregation
+    ``_plural`` rule: 'setting' -> 'settings', 'policy' -> 'policies')."""
+    if not tok or tok.endswith("s"):
+        return tok
+    if tok.endswith("y") and len(tok) > 2 and tok[-2] not in "aeiou":
+        return tok[:-1] + "ies"
+    return tok + "s"
+
+
+def _spray_display_sing(tok: str) -> str:
+    """Display-channel singular for a shared-subdir token — casing kept
+    ('applications' -> 'application', 'AI' -> 'AI', 'data' -> 'data')."""
+    if tok and len(tok) > 3 and tok.lower().endswith("s"):
+        return tok[:-1]
+    return tok
+
+
+def _spray_row_eligible(uf: Any) -> bool:
+    """Organic member-ful journey rows only — channel rows (markers,
+    synthesized recall seeds, system seeds) keep their identity verbatim
+    (the det-aggregation Class-1 law)."""
+    if str(getattr(uf, "category", "") or "") == "system":
+        return False
+    if getattr(uf, "synthesized", False) or getattr(uf, "synthesis_reason", None):
+        return False
+    if getattr(uf, "is_coverage_marker", False):
+        return False
+    return bool(getattr(uf, "member_flow_ids", None) or [])
+
+
+def _spray_member_paths(uf: Any, flow_by_id: Mapping[str, Any]) -> list[str]:
+    """Every member flow's file paths (the leaf-dir evidence universe)."""
+    out: list[str] = []
+    for mid in getattr(uf, "member_flow_ids", None) or []:
+        fl = flow_by_id.get(str(mid))
+        if fl is not None:
+            out.extend(str(p) for p in (getattr(fl, "paths", None) or []))
+    return out
+
+
+def _spray_tail_match(uf: Any, flow_by_id: Mapping[str, Any]) -> bool:
+    """True when the row's tail token names its members' own leaf directory
+    (singular fold) on >= _SPRAY_LEAF_RATIO of the member paths."""
+    toks = str(getattr(uf, "name", "") or "").split()
+    if len(toks) < 3:
+        return False
+    tail = _spray_sing(toks[-1])
+    if not tail:
+        return False
+    paths = _spray_member_paths(uf, flow_by_id)
+    if not paths:
+        return False
+    hits = sum(1 for p in paths if _spray_sing(_spray_leaf_dir(p)) == tail)
+    return (hits / len(paths)) >= _SPRAY_LEAF_RATIO
+
+
+def _spray_fired_groups(
+    user_flows: Iterable[Any],
+    flow_by_id: Mapping[str, Any],
+) -> list[tuple[tuple[str, tuple[str, ...]], list[Any]]]:
+    """The (PF, prefix) groups the predicate fires on, deterministic order.
+
+    Each returned group carries EVERY eligible sibling of the fired prefix
+    (group-absorption), not only the tail-matching ones. Paren-tail rows
+    (G0) never enter a group; a 1-token prefix (G1) never forms one."""
+    from collections import defaultdict
+
+    groups: dict[tuple[str, tuple[str, ...]], list[Any]] = defaultdict(list)
+    for uf in user_flows:
+        if not _spray_row_eligible(uf):
+            continue
+        toks = str(getattr(uf, "name", "") or "").split()
+        if len(toks) < 3:            # G1 — prefix must extend past the intent
+            continue
+        if "(" in toks[-1] or ")" in toks[-1]:
+            continue                 # G0 — paren-tail is R5-2's class
+        pfid = str(getattr(uf, "product_feature_id", "") or "")
+        groups[(pfid, tuple(toks[:-1]))].append(uf)
+
+    fired: list[tuple[tuple[str, tuple[str, ...]], list[Any]]] = []
+    for key in sorted(groups, key=lambda k: (k[0], k[1])):
+        rows = sorted(groups[key], key=lambda u: str(getattr(u, "id", "") or ""))
+        matched = [u for u in rows if _spray_tail_match(u, flow_by_id)]
+        if len(matched) >= _SPRAY_MIN_SIBLINGS:
+            fired.append((key, rows))
+    return fired
+
+
+def _spray_parent_name(prefix: tuple[str, ...], vocab: Mapping[str, Any]) -> str:
+    """The minted parent's own-resource display from the group's shared
+    dir-chain tokens (the det-agg prefix IS that chain: intent + root-dir
+    singular + subdir tokens at split depth): intent + shared-subdir tokens
+    (display-singular) + PLURALIZED root-dir token — 'Manage AI settings' /
+    'Manage application settings' / 'Manage data model settings', never the
+    bare prefix."""
+    intent = prefix[0]
+    root = prefix[1]
+    subs = [_spray_display_sing(t) for t in prefix[2:]]
+    parts = [intent] + [t for t in subs if t] + [_spray_plural(root.lower())]
+    return polish_display_casing(" ".join(p for p in parts if p), vocab)
+
+
+def apply_spray_generalization(
+    user_flows: list[Any],
+    flow_by_id: Mapping[str, Any],
+    vocab: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Collapse every fired spray group into ONE own-resource parent row.
+
+    Mutates in place (only ever called behind ``spray_generalized_enabled``
+    -> the OFF path never runs -> byte-identical). The survivor is the
+    group's smallest id (deterministic, stays inside the scan's live id
+    universe); it takes the minted parent name, the member UNION of the
+    whole group (conservation — zero flow loss), the routes union, and the
+    absorbed names on ``previous_names``; every absorbed flow backpointer
+    is repointed (the I14 never-dangle law). A parent name already worn by
+    a live same-PF row OUTSIDE the group keeps the survivor's current name
+    instead (the R5 no-new-dup law — absorption still happens; a name is
+    never duplicated). Returns telemetry."""
+    tele: dict[str, Any] = {
+        "groups_fired": 0,
+        "rows_absorbed": 0,
+        "parents": [],
+        "parent_name_dup_kept": 0,
+    }
+    fired = _spray_fired_groups(user_flows, flow_by_id)
+    if not fired:
+        return tele
+
+    # Deduped live flow objects for the I14 repoint (flow_by_id keys both
+    # uuid and name forms onto the same object).
+    _seen_fl: set[int] = set()
+    live_flows: list[Any] = []
+    for fl in flow_by_id.values():
+        if id(fl) not in _seen_fl:
+            _seen_fl.add(id(fl))
+            live_flows.append(fl)
+
+    dead_ids: set[str] = set()
+    for (pfid, prefix), rows in fired:
+        survivor = rows[0]
+        absorbed = rows[1:]
+        group_ids = {str(getattr(u, "id", "") or "") for u in rows}
+        parent_name = _spray_parent_name(prefix, vocab)
+
+        members: list[str] = []
+        have: set[str] = set()
+        routes: set[str] = set()
+        for u in rows:
+            for m in getattr(u, "member_flow_ids", None) or []:
+                if str(m) not in have:
+                    have.add(str(m))
+                    members.append(str(m))
+            routes.update(str(r) for r in (getattr(u, "routes", None) or []))
+
+        folded = parent_name.strip().lower()
+        dup = any(
+            str(getattr(o, "product_feature_id", "") or "") == pfid
+            and str(getattr(o, "id", "") or "") not in group_ids
+            and str(getattr(o, "name", "") or "").strip().lower() == folded
+            for o in user_flows
+        )
+
+        prev = list(getattr(survivor, "previous_names", None) or [])
+        old_name = str(getattr(survivor, "name", "") or "")
+        if dup:
+            tele["parent_name_dup_kept"] += 1
+        elif display_law_violations(parent_name, vocab):
+            # A law-dirty mint never ships (house rule); the survivor keeps
+            # its current law-clean name — absorption still happens.
+            tele["parent_name_law_kept"] = (
+                tele.get("parent_name_law_kept", 0) + 1)
+        else:
+            if old_name and old_name != parent_name and old_name not in prev:
+                prev.append(old_name)
+            survivor.name = parent_name
+            survivor.resource = " ".join(
+                [_spray_display_sing(t).lower() for t in prefix[2:] if t]
+                + [_spray_sing(prefix[1])]
+            ).strip()
+        for u in absorbed:
+            nm = str(getattr(u, "name", "") or "")
+            if nm and nm not in prev:
+                prev.append(nm)
+        if hasattr(survivor, "previous_names"):
+            survivor.previous_names = prev
+
+        survivor.member_flow_ids = sorted(members)
+        survivor.member_count = len(members)
+        if routes:
+            survivor.routes = sorted(routes)
+
+        survivor_id = str(getattr(survivor, "id", "") or "")
+        group_dead = {str(getattr(u, "id", "") or "") for u in absorbed}
+        dead_ids.update(group_dead)
+        for fl in live_flows:   # I14 — repoint, never dangle
+            if str(getattr(fl, "user_flow_id", None) or "") in group_dead:
+                fl.user_flow_id = survivor_id
+
+        tele["groups_fired"] += 1
+        tele["rows_absorbed"] += len(absorbed)
+        tele["parents"].append(
+            str(getattr(survivor, "name", "") or parent_name))
+
+    if dead_ids:
+        user_flows[:] = [
+            u for u in user_flows
+            if str(getattr(u, "id", "") or "") not in dead_ids
+        ]
+    return tele
+
+
 # ── Pin channel (keeper — content-derived prev-scan join) ───────────────
 
 
@@ -4294,6 +4580,18 @@ def run_naming_contract(
                     _seen_ident[repaired.strip().lower()] = slug
                     continue
             _seen_ident.setdefault(folded, slug)
+
+    # ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ──
+    # The generalized R5-2 spray predicate + group-absorption over the
+    # UNPARENTHESIZED tech-dir-suffix form the det-aggregation channel
+    # mints. Runs LAST — over the FINAL display names every prior pass
+    # (laws, labeler, R5 wave) produced, the same names the probe judged —
+    # so the G0 class boundary with R5-2 is decided on shipped names.
+    # Flag OFF ⇒ the pass is un-entered ⇒ user_flows[] + telemetry
+    # byte-identical (KS 4-way gate).
+    if spray_generalized_enabled():
+        tele["spray_generalized"] = apply_spray_generalization(
+            user_flows, flow_by_id, vocab)
 
     tele["labeler_pending"] = len(pending)
     return tele
