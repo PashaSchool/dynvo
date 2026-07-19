@@ -883,6 +883,18 @@ ENV_OUTPUT_FLAGS = (
     # byte-identically (KS 4-way). Appended WITHOUT a KEY_SCHEMA bump — the
     # bump rides the separate default-flip commit (flip-protocol).
     "FAULTLINE_NAMING_WAVE_R5",
+    # B74 Seg C (2026-07-19, probe-canon tune-first) — home-pure container
+    # inherit: a journey member whose HOME PF is a monorepo ws-pkg CONTAINER
+    # (anchored-mint ``anchor_id`` "ws:" marker — Form A only; mass/ratio
+    # forms refuted) is inheritable like lane/unowned on the CITED channels
+    # (Pass-1 from_flows + Pass-2a cited devs). The 2b whole-pool rescue and
+    # the route backfill stay home-STRICT. Reshapes user_flows[] membership
+    # (twenty: 'Sign in and authenticate' 0->11 members) + the 6.7d
+    # uf_home_filtered telemetry on ws-container repos only. Default OFF;
+    # unset/=0 keeps the strict filter byte-identically; armed on a repo
+    # WITHOUT ws-containers is inert (KS: openstatus). Appended WITHOUT a
+    # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
+    "FAULTLINE_HOME_PURE_CONTAINER_INHERIT",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
