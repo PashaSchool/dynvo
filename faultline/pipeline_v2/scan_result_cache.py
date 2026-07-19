@@ -893,7 +893,7 @@ ENV_OUTPUT_FLAGS = (
     # own-resource parent row ('Manage AI settings' form; member-union
     # conservation, I14 repoint). Paren-tail rows are R5-2's class and are
     # never touched (G0). Reshapes user_flows[] (row count/names/membership)
-    # + scan_meta.naming_contract telemetry on armed worlds only. Default
+    # + the scan_meta.spray_generalized telemetry on armed worlds only. Default
     # OFF; unset/=0 keeps the pass un-entered, byte-identical. Appended
     # WITHOUT a KEY_SCHEMA bump — the bump rides the separate flip commit
     # (flip-protocol).

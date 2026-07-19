@@ -164,6 +164,11 @@ NAMING_WAVE_R5_ENV = "FAULTLINE_NAMING_WAVE_R5"
 #: root-dir token, never the bare prefix). Conservation by member union
 #: (zero flow loss; I14 backpointer repoint). Class boundary: a paren-tail row
 #: is R5-2's qualifier-spray class and is NEVER touched here (G0).
+#: THIS module hosts the flag + the PREDICATE + the parent-name derivation
+#: (beside the R5-2 machinery the G0 boundary fences); the STRUCTURAL apply
+#: (member union, row drops, I14 repoints) lives in ``spray_absorption`` and
+#: is wired in ``phase_finalize`` right AFTER the naming contract — the §4.8
+#: identity law forbids identity writes inside the naming module.
 #: Unset/``0`` keeps the pass un-entered ⇒ user_flows[] + telemetry
 #: byte-identical (KS 4-way gate). Appended to ENV_OUTPUT_FLAGS WITHOUT a
 #: KEY_SCHEMA bump — the bump rides the separate flip commit (flip-protocol).
@@ -2590,114 +2595,14 @@ def _spray_parent_name(prefix: tuple[str, ...], vocab: Mapping[str, Any]) -> str
     return polish_display_casing(" ".join(p for p in parts if p), vocab)
 
 
-def apply_spray_generalization(
-    user_flows: list[Any],
-    flow_by_id: Mapping[str, Any],
-    vocab: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Collapse every fired spray group into ONE own-resource parent row.
-
-    Mutates in place (only ever called behind ``spray_generalized_enabled``
-    -> the OFF path never runs -> byte-identical). The survivor is the
-    group's smallest id (deterministic, stays inside the scan's live id
-    universe); it takes the minted parent name, the member UNION of the
-    whole group (conservation — zero flow loss), the routes union, and the
-    absorbed names on ``previous_names``; every absorbed flow backpointer
-    is repointed (the I14 never-dangle law). A parent name already worn by
-    a live same-PF row OUTSIDE the group keeps the survivor's current name
-    instead (the R5 no-new-dup law — absorption still happens; a name is
-    never duplicated). Returns telemetry."""
-    tele: dict[str, Any] = {
-        "groups_fired": 0,
-        "rows_absorbed": 0,
-        "parents": [],
-        "parent_name_dup_kept": 0,
-    }
-    fired = _spray_fired_groups(user_flows, flow_by_id)
-    if not fired:
-        return tele
-
-    # Deduped live flow objects for the I14 repoint (flow_by_id keys both
-    # uuid and name forms onto the same object).
-    _seen_fl: set[int] = set()
-    live_flows: list[Any] = []
-    for fl in flow_by_id.values():
-        if id(fl) not in _seen_fl:
-            _seen_fl.add(id(fl))
-            live_flows.append(fl)
-
-    dead_ids: set[str] = set()
-    for (pfid, prefix), rows in fired:
-        survivor = rows[0]
-        absorbed = rows[1:]
-        group_ids = {str(getattr(u, "id", "") or "") for u in rows}
-        parent_name = _spray_parent_name(prefix, vocab)
-
-        members: list[str] = []
-        have: set[str] = set()
-        routes: set[str] = set()
-        for u in rows:
-            for m in getattr(u, "member_flow_ids", None) or []:
-                if str(m) not in have:
-                    have.add(str(m))
-                    members.append(str(m))
-            routes.update(str(r) for r in (getattr(u, "routes", None) or []))
-
-        folded = parent_name.strip().lower()
-        dup = any(
-            str(getattr(o, "product_feature_id", "") or "") == pfid
-            and str(getattr(o, "id", "") or "") not in group_ids
-            and str(getattr(o, "name", "") or "").strip().lower() == folded
-            for o in user_flows
-        )
-
-        prev = list(getattr(survivor, "previous_names", None) or [])
-        old_name = str(getattr(survivor, "name", "") or "")
-        if dup:
-            tele["parent_name_dup_kept"] += 1
-        elif display_law_violations(parent_name, vocab):
-            # A law-dirty mint never ships (house rule); the survivor keeps
-            # its current law-clean name — absorption still happens.
-            tele["parent_name_law_kept"] = (
-                tele.get("parent_name_law_kept", 0) + 1)
-        else:
-            if old_name and old_name != parent_name and old_name not in prev:
-                prev.append(old_name)
-            survivor.name = parent_name
-            survivor.resource = " ".join(
-                [_spray_display_sing(t).lower() for t in prefix[2:] if t]
-                + [_spray_sing(prefix[1])]
-            ).strip()
-        for u in absorbed:
-            nm = str(getattr(u, "name", "") or "")
-            if nm and nm not in prev:
-                prev.append(nm)
-        if hasattr(survivor, "previous_names"):
-            survivor.previous_names = prev
-
-        survivor.member_flow_ids = sorted(members)
-        survivor.member_count = len(members)
-        if routes:
-            survivor.routes = sorted(routes)
-
-        survivor_id = str(getattr(survivor, "id", "") or "")
-        group_dead = {str(getattr(u, "id", "") or "") for u in absorbed}
-        dead_ids.update(group_dead)
-        for fl in live_flows:   # I14 — repoint, never dangle
-            if str(getattr(fl, "user_flow_id", None) or "") in group_dead:
-                fl.user_flow_id = survivor_id
-
-        tele["groups_fired"] += 1
-        tele["rows_absorbed"] += len(absorbed)
-        tele["parents"].append(
-            str(getattr(survivor, "name", "") or parent_name))
-
-    if dead_ids:
-        user_flows[:] = [
-            u for u in user_flows
-            if str(getattr(u, "id", "") or "") not in dead_ids
-        ]
-    return tele
+def _spray_parent_resource(prefix: tuple[str, ...]) -> str:
+    """The parent's own-resource noun (lowercase singular) for the caller
+    that owns the STRUCTURAL apply (``spray_absorption`` — the §4.8
+    identity law forbids identity writes inside this module)."""
+    return " ".join(
+        [_spray_display_sing(t).lower() for t in prefix[2:] if t]
+        + [_spray_sing(prefix[1])]
+    ).strip()
 
 
 # ── Pin channel (keeper — content-derived prev-scan join) ───────────────
@@ -4580,18 +4485,6 @@ def run_naming_contract(
                     _seen_ident[repaired.strip().lower()] = slug
                     continue
             _seen_ident.setdefault(folded, slug)
-
-    # ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ──
-    # The generalized R5-2 spray predicate + group-absorption over the
-    # UNPARENTHESIZED tech-dir-suffix form the det-aggregation channel
-    # mints. Runs LAST — over the FINAL display names every prior pass
-    # (laws, labeler, R5 wave) produced, the same names the probe judged —
-    # so the G0 class boundary with R5-2 is decided on shipped names.
-    # Flag OFF ⇒ the pass is un-entered ⇒ user_flows[] + telemetry
-    # byte-identical (KS 4-way gate).
-    if spray_generalized_enabled():
-        tele["spray_generalized"] = apply_spray_generalization(
-            user_flows, flow_by_id, vocab)
 
     tele["labeler_pending"] = len(pending)
     return tele

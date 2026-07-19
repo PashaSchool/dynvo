@@ -49,6 +49,7 @@ from faultline.pipeline_v2.naming_contract import (
     run_naming_contract,
     spray_generalized_enabled,
 )
+from faultline.pipeline_v2.spray_absorption import run_spray_generalization
 
 VOCAB = load_naming_vocab()
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -171,12 +172,16 @@ def _world() -> tuple[list[Feature], list[UserFlow], list[Flow]]:
 
 
 def _run(pfs: list[Feature], ufs: list[UserFlow],
-         flows: list[Flow]) -> dict:
-    return run_naming_contract(
+         flows: list[Flow]) -> dict | None:
+    """The phase_finalize wiring: naming contract FIRST (final display
+    names — the probe world), then the flag-gated absorption seam.
+    Returns the spray telemetry (``None`` when the flag is off)."""
+    run_naming_contract(
         pfs, ufs, flows, keeper_on=False,
         product_strings=None, routes_index=None,
         uf_authored_names={}, labeler=None, verifier=None, repo_root=None,
     )
+    return run_spray_generalization(ufs, flows)
 
 
 def _names(ufs: list[UserFlow]) -> set[str]:
@@ -221,8 +226,8 @@ def test_flag_registered_for_cache_keying() -> None:
 def test_off_world_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(SPRAY_GENERALIZED_ENV, raising=False)
     pfs, ufs, flows = _world()
-    tele = _run(pfs, ufs, flows)
-    assert "spray_generalized" not in tele
+    spray = _run(pfs, ufs, flows)
+    assert spray is None
     assert len(ufs) == 36
     assert _SPRAY_NAMES <= _names(ufs)
     assert not (_PARENT_NAMES & _names(ufs))
@@ -236,8 +241,8 @@ def test_twenty_b_exhibit_17_of_17_absorption(
 ) -> None:
     monkeypatch.setenv(SPRAY_GENERALIZED_ENV, "1")
     pfs, ufs, flows = _world()
-    tele = _run(pfs, ufs, flows)
-    spray = tele["spray_generalized"]
+    spray = _run(pfs, ufs, flows)
+    assert spray is not None
     assert spray["groups_fired"] == 3
     assert spray["rows_absorbed"] == 14          # 17 rows -> 3 survivors
     assert sorted(spray["parents"]) == sorted(_PARENT_NAMES)
@@ -376,8 +381,8 @@ def test_anti_case_keyed_resolver_twins_untouched(
             f"UF-R-{i:02d}", f"Manage workspace resolvers ({qual})",
             [fid], pfid="server"))
     before = [(u.id, str(u.name)) for u in ufs]
-    tele = _run(pfs, ufs, flows)
-    assert tele["spray_generalized"]["groups_fired"] == 0
+    spray = _run(pfs, ufs, flows)
+    assert spray is not None and spray["groups_fired"] == 0
     assert [(u.id, str(u.name)) for u in ufs] == before
 
 
@@ -400,8 +405,8 @@ def test_two_matching_siblings_never_fire(
         _uf("UF-X-02", "Manage setting AI types", ["s-2"]),
         _uf("UF-X-03", "Manage setting AI widgets", ["s-3"]),
     ]
-    tele = _run(pfs, ufs, flows)
-    assert tele["spray_generalized"]["groups_fired"] == 0
+    spray = _run(pfs, ufs, flows)
+    assert spray is not None and spray["groups_fired"] == 0
     assert len(ufs) == 3
 
 
@@ -423,8 +428,8 @@ def test_leaf_ratio_exactly_half_counts(
     flows.append(_flow("hh-1", "hh-1-flow", ["app/settings/ai/states/S.ts"]))
     flows.append(_flow("hh-2", "hh-2-flow", ["app/settings/ai/Other.tsx"]))
     ufs.append(_uf("UF-C-03", "Manage setting AI states", ["hh-1", "hh-2"]))
-    tele = _run(pfs, ufs, flows)
-    spray = tele["spray_generalized"]
+    spray = _run(pfs, ufs, flows)
+    assert spray is not None
     assert spray["groups_fired"] == 1
     assert spray["rows_absorbed"] == 2           # whole 3-row group -> 1
     assert len(ufs) == 1
@@ -454,8 +459,8 @@ def test_leaf_ratio_below_half_never_counts(
     flows.extend(below)
     ufs.append(_uf("UF-B-03", "Manage setting AI states",
                    ["bb-1", "bb-2", "bb-3"]))
-    tele = _run(pfs, ufs, flows)
-    assert tele["spray_generalized"]["groups_fired"] == 0
+    spray = _run(pfs, ufs, flows)
+    assert spray is not None and spray["groups_fired"] == 0
     assert len(ufs) == 3
 
 
@@ -476,8 +481,8 @@ def test_no_new_dup_guard_keeps_survivor_name(
                        [fid]))
     flows.append(_flow("d-9", "d-9-flow", ["app/settings/ai/Live.tsx"]))
     ufs.append(_uf("UF-D-99", "Manage AI settings", ["d-9"]))
-    tele = _run(pfs, ufs, flows)
-    spray = tele["spray_generalized"]
+    spray = _run(pfs, ufs, flows)
+    assert spray is not None
     assert spray["groups_fired"] == 1
     assert spray["parent_name_dup_kept"] == 1
     names = sorted(_names(ufs))
