@@ -65,10 +65,13 @@ from faultline.pipeline_v2.transport_handoff import (
 )
 
 # (env-var name, helper) for every S*-pack flag flipped default OFF -> ON.
+# it2 amendment: FAULTLINE_UF_DET_AGGREGATION was UN-flipped back to OFF
+# after the corpus regression audit (4x WORSE — bare 'Manage <plural>'
+# naming corpus-wide); it left this list and carries its own un-flip
+# contract test below. 9 flags remain default ON.
 _FLIPPED = [
     (DEGRADATION_STAMP_ENV, degradation_stamp_enabled),
     (OWNER_ORACLE_ENV, owner_oracle_enabled),
-    (DET_AGGREGATION_ENV, det_aggregation_enabled),
     (UF_REFINE_TOKEN_SCALE_ENV, _token_scale_enabled),
     (BATCH_CANON_ENV, batch_canon_enabled),
     (OVERTURN_ARBITER_ENV, overturn_arbiter_enabled),
@@ -78,8 +81,8 @@ _FLIPPED = [
     (GENERATED_CONTENT_ENV_FLAG, generated_content_marker_enabled),
 ]
 
-# Sanity: the complete S*-pack (10 flags); no duplicate env names.
-assert len(_FLIPPED) == 10
+# Sanity: the S*-pack after the it2 un-flip (9 flags); no duplicate envs.
+assert len(_FLIPPED) == 9
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
@@ -118,3 +121,16 @@ def test_flip_contract_falsy_aliases_kill(env, helper, val, monkeypatch):
     """flip32: false/off/no stay kill-switch aliases after the flip."""
     monkeypatch.setenv(env, val)
     assert helper() is False
+
+
+def test_det_aggregation_unflip_contract(monkeypatch):
+    """it2 un-flip (same day, KEY_SCHEMA stays 32): the corpus regression
+    audit refuted the A-flip (4x WORSE — the det-cluster naming layer was
+    panel-hardened only on Soc0/novu; bare 'Manage <plural>' bins
+    corpus-wide). unset ⇒ OFF again; =1 still arms; =0 still kills."""
+    monkeypatch.delenv(DET_AGGREGATION_ENV, raising=False)
+    assert det_aggregation_enabled() is False
+    monkeypatch.setenv(DET_AGGREGATION_ENV, "1")
+    assert det_aggregation_enabled() is True
+    monkeypatch.setenv(DET_AGGREGATION_ENV, "0")
+    assert det_aggregation_enabled() is False

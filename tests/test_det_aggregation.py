@@ -301,10 +301,12 @@ def test_passthrough_ids_unique_and_canonical() -> None:
 # ── kill-switch + registration ──────────────────────────────────────────────
 
 
-def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset ⇒ ON.
+def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC un-flip migration (2026-07-19 S*-pack it2, KEY_SCHEMA 32):
+    # the A-flip was reverted after the corpus regression audit (4x WORSE,
+    # bare 'Manage <plural>' naming corpus-wide) — unset ⇒ OFF again.
     monkeypatch.delenv(DET_AGGREGATION_ENV, raising=False)
-    assert det_aggregation_enabled() is True
+    assert det_aggregation_enabled() is False
 
 
 @pytest.mark.parametrize("val", ["0", "false", "no", "off", ""])

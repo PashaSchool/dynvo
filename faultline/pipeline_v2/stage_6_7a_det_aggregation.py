@@ -57,12 +57,18 @@ _INTENT_ORDER = (
 
 
 def det_aggregation_enabled() -> bool:
-    """Default ON since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32;
-    stability 100/0/1.00, panel 4 circles — S2 Seg A).
-    ``FAULTLINE_UF_DET_AGGREGATION=0`` (or false/no/off) restores the
-    LLM-structured path byte-identically — explicit off stays a valid
-    kill-switch forever."""
-    return os.environ.get(DET_AGGREGATION_ENV, "1").strip().lower() not in {
+    """Default OFF — set ``FAULTLINE_UF_DET_AGGREGATION=1`` to arm.
+
+    Flipped ON in the 2026-07-19 S*-pack (KEY_SCHEMA 32) and UN-flipped
+    back to OFF the same day: the corpus regression audit came back
+    4x WORSE — the det-cluster naming layer (regrain it3-it6) was
+    panel-hardened only on Soc0/novu and emits bare 'Manage <plural>'
+    bins corpus-wide (twenty 143, midday 29 bins incl. 'Manage fixs/
+    taxs/inboxs', documenso 'Manage os/ts', novu 61% bare + paren
+    0->33). R5 corpus hardening of the naming layer rides a follow-up
+    cycle; KEY_SCHEMA stays 32 (unset semantics changed twice within
+    v32 — see the v32 changelog)."""
+    return os.environ.get(DET_AGGREGATION_ENV, "0").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

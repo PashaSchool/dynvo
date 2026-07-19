@@ -741,10 +741,13 @@ ENV_OUTPUT_FLAGS = (
     # skipped. UF-COUNT becomes invariant to LLM death (fail-open 264-vs-78
     # class) and to resampling (−26% whole-batch class) — probe 2026-07-18.
     # Reshapes user_flows[] (membership/grain/ids) + downstream homes. Default
-    # ON (flipped 2026-07-19, S*-pack, KEY_SCHEMA 32 — stability 100/0/1.00,
-    # panel 4 circles; keyless obstacle baselines re-recorded for the S2
-    # regrain 141->85 class); =0/false/off restores the LLM-structured path
-    # byte-identically — explicit off stays a valid kill-switch forever.
+    # OFF: flipped ON in the 2026-07-19 S*-pack (KEY_SCHEMA 32) and
+    # UN-flipped back the same day — corpus regression audit 4x WORSE (the
+    # det-cluster naming layer was panel-hardened only on Soc0/novu; bare
+    # 'Manage <plural>' bins corpus-wide: twenty 143 / midday 29 / documenso
+    # 'Manage os/ts' / novu 61% bare). R5 corpus hardening rides a follow-up
+    # cycle; =1 arms, =0/unset restores the LLM-structured path
+    # byte-identically.
     "FAULTLINE_UF_DET_AGGREGATION",
     # S2 Seg C (2026-07-18) — canonical LLM batch composition: volatile pure
     # counts leave the 6.7d prompt canon (digest n_dev_features; Call-2 per-row
@@ -936,6 +939,17 @@ ENV_OUTPUT_FLAGS = (
 #: flipped (stay OFF): S4c (precondition: the shards-orphan rule) and S4d
 #: (precondition: its own keyed UF-proof) — each rides a later cycle.
 #: scan_meta.key_schema=32 emitted so downstream rulers gate new-world logic.
+#: v32 amendment (same day, it2): FAULTLINE_UF_DET_AGGREGATION UN-flipped
+#: back to default OFF — the mandatory corpus regression audit (7 pairs)
+#: came back 1 BETTER / 2 MIXED / 4 WORSE with the single root corpus-wide
+#: in the A-flip: the det-cluster naming layer (regrain it3-it6) was
+#: panel-hardened only on Soc0/novu and emits bare 'Manage <plural>' bins
+#: elsewhere (twenty 143, midday 29 bins, documenso 'Manage os/ts', novu
+#: 61% bare + paren 0->33). The other 9 pack flags STAY ON (their wins are
+#: real: agents 187K->80K, twenty-front 88K->40K, Soc0 BETTER). KEY_SCHEMA
+#: stays 32 — unset semantics changed twice within one unreleased schema
+#: generation; the naming layer returns via R5 corpus hardening in its own
+#: cycle with its own flip.
 KEY_SCHEMA_VERSION = 32
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept

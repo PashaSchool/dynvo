@@ -154,11 +154,11 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # See stage_6_86_anchored_mint.py.
     (6, "anchored_mint"),
     (6, "user_flows"),
-    # SEMANTIC (S*-pack flip, 2026-07-19, KEY_SCHEMA 32) — under the flipped
-    # FAULTLINE_UF_DET_AGGREGATION default the journey STRUCTURE is computed
-    # deterministically (Stage 6.7a) and the structural LLM stages are
-    # skipped, so the 6.7c uf_splitter artifact leaves the default sequence.
-    # FAULTLINE_UF_DET_AGGREGATION=0 (kill-switch) restores it.
+    # SEMANTIC (S*-pack it2, 2026-07-19): the A-flip
+    # (FAULTLINE_UF_DET_AGGREGATION) was UN-flipped after the corpus
+    # regression audit, so the 6.7c uf_splitter artifact is back in the
+    # default sequence (=1 removes it again — the S2 world).
+    (6, "uf_splitter"),
     (6, "uf_refiner"),
     # Stage 6.88 (Wave 5, 2026-07-07, Product-Spine journey lattice) —
     # deterministic catch-all journey partition + exact subset-dup
