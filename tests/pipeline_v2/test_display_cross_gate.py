@@ -365,6 +365,105 @@ def test_pass1_authentic_label_still_installs_when_armed(
     assert pf.display_name == "Directory Sync"
 
 
+# ── exhibit 6 (iteration 3): labeler composite-KEEP — the Pass-3 seam ────
+# novu keyed calibration (2026-07-19): the hub provider PFs carry ZERO nav
+# votes (offline vote rebuild VERIFIED) — the gate never touched them. The
+# batched PM-labeler prompt legitimately changed on the intended class row
+# (application-generic), the fresh Haiku draw picked bare vendor leaves
+# ('Chat — Discord' -> 'Discord') for 18 hub items, and the application
+# seam's law re-check had no information-loss guard (applied 10 -> 28).
+# The guard: under the SAME flag, a persona pick that equals the hub
+# composition's vendor leaf (a pure prefix-drop) is rejected.
+
+
+def _hub_pf() -> SimpleNamespace:
+    return SimpleNamespace(
+        name="discord",
+        display_name=None,
+        anchor_id="hub:packages/providers/src/lib/chat/discord",
+        paths=["packages/providers/src/lib/chat/discord/discord.provider.ts"],
+    )
+
+
+def _run_with_labeler(pf: Any, choices: dict[str, str]) -> None:
+    from faultline.pipeline_v2.naming_contract import run_naming_contract
+
+    run_naming_contract(
+        [pf], [], (), product_strings=None, routes_index=[],
+        keeper_on=False, labeler=lambda pending: {"choices": choices},
+    )
+
+
+def test_composite_keep_blocks_prefix_drop_when_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ANTI-CASE of the it3 class: armed, the persona's bare-vendor pick
+    may not flatten the hub composition."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "1")
+    pf = _hub_pf()
+    _run_with_labeler(pf, {"discord": "Discord"})
+    assert pf.display_name == "Chat — Discord"
+
+
+def test_composite_flattening_reproduces_when_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OFF reproduces the pre-guard application byte-for-byte — the
+    kill-switch anchor for the Pass-3 seam."""
+    monkeypatch.delenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", raising=False)
+    pf = _hub_pf()
+    _run_with_labeler(pf, {"discord": "Discord"})
+    assert pf.display_name == "Discord"
+
+
+def test_composite_keep_blocks_dash_flatten_when_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """novu ``chat-webhook`` exhibit: 'Chat — Webhook' -> pick
+    'Chat Webhook' keeps the words but flattens the authored channel/
+    vendor shape — same information-loss class, same rejection."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "1")
+    pf = SimpleNamespace(
+        name="chat-webhook",
+        display_name=None,
+        anchor_id="hub:packages/providers/src/lib/chat/chat-webhook",
+        paths=["packages/providers/src/lib/chat/chat-webhook/webhook.provider.ts"],
+    )
+    _run_with_labeler(pf, {"chat-webhook": "Chat Webhook"})
+    # The composite shape survives: the pick's words == the composition's
+    # words, so the flatten is rejected whatever separator form the
+    # composition pass produced.
+    assert pf.display_name != "Chat Webhook"
+    assert " — " in pf.display_name
+
+
+def test_composite_keep_allows_real_correction_when_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pick that CHANGES the name (not a pure prefix-drop) still
+    applies — the guard blocks information loss, never correction."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "1")
+    pf = _hub_pf()
+    _run_with_labeler(pf, {"discord": "Discord Notifications"})
+    assert pf.display_name == "Discord Notifications"
+
+
+def test_composite_keep_is_hub_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-hub PF whose display happens to carry ' — ' is NOT guarded —
+    the channel-prefix law is evidenced by the hub dir structure only."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "1")
+    pf = SimpleNamespace(
+        name="insights-page",
+        display_name="App Store — Insights",
+        anchor_id="route:apps/web/app/insights",
+        paths=["apps/web/app/insights/page.tsx"],
+    )
+    _run_with_labeler(pf, {"insights-page": "Insights"})
+    assert pf.display_name == "Insights"
+
+
 # ── OFF-path byte-identity at the consumer seam ─────────────────────────
 
 

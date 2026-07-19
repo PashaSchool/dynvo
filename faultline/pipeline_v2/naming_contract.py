@@ -3462,7 +3462,37 @@ def run_naming_contract(
             pick = " ".join(pick.split())
             if display_law_violations(pick, vocab):
                 continue
-            if pick != str(getattr(item.obj, "display_name", "") or ""):
+            cur = str(getattr(item.obj, "display_name", "") or "")
+            # Display-cross it3 composite-KEEP (same flag): a hub-family
+            # composition's channel prefix ("Chat — Discord", "Email —
+            # Mailgun") is evidenced structure — the family word IS the
+            # hub dir the vendor package lives under. A persona pick that
+            # merely DROPS the prefix (pick == the composition's vendor
+            # leaf, case-folded) loses that information without adding
+            # any; it is rejected so a fresh LLM draw can never flatten
+            # the composite class (novu keyed calibration 2026-07-19: one
+            # legitimate batch-prompt change re-drew all 81 decisions and
+            # flattened 18 composites). A pick that CHANGES the leaf or
+            # the shape (a real correction) still applies. OFF path never
+            # enters — byte-identical.
+            if display_gate_on and cur:
+                head, sep, leaf = cur.rpartition(" — ")
+                if sep and _anchor_path(str(
+                        getattr(item.obj, "anchor_id", None) or ""
+                        ))[0] == "hub":
+                    # Word-sequence compare (separator-robust): a pick
+                    # whose words == the composition's words (dash-
+                    # flatten, novu chat-webhook) or == the vendor
+                    # leaf's words (prefix-drop, novu discord) is the
+                    # information-loss class.
+                    def _cw(text: str) -> list[str]:
+                        return [w for w in _GATE_SPLIT.split(text.lower())
+                                if w]
+                    if _cw(pick) in (_cw(leaf), _cw(cur)):
+                        tele["labeler_composite_keep"] = (
+                            tele.get("labeler_composite_keep", 0) + 1)
+                        continue
+            if pick != cur:
                 item.obj.display_name = pick
                 applied += 1
         for item in pending:
