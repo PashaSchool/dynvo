@@ -862,6 +862,17 @@ ENV_OUTPUT_FLAGS = (
     # restores the shipped display byte-identically. Appended WITHOUT a
     # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
     "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE",
+    # B73 organic-move (2026-07-19, fork-A ruling) — the ratified
+    # strict+gated organic UF re-home rule at the 6.99b rail: armed, it
+    # REPLACES the S5a mega-organic handling of the rail's candidates with
+    # home_share==0.0 ∧ rival_share>=0.8 (inclusive) + the product→dev
+    # direction-gate; PURE arbiter moves (rung organic-move), no renames,
+    # no folds, no I8 orphan-guard (explicit ruling — sole-UF from-PFs are
+    # the disease). Reshapes user_flows[].product_feature_id on repos with
+    # strict candidates. Default OFF; unset/=0 keeps the branch un-entered,
+    # byte-identical (including the mega-armed path). Appended WITHOUT a
+    # KEY_SCHEMA bump — the bump rides the separate flip commit.
+    "FAULTLINE_ORGANIC_MOVE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
