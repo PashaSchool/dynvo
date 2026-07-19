@@ -453,3 +453,224 @@ def test_r5_5_cap_noop_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
     _apply_r5_confidence_caps([uf], tele, rungs_on=True)
     assert uf.name_confidence == "high"
     assert "uf_shape_capped" not in tele
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Segment R5-2 iter-2 — keyed-refutation fixes (spray predicate,
+# verifier re-derive threading, no-new-dup guard)
+# ══════════════════════════════════════════════════════════════════════
+
+from faultline.pipeline_v2.naming_contract import (  # noqa: E402
+    _r5_sibling_name_dup,
+    _spray_sibling_uf_ids,
+)
+
+
+def _uf_full(uid: str, name: str, pfid: str, resource: str, *,
+             members: list[str] | None = None,
+             synthesized: bool = True) -> UserFlow:
+    m = members or []
+    return UserFlow(
+        id=uid, name=name, resource=resource, domain=None,
+        product_feature_id=pfid, intent="manage",
+        member_flow_ids=m, member_count=len(m),
+        category="interactive", synthesized=synthesized,
+    )
+
+
+def _run_with_verifier(pfs, ufs, verifier):
+    return run_naming_contract(
+        pfs, ufs, [], keeper_on=False,
+        product_strings=None, routes_index=None,
+        uf_authored_names={}, labeler=None, verifier=verifier,
+        repo_root=None,
+    )
+
+
+# ── spray predicate — 'Manage twenty server (billing)' ×N class ─────────
+
+
+def _sprayed_hub() -> tuple[list[Feature], list[UserFlow]]:
+    pf = _pf("twenty-server", "Twenty Server", "package:packages/twenty-server")
+    ufs = [
+        _uf_full("u1", "Manage twenty server (billing)", "twenty-server",
+                 "billing", members=["m1"]),
+        _uf_full("u2", "Manage twenty server (dpa)", "twenty-server",
+                 "dpa", members=["m2"]),
+        _uf_full("u3", "Manage twenty server (fields)", "twenty-server",
+                 "fields", members=["m3"]),
+    ]
+    return [pf], ufs
+
+
+def test_spray_predicate_flags_pf_identity_base() -> None:
+    pfs, ufs = _sprayed_hub()
+    ids = _spray_sibling_uf_ids(ufs, {p.name: p for p in pfs})
+    assert ids == {"u1", "u2", "u3"}
+
+
+def test_spray_rows_adopt_own_resource_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The fresh-keyed live disease form: identical PF-identity base +
+    # qualifier spray. ON: every row templates on its OWN resource; the
+    # base echo and the qual spray are both gone.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    pfs, ufs = _sprayed_hub()
+    _run(pfs, ufs)
+    names = [u.name for u in ufs]
+    assert not any("twenty server" in n.lower() for n in names), names
+    assert len({n.strip().lower() for n in names}) == 3  # all distinct
+
+
+def test_spray_rows_no_own_resource_adoption_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # OFF is the pre-R5 path: synthesized rows may churn through the
+    # PF-display template + uniqueness (that churn IS the disease), but
+    # the own-resource adoption never happens — the PF echo remains.
+    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    pfs, ufs = _sprayed_hub()
+    _run(pfs, ufs)
+    names = [str(u.name) for u in ufs]
+    assert any("twenty server" in n.lower() for n in names), names
+
+
+def test_anticase_spray_needs_pf_identity_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 'Manage invoices (drafts)'/'(sent)' — the base names a real resource,
+    # NOT the PF home; the qualifier is legit disambiguation. Never flagged,
+    # never renamed.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    pf = _pf("billing", "Billing", "route:app/billing")
+    ufs = [
+        _uf_full("u1", "Manage invoices (drafts)", "billing", "drafts",
+                 members=["m1"]),
+        _uf_full("u2", "Manage invoices (sent)", "billing", "sent",
+                 members=["m2"]),
+    ]
+    assert _spray_sibling_uf_ids(ufs, {"billing": pf}) == set()
+    _run([pf], ufs)
+    assert [u.name for u in ufs] == [
+        "Manage invoices (drafts)", "Manage invoices (sent)"]
+
+
+# ── verifier-reject re-derive threads own_resource (the keyed leak) ─────
+
+
+def test_verifier_reject_rederive_keeps_own_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Keyed refutation root cause: the Draft Verifier rejected 52 synth
+    # drafts and the re-derive WITHOUT own_resource minted the PF-display
+    # echo ('Manage twenty server' ×22) that Law A spray-qualified back.
+    # iter-2: the re-derive threads the same own-resource membership.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    pf = _pf("twenty-server", "Twenty Server", "package:packages/twenty-server")
+    ufs = [
+        _uf_full("u1", "Browse & manage billing", "twenty-server", "billing",
+                 members=["m1"]),
+        _uf_full("u2", "Browse & manage dpa", "twenty-server", "dpa",
+                 members=["m2"]),
+        _uf_full("u3", "Browse & manage fields", "twenty-server", "fields",
+                 members=["m3"]),
+    ]
+    _run_with_verifier([pf], ufs, lambda drafts: {d["id"]: False for d in drafts})
+    names = [u.name for u in ufs]
+    # no PF-display echo, no spray — each row keeps its own resource.
+    assert not any("twenty server" in n.lower() for n in names), names
+    assert len({n.strip().lower() for n in names}) == 3
+
+
+def test_verifier_reject_rederive_off_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # OFF: the reject re-derive is the pre-R5 path — the PF-display echo
+    # + uniqueness spray reproduce (the recorded keyed OFF behavior).
+    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    pf = _pf("twenty-server", "Twenty Server", "package:packages/twenty-server")
+    ufs = [
+        _uf_full("u1", "Browse & manage billing", "twenty-server", "billing",
+                 members=["m1"]),
+        _uf_full("u2", "Browse & manage dpa", "twenty-server", "dpa",
+                 members=["m2"]),
+    ]
+    _run_with_verifier([pf], ufs, lambda drafts: {d["id"]: False for d in drafts})
+    names = [u.name for u in ufs]
+    assert any("twenty server" in n.lower() for n in names), names
+
+
+# ── no-new-dup guard ────────────────────────────────────────────────────
+
+
+def test_dup_guard_helper() -> None:
+    ufs = [
+        _uf_full("u1", "View resolvers", "twenty-server", "resolvers"),
+        _uf_full("u2", "View admin panel", "twenty-server", "admin panel"),
+        _uf_full("u3", "View resolvers", "other-pf", "resolvers"),
+    ]
+    # same PF + same folded name = dup; other PF never counts.
+    assert _r5_sibling_name_dup(ufs[1], "View resolvers", ufs) is True
+    assert _r5_sibling_name_dup(ufs[1], "view RESOLVERS", ufs) is True
+    assert _r5_sibling_name_dup(ufs[1], "View widgets", ufs) is False
+    assert _r5_sibling_name_dup(ufs[0], "View resolvers", ufs[:2]) is False
+
+
+def test_no_new_sibling_dup_minted_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two same-resource siblings would both template to the same
+    # own-resource name — the second is blocked and keeps its old name
+    # (the keyed collateral class: a rename never duplicates a live row).
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    pf = _pf("twenty-server", "Twenty Server", "package:packages/twenty-server")
+    ufs = [
+        _uf_full("u1", "Manage twenty server (resolver)", "twenty-server",
+                 "resolvers", members=["m1"]),
+        _uf_full("u2", "Manage twenty server (resolvers)", "twenty-server",
+                 "resolvers", members=["m2"]),
+        _uf_full("u3", "Manage twenty server (billing)", "twenty-server",
+                 "billing", members=["m3"]),
+    ]
+    tele = _run(pf and [pf], ufs)
+    names = [str(u.name) for u in ufs]
+    folded = [n.strip().lower() for n in names]
+    assert len(set(folded)) == len(folded), names  # no duplicates minted
+    assert tele.get("uf_r5_dup_blocked", 0) >= 1
+
+
+# ── anti-case: many-member aggregate keeps its PF-display name ──────────
+
+
+def test_anticase_aggregate_8_member_untouched_by_r5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # twenty 'Connect twenty server' ×8 members — a REAL aggregate; R5 must
+    # not re-template it onto one member's resource. Its name must be
+    # byte-identical between OFF and ON.
+    pf_off = _pf("twenty-server", "Twenty Server",
+                 "package:packages/twenty-server")
+    pf_on = _pf("twenty-server", "Twenty Server",
+                "package:packages/twenty-server")
+    mk = lambda: [
+        _uf_full("agg", "Connect twenty server", "twenty-server",
+                 "twenty-shared", members=[f"m{i}" for i in range(8)]),
+        _uf_full("u1", "Manage twenty server (billing)", "twenty-server",
+                 "billing", members=["m10"]),
+        _uf_full("u2", "Manage twenty server (dpa)", "twenty-server",
+                 "dpa", members=["m11"]),
+    ]
+    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    ufs_off = mk()
+    _run([pf_off], ufs_off)
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    ufs_on = mk()
+    _run([pf_on], ufs_on)
+    agg_off = next(u for u in ufs_off if u.id == "agg")
+    agg_on = next(u for u in ufs_on if u.id == "agg")
+    assert agg_on.name == agg_off.name  # aggregate untouched by the wave
+    # while the thin spray siblings DID re-template ON.
+    assert not any(
+        "twenty server" in str(u.name).lower()
+        for u in ufs_on if u.id != "agg")

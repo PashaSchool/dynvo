@@ -2273,6 +2273,17 @@ def build_uf_candidates(
     return out
 
 
+def _uf_member_count(uf: Any) -> int:
+    """Member count of a UF row (``member_count`` else the id list)."""
+    mc = getattr(uf, "member_count", None)
+    if mc is None:
+        mc = len(getattr(uf, "member_flow_ids", None) or [])
+    try:
+        return int(mc or 0)
+    except (TypeError, ValueError):  # pragma: no cover — defensive
+        return 0
+
+
 def _echo_own_resource_uf_ids(
     user_flows: Iterable[Any],
     pf_by_slug: Mapping[str, Any],
@@ -2282,11 +2293,14 @@ def _echo_own_resource_uf_ids(
     collapse them into one echoed row.
 
     A UF qualifies when: it is ORGANIC (``category != 'system'`` — the D9
-    hand already owns system seeds), carries a ``resource`` DISTINCT from
-    its PF's identity, and shares that PF with ≥2 such UFs spanning ≥2
-    distinct resources (twenty ``twenty-server`` hosts 24). Scale-invariant
-    (a ratio-free ≥2/≥2 shape rule, no per-repo numbers); a single-resource
-    PF or a PF whose UFs echo its own identity is never touched."""
+    hand already owns system seeds), THIN (``member_count`` ≤ 2 — a
+    many-member aggregate like twenty 'Connect twenty server' ×8 carries
+    real breadth and keeps its PF-display name; keyed-refutation iter-2
+    anti-case), carries a ``resource`` DISTINCT from its PF's identity,
+    and shares that PF with ≥2 such UFs spanning ≥2 distinct resources
+    (twenty ``twenty-server`` hosts 22+). Scale-invariant (a ratio-free
+    ≥2/≥2 shape rule, no per-repo numbers); a single-resource PF or a PF
+    whose UFs echo its own identity is never touched."""
     from collections import defaultdict
 
     by_pf: dict[str, list[Any]] = defaultdict(list)
@@ -2294,6 +2308,8 @@ def _echo_own_resource_uf_ids(
         if str(getattr(uf, "category", "") or "") == "system":
             continue
         if not str(getattr(uf, "resource", "") or "").strip():
+            continue
+        if _uf_member_count(uf) > 2:
             continue
         by_pf[str(getattr(uf, "product_feature_id", "") or "")].append(uf)
     out: set[str] = set()
@@ -2315,6 +2331,77 @@ def _echo_own_resource_uf_ids(
             for u in distinct:
                 out.add(str(getattr(u, "id", "") or ""))
     return out
+
+
+def _spray_sibling_uf_ids(
+    user_flows: Iterable[Any],
+    pf_by_slug: Mapping[str, Any],
+) -> set[str]:
+    """R5-2 iter-2 — qualifier-SPRAY ids: same-PF siblings whose
+    paren-stripped folded BASE is identical across ≥2 THIN rows
+    (``member_count`` ≤ 2, non-empty resource) AND wears the PF's own
+    identity ('Manage twenty server (billing)/(dpa)/…' ×22 — the base
+    names the HOME, not the job; the fresh-keyed live disease form).
+
+    These rows must ADOPT the own-resource template even though the
+    sprayed current name is law-clean (the ranking otherwise keeps it).
+    A base that names a real resource ('Manage invoices (drafts)' /
+    '(sent)') does NOT wear the PF identity and is never flagged —
+    the qualifier there is legit disambiguation."""
+    from collections import defaultdict
+
+    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for uf in user_flows:
+        if str(getattr(uf, "category", "") or "") == "system":
+            continue
+        if not str(getattr(uf, "resource", "") or "").strip():
+            continue
+        if _uf_member_count(uf) > 2:
+            continue
+        nm = str(getattr(uf, "name", "") or "")
+        base = re.sub(r"\s*\([^)]*\)+\s*$", "", nm).strip()
+        base = re.sub(r"\s*\([^)]*\)+\s*$", "", base).strip()
+        if not base:
+            continue
+        pfid = str(getattr(uf, "product_feature_id", "") or "")
+        pf = pf_by_slug.get(pfid)
+        pf_ident = _ident_fold(
+            str(getattr(pf, "display_name", None)
+                or getattr(pf, "name", "") or "")
+        ) if pf is not None else ""
+        if not pf_ident or pf_ident not in _ident_fold(base):
+            continue
+        groups[(pfid, base.lower())].append(str(getattr(uf, "id", "") or ""))
+    out: set[str] = set()
+    for _key, ids in groups.items():
+        if len(ids) >= 2:
+            out.update(ids)
+    return out
+
+
+def _r5_sibling_name_dup(
+    uf: Any, cand: str, user_flows: Iterable[Any],
+) -> bool:
+    """R5-2 iter-2 no-new-dup guard — True when ANOTHER live UF of the
+    SAME PF already wears ``cand`` (case-folded). No R5 rename may mint a
+    name identical to a live sibling (the keyed-refutation collateral:
+    'Manage twenty server (application development)' -> bare 'Manage
+    twenty server' duplicating an existing row); the caller keeps the old
+    name instead — a kept diseased name is then demoted by the R5-5
+    shape cap, never duplicated."""
+    fld = (cand or "").strip().lower()
+    if not fld:
+        return False
+    uid = str(getattr(uf, "id", "") or "")
+    pfid = str(getattr(uf, "product_feature_id", "") or "")
+    for other in user_flows:
+        if str(getattr(other, "id", "") or "") == uid:
+            continue
+        if str(getattr(other, "product_feature_id", "") or "") != pfid:
+            continue
+        if str(getattr(other, "name", "") or "").strip().lower() == fld:
+            return True
+    return False
 
 
 # ── Pin channel (keeper — content-derived prev-scan join) ───────────────
@@ -3563,8 +3650,15 @@ def run_naming_contract(
     _echo_own_res_ids: set[str] = (
         _echo_own_resource_uf_ids(user_flows, pf_by_slug) if _wave_r5 else set()
     )
+    # R5-2 iter-2 — spray-form ids (identical PF-identity base + paren qual
+    # across ≥2 thin siblings): these adopt the own-resource template even
+    # over a law-clean sprayed current. Empty when the wave is off.
+    _spray_ids: set[str] = (
+        _spray_sibling_uf_ids(user_flows, pf_by_slug) if _wave_r5 else set()
+    )
     if _wave_r5:
         tele["uf_own_resource_templated"] = len(_echo_own_res_ids)
+        tele["uf_spray_retemplated"] = len(_spray_ids & _echo_own_res_ids)
     for uf in user_flows:
         pf = pf_by_slug.get(str(getattr(uf, "product_feature_id", None) or ""))
         pf_display = (
@@ -3576,13 +3670,37 @@ def run_naming_contract(
             flow_name_by_id.get(str(m), str(m))
             for m in (getattr(uf, "member_flow_ids", None) or [])
         ]
-        _own_res = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
+        _uid = str(getattr(uf, "id", "") or "")
+        _own_res = _uid in _echo_own_res_ids
         candidates = build_uf_candidates(
             uf, pf, vocab, member_names, authored=_authored_for(uf),
             own_resource=_own_res)
         violations = display_law_violations(
             polish_display_casing(current, vocab), vocab,
             pf_display=pf_display or None)
+        # R5-2 iter-2 — ranking within a flagged hub member is decided by
+        # whether the CURRENT base wears the PF's identity:
+        #   * spray/echo form ('Manage twenty server (billing)', bare
+        #     'Manage twenty server') — the base names the HOME, not the
+        #     job: the own-resource template must lead even over a
+        #     law-clean current (move polished current to the END);
+        #   * a healthy job-named current ('Manage invoices (drafts)',
+        #     'Browse & manage billing') — the base names a real resource:
+        #     the current leads even for a synthesized row (move it to the
+        #     FRONT; no churn of good names onto their bare resource).
+        if _own_res:
+            _pc = polish_display_casing(current, vocab)
+            _base_cur = re.sub(r"\s*\([^)]*\)+\s*$", "", current).strip()
+            _base_cur = re.sub(r"\s*\([^)]*\)+\s*$", "", _base_cur).strip()
+            _pf_ident = _ident_fold(pf_display)
+            _wears_pf = bool(_pf_ident) and _pf_ident in _ident_fold(_base_cur)
+            if _uid in _spray_ids or _wears_pf:
+                _rest = [c for c in candidates if c != _pc]
+                if _rest:
+                    candidates = _rest + (
+                        [_pc] if _pc in candidates else [])
+            elif not violations and _pc in candidates:
+                candidates = [_pc] + [c for c in candidates if c != _pc]
         pinned = bool(
             keeper_on and isinstance(getattr(uf, "identity", None), dict)
             and (uf.identity or {}).get("pinned_from")
@@ -3599,6 +3717,16 @@ def run_naming_contract(
                 break
         if chosen is None:
             chosen = polish_display_casing(current, vocab)
+
+        # R5-2 iter-2 no-new-dup guard — an own-resource-influenced rename
+        # never mints a name a live same-PF sibling already wears; keep the
+        # old name instead (a kept diseased name is demoted by the R5-5
+        # shape cap, never duplicated). OFF ⇒ _own_res is always False.
+        if (_own_res and chosen
+                and chosen != polish_display_casing(current, vocab)
+                and _r5_sibling_name_dup(uf, chosen, user_flows)):
+            chosen = polish_display_casing(current, vocab)
+            tele["uf_r5_dup_blocked"] = tele.get("uf_r5_dup_blocked", 0) + 1
 
         # B50 — pure degrime-induced adoption (no law violation, organic
         # journey, no authored label, current only unclean via the echo
@@ -3769,16 +3897,22 @@ def run_naming_contract(
                 flow_name_by_id.get(str(m), str(m))
                 for m in (getattr(uf, "member_flow_ids", None) or [])
             ]
+            # R5-2 iter-2 — same own-resource threading + no-new-dup guard
+            # as the verifier re-derive (OFF ⇒ byte-identical).
+            _t_own = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
             for cand in build_uf_candidates(
                     uf, live_pf, vocab, member_names,
-                    authored=_authored_for(uf)):
-                if not display_law_violations(
+                    authored=_authored_for(uf), own_resource=_t_own):
+                if display_law_violations(
                     cand, vocab, pf_display=live_disp,
                 ):
-                    uf.name = cand
-                    tele["uf_twins_resolved"] += 1
-                    _law_fix("pf_uf_twin")
-                    break
+                    continue
+                if _wave_r5 and _r5_sibling_name_dup(uf, cand, user_flows):
+                    continue
+                uf.name = cand
+                tele["uf_twins_resolved"] += 1
+                _law_fix("pf_uf_twin")
+                break
 
     # ── Pass 4: Draft Verifier over backstop-synthesized UFs (§4.7) ──
     # The chain4 'schema.json'-class guard: a synthesized journey whose
@@ -3831,12 +3965,25 @@ def run_naming_contract(
                     flow_name_by_id.get(str(m), str(m))
                     for m in (getattr(uf, "member_flow_ids", None) or [])
                 ]
-                for cand in build_uf_candidates(uf, pf, vocab, member_names):
-                    if not display_law_violations(
+                # R5-2 iter-2 — the reject re-derive threads the SAME
+                # own-resource membership as Pass 2 (the keyed-refutation
+                # leak: 52 rejects re-derived WITHOUT it, minting 'Manage
+                # twenty server' ×22 that Law A spray-qualified back), and
+                # the no-new-dup guard skips a candidate a live sibling
+                # already wears. OFF ⇒ set empty + guard never consulted ⇒
+                # byte-identical.
+                _v_own = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
+                for cand in build_uf_candidates(
+                        uf, pf, vocab, member_names, own_resource=_v_own):
+                    if display_law_violations(
                         cand, vocab, pf_display=pf_display or None,
                     ):
-                        uf.name = cand
-                        break
+                        continue
+                    if _wave_r5 and _r5_sibling_name_dup(
+                            uf, cand, user_flows):
+                        continue
+                    uf.name = cand
+                    break
             tele["verifier_synth_reviewed"] = len(drafts)
             tele["verifier_synth_rejected"] = rejected
 
