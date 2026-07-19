@@ -284,6 +284,87 @@ def test_ladder_falls_to_basename_on_reverted_nav() -> None:
     assert post.provenance == "dir-basename"
 
 
+# ── exhibit 5 (iteration 2): Pass-1 candidate rank — the SECOND mechanism ─
+# cal wave-spot forensic (2026-07-19): app-store->'license', features->
+# 'impersonation', organization->'directory_sync' were installed by Pass 1
+# (build_pf_candidates ranks nav_label FIRST), not by the B71 ladder — the
+# iteration-1 gate left them standing. The gate must cover the Pass-1 feed.
+
+
+def _run_contract(pfs: list[Any], ps: Any, routes: list[dict[str, str]]) -> None:
+    from faultline.pipeline_v2.naming_contract import run_naming_contract
+
+    run_naming_contract(
+        pfs, [], (), product_strings=ps, routes_index=routes,
+        keeper_on=False,
+    )
+
+
+def _pass1_fixture() -> tuple[list[Any], Any, list[dict[str, str]]]:
+    """cal ``features``-shape with NO pre-set display: Pass 1 mints it, and
+    the foreign 'impersonation' label is the top-ranked candidate."""
+    pf = SimpleNamespace(
+        name="features",
+        display_name=None,
+        anchor_id="route:apps/web/app/(wrap)/settings/(sl)/my-account/features",
+        paths=[
+            "apps/web/app/(wrap)/settings/(sl)/my-account/features/page.tsx",
+            "apps/web/app/(wrap)/settings/(sl)/my-account/features/edit.tsx",
+            "packages/features/my-account/list.tsx",
+            "apps/web/app/(wrap)/settings/(sl)/security/impersonation/page.tsx",
+        ],
+    )
+    routes = [
+        {"pattern": "/settings/security/impersonation",
+         "file": "apps/web/app/(wrap)/settings/(sl)/security/impersonation/page.tsx"},
+        {"pattern": "/settings/my-account/features",
+         "file": "apps/web/app/(wrap)/settings/(sl)/my-account/features/page.tsx"},
+    ]
+    ps = _ps([("impersonation", "/settings/security/impersonation")])
+    return [pf], ps, routes
+
+
+def test_exhibit_pass1_foreign_label_blocked_when_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "1")
+    pfs, ps, routes = _pass1_fixture()
+    _run_contract(pfs, ps, routes)
+    assert pfs[0].display_name == "Features"   # honest slug word, not foreign
+
+
+def test_exhibit_pass1_off_path_installs_raw_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OFF reproduces the pre-gate Pass-1 behaviour (the byte-identity
+    anchor for the kill-switch): the raw foreign label wins the rank."""
+    monkeypatch.delenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", raising=False)
+    pfs, ps, routes = _pass1_fixture()
+    _run_contract(pfs, ps, routes)
+    assert pfs[0].display_name == "impersonation"
+
+
+def test_pass1_authentic_label_still_installs_when_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ANTI-CASE at the Pass-1 seam: an authored label WITH identity
+    evidence still installs under the gate — title-cased."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "1")
+    pf = SimpleNamespace(
+        name="directory-sync",
+        display_name=None,
+        anchor_id="route:apps/web/app/(wrap)/settings/(sl)/organizations/dsync",
+        paths=["apps/web/app/(wrap)/settings/(sl)/organizations/dsync/page.tsx"],
+    )
+    routes = [
+        {"pattern": "/settings/organizations/dsync",
+         "file": "apps/web/app/(wrap)/settings/(sl)/organizations/dsync/page.tsx"},
+    ]
+    ps = _ps([("directory_sync", "/settings/organizations/dsync")])
+    _run_contract([pf], ps, routes)
+    assert pf.display_name == "Directory Sync"
+
+
 # ── OFF-path byte-identity at the consumer seam ─────────────────────────
 
 

@@ -3130,6 +3130,24 @@ def run_naming_contract(
         nav_label_sets_for_pfs(product_features, product_strings, routes_index)
         if uf_rung_sources_v2_enabled() else {}
     )
+    # Display-cross evidence gate (default OFF): the DISPLAY channel's three
+    # nav consumers (Pass-1 candidate rank, keyed labeler context, the B71
+    # provenance ladder) read the GATED label map — foreign labels reverted,
+    # anchor-page tie-break, title-cased. Law C (B40 nav rung) and the B57
+    # nav-cluster rung keep reading the RAW votes below — untouched. OFF ⇒
+    # empty map + raw reads everywhere ⇒ byte-identical.
+    display_gate_on = pf_display_evidence_gate_enabled()
+    gated_nav_labels = (
+        gated_nav_labels_for_pfs(
+            product_features, product_strings, routes_index, vocab)
+        if display_gate_on else {}
+    )
+
+    def _display_nav_label(slug: str) -> str | None:
+        if display_gate_on:
+            return gated_nav_labels.get(slug) or None
+        return nav_labels.get(slug)
+
     prev_by_anchor, prev_by_slug = (
         _prev_pf_displays(prev_scan) if (keeper_on and prev_scan) else ({}, {})
     )
@@ -3149,7 +3167,7 @@ def run_naming_contract(
         )
         anchor_id = str(getattr(pf, "anchor_id", None) or "")
         candidates = build_pf_candidates(
-            pf, vocab, nav_label=nav_labels.get(slug), repo_root=repo_root)
+            pf, vocab, nav_label=_display_nav_label(slug), repo_root=repo_root)
         # B27 — the package's own declared display word (None when the
         # channel is off / not a package-dir anchor). Cached read.
         pkg_display, pkg_src = (
@@ -3302,7 +3320,7 @@ def run_naming_contract(
                                          c, anchor_id, vocab))],
                 context={
                     "anchor_id": anchor_id,
-                    "nav_label": nav_labels.get(slug),
+                    "nav_label": _display_nav_label(slug),
                 },
                 obj=pf,
             ))
@@ -3631,16 +3649,10 @@ def run_naming_contract(
 
         # Display-cross evidence gate (default OFF): when armed, the nav
         # channel feeding the provenance ladder is the GATED map (foreign
-        # labels reverted, anchor-page tie-break, title-cased) instead of
-        # the raw B40 top-vote label. OFF/unset ⇒ ``_gated_nav`` is empty
-        # and the ``else`` branch reproduces the pre-gate ``nav`` byte for
-        # byte.
-        _gate_on = pf_display_evidence_gate_enabled()
-        _gated_nav = (
-            gated_nav_labels_for_pfs(
-                product_features, product_strings, routes_index, vocab)
-            if _gate_on else {}
-        )
+        # labels reverted, anchor-page tie-break, title-cased — the same
+        # ``_display_nav_label`` view Pass 1 consumed) instead of the raw
+        # top-vote label. OFF/unset reproduces the pre-gate ``nav`` byte
+        # for byte.
 
         def _pf_sources(pf: Any) -> ProvenanceSources:
             pslug = str(getattr(pf, "name", "") or "")
@@ -3652,12 +3664,8 @@ def run_naming_contract(
                 pkg, pkg_src = _package_manifest_display(aid, vocab, repo_root, cur)
                 if pkg and pkg_src == "manifest":
                     manifest = pkg
-            nav = (
-                _gated_nav.get(pslug, "") if _gate_on
-                else nav_labels.get(pslug, "") or ""
-            )
             return ProvenanceSources(
-                nav=nav,
+                nav=_display_nav_label(pslug) or "",
                 manifest=manifest,
                 basename=_anchor_terminal_segment(aid) or "",
                 # Horizon-1 ruling (2026-07-16): anchor-kind scopes the
