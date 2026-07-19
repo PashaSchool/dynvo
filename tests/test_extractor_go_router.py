@@ -348,10 +348,12 @@ def test_off_traefik_shape_keeps_shipped_header_garbage(
     assert "api-rawdata" not in names
 
 
-def test_unset_matches_explicit_off(
+def test_unset_matches_explicit_on(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unset ≡ explicit ``0`` — the shipped board, byte-for-byte."""
+    """SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the
+    inverted kill-switch law — unset ≡ explicit ``1``, the ARMED board,
+    byte-for-byte (pre-flip this test asserted unset ≡ explicit ``0``)."""
     _write(tmp_path / "pkg" / "api" / "handler.go", _traefik_shape_src())
     ctx = _ctx(repo_path=tmp_path, tracked_files=["pkg/api/handler.go"])
 
@@ -360,12 +362,12 @@ def test_unset_matches_explicit_off(
         (c.name, c.paths, c.confidence_self)
         for c in GoRouterExtractor().extract(ctx)
     )
-    monkeypatch.setenv(GO_EXTRACTION_ENV, "0")
-    off = sorted(
+    monkeypatch.setenv(GO_EXTRACTION_ENV, "1")
+    on = sorted(
         (c.name, c.paths, c.confidence_self)
         for c in GoRouterExtractor().extract(ctx)
     )
-    assert unset == off
+    assert unset == on
 
 
 def test_armed_nethttp_go122_method_pattern(
@@ -590,12 +592,14 @@ def test_ws_merge_go_router_origin_gate(
     assert go_off.routes == ()
 
 
-def test_flag_default_off() -> None:
-    """Belt-and-braces: the flag reader defaults OFF and honours truthy set."""
+def test_flag_default_on() -> None:
+    """Belt-and-braces: the flag reader defaults ON (SEMANTIC flip
+    migration, 2026-07-19 S*-pack, KEY_SCHEMA 32) and honours both the
+    truthy set and the kill-switch values."""
     import os
     saved = os.environ.pop(GO_EXTRACTION_ENV, None)
     try:
-        assert go_extraction_enabled() is False
+        assert go_extraction_enabled() is True
         for on in ("1", "true", "on", "yes", "TRUE"):
             os.environ[GO_EXTRACTION_ENV] = on
             assert go_extraction_enabled() is True

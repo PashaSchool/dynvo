@@ -824,10 +824,12 @@ ENV_OUTPUT_FLAGS = (
     # method-prefixed ``"GET /x"`` ServeMux pattern), dropping the header/key
     # false positives with no per-repo vocabulary, plus excludes testdata/
     # example fixtures (dev-artifact law). Reshapes go-router anchors only —
-    # go-package directory anchors are untouched. Default OFF; the flag is
-    # read at collect time so the cached pattern bundle serves OFF and ON
-    # alike — unset / ``0`` restores the shipped board byte-identically. No
-    # KEY_SCHEMA bump (the default flip rides its own later commit).
+    # go-package directory anchors are untouched. Default ON (flipped
+    # 2026-07-19, S*-pack, KEY_SCHEMA 32 — traefik 0->1 PF/51 routes,
+    # ollama 0->2/76); the flag is read at collect time so the cached
+    # pattern bundle serves OFF and ON alike — =0/false/off restores the
+    # shipped board byte-identically — explicit off stays a valid
+    # kill-switch forever.
     "FAULTLINE_GO_EXTRACTION",
 )
 

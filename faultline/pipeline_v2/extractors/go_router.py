@@ -57,15 +57,17 @@ GO_EXTRACTION_ENV = "FAULTLINE_GO_EXTRACTION"
 
 
 def go_extraction_enabled() -> bool:
-    """Default **OFF**. ``FAULTLINE_GO_EXTRACTION`` in ``{1,true,on,yes}``
-    arms the ``armed:`` YAML block: the gorilla/mux registration signature
+    """Default **ON** since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32;
+    traefik 0->1 PF/51 routes, ollama 0->2/76 — S4b).
+    ON arms the ``armed:`` YAML block: the gorilla/mux registration signature
     plus the ``route_must_be_path`` filter that drops the header-name / JSON-
     key false positives the bare ``.Get("...")`` patterns pick up on real Go
-    code. Unset / ``0`` / any falsy token keeps the shipped extractor
-    byte-identical (the flag is read at COLLECT time, so the compiled bundle
-    is shared across OFF/ON — no cache staleness)."""
-    return os.environ.get(GO_EXTRACTION_ENV, "0").strip().lower() in {
-        "1", "true", "on", "yes",
+    code. ``FAULTLINE_GO_EXTRACTION=0`` (or false/no/off) keeps the shipped
+    extractor byte-identical (the flag is read at COLLECT time, so the
+    compiled bundle is shared across OFF/ON — no cache staleness) —
+    explicit off stays a valid kill-switch forever."""
+    return os.environ.get(GO_EXTRACTION_ENV, "1").strip().lower() not in {
+        "0", "false", "no", "off", "",
     }
 
 
