@@ -63,6 +63,16 @@ from faultline.pipeline_v2.manifest_display import (
     pf_manifest_name_enabled,
     word_split_slug,
 )
+from faultline.pipeline_v2.naming_wave_r5 import (
+    MemberEvidence,
+    brand_echo_pkg,
+    build_board_evidence,
+    canonicalize_compose,
+    derive_split_display,
+    plural_rename,
+    r5_vocab_sets,
+    unresolved_dir_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2589,6 +2599,9 @@ def _apply_uf_name_laws(
     routes_index: Iterable[Mapping[str, Any]] | None = None,
     repo_root: Any = None,
     adjudicated_sources: Mapping[str, Mapping[str, Iterable[str]]] | None = None,
+    r5_evidence: tuple[
+        MemberEvidence, Mapping[str, MemberEvidence],
+        Mapping[str, MemberEvidence]] | None = None,
 ) -> None:
     """B9 — three deterministic UF display laws over FINAL members/names, run
     AFTER the labeler so labeler-introduced collisions/over-claims are caught.
@@ -2597,6 +2610,25 @@ def _apply_uf_name_laws(
     from collections import defaultdict
 
     idx = _action_family_index(vocab)
+
+    # ── R5 phase-2 (FAULTLINE_NAMING_WAVE_R5, default OFF) — member-evidence
+    # pool + vocab sets for the rename/plural/conf-drop/brand-echo lanes.
+    # ``r5_evidence`` is threaded by run_naming_contract (built once); the
+    # 6.7e rescore seam rebuilds it here so BOTH passes apply the SAME laws
+    # (idempotent: a healed name re-derives to itself). OFF ⇒ None ⇒ every
+    # R5 phase-2 block below is a no-op ⇒ byte-identical.
+    _r5_on = naming_wave_r5_enabled()
+    _r5_sets: Mapping[str, Any] | None = None
+    _r5_repo_ev: MemberEvidence | None = None
+    _r5_uf_ev: Mapping[str, MemberEvidence] = {}
+    if _r5_on:
+        _r5_sets = r5_vocab_sets(vocab)
+        if r5_evidence is None:
+            r5_evidence = build_board_evidence(
+                user_flows, list(pf_by_slug.values()), flow_by_id or {},
+                repo_root)
+        _r5_repo_ev, _r5_uf_ev_m, _ = r5_evidence
+        _r5_uf_ev = _r5_uf_ev_m
 
     def _members(uf: Any) -> list[str]:
         return [flow_name_by_id.get(str(m), str(m))
@@ -2742,7 +2774,14 @@ def _apply_uf_name_laws(
                 # (link)', 'Manage settings (Settings)', 'Manage tRPC (tRPC)').
                 if uf_name_degrime_enabled() and _qualifier_echoes_base(base, q):
                     continue
-                cand = polish_display_casing(f"{base} ({q})", vocab)
+                cand_raw = f"{base} ({q})"
+                if _r5_on and _r5_sets is not None:
+                    # R5-4 — compose site 1/3: canonical joint before polish.
+                    cand_raw, _r5_rule = canonicalize_compose(cand_raw, _r5_sets)
+                    if _r5_rule:
+                        tele["r5_compose_canonicalized"] = (
+                            tele.get("r5_compose_canonicalized", 0) + 1)
+                cand = polish_display_casing(cand_raw, vocab)
                 fld = cand.strip().lower()
                 if (fld not in taken
                         and not display_law_violations(
@@ -2884,6 +2923,65 @@ def _apply_uf_name_laws(
                     _snap_tele["families"].get(_fam, 0) + 1)
             _snap_tele["skipped_collision"] += (
                 len(_snap_proposals) - len(_snap_allowed))
+
+    # ── R5-3 (FAULTLINE_NAMING_WAVE_R5) — member-evidence display derivation
+    # over the FINAL UF names, before Law C so confidence is scored on the
+    # healed name (the B50-deparam precedent). Two rungs, both COLLISION-SAFE
+    # via degrime_rename_plan and law-checked, protected journeys exempt:
+    #   1. split-core rename ('Manage pagelayouts' -> 'Manage page layouts',
+    #      'Manage signup' -> 'Manage sign up', 'Connect api_keys' ->
+    #      'Connect API keys' after casing polish);
+    #   2. plural rung ('Manage account setting' -> '... settings' on >= 3x
+    #      member evidence, anchor-source segment excluded).
+    # Idempotent: a healed name re-derives to itself in the 6.7e rescore.
+    if _r5_on and _r5_sets is not None and _r5_repo_ev is not None:
+        _r5_empty = MemberEvidence()
+        _r5_split_props: dict[str, str] = {}
+        for uf in ordered:
+            if _uf_protected(uf, authored_ids, keeper_on):
+                continue
+            _uid = str(getattr(uf, "id", "") or "")
+            cur = str(getattr(uf, "name", "") or "")
+            healed, _r5_srcs = derive_split_display(
+                cur, _r5_uf_ev.get(_uid) or _r5_empty, _r5_repo_ev, _r5_sets)
+            if _r5_srcs and healed != cur:
+                healed = polish_display_casing(healed, vocab)
+            if (healed != cur
+                    and not display_law_violations(
+                        healed, vocab, pf_display=_pfd(uf) or None,
+                        member_tokens=_uf_member_evidence(uf))):
+                _r5_split_props[_uid] = healed
+        if _r5_split_props:
+            _r5_cur = {
+                str(getattr(u, "id", "") or ""): str(getattr(u, "name", "") or "")
+                for u in ordered
+            }
+            _r5_by_id = {str(getattr(u, "id", "") or ""): u for u in ordered}
+            for _uid in sorted(degrime_rename_plan(_r5_cur, _r5_split_props)):
+                _r5_by_id[_uid].name = _r5_split_props[_uid]
+                tele["r5_split_renamed"] = tele.get("r5_split_renamed", 0) + 1
+        _r5_plural_props: dict[str, str] = {}
+        for uf in ordered:
+            if _uf_protected(uf, authored_ids, keeper_on):
+                continue
+            _uid = str(getattr(uf, "id", "") or "")
+            cur = str(getattr(uf, "name", "") or "")
+            plur = plural_rename(
+                cur, _r5_uf_ev.get(_uid) or _r5_empty, _r5_sets)
+            if (plur is not None and plur != cur
+                    and not display_law_violations(
+                        plur, vocab, pf_display=_pfd(uf) or None,
+                        member_tokens=_uf_member_evidence(uf))):
+                _r5_plural_props[_uid] = plur
+        if _r5_plural_props:
+            _r5_cur = {
+                str(getattr(u, "id", "") or ""): str(getattr(u, "name", "") or "")
+                for u in ordered
+            }
+            _r5_by_id = {str(getattr(u, "id", "") or ""): u for u in ordered}
+            for _uid in sorted(degrime_rename_plan(_r5_cur, _r5_plural_props)):
+                _r5_by_id[_uid].name = _r5_plural_props[_uid]
+                tele["r5_plural_renamed"] = tele.get("r5_plural_renamed", 0) + 1
 
     rungs_on = name_evidence_rungs_enabled()
     _nav = nav_labels or {}
@@ -3300,7 +3398,12 @@ def _apply_uf_name_laws(
                 uf.name_evidence = miss
     # R5-5 — cap census-shape 'high' rows to 'medium' over the FULL set (both
     # this pass and the adjudicator's rescore re-run it; OFF ⇒ no-op).
-    _apply_r5_confidence_caps(user_flows, tele, rungs_on=rungs_on)
+    # Phase-2 threads the member-evidence pool so the unresolved-dir-token
+    # and brand-echo rungs fire in BOTH passes too.
+    _apply_r5_confidence_caps(
+        user_flows, tele, rungs_on=rungs_on,
+        repo_ev=_r5_repo_ev, sets=_r5_sets,
+        flow_by_id=flow_by_id, repo_root=repo_root)
     tele["confidence_after"] = _conf_hist(user_flows)
 
 
@@ -3469,6 +3572,9 @@ def run_naming_contract(
     )
     if _wave_r5:
         tele["pf_identity_parity_qualified"] = 0
+    # R5 phase-2 — vocab sets for the compose canonicalizer + display
+    # derivation lanes (cached; zero work when the wave is off).
+    _r5_sets: Mapping[str, Any] | None = r5_vocab_sets(vocab) if _wave_r5 else None
     for pf in sorted(product_features,
                      key=lambda p: str(getattr(p, "name", "") or "")):
         slug = str(getattr(pf, "name", "") or "")
@@ -3523,6 +3629,13 @@ def run_naming_contract(
                 base = pkg_display
             fallback = polish_display_casing(current, vocab)
             bq = f"{base} ({qual})" if base and qual else None
+            if bq and _wave_r5 and _r5_sets is not None:
+                # R5-4 — compose site 2/3: canonical joint on the qualified
+                # PF fallback ('New (Studio)' class inverts to noun-lead).
+                bq, _r5_bq_rule = canonicalize_compose(bq, _r5_sets)
+                if _r5_bq_rule:
+                    tele["r5_compose_canonicalized"] = (
+                        tele.get("r5_compose_canonicalized", 0) + 1)
             if humanize_route_names_enabled():
                 # B2: the qualified fallback must be LAW-clean AND free of
                 # route-template residue (the pre-B2 path emitted
@@ -4013,6 +4126,14 @@ def run_naming_contract(
     # ── B9 UF name laws (post-labeler, evaluated over FINAL members) ──
     # Runs AFTER the labeler so labeler-introduced collisions/over-claims are
     # caught; composes with membership fixes (evaluates ACTUAL members).
+    # R5 phase-2 — build the member-evidence pool ONCE (UF laws + the PF
+    # display lane below share it). ``None`` when the wave is off ⇒ the UF
+    # law body skips every phase-2 block ⇒ byte-identical.
+    _r5_evidence = (
+        build_board_evidence(
+            user_flows, product_features, flow_by_id, repo_root)
+        if _wave_r5 else None
+    )
     if uf_name_laws_enabled():
         _apply_uf_name_laws(
             user_flows, pf_by_slug, vocab, flow_name_by_id, tele,
@@ -4026,6 +4147,7 @@ def run_naming_contract(
             nav_label_sets=nav_label_sets,
             routes_index=routes_index,
             repo_root=repo_root,
+            r5_evidence=_r5_evidence,
         )
 
     # ── B56 final pass: UF names inherit the PF abbreviation expansions ──
@@ -4083,6 +4205,58 @@ def run_naming_contract(
         tele["pf_display_provenance"] = apply_pf_display_provenance(
             product_features, _pf_sources, vocab)
 
+    # ── R5-3 phase-2: PF display derivation (FAULTLINE_NAMING_WAVE_R5) ──
+    # The split-core rename lane over PF displays ('Signin' -> 'Sign in',
+    # 'Blobstorage' -> 'Blob storage') + the unresolved-dir-token conf-drop
+    # ('Htmltopdf' / 'Bgtasks' keep their name, cap high -> medium and stamp
+    # ``shape:unresolved-dir-token``). Collision-safe (folded-display map);
+    # identity-folds are INVARIANT under a space split, so R5-1 parity below
+    # judges the same identities. Flag OFF ⇒ skipped ⇒ byte-identical.
+    if _wave_r5 and _r5_sets is not None and _r5_evidence is not None:
+        _r5_repo_ev, _, _r5_pf_ev = _r5_evidence
+        _r5_pf_empty = MemberEvidence()
+        _pf_cur: dict[str, str] = {}
+        _pf_props: dict[str, str] = {}
+        for pf in sorted(product_features,
+                         key=lambda p: str(getattr(p, "name", "") or "")):
+            slug = str(getattr(pf, "name", "") or "")
+            disp = str(getattr(pf, "display_name", None) or "")
+            _pf_cur[slug] = disp
+            if not disp or "(" in disp:
+                continue
+            healed, _srcs = derive_split_display(
+                disp, _r5_pf_ev.get(slug) or _r5_pf_empty, _r5_repo_ev,
+                _r5_sets)
+            if _srcs and healed != disp:
+                healed = polish_display_casing(healed, vocab)
+            if healed != disp and not display_law_violations(healed, vocab):
+                _pf_props[slug] = healed
+        if _pf_props:
+            _pf_by_slug_l = {
+                str(getattr(p, "name", "") or ""): p for p in product_features
+            }
+            for slug in sorted(degrime_rename_plan(_pf_cur, _pf_props)):
+                _pf_by_slug_l[slug].display_name = _pf_props[slug]
+                tele["r5_pf_split_renamed"] = (
+                    tele.get("r5_pf_split_renamed", 0) + 1)
+        _r5_repo_ev2 = _r5_evidence[0]
+        _rungs_on = name_evidence_rungs_enabled()
+        for pf in sorted(product_features,
+                         key=lambda p: str(getattr(p, "name", "") or "")):
+            if str(getattr(pf, "name_confidence", "") or "") != "high":
+                continue
+            disp = str(getattr(pf, "display_name", None) or "")
+            if unresolved_dir_token(disp, _r5_repo_ev2, _r5_sets) is None:
+                continue
+            pf.name_confidence = "medium"
+            if _rungs_on:
+                _ev = list(getattr(pf, "name_evidence", None) or [])
+                if "shape:unresolved-dir-token" not in _ev:
+                    _ev.append("shape:unresolved-dir-token")
+                pf.name_evidence = _ev
+            tele["r5_pf_dirtoken_capped"] = (
+                tele.get("r5_pf_dirtoken_capped", 0) + 1)
+
     # ── R5-1: identity-parity law (FAULTLINE_NAMING_WAVE_R5, default OFF) ──
     # THE authoritative last word on PF displays. The B71 provenance ladder
     # (above) re-derives each display independently from the RAW nav channel
@@ -4127,6 +4301,10 @@ def run_naming_contract(
 
 def _apply_r5_confidence_caps(
     user_flows: Iterable[Any], tele: dict[str, Any], *, rungs_on: bool,
+    repo_ev: MemberEvidence | None = None,
+    sets: Mapping[str, Any] | None = None,
+    flow_by_id: Mapping[str, Any] | None = None,
+    repo_root: Any = None,
 ) -> None:
     """R5-5 negative confidence rungs (``FAULTLINE_NAMING_WAVE_R5``, default
     OFF). A FINAL sweep over EVERY user flow — placed inside
@@ -4147,7 +4325,35 @@ def _apply_r5_confidence_caps(
     for uf in user_flows:
         if str(getattr(uf, "name_confidence", "") or "") != "high":
             continue
-        shape = _name_disease_shape(str(getattr(uf, "name", "") or ""))
+        name = str(getattr(uf, "name", "") or "")
+        shape = _name_disease_shape(name)
+        if not shape and sets is not None:
+            # R5-5-ext brand-echo — a bare '<verb> <pkg>' journey whose
+            # remainder restates a brand-echoing workspace package from
+            # its OWN member paths never ships 'high' (probe r55: ANY
+            # member count; healthy product-word packages untouched).
+            # Checked BEFORE the dir-token rung — it is the more specific
+            # diagnosis when a brand token also lacks symbol-singles
+            # ('Manage hoppscotch desktop' stamps brand-echo).
+            _paths: list[str] = []
+            for _mid in (getattr(uf, "member_flow_ids", None) or ()):
+                _fl = (flow_by_id or {}).get(str(_mid))
+                if _fl is not None:
+                    _paths.extend(
+                        str(p) for p in (getattr(_fl, "paths", None) or ()))
+            if brand_echo_pkg(name, _paths, repo_root, sets) is not None:
+                shape = "brand-echo"
+                tele["uf_brand_echo_capped"] = (
+                    tele.get("uf_brand_echo_capped", 0) + 1)
+        if not shape and repo_ev is not None and sets is not None:
+            # R5-3 phase-2 conf-drop — an UNRESOLVED dir-token keeps its
+            # name but never ships 'high' (Htmltopdf / Bgtasks class:
+            # zero const-guarded symbol-singles, split-core found no
+            # evidence either — this runs after the rename lane).
+            if unresolved_dir_token(name, repo_ev, sets) is not None:
+                shape = "unresolved-dir-token"
+                tele["uf_dirtoken_capped"] = (
+                    tele.get("uf_dirtoken_capped", 0) + 1)
         if not shape:
             continue
         uf.name_confidence = "medium"
