@@ -51,6 +51,7 @@ def _pin_ws1_baseline_world(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAULTLINE_UF_DET_AGGREGATION", "0")
     monkeypatch.setenv("FAULTLINE_UF_REFINE_TOKEN_SCALE", "0")
     monkeypatch.setenv("FAULTLINE_LLM_BATCH_CANON", "0")
+    monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "0")
 
 
 MUTATED_STAGE = "test_strip"

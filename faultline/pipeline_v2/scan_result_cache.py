@@ -803,9 +803,12 @@ ENV_OUTPUT_FLAGS = (
     # explicit routes_index rows (the App-Router profile already anchors the
     # files' features/flows via the same first-segment slug — same-slug merge,
     # no twin); build_routes_index folds them LAST so a clean next-app-router
-    # repo's stock rows win the dedup byte-identically. Default OFF; unset / =0
-    # keeps the extractor unregistered (extractor_hits byte-identical — the B67
-    # kill-switch lesson). No KEY_SCHEMA bump (the flip rides its own commit).
+    # repo's stock rows win the dedup byte-identically. Default ON (flipped
+    # 2026-07-19, S*-pack, KEY_SCHEMA 32 — cal 0->249 / onyx 0->106 routes,
+    # conservation 0; KS-sets of both class forms + wave-17); =0/false/off
+    # keeps the extractor unregistered (extractor_hits byte-identical — the
+    # B67 kill-switch lesson) — explicit off stays a valid kill-switch
+    # forever.
     "FAULTLINE_APPROUTER_KEYLESS",
     # S4b (2026-07-18) — Go extraction repair. On real Go repos the shipped
     # go-router extractor mints HTTP-header names and JSON/struct keys as

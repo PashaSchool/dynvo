@@ -83,13 +83,15 @@ _CONF_CAP = 0.95
 
 
 def approuter_keyless_enabled() -> bool:
-    """Default **OFF**. ``FAULTLINE_APPROUTER_KEYLESS=1`` (or true/yes/on)
-    arms the extractor; unset / ``0`` / false / off keep it inert
-    (``extract`` -> ``[]``) AND unregistered (see
+    """Default **ON** since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32;
+    cal 0->249, onyx 0->106 routes; conservation 0 — S4a).
+    ``FAULTLINE_APPROUTER_KEYLESS=0`` (or false/no/off) keeps the extractor
+    inert (``extract`` -> ``[]``) AND unregistered (see
     :mod:`faultline.pipeline_v2.stage_1_extractors`), so the scan is
-    byte-identical to pre-S4a."""
-    return os.environ.get(APPROUTER_KEYLESS_ENV, "").strip().lower() in {
-        "1", "true", "yes", "on",
+    byte-identical to pre-S4a — explicit off stays a valid kill-switch
+    forever."""
+    return os.environ.get(APPROUTER_KEYLESS_ENV, "1").strip().lower() not in {
+        "0", "false", "no", "off", "",
     }
 
 

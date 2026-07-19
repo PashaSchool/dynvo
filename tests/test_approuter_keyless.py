@@ -131,7 +131,9 @@ def test_derive_app_router_route_rejects_non_app_router() -> None:
 
 
 def test_extractor_inert_when_flag_off(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("FAULTLINE_APPROUTER_KEYLESS", raising=False)
+    # MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): flag-OFF
+    # is now the explicit kill-switch (unset arms the extractor).
+    monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "0")
     _write(tmp_path, {"apps/web/app/bookings/page.tsx": _PAGE})
     ctx = _ctx(tmp_path, stack="js-generic")
     assert approuter_keyless_enabled() is False
@@ -218,7 +220,8 @@ def test_no_twin_rows_on_clean_next_app_router_repo(
     LAST and dedup against the stock rows, so no twin and no drift."""
     _write(tmp_path, _CLEAN_APP_REPO)
 
-    monkeypatch.delenv("FAULTLINE_APPROUTER_KEYLESS", raising=False)
+    # MECHANICAL flip migration (flip32): OFF leg = explicit kill-switch.
+    monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "0")
     off = _routes_index_for(tmp_path)
 
     monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "1")
@@ -262,7 +265,8 @@ def test_cal_shape_app_router_residue_recovered(
 ) -> None:
     _write(tmp_path, _CAL_SHAPE)
 
-    monkeypatch.delenv("FAULTLINE_APPROUTER_KEYLESS", raising=False)
+    # MECHANICAL flip migration (flip32): OFF leg = explicit kill-switch.
+    monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "0")
     off = _routes_index_for(tmp_path)
     monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "1")
     on = _routes_index_for(tmp_path)
@@ -308,7 +312,8 @@ def test_onyx_shape_leftover_app_router_recovered(
 ) -> None:
     _write(tmp_path, _ONYX_SHAPE)
 
-    monkeypatch.delenv("FAULTLINE_APPROUTER_KEYLESS", raising=False)
+    # MECHANICAL flip migration (flip32): OFF leg = explicit kill-switch.
+    monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "0")
     off = _routes_index_for(tmp_path)
     monkeypatch.setenv("FAULTLINE_APPROUTER_KEYLESS", "1")
     on = _routes_index_for(tmp_path)

@@ -121,6 +121,14 @@ _SOURCE_PRIORITY: dict[str, int] = {
     # union-proof scans.)
     "server-api-entry": 4,   # B66 NestJS/GraphQL/tRPC/koa/hono entries
     "spa-page":         4,   # B65-v3 vue file-pages + react-router config
+    # S*-pack flip (2026-07-19) — SEMANTIC add-on: the S4a App-Router
+    # keyless extractor now REGISTERS BY DEFAULT (KEY_SCHEMA 32), so the
+    # priority-completeness guard demands an explicit tier. Declared
+    # filesystem entry points (app/**/page.tsx + route.ts) — the
+    # ``route``/``route-pages`` class, tier 4. (Its S4a armed proofs ran
+    # at the implicit 0; ownership-conflict outcomes are adjudicated by
+    # the post-flip union-proof scans — the horizon-1 precedent.)
+    "route-approuter":  4,   # S4a App-Router keyless page/route leaves
     # Profile-supplied Django app-directory anchors (Phase B #2). Same
     # code-layout tier as fastapi-domain: below declared URLConf routes
     # (the urls/views files belong to the route anchor), above schema.

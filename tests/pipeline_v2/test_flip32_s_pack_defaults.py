@@ -47,6 +47,10 @@ from faultline.pipeline_v2.overturn_ledger import (
     OVERTURN_ARBITER_ENV,
     overturn_arbiter_enabled,
 )
+from faultline.pipeline_v2.extractors.approuter_keyless import (
+    APPROUTER_KEYLESS_ENV,
+    approuter_keyless_enabled,
+)
 
 # (env-var name, helper) for every S*-pack flag flipped default OFF -> ON.
 _FLIPPED = [
@@ -56,10 +60,11 @@ _FLIPPED = [
     (UF_REFINE_TOKEN_SCALE_ENV, _token_scale_enabled),
     (BATCH_CANON_ENV, batch_canon_enabled),
     (OVERTURN_ARBITER_ENV, overturn_arbiter_enabled),
+    (APPROUTER_KEYLESS_ENV, approuter_keyless_enabled),
 ]
 
 # Sanity: grows commit-by-commit with the pack; no duplicate env names.
-assert len(_FLIPPED) == 6
+assert len(_FLIPPED) == 7
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
