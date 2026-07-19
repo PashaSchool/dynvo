@@ -248,3 +248,101 @@ def test_anticase_distinct_healthy_displays_untouched(
     disp = _disp(pfs)
     assert disp == {"auth": "Auth", "billing": "Billing", "webhooks": "Webhooks"}
     assert tele.get("pf_identity_parity_qualified", 0) == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Segment R5-2 — own-resource echo-hub templating
+# ══════════════════════════════════════════════════════════════════════
+
+from faultline.pipeline_v2.naming_contract import (  # noqa: E402
+    _echo_own_resource_uf_ids,
+    build_uf_candidates,
+)
+
+
+def _uf_res(uid: str, name: str, pfid: str, resource: str,
+            *, category: str = "interactive", synthesized: bool = True) -> UserFlow:
+    return UserFlow(
+        id=uid, name=name, resource=resource, domain=None,
+        product_feature_id=pfid, intent="manage",
+        member_flow_ids=[], member_count=0,
+        category=category, synthesized=synthesized,
+    )
+
+
+def _twenty_server_hub() -> tuple[list[Feature], list[UserFlow]]:
+    # twenty ``twenty-server`` PF hosts many organic UFs each on a DISTINCT
+    # resource; the PF-display template collapses them into 'Manage twenty
+    # server (…)' echoes.
+    pf = _pf("twenty-server", "Twenty Server", "package:packages/twenty-server")
+    ufs = [
+        _uf_res("u1", "Twenty Server", "twenty-server", "billing"),
+        _uf_res("u2", "Twenty Server", "twenty-server", "field-metadata"),
+        _uf_res("u3", "Twenty Server", "twenty-server", "dpa"),
+        _uf_res("u4", "Twenty Server", "twenty-server", "fields"),
+    ]
+    return [pf], ufs
+
+
+def test_echo_hub_detection_flags_multi_resource_hub() -> None:
+    pfs, ufs = _twenty_server_hub()
+    ids = _echo_own_resource_uf_ids(ufs, {p.name: p for p in pfs})
+    assert ids == {"u1", "u2", "u3", "u4"}
+
+
+def test_echo_hub_own_resource_kills_echo_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
+    pfs, ufs = _twenty_server_hub()
+    tele = _run(pfs, ufs)
+    names = {u.name for u in ufs}
+    # every sibling now carries its OWN resource, not the shared PF echo.
+    assert not any(n.strip().lower().startswith("manage twenty server")
+                   for n in names)
+    assert len(names) == 4  # four distinct rows, no echo, no qualifier-spray
+    assert tele.get("uf_own_resource_templated", -1) >= 0
+
+
+def test_echo_hub_candidate_uses_own_resource_over_pf_display() -> None:
+    pf = _pf("twenty-server", "Twenty Server", "package:packages/twenty-server")
+    uf = _uf_res("u1", "Twenty Server", "twenty-server", "billing")
+    with_own = build_uf_candidates(uf, pf, VOCAB, own_resource=True)
+    without = build_uf_candidates(uf, pf, VOCAB, own_resource=False)
+    # own-resource template mentions the resource, not the PF display.
+    assert any("billing" in c.lower() for c in with_own)
+    assert any("twenty server" in c.lower() for c in without)
+
+
+# ── ANTI-CASES for R5-2 ──────────────────────────────────────────────
+
+
+def test_anticase_single_resource_pf_not_a_hub() -> None:
+    # A PF whose UFs all share ONE resource is not a multi-resource hub.
+    pf = _pf("billing", "Billing", "route:app/billing")
+    ufs = [
+        _uf_res("u1", "Billing", "billing", "invoice"),
+        _uf_res("u2", "Billing", "billing", "invoice"),
+    ]
+    ids = _echo_own_resource_uf_ids(ufs, {pf.name: pf})
+    assert ids == set()
+
+
+def test_anticase_own_identity_resource_not_templated() -> None:
+    # A UF whose resource echoes the PF identity is the PF's core, not a
+    # distinct hub member — untouched.
+    pf = _pf("billing", "Billing", "route:app/billing")
+    ufs = [
+        _uf_res("u1", "Billing", "billing", "billing"),
+        _uf_res("u2", "Billing", "billing", "billing"),
+    ]
+    ids = _echo_own_resource_uf_ids(ufs, {pf.name: pf})
+    assert ids == set()
+
+
+def test_r5_2_off_byte_identical(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    pfs, ufs = _twenty_server_hub()
+    tele = _run(pfs, ufs)
+    # OFF: no own-resource telemetry key, echo template preserved.
+    assert "uf_own_resource_templated" not in tele

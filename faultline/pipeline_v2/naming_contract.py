@@ -2136,6 +2136,7 @@ def build_uf_candidates(
     vocab: Mapping[str, Any],
     member_flow_names: Iterable[str] = (),
     authored: Iterable[str] = (),
+    own_resource: bool = False,
 ) -> list[str]:
     """Ranked display candidates for one user flow. Journey templates
     (verb-led, actor+intent+outcome shape) lead when the current name is
@@ -2147,7 +2148,16 @@ def build_uf_candidates(
     literally named this journey, which outranks any derived template. Each
     is still polished + law-gated by the caller like any candidate, so an
     unlawful authored string simply falls through to the derived set.
-    Empty (the default) ⇒ byte-identical to the pre-Track-C ranking."""
+    Empty (the default) ⇒ byte-identical to the pre-Track-C ranking.
+
+    ``own_resource`` (R5-2 echo-hub, ``FAULTLINE_NAMING_WAVE_R5``) — the
+    generic template joins on the UF's OWN resource instead of the PF
+    display. The D9 system-seed hand (below) already does this for
+    flow-less SYSTEM seeds; R5-2 extends it to ORGANIC siblings when ≥2
+    UFs of one PF would otherwise mint the identical "<verb> <PF-display>"
+    row (twenty ``twenty-server`` -> 'Manage twenty server' ×24). The
+    caller sets it only for those hub members; False (the default) ⇒
+    byte-identical to the pre-R5-2 template."""
     current = str(getattr(uf, "name", "") or "")
     pf_display = (
         str(getattr(pf, "display_name", None) or getattr(pf, "name", "") or "")
@@ -2189,8 +2199,16 @@ def build_uf_candidates(
         template_name = tmpl.replace("{v}", vendor_disp)
     else:
         tmpl = (templates.get("generic") or {}).get(verdict) or "Manage {r}"
-        template_name = tmpl.replace(
-            "{r}", _resource_phrase(pf_display or current, vocab))
+        # R5-2 — an echo-hub organic sibling joins on its OWN resource so the
+        # row surfaces the job's identity, not the shared PF home (kills the
+        # 'Manage twenty server' ×24 echo + its qualifier-spray). Falls back
+        # to the PF-display join when the UF has no distinct resource.
+        _r_src = pf_display or current
+        if own_resource and getattr(uf, "resource", None):
+            _own = re.sub(r"[-_]+", " ", str(uf.resource)).strip()
+            if _own:
+                _r_src = _own
+        template_name = tmpl.replace("{r}", _resource_phrase(_r_src, vocab))
 
     # B50 Seg1 — a template whose verb duplicates the leading resource token
     # ('Ingest ingest', 'View views', 'Send send test email') collapses at
@@ -2224,6 +2242,50 @@ def build_uf_candidates(
     else:
         _add(polished_current)
         _add(template_name)
+    return out
+
+
+def _echo_own_resource_uf_ids(
+    user_flows: Iterable[Any],
+    pf_by_slug: Mapping[str, Any],
+) -> set[str]:
+    """R5-2 — the UF ids that must template on their OWN resource because
+    their PF is a multi-resource hub whose PF-display template would
+    collapse them into one echoed row.
+
+    A UF qualifies when: it is ORGANIC (``category != 'system'`` — the D9
+    hand already owns system seeds), carries a ``resource`` DISTINCT from
+    its PF's identity, and shares that PF with ≥2 such UFs spanning ≥2
+    distinct resources (twenty ``twenty-server`` hosts 24). Scale-invariant
+    (a ratio-free ≥2/≥2 shape rule, no per-repo numbers); a single-resource
+    PF or a PF whose UFs echo its own identity is never touched."""
+    from collections import defaultdict
+
+    by_pf: dict[str, list[Any]] = defaultdict(list)
+    for uf in user_flows:
+        if str(getattr(uf, "category", "") or "") == "system":
+            continue
+        if not str(getattr(uf, "resource", "") or "").strip():
+            continue
+        by_pf[str(getattr(uf, "product_feature_id", "") or "")].append(uf)
+    out: set[str] = set()
+    for pfid, ufs in by_pf.items():
+        pf = pf_by_slug.get(pfid)
+        pf_ident = _ident_fold(
+            str(getattr(pf, "display_name", None) or getattr(pf, "name", "") or "")
+        ) if pf is not None else ""
+        distinct = [
+            u for u in ufs
+            if _ident_fold(str(getattr(u, "resource", "") or ""))
+            not in ("", pf_ident)
+        ]
+        res_idents = {
+            _ident_fold(str(getattr(u, "resource", "") or "")) for u in distinct
+        }
+        res_idents.discard("")
+        if len(distinct) >= 2 and len(res_idents) >= 2:
+            for u in distinct:
+                out.add(str(getattr(u, "id", "") or ""))
     return out
 
 
@@ -3464,6 +3526,14 @@ def run_naming_contract(
     # pass: targets first, then only non-colliding renames land (a template
     # already worn by a sibling never duplicates). Flag OFF ⇒ byte-identical.
     degrime_p2_proposals: dict[str, str] = {}
+    # R5-2 echo-hub members that template on their own resource (empty set
+    # when the wave is off ⇒ every build_uf_candidates call keeps
+    # own_resource=False ⇒ byte-identical).
+    _echo_own_res_ids: set[str] = (
+        _echo_own_resource_uf_ids(user_flows, pf_by_slug) if _wave_r5 else set()
+    )
+    if _wave_r5:
+        tele["uf_own_resource_templated"] = len(_echo_own_res_ids)
     for uf in user_flows:
         pf = pf_by_slug.get(str(getattr(uf, "product_feature_id", None) or ""))
         pf_display = (
@@ -3475,8 +3545,10 @@ def run_naming_contract(
             flow_name_by_id.get(str(m), str(m))
             for m in (getattr(uf, "member_flow_ids", None) or [])
         ]
+        _own_res = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
         candidates = build_uf_candidates(
-            uf, pf, vocab, member_names, authored=_authored_for(uf))
+            uf, pf, vocab, member_names, authored=_authored_for(uf),
+            own_resource=_own_res)
         violations = display_law_violations(
             polish_display_casing(current, vocab), vocab,
             pf_display=pf_display or None)
