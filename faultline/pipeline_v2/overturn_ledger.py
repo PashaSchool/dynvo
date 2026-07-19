@@ -70,12 +70,15 @@ OVERTURN_ARBITER_ENV = "FAULTLINE_OVERTURN_ARBITER"
 
 
 def overturn_arbiter_enabled() -> bool:
-    """Default OFF. ``FAULTLINE_OVERTURN_ARBITER=1`` installs the ledger.
+    """Default ON since the 2026-07-19 S*-pack flip (KEY_SCHEMA 32;
+    byte-ident x3 pre-flip — the flip IS the overturns telemetry; B72
+    shields / B73 rules land AFTER as proposer-rule cycles).
 
-    unset / ``0`` / ``false`` / ``off`` → the observer is never installed
-    and the scan is byte-identical to main.
+    ``FAULTLINE_OVERTURN_ARBITER=0`` (or false/no/off) → the observer is
+    never installed and the scan is byte-identical to pre-S3 — explicit
+    off stays a valid kill-switch forever.
     """
-    return os.environ.get(OVERTURN_ARBITER_ENV, "0").strip().lower() not in {
+    return os.environ.get(OVERTURN_ARBITER_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

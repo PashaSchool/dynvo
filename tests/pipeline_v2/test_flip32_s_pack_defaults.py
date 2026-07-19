@@ -43,6 +43,10 @@ from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
     BATCH_CANON_ENV,
     batch_canon_enabled,
 )
+from faultline.pipeline_v2.overturn_ledger import (
+    OVERTURN_ARBITER_ENV,
+    overturn_arbiter_enabled,
+)
 
 # (env-var name, helper) for every S*-pack flag flipped default OFF -> ON.
 _FLIPPED = [
@@ -51,10 +55,11 @@ _FLIPPED = [
     (DET_AGGREGATION_ENV, det_aggregation_enabled),
     (UF_REFINE_TOKEN_SCALE_ENV, _token_scale_enabled),
     (BATCH_CANON_ENV, batch_canon_enabled),
+    (OVERTURN_ARBITER_ENV, overturn_arbiter_enabled),
 ]
 
 # Sanity: grows commit-by-commit with the pack; no duplicate env names.
-assert len(_FLIPPED) == 5
+assert len(_FLIPPED) == 6
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

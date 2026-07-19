@@ -71,8 +71,9 @@ def ledger():
 
 
 def test_overturn_arbiter_enabled_flag(monkeypatch):
+    # SEMANTIC flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): unset ⇒ ON.
     monkeypatch.delenv("FAULTLINE_OVERTURN_ARBITER", raising=False)
-    assert overturn_arbiter_enabled() is False  # default OFF
+    assert overturn_arbiter_enabled() is True  # default ON (flip32)
     for off in ("0", "false", "off", "no", ""):
         monkeypatch.setenv("FAULTLINE_OVERTURN_ARBITER", off)
         assert overturn_arbiter_enabled() is False
