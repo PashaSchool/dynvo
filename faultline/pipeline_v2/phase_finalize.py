@@ -2959,6 +2959,30 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ──
+    # Structural absorption of the generalized R5-2 tech-dir-suffix spray
+    # ('Manage setting AI components/constants/…' — the det-aggregation
+    # regrain class) over the FINAL display names the naming contract just
+    # emitted (probe canon: the boards it judged carried post-contract
+    # names). Predicate + parent-name derivation live in naming_contract
+    # (beside R5-2, whose paren class the G0 boundary protects); the apply
+    # (member union, row drops, I14 repoints) is this seam — the naming
+    # module's §4.8 identity law forbids structure writes inside it.
+    # Flag OFF/unset ⇒ run_spray_generalization returns None before any
+    # mutation ⇒ no scan_meta key ⇒ byte-identical (KS 4-way gate).
+    try:
+        from faultline.pipeline_v2.spray_absorption import (
+            run_spray_generalization,
+        )
+        _spray_tele = run_spray_generalization(
+            user_flows, list(bipartite.flows))
+        if _spray_tele is not None:
+            scan_meta["spray_generalized"] = _spray_tele
+    except Exception as exc:  # noqa: BLE001 — absorption must never break a scan
+        scan_meta.setdefault("warnings", []).append(
+            f"spray-generalization failed ({exc}); rows unabsorbed"
+        )
+
     # ── Stage 6.7e — B57 Seg2 journey-evidence adjudicator (keyed-only) ─
     # Runs immediately AFTER the naming contract (selection needs Law C v1
     # name_confidence) and BEFORE synth_quality/emit_coverage_gaps so an
