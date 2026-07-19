@@ -159,12 +159,12 @@ class MemberEvidence:
         self._add_runs(words, "manifest")
 
     def merge_from(self, other: "MemberEvidence") -> None:
-        for f, c in other.sym.items():
-            self.sym[f].update(c)
-        for f, c in other.path.items():
-            self.path[f].update(c)
-        for f, c in other.runs.items():
-            self.runs[f].update(c)
+        for f, wc in other.sym.items():
+            self.sym[f].update(wc)
+        for f, wc in other.path.items():
+            self.path[f].update(wc)
+        for f, rc in other.runs.items():
+            self.runs[f].update(rc)
             self.run_src.setdefault(f, other.run_src.get(f, "evidence"))
 
     # ── read helpers ────────────────────────────────────────────────
