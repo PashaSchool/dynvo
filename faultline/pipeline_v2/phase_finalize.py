@@ -2614,6 +2614,66 @@ def run_finalize_phase(
                 f"surface_taxonomy: FAILED ({exc}) — continuing", feature=None,
             )
 
+    # ── Stage 6.987 — S5b leaf-route dissolution + platform promotion ──
+    # ONE arbiter wave (spec fixs5b §ПРОБИ-ФОРМИ): Seg B dissolves a
+    # ``route:``-leaf black hole (flat-leaf anchor whose mass >> its own
+    # subtree — novu ``duplicate-workflow`` 315/2) by re-homing its foreign
+    # member devs to real capability siblings (S5a dev-identity bridge +
+    # file-grain majority segment); unhomed devs lane (NOT forced), which
+    # FREES their pages. Seg C then promotes buried product surfaces —
+    # platform-lane residents carrying PAGE evidence (a-lite mirror; P1
+    # page-cohort ∪ P2 lane-token↔freed-page bridge) — by birth (S5a
+    # birth-law) or merge-into-sibling. Runs AFTER the emission taxonomy
+    # established the lane (pfid=None + shared_reason residents) + 6.97 LOC,
+    # BEFORE emission integrity (which reconciles the births' UF refs I12 +
+    # drops any phantom) and BEFORE the platform lane is assembled (so
+    # promoted residents leave the lane). Every dev/UF move is an
+    # overturn-ledger proposal (rung ``leafroute``). Kill-switch
+    # FAULTLINE_LEAFROUTE_PROMOTION unset/0 → stage not entered →
+    # byte-identical.
+    from faultline.pipeline_v2.leafroute_promotion import (
+        leafroute_promotion_enabled,
+        run_leafroute_promotion,
+    )
+    if leafroute_promotion_enabled():
+        with StageLogger(run_dir, 6, "leafroute_promotion") as log_lrp:
+            try:
+                lrp_tele = run_leafroute_promotion(
+                    features, product_features, user_flows,
+                    list(bipartite.flows), lineage_result.routes_index, ctx,
+                    feature_flow_edges=list(bipartite.edges),
+                )
+                if (lrp_tele.get("leaf_dissolved") or lrp_tele.get("births")
+                        or lrp_tele.get("merged")):
+                    scan_meta["leafroute_promotion"] = lrp_tele
+                log_lrp.info(
+                    "leafroute_promotion: leaf_fired=%d devs_rehomed=%d "
+                    "devs_freed=%d pfs_born=%d devs_merged=%d p2_pages=%d"
+                    % (
+                        len(lrp_tele.get("leaf_fired", [])),
+                        lrp_tele.get("devs_rehomed", 0),
+                        lrp_tele.get("devs_freed", 0),
+                        lrp_tele.get("pfs_born", 0),
+                        lrp_tele.get("devs_merged", 0),
+                        lrp_tele.get("p2_pages_bridged", 0),
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=6,
+                    stage_name="leafroute_promotion",
+                    payload=lrp_tele,
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"leafroute-promotion failed ({exc}); board left as-is")
+                log_lrp.info(
+                    f"leafroute_promotion: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── W5.1 — LOC-worthy PF backstop (final I8 close, $0) ─────────────
     # Excavation (Stage 6.87) mints FLOWLESS high-LOC surfaces (supabase
     # Settings 27.5K, Query Performance, …); the flow-based PF-UF backstop

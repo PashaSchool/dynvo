@@ -836,6 +836,20 @@ ENV_OUTPUT_FLAGS = (
     # shipped board byte-identically — explicit off stays a valid
     # kill-switch forever.
     "FAULTLINE_GO_EXTRACTION",
+    # S5b (2026-07-19) — leaf-route dissolution + platform promotion, ONE
+    # arbiter wave (the S5a precedent). Seg B re-homes a route:-leaf black
+    # hole's annexed member devs to real siblings (novu duplicate-workflow
+    # 315/2 -> subscribers/analytics/domains/…; unhomed devs lane, freeing
+    # their pages); Seg C promotes buried product surfaces — platform-lane
+    # residents with PAGE evidence (a-lite mirror; P1 page-cohort ∪ P2
+    # lane-token↔freed-page bridge) — by birth (S5a birth-law) or
+    # merge-into-sibling (the notifications class). Reshapes
+    # developer_features[].product_feature_id + product_features[]
+    # (births/merges/leaf-shed) on repos where a leaf hole or a buried
+    # surface exists. Default OFF; =0/unset keeps the stage un-entered,
+    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
+    # the separate flip commit (flip-protocol).
+    "FAULTLINE_LEAFROUTE_PROMOTION",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
