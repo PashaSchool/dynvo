@@ -1386,11 +1386,28 @@ class SpaRouterExtractor:
         entries: list[_Entry] = []
         entries.extend(_collect_vue_pages(ctx))
         entries.extend(_collect_react_router(ctx))
-        if spa_route_table_enabled():
-            # B74 Seg A — additive route-table arm on the SAME source
-            # slug: unset/falsy keeps the emitted set byte-identical.
-            entries.extend(_collect_route_tables(ctx))
         return _emit(entries)
+
+
+def route_table_candidates(ctx: "ScanContext") -> list[AnchorCandidate]:
+    """B74 Seg A — the route-table arm as a REPO-WIDE Stage-1 post-pass.
+
+    NOT part of :meth:`SpaRouterExtractor.extract` on purpose: route
+    tables are a CROSS-WORKSPACE surface — the table is declared in a
+    shared package (twenty-shared ``AppPath``) while its router
+    consumers live in an app package (twenty-front) — so the
+    per-workspace dispatch's scoped contexts can never join the two
+    (the twenty KS forensics exhibit: armed scan, 0 rows). Both Stage-1
+    paths (:func:`stage_1_extractors.stage_1_extractors` global,
+    :func:`stage_1_per_workspace.run_stage_1_per_workspace`) fold this
+    pass ONCE with the FULL repo context into the ``spa-page`` source.
+
+    Returns ``[]`` unless BOTH the family flag (kill-switch dominates —
+    ``FAULTLINE_SPA_ROUTER_ENTRIES=0`` restores the pre-B65-v3 world
+    entirely) and ``FAULTLINE_SPA_ROUTE_TABLE`` are on."""
+    if not (spa_router_entries_enabled() and spa_route_table_enabled()):
+        return []
+    return _emit(_collect_route_tables(ctx))
 
 
 def _emit(entries: list[_Entry]) -> list[AnchorCandidate]:
@@ -1438,6 +1455,7 @@ __all__ = [
     "SPA_ROUTER_ENTRIES_ENV",
     "SPA_ROUTE_TABLE_ENV",
     "SpaRouterExtractor",
+    "route_table_candidates",
     "spa_route_table_enabled",
     "spa_router_entries_enabled",
 ]

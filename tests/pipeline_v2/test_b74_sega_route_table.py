@@ -32,9 +32,11 @@ from faultline.pipeline_v2.extractors.spa_router import (
     SPA_ROUTE_TABLE_ENV,
     SPA_ROUTER_ENTRIES_ENV,
     SpaRouterExtractor,
+    route_table_candidates,
     spa_route_table_enabled,
 )
 from faultline.pipeline_v2.stage_0_intake import ScanContext
+from faultline.pipeline_v2.stage_1_extractors import stage_1_extractors
 
 
 def _ctx(repo: Path, files: list[str], **kw) -> ScanContext:
@@ -48,6 +50,15 @@ def _ctx(repo: Path, files: list[str], **kw) -> ScanContext:
         secondary_stacks=kw.get("secondary_stacks", ()),
         audited_stack=kw.get("audited_stack"),
     )
+
+
+def _extract(repo: Path, files: list[str], **kw):
+    """Anchors through the REAL Stage-1 seam (extract() no longer runs
+    the table arm — the repo-wide post-pass folds it into spa-page)."""
+    out = stage_1_extractors(
+        _ctx(repo, files, **kw), extractors=[SpaRouterExtractor()],
+    )
+    return out.get(SPA_PAGE_SOURCE) or []
 
 
 @pytest.fixture
@@ -187,17 +198,23 @@ def test_unset_equals_zero_and_stays_inert(
     """Kill-switch law: unset == explicit '0' byte-identical; the armed
     world is the ONLY one carrying route-table candidates."""
     files = _twenty_fixture(tmp_path)
-    ctx = _ctx(tmp_path, files)
 
     monkeypatch.delenv(SPA_ROUTE_TABLE_ENV, raising=False)
-    unset = SpaRouterExtractor().extract(ctx)
+    unset = _extract(tmp_path, files)
     monkeypatch.setenv(SPA_ROUTE_TABLE_ENV, "0")
-    zero = SpaRouterExtractor().extract(ctx)
+    zero = _extract(tmp_path, files)
     assert unset == zero == []  # no manifest -> Seg A/B inert too
+    # The repo-wide pass itself is inert too (both dispatch paths).
+    assert route_table_candidates(_ctx(tmp_path, files)) == []
 
     monkeypatch.setenv(SPA_ROUTE_TABLE_ENV, "1")
-    armed = SpaRouterExtractor().extract(ctx)
+    armed = _extract(tmp_path, files)
     assert armed, "armed world must emit route-table candidates"
+
+    # Family kill-switch DOMINATES: SPA_ROUTER_ENTRIES=0 silences the
+    # table arm even when armed (pre-B65-v3 world restoration).
+    monkeypatch.setenv(SPA_ROUTER_ENTRIES_ENV, "0")
+    assert route_table_candidates(_ctx(tmp_path, files)) == []
 
 
 def test_no_new_extractor_hits_source_key(
@@ -225,9 +242,7 @@ def test_no_new_extractor_hits_source_key(
 def test_twenty_apppath_20_patterns_named_owners(
     tmp_path: Path, table_on: None,
 ) -> None:
-    anchors = SpaRouterExtractor().extract(
-        _ctx(tmp_path, _twenty_fixture(tmp_path)),
-    )
+    anchors = _extract(tmp_path, _twenty_fixture(tmp_path))
     assert all(a.source == SPA_PAGE_SOURCE for a in anchors)
     patterns = _patterns_of(anchors)
     assert len(patterns) == 20, sorted(patterns)
@@ -254,8 +269,8 @@ def test_twenty_apppath_20_patterns_named_owners(
 
 
 def test_determinism_two_extracts(tmp_path: Path, table_on: None) -> None:
-    ctx = _ctx(tmp_path, _twenty_fixture(tmp_path))
-    assert SpaRouterExtractor().extract(ctx) == SpaRouterExtractor().extract(ctx)
+    files = _twenty_fixture(tmp_path)
+    assert _extract(tmp_path, files) == _extract(tmp_path, files)
 
 
 # ── twenty SettingsPath — consumption-primary slashless gate ─────────────────
@@ -296,7 +311,7 @@ def test_settingspath_slashless_table_is_taken(
         "packages/twenty-front/src/pages/settings/profile/SettingsProfile.tsx",
         "export const SettingsProfile = () => null;\n",
     )
-    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, [table, router, page]))
+    anchors = _extract(tmp_path, [table, router, page])
     patterns = _patterns_of(anchors)
     assert patterns == {
         "profile", "experience", "accounts",
@@ -370,7 +385,7 @@ def test_novu_routes_object_and_scoped_barrel(
             "export default function Home() { return null; }\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    anchors = _extract(tmp_path, files)
     patterns = _patterns_of(anchors)
     # '/auth/sign-in' (FIRST member) is absent — the probe-canon
     # first-member miss pinned above; everything else emits.
@@ -415,7 +430,7 @@ def test_lazy_with_preload_bridge(tmp_path: Path, table_on: None) -> None:
             "export default function AlphaPage() { return null; }\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    anchors = _extract(tmp_path, files)
     assert _pattern_files(anchors)["/alpha"] == {"src/pages/AlphaPage.tsx"}
 
 
@@ -453,7 +468,7 @@ def test_wrapper_fallback_and_redirect_filters(
             "export const AlphaPage = () => null;\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    anchors = _extract(tmp_path, files)
     pfiles = _pattern_files(anchors)
     # fallback + wrappers stripped -> the REAL page owns /alpha.
     assert pfiles["/alpha"] == {"src/pages/AlphaPage.tsx"}
@@ -516,9 +531,7 @@ def test_anticase_documentation_paths_never_emit(
             " <a href={DOCUMENTATION_PATHS.OBJECTS}>docs</a>;\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(
-        _ctx(tmp_path, _legit_plus(tmp_path, extra)),
-    )
+    anchors = _extract(tmp_path, _legit_plus(tmp_path, extra))
     patterns = _patterns_of(anchors)
     assert patterns == {"/alpha", "/beta", "/gamma"}
     assert not any("user-guide" in p or "developers" in p for p in patterns)
@@ -539,9 +552,7 @@ def test_anticase_background_asset_pack_never_emits(
             "};\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(
-        _ctx(tmp_path, _legit_plus(tmp_path, extra)),
-    )
+    anchors = _extract(tmp_path, _legit_plus(tmp_path, extra))
     assert not any("images" in p for p in _patterns_of(anchors))
 
 
@@ -567,9 +578,7 @@ def test_anticase_appbasepath_interpolation_never_emits(
             " `${AppBasePath.Client}/${p}`;\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(
-        _ctx(tmp_path, _legit_plus(tmp_path, extra)),
-    )
+    anchors = _extract(tmp_path, _legit_plus(tmp_path, extra))
     assert not any("client" in p or "api-root" in p for p in _patterns_of(anchors))
 
 
@@ -609,9 +618,7 @@ def test_anticase_redirect_maps_never_emit(
             "export const out = () => redirect(redirects.toLogin);\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(
-        _ctx(tmp_path, _legit_plus(tmp_path, extra)),
-    )
+    anchors = _extract(tmp_path, _legit_plus(tmp_path, extra))
     patterns = _patterns_of(anchors)
     assert patterns == {"/alpha", "/beta", "/gamma"}
     assert not any("docs" in p or "signin" in p for p in patterns)
@@ -639,9 +646,7 @@ def test_anticase_api_path_config_outside_router_file(
             " request({ path: API_PATHS.USERS, method: 'GET' });\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(
-        _ctx(tmp_path, _legit_plus(tmp_path, extra)),
-    )
+    anchors = _extract(tmp_path, _legit_plus(tmp_path, extra))
     assert not any("api" in p for p in _patterns_of(anchors))
 
 
@@ -677,7 +682,7 @@ def test_shape_gates_min_entries_and_ratio(
             "</>);\n",
         ),
     ]
-    anchors = SpaRouterExtractor().extract(_ctx(tmp_path, files))
+    anchors = _extract(tmp_path, files)
     assert _patterns_of(anchors) == set()
 
 
@@ -689,9 +694,7 @@ def test_routes_index_stamps_spa_page_kind(
 ) -> None:
     from faultline.pipeline_v2.indexes import build_routes_index
 
-    anchors = SpaRouterExtractor().extract(
-        _ctx(tmp_path, _twenty_fixture(tmp_path)),
-    )
+    anchors = _extract(tmp_path, _twenty_fixture(tmp_path))
     rows = build_routes_index([], {SPA_PAGE_SOURCE: anchors})
     assert rows, "table rows must fold into routes_index"
     assert {r["method"] for r in rows} == {"PAGE"}
@@ -699,3 +702,43 @@ def test_routes_index_stamps_spa_page_kind(
     assert {r["pattern"] for r in rows} >= {
         "/welcome", "/objects/tasks", "settings",
     }
+
+
+# ── per-workspace dispatch — the cross-workspace join (KS forensics) ─────────
+
+
+def test_per_workspace_dispatch_joins_cross_workspace_table(
+    tmp_path: Path, table_on: None,
+) -> None:
+    """The twenty KS-forensics exhibit: the table lives in one workspace
+    (twenty-shared) while its router consumers live in another
+    (twenty-front). Scoped per-workspace passes can never join them —
+    the repo-wide post-pass in ``run_stage_1_per_workspace`` MUST."""
+    from faultline.pipeline_v2.stage_0_intake import Workspace
+    from faultline.pipeline_v2.stage_1_per_workspace import (
+        run_stage_1_per_workspace,
+    )
+
+    files = _twenty_fixture(tmp_path)
+    shared = [f for f in files if f.startswith("packages/twenty-shared/")]
+    front = [f for f in files if f.startswith("packages/twenty-front/")]
+    ctx = _ctx(
+        tmp_path, files, monorepo=True,
+        workspaces=[
+            Workspace(
+                name="twenty-shared", path="packages/twenty-shared",
+                stack="node", files=shared,
+            ),
+            Workspace(
+                name="twenty-front", path="packages/twenty-front",
+                stack="vite", files=front,
+            ),
+        ],
+    )
+    result = run_stage_1_per_workspace(
+        ctx, extractors=[SpaRouterExtractor()],
+    )
+    anchors = result.stage1_out.get(SPA_PAGE_SOURCE) or []
+    patterns = _patterns_of(anchors)
+    assert "/welcome" in patterns
+    assert len(patterns) == 20, sorted(patterns)
