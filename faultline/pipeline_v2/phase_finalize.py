@@ -123,6 +123,11 @@ def run_finalize_phase(
     llm_health: LlmHealth | None = None,
     repo_class_result: Any = None,
     prev_scan_json: dict[str, Any] | None = None,
+    # B74 Seg B — the Stage-3 unit snapshot (name → sorted owned paths
+    # at flow-derivation time) for the post-grain re-derivation cohort
+    # selector. ``None`` (legacy callers / replay of older captures)
+    # keeps Stage 6.865 un-entered.
+    stage3_unit_snapshot: dict[str, list[str]] | None = None,
 ) -> Path:
     """Run Stage 6.8 → 3.5 → 6.9 → 6.7/6.7c/6.7b → 6.95 → 7 and write output.
 
@@ -768,6 +773,78 @@ def run_finalize_phase(
         scan_meta["stage_6_7_user_flows"] = dict(uf_marker)
         scan_meta["stage_6_7c_uf_splitter"] = dict(uf_marker)
         scan_meta["stage_6_7b_uf_refiner"] = dict(uf_marker)
+
+    # ── Stage 6.865 — B74 Seg B post-grain flow re-derivation (F3′) ────
+    # Stage-8-born / re-membered dev features (path-set ≠ the unit Stage
+    # 3 derived flows on — twenty object-record-2 49K loc / activities /
+    # workflow-2 with 0 flows) re-run the EXISTING Stage-3 machinery
+    # here, BETWEEN the 6.86 mint window and the Stage 6.7 UF family, so
+    # the single existing mint sees the flows naturally (F3′ — zero new
+    # mint channels). Flows land in feature.flows[] + the bipartite
+    # mirror with Stage-3/5.5 writer identity. Full scans only (the
+    # snapshot excludes spliced untouched features; cold-scan rule);
+    # keyless scans run the deterministic cohort selection + candidate
+    # enumeration and report them in scan_meta (honest no-client
+    # degrade). Default OFF (FAULTLINE_FLOW_REDERIVE_POSTGRAIN);
+    # unset/=0 keeps the stage un-entered, byte-identical. Telemetry
+    # key + artifact only when the causal gate fires (Seg C openstatus
+    # inertness law).
+    from faultline.pipeline_v2.flow_rederive import (
+        flow_rederive_enabled,
+        run_flow_rederive,
+    )
+    if (
+        flow_rederive_enabled()
+        and not uf_suppressed
+        and is_full_scan
+        and stage3_unit_snapshot is not None
+    ):
+        write_stage_input(run_dir, 6, "flow_rederive", {
+            "features": features,
+            "bipartite_flows": list(bipartite.flows),
+            "bipartite_edges": list(bipartite.edges),
+            "routes_index": lineage_result.routes_index,
+            "scan_meta": scan_meta,
+            "ctx": ctx,
+            "stage3_unit_snapshot": stage3_unit_snapshot,
+            "repo_path": str(repo_path),
+            "model_id": model_id,
+        })
+        with StageLogger(run_dir, 6, "flow_rederive") as log_frd:
+            try:
+                frd_tele = run_flow_rederive(
+                    features, bipartite.flows, bipartite.edges, ctx,
+                    stage3_unit_snapshot=stage3_unit_snapshot,
+                    model=model_id,
+                    routes_index=lineage_result.routes_index,
+                    tracker=tracker,
+                    llm_health=llm_health,
+                    log=log_frd,
+                )
+                if frd_tele is not None:
+                    scan_meta["flow_rederive"] = frd_tele
+                    write_stage_artifact(
+                        ctx.repo_path,
+                        stage_index=6,
+                        stage_name="flow_rederive",
+                        payload=frd_tele,
+                        run_dir=run_dir,
+                    )
+                else:
+                    log_frd.info(
+                        "flow_rederive: no causal candidates — inert "
+                        "(armed no-fire boards stay byte-identical)",
+                        feature=None,
+                    )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"flow-rederive failed ({exc}); "
+                    f"pre-rederive flow store kept"
+                )
+                log_frd.info(
+                    f"flow_rederive: FAILED ({exc}) — flow store kept",
+                    feature=None,
+                )
 
     # ── Stage 6.7 — User-Flow rollup (Layer-2-for-flows, $0 LLM) ────
     # Deterministic post-pass: rolls the code-grain flow store up into
