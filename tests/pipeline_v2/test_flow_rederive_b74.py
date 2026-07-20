@@ -277,16 +277,18 @@ def test_chunk_elig_override_independent_of_global_cut(tmp_path: Path) -> None:
     sel = select_rederive_cohort(features, snapshot, ctx)
     by_name = {c.feature.name: c for c in sel.candidates}
 
-    # 24 paths > 20 → chunk plan via the existing _plan_chunks fan-out.
+    # 24 paths > 20 → chunk plan via the existing _plan_chunks fan-out,
+    # capped at the prompt-window NEED (ceil(24/20) = 2 — exactly as
+    # many chunks as visibility requires, not one more).
     orec = by_name["object-record-2"]
     assert orec.chunk_plan is not None
-    assert orec.call_units >= 2
+    assert orec.call_units == 2
     # 4 paths / 12 exports — under both caps → single call.
     acts = by_name["activities"]
     assert acts.chunk_plan is None
     assert acts.call_units == 1
     # telemetry-facing aggregate
-    assert sum(c.call_units for c in sel.candidates) >= 5
+    assert sum(c.call_units for c in sel.candidates) >= 4
 
 
 def test_re_membered_at_cap_excluded_or_chunked(tmp_path: Path) -> None:

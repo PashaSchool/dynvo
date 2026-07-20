@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import statistics
 import threading
@@ -200,33 +201,27 @@ def _feature_kloc(
     return total / 1000.0
 
 
-def _repo_grain_median(
-    stage3_unit_snapshot: dict[str, list[str]],
-    dev_features: list[Any],
-) -> int:
-    """Stage-3-grain median owned size — the chunk-cap denominator.
+def _chunk_cap(n_paths: int, n_exports: int) -> int:
+    """Prompt-window NEED — the re-derive chunk-count cap.
 
-    Mirrors ``stage_3_flows._oversized_cut``'s median computation over
-    the SAME population Stage 3 measured (the stage-3 units, from the
-    snapshot): the chunk-count cap is the Stage-3 cost law («the LLM
-    call count is bounded by the number of median-grain features this
-    feature is worth»), and that law was calibrated on the stage-3
-    grain. Measuring it on the post-decomposition board (a much finer
-    median) over-chunks the cohort ~5x (armed-keyless twenty census:
-    1,490 call units vs the probe's stage-3-grain economics — the spec
-    prices twenty at $1-2.5). Falls back to the current dev set for
-    degenerate snapshots.
+    The ratio trigger fires because the 1-call window is BLIND (probe:
+    2/3 of the twenty targets invisible behind the prompt sample caps);
+    the cure is exactly as many chunks as visibility requires —
+    ``ceil(paths / MAX_PATHS_IN_PROMPT)`` / ``ceil(exports /
+    MAX_EXPORTS_IN_PROMPT)`` — and not one more. Scale-invariant (a
+    pure ratio of the feature's own surface to the prompt windows).
+    The Stage-3 ``len(paths) // repo-median`` law does NOT transfer to
+    this cohort: the stage-3 unit median on a monorepo is dominated by
+    1-2-path extractor anchors (armed-keyless twenty census: 2,524
+    call units under that law vs 43 for the probe's biggest target
+    under this one). ``_plan_chunks`` merges overflow into the
+    residual chunk, so the cap holds even on pathological fan-outs.
     """
-    sizes = [
-        len(paths) for paths in stage3_unit_snapshot.values() if paths
-    ]
-    if not sizes:
-        sizes = [
-            len(f.paths) for f in dev_features if getattr(f, "paths", None)
-        ]
-    if not sizes:
-        return 2
-    return max(2, int(statistics.median(sizes)))
+    return max(
+        2,
+        math.ceil(n_paths / MAX_PATHS_IN_PROMPT),
+        math.ceil(n_exports / MAX_EXPORTS_IN_PROMPT),
+    )
 
 
 def select_rederive_cohort(
@@ -270,7 +265,6 @@ def select_rederive_cohort(
     sel.flowful_median_density = round(median_density, 4)
     density_ceiling = median_density / _OVERSIZED_MEDIAN_MULT
 
-    grain_median = _repo_grain_median(stage3_unit_snapshot, dev_features)
 
     for f in sorted(dev_features, key=lambda x: x.name):
         current = _non_test_pathset(getattr(f, "paths", None))
@@ -321,7 +315,7 @@ def select_rederive_cohort(
         ):
             chunk_plan = _plan_chunks(
                 sorted(f.paths),
-                max_chunks=max(2, len(f.paths) // grain_median),
+                max_chunks=_chunk_cap(len(f.paths), len(exports)),
             )
 
         # Re-membered rows already at the per-call flow cap: their
