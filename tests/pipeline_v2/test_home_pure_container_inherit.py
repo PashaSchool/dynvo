@@ -180,6 +180,35 @@ def test_armed_without_ws_containers_is_inert(monkeypatch) -> None:
     assert tele == tele_ref
 
 
+def test_armed_container_that_never_homes_members_is_inert(
+        monkeypatch) -> None:
+    """The real openstatus shape: a ws-anchored PF exists
+    (notification-slack) but NO journey member is homed at it — armed
+    output including telemetry must be byte-identical to unset (the
+    channel fires nothing, the key never appears)."""
+    fl = _flow("update-monitor-flow", "apps/web/src/monitors/edit.tsx")
+    d_mon = _dev("monitors", "monitors", [fl.entry_point_file], [fl])
+    old = _uf("UF-001", "Manage monitors", "monitors", [fl.uuid])
+    spec = {
+        "name": "Manage monitors", "resource": "monitor",
+        "product_feature": "Monitors",
+        "from_flows": ["UF-001"], "from_dev_features": [],
+    }
+    monkeypatch.setenv(_ENV, "1")
+    ufs_on, tele_on = _build_user_flows(
+        [spec], [old], [d_mon], [], home_pure=True,
+        container_pf_keys=frozenset({"notification-slack"}))
+    monkeypatch.delenv(_ENV, raising=False)
+    d2 = _dev("monitors", "monitors", [fl.entry_point_file], [fl])
+    old2 = _uf("UF-001", "Manage monitors", "monitors", [fl.uuid])
+    ufs_off, tele_off = _build_user_flows(
+        [spec], [old2], [d2], [], home_pure=True, container_pf_keys=None)
+    assert "uf_home_container_inherited" not in tele_on
+    assert tele_on == tele_off
+    assert [u.member_flow_ids for u in ufs_on] == \
+        [u.member_flow_ids for u in ufs_off]
+
+
 # ── Reservation: the rightful claimant keeps its member ─────────────────
 
 
@@ -219,7 +248,7 @@ def test_reservation_saves_rightful_claimant(monkeypatch) -> None:
     assert "Create and configure applications" in tele["uf_dropped_names"]
     # The reservation block is NOT foreignness — not counted.
     assert tele["uf_home_filtered"] == 0
-    assert tele["uf_home_container_inherited"] == 0
+    assert tele.get("uf_home_container_inherited", 0) == 0
 
 
 def test_unreserved_member_still_inherits_via_from_flows(monkeypatch) -> None:
@@ -267,7 +296,7 @@ def test_container_pf_journey_cannot_inherit_foreign_container(
         [spec], [old], [d_pa], [], home_pure=True,
         container_pf_keys=containers)
     assert ufs == []
-    assert tele["uf_home_container_inherited"] == 0
+    assert tele.get("uf_home_container_inherited", 0) == 0
     # Container-block = reservation, not foreignness: uncounted.
     assert tele["uf_home_filtered"] == 0
 
@@ -294,7 +323,7 @@ def test_manage_email_blocklist_stays_filtered(monkeypatch) -> None:
         container_pf_keys=_CONTAINERS)
     assert ufs == []
     assert "Manage email blocklist" in tele["uf_dropped_names"]
-    assert tele["uf_home_container_inherited"] == 0
+    assert tele.get("uf_home_container_inherited", 0) == 0
     assert tele["uf_home_filtered"] > 0
 
 

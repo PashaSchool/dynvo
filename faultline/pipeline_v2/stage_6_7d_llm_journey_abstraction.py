@@ -1224,7 +1224,10 @@ def _build_user_flows(
     )
     reserved_mids: set[str] = set()
     if container_keys:
-        tele["uf_home_container_inherited"] = 0
+        # Telemetry key appears only when the channel actually FIRES
+        # (set in _home_ok): a repo whose ws-containers never home a
+        # journey member (openstatus notification-slack) must stay
+        # byte-identical armed vs unset — the inertness law.
         for spec in uf_specs:
             s_pf = _slug(spec.get("product_feature") or "") or None
             if not s_pf:
@@ -1252,7 +1255,8 @@ def _build_user_flows(
             # UNCOUNTED everywhere else (reservation, not foreignness).
             if (container_inherit and pf_key not in container_keys
                     and mid not in reserved_mids):
-                tele["uf_home_container_inherited"] += 1
+                tele["uf_home_container_inherited"] = (
+                    tele.get("uf_home_container_inherited", 0) + 1)
                 return True
             return False
         tele["uf_home_filtered"] += 1
