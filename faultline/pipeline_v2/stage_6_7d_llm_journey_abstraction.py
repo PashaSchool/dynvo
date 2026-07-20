@@ -1037,6 +1037,41 @@ def _home_pure_enabled() -> bool:
         not in {"0", "false", "no", "off"}
 
 
+# ── B74 Seg C — home-pure: container ≠ foreignness (default OFF) ─────────
+_CONTAINER_INHERIT_ENV = "FAULTLINE_HOME_PURE_CONTAINER_INHERIT"
+
+_WS_ANCHOR_PREFIX = "ws:"
+
+
+def _container_inherit_enabled() -> bool:
+    return (os.environ.get(_CONTAINER_INHERIT_ENV, "0") or "0") \
+        .strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _container_pf_keys(product_features: list["Feature"]) -> frozenset[str]:
+    """PF keys of monorepo ws-pkg CONTAINERS (B74 Seg C, Form A ONLY).
+
+    The anchored mint stamps ``Feature.anchor_id`` with the spine
+    anchor's canonical id — ``ws:<workspace-path>`` marks a
+    workspace-package anchor (the PF-side twin of Stage 8.7's
+    ``_is_workspace_anchor`` dev-side marker). A journey member whose
+    HOME is such a container carries packaging provenance, not
+    foreignness: on twenty every twenty-front dev stamps home
+    "twenty-front", so home-pure filtered ENTIRE product cores
+    (24,226 filters/scan; 'Sign in and authenticate' dropped at 0
+    members). Mass/ratio container forms were REFUTED by the
+    2026-07-19 probe (they misclassify real capabilities at every
+    rung) — the mint marker is the only detector."""
+    out: set[str] = set()
+    for pf in product_features:
+        aid = str(getattr(pf, "anchor_id", None) or "")
+        if aid.startswith(_WS_ANCHOR_PREFIX):
+            key = getattr(pf, "name", "") or ""
+            if key:
+                out.add(key)
+    return frozenset(out)
+
+
 def _flow_home_map(
     developer_features: list["Feature"],
 ) -> dict[str, str | None]:
@@ -1066,6 +1101,7 @@ def _build_user_flows(
     routes_index: list[dict[str, Any]],
     interior_evidence: dict[str, Any] | None = None,
     home_pure: bool = False,
+    container_pf_keys: frozenset[str] | None = None,
 ) -> tuple[list["UserFlow"], dict[str, Any]]:
     """Reconstruct the abstracted user_flows — GROUNDED-ONLY.
 
@@ -1153,13 +1189,76 @@ def _build_user_flows(
         _flow_home_map(developer_features)
         if home_pure and _home_pure_enabled() else {}
     )
+    # B74 Seg C (FAULTLINE_HOME_PURE_CONTAINER_INHERIT, default OFF):
+    # home = ws-pkg CONTAINER (anchored-mint "ws:" marker) is packaging,
+    # not foreignness. Probe-canon scoped form (2026-07-19, replay-
+    # refined member-by-member on the twenty capture):
+    #   * A capability journey (own PF NOT a container) inherits
+    #     container-homed members on the CITED channels — Pass 1
+    #     from_flows + Pass 2a cited devs. Client+server journeys span
+    #     containers ('Sign in and authenticate' = 8 twenty-front + 3
+    #     twenty-server members), so the inherit is not per-container.
+    #   * RESERVATION: a container-homed member riding a dev that some
+    #     OTHER journey cites with a MATCHING product feature (spec pf
+    #     slug == the member's home) belongs to that rightful claimant
+    #     — it is never container-inherited away. Without this,
+    #     'Create and configure applications' claim-greed-killed
+    #     'Submit partner application' (its flow rides dev
+    #     partner-application, cited by the SPA journey whose own PF is
+    #     the twenty-website home).
+    #   * A journey whose OWN PF IS a container never container-inherits
+    #     a foreign container's member (its own members pass h==pf_key).
+    #   * The whole-pool 2b token rescue and the route backfill stay
+    #     home-STRICT (the 46-member/13.2% false-pool claim-greed law).
+    #   * Armed, a BLOCKED container-homed member is a packaging
+    #     reservation, not foreignness — uf_home_filtered keeps counting
+    #     ONLY sibling-capability blocks (the metric the class-fix is
+    #     judged by). Unset keeps every count byte-identical.
+    # Telemetry key exists only when the channel is armed AND the repo
+    # has ws-containers, so unset/inert worlds stay byte-identical.
+    container_keys: frozenset[str] = (
+        container_pf_keys
+        if (home_by_mid and container_pf_keys
+            and _container_inherit_enabled())
+        else frozenset()
+    )
+    reserved_mids: set[str] = set()
+    if container_keys:
+        # Telemetry key appears only when the channel actually FIRES
+        # (set in _home_ok): a repo whose ws-containers never home a
+        # journey member (openstatus notification-slack) must stay
+        # byte-identical armed vs unset — the inertness law.
+        for spec in uf_specs:
+            s_pf = _slug(spec.get("product_feature") or "") or None
+            if not s_pf:
+                continue
+            for dref in spec.get("from_dev_features") or []:
+                dev = (dev_by_name.get(dref.strip().lower())
+                       if isinstance(dref, str) else None)
+                if dev is None:
+                    continue
+                for mid in dev_flow_ids.get(dev.name, []):
+                    if home_by_mid.get(mid) == s_pf:
+                        reserved_mids.add(mid)
 
-    def _home_ok(mid: str, pf_key: str | None) -> bool:
+    def _home_ok(mid: str, pf_key: str | None, *,
+                 container_inherit: bool = False) -> bool:
         if not home_by_mid or not pf_key:
             return True
         h = home_by_mid.get(mid)
         if h is None or h == pf_key:
             return True
+        if h in container_keys:
+            # Armed only (empty set when unset/inert). Packaging home:
+            # inheritable by a capability journey on the cited channels
+            # unless reserved for its rightful claimant; blocked and
+            # UNCOUNTED everywhere else (reservation, not foreignness).
+            if (container_inherit and pf_key not in container_keys
+                    and mid not in reserved_mids):
+                tele["uf_home_container_inherited"] = (
+                    tele.get("uf_home_container_inherited", 0) + 1)
+                return True
+            return False
         tele["uf_home_filtered"] += 1
         return False
 
@@ -1243,7 +1342,8 @@ def _build_user_flows(
             if not src:
                 continue
             for mid in src.member_flow_ids:
-                if mid not in seen_m and _home_ok(mid, spec_pf_key):
+                if mid not in seen_m and _home_ok(
+                        mid, spec_pf_key, container_inherit=True):
                     seen_m.add(mid)
                     members.append(mid)
             routes.extend(src.routes or [])
@@ -1290,7 +1390,8 @@ def _build_user_flows(
                 for mid in dev_flow_ids.get(dev.name, []):
                     if (mid not in claimed and mid not in seen_a
                             and (flow_tokens.get(mid) or set()) & utok
-                            and _home_ok(mid, spec_pf_key)):
+                            and _home_ok(mid, spec_pf_key,
+                                         container_inherit=True)):
                         seen_a.add(mid)
                         attached.append(mid)
             if attached:
@@ -3342,7 +3443,14 @@ def run_journey_abstraction(
         new_ufs, uf_tele = _build_user_flows(
             uf_specs_, user_flows, developer_features, routes_index,
             interior_evidence=interior_evidence if anchored else None,
-            home_pure=anchored)
+            home_pure=anchored,
+            # B74 Seg C: the INPUT product_features are the Stage 6.86
+            # mint universe (the phase_finalize:1092 argument), whose
+            # anchor_id carries the ws-pkg container marker. _build_
+            # user_flows has no PF list of its own — thread the derived
+            # container-key set (empty set when un-anchored / flag OFF).
+            container_pf_keys=(
+                _container_pf_keys(product_features) if anchored else None))
         if not new_pfs or not new_ufs:
             return None
         if anchored:
