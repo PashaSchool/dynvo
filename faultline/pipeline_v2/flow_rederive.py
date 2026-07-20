@@ -514,7 +514,10 @@ def _attach_flows(
     new_edges: list[Any] = []
     flows_added = 0
     for fwf in sorted(fwfs, key=lambda x: x.feature.name):
-        feature = fwf.feature
+        # FeatureWithFlows types ``feature`` as the Stage-2
+        # DeveloperFeature; here it carries the public Feature model
+        # (flows[] present) — the same duck-typing Stage 3's helpers use.
+        feature: Any = fwf.feature
         for spec in _sorted_flows(fwf.flows):
             flow = _flow_spec_to_flow(spec)
             # Stage-3.5 per-flow expansion (writer identity): the live
