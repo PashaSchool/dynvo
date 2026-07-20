@@ -8,11 +8,19 @@ channels only (Pass-1 from_flows + Pass-2a cited devs). The whole-pool
 2b token rescue and the route backfill stay home-STRICT (claim-greed
 law). Foreignness is unchanged when home is a SIBLING capability.
 
-Named exhibits pinned here (the spec's survivors):
+Named exhibits pinned here (the spec's survivors — replay-refined
+member-by-member on the twenty capture, runs 1-9):
   - twenty  'Sign in and authenticate'   — rescue shape 0 -> 11 members
+    (8 twenty-front + 3 twenty-server: the inherit spans containers)
   - twenty  'Manage email blocklist'     — ANTI-CASE: stays filtered
     (home=settings is a route-anchored sibling — the rule holds)
-  - twenty  'Submit partner application' — NOT killed (2b stays strict)
+  - twenty  'Submit partner application' — NOT killed: its member is
+    RESERVED (riding a dev another journey cites with matching PF) and
+    2b stays strict
+  - a journey whose own PF IS a container never container-inherits a
+    foreign container's member
+  - blocked container-homed members are reservations, NOT counted in
+    uf_home_filtered (sibling-only metric)
   - novu    'Authenticate CLI device session' — cited-dev 2a rescue
   - sibling-leak == 0 invariant across all channels
   - unset => byte-behavior; armed w/o ws-containers => inert
@@ -69,27 +77,39 @@ def _uf(uid: str, name: str, pfid: str, member_ids: list[str]) -> UserFlow:
     )
 
 
-_CONTAINERS = frozenset({"twenty-front"})
+_CONTAINERS = frozenset({"twenty-front", "twenty-server"})
 
 
 def _twenty_signin_world():
-    """The twenty exhibit: dev ``auth`` stamped to the ws-pkg container
-    ``twenty-front`` — every sign-in flow's HOME is the container, so
-    strict home-pure filtered the ENTIRE journey (0 members, dropped)."""
-    flows = [
+    """The twenty exhibit (replay-verified 8+3 shape): dev ``auth`` is
+    stamped to the ws-pkg container ``twenty-front`` and 3 server-side
+    flows ride the ``twenty-server`` blob dev — every member's HOME is a
+    container, so strict home-pure filtered the ENTIRE journey
+    (0 members, dropped). The inherit must span BOTH containers."""
+    front = [
         _flow(f"sign-in-step-{i}-flow",
               f"packages/twenty-front/src/auth/step{i}.tsx")
-        for i in range(11)
+        for i in range(8)
+    ]
+    server = [
+        _flow(f"auth-api-{i}-flow",
+              f"packages/twenty-server/src/auth/api{i}.ts")
+        for i in range(3)
     ]
     d_auth = _dev("auth", "twenty-front",
-                  [f.entry_point_file for f in flows], flows)
+                  [f.entry_point_file for f in front], front)
+    d_server = _dev("twenty-server", "twenty-server",
+                    [f.entry_point_file for f in server], server)
+    flows = front + server
     old = _uf("UF-001", "Sign in", "twenty-front", [f.uuid for f in flows])
+    # Mirrors the real Call-1 payload (llm-cache d5205316…): the journey
+    # cites BOTH the deterministic UF and the auth dev feature.
     spec = {
         "name": "Sign in and authenticate", "resource": "auth",
         "product_feature": "Auth",
-        "from_flows": ["UF-001"], "from_dev_features": [],
+        "from_flows": ["UF-001"], "from_dev_features": ["auth"],
     }
-    return d_auth, old, spec, flows
+    return [d_auth, d_server], old, spec, flows
 
 
 # ── twenty 'Sign in and authenticate' — rescue shape 0 -> 11 ────────────
@@ -97,12 +117,14 @@ def _twenty_signin_world():
 
 def test_twenty_sign_in_rescue_shape_0_to_11(monkeypatch) -> None:
     monkeypatch.setenv(_ENV, "1")
-    d_auth, old, spec, flows = _twenty_signin_world()
+    devs, old, spec, flows = _twenty_signin_world()
     ufs, tele = _build_user_flows(
-        [spec], [old], [d_auth], [], home_pure=True,
+        [spec], [old], devs, [], home_pure=True,
         container_pf_keys=_CONTAINERS)
     (uf,) = ufs
     assert uf.name == "Sign in and authenticate"
+    # 8 twenty-front + 3 twenty-server members — the inherit spans
+    # containers (client+server journeys are one journey).
     assert uf.member_flow_ids == [f.uuid for f in flows]
     assert uf.member_count == 11
     assert tele["uf_home_container_inherited"] == 11
@@ -115,9 +137,9 @@ def test_unset_keeps_strict_filter_byte_behavior(monkeypatch) -> None:
     journey is filtered/dropped exactly like a run given NO set, and no
     new telemetry key appears."""
     monkeypatch.delenv(_ENV, raising=False)
-    d_auth, old, spec, _flows_ = _twenty_signin_world()
+    devs, old, spec, _flows_ = _twenty_signin_world()
     ufs, tele = _build_user_flows(
-        [spec], [old], [d_auth], [], home_pure=True,
+        [spec], [old], devs, [], home_pure=True,
         container_pf_keys=_CONTAINERS)
     assert ufs == []
     assert "Sign in and authenticate" in tele["uf_dropped_names"]
@@ -125,16 +147,16 @@ def test_unset_keeps_strict_filter_byte_behavior(monkeypatch) -> None:
     # Identical to the no-set world (the exact pre-B74 behavior).
     d2, old2, spec2, _f2 = _twenty_signin_world()
     ufs_ref, tele_ref = _build_user_flows(
-        [spec2], [old2], [d2], [], home_pure=True, container_pf_keys=None)
+        [spec2], [old2], d2, [], home_pure=True, container_pf_keys=None)
     assert ufs == ufs_ref
     assert tele == tele_ref
 
 
 def test_flag_off_value_zero_matches_unset(monkeypatch) -> None:
     monkeypatch.setenv(_ENV, "0")
-    d_auth, old, spec, _flows_ = _twenty_signin_world()
+    devs, old, spec, _flows_ = _twenty_signin_world()
     ufs, tele = _build_user_flows(
-        [spec], [old], [d_auth], [], home_pure=True,
+        [spec], [old], devs, [], home_pure=True,
         container_pf_keys=_CONTAINERS)
     assert ufs == []
     assert "uf_home_container_inherited" not in tele
@@ -144,18 +166,110 @@ def test_armed_without_ws_containers_is_inert(monkeypatch) -> None:
     """openstatus analog: flag armed on a repo with NO ws-pkg containers
     — empty container set, strict behavior, no new telemetry key."""
     monkeypatch.setenv(_ENV, "1")
-    d_auth, old, spec, _flows_ = _twenty_signin_world()
+    devs, old, spec, _flows_ = _twenty_signin_world()
     ufs, tele = _build_user_flows(
-        [spec], [old], [d_auth], [], home_pure=True,
+        [spec], [old], devs, [], home_pure=True,
         container_pf_keys=frozenset())
     assert ufs == []
     assert "uf_home_container_inherited" not in tele
     monkeypatch.delenv(_ENV, raising=False)
     d2, old2, spec2, _f2 = _twenty_signin_world()
     ufs_ref, tele_ref = _build_user_flows(
-        [spec2], [old2], [d2], [], home_pure=True, container_pf_keys=None)
+        [spec2], [old2], d2, [], home_pure=True, container_pf_keys=None)
     assert ufs == ufs_ref
     assert tele == tele_ref
+
+
+# ── Reservation: the rightful claimant keeps its member ─────────────────
+
+
+def test_reservation_saves_rightful_claimant(monkeypatch) -> None:
+    """The SPA class (replay runs 2/6): a container-homed member riding
+    a dev that ANOTHER journey cites with a MATCHING product feature
+    (spec pf slug == member home) is RESERVED — an earlier journey's
+    Pass-1 inherit may not hoover it. The rightful journey then claims
+    it via the strict h == pf_key pass."""
+    monkeypatch.setenv(_ENV, "1")
+    fl = _flow("post-api-partner-application-flow",
+               "packages/twenty-website/src/api/partner.ts")
+    d_pa = _dev("partner-application", "twenty-website",
+                [fl.entry_point_file], [fl])
+    old = _uf("UF-035-9", "Browse and Configure Application",
+              "twenty-website", [fl.uuid])
+    thief = {
+        # Emission-order FIRST, non-container PF, cites the det UF
+        # holding the reserved member — the exact twenty thief shape
+        # ('Create and configure applications').
+        "name": "Create and configure applications", "resource": "app",
+        "product_feature": "Applications",
+        "from_flows": ["UF-035-9"], "from_dev_features": [],
+    }
+    rightful = {
+        "name": "Submit partner application",
+        "resource": "partner-application",
+        "product_feature": "Twenty Website",
+        "from_flows": [], "from_dev_features": ["partner-application"],
+    }
+    containers = frozenset({"twenty-website"})
+    ufs, tele = _build_user_flows(
+        [thief, rightful], [old], [d_pa], [], home_pure=True,
+        container_pf_keys=containers)
+    assert [u.name for u in ufs] == ["Submit partner application"]
+    assert ufs[0].member_flow_ids == [fl.uuid]
+    assert "Create and configure applications" in tele["uf_dropped_names"]
+    # The reservation block is NOT foreignness — not counted.
+    assert tele["uf_home_filtered"] == 0
+    assert tele["uf_home_container_inherited"] == 0
+
+
+def test_unreserved_member_still_inherits_via_from_flows(monkeypatch) -> None:
+    """Without a rightful claimant (nobody cites the riding dev with a
+    matching PF), the cited-UF channel inherits the container-homed
+    member — the mass-rescue side of the class fix."""
+    monkeypatch.setenv(_ENV, "1")
+    fl = _flow("post-api-partner-application-flow",
+               "packages/twenty-website/src/api/partner.ts")
+    d_pa = _dev("partner-application", "twenty-website",
+                [fl.entry_point_file], [fl])
+    old = _uf("UF-035-9", "Browse and Configure Application",
+              "twenty-website", [fl.uuid])
+    thief = {
+        "name": "Create and configure applications", "resource": "app",
+        "product_feature": "Applications",
+        "from_flows": ["UF-035-9"], "from_dev_features": [],
+    }
+    ufs, tele = _build_user_flows(
+        [thief], [old], [d_pa], [], home_pure=True,
+        container_pf_keys=frozenset({"twenty-website"}))
+    (uf,) = ufs
+    assert uf.member_flow_ids == [fl.uuid]
+    assert tele["uf_home_container_inherited"] == 1
+
+
+def test_container_pf_journey_cannot_inherit_foreign_container(
+        monkeypatch) -> None:
+    """A journey whose OWN PF IS a container never container-inherits a
+    FOREIGN container's member (its own members pass as h == pf_key)."""
+    monkeypatch.setenv(_ENV, "1")
+    fl = _flow("post-api-partner-application-flow",
+               "packages/twenty-website/src/api/partner.ts")
+    d_pa = _dev("partner-application", "twenty-website",
+                [fl.entry_point_file], [fl])
+    old = _uf("UF-035-9", "Browse and Configure Application",
+              "twenty-website", [fl.uuid])
+    spec = {
+        "name": "Run server workloads", "resource": "workload",
+        "product_feature": "Twenty Server",  # a container PF journey
+        "from_flows": ["UF-035-9"], "from_dev_features": [],
+    }
+    containers = frozenset({"twenty-website", "twenty-server"})
+    ufs, tele = _build_user_flows(
+        [spec], [old], [d_pa], [], home_pure=True,
+        container_pf_keys=containers)
+    assert ufs == []
+    assert tele["uf_home_container_inherited"] == 0
+    # Container-block = reservation, not foreignness: uncounted.
+    assert tele["uf_home_filtered"] == 0
 
 
 # ── ANTI-CASE: 'Manage email blocklist' stays filtered ──────────────────
@@ -261,10 +375,10 @@ def test_sibling_leak_zero_invariant(monkeypatch) -> None:
     specs = [
         {"name": "Sign in and authenticate", "resource": "auth",
          "product_feature": "Auth",
-         "from_flows": ["UF-001"], "from_dev_features": []},
+         "from_flows": ["UF-001"], "from_dev_features": ["auth"]},
         {"name": "Manage email blocklist", "resource": "blocklist",
          "product_feature": "Email Blocklist",
-         "from_flows": ["UF-001"], "from_dev_features": []},
+         "from_flows": ["UF-001"], "from_dev_features": ["settings-email"]},
     ]
     ufs, _tele = _build_user_flows(
         specs, [old], devs, [], home_pure=True,
@@ -348,13 +462,13 @@ def test_run_journey_abstraction_threads_container_keys(monkeypatch) -> None:
         return real(*args, **kw)
 
     monkeypatch.setattr(s67d, "_build_user_flows", _spy)
-    d_auth, old, _spec, _flows_ = _twenty_signin_world()
+    devs, old, _spec, _flows_ = _twenty_signin_world()
     pfs = [
         _pf("auth", "Auth", anchor="route:/welcome"),
         _pf("twenty-front", "Twenty Front", anchor="ws:packages/twenty-front"),
     ]
     run_journey_abstraction(
-        [old], pfs, [d_auth], [], client=_Client(_PAYLOAD), model="m",
+        [old], pfs, devs, [], client=_Client(_PAYLOAD), model="m",
         anchored=True,
     )
     assert captured == [frozenset({"twenty-front"})]
@@ -371,10 +485,10 @@ def test_run_journey_abstraction_unanchored_passes_no_keys(monkeypatch) -> None:
         return real(*args, **kw)
 
     monkeypatch.setattr(s67d, "_build_user_flows", _spy)
-    d_auth, old, _spec, _flows_ = _twenty_signin_world()
+    devs, old, _spec, _flows_ = _twenty_signin_world()
     pfs = [_pf("auth", "Auth", anchor="route:/welcome")]
     run_journey_abstraction(
-        [old], pfs, [d_auth], [],
+        [old], pfs, devs, [],
         client=_Client(_PAYLOAD, reattrib='{"map":{"auth":"Auth"}}'),
         model="m", anchored=False,
     )

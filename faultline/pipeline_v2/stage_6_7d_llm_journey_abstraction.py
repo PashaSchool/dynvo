@@ -1191,22 +1191,52 @@ def _build_user_flows(
     )
     # B74 Seg C (FAULTLINE_HOME_PURE_CONTAINER_INHERIT, default OFF):
     # home = ws-pkg CONTAINER (anchored-mint "ws:" marker) is packaging,
-    # not foreignness — inheritable like lane/unowned, but ONLY on the
-    # CITED channels (Pass 1 from_flows + Pass 2a cited devs). The
-    # whole-pool 2b token rescue and the route backfill stay home-STRICT:
-    # loosening them re-opens the claim-greed pool (twenty probe: a 46-
-    # member 13.2%-precision false pool that killed 'Submit partner
-    # application'). Foreignness law is unchanged when home is a SIBLING
-    # capability. Telemetry key exists only when the channel is armed AND
-    # the repo has ws-containers, so unset/inert worlds stay byte-identical.
+    # not foreignness. Probe-canon scoped form (2026-07-19, replay-
+    # refined member-by-member on the twenty capture):
+    #   * A capability journey (own PF NOT a container) inherits
+    #     container-homed members on the CITED channels — Pass 1
+    #     from_flows + Pass 2a cited devs. Client+server journeys span
+    #     containers ('Sign in and authenticate' = 8 twenty-front + 3
+    #     twenty-server members), so the inherit is not per-container.
+    #   * RESERVATION: a container-homed member riding a dev that some
+    #     OTHER journey cites with a MATCHING product feature (spec pf
+    #     slug == the member's home) belongs to that rightful claimant
+    #     — it is never container-inherited away. Without this,
+    #     'Create and configure applications' claim-greed-killed
+    #     'Submit partner application' (its flow rides dev
+    #     partner-application, cited by the SPA journey whose own PF is
+    #     the twenty-website home).
+    #   * A journey whose OWN PF IS a container never container-inherits
+    #     a foreign container's member (its own members pass h==pf_key).
+    #   * The whole-pool 2b token rescue and the route backfill stay
+    #     home-STRICT (the 46-member/13.2% false-pool claim-greed law).
+    #   * Armed, a BLOCKED container-homed member is a packaging
+    #     reservation, not foreignness — uf_home_filtered keeps counting
+    #     ONLY sibling-capability blocks (the metric the class-fix is
+    #     judged by). Unset keeps every count byte-identical.
+    # Telemetry key exists only when the channel is armed AND the repo
+    # has ws-containers, so unset/inert worlds stay byte-identical.
     container_keys: frozenset[str] = (
         container_pf_keys
         if (home_by_mid and container_pf_keys
             and _container_inherit_enabled())
         else frozenset()
     )
+    reserved_mids: set[str] = set()
     if container_keys:
         tele["uf_home_container_inherited"] = 0
+        for spec in uf_specs:
+            s_pf = _slug(spec.get("product_feature") or "") or None
+            if not s_pf:
+                continue
+            for dref in spec.get("from_dev_features") or []:
+                dev = (dev_by_name.get(dref.strip().lower())
+                       if isinstance(dref, str) else None)
+                if dev is None:
+                    continue
+                for mid in dev_flow_ids.get(dev.name, []):
+                    if home_by_mid.get(mid) == s_pf:
+                        reserved_mids.add(mid)
 
     def _home_ok(mid: str, pf_key: str | None, *,
                  container_inherit: bool = False) -> bool:
@@ -1215,9 +1245,16 @@ def _build_user_flows(
         h = home_by_mid.get(mid)
         if h is None or h == pf_key:
             return True
-        if container_inherit and h in container_keys:
-            tele["uf_home_container_inherited"] += 1
-            return True
+        if h in container_keys:
+            # Armed only (empty set when unset/inert). Packaging home:
+            # inheritable by a capability journey on the cited channels
+            # unless reserved for its rightful claimant; blocked and
+            # UNCOUNTED everywhere else (reservation, not foreignness).
+            if (container_inherit and pf_key not in container_keys
+                    and mid not in reserved_mids):
+                tele["uf_home_container_inherited"] += 1
+                return True
+            return False
         tele["uf_home_filtered"] += 1
         return False
 
