@@ -118,7 +118,9 @@ react_router:
 # file carrying a router marker below. Owner map resolves the consuming
 # route's element/component to its page file (wrapper/fallback filtered,
 # lazy-import bridged); table values without a direct Route are emitted
-# as pattern anchors WITHOUT an owner (nav-alias law). Flag
+# as pattern anchors WITHOUT an owner, attributed to the table's first
+# consuming router file (nav-alias law + IT2 container guard: the
+# declaring ws-pkg is evidence, never a capability). Flag
 # FAULTLINE_SPA_ROUTE_TABLE, default OFF.
 route_table:
   extensions:

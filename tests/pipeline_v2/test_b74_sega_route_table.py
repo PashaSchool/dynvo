@@ -256,16 +256,23 @@ def test_twenty_apppath_20_patterns_named_owners(
         "packages/twenty-front/src/pages/object-record/RecordIndexPage.tsx",
     }
     # Nav-alias values without a direct Route — pattern anchors WITHOUT
-    # an owner: they sit on the table file itself (legal by spec).
-    assert pfiles["/objects/tasks"] == {_APP_TABLE}
-    assert pfiles["/objects/opportunities"] == {_APP_TABLE}
+    # an owner, attributed to the FIRST consuming router file (IT2
+    # container guard: the declaring ws-pkg is evidence, never a
+    # capability).
+    assert pfiles["/objects/tasks"] == {_APP_ROUTER}
+    assert pfiles["/objects/opportunities"] == {_APP_ROUTER}
     # Slashless member emits raw (leading '/' is a prior, not a gate).
     assert "settings" in patterns
-    # Ownerless root rides the table-name slug (app-path anchor).
-    assert pfiles["/"] == {_APP_TABLE}
+    # Ownerless root rides the table-name slug (app-path anchor) on the
+    # consumer side.
+    assert pfiles["/"] == {_APP_ROUTER}
     assert any(a.name == "app-path" for a in anchors)
     # Every route row is a PAGE row.
     assert {m for _p, m, _f in _routes_of(anchors)} == {"PAGE"}
+    # IT2 container guard, explicit: NOTHING points at the declaring
+    # table file — no anchor path, no route row.
+    assert all(_APP_TABLE not in a.paths for a in anchors)
+    assert all(f != _APP_TABLE for _p, _m, f in _routes_of(anchors))
 
 
 def test_determinism_two_extracts(tmp_path: Path, table_on: None) -> None:
@@ -332,13 +339,10 @@ def test_novu_routes_object_and_scoped_barrel(
     multi-target star barrel is an honest no-hop entry."""
     files = [
         _write(tmp_path, "apps/dashboard/package.json", '{"name": "dash"}'),
-        # Real-novu shape: SIGN_IN is the FIRST member. PROBE-CANON
-        # KNOWN MISS (ship-verdict deviation): the object-member regex's
-        # ``^`` branch carries no ``\\s*``, so the first member after
-        # ``{\\n`` is not parsed — canon novu = 85 patterns WITHOUT
-        # '/auth/sign-in'. A one-line fix exists; it changes the named
-        # gate numbers (85/79 -> 86/80), so it is an OPERATOR decision,
-        # not an implementation improvisation.
+        # Real-novu shape: SIGN_IN is the FIRST member. IT2 (coordinator
+        # ruling 1): the fixed ``^\\s*`` branch parses it — the canon
+        # numbers shifted 85->86 patterns (corpus re-probe: still
+        # exactly-3 emitted tables, 0 false).
         _write(
             tmp_path, "apps/dashboard/src/utils/routes.ts",
             "export const ROUTES = {\n"
@@ -387,19 +391,22 @@ def test_novu_routes_object_and_scoped_barrel(
     ]
     anchors = _extract(tmp_path, files)
     patterns = _patterns_of(anchors)
-    # '/auth/sign-in' (FIRST member) is absent — the probe-canon
-    # first-member miss pinned above; everything else emits.
+    # IT2: '/auth/sign-in' (FIRST member) is parsed — the fixed regex
+    # returns the S5b-H sign-in material.
     assert patterns == {
-        "/", "/auth/sso", "/env/:environmentSlug/workflows",
+        "/", "/auth/sign-in", "/auth/sso",
+        "/env/:environmentSlug/workflows",
     }
     pfiles = _pattern_files(anchors)
     # Scoped resolution: own-package barrel, NOT playground/nextjs.
+    assert pfiles["/auth/sign-in"] == {"apps/dashboard/src/pages/index.ts"}
     assert pfiles["/auth/sso"] == {"apps/dashboard/src/pages/index.ts"}
     assert pfiles["/"] == {"apps/dashboard/src/dashboard-page.tsx"}
-    # Nav-alias without a Route: the workflows pattern sits ownerless on
-    # the table file.
+    # Nav-alias without a Route: the workflows pattern attributes to the
+    # FIRST consuming router file (IT2 container guard), never the
+    # declaring table file.
     assert pfiles["/env/:environmentSlug/workflows"] == {
-        "apps/dashboard/src/utils/routes.ts",
+        "apps/dashboard/src/main.tsx",
     }
 
 
@@ -472,10 +479,11 @@ def test_wrapper_fallback_and_redirect_filters(
     pfiles = _pattern_files(anchors)
     # fallback + wrappers stripped -> the REAL page owns /alpha.
     assert pfiles["/alpha"] == {"src/pages/AlphaPage.tsx"}
-    # Navigate is a wrapper, not an owner -> /beta emits ownerless.
-    assert pfiles["/beta"] == {table}
-    # /gamma has no Route at all -> nav-alias pattern on the table file.
-    assert pfiles["/gamma"] == {table}
+    # Navigate is a wrapper, not an owner -> /beta emits ownerless,
+    # attributed to the consuming router file (IT2 container guard).
+    assert pfiles["/beta"] == {"src/router.tsx"}
+    # /gamma has no Route at all -> nav-alias pattern, consumer-side.
+    assert pfiles["/gamma"] == {"src/router.tsx"}
 
 
 # ── NAMED anti-cases — the consumption gate is load-bearing ──────────────────
@@ -702,6 +710,63 @@ def test_routes_index_stamps_spa_page_kind(
     assert {r["pattern"] for r in rows} >= {
         "/welcome", "/objects/tasks", "settings",
     }
+
+
+# ── IT2 container guard — declaring package vs owned capability ──────────────
+
+
+def test_container_guard_declaring_pkg_gets_nothing_owned_capability_lives(
+    tmp_path: Path, table_on: None,
+) -> None:
+    """IT2 ruling 2 pin (both sides): a ws-pkg that only DECLARES the
+    table receives ZERO rows/paths (evidence, not a capability — the
+    'twenty-shared' container-PF exhibit), while a blocklist-shaped
+    OWNED member keeps its page-file anchor (real capability lives)."""
+    table = _write(
+        tmp_path, "packages/shared/src/types/SettingsPath.ts",
+        "export enum SettingsPath {\n"
+        "  Blocklist = 'accounts/blocklist',\n"
+        "  ProfilePage = 'profile',\n"
+        "  Experience = 'experience',\n"
+        "}\n",
+    )
+    files = [
+        table,
+        _write(tmp_path, "packages/shared/package.json", '{"name": "shared"}'),
+        _write(tmp_path, "apps/front/package.json", '{"name": "front"}'),
+        _write(
+            tmp_path, "apps/front/src/SettingsRoutes.tsx",
+            "import { Route, Routes } from 'react-router-dom';\n"
+            "import { SettingsBlocklist } from"
+            " '~/pages/settings/SettingsBlocklist';\n"
+            "export const SettingsRoutes = () => (\n"
+            "  <Routes>\n"
+            "    <Route path={SettingsPath.Blocklist}"
+            " element={<SettingsBlocklist />} />\n"
+            "  </Routes>\n"
+            ");\n",
+        ),
+        _write(
+            tmp_path, "apps/front/src/pages/settings/SettingsBlocklist.tsx",
+            "export const SettingsBlocklist = () => null;\n",
+        ),
+    ]
+    anchors = _extract(tmp_path, files)
+    pfiles = _pattern_files(anchors)
+    # The owned capability keeps its page anchor.
+    assert pfiles["accounts/blocklist"] == {
+        "apps/front/src/pages/settings/SettingsBlocklist.tsx",
+    }
+    # Ownerless members attribute to the consuming router file.
+    assert pfiles["profile"] == {"apps/front/src/SettingsRoutes.tsx"}
+    # The declaring package receives NOTHING — no path, no row.
+    assert all(
+        not p.startswith("packages/shared/") for a in anchors for p in a.paths
+    )
+    assert all(
+        not f.startswith("packages/shared/")
+        for _p, _m, f in _routes_of(anchors)
+    )
 
 
 # ── per-workspace dispatch — the cross-workspace join (KS forensics) ─────────

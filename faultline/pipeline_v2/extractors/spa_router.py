@@ -1026,8 +1026,10 @@ def _collect_react_router(ctx: "ScanContext") -> list[_Entry]:
 # resolvable Route element take the page component's file as their entry
 # (lazy / lazyWithPreload bridge through the consuming file's imports,
 # wrapper + ``fallback={...}`` filtered); values without a direct Route
-# (twenty tasks/opportunities nav-aliases) emit as pattern anchors on
-# the table file itself — WITHOUT an owner (legal by spec).
+# (twenty tasks/opportunities nav-aliases) emit as pattern anchors
+# WITHOUT an owner, attributed to the table's first consuming router
+# file (the app side — IT2 container guard: the declaring ws-pkg is
+# evidence, never a capability).
 
 #: Candidacy floor + route-like shape ratio (probe canon; scale-invariant
 #: ratios, no per-repo tuning).
@@ -1049,8 +1051,14 @@ _RT_CONST_OBJ_RE = re.compile(
     r"export\s+const\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=]{0,120}?)?=\s*"
     r"(?:Object\.freeze\s*\(\s*)?\{",
 )
+#: IT2 (coordinator ruling 1): the ``^`` branch carries ``\s*`` so the
+#: FIRST object member after ``{\n`` is parsed — the probe-canon regex
+#: lost it (real novu ``SIGN_IN: '/auth/sign-in'`` — the S5b-H sign-in
+#: material). Canon shift documented: novu ROUTES 85/79 -> 86/79
+#: (corpus re-probe 2026-07-20: 2,042 candidates -> the same exactly-3
+#: tables emit, 0 false).
 _RT_OBJ_MEMBER_RE = re.compile(
-    r"(?:^|[,{]\s*)['\"]?([A-Za-z_$][\w$]*)['\"]?\s*:\s*"
+    r"(?:^\s*|[,{]\s*)['\"]?([A-Za-z_$][\w$]*)['\"]?\s*:\s*"
     r"(['\"`])((?:(?!\2).)*)\2",
     re.DOTALL,
 )
@@ -1331,26 +1339,35 @@ def _collect_route_tables(ctx: "ScanContext") -> list[_Entry]:
 
     entries: list[_Entry] = []
     for table in tables:
-        consumed = False
+        first_consumer: str | None = None
         owners: dict[str, tuple[str, str]] = {}
         use_re = _rt_use_re(table.name)
         for consumer in sorted(router_texts):
             text = router_texts[consumer]
             if table.name not in text or not use_re.search(text):
                 continue
-            consumed = True
+            if first_consumer is None:
+                first_consumer = consumer
             for value, owner in _rt_owner_map(
                 text, consumer, table, gr, repo_root, tracked,
             ).items():
                 owners.setdefault(value, owner)
-        if not consumed:
+        if first_consumer is None:
             continue  # the load-bearing emission gate (probe canon)
         for value in sorted(
             {v for v in table.entries.values() if _rt_route_like(v)}
         ):
             own = owners.get(value)
             comp = own[0] if own else None
-            entry_file = own[1] if own else table.file
+            # IT2 container guard (coordinator ruling 2): an ownerless
+            # value attributes to the table's FIRST consuming router
+            # file — the app side — NEVER to the declaring table file.
+            # The declaration package is evidence, not a capability: a
+            # ws-pkg that only DECLARES the table must not receive
+            # PAGE-surface rows, or the 6.86 mint licenses the container
+            # as a PF (twenty census exhibit: 'twenty-shared' PF,
+            # 13,851 loc, minted purely off table-file rows).
+            entry_file = own[1] if own else first_consumer
             slug = _first_static_segment(value)
             if not slug and comp:
                 slug = _rr_component_slug(comp, gr.resolve_gr)
