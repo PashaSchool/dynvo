@@ -200,12 +200,30 @@ def _feature_kloc(
     return total / 1000.0
 
 
-def _repo_grain_median(dev_features: list[Any]) -> int:
-    """Repo-grain median owned size — the Stage-3 chunk-cap denominator
-    (mirrors ``stage_3_flows._oversized_cut``'s median computation)."""
+def _repo_grain_median(
+    stage3_unit_snapshot: dict[str, list[str]],
+    dev_features: list[Any],
+) -> int:
+    """Stage-3-grain median owned size — the chunk-cap denominator.
+
+    Mirrors ``stage_3_flows._oversized_cut``'s median computation over
+    the SAME population Stage 3 measured (the stage-3 units, from the
+    snapshot): the chunk-count cap is the Stage-3 cost law («the LLM
+    call count is bounded by the number of median-grain features this
+    feature is worth»), and that law was calibrated on the stage-3
+    grain. Measuring it on the post-decomposition board (a much finer
+    median) over-chunks the cohort ~5x (armed-keyless twenty census:
+    1,490 call units vs the probe's stage-3-grain economics — the spec
+    prices twenty at $1-2.5). Falls back to the current dev set for
+    degenerate snapshots.
+    """
     sizes = [
-        len(f.paths) for f in dev_features if getattr(f, "paths", None)
+        len(paths) for paths in stage3_unit_snapshot.values() if paths
     ]
+    if not sizes:
+        sizes = [
+            len(f.paths) for f in dev_features if getattr(f, "paths", None)
+        ]
     if not sizes:
         return 2
     return max(2, int(statistics.median(sizes)))
@@ -252,7 +270,7 @@ def select_rederive_cohort(
     sel.flowful_median_density = round(median_density, 4)
     density_ceiling = median_density / _OVERSIZED_MEDIAN_MULT
 
-    grain_median = _repo_grain_median(dev_features)
+    grain_median = _repo_grain_median(stage3_unit_snapshot, dev_features)
 
     for f in sorted(dev_features, key=lambda x: x.name):
         current = _non_test_pathset(getattr(f, "paths", None))
