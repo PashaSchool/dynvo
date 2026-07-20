@@ -1348,9 +1348,9 @@ def _collect_route_tables(ctx: "ScanContext") -> list[_Entry]:
         for value in sorted(
             {v for v in table.entries.values() if _rt_route_like(v)}
         ):
-            owner = owners.get(value)
-            comp = owner[0] if owner else None
-            entry_file = owner[1] if owner else table.file
+            own = owners.get(value)
+            comp = own[0] if own else None
+            entry_file = own[1] if own else table.file
             slug = _first_static_segment(value)
             if not slug and comp:
                 slug = _rr_component_slug(comp, gr.resolve_gr)
