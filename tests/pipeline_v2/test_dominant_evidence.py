@@ -435,6 +435,93 @@ def test_generic_template_gates_multi_resource_join(
     assert any("knowledges, orgs & files" in c.lower() for c in off), off
 
 
+# ── site 4: det-agg it5-1b qualifier-family join ────────────────────────
+
+
+def _it51b_world() -> tuple[UserFlow, dict[str, Any]]:
+    """The Soc0 keyless exhibit shape ('Manage org knowledges, entries &
+    froms'): 16 org-knowledge members where the 'entry' family holds 4/16
+    (0.25) and the 'from' family 3/16 (0.19) — both under the 0.34 floor."""
+    names = (
+        [f"view-org-knowledge-file-{i}-flow" for i in range(5)]
+        + [f"browse-org-knowledge-revision-{i}-flow" for i in range(4)]
+        + [f"create-org-knowledge-entry-{i}-flow" for i in range(4)]
+        + [f"create-org-knowledge-from-message-{i}-flow" for i in range(3)]
+    )
+    flows = [_r_flow(n, "backend/routers/org_knowledge.py") for n in names]
+    uf = UserFlow(
+        id="UF-036", name="Manage org knowledges", domain="org_knowledge",
+        product_feature_id="network-security", intent="manage",
+        resource="api-org-knowledge-file-by-file-id-download",
+        member_flow_ids=[f.uuid for f in flows], member_count=len(flows),
+    )
+    return uf, {f.uuid: f for f in flows}
+
+
+def test_det_agg_qualifier_families_respect_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Site 4 (det-agg it5-1b): a qualifier family joins the display only
+    with member support ≥ 0.34 — the 2-of-16 tails ('entries & froms'
+    class) stop titling the journey."""
+    from faultline.pipeline_v2.naming_contract import (
+        _verb_class_tokens,
+        load_naming_vocab,
+    )
+    from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+        rename_raw_resource_rows,
+    )
+
+    verbs = _verb_class_tokens(load_naming_vocab())
+
+    monkeypatch.setenv(DOMINANT_EVIDENCE_ENV, "1")
+    uf, fbid = _it51b_world()
+    tele = rename_raw_resource_rows([uf], fbid, verbs)
+    assert tele["renamed"] == 1
+    low = uf.name.lower()
+    assert "from" not in low and "entrie" not in low and "entry" not in low, uf.name
+    assert low.startswith("manage org knowledge"), uf.name
+
+    # OFF: byte-identical to the banked composer (tails join as before)
+    monkeypatch.delenv(DOMINANT_EVIDENCE_ENV, raising=False)
+    uf2, fbid2 = _it51b_world()
+    rename_raw_resource_rows([uf2], fbid2, verbs)
+    assert "&" in uf2.name, uf2.name
+
+
+def test_det_agg_majority_family_still_joins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anti-case: a qualifier family with true majority support (≥ 0.34)
+    KEEPS its place in the composed display."""
+    from faultline.pipeline_v2.naming_contract import (
+        _verb_class_tokens,
+        load_naming_vocab,
+    )
+    from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+        rename_raw_resource_rows,
+    )
+
+    verbs = _verb_class_tokens(load_naming_vocab())
+    names = (
+        [f"create-threat-hunts-feed-poll-{i}-flow" for i in range(5)]
+        + [f"browse-threat-hunts-feeds-{i}-flow" for i in range(4)]
+        + [f"browse-threat-hunts-articles-{i}-flow" for i in range(6)]
+        + [f"create-threat-hunts-hunt-run-{i}-flow" for i in range(2)]
+    )
+    flows = [_r_flow(n, "backend/routers/threat_hunts.py") for n in names]
+    uf = UserFlow(
+        id="UF-058", name="Create detectors", domain="threat_hunt",
+        product_feature_id="threat-hunts", intent="manage",
+        resource="api-threat-hunt-article-article-id-adopt-detector",
+        member_flow_ids=[f.uuid for f in flows], member_count=len(flows),
+    )
+    monkeypatch.setenv(DOMINANT_EVIDENCE_ENV, "1")
+    rename_raw_resource_rows([uf], {f.uuid: f for f in flows}, verbs)
+    # feeds 9/17 (0.53) and articles 6/17 (0.35) both clear the floor
+    assert uf.name == "Manage threat hunts, feeds & articles", uf.name
+
+
 # ── member_evidence_pairs helper ────────────────────────────────────────
 
 
