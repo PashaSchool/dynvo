@@ -343,6 +343,41 @@ def test_segc_same_target_narrowing_off_when_flag_unset(monkeypatch):
     assert "organic_prior_hold_narrowed" not in tele
 
 
+# ══ Arbiter-client contract (S3 ledger, rung 'affinity-rehome') ═════════
+
+
+def test_segb_arbiter_journals_affinity_rehome_rung(monkeypatch):
+    """Seg B is an S3 arbiter client: with an active ledger the move is
+    journaled at rung 'affinity-rehome' (kind='uf', old→new) and the write
+    still lands (chokepoint-immediate semantics — the b73 client
+    precedent)."""
+    from faultline.models.types import UserFlow
+    from faultline.pipeline_v2.overturn_ledger import (
+        OverturnLedger,
+        install_ledger,
+        uninstall_ledger,
+    )
+    _on(monkeypatch)
+    devs, pfs, ufs = _vacuum_scene()
+    real = UserFlow(
+        id="UF-1", name="Manage cases", product_feature_id="network-security",
+        intent="manage", resource="case",
+        member_flow_ids=["f-ca"], member_count=1)
+    real.synthesized = False
+    ufs[0] = real
+    led = OverturnLedger()
+    install_ledger(led)
+    try:
+        apply_home_affinity_gate(ufs, devs, pfs)
+    finally:
+        uninstall_ledger()
+    assert real.product_feature_id == "cases"
+    moves = [e for e in led.entries if e.rung == "affinity-rehome"]
+    assert len(moves) >= 1
+    assert moves[0].kind == "uf"
+    assert moves[0].old == "network-security" and moves[0].new == "cases"
+
+
 # ══ Seg D — mega vacuum census ══════════════════════════════════════════
 
 
