@@ -97,7 +97,8 @@ _FLIPPED = [
 ]
 
 # The full ratified pack set (№2: 4 flags + №3: 9 flags); no duplicates.
-assert len(_FLIPPED) == 13
+# 13 фліпнуто в паках 2+3; DET_AGG un-flip №2 (KS 35) вилучив один.
+assert len(_FLIPPED) == 12
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
