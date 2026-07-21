@@ -140,6 +140,7 @@ qualifying overlap — the guards cannot touch them (unit-pinned).
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.conservation import home_affinity_gate_enabled
 from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 from faultline.pipeline_v2.transport_handoff import mega_decomp_armed
 
@@ -326,6 +327,29 @@ def _home_noun_echo(
         if fl is not None:
             row_toks |= _sing_tokens(str(_attr(fl, "name") or ""))
     return bool(home_toks & row_toks)
+
+
+def _rival_name_affinity(uf: Any, rival_pf: Any, vocab: Mapping[str, Any]) -> bool:
+    """B78 Seg C(b) rival-sanity: does the RIVAL PF's name share >= 1 content
+    token (name minus the vocab verb classes) with the journey's name?
+
+    The anchor-prefix breadth ruler is structural — it can crown a rival that
+    merely SHARES a broad route prefix with the journey's entries yet has no
+    domain relation to it ('Manage admins' → rival 'chat': admin vs chat,
+    zero content overlap — the B78 forensic). Moving there is annexation in
+    the other direction, so a rival with no name affinity ⇒ DEFER (the B49
+    'never invent a move' doctrine). Verb-only journey names carry no name
+    signal → conservatively no affinity → defer."""
+    if rival_pf is None:
+        return False
+    verb_toks = _verb_class_tokens(vocab)
+    uf_ct = {t for t in _sing_tokens(str(_attr(uf, "name") or ""))
+             if t and t not in verb_toks}
+    if not uf_ct:
+        return False
+    rtoks = _sing_tokens(
+        str(_attr(rival_pf, "name") or ""), _pf_display(rival_pf))
+    return bool(uf_ct & rtoks)
 
 
 def _member_entries(uf: Any, flow_by_uuid: Mapping[str, Any]) -> list[str]:
@@ -540,8 +564,24 @@ def run_post_uf_rehome(
                 # reason — cross_app_target — or moved itself) is NEVER
                 # re-adjudicated by the organic lane; nav-stage authority
                 # outranks the breadth ruler's weaker evidence.
+                #
+                # B78 Seg C(a) — SAME-TARGET narrowing (armed only): the wide
+                # hold is too blunt (it fences a mis-homed sole journey held
+                # for a DIFFERENT target). Armed, only a mega MOVE to X blocks
+                # a re-move to that same X; a decline/stay hold, or a move to a
+                # different better target Y, no longer blocks here (mega-hold
+                # про move-до-X не вбиває move-до-Y). The rival-sanity guard
+                # below is the safety the wide hold used to provide — UF-051's
+                # 'chat' rival has no name affinity, so it stays blocked.
                 hold = (mega_holds or {}).get(uid)
-                if hold:
+                _block_hold = bool(hold)
+                if hold and home_affinity_gate_enabled():
+                    _mt = hold[6:] if hold.startswith("moved:") else None
+                    _block_hold = _mt is not None and _mt == rival_key
+                    if not _block_hold:
+                        tele["organic_prior_hold_narrowed"] = (
+                            tele.get("organic_prior_hold_narrowed", 0) + 1)
+                if _block_hold:
                     tele["organic_blocked_prior_hold"] = (
                         tele.get("organic_blocked_prior_hold", 0) + 1)
                     tele.setdefault("organic_blocked_rows", []).append({
@@ -549,6 +589,24 @@ def run_post_uf_rehome(
                         "name": str(_attr(uf, "name") or ""),
                         "from": pfid, "to": rival_key,
                         "reason": "prior-hold", "hold": str(hold),
+                    })
+                    continue
+                # B78 Seg C(b) — RIVAL-SANITY (armed only): the anchor-prefix
+                # breadth ruler can crown a rival with zero domain relation to
+                # the journey (UF-051 'Manage admins' → 'chat'). A rival whose
+                # NAME shares no content token with the journey ⇒ DEFER, never
+                # move (annexation in the other direction). This is the guard
+                # the narrowed prior-hold hands the safety baton to.
+                if (home_affinity_gate_enabled()
+                        and not _rival_name_affinity(
+                            uf, pf_by_key.get(rival_key), vocab)):
+                    tele["organic_blocked_rival_sanity"] = (
+                        tele.get("organic_blocked_rival_sanity", 0) + 1)
+                    tele.setdefault("organic_blocked_rows", []).append({
+                        "uf": uid,
+                        "name": str(_attr(uf, "name") or ""),
+                        "from": pfid, "to": rival_key,
+                        "reason": "rival-sanity",
                     })
                     continue
                 # it2 guard 1 — ANCHOR-OVERLAP false-zero (Soc0 UF-051
