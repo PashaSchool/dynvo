@@ -73,8 +73,9 @@ NAMED GUARDS (unit anti-cases, phase-1 §4 + v2 forensics):
 Default OFF (``FAULTLINE_HOMING_HYGIENE`` unset) ⇒ the rail never runs ⇒
 byte-identical output. $0 — deterministic, no LLM, no I/O.
 
-B73 ORGANIC-MOVE (``FAULTLINE_ORGANIC_MOVE``, default OFF; operator
-ratification 2026-07-17 + fork-A ruling 2026-07-19): when armed, the
+B73 ORGANIC-MOVE (``FAULTLINE_ORGANIC_MOVE``, default ON since the
+2026-07-21 pack-2 flip — KEY_SCHEMA 33; operator ratification 2026-07-17 +
+fork-A ruling 2026-07-19; explicit ``=0`` stays the kill-switch): when armed, the
 ratified STRICT+GATED rule REPLACES the S5a mega-organic handling of this
 rail's organic candidates (mega's own decomposition elsewhere is untouched):
 
@@ -167,8 +168,8 @@ _UNION_FLOOR = 0.34
 #: safety margin while staying scale-invariant).
 _BREADTH_RATIO = 3.0
 
-#: B73 organic-move kill-switch (default OFF; registered in
-#: ``scan_result_cache.ENV_OUTPUT_FLAGS`` — no KEY_SCHEMA bump).
+#: B73 organic-move kill-switch (default ON since the 2026-07-21 pack-2
+#: flip, KEY_SCHEMA 33; registered in ``scan_result_cache.ENV_OUTPUT_FLAGS``).
 ORGANIC_MOVE_ENV = "FAULTLINE_ORGANIC_MOVE"
 #: B73 ratified strict thresholds (operator ratification 2026-07-17) —
 #: constants by law, never env-parameterized; scale-invariant shares over
@@ -184,10 +185,14 @@ __all__ = [
 
 
 def organic_move_enabled() -> bool:
-    """B73 — default **OFF** (unset/``0`` ⇒ the organic-move branch is never
-    entered and the scan is byte-identical to main, including the mega-armed
-    organic path). Flipped only by its own pack per the 4-gate protocol."""
-    return os.environ.get(ORGANIC_MOVE_ENV, "").strip().lower() in {
+    """B73 — default **ON** since the 2026-07-21 pack-2 flip (KEY_SCHEMA 33;
+    keyed proof Soc0 green — moved=0, UF-051 blocked reason='prior-hold',
+    conservation 399→399/0/0; typebot keyed-evidence trio byte-inert).
+    Unset ≡ explicit ``1``; explicit ``=0``/``false`` ⇒ the organic-move
+    branch is never entered and the scan is byte-identical to the pre-B73
+    world, including the mega-armed organic path (explicit off stays a
+    valid kill-switch forever)."""
+    return os.environ.get(ORGANIC_MOVE_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

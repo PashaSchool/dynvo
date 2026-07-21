@@ -886,9 +886,14 @@ ENV_OUTPUT_FLAGS = (
     # direction-gate; PURE arbiter moves (rung organic-move), no renames,
     # no folds, no I8 orphan-guard (explicit ruling — sole-UF from-PFs are
     # the disease). Reshapes user_flows[].product_feature_id on repos with
-    # strict candidates. Default OFF; unset/=0 keeps the branch un-entered,
-    # byte-identical (including the mega-armed path). Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate flip commit.
+    # strict candidates. Default ON since the 2026-07-21 pack-2 flip
+    # (KEY_SCHEMA 33; keyed proof Soc0 green — moved=0, UF-051 blocked
+    # reason='prior-hold' hold='cross_app_target', conservation
+    # 399→399/0/0; typebot keyed-evidence trio byte-inert, KS ON == it1
+    # digest; ledger §B73-IT2). ``=0``/false/off keeps the branch
+    # un-entered, byte-identical (including the mega-armed path) —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_ORGANIC_MOVE",
     # R5 corpus naming-wave master (2026-07-19) — one flag gates the five R5
     # naming segments' NEW display-channel behaviors: identity-parity

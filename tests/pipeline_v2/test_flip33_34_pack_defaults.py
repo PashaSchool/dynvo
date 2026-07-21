@@ -38,16 +38,21 @@ from faultline.pipeline_v2.stage_1_per_workspace import (
     WORKSPACE_UNION_ENV,
     workspace_union_enabled,
 )
+from faultline.pipeline_v2.stage_6_99b_post_uf_rehome import (
+    ORGANIC_MOVE_ENV,
+    organic_move_enabled,
+)
 
 # (env-var name, helper) for every pack-№2/№3 flag flipped default OFF -> ON.
 _FLIPPED = [
     (PF_DISPLAY_EVIDENCE_GATE_ENV, pf_display_evidence_gate_enabled),
     (WORKSPACE_UNION_ENV, workspace_union_enabled),
     (NAMING_WAVE_R5_ENV, naming_wave_r5_enabled),
+    (ORGANIC_MOVE_ENV, organic_move_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 3
+assert len(_FLIPPED) == 4
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
