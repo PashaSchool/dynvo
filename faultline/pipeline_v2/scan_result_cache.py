@@ -1028,9 +1028,14 @@ ENV_OUTPUT_FLAGS = (
     # conservation resettle target. Reshapes user_flows[] membership on
     # armed composite worlds (the class lives ONLY on the FLOW_REDERIVE ×
     # CONTAINER_INHERIT interaction: twenty 502m/278m/216m mass-transfer
-    # giants). Default OFF; unset/=0 keeps 6.7c/6.7d/conservation
-    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
-    # the separate default-flip commit (flip-protocol).
+    # giants). Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA
+    # 34; replay census on the twenty capture — 502-class 542→7 (target),
+    # AI-agents 216→7, marketplace 278→25; buckets keep members as honest
+    # residual rows — 0/2211 losses (the OFF world LOST 957); anti-cases
+    # 23/26/6 intact; KS byte-ident both worlds; ledger §B77).
+    # ``=0``/false/off keeps 6.7c/6.7d/conservation byte-identical —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_RESIDUAL_CITABILITY",
     # B75 (2026-07-21, probe-canon supports/tune-first) — UF-giant
     # cases-split: giant catch-all journeys (mc >= the census band edge

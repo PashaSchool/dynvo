@@ -60,6 +60,10 @@ from faultline.pipeline_v2.uf_cases_split import (
     CASES_SPLIT_ENV,
     cases_split_enabled,
 )
+from faultline.pipeline_v2.stage_6_7c_uf_splitter import (
+    RESIDUAL_CITABILITY_ENV,
+    residual_citability_enabled,
+)
 
 # (env-var name, helper) for every pack-№2/№3 flag flipped default OFF -> ON.
 _FLIPPED = [
@@ -73,10 +77,11 @@ _FLIPPED = [
     (FLOW_REDERIVE_ENV, flow_rederive_enabled),
     (DIGEST_STRATIFICATION_ENV, digest_stratification_enabled),
     (CASES_SPLIT_ENV, cases_split_enabled),
+    (RESIDUAL_CITABILITY_ENV, residual_citability_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 9
+assert len(_FLIPPED) == 10
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

@@ -119,7 +119,8 @@ def _cache_enabled() -> bool:
     }
 
 
-# ── B77 — residual citability (default OFF) ────────────────────────────────
+# ── B77 — residual citability (default ON since the 2026-07-21 pack-3
+# flip, KEY_SCHEMA 34) ─────────────────────────────────────────────────────
 # Class: RESIDUAL-CITABILITY MASS-TRANSFER (forensics 2026-07-21, ledger
 # §ФОРЕНЗИКА 502M). The 6.7c mega-split's recall-safe RESIDUAL sub-UF keeps
 # the parent's (often journey-like) name, so downstream Call-1 cites it via
@@ -138,14 +139,20 @@ def _cache_enabled() -> bool:
 #           for >1 real PF home with no common majority is carved per home
 #           (existing :func:`conservation.member_votes` mechanism).
 #   Seg 4 — a ws-container PF is not a valid conservation resettle target.
-# Default OFF; unset/=0 keeps every path byte-identical (kill-switch law).
+# Default ON since the 2026-07-21 pack-3 flip; explicit =0 keeps every
+# path byte-identical (kill-switch forever; unset ≡ explicit "1").
 RESIDUAL_CITABILITY_ENV = "FAULTLINE_RESIDUAL_CITABILITY"
 
 
 def residual_citability_enabled() -> bool:
-    """Default **OFF**. Unset / falsy keeps 6.7c/6.7d/conservation
-    byte-identical to the flag-less engine (kill-switch law)."""
-    return os.environ.get(RESIDUAL_CITABILITY_ENV, "0").strip().lower() in {
+    """Default **ON** since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    replay census on the twenty capture — 502-class 542→7 (the target),
+    AI-agents 216→7, marketplace 278→25; no-orphan 0/2211 member losses
+    (the OFF world LOST 957); KS byte-ident both worlds). Unset ≡
+    explicit ``1``; explicit falsy (``0``/``false``/``off``) keeps
+    6.7c/6.7d/conservation byte-identical to the flag-less engine
+    (explicit off stays a valid kill-switch forever)."""
+    return os.environ.get(RESIDUAL_CITABILITY_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
