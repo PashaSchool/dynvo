@@ -31,8 +31,10 @@ import pytest
 from faultline.pipeline_v2.naming_contract import (
     NAMING_WAVE_R5_ENV,
     PF_DISPLAY_EVIDENCE_GATE_ENV,
+    SPRAY_GENERALIZED_ENV,
     naming_wave_r5_enabled,
     pf_display_evidence_gate_enabled,
+    spray_generalized_enabled,
 )
 from faultline.pipeline_v2.stage_1_per_workspace import (
     WORKSPACE_UNION_ENV,
@@ -88,10 +90,11 @@ _FLIPPED = [
     (RESIDUAL_CITABILITY_ENV, residual_citability_enabled),
     (METRICS_RECOMPUTE_ENV, metrics_recompute_enabled),
     (DET_AGGREGATION_ENV, det_aggregation_enabled),
+    (SPRAY_GENERALIZED_ENV, spray_generalized_enabled),
 ]
 
-# Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 12
+# The full ratified pack set (№2: 4 flags + №3: 9 flags); no duplicates.
+assert len(_FLIPPED) == 13
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

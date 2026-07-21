@@ -195,12 +195,14 @@ def _member_union(ufs: list[UserFlow]) -> set[str]:
     return out
 
 
-# ── flag: default OFF + kill-switch + cache keying ───────────────────────
+# ── flag: default ON (pack-3 flip) + kill-switch + cache keying ──────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): unset
+    # now arms the absorption pass (unset ≡ explicit-1).
     monkeypatch.delenv(SPRAY_GENERALIZED_ENV, raising=False)
-    assert spray_generalized_enabled() is False
+    assert spray_generalized_enabled() is True
 
 
 @pytest.mark.parametrize("val", ["0", "false", "off", "no", ""])
@@ -224,7 +226,9 @@ def test_flag_registered_for_cache_keying() -> None:
 
 
 def test_off_world_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(SPRAY_GENERALIZED_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(SPRAY_GENERALIZED_ENV, "0")
     pfs, ufs, flows = _world()
     spray = _run(pfs, ufs, flows)
     assert spray is None

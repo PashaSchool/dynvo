@@ -3037,7 +3037,8 @@ def run_finalize_phase(
                     feature=None,
                 )
 
-    # ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ──
+    # ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED,
+    # default ON since the 2026-07-21 pack-3 flip) ──────────────────────
     # Structural absorption of the generalized R5-2 tech-dir-suffix spray
     # ('Manage setting AI components/constants/…' — the det-aggregation
     # regrain class) over the FINAL display names the naming contract just

@@ -926,10 +926,16 @@ ENV_OUTPUT_FLAGS = (
     # own-resource parent row ('Manage AI settings' form; member-union
     # conservation, I14 repoint). Paren-tail rows are R5-2's class and are
     # never touched (G0). Reshapes user_flows[] (row count/names/membership)
-    # + the scan_meta.spray_generalized telemetry on armed worlds only. Default
-    # OFF; unset/=0 keeps the pass un-entered, byte-identical. Appended
-    # WITHOUT a KEY_SCHEMA bump — the bump rides the separate flip commit
-    # (flip-protocol).
+    # + the scan_meta.spray_generalized telemetry on armed worlds only.
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; census
+    # twenty (R5+DET_AGG world) — spray 17→0, parents 'Manage AI settings'
+    # mc38 / 'Manage application settings' mc52 / 'Manage data model
+    # settings' mc25, settings-PF 36→22, conservation 328==328, 0 false,
+    # I14 dangling 0; KS byte-ident typebot+openstatus; flips together
+    # with its pair FAULTLINE_UF_DET_AGGREGATION — ledger §S2-A-V3).
+    # ``=0``/false/off keeps the pass un-entered, byte-identical —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_SPRAY_GENERALIZED",
     # B74 Seg C (2026-07-19, probe-canon tune-first) — home-pure container
     # inherit: a journey member whose HOME PF is a monorepo ws-pkg CONTAINER

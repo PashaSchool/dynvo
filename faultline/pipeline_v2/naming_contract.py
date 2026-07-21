@@ -152,7 +152,9 @@ PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
 #: separate flip commit (flip-protocol).
 NAMING_WAVE_R5_ENV = "FAULTLINE_NAMING_WAVE_R5"
 
-#: S2-A-v3 spray-generalization (default OFF). Generalizes the R5-2 spray
+#: S2-A-v3 spray-generalization (default ON since the 2026-07-21 pack-3
+#: flip, KEY_SCHEMA 34; explicit =0 stays the kill-switch). Generalizes
+#: the R5-2 spray
 #: predicate to the UNPARENTHESIZED tech-dir-suffix form the det-aggregation
 #: regrain channel mints ('Manage setting AI components/constants/graphqls/
 #: hooks/types/utils' — twenty-b exhibit, settings-PF 36 rows): same-PF
@@ -402,13 +404,17 @@ def naming_wave_r5_enabled() -> bool:
 
 
 def spray_generalized_enabled() -> bool:
-    """S2-A-v3 spray-generalization (default OFF).
-    ``FAULTLINE_SPRAY_GENERALIZED`` ``=1``/``true`` arms the generalized
-    R5-2 spray predicate + group-absorption pass; unset/``0``/``false``/
+    """S2-A-v3 spray-generalization — default **ON** since the 2026-07-21
+    pack-3 flip (KEY_SCHEMA 34; census twenty (R5+DET_AGG world) — spray
+    17→0, parents 'Manage AI settings' mc38 / 'Manage application
+    settings' mc52 / 'Manage data model settings' mc25, settings-PF
+    36→22, conservation 328==328, 0 false, I14 dangling 0; KS byte-ident
+    typebot+openstatus; the pair flag of FAULTLINE_UF_DET_AGGREGATION —
+    ledger §S2-A-V3). Unset ≡ explicit ``1``; explicit ``0``/``false``/
     ``off`` keeps the pass un-entered ⇒ user_flows[] + telemetry
-    byte-identical (the KS 4-way gate)."""
+    byte-identical (explicit off stays a valid kill-switch forever)."""
     return os.environ.get(
-        SPRAY_GENERALIZED_ENV, "0"
+        SPRAY_GENERALIZED_ENV, "1"
     ).strip().lower() in {"1", "true"}
 
 
@@ -2459,7 +2465,8 @@ def _r5_sibling_name_dup(
     return False
 
 
-# ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ─────
+# ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, default
+# ON since the 2026-07-21 pack-3 flip) ──────────────────────────────────
 #
 # The generalized R5-2 spray predicate over the UNPARENTHESIZED form (probe
 # canon, 2026-07-19: 15/17 direct + 17/17 with group-absorption on the
