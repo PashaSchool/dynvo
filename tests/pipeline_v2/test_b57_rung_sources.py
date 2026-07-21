@@ -658,6 +658,9 @@ class TestIter2VerbComposition:
                                                              monkeypatch):
         # Anti-case (б): GET+POST composition grounds create/read leads,
         # NEVER a delete lead — only PRESENT families ground.
+        # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+        # pre-R5 law pinned — the default-ON R5 wave is pinned off.
+        monkeypatch.setenv("FAULTLINE_NAMING_WAVE_R5", "0")
         monkeypatch.setenv(_FLAG, "1")
         pfs = [_pf("gadgets", "Gadgets")]
         uf_d = _uf("UF-1", "Delete widgets", "gadgets", resource="widgets",

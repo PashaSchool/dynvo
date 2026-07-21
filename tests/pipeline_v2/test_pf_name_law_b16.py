@@ -159,6 +159,10 @@ def _soc0_triple() -> list[Feature]:
 
 
 def test_run_contract_strips_clean_keeps_collision(monkeypatch):
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): this
+    # test pins the pre-R5 collision law — the default-ON R5 wave is
+    # pinned off (R5 behavior is covered by its own test files).
+    monkeypatch.setenv("FAULTLINE_NAMING_WAVE_R5", "0")
     monkeypatch.setenv(PF_NAME_LAW_ENV, "1")
     pfs = _soc0_triple()
     tele = run_naming_contract(pfs, [], [])

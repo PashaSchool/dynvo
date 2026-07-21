@@ -138,7 +138,11 @@ def test_registry_parity_all_flags_schema_bumped():
     # demands its own bump; see the v31 changelog line).
     # 32 = the S*-pack flip (2026-07-19 — 10 flags default ON, one bump on
     # the pack's first commit; see the v32 changelog line).
-    assert KEY_SCHEMA_VERSION == 32
+    # SEMANTIC flip migration (2026-07-21): 33 = flip-pack №2 (4 flags,
+    # bump on the pack's first commit — display-gate/union/R5/organic);
+    # 34 = flip-pack №3 (9 flags incl. the S2-A return pair; see the
+    # v33/v34 changelog lines).
+    assert KEY_SCHEMA_VERSION == 34
 
 
 # ── behaviour matrix: HOMING observables ─────────────────────────────────

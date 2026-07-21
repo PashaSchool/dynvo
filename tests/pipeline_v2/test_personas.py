@@ -314,7 +314,14 @@ def test_verifier_parse_failure_defaults_accept() -> None:
 # ── Naming-stage integration (labeler applies through the stage) ────────
 
 
-def test_naming_stage_applies_labeler_choices_with_law_recheck() -> None:
+def test_naming_stage_applies_labeler_choices_with_law_recheck(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): this
+    # test pins the pre-gate persona install (bare-vendor pick wins) —
+    # the default-ON display-cross gate's it3 composite-flatten guard is
+    # pinned off (armed behavior is covered by test_display_cross_gate).
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "0")
     from datetime import datetime, timezone
 
     from faultline.models.types import Feature, UserFlow
