@@ -151,7 +151,7 @@ _STRUCTURAL_SEGMENTS = frozenset({
     "packages", "apps", "app", "pages", "views", "screens", "routes",
     "states", "state", "contexts", "providers", "selectors", "queries",
     "mutations", "graphql", "stories", "__stories__", "tests",
-    "__tests__", "internal",
+    "__tests__", "internal", "tabs", "tab",
 })
 
 #: Routing-convention segments — a leaf whose identity dissolves into the
@@ -549,22 +549,41 @@ def apply_uf_cases_split(
         parent_pfid = str(getattr(parent, "product_feature_id", "") or "")
         live_names = _names_of_pf(parent_pfid)
 
-        children: list[Any] = []
-        claimed: list[str] = []
-        claimed_set: set[str] = set()
-        sample_children: list[dict[str, Any]] = []
+        # Same-key coalesce: sibling qualified leaves whose identity
+        # dissolves to ONE case key (structural sub-dirs of a single
+        # case dir — components/hooks/utils under settings/applications)
+        # are the SAME case; minting them separately would fabricate
+        # decorated near-duplicate names. Union their members (still
+        # pairwise disjoint — descent leaves never overlap). Keys stay
+        # distinct on the probe canon, so this is canon-neutral.
+        grouped: dict[str, dict[str, Any]] = {}
         for cand in qualified:
             key = _child_key(
                 cand["leaf_dir"], parent_resource, parent_domain)
             if not key:
                 tele["name_folded"] += 1
                 continue
+            g = grouped.setdefault(
+                key, {"key": key, "mids": [], "witnessed": 0})
+            g["mids"].extend(cand["mids"])
+            g["witnessed"] += cand["witnessed"]
+        if len(grouped) < k_floor:
+            tele["below_k_kept"] += 1
+            continue
+
+        children: list[Any] = []
+        claimed: list[str] = []
+        claimed_set: set[str] = set()
+        sample_children: list[dict[str, Any]] = []
+        for key in sorted(grouped):
+            cand = grouped[key]
             word, family = _child_verb_word(
                 cand["mids"], flow_by_id, action_vocab, parent_name)
             phrase = key.replace("-", " ")
-            noun = next(
-                (t for t in _TOKEN_RE.split(parent_resource.lower()) if t),
-                "")
+            # Decoration noun = the HEAD noun of the parent resource (the
+            # LAST compound token: 'multiple-record' -> 'record').
+            noun = ([t for t in _TOKEN_RE.split(parent_resource.lower())
+                     if t] or [""])[-1]
             raw_candidates = [f"{word} {phrase}"]
             if noun and _norm_token(noun) not in _fold_tokens(phrase):
                 raw_candidates.append(f"{word} {noun} {phrase}")
@@ -587,7 +606,7 @@ def apply_uf_cases_split(
             live_names.add(name.strip().lower())
             routes: list[str] = []
             child = UserFlow(
-                id=_child_id(parent_id, cand["leaf_dir"]),
+                id=_child_id(parent_id, key),
                 name=name,
                 resource=phrase,
                 domain=f"cases:{key}",
