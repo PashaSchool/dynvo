@@ -504,6 +504,10 @@ def apply_uf_cases_split(
         }
 
     insertions: list[tuple[int, list[Any]]] = []
+    # Cross-giant mint ledger: children minted for an earlier giant of the
+    # SAME capability are not yet inserted into user_flows — the no-dup
+    # ruler must still see their names.
+    minted_by_pf: dict[str, set[str]] = {}
     for idx, parent in enumerate(list(user_flows)):
         members = [
             str(m) for m in (getattr(parent, "member_flow_ids", None) or [])]
@@ -548,6 +552,7 @@ def apply_uf_cases_split(
         parent_domain = str(getattr(parent, "domain", "") or "")
         parent_pfid = str(getattr(parent, "product_feature_id", "") or "")
         live_names = _names_of_pf(parent_pfid)
+        live_names |= minted_by_pf.setdefault(parent_pfid, set())
 
         # Same-key coalesce: sibling qualified leaves whose identity
         # dissolves to ONE case key (structural sub-dirs of a single
@@ -604,6 +609,7 @@ def apply_uf_cases_split(
                 tele["name_folded"] += 1
                 continue
             live_names.add(name.strip().lower())
+            minted_by_pf[parent_pfid].add(name.strip().lower())
             routes: list[str] = []
             child = UserFlow(
                 id=_child_id(parent_id, key),
