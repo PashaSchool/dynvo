@@ -3326,7 +3326,8 @@ def run_finalize_phase(
     # write. PF metrics come from each PF's OWN path-set with
     # per-commit dedup — never sum-over-contributors. Metric fields
     # only: membership and hotspot_files are never touched.
-    # Kill-switch FAULTLINE_METRICS_RECOMPUTE (default OFF) — unset/=0
+    # Kill-switch FAULTLINE_METRICS_RECOMPUTE (default ON since the
+    # 2026-07-21 pack-3 flip) — explicit =0
     # never enters the pass ⇒ no scan_meta key ⇒ byte-identical.
     from faultline.pipeline_v2.metrics_recompute import (
         metrics_recompute_enabled,

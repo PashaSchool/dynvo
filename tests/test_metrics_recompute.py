@@ -352,10 +352,12 @@ def test_factory_file_lane_stamps_null_state(monkeypatch):
 
 
 def test_factories_keep_legacy_inheritance_when_off(monkeypatch):
-    """Kill-switch anti-case: unset flag ⇒ the four factories keep the
+    """Kill-switch anti-case: explicit =0 ⇒ the four factories keep the
     pre-B76 deep-copy inheritance byte-for-byte (the OFF world's boards
-    must not move — KS 4-way law)."""
-    monkeypatch.delenv(METRICS_RECOMPUTE_ENV, raising=False)
+    must not move — KS 4-way law).
+    MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
+    monkeypatch.setenv(METRICS_RECOMPUTE_ENV, "0")
     assert not metrics_recompute_enabled()
     from faultline.pipeline_v2.file_lane import _make_lane_dev
     from faultline.pipeline_v2.lane_excavation import _make_excav_dev

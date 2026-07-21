@@ -1011,10 +1011,14 @@ ENV_OUTPUT_FLAGS = (
     # instead of deep-copying identity. Reshapes total_commits/bug_fixes/
     # bug_fix_ratio/authors/last_modified/health_score/health_confidence
     # on developer_features[] + product_features[] (metric channel only —
-    # membership and hotspot_files untouched). Default OFF; unset/=0 keeps
-    # the pass un-entered and the factory inheritance byte-identical.
-    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
-    # flip commit (flip-protocol).
+    # membership and hotspot_files untouched). Default ON since the
+    # 2026-07-21 pack-3 flip (KEY_SCHEMA 34; census ×3 repos on the
+    # 7-flag battery, same-world — "impossible" tc=0∧authors>0 rows
+    # 60+17/162+42/84+9 → 0+0 on ALL, hotspots byte-ident (full join 0
+    # diffs), dedup law dev-sum ≤ repo commits; both mechanism halves
+    # load-bearing; ledger §B76). ``=0``/false/off keeps the pass
+    # un-entered and the factory inheritance byte-identical — explicit
+    # off stays a valid kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_METRICS_RECOMPUTE",
     # B77 (2026-07-21, forensics-canon §ФОРЕНЗИКА 502M) — residual
     # citability: the 6.7c mega-split RESIDUAL bucket is marked

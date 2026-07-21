@@ -37,7 +37,8 @@ SACRED: display-only for structural layers — the pass never touches
 membership (``paths`` / ``member_files`` / ``flows`` / UF homes) and
 never touches ``hotspot_files`` (not part of the affected class).
 
-Kill-switch: ``FAULTLINE_METRICS_RECOMPUTE`` (default OFF) — unset /
+Kill-switch: ``FAULTLINE_METRICS_RECOMPUTE`` (default ON since the
+2026-07-21 pack-3 flip, KEY_SCHEMA 34) — explicit
 ``0`` never enters the pass and keeps the mint factories' legacy
 inheritance byte-identical.
 
@@ -65,13 +66,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Kill-switch — default OFF (unset/``0`` ⇒ byte-identical to main).
+#: Kill-switch — default ON since the 2026-07-21 pack-3 flip
+#: (KEY_SCHEMA 34); explicit ``=0`` ⇒ byte-identical to the pre-B76 world.
 METRICS_RECOMPUTE_ENV = "FAULTLINE_METRICS_RECOMPUTE"
 
 
 def metrics_recompute_enabled() -> bool:
-    """B76 — default **OFF** (unset/``0`` ⇒ byte-identical to main)."""
-    return os.environ.get(METRICS_RECOMPUTE_ENV, "").strip().lower() in {
+    """B76 — default **ON** since the 2026-07-21 pack-3 flip (KEY_SCHEMA
+    34; census ×3 repos on the 7-flag battery, same-world — "impossible"
+    tc=0∧authors>0 rows 60+17/162+42/84+9 → 0+0 on ALL, hotspots
+    byte-ident (full join, 0 diffs), dedup law dev-sum ≤ repo commits).
+    Unset ≡ explicit ``1``; explicit ``=0``/``false`` ⇒ byte-identical
+    to the pre-B76 world (kill-switch forever)."""
+    return os.environ.get(METRICS_RECOMPUTE_ENV, "1").strip().lower() in {
         "1", "true",
     }
 
