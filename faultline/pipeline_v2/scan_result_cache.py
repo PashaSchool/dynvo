@@ -737,14 +737,19 @@ ENV_OUTPUT_FLAGS = (
     # the structural LLM stages (6.7c mega-split, 6.7d journey rewrite) are
     # skipped. UF-COUNT becomes invariant to LLM death (fail-open 264-vs-78
     # class) and to resampling (−26% whole-batch class) — probe 2026-07-18.
-    # Reshapes user_flows[] (membership/grain/ids) + downstream homes. Default
-    # OFF: flipped ON in the 2026-07-19 S*-pack (KEY_SCHEMA 32) and
-    # UN-flipped back the same day — corpus regression audit 4x WORSE (the
-    # det-cluster naming layer was panel-hardened only on Soc0/novu; bare
-    # 'Manage <plural>' bins corpus-wide: twenty 143 / midday 29 / documenso
-    # 'Manage os/ts' / novu 61% bare). R5 corpus hardening rides a follow-up
-    # cycle; =1 arms, =0/unset restores the LLM-structured path
-    # byte-identically.
+    # Reshapes user_flows[] (membership/grain/ids) + downstream homes.
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34) — the
+    # S2-A RETURN: flipped ON in the 2026-07-19 S*-pack (KEY_SCHEMA 32),
+    # UN-flipped the same day (corpus regression audit 4x WORSE — the
+    # det-cluster naming layer emitted bare 'Manage <plural>' bins
+    # corpus-wide: twenty 143 / midday 29 / documenso 'Manage os/ts' /
+    # novu 61% bare), and RE-flipped after the R5 corpus naming wave +
+    # spray-generalization cured the collapse (ledger §S2-A-V3: twenty
+    # spray 17→0, settings-PF 36→22, conservation 328==328, 0 false, I14
+    # dangling 0; pair flag FAULTLINE_SPRAY_GENERALIZED flips together).
+    # ``=0``/false/off restores the LLM-structured path byte-identically —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_UF_DET_AGGREGATION",
     # S2 Seg C (2026-07-18) — canonical LLM batch composition: volatile pure
     # counts leave the 6.7d prompt canon (digest n_dev_features; Call-2 per-row

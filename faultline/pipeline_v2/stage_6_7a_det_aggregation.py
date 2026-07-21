@@ -57,18 +57,20 @@ _INTENT_ORDER = (
 
 
 def det_aggregation_enabled() -> bool:
-    """Default OFF — set ``FAULTLINE_UF_DET_AGGREGATION=1`` to arm.
+    """Default **ON** since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34) —
+    the S2-A RETURN: the 2026-07-19 04cf47f un-flip is REVERSED.
 
-    Flipped ON in the 2026-07-19 S*-pack (KEY_SCHEMA 32) and UN-flipped
-    back to OFF the same day: the corpus regression audit came back
-    4x WORSE — the det-cluster naming layer (regrain it3-it6) was
-    panel-hardened only on Soc0/novu and emits bare 'Manage <plural>'
-    bins corpus-wide (twenty 143, midday 29 bins incl. 'Manage fixs/
-    taxs/inboxs', documenso 'Manage os/ts', novu 61% bare + paren
-    0->33). R5 corpus hardening of the naming layer rides a follow-up
-    cycle; KEY_SCHEMA stays 32 (unset semantics changed twice within
-    v32 — see the v32 changelog)."""
-    return os.environ.get(DET_AGGREGATION_ENV, "0").strip().lower() not in {
+    History: flipped ON in the S*-pack (KEY_SCHEMA 32), UN-flipped the
+    same day — the det-cluster naming layer emitted bare
+    'Manage <plural>' bins corpus-wide (twenty 143, midday 29,
+    documenso 'Manage os/ts', novu 61% bare). The naming collapse is
+    now CURED by the R5 corpus naming wave + spray-generalization
+    (ledger §S2-A-V3: twenty spray 17→0, settings-PF 36→22,
+    conservation 328==328, 0 false, I14 dangling 0) — the flag returns
+    together with its pair ``FAULTLINE_SPRAY_GENERALIZED``. Unset ≡
+    explicit ``1``; explicit ``0``/``false``/``off`` restores the
+    LLM-structured path byte-identically (kill-switch forever)."""
+    return os.environ.get(DET_AGGREGATION_ENV, "1").strip().lower() not in {
         "0", "false", "no", "off", "",
     }
 

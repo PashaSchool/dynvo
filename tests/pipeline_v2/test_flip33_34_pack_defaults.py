@@ -68,6 +68,10 @@ from faultline.pipeline_v2.metrics_recompute import (
     METRICS_RECOMPUTE_ENV,
     metrics_recompute_enabled,
 )
+from faultline.pipeline_v2.stage_6_7a_det_aggregation import (
+    DET_AGGREGATION_ENV,
+    det_aggregation_enabled,
+)
 
 # (env-var name, helper) for every pack-№2/№3 flag flipped default OFF -> ON.
 _FLIPPED = [
@@ -83,10 +87,11 @@ _FLIPPED = [
     (CASES_SPLIT_ENV, cases_split_enabled),
     (RESIDUAL_CITABILITY_ENV, residual_citability_enabled),
     (METRICS_RECOMPUTE_ENV, metrics_recompute_enabled),
+    (DET_AGGREGATION_ENV, det_aggregation_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 11
+assert len(_FLIPPED) == 12
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
