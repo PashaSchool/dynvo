@@ -3274,6 +3274,62 @@ def run_finalize_phase(
             scan_meta.setdefault("warnings", []).append(
                 f"post-uf-rehome failed ({exc}); UF homes left as-is")
 
+    # ── Stage 6.998 — B76 metrics recompute-on-emission ────────────────
+    # Stage 6 stamped commit metrics ONCE, before the whole Layer-2
+    # surgery; every post-Stage-6 mint (8.9 subdecompose / 6.87
+    # excavation / file-lane / provenance re-home) shipped tc=0 rows
+    # wearing inherited authors/health, and the PF layer summed stale
+    # contributor numbers (Alerts 5 vs ~63 real). Re-run the SAME
+    # deterministic sweep over the FINAL membership here — after the
+    # last membership-mutating stage of the phase (emission integrity's
+    # phantom drops + path_index refresh, spray absorption, and the
+    # 6.99/6.99b journey re-homes are all behind us; everything below
+    # is display / LOC / telemetry channels) and before the Stage-7
+    # write. PF metrics come from each PF's OWN path-set with
+    # per-commit dedup — never sum-over-contributors. Metric fields
+    # only: membership and hotspot_files are never touched.
+    # Kill-switch FAULTLINE_METRICS_RECOMPUTE (default OFF) — unset/=0
+    # never enters the pass ⇒ no scan_meta key ⇒ byte-identical.
+    from faultline.pipeline_v2.metrics_recompute import (
+        metrics_recompute_enabled,
+        run_metrics_recompute,
+    )
+    if metrics_recompute_enabled():
+        with StageLogger(run_dir, 7, "metrics_recompute") as log_mr:
+            try:
+                mr_tele = run_metrics_recompute(
+                    features, product_features, ctx.commits,
+                )
+                scan_meta["metrics_recompute"] = mr_tele
+                log_mr.info(
+                    "metrics_recompute: dev %d rows (impossible %d -> %d), "
+                    "pf %d rows (impossible %d -> %d)" % (
+                        mr_tele["dev_rows"],
+                        mr_tele["impossible_dev_before"],
+                        mr_tele["impossible_dev_after"],
+                        mr_tele["pf_rows"],
+                        mr_tele["impossible_pf_before"],
+                        mr_tele["impossible_pf_after"],
+                    ),
+                    feature=None,
+                )
+                write_stage_artifact(
+                    ctx.repo_path,
+                    stage_index=7,
+                    stage_name="metrics_recompute",
+                    payload=dict(mr_tele),
+                    run_dir=run_dir,
+                )
+            except Exception as exc:  # noqa: BLE001 — metrics must never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"metrics-recompute failed ({exc}); metrics left as-is"
+                )
+                log_mr.info(
+                    f"metrics_recompute: FAILED ({exc}) — continuing "
+                    f"with Stage-6 values",
+                    feature=None,
+                )
+
     # ── W3 rider — full-bill LLM cost refresh (chain4 finding) ─────
     # ``run.py`` snapshots ``cost_usd``/``calls`` into scan_meta BEFORE
     # this phase runs, so every finalize-phase LLM call (6.7c splitter,

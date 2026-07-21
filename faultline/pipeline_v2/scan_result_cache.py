@@ -952,6 +952,21 @@ ENV_OUTPUT_FLAGS = (
     # KEY_SCHEMA bump — the bump rides the separate flip commit
     # (flip-protocol).
     "FAULTLINE_DIGEST_STRATIFICATION",
+    # B76 (2026-07-21) — metrics recompute-on-emission: re-runs the Stage-6
+    # commit-metric sweep over the FINAL membership after the last
+    # membership-mutating finalize stage (mint-time metric zeroing class:
+    # tc=0 rows wearing inherited authors/health; PF sum-over-contributors
+    # both losing zeroed mass and double-counting shared commits — Alerts
+    # 5 vs ~63). PF metrics recompute from each PF's OWN path-set with
+    # per-commit dedup; the four mint factories stamp an honest null-state
+    # instead of deep-copying identity. Reshapes total_commits/bug_fixes/
+    # bug_fix_ratio/authors/last_modified/health_score/health_confidence
+    # on developer_features[] + product_features[] (metric channel only —
+    # membership and hotspot_files untouched). Default OFF; unset/=0 keeps
+    # the pass un-entered and the factory inheritance byte-identical.
+    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
+    # flip commit (flip-protocol).
+    "FAULTLINE_METRICS_RECOMPUTE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
