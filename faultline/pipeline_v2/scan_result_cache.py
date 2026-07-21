@@ -938,6 +938,20 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump
     # rides the separate default-flip commit (flip-protocol).
     "FAULTLINE_FLOW_REDERIVE_POSTGRAIN",
+    # S5b Seg H (2026-07-21, probe-canon tune-first) — digest stratification:
+    # the 6.7d Call-1 digest stops starving the page surface under the caps.
+    # M1-ADDITIVE appends page-anchored UFs BEYOND the mass-sorted UF cap
+    # (reservation append — displacement=0; the fixed-cap form starved 5/67
+    # cached proposals and was refuted); M2-HYGIENE-QUOTA reserves half the
+    # route budget for the hygienic page stream under route pressure
+    # (storybook/dev-artifact paths + filename-echo pseudo-routes demoted
+    # out of the quota only). Digest/prompt/cache-key change on pressured
+    # repos → user_flows[] + product_features[] reshape via Call-1. No-
+    # pressure repos are byte-identical (inertness law). Default OFF;
+    # unset/=0 keeps both cuts byte-identical. Appended WITHOUT a
+    # KEY_SCHEMA bump — the bump rides the separate flip commit
+    # (flip-protocol).
+    "FAULTLINE_DIGEST_STRATIFICATION",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

@@ -117,6 +117,37 @@ ALIGN_ENV = "FAULTLINE_STAGE_6_7D_ALIGN"
 def align_enabled() -> bool:
     return os.environ.get(ALIGN_ENV, "0").strip() not in {"0", "false", "False", ""}
 
+
+# ── S5b Seg H — digest stratification (default OFF) ─────────────────────────
+# Class: digest-shadow starvation — the Call-1 digest carries MASS, not
+# surface identity. On any repo above the caps the ranked cuts starve the
+# whole page surface out of ALL channels at once (novu: 'sign-in'=0 tokens
+# in the reconstructed prompt → 0/12 strict draws propose 'Sign in').
+# Two CUT-ONLY mechanisms (probe canon 2026-07-20, s5bh-out/):
+#   M1-ADDITIVE (UF channel): page-anchored UFs (entry flow = product-PAGE
+#     file, P1 predicate) that did NOT fit the mass-sorted cap are APPENDED
+#     BEYOND the cap — a reservation append, never displacement (the
+#     fixed-cap stratified form starved 5/67 cached proposals: REFUTED).
+#     The stratum qualifies INDEPENDENT of product_feature_id (UF-104
+#     pf=None class).
+#   M2-HYGIENE-QUOTA (route channel): under route pressure, half the route
+#     budget is reserved for the HYGIENIC page stream (PAGE rows minus
+#     storybook/dev-artifact paths and filename-echo patterns), the rest
+#     fills in original order. Emission keeps the original relative order —
+#     a pure cut change, so a repo whose routes all fit stays byte-identical
+#     (inertness law). M2b slug-dedup was probe-REFUTED (flat page dirs).
+# Registered in ``scan_result_cache.ENV_OUTPUT_FLAGS`` (append-only, no
+# KEY_SCHEMA bump — reconciled at merge).
+DIGEST_STRATIFICATION_ENV = "FAULTLINE_DIGEST_STRATIFICATION"
+
+
+def digest_stratification_enabled() -> bool:
+    """Default **OFF**. Unset / falsy keeps both digest cuts byte-identical
+    to the flag-less engine (kill-switch law)."""
+    return os.environ.get(DIGEST_STRATIFICATION_ENV, "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
 #: Bumped whenever the prompt / reconstruction changes in a way that would make
 #: a previously-cached answer wrong. Part of the cache key, so a bump
 #: transparently invalidates every stale entry. "contract-3" invalidates the
@@ -693,11 +724,103 @@ def _propagate_dev_map(
     return out
 
 
+def _page_anchored_uf_ids(
+    user_flows: list["UserFlow"],
+    developer_features: list["Feature"],
+    routes_index: list[dict[str, Any]],
+) -> frozenset[str]:
+    """S5b Seg H M1 — ids of UFs any of whose member flows ENTERS on a
+    product-PAGE file (the Seg C P1 predicate via
+    :func:`leafroute_promotion._page_files`: layout/loading/error/template +
+    ``_app``/``_document``/``_error`` + ``pages/api`` excluded; ``page.<ext>``,
+    a component under a ``pages``/``routes`` segment, or a PAGE-method
+    routes_index file qualify). The stratum is INDEPENDENT of
+    ``product_feature_id`` — a pf=None journey (UF-104 class) anchors the
+    same. Walks the ORIGINAL developer features (rollup SimpleNamespaces
+    carry no flows)."""
+    from faultline.pipeline_v2.leafroute_promotion import _page_files
+
+    entry_by_mid: dict[str, str] = {}
+    for d in developer_features:
+        for fl in getattr(d, "flows", None) or []:
+            mid = _flow_member_id(fl)
+            if not mid:
+                continue
+            ep = getattr(fl, "entry_point_file", None)
+            if ep and mid not in entry_by_mid:
+                entry_by_mid[mid] = str(ep)
+    ri_page_files = {
+        str(r.get("file"))
+        for r in routes_index
+        if str(r.get("method") or "").upper() == "PAGE"
+    }
+    out: set[str] = set()
+    for u in user_flows:
+        for mid in u.member_flow_ids or []:
+            ep = entry_by_mid.get(mid, "")
+            if ep and _page_files([ep], ri_page_files):
+                out.add(u.id or "")
+                break
+    out.discard("")
+    return frozenset(out)
+
+
+#: template placeholders (``/${ROUTES.SIGN_IN}/*``) are route INDIRECTION,
+#: not filename identity — stripped before the echo test below.
+_ROUTE_TPL = re.compile(r"\$\{[^}]*\}")
+
+
+def _hygienic_page_route(r: dict[str, Any]) -> bool:
+    """S5b Seg H M2 hygiene — is this PAGE row real page surface (quota-
+    worthy) or artifact noise? Two rungs, both mechanism-first:
+
+    1. artifact PATHS — the spa-router YAML skip vocabulary (storybook /
+       stories / playground / examples / demo / generated) as corroboration:
+       exact dir-segment match with dunder wrappers normalized
+       (``__stories__`` ≡ ``stories``) + dotted filename markers
+       (``SignInUp.stories.tsx``). Twenty exhibit: SignInUp.stories.
+    2. filename-ECHO patterns — an authored web route is lowercase; a
+       LITERAL pattern segment carrying an uppercase letter is the source
+       filename echoed as a pseudo-route (component-path class; twenty
+       exhibit: /object-record/RecordShowPageHeader). Dynamic params
+       (``:connectedAccountId``, ``[slug]``) legitimately carry camelCase
+       and are skipped; ``${...}`` templates are stripped first.
+
+    Hygiene only DEMOTES a row out of the reserved page quota — the row
+    stays eligible for the original-order fill, so a no-pressure repo is
+    untouched (inertness law)."""
+    from faultline.pipeline_v2.extractors.spa_router import (
+        _skip_filename_markers,
+        _skip_segments,
+    )
+
+    f = str(r.get("file") or "").lower()
+    segs = f.split("/")
+    if any(s.strip("_") in _skip_segments() for s in segs[:-1]):
+        return False
+    base = segs[-1] if segs else ""
+    dotparts = base.split(".")
+    if len(dotparts) >= 2 and any(
+        comp in _skip_filename_markers() for comp in dotparts[1:-1]
+    ):
+        return False
+    pat = _ROUTE_TPL.sub("", str(r.get("pattern") or ""))
+    for seg in pat.split("/"):
+        if seg.startswith(":") or seg.startswith("["):
+            continue
+        if any(c.isupper() for c in seg):
+            return False
+    return True
+
+
 def _build_digest(
     developer_features: list["Feature"],
     product_features: list["Feature"],
     user_flows: list["UserFlow"],
     routes_index: list[dict[str, Any]],
+    *,
+    stratified: bool = False,
+    page_anchored: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     # Secondary key (name) breaks commit-count ties deterministically — else
     # equal-commit modules keep input order (nondeterministic) and the digest
@@ -732,16 +855,69 @@ def _build_digest(
          "domain": u.domain, "intent": u.intent}
         for u in ufs_by_weight[:MAX_USER_FLOWS_DIGEST]
     ]
+    # S5b Seg H M1-ADDITIVE: page-anchored UFs that did not fit the
+    # mass-sorted cap are APPENDED BEYOND it, in the same deterministic
+    # weight order. The capped prefix stays byte-identical (displacement=0
+    # — appending, not re-cutting, is what keeps every cached proposal's
+    # raw material in the digest); a repo whose UFs all fit appends
+    # nothing (inertness law).
+    if stratified and page_anchored:
+        uf_lines += [
+            {"id": u.id, "name": u.name, "resource": u.resource,
+             "domain": u.domain, "intent": u.intent}
+            for u in ufs_by_weight[MAX_USER_FLOWS_DIGEST:]
+            if (u.id or "") in page_anchored
+        ]
     seen: set[tuple] = set()
     routes: list[dict[str, Any]] = []
-    for r in routes_index:
-        key = (r.get("pattern"), r.get("method"))
-        if key in seen:
-            continue
-        seen.add(key)
-        routes.append({"p": r.get("pattern"), "m": r.get("method"), "t": r.get("trigger")})
-        if len(routes) >= MAX_ROUTES_DIGEST:
-            break
+    if not stratified:
+        for r in routes_index:
+            key = (r.get("pattern"), r.get("method"))
+            if key in seen:
+                continue
+            seen.add(key)
+            routes.append({"p": r.get("pattern"), "m": r.get("method"), "t": r.get("trigger")})
+            if len(routes) >= MAX_ROUTES_DIGEST:
+                break
+    else:
+        # S5b Seg H M2-HYGIENE-QUOTA — same dedup, but under route pressure
+        # HALF the budget (a scale-invariant ratio of the cap, not a count)
+        # is reserved for the hygienic page stream; the rest fills in
+        # original order. Emission keeps the original relative order — a
+        # pure CUT change, so when every unique route fits the digest is
+        # byte-identical to the unstratified cut. spa-page rows
+        # (method=PAGE, B74 route-table / B65-v3) ride the page stream by
+        # construction.
+        uniq: list[dict[str, Any]] = []
+        for r in routes_index:
+            key = (r.get("pattern"), r.get("method"))
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(r)
+        if len(uniq) <= MAX_ROUTES_DIGEST:
+            chosen = uniq
+        else:
+            page_idx = [
+                i for i, r in enumerate(uniq)
+                if str(r.get("method") or "").upper() == "PAGE"
+                and _hygienic_page_route(r)
+            ]
+            reserved = set(page_idx[:MAX_ROUTES_DIGEST // 2])
+            budget = MAX_ROUTES_DIGEST - len(reserved)
+            picked = set(reserved)
+            for i in range(len(uniq)):
+                if budget <= 0:
+                    break
+                if i in reserved:
+                    continue
+                picked.add(i)
+                budget -= 1
+            chosen = [uniq[i] for i in sorted(picked)]
+        routes = [
+            {"p": r.get("pattern"), "m": r.get("method"), "t": r.get("trigger")}
+            for r in chosen
+        ]
     digest = {
         "n_dev_features": len(developer_features),
         "developer_features": dev_lines,
@@ -3332,7 +3508,28 @@ def run_journey_abstraction(
     non_facet_devs = [f for f in developer_features if not _is_facet(f)]
     tele["facet_devs_excluded"] = len(developer_features) - len(non_facet_devs)
     dev_view, sub_to_parent = _rollup_split_view(non_facet_devs)
-    digest = _build_digest(dev_view, product_features, user_flows, routes_index)
+    # S5b Seg H — digest stratification (default OFF): the page-anchor walk
+    # runs over the ORIGINAL feature list (rollup views carry no flows) and
+    # only when armed, so the unset/``0`` digest is byte-identical.
+    _strat = digest_stratification_enabled()
+    _strat_page_ids: frozenset[str] | None = None
+    if _strat:
+        _strat_page_ids = _page_anchored_uf_ids(
+            user_flows, developer_features, routes_index)
+    digest = _build_digest(
+        dev_view, product_features, user_flows, routes_index,
+        stratified=_strat, page_anchored=_strat_page_ids,
+    )
+    if _strat:
+        # telemetry key only on fire (openstatus inertness law).
+        tele["digest_stratification"] = {
+            "page_anchored_ufs": len(_strat_page_ids or ()),
+            "uf_appended": max(
+                0, len(digest["current_user_flows"]) - MAX_USER_FLOWS_DIGEST),
+            "page_routes_in_digest": sum(
+                1 for r in digest["routes"]
+                if str(r.get("m") or "").upper() == "PAGE"),
+        }
 
     # ── Anchored mode (Wave 2b): dev→PF from the mint's lineage stamps ──
     # The map is TOTAL over lineage devs; lane residents (pfid=None) are
