@@ -309,6 +309,11 @@ def _make_rehome_dev(
     while name in used_names:
         name = f"{base}{n}"
         n += 1
+    from faultline.pipeline_v2.metrics_recompute import (  # local: avoid import cycle
+        metrics_recompute_enabled,
+        mint_null_state,
+    )
+
     owned_members = [
         MemberFile(
             path=p, role="anchor", confidence=1.0, primary=True,
@@ -316,7 +321,7 @@ def _make_rehome_dev(
         )
         for p in sorted(files)
     ]
-    return shell.model_copy(deep=True, update={
+    _update: dict = {
         "name": name,
         "display_name": name,
         "paths": sorted(files),
@@ -344,7 +349,13 @@ def _make_rehome_dev(
         "hotspot_files": [],
         "participants": [],
         "history": None,
-    })
+    }
+    if metrics_recompute_enabled():
+        # B76 — honest null-state: no inherited authors/health/
+        # last_modified from the shell's deep copy (mint-time metric
+        # zeroing class). Emission recompute stamps real values.
+        _update.update(mint_null_state())
+    return shell.model_copy(deep=True, update=_update)
 
 
 def _shrink_lane_dev(shell: "Feature", moved: set[str]) -> None:

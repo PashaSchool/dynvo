@@ -289,6 +289,10 @@ def _make_excav_dev(
     primary members, content-derived uuid, ``split_from`` lineage) with
     the excavation marker. Flows move separately by entry file."""
     from faultline.models.types import MemberFile
+    from faultline.pipeline_v2.metrics_recompute import (  # local: avoid import cycle
+        metrics_recompute_enabled,
+        mint_null_state,
+    )
 
     owned_members = [
         MemberFile(
@@ -297,7 +301,7 @@ def _make_excav_dev(
         )
         for p in sorted(files)
     ]
-    return shell.model_copy(deep=True, update={
+    _update: dict = {
         "name": name,
         "display_name": name,
         "paths": sorted(files),
@@ -323,7 +327,13 @@ def _make_excav_dev(
         "participants": [],
         "history": None,
         "shared_reason": None,
-    })
+    }
+    if metrics_recompute_enabled():
+        # B76 — honest null-state: no inherited authors/health/
+        # last_modified from the shell's deep copy (mint-time metric
+        # zeroing class). Emission recompute stamps real values.
+        _update.update(mint_null_state())
+    return shell.model_copy(deep=True, update=_update)
 
 
 def _remove_files_from_shell(shell: "Feature", moved: set[str]) -> None:

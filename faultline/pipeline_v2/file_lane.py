@@ -432,11 +432,16 @@ def _make_lane_dev(
     uuid = hashlib.sha256(
         f"file-lane-v1|{gdir}|{'|'.join(files)}".encode("utf-8")
     ).hexdigest()[:32]
+    from faultline.pipeline_v2.metrics_recompute import (  # local: avoid import cycle
+        metrics_recompute_enabled,
+        mint_null_state,
+    )
+
     # Every content field is set explicitly (git / health / flow state zeroed to
     # neutral defaults) so the synthetic lane dev never inherits a template
     # feature's stats — regardless of which template supplied the pydantic
     # defaults for fields we do not name.
-    return template.model_copy(deep=True, update={
+    _update: dict = {
         "name": name,
         "display_name": name,
         "paths": list(files),
@@ -473,7 +478,14 @@ def _make_lane_dev(
         "symbol_attributions": [],
         "participants": [],
         "history": None,
-    })
+    }
+    if metrics_recompute_enabled():
+        # B76 — the one identity field this factory still deep-copied
+        # from the template: last_modified (mint-time metric zeroing
+        # class). mint_null_state() is idempotent over the null stamps
+        # already listed above.
+        _update.update(mint_null_state())
+    return template.model_copy(deep=True, update=_update)
 
 
 # ── B15: shared-leaf role consistency (post-emission) ────────────────────────
