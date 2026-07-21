@@ -3061,7 +3061,8 @@ def run_finalize_phase(
             f"spray-generalization failed ({exc}); rows unabsorbed"
         )
 
-    # ── B75 — UF-giant cases-split (FAULTLINE_UF_CASES_SPLIT, OFF) ──────
+    # ── B75 — UF-giant cases-split (FAULTLINE_UF_CASES_SPLIT, default
+    # ON since the 2026-07-21 pack-3 flip) ──────────────────────────────
     # Dir-tree case re-grain of giant catch-all journeys (mc >= census
     # band edge 30): >= K qualified surface cases extract as children;
     # the parent row survives as the residual (survivor-id law). Seam

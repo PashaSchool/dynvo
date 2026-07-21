@@ -1040,9 +1040,15 @@ ENV_OUTPUT_FLAGS = (
     # children BEFORE extraction (tracecat tiptap/ai exhibit). Reshapes
     # the emitted user_flows[] layer + flow backpointers on boards that
     # carry giants; 0-giant boards are byte-identical (inertness law).
-    # Default OFF; unset/=0 keeps the seam un-entered, byte-identical.
-    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
-    # default-flip commit (flip-protocol).
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    # sim-canon on the composite keyed twenty world — 209m 'Browse object
+    # record' → 10 children / 131m → 11 (settings names), 86m golden
+    # 'Create and edit records' = 4 recognizable cases + residual
+    # lineage, 502m/220m honestly KEPT (B77's class — division of labor
+    # proven by simulation); keyless inertness ×3 topologies byte-ident;
+    # suite² failset-diff empty; ledger §B75). ``=0``/false/off keeps
+    # the seam un-entered, byte-identical — explicit off stays a valid
+    # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_UF_CASES_SPLIT",
 )
 

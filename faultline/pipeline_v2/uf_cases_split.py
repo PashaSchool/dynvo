@@ -1,4 +1,6 @@
-"""B75 — UF-giant cases-split (``FAULTLINE_UF_CASES_SPLIT``, default OFF).
+"""B75 — UF-giant cases-split (``FAULTLINE_UF_CASES_SPLIT``, default ON
+since the 2026-07-21 pack-3 flip, KEY_SCHEMA 34; explicit =0 stays the
+kill-switch).
 
 A giant catch-all journey (member_count >= :data:`GIANT_MEMBER_FLOOR`)
 whose member entry files cluster into >= K distinct SURFACE cases is
@@ -165,8 +167,13 @@ _TOKEN_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
 def cases_split_enabled() -> bool:
-    """Default OFF; ``FAULTLINE_UF_CASES_SPLIT=1`` arms the stage."""
-    return os.environ.get(CASES_SPLIT_ENV, "").strip() == "1"
+    """Default **ON** since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    sim-canon 209m→10 children / 131m→11 on the composite twenty world,
+    86m golden 'Create and edit records' = 4 recognizable cases +
+    residual lineage; keyless inertness ×3 topologies byte-ident).
+    Unset ≡ explicit ``1``; explicit ``FAULTLINE_UF_CASES_SPLIT=0``
+    keeps the seam un-entered, byte-identical (kill-switch forever)."""
+    return os.environ.get(CASES_SPLIT_ENV, "1").strip() == "1"
 
 
 def min_case_children() -> int:
