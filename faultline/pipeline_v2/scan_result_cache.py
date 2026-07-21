@@ -973,9 +973,15 @@ ENV_OUTPUT_FLAGS = (
     # transitively, the minted user_flows[] layer on repos with
     # post-stage-3 grain changes; armed no-fire boards are
     # byte-identical (telemetry key only on fire — Seg C inertness
-    # law). Default OFF; =0/unset keeps the stage un-entered,
-    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump
-    # rides the separate default-flip commit (flip-protocol).
+    # law). Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    # keyed proof twenty green — 894 live calls, +3,712 flows
+    # (1400→3673), UF 120→169, members 561→1211; golden targets taken:
+    # tasks 34m, workflows 44m (was 2-loc), AI-assistant 13m,
+    # calendar/data-model/marketplace/auth-tokens; husks 0,
+    # degradations 0; ledger §B74 SEG B; the UF-giant blocker resolved
+    # by B75 cases-split — same pack). ``=0``/false/off keeps the stage
+    # un-entered, byte-identical — explicit off stays a valid
+    # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_FLOW_REDERIVE_POSTGRAIN",
     # S5b Seg H (2026-07-21, probe-canon tune-first) — digest stratification:
     # the 6.7d Call-1 digest stops starving the page surface under the caps.

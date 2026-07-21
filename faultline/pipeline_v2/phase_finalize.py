@@ -785,8 +785,9 @@ def run_finalize_phase(
     # snapshot excludes spliced untouched features; cold-scan rule);
     # keyless scans run the deterministic cohort selection + candidate
     # enumeration and report them in scan_meta (honest no-client
-    # degrade). Default OFF (FAULTLINE_FLOW_REDERIVE_POSTGRAIN);
-    # unset/=0 keeps the stage un-entered, byte-identical. Telemetry
+    # degrade). Default ON since the 2026-07-21 pack-3 flip
+    # (FAULTLINE_FLOW_REDERIVE_POSTGRAIN, KEY_SCHEMA 34);
+    # explicit =0 keeps the stage un-entered, byte-identical. Telemetry
     # key + artifact only when the causal gate fires (Seg C openstatus
     # inertness law).
     from faultline.pipeline_v2.flow_rederive import (

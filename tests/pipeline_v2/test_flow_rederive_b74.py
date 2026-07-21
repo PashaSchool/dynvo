@@ -234,9 +234,11 @@ def _twenty_board(tmp_path: Path) -> tuple[list[Feature], dict[str, list[str]], 
 # ── flag default ────────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: Any) -> None:
+def test_flag_default_on(monkeypatch: Any) -> None:
+    # SEMANTIC flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): unset
+    # now arms the 6.865 re-derivation stage (unset ≡ explicit-1).
     monkeypatch.delenv(FLOW_REDERIVE_ENV, raising=False)
-    assert flow_rederive_enabled() is False
+    assert flow_rederive_enabled() is True
     monkeypatch.setenv(FLOW_REDERIVE_ENV, "0")
     assert flow_rederive_enabled() is False
     monkeypatch.setenv(FLOW_REDERIVE_ENV, "1")
