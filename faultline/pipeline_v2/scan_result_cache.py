@@ -967,6 +967,22 @@ ENV_OUTPUT_FLAGS = (
     # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
     # flip commit (flip-protocol).
     "FAULTLINE_METRICS_RECOMPUTE",
+    # B77 (2026-07-21, forensics-canon §ФОРЕНЗИКА 502M) — residual
+    # citability: the 6.7c mega-split RESIDUAL bucket is marked
+    # structurally (``UserFlow.residual``) and stops being a wholesale
+    # Pass-1 ``from_flows`` inherit source (its members stay in the
+    # bucket / the token-gated grounding channels — no-orphan); Pass-1
+    # container-inherit gains Pass-2a's own ``& utok`` content-token
+    # affinity gate; a built UF majority-voting for >1 real PF home with
+    # no common majority is carved per home (mint-side, existing
+    # member_votes mechanism); a ws-container PF is not a valid
+    # conservation resettle target. Reshapes user_flows[] membership on
+    # armed composite worlds (the class lives ONLY on the FLOW_REDERIVE ×
+    # CONTAINER_INHERIT interaction: twenty 502m/278m/216m mass-transfer
+    # giants). Default OFF; unset/=0 keeps 6.7c/6.7d/conservation
+    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
+    # the separate default-flip commit (flip-protocol).
+    "FAULTLINE_RESIDUAL_CITABILITY",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

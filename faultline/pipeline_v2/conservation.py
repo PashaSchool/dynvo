@@ -279,12 +279,24 @@ def conserved_pfid(
     incumbent: str | None,
     *,
     null_shared_without_signal: bool = False,
+    container_pf_keys: frozenset[str] | None = None,
 ) -> tuple[str | None, bool]:
     """Apply the conservation ladder to ONE user flow.
 
     Returns ``(pf_key, resettled)`` — ``pf_key`` may equal the incumbent
     (law satisfied / no signal), a different real PF (resettled), or
     ``None`` (shared incumbent with no signal under the finalize mode).
+
+    ``container_pf_keys`` (B77 Seg 4, ``FAULTLINE_RESIDUAL_CITABILITY``):
+    monorepo ws-pkg CONTAINER PFs are packaging, never a journey home —
+    a container is NOT a valid rung-3 resettle target (the 502m bypass:
+    377/502 votes of container-INHERITED members majority-shipped the
+    journey onto the ws-container-PF, around the Seg-C "no journey lives
+    in a container" guard). When every voted candidate is a container the
+    ladder falls through to rung-4 semantics (existing doctrine: keep the
+    incumbent for the richer downstream ladders / null a shared binding
+    under the finalize mode). ``None`` (default / flag off) → the shipped
+    ladder, byte-identical.
     """
     span_votes, entry_votes = member_votes(members, file_pf_owner)
     incumbent_key = str(incumbent) if incumbent else None
@@ -318,8 +330,17 @@ def conserved_pfid(
 
     # Rung 3 — resettle to the span-argmax real PF (entry tally breaks
     # span ties; lexicographic key is the deterministic last resort).
+    pool = set(span_votes) | set(entry_votes)
+    if container_pf_keys:
+        pool -= container_pf_keys
+        if not pool:
+            # B77 Seg 4 — every voted candidate is a ws-container:
+            # packaging signal only. Rung-4 semantics (no valid target).
+            if incumbent_shared and null_shared_without_signal:
+                return None, True
+            return incumbent_key, False
     candidates = sorted(
-        set(span_votes) | set(entry_votes),
+        pool,
         key=lambda k: (
             -span_votes.get(k, 0),
             -entry_votes.get(k, 0),
@@ -355,6 +376,20 @@ def apply_uf_conservation(
     }
     if not conservation_enabled() or not user_flows:
         return tele
+
+    # B77 Seg 4 (FAULTLINE_RESIDUAL_CITABILITY) — ws-container PFs are
+    # never a valid resettle target (packaging, not a home). Derived with
+    # the same "ws:" anchor marker Seg C uses; ``None`` when the flag is
+    # unset (or no containers exist) keeps the ladder byte-identical.
+    container_keys: frozenset[str] | None = None
+    from faultline.pipeline_v2.stage_6_7c_uf_splitter import (
+        residual_citability_enabled,
+    )
+    if residual_citability_enabled():
+        from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+            _container_pf_keys,
+        )
+        container_keys = _container_pf_keys(product_features) or None
 
     pf_keys = frozenset(
         str(getattr(pf, "id", None) or getattr(pf, "name", "") or "")
@@ -392,6 +427,7 @@ def apply_uf_conservation(
         chosen, moved = conserved_pfid(
             members, file_pf_owner, incumbent,
             null_shared_without_signal=null_shared_without_signal,
+            container_pf_keys=container_keys,
         )
         if moved:
             uf.product_feature_id = chosen
