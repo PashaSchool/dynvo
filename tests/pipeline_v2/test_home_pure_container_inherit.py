@@ -1,4 +1,6 @@
-"""B74 Seg C — home-pure: ws-pkg container ≠ foreignness (default OFF).
+"""B74 Seg C — home-pure: ws-pkg container ≠ foreignness (default ON
+since the 2026-07-21 pack-3 flip, KEY_SCHEMA 34; explicit =0 stays the
+kill-switch).
 
 ``FAULTLINE_HOME_PURE_CONTAINER_INHERIT``: a journey member whose HOME
 PF is a monorepo ws-pkg CONTAINER (anchored-mint ``anchor_id`` "ws:"
@@ -23,7 +25,7 @@ member-by-member on the twenty capture, runs 1-9):
     uf_home_filtered (sibling-only metric)
   - novu    'Authenticate CLI device session' — cited-dev 2a rescue
   - sibling-leak == 0 invariant across all channels
-  - unset => byte-behavior; armed w/o ws-containers => inert
+  - explicit =0 => byte-behavior; armed w/o ws-containers => inert
 """
 
 from __future__ import annotations
@@ -132,11 +134,13 @@ def test_twenty_sign_in_rescue_shape_0_to_11(monkeypatch) -> None:
     assert tele["uf_dropped_names"] == []
 
 
-def test_unset_keeps_strict_filter_byte_behavior(monkeypatch) -> None:
-    """unset => byte-behavior: the container set is dead weight — the
-    journey is filtered/dropped exactly like a run given NO set, and no
-    new telemetry key appears."""
-    monkeypatch.delenv(_ENV, raising=False)
+def test_off_keeps_strict_filter_byte_behavior(monkeypatch) -> None:
+    """explicit =0 => byte-behavior: the container set is dead weight —
+    the journey is filtered/dropped exactly like a run given NO set, and
+    no new telemetry key appears.
+    MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
+    monkeypatch.setenv(_ENV, "0")
     devs, old, spec, _flows_ = _twenty_signin_world()
     ufs, tele = _build_user_flows(
         [spec], [old], devs, [], home_pure=True,
@@ -152,7 +156,9 @@ def test_unset_keeps_strict_filter_byte_behavior(monkeypatch) -> None:
     assert tele == tele_ref
 
 
-def test_flag_off_value_zero_matches_unset(monkeypatch) -> None:
+def test_flag_off_value_zero_keeps_strict(monkeypatch) -> None:
+    # MECHANICAL rename (2026-07-21 pack №3 flip): unset no longer means
+    # OFF — the =0 kill-switch leg keeps the strict filter.
     monkeypatch.setenv(_ENV, "0")
     devs, old, spec, _flows_ = _twenty_signin_world()
     ufs, tele = _build_user_flows(
@@ -172,7 +178,9 @@ def test_armed_without_ws_containers_is_inert(monkeypatch) -> None:
         container_pf_keys=frozenset())
     assert ufs == []
     assert "uf_home_container_inherited" not in tele
-    monkeypatch.delenv(_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF reference leg is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(_ENV, "0")
     d2, old2, spec2, _f2 = _twenty_signin_world()
     ufs_ref, tele_ref = _build_user_flows(
         [spec2], [old2], d2, [], home_pure=True, container_pf_keys=None)
@@ -198,7 +206,9 @@ def test_armed_container_that_never_homes_members_is_inert(
     ufs_on, tele_on = _build_user_flows(
         [spec], [old], [d_mon], [], home_pure=True,
         container_pf_keys=frozenset({"notification-slack"}))
-    monkeypatch.delenv(_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF reference leg is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(_ENV, "0")
     d2 = _dev("monitors", "monitors", [fl.entry_point_file], [fl])
     old2 = _uf("UF-001", "Manage monitors", "monitors", [fl.uuid])
     ufs_off, tele_off = _build_user_flows(

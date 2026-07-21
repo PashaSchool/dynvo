@@ -933,10 +933,15 @@ ENV_OUTPUT_FLAGS = (
     # (Pass-1 from_flows + Pass-2a cited devs). The 2b whole-pool rescue and
     # the route backfill stay home-STRICT. Reshapes user_flows[] membership
     # (twenty: 'Sign in and authenticate' 0->11 members) + the 6.7d
-    # uf_home_filtered telemetry on ws-container repos only. Default OFF;
-    # unset/=0 keeps the strict filter byte-identically; armed on a repo
-    # WITHOUT ws-containers is inert (KS: openstatus). Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
+    # uf_home_filtered telemetry on ws-container repos only. Default ON
+    # since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; keyed proof twenty
+    # green — 'Sign in and authenticate' mints 14 members on the live
+    # channel, filter 24,226→2,081, dropped exactly {blocklist by-design,
+    # SSO}, members 561→801 (+240 rescue), husks 0, degradations 0;
+    # ledger §B74 SEG C). ``=0``/false/off keeps the strict filter
+    # byte-identical — explicit off stays a valid kill-switch forever
+    # (unset ≡ explicit "1"); armed on a repo WITHOUT ws-containers is
+    # inert (KS: openstatus).
     "FAULTLINE_HOME_PURE_CONTAINER_INHERIT",
     # B74 Seg A (2026-07-20) — SPA route-table extraction: exported enum /
     # flat-const route tables (twenty AppPath/SettingsPath, novu ROUTES)
@@ -1155,7 +1160,31 @@ ENV_OUTPUT_FLAGS = (
 #: "off" still disables — inverted-kill-switch unit per flag: unset ≡
 #: explicit "1" byte-identical). scan_meta.key_schema=33 emitted so
 #: downstream rulers gate new-world logic.
-KEY_SCHEMA_VERSION = 33
+#: v34 (flip-pack №3, 2026-07-21 — ledger «ПАК №3 ПОВНІСТЮ ЗІБРАНИЙ» /
+#: «ПАК №3 КОМПЛЕКТНИЙ», operator-ratified 2026-07-21): the pack flips 9
+#: previously-default-OFF flags to default ON, each in its own commit (per
+#: flip-protocol), the ONE bump riding the pack's FIRST commit:
+#: FAULTLINE_HOME_PURE_CONTAINER_INHERIT (B74-C; keyed twenty — 'Sign in
+#: and authenticate' 14m, filter 24,226→2,081, +240 rescue),
+#: _SPA_ROUTE_TABLE (B74-A; twenty +114 PAGE / novu +86, 0/2,042 false),
+#: _FLOW_REDERIVE_POSTGRAIN (B74-B; keyed twenty 894 live calls, +3,712
+#: flows, golden tasks/workflows/AI taken), _DIGEST_STRATIFICATION
+#: (S5b-H; keyed novu 'Sign in to existing account' mints, UF 88→92),
+#: _UF_CASES_SPLIT (B75; sim-canon 209→10/131→11 children, composite
+#: keyed twenty target), _RESIDUAL_CITABILITY (B77; replay census 502-class
+#: 542→7, no-orphan 0/2211), _METRICS_RECOMPUTE (B76; impossible metric
+#: rows →0 ×3 repos, hotspots byte-ident), and the S2-A return pair
+#: _UF_DET_AGGREGATION + _SPRAY_GENERALIZED (the 04cf47f un-flip REVERSED:
+#: the naming collapse is cured by R5 + spray-generalization — ledger
+#: §S2-A-V3: twenty spray 17→0, settings-PF 36→22, conservation 328==328,
+#: 0 false, I14 dangling 0). Default flips change what "unset" means, so
+#: cached entries keyed under unset must not be served across them
+#: (v16/v21/v25/v27/v28/v29/v30/v31/v32/v33 precedent). Every flag keeps
+#: its X=0 kill-switch (explicit "0"/"false"/"off" still disables —
+#: inverted-kill-switch unit per flag: unset ≡ explicit "1"
+#: byte-identical). scan_meta.key_schema=34 emitted so downstream rulers
+#: gate new-world logic.
+KEY_SCHEMA_VERSION = 34
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

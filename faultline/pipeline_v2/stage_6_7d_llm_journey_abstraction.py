@@ -1216,14 +1216,21 @@ def _home_pure_enabled() -> bool:
         not in {"0", "false", "no", "off"}
 
 
-# ── B74 Seg C — home-pure: container ≠ foreignness (default OFF) ─────────
+# ── B74 Seg C — home-pure: container ≠ foreignness (default ON since the
+# 2026-07-21 pack-3 flip, KEY_SCHEMA 34) ─────────────────────────────────
 _CONTAINER_INHERIT_ENV = "FAULTLINE_HOME_PURE_CONTAINER_INHERIT"
 
 _WS_ANCHOR_PREFIX = "ws:"
 
 
 def _container_inherit_enabled() -> bool:
-    return (os.environ.get(_CONTAINER_INHERIT_ENV, "0") or "0") \
+    """Default **ON** since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    keyed proof twenty green — 'Sign in and authenticate' mints on the
+    live channel with 14 members, uf_home filter 24,226→2,081, +240
+    member rescue, husks 0, degradations 0). Unset ≡ explicit ``1``;
+    explicit ``=0``/``false``/``off`` keeps the home-strict filter
+    byte-identical (explicit off stays a valid kill-switch forever)."""
+    return (os.environ.get(_CONTAINER_INHERIT_ENV, "1") or "1") \
         .strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -1368,7 +1375,8 @@ def _build_user_flows(
         _flow_home_map(developer_features)
         if home_pure and _home_pure_enabled() else {}
     )
-    # B74 Seg C (FAULTLINE_HOME_PURE_CONTAINER_INHERIT, default OFF):
+    # B74 Seg C (FAULTLINE_HOME_PURE_CONTAINER_INHERIT, default ON since
+    # the 2026-07-21 pack-3 flip):
     # home = ws-pkg CONTAINER (anchored-mint "ws:" marker) is packaging,
     # not foreignness. Probe-canon scoped form (2026-07-19, replay-
     # refined member-by-member on the twenty capture):

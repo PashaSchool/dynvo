@@ -42,6 +42,10 @@ from faultline.pipeline_v2.stage_6_99b_post_uf_rehome import (
     ORGANIC_MOVE_ENV,
     organic_move_enabled,
 )
+from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+    _CONTAINER_INHERIT_ENV,
+    _container_inherit_enabled,
+)
 
 # (env-var name, helper) for every pack-№2/№3 flag flipped default OFF -> ON.
 _FLIPPED = [
@@ -49,10 +53,12 @@ _FLIPPED = [
     (WORKSPACE_UNION_ENV, workspace_union_enabled),
     (NAMING_WAVE_R5_ENV, naming_wave_r5_enabled),
     (ORGANIC_MOVE_ENV, organic_move_enabled),
+    # ── pack №3 (KEY_SCHEMA 34) ──
+    (_CONTAINER_INHERIT_ENV, _container_inherit_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 4
+assert len(_FLIPPED) == 5
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
