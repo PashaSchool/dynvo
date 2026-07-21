@@ -89,7 +89,10 @@ _FLIPPED = [
     (CASES_SPLIT_ENV, cases_split_enabled),
     (RESIDUAL_CITABILITY_ENV, residual_citability_enabled),
     (METRICS_RECOMPUTE_ENV, metrics_recompute_enabled),
-    (DET_AGGREGATION_ENV, det_aggregation_enabled),
+    # UN-flip №2 (KEY_SCHEMA 35, 2026-07-21): DET_AGG вилучений з
+    # unset-is-on батареї — det-agg ON скіпає 6.7d на keyed-каналі
+    # (нейтралізує 6.7d-сімʼю пака); default OFF до det×6.7d композиції.
+    # Контракт default-OFF живе у tests/test_det_aggregation.py.
     (SPRAY_GENERALIZED_ENV, spray_generalized_enabled),
 ]
 

@@ -301,13 +301,13 @@ def test_passthrough_ids_unique_and_canonical() -> None:
 # ── kill-switch + registration ──────────────────────────────────────────────
 
 
-def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    # SEMANTIC re-flip migration (2026-07-21 pack №3, KEY_SCHEMA 34):
-    # the S2-A return — the 04cf47f un-flip is REVERSED (the bare
-    # 'Manage <plural>' collapse is cured by R5 + spray-generalization,
-    # ledger §S2-A-V3) — unset ⇒ ON (unset ≡ explicit-1).
+def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC un-flip №2 (2026-07-21, KEY_SCHEMA 35): det-agg ON skips
+    # the 6.7d rewrite on the keyed channel (phase_finalize S2-Seg-A
+    # probe), neutralizing the 6.7d-family pack-3 defaults + B74-C
+    # wins — default OFF until the det×6.7d composition cycle lands.
     monkeypatch.delenv(DET_AGGREGATION_ENV, raising=False)
-    assert det_aggregation_enabled() is True
+    assert det_aggregation_enabled() is False
 
 
 @pytest.mark.parametrize("val", ["0", "false", "no", "off", ""])

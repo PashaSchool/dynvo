@@ -57,8 +57,17 @@ _INTENT_ORDER = (
 
 
 def det_aggregation_enabled() -> bool:
-    """Default **ON** since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34) —
-    the S2-A RETURN: the 2026-07-19 04cf47f un-flip is REVERSED.
+    """Default **OFF** since the 2026-07-21 UN-flip (KEY_SCHEMA 35) —
+    the pack-3 flip (KEY_SCHEMA 34) is REVERSED a second time: with
+    det-aggregation ON the 6.7d rewrite is SKIPPED even on the keyed
+    channel (see phase_finalize S2-Seg-A probe), which neutralizes the
+    6.7d-family defaults flipped in the same pack (container-inherit,
+    digest-stratification, residual-citability Pass-1 refusal) and the
+    B74-C 'Sign in' rescue on production boards. The naming collapse
+    that caused the FIRST un-flip is cured (R5+spray), but the
+    det×6.7d COMPOSITION is an open cycle — until it lands, the keyed
+    product world keeps 6.7d. Explicit =1 remains the arming switch
+    for stability experiments.
 
     History: flipped ON in the S*-pack (KEY_SCHEMA 32), UN-flipped the
     same day — the det-cluster naming layer emitted bare
@@ -70,8 +79,8 @@ def det_aggregation_enabled() -> bool:
     together with its pair ``FAULTLINE_SPRAY_GENERALIZED``. Unset ≡
     explicit ``1``; explicit ``0``/``false``/``off`` restores the
     LLM-structured path byte-identically (kill-switch forever)."""
-    return os.environ.get(DET_AGGREGATION_ENV, "1").strip().lower() not in {
-        "0", "false", "no", "off", "",
+    return os.environ.get(DET_AGGREGATION_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
     }
 
 

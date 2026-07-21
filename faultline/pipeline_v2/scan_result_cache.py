@@ -1225,7 +1225,10 @@ ENV_OUTPUT_FLAGS = (
 #: inverted-kill-switch unit per flag: unset ≡ explicit "1"
 #: byte-identical). scan_meta.key_schema=34 emitted so downstream rulers
 #: gate new-world logic.
-KEY_SCHEMA_VERSION = 34
+# v35 (2026-07-21): UN-flip FAULTLINE_UF_DET_AGGREGATION (default OFF again) —
+#   det-agg ON skips the 6.7d rewrite on the keyed channel, neutralizing the
+#   6.7d-family pack-3 defaults + B74-C wins; det×6.7d composition = open cycle.
+KEY_SCHEMA_VERSION = 35
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.
