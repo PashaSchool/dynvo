@@ -1,5 +1,6 @@
 """S2-A-v3 spray-generalization — the STRUCTURAL absorption stage
-(``FAULTLINE_SPRAY_GENERALIZED``, default OFF).
+(``FAULTLINE_SPRAY_GENERALIZED``, default ON since the 2026-07-21
+pack-3 flip, KEY_SCHEMA 34; explicit =0 stays the kill-switch).
 
 The generalized R5-2 spray predicate + parent-name derivation live in
 :mod:`faultline.pipeline_v2.naming_contract` (beside the R5-2 machinery

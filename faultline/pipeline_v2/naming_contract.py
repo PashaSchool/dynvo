@@ -135,8 +135,9 @@ NAMING_PACK_ENV = "FAULTLINE_NAMING_PACK"
 #: the B57 nav-cluster rung read the ungated votes and are untouched.
 PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
 
-#: R5 corpus naming-wave master flag (default OFF). One flag gates the five
-#: R5 segments' NEW display-channel behaviors as one wave:
+#: R5 corpus naming-wave master flag (default ON since the 2026-07-21
+#: pack-2 flip, KEY_SCHEMA 33; explicit =0 stays the kill-switch). One flag
+#: gates the five R5 segments' NEW display-channel behaviors as one wave:
 #:   * R5-1 identity-parity — a PF display that folds to ANOTHER live PF's
 #:     canonical slug (or shares a folded display) is reject/qualified at the
 #:     existing display-collision gate (the ``general`` -> 'Settings' remnant
@@ -151,7 +152,9 @@ PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
 #: separate flip commit (flip-protocol).
 NAMING_WAVE_R5_ENV = "FAULTLINE_NAMING_WAVE_R5"
 
-#: S2-A-v3 spray-generalization (default OFF). Generalizes the R5-2 spray
+#: S2-A-v3 spray-generalization (default ON since the 2026-07-21 pack-3
+#: flip, KEY_SCHEMA 34; explicit =0 stays the kill-switch). Generalizes
+#: the R5-2 spray
 #: predicate to the UNPARENTHESIZED tech-dir-suffix form the det-aggregation
 #: regrain channel mints ('Manage setting AI components/constants/graphqls/
 #: hooks/types/utils' — twenty-b exhibit, settings-PF 36 rows): same-PF
@@ -371,37 +374,47 @@ def naming_pack_enabled() -> bool:
 
 def pf_display_evidence_gate_enabled() -> bool:
     """Display-cross evidence gate over the PF provenance ladder's nav
-    channel (B71 consumer). Default **OFF** (new behavior): armed, an
+    channel (B71 consumer). Default **ON** since the 2026-07-21 pack-2
+    flip (KEY_SCHEMA 33; keyed proof cal + novu green — sim==engine 7/21
+    exact, cal 5→0 false displays, novu footprint exactly 1 row): an
     authored nav label only becomes a PF display when its tokens intersect
     the PF's name/anchor-terminal identity OR its member-dominant path
     tokens; equal-vote ties prefer the label whose href lands on the PF's
     own anchor page before alpha; the surviving label is title-cased.
-    ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE=1``/``true`` arms; unset/``0`` keeps
+    Unset ≡ explicit ``1``; explicit ``=0``/``false`` keeps
     ``ProvenanceSources.nav`` — and therefore the emitted display — byte
-    identical (the kill-switch law)."""
+    identical (explicit off stays a valid kill-switch forever)."""
     return os.environ.get(
-        PF_DISPLAY_EVIDENCE_GATE_ENV, "0"
+        PF_DISPLAY_EVIDENCE_GATE_ENV, "1"
     ).strip().lower() in {"1", "true"}
 
 
 def naming_wave_r5_enabled() -> bool:
-    """R5 corpus naming-wave master (default OFF). ``FAULTLINE_NAMING_WAVE_R5``
-    ``=1``/``true`` arms every R5 segment; unset/``0``/``false``/``off`` keeps
-    each segment inert ⇒ display + telemetry byte-identical to pre-R5 (the
-    inverted kill-switch survives the later default flip)."""
+    """R5 corpus naming-wave master. Default **ON** since the 2026-07-21
+    pack-2 flip (KEY_SCHEMA 33; keyed A/B twenty + papermark green —
+    phase-1 cures hold: paren-high 17→0, dups 3→0; brand-echo stamps ×5,
+    measured demote high 101→92, no over-demotion on the keyed PF layer).
+    Unset ≡ explicit ``1`` — every R5 segment armed; explicit ``0``/
+    ``false``/``off`` keeps each segment inert ⇒ display + telemetry
+    byte-identical to pre-R5 (explicit off stays a valid kill-switch
+    forever)."""
     return os.environ.get(
-        NAMING_WAVE_R5_ENV, "0"
+        NAMING_WAVE_R5_ENV, "1"
     ).strip().lower() in {"1", "true"}
 
 
 def spray_generalized_enabled() -> bool:
-    """S2-A-v3 spray-generalization (default OFF).
-    ``FAULTLINE_SPRAY_GENERALIZED`` ``=1``/``true`` arms the generalized
-    R5-2 spray predicate + group-absorption pass; unset/``0``/``false``/
+    """S2-A-v3 spray-generalization — default **ON** since the 2026-07-21
+    pack-3 flip (KEY_SCHEMA 34; census twenty (R5+DET_AGG world) — spray
+    17→0, parents 'Manage AI settings' mc38 / 'Manage application
+    settings' mc52 / 'Manage data model settings' mc25, settings-PF
+    36→22, conservation 328==328, 0 false, I14 dangling 0; KS byte-ident
+    typebot+openstatus; the pair flag of FAULTLINE_UF_DET_AGGREGATION —
+    ledger §S2-A-V3). Unset ≡ explicit ``1``; explicit ``0``/``false``/
     ``off`` keeps the pass un-entered ⇒ user_flows[] + telemetry
-    byte-identical (the KS 4-way gate)."""
+    byte-identical (explicit off stays a valid kill-switch forever)."""
     return os.environ.get(
-        SPRAY_GENERALIZED_ENV, "0"
+        SPRAY_GENERALIZED_ENV, "1"
     ).strip().lower() in {"1", "true"}
 
 
@@ -1706,8 +1719,10 @@ def nav_label_sets_for_pfs(
 #
 # A NEW consumer of the SAME ungated ``_nav_label_votes`` machinery — the
 # B40 nav-pinning rung (:func:`nav_labels_for_pfs`) and the B57 nav-cluster
-# rung (:func:`nav_label_sets_for_pfs`) are untouched. Only armed behind
-# ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE`` (default OFF): the raw top-voted
+# rung (:func:`nav_label_sets_for_pfs`) are untouched. Gated behind
+# ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE`` (default ON since the 2026-07-21
+# pack-2 flip, KEY_SCHEMA 33; explicit =0 stays the kill-switch): the raw
+# top-voted
 # label can be a FOREIGN capability (a nav link whose href first-come-owns a
 # borrowed route file — cal ``insights`` display 'Bookings'), which the
 # provenance ladder then installs as the PF display. The gate keeps a label
@@ -2450,7 +2465,8 @@ def _r5_sibling_name_dup(
     return False
 
 
-# ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ─────
+# ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, default
+# ON since the 2026-07-21 pack-3 flip) ──────────────────────────────────
 #
 # The generalized R5-2 spray predicate over the UNPARENTHESIZED form (probe
 # canon, 2026-07-19: 15/17 direct + 17/17 with group-absorption on the
@@ -2802,7 +2818,7 @@ def _apply_uf_name_laws(
 
     idx = _action_family_index(vocab)
 
-    # ── R5 phase-2 (FAULTLINE_NAMING_WAVE_R5, default OFF) — member-evidence
+    # ── R5 phase-2 (FAULTLINE_NAMING_WAVE_R5, default ON since 2026-07-21) — member-evidence
     # pool + vocab sets for the rename/plural/conf-drop/brand-echo lanes.
     # ``r5_evidence`` is threaded by run_naming_contract (built once); the
     # 6.7e rescore seam rebuilds it here so BOTH passes apply the SAME laws
@@ -3751,7 +3767,7 @@ def run_naming_contract(
     # ── Pass 1: product features (pin > candidates; laws gate both) ──
     taken: dict[str, str] = {}  # case-folded display -> pf slug
     pf_by_slug: dict[str, Any] = {}
-    # R5-1 identity-parity (FAULTLINE_NAMING_WAVE_R5, default OFF) — the
+    # R5-1 identity-parity (FAULTLINE_NAMING_WAVE_R5, default ON since 2026-07-21) — the
     # identity-fold of EVERY live PF slug, computed once so the guard is
     # order-independent (a display grabbing a not-yet-processed PF's identity
     # is caught). Empty work when the wave is off ⇒ byte-identical.
@@ -4448,7 +4464,7 @@ def run_naming_contract(
             tele["r5_pf_dirtoken_capped"] = (
                 tele.get("r5_pf_dirtoken_capped", 0) + 1)
 
-    # ── R5-1: identity-parity law (FAULTLINE_NAMING_WAVE_R5, default OFF) ──
+    # ── R5-1: identity-parity law (FAULTLINE_NAMING_WAVE_R5, default ON) ──
     # THE authoritative last word on PF displays. The B71 provenance ladder
     # (above) re-derives each display independently from the RAW nav channel
     # with no cross-PF check, so it re-introduces the identity-parity remnant
@@ -4498,7 +4514,8 @@ def _apply_r5_confidence_caps(
     repo_root: Any = None,
 ) -> None:
     """R5-5 negative confidence rungs (``FAULTLINE_NAMING_WAVE_R5``, default
-    OFF). A FINAL sweep over EVERY user flow — placed inside
+    ON since the 2026-07-21 pack-2 flip). A FINAL sweep over EVERY user
+    flow — placed inside
     :func:`_apply_uf_name_laws` so BOTH the naming-contract pass AND the
     6.7e adjudicator's ``rescore_uf_confidence`` re-run it (else the
     adjudicator re-grades a capped row back to 'high'). The Law C rubric

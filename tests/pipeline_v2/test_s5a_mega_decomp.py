@@ -471,10 +471,17 @@ def _organic_scene():
 def test_seg_c_off_organic_telemetry_only():
     # MECHANICAL flip migration (2026-07-19 S*-pack, KEY_SCHEMA 32): the OFF
     # world is now the explicit kill-switch (unset arms Seg C).
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    # B73 organic-move strict rule is default ON too — the telemetry-only
+    # premise is the fully-unarmed world, so its kill-switch is pinned.
     os.environ[MEGA_DECOMP_ARM_ENV] = "0"
-    run, reg, devs, booty, keeper = _organic_scene()
-    pfs = [PF("network", "route:network"), PF("admin", "route:admin")]
-    tele = run([booty, keeper], devs, pfs, reg)   # explicit kill-switch
+    os.environ["FAULTLINE_ORGANIC_MOVE"] = "0"
+    try:
+        run, reg, devs, booty, keeper = _organic_scene()
+        pfs = [PF("network", "route:network"), PF("admin", "route:admin")]
+        tele = run([booty, keeper], devs, pfs, reg)   # explicit kill-switch
+    finally:
+        os.environ.pop("FAULTLINE_ORGANIC_MOVE", None)
     assert tele.get("organic_candidates") == 1
     assert tele["rehomed"] == 0
     assert booty.product_feature_id == "network"   # NOT moved
@@ -482,6 +489,10 @@ def test_seg_c_off_organic_telemetry_only():
 
 def test_seg_c_organic_bridge_moves_through_ledger():
     os.environ[MEGA_DECOMP_ARM_ENV] = "1"
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    # B73 organic-move rule REPLACES the mega-organic bridge when armed —
+    # this test pins the mega path, so the B73 kill-switch is pinned.
+    os.environ["FAULTLINE_ORGANIC_MOVE"] = "0"
     run, reg, devs, booty, keeper = _organic_scene()
     pfs = [PF("network", "route:network"), PF("admin", "route:admin")]
     led = OverturnLedger()
@@ -490,6 +501,7 @@ def test_seg_c_organic_bridge_moves_through_ledger():
         tele = run([booty, keeper], devs, pfs, reg)
     finally:
         uninstall_ledger()
+        os.environ.pop("FAULTLINE_ORGANIC_MOVE", None)
     assert tele["rehomed"] == 1
     assert tele.get("organic_rehomed") == 1
     assert booty.product_feature_id == "admin"     # moved to the wider owner

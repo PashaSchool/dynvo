@@ -387,12 +387,14 @@ def test_ws_apps_is_product_layer(monkeypatch):
 # ── ANTI: unset flag ⇒ branch un-entered (mega-решта неторкана) ─────────
 
 
-def test_anticase_unset_flag_mega_armed_path_unchanged(monkeypatch):
+def test_anticase_off_flag_mega_armed_path_unchanged(monkeypatch):
     """Kill-switch pair at the unit grain: the SAME burial scene, flag
-    UNSET, mega at its armed default — the organic candidate moves via the
-    mega rung exactly as main does today (b24_class journaled). This is
-    the replaced behavior fork-A supersedes ONLY under the flag."""
-    monkeypatch.delenv("FAULTLINE_ORGANIC_MOVE", raising=False)
+    OFF, mega at its armed default — the organic candidate moves via the
+    mega rung exactly as the pre-B73 engine did (b24_class journaled).
+    This is the replaced behavior fork-A supersedes when armed.
+    MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
+    monkeypatch.setenv("FAULTLINE_ORGANIC_MOVE", "0")
     monkeypatch.delenv("FAULTLINE_MEGA_DECOMP_ARM", raising=False)
     registry, pfs, devs, buried, other, teams_native = _burial_scene()
     tele = run_post_uf_rehome([buried, other, teams_native], devs, pfs,
@@ -404,10 +406,12 @@ def test_anticase_unset_flag_mega_armed_path_unchanged(monkeypatch):
     assert "organic_blocked_rows" not in tele
 
 
-def test_anticase_unset_flag_mega_off_telemetry_only(monkeypatch):
-    """Flag unset + mega kill-switched ⇒ telemetry-only candidate, exactly
-    the pre-flip law (byte-parity with the B69-v2 anti-case)."""
-    monkeypatch.delenv("FAULTLINE_ORGANIC_MOVE", raising=False)
+def test_anticase_off_flag_mega_off_telemetry_only(monkeypatch):
+    """Flag OFF + mega kill-switched ⇒ telemetry-only candidate, exactly
+    the pre-B73 law (byte-parity with the B69-v2 anti-case).
+    MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
+    monkeypatch.setenv("FAULTLINE_ORGANIC_MOVE", "0")
     monkeypatch.setenv("FAULTLINE_MEGA_DECOMP_ARM", "0")
     registry, pfs, devs, buried, other, teams_native = _burial_scene()
     tele = run_post_uf_rehome([buried, other, teams_native], devs, pfs,
@@ -708,9 +712,11 @@ def test_arbiter_ledger_journals_organic_move_rung(monkeypatch):
 # ── Flag helper ──────────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch):
+def test_flag_default_on(monkeypatch):
+    # SEMANTIC flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): unset
+    # now arms the organic-move branch (unset ≡ explicit-1).
     monkeypatch.delenv("FAULTLINE_ORGANIC_MOVE", raising=False)
-    assert organic_move_enabled() is False
+    assert organic_move_enabled() is True
     monkeypatch.setenv("FAULTLINE_ORGANIC_MOVE", "0")
     assert organic_move_enabled() is False
     monkeypatch.setenv("FAULTLINE_ORGANIC_MOVE", "1")

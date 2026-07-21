@@ -125,7 +125,9 @@ def test_residual_marker_stamped_when_armed(monkeypatch) -> None:
 
 
 def test_residual_marker_off_is_byte_identical(monkeypatch) -> None:
-    monkeypatch.delenv(_B77, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(_B77, "0")
     parent, journeys, fbk = _split_world()
     subs = _split_one(parent, journeys, fbk)
     assert all(s.residual is False for s in subs)
@@ -194,7 +196,9 @@ def test_pass1_flag_off_reproduces_mass_transfer(monkeypatch) -> None:
     """Kill-switch: OFF keeps the defect byte-exactly (wholesale inherit of
     all 10, no bucket row, no new telemetry keys) — the fallback path the
     flag protects is alive."""
-    monkeypatch.delenv(_B77, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(_B77, "0")
     devs, bucket, spec, core, story = _giant_world()
     ufs, tele = _build_user_flows([spec], [bucket], devs, [])
     (journey,) = ufs
@@ -265,10 +269,12 @@ def test_pass1_container_affinity_gate(monkeypatch) -> None:
 
 
 def test_container_inherit_without_b77_is_untouched(monkeypatch) -> None:
-    """The B74 Seg C baseline survives: with B77 unset the container
+    """The B74 Seg C baseline survives: with B77 off the container
     inherit stays ungated (all 5 members) and no affinity key appears."""
     monkeypatch.setenv(_SEGC, "1")
-    monkeypatch.delenv(_B77, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(_B77, "0")
     devs, old, spec, hit, miss = _container_world()
     ufs, tele = _build_user_flows(
         [spec], [old], devs, [], home_pure=True,
@@ -488,7 +494,9 @@ def test_apply_uf_conservation_gates_containers_under_flag(
                    "logic-functions", [m1.uuid, m1b.uuid, m2.uuid])
 
     # Flag OFF — the ladder resettles onto the ws-container (the defect).
-    monkeypatch.delenv(_B77, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(_B77, "0")
     uf_off = _world()
     tele_off = apply_uf_conservation(
         [uf_off], [d_front, d_logic], [pf_cont, pf_real])

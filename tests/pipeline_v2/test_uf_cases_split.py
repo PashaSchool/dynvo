@@ -148,7 +148,9 @@ def test_derivation_witness_floor_is_i15_ruler() -> None:
 
 
 def test_flag_off_returns_none_untouched(census, monkeypatch) -> None:
-    monkeypatch.delenv(CASES_SPLIT_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(CASES_SPLIT_ENV, "0")
     assert not cases_split_enabled()
     uf, flows, _, _ = _build(census["twenty_209_browse_object_record"])
     before = [dict(u.model_dump()) if hasattr(u, "model_dump") else u.dict()
@@ -162,6 +164,10 @@ def test_flag_off_returns_none_untouched(census, monkeypatch) -> None:
     monkeypatch.setenv(CASES_SPLIT_ENV, "0")
     assert not cases_split_enabled()
     monkeypatch.setenv(CASES_SPLIT_ENV, "1")
+    assert cases_split_enabled()
+    # SEMANTIC flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): unset
+    # now arms the stage (unset ≡ explicit-1).
+    monkeypatch.delenv(CASES_SPLIT_ENV, raising=False)
     assert cases_split_enabled()
 
 

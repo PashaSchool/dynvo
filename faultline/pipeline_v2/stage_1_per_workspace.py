@@ -152,15 +152,18 @@ _TRUTHY = {"1", "true", "yes", "on"}
 def workspace_union_enabled() -> bool:
     """Return True when the declared-workspace union gate is armed.
 
-    Default **OFF** — ``FAULTLINE_WORKSPACE_UNION`` unset (or any value
-    outside ``{1, true, yes, on}``) leaves Stage 1 byte-identical to the
-    pre-gate behaviour. Set ``FAULTLINE_WORKSPACE_UNION=1`` to arm it.
+    Default **ON** since the 2026-07-21 pack-2 flip (KEY_SCHEMA 33; keyed
+    A/B onyx green — fallback 57.1→36.5%, web-residual 2114→0; anti-cases
+    langfuse/typebot byte-identical even armed). Unset ≡ explicit ``1``;
+    an explicit value outside ``{1, true, yes, on}`` (``=0``/``false``/
+    ``off``) leaves Stage 1 byte-identical to the pre-gate behaviour —
+    explicit off stays a valid kill-switch forever.
 
-    New behaviour is env-flag-gated per the operator law: the union only
-    fires when this returns True AND the declared workspaces span a
-    minority of tracked files (:func:`_declared_covers_minority`).
+    The union only fires when this returns True AND the declared
+    workspaces span a minority of tracked files
+    (:func:`_declared_covers_minority`).
     """
-    return os.environ.get(WORKSPACE_UNION_ENV, "0").strip().lower() in _TRUTHY
+    return os.environ.get(WORKSPACE_UNION_ENV, "1").strip().lower() in _TRUTHY
 
 
 def _distinct_interesting_stacks(workspaces: list[Workspace]) -> int:
@@ -673,8 +676,9 @@ def run_stage_1_per_workspace(
         # (reuse of the infisical synthesis mechanism; no new extractors)
         # so the bulk is scoped to its own stack instead of dissolving in
         # the js-generic leftover pass. Flag-gated
-        # (FAULTLINE_WORKSPACE_UNION, default OFF); unset ⇒ byte-identical
-        # to base because this branch never runs.
+        # (FAULTLINE_WORKSPACE_UNION, default ON since the 2026-07-21
+        # pack-2 flip, KEY_SCHEMA 33); explicit =0 ⇒ byte-identical
+        # to base because this branch never runs (kill-switch forever).
         additions = _union_synthesised(workspaces, ctx)
         if additions:
             workspaces = workspaces + additions

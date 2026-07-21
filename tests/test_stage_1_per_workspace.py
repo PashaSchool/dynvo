@@ -285,14 +285,23 @@ def test_merge_small_emissions_coalesce_even_if_disjoint() -> None:
     assert schemas[0].name == "user"
 
 
-def test_leftover_pass_picks_up_uncovered_packages(tmp_path: Path) -> None:
+def test_leftover_pass_picks_up_uncovered_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Files outside any declared workspace should still get extracted.
 
     Simulates the pnpm-workspace glob-expansion gap where Stage 0
     only enumerated ``apps/*`` workspaces; here we manually construct
     a ctx with declared workspaces that DON'T include the schema
     files, then assert the leftover pass picks them up.
+
+    MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    default-ON WORKSPACE_UNION gate now synthesises the undeclared
+    package on this minority-declared fixture (leftover 0 by design) —
+    the leftover SAFETY NET this test pins is the union-off world, so
+    the kill-switch is pinned with an explicit =0.
     """
+    monkeypatch.setenv("FAULTLINE_WORKSPACE_UNION", "0")
     # Layout: apps/web/ is declared; packages/db/ exists with
     # drizzle schema but is NOT declared as a workspace.
     apps_web = tmp_path / "apps" / "web"

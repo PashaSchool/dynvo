@@ -6,7 +6,9 @@ bulk (``web/`` Next app, ``cli/`` Python) is *undeclared*. Pre-gate,
 ``run_stage_1_per_workspace`` short-circuited on the declared list and the
 bulk dissolved into the js-generic ``__leftover__`` pass.
 
-The UNION gate (env-flagged ``FAULTLINE_WORKSPACE_UNION``, default OFF)
+The UNION gate (env-flagged ``FAULTLINE_WORKSPACE_UNION``, default ON
+since the 2026-07-21 pack-2 flip — KEY_SCHEMA 33; explicit =0 stays the
+kill-switch)
 detects that the declared workspaces span a strict MINORITY of tracked
 files (scale-invariant ``covered * 2 < total`` — no magic number) and
 unions them with the non-overlapping results of ``synthesise_workspaces``
@@ -128,9 +130,11 @@ def _run(ctx: ScanContext) -> object:
 # ── env flag / kill-switch ──────────────────────────────────────────────
 
 
-def test_flag_defaults_off_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_defaults_on_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): unset
+    # now arms the union gate (unset ≡ explicit-1).
     monkeypatch.delenv(WS_UNION_ENV, raising=False)
-    assert workspace_union_enabled() is False
+    assert workspace_union_enabled() is True
 
 
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " On "])
@@ -232,7 +236,9 @@ def test_onyx_shape_armed_drives_web_residual_to_zero(
     _make_onyx_shape(tmp_path)
     ctx = stage_0_intake(tmp_path, skip_git=True)
 
-    monkeypatch.delenv(WS_UNION_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(WS_UNION_ENV, "0")
     base = run_stage_1_per_workspace(ctx)
     monkeypatch.setenv(WS_UNION_ENV, "1")
     armed = run_stage_1_per_workspace(ctx)
@@ -256,10 +262,12 @@ def test_onyx_shape_flag_off_leaves_bulk_undeclared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Flag OFF ⇒ pre-gate behaviour: only the declared workspaces are
-    scoped, web/ + cli/ stay in the leftover pass (byte-identical base)."""
+    scoped, web/ + cli/ stay in the leftover pass (byte-identical base).
+    MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
     _make_onyx_shape(tmp_path)
     ctx = stage_0_intake(tmp_path, skip_git=True)
-    monkeypatch.delenv(WS_UNION_ENV, raising=False)
+    monkeypatch.setenv(WS_UNION_ENV, "0")
     res = run_stage_1_per_workspace(ctx)
     used = {w.name for w in res.workspaces_used}
     assert used == {"widget", "desktop"}
@@ -287,7 +295,9 @@ def test_high_coverage_monorepo_byte_identical_off_vs_armed(
     _make_high_coverage_monorepo(tmp_path)
     ctx = stage_0_intake(tmp_path, skip_git=True)
 
-    monkeypatch.delenv(WS_UNION_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    # OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(WS_UNION_ENV, "0")
     off = run_stage_1_per_workspace(ctx)
     monkeypatch.setenv(WS_UNION_ENV, "1")
     on = run_stage_1_per_workspace(ctx)

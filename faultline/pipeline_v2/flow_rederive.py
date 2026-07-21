@@ -71,10 +71,13 @@ artifact appear ONLY when the causal gate selected at least one
 candidate — an armed scan of a repo without post-Stage-3 grain changes
 is byte-identical to unset.
 
-Flag: ``FAULTLINE_FLOW_REDERIVE_POSTGRAIN`` — default **OFF**; unset /
-``0`` keeps the stage un-entered, byte-identical. Registered in
-``scan_result_cache.ENV_OUTPUT_FLAGS`` WITHOUT a KEY_SCHEMA bump (the
-bump rides the separate default-flip commit — flip-protocol).
+Flag: ``FAULTLINE_FLOW_REDERIVE_POSTGRAIN`` — default **ON** since the
+2026-07-21 pack-3 flip (KEY_SCHEMA 34; keyed proof twenty green — 894
+live calls, +3,712 flows, UF 120→169, golden targets taken: tasks 34m /
+workflows 44m / AI-assistant 13m; husks 0, degradations 0). Unset ≡
+explicit ``1``; explicit ``0``/``false`` keeps the stage un-entered,
+byte-identical (explicit off stays a valid kill-switch forever).
+Registered in ``scan_result_cache.ENV_OUTPUT_FLAGS``.
 """
 
 from __future__ import annotations
@@ -130,17 +133,20 @@ from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
 
 logger = logging.getLogger(__name__)
 
-#: B74 Seg B gate — default OFF (unset/``0`` ⇒ the stage is never
-#: entered and the scan is byte-identical to main). Flip rides its own
-#: later commit per flip-protocol.
+#: B74 Seg B gate — default ON since the 2026-07-21 pack-3 flip
+#: (KEY_SCHEMA 34); explicit ``=0`` ⇒ the stage is never entered and the
+#: scan is byte-identical to the pre-B74-B world (kill-switch forever).
 FLOW_REDERIVE_ENV = "FAULTLINE_FLOW_REDERIVE_POSTGRAIN"
 
 _TELEMETRY_SAMPLE_CAP = 25
 
 
 def flow_rederive_enabled() -> bool:
-    """Seg B — default **OFF** (unset/``0`` ⇒ byte-identical to main)."""
-    return os.environ.get(FLOW_REDERIVE_ENV, "").strip().lower() in {
+    """Seg B — default **ON** since the 2026-07-21 pack-3 flip
+    (KEY_SCHEMA 34; keyed proof twenty green). Unset ≡ explicit ``1``;
+    explicit ``=0``/``false`` ⇒ byte-identical to the pre-B74-B world
+    (kill-switch forever)."""
+    return os.environ.get(FLOW_REDERIVE_ENV, "1").strip().lower() in {
         "1", "true",
     }
 

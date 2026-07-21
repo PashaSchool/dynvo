@@ -154,11 +154,14 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # See stage_6_86_anchored_mint.py.
     (6, "anchored_mint"),
     (6, "user_flows"),
-    # SEMANTIC (S*-pack it2, 2026-07-19): the A-flip
-    # (FAULTLINE_UF_DET_AGGREGATION) was UN-flipped after the corpus
-    # regression audit, so the 6.7c uf_splitter artifact is back in the
-    # default sequence (=1 removes it again — the S2 world).
-    (6, "uf_splitter"),
+    # SEMANTIC (pack №3 S2-A return, 2026-07-21, KEY_SCHEMA 34): the
+    # 04cf47f un-flip is REVERSED — FAULTLINE_UF_DET_AGGREGATION is
+    # default ON again (naming collapse cured by R5 + spray-
+    # generalization, ledger §S2-A-V3), so the structural-LLM 6.7c
+    # uf_splitter artifact leaves the default sequence (=0 restores
+    # it — the LLM-structured world). The det_aggregation artifact
+    # itself appears only when the run carries user_flows (this
+    # minimal fixture does not).
     (6, "uf_refiner"),
     # Stage 6.88 (Wave 5, 2026-07-07, Product-Spine journey lattice) —
     # deterministic catch-all journey partition + exact subset-dup
@@ -210,6 +213,12 @@ EXPECTED_ARTIFACT_SEQUENCE: list[tuple[int, str]] = [
     # off). Telemetry artifact emitted on every run. See
     # naming_contract.py.
     (7, "naming_contract"),
+    # SEMANTIC (pack №3 flip, 2026-07-21, KEY_SCHEMA 34) — B76 metrics
+    # recompute-on-emission (Stage 6.998) is default ON, so its telemetry
+    # artifact now appears in the default sequence (after the naming
+    # contract, before uf_loc). FAULTLINE_METRICS_RECOMPUTE=0 removes it
+    # (kill-switch).
+    (7, "metrics_recompute"),
     # Stage 6.97b (B4-fix wave, 2026-07-08) — UF-level LOC: union of owned
     # member-flow spans per journey (validator floc_owned semantics).
     # Additive field only; $0/deterministic, FAULTLINE_UF_LOC=0 off.

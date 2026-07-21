@@ -40,12 +40,14 @@ def _ps(pairs: list[tuple[str, str]]) -> Any:
     return SimpleNamespace(nav_pairs_by_file={"components/Navigation.tsx": pairs})
 
 
-# ── flag: default OFF + kill-switch semantics ───────────────────────────
+# ── flag: default ON (pack-2 flip) + kill-switch semantics ──────────────
 
 
-def test_gate_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gate_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): unset
+    # now arms the gate (unset ≡ explicit-1); =0/false stays kill-switch.
     monkeypatch.delenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", raising=False)
-    assert pf_display_evidence_gate_enabled() is False
+    assert pf_display_evidence_gate_enabled() is True
     monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "0")
     assert pf_display_evidence_gate_enabled() is False
     monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "false")
@@ -337,8 +339,10 @@ def test_exhibit_pass1_off_path_installs_raw_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """OFF reproduces the pre-gate Pass-1 behaviour (the byte-identity
-    anchor for the kill-switch): the raw foreign label wins the rank."""
-    monkeypatch.delenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", raising=False)
+    anchor for the kill-switch): the raw foreign label wins the rank.
+    MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "0")
     pfs, ps, routes = _pass1_fixture()
     _run_contract(pfs, ps, routes)
     assert pfs[0].display_name == "impersonation"
@@ -409,8 +413,10 @@ def test_composite_flattening_reproduces_when_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """OFF reproduces the pre-guard application byte-for-byte — the
-    kill-switch anchor for the Pass-3 seam."""
-    monkeypatch.delenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", raising=False)
+    kill-switch anchor for the Pass-3 seam.
+    MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "0")
     pf = _hub_pf()
     _run_with_labeler(pf, {"discord": "Discord"})
     assert pf.display_name == "Discord"
@@ -523,10 +529,12 @@ def test_composite_keep_is_hub_scoped(
 
 
 def test_off_path_uses_raw_nav_channel(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset/0 must reproduce the pre-gate nav feed exactly: the gated map
-    is only consulted when the flag is armed (the kill-switch law at the
-    seam — full byte-identity is the killswitch_4way scan gate)."""
-    monkeypatch.delenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", raising=False)
+    """Explicit =0 must reproduce the pre-gate nav feed exactly: the gated
+    map is only consulted when the flag is armed (the kill-switch law at
+    the seam — full byte-identity is the killswitch_4way scan gate).
+    MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    OFF baseline is pinned with an explicit =0, not left unset."""
+    monkeypatch.setenv("FAULTLINE_PF_DISPLAY_EVIDENCE_GATE", "0")
     pfs, ps, routes = _cal_features_fixture()
     raw = nav_labels_for_pfs(pfs, ps, routes)
     assert raw == {"features": "Profile"}

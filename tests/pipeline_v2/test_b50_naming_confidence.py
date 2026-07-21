@@ -238,6 +238,10 @@ class TestSeg1LawAQualifierIntegration:
         return {u.id: u.name for u in ufs}
 
     def test_echo_qualifier_suppressed(self, monkeypatch):
+        # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+        # this test pins a pre-R5 law — the default-ON R5 wave is pinned
+        # off (R5 behavior is covered by its own test files).
+        monkeypatch.setenv(nc.NAMING_WAVE_R5_ENV, "0")
         names = self._run(True, monkeypatch)
         # The 'Manage manage links' template echo is collapsed …
         assert names["UF-1"] == "Manage links"
@@ -247,6 +251,10 @@ class TestSeg1LawAQualifierIntegration:
         assert names["UF-3"] == "Manage links (file)"
 
     def test_flag_off_preserves_pre_b50(self, monkeypatch):
+        # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+        # this test pins a pre-R5 law — the default-ON R5 wave is pinned
+        # off (R5 behavior is covered by its own test files).
+        monkeypatch.setenv(nc.NAMING_WAVE_R5_ENV, "0")
         names = self._run(False, monkeypatch)
         # Pre-B50 output carries the template + qualifier echoes verbatim.
         assert names["UF-1"] == "Manage manage links"
@@ -399,6 +407,10 @@ class TestSeg2CollisionSafeIntegration:
         return pf, uf1, uf2, flows
 
     def test_kan_pair_names_unchanged_no_dup(self, monkeypatch):
+        # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+        # this test pins a pre-R5 law — the default-ON R5 wave is pinned
+        # off (R5 behavior is covered by its own test files).
+        monkeypatch.setenv(nc.NAMING_WAVE_R5_ENV, "0")
         monkeypatch.setenv(nc.UF_NAME_DEGRIME_ENV, "1")
         pf, uf1, uf2, flows = self._kan_pair()
         tele = nc.run_naming_contract([pf], [uf1, uf2], flows, keeper_on=False)

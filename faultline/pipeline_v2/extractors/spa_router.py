@@ -27,7 +27,8 @@ Segments (each a separate commit, ONE flag):
     react-router-framework repos disqualify (their pages are covered by
     filesystem extractors — SACRED no-dup law).
   * Seg D — B74 Seg A route tables (SEPARATE flag
-    ``FAULTLINE_SPA_ROUTE_TABLE``, default OFF): exported enum /
+    ``FAULTLINE_SPA_ROUTE_TABLE``, default ON since the 2026-07-21
+    pack-3 flip): exported enum /
     flat-const route tables (twenty ``AppPath``/``SettingsPath``, novu
     ``ROUTES``) whose members Seg B honestly SKIPS (``path={Table.X}``
     is not a literal). Candidacy is shape-only; emission requires
@@ -124,13 +125,17 @@ def spa_router_entries_enabled() -> bool:
 
 
 def spa_route_table_enabled() -> bool:
-    """B74 Seg A — default **OFF**. ``FAULTLINE_SPA_ROUTE_TABLE=1`` arms
-    the route-table arm (:func:`_collect_route_tables`); unset / falsy
-    keeps it inert so the emitted candidate set — and therefore the scan
-    — is byte-identical to the flag-less engine. Registered in
-    ``scan_result_cache.ENV_OUTPUT_FLAGS`` (append-only, no KEY_SCHEMA
-    bump)."""
-    return os.environ.get(SPA_ROUTE_TABLE_ENV, "").strip().lower() in {
+    """B74 Seg A — default **ON** since the 2026-07-21 pack-3 flip
+    (KEY_SCHEMA 34; keyed proof twenty + novu green — twenty
+    routes_index +114 PAGE rows (AppPath/SettingsPath), novu +86;
+    consumption-gate holds the 0-false law: 0/2,042 candidates).
+    Unset ≡ explicit ``1`` — the route-table arm
+    (:func:`_collect_route_tables`) is armed; explicit falsy
+    (``0``/``false``/``off``) keeps it inert so the emitted candidate
+    set — and therefore the scan — is byte-identical to the flag-less
+    engine (explicit off stays a valid kill-switch forever). Registered
+    in ``scan_result_cache.ENV_OUTPUT_FLAGS``."""
+    return os.environ.get(SPA_ROUTE_TABLE_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 

@@ -400,7 +400,7 @@ def homing_hygiene_enabled() -> bool:
 
 
 def _r5_canonical_compose(display: str) -> str:
-    """R5-4 (``FAULTLINE_NAMING_WAVE_R5``, default OFF) — compose site 3/3.
+    """R5-4 (``FAULTLINE_NAMING_WAVE_R5``, default ON since the 2026-07-21 pack-2 flip) — compose site 3/3.
 
     The anchored-mint ``"<display> (<qualifier>)"`` joint runs through the
     ONE compose canonicalizer (whitespace residue, internal parens, double

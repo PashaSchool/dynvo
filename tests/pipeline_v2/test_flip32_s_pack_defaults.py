@@ -123,13 +123,16 @@ def test_flip_contract_falsy_aliases_kill(env, helper, val, monkeypatch):
     assert helper() is False
 
 
-def test_det_aggregation_unflip_contract(monkeypatch):
-    """it2 un-flip (same day, KEY_SCHEMA stays 32): the corpus regression
-    audit refuted the A-flip (4x WORSE — the det-cluster naming layer was
-    panel-hardened only on Soc0/novu; bare 'Manage <plural>' bins
-    corpus-wide). unset ⇒ OFF again; =1 still arms; =0 still kills."""
+def test_det_aggregation_reflip_contract(monkeypatch):
+    """SEMANTIC re-flip migration (2026-07-21 pack №3, KEY_SCHEMA 34):
+    the it2 un-flip (corpus audit 4x WORSE — bare 'Manage <plural>'
+    bins) is REVERSED — the naming collapse is cured by R5 +
+    spray-generalization (ledger §S2-A-V3), and the S2-A pair
+    (_UF_DET_AGGREGATION + _SPRAY_GENERALIZED) flips together in
+    pack №3. unset ⇒ ON; =1 still arms; =0 still kills (forever).
+    The full inverted-KS battery lives in test_flip33_34_pack_defaults."""
     monkeypatch.delenv(DET_AGGREGATION_ENV, raising=False)
-    assert det_aggregation_enabled() is False
+    assert det_aggregation_enabled() is True
     monkeypatch.setenv(DET_AGGREGATION_ENV, "1")
     assert det_aggregation_enabled() is True
     monkeypatch.setenv(DET_AGGREGATION_ENV, "0")

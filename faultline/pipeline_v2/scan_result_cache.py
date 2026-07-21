@@ -737,14 +737,19 @@ ENV_OUTPUT_FLAGS = (
     # the structural LLM stages (6.7c mega-split, 6.7d journey rewrite) are
     # skipped. UF-COUNT becomes invariant to LLM death (fail-open 264-vs-78
     # class) and to resampling (−26% whole-batch class) — probe 2026-07-18.
-    # Reshapes user_flows[] (membership/grain/ids) + downstream homes. Default
-    # OFF: flipped ON in the 2026-07-19 S*-pack (KEY_SCHEMA 32) and
-    # UN-flipped back the same day — corpus regression audit 4x WORSE (the
-    # det-cluster naming layer was panel-hardened only on Soc0/novu; bare
-    # 'Manage <plural>' bins corpus-wide: twenty 143 / midday 29 / documenso
-    # 'Manage os/ts' / novu 61% bare). R5 corpus hardening rides a follow-up
-    # cycle; =1 arms, =0/unset restores the LLM-structured path
-    # byte-identically.
+    # Reshapes user_flows[] (membership/grain/ids) + downstream homes.
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34) — the
+    # S2-A RETURN: flipped ON in the 2026-07-19 S*-pack (KEY_SCHEMA 32),
+    # UN-flipped the same day (corpus regression audit 4x WORSE — the
+    # det-cluster naming layer emitted bare 'Manage <plural>' bins
+    # corpus-wide: twenty 143 / midday 29 / documenso 'Manage os/ts' /
+    # novu 61% bare), and RE-flipped after the R5 corpus naming wave +
+    # spray-generalization cured the collapse (ledger §S2-A-V3: twenty
+    # spray 17→0, settings-PF 36→22, conservation 328==328, 0 false, I14
+    # dangling 0; pair flag FAULTLINE_SPRAY_GENERALIZED flips together).
+    # ``=0``/false/off restores the LLM-structured path byte-identically —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_UF_DET_AGGREGATION",
     # S2 Seg C (2026-07-18) — canonical LLM batch composition: volatile pure
     # counts leave the 6.7d prompt canon (digest n_dev_features; Call-2 per-row
@@ -854,11 +859,31 @@ ENV_OUTPUT_FLAGS = (
     # ``organization`` -> 'directory_sync') is reverted to the honest basename,
     # equal-vote ties prefer the PF's own anchor-page self-link, and the
     # survivor is title-cased. Reshapes product_features[].display_name +
-    # scan_meta.naming_contract.pf_display_provenance only. Default OFF; the
-    # cached bundle serves OFF and ON alike (read at emit time) — unset/=0
-    # restores the shipped display byte-identically. Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
+    # scan_meta.naming_contract.pf_display_provenance only. Default ON since
+    # the 2026-07-21 pack-2 flip (KEY_SCHEMA 33; keyed proof cal + novu green
+    # — sim==engine 7/21 exact, cal 5→0 false displays, novu footprint exactly
+    # 1 row; ledger display-cross pack 2026-07-19). ``=0``/false/off restores
+    # the shipped display byte-identically — explicit off stays a valid
+    # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE",
+    # workspace UNION gate (2026-07-19, onyx shape) — when the declared
+    # workspaces span a strict MINORITY of tracked files (scale-invariant
+    # covered*2 < total), they are unioned with the non-overlapping
+    # synthesise_workspaces results so the undeclared product bulk (onyx
+    # web/ Next app + cli/ Python) scopes to its own stack instead of
+    # dissolving into the js-generic leftover pass. Reshapes the Stage-1
+    # workspace partition and therefore every downstream layer on
+    # minority-declared repos; high-coverage declared monorepos
+    # (langfuse/supabase/typebot) are ratio-gate inert. Default ON since
+    # the 2026-07-21 pack-2 flip (KEY_SCHEMA 33; keyed A/B onyx green —
+    # fallback 57.1→36.5%, web-residual 2114→0; anti-cases langfuse/
+    # typebot byte-ident even armed; ledger onyx union-gate cycle).
+    # ``=0``/false/off restores the pre-gate Stage 1 byte-identically —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1"). NOTE: registered at flip time — the add-cycle omitted the
+    # ENV_OUTPUT_FLAGS registration (cache-keying gap found at the flip
+    # audit; the v33 bump invalidates every entry cached under the gap).
+    "FAULTLINE_WORKSPACE_UNION",
     # B73 organic-move (2026-07-19, fork-A ruling) — the ratified
     # strict+gated organic UF re-home rule at the 6.99b rail: armed, it
     # REPLACES the S5a mega-organic handling of the rail's candidates with
@@ -866,9 +891,14 @@ ENV_OUTPUT_FLAGS = (
     # direction-gate; PURE arbiter moves (rung organic-move), no renames,
     # no folds, no I8 orphan-guard (explicit ruling — sole-UF from-PFs are
     # the disease). Reshapes user_flows[].product_feature_id on repos with
-    # strict candidates. Default OFF; unset/=0 keeps the branch un-entered,
-    # byte-identical (including the mega-armed path). Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate flip commit.
+    # strict candidates. Default ON since the 2026-07-21 pack-2 flip
+    # (KEY_SCHEMA 33; keyed proof Soc0 green — moved=0, UF-051 blocked
+    # reason='prior-hold' hold='cross_app_target', conservation
+    # 399→399/0/0; typebot keyed-evidence trio byte-inert, KS ON == it1
+    # digest; ledger §B73-IT2). ``=0``/false/off keeps the branch
+    # un-entered, byte-identical (including the mega-armed path) —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_ORGANIC_MOVE",
     # R5 corpus naming-wave master (2026-07-19) — one flag gates the five R5
     # naming segments' NEW display-channel behaviors: identity-parity
@@ -878,9 +908,13 @@ ENV_OUTPUT_FLAGS = (
     # (census-shape name_confidence caps + name_evidence stamps). Reshapes
     # product_features[].display_name + user_flows[].name/name_confidence/
     # name_evidence + scan_meta.naming_contract telemetry only — canonical
-    # identity untouched. Default OFF; =0/unset restores the pre-R5 emission
-    # byte-identically (KS 4-way). Appended WITHOUT a KEY_SCHEMA bump — the
-    # bump rides the separate default-flip commit (flip-protocol).
+    # identity untouched. Default ON since the 2026-07-21 pack-2 flip
+    # (KEY_SCHEMA 33; keyed A/B twenty + papermark green — phase-1 cures
+    # hold paren-high 17→0 / dups 3→0, brand-echo stamps ×5, measured
+    # demote high 101→92, keyed PF layer only 2 medium = no over-demotion;
+    # ledger §R5-PHASE2). ``=0``/false/off restores the pre-R5 emission
+    # byte-identically — explicit off stays a valid kill-switch forever
+    # (unset ≡ explicit "1").
     "FAULTLINE_NAMING_WAVE_R5",
     # S2-A-v3 (2026-07-19) — spray-generalization: the generalized R5-2 spray
     # predicate over the UNPARENTHESIZED tech-dir-suffix form the
@@ -892,10 +926,16 @@ ENV_OUTPUT_FLAGS = (
     # own-resource parent row ('Manage AI settings' form; member-union
     # conservation, I14 repoint). Paren-tail rows are R5-2's class and are
     # never touched (G0). Reshapes user_flows[] (row count/names/membership)
-    # + the scan_meta.spray_generalized telemetry on armed worlds only. Default
-    # OFF; unset/=0 keeps the pass un-entered, byte-identical. Appended
-    # WITHOUT a KEY_SCHEMA bump — the bump rides the separate flip commit
-    # (flip-protocol).
+    # + the scan_meta.spray_generalized telemetry on armed worlds only.
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; census
+    # twenty (R5+DET_AGG world) — spray 17→0, parents 'Manage AI settings'
+    # mc38 / 'Manage application settings' mc52 / 'Manage data model
+    # settings' mc25, settings-PF 36→22, conservation 328==328, 0 false,
+    # I14 dangling 0; KS byte-ident typebot+openstatus; flips together
+    # with its pair FAULTLINE_UF_DET_AGGREGATION — ledger §S2-A-V3).
+    # ``=0``/false/off keeps the pass un-entered, byte-identical —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_SPRAY_GENERALIZED",
     # B74 Seg C (2026-07-19, probe-canon tune-first) — home-pure container
     # inherit: a journey member whose HOME PF is a monorepo ws-pkg CONTAINER
@@ -904,10 +944,15 @@ ENV_OUTPUT_FLAGS = (
     # (Pass-1 from_flows + Pass-2a cited devs). The 2b whole-pool rescue and
     # the route backfill stay home-STRICT. Reshapes user_flows[] membership
     # (twenty: 'Sign in and authenticate' 0->11 members) + the 6.7d
-    # uf_home_filtered telemetry on ws-container repos only. Default OFF;
-    # unset/=0 keeps the strict filter byte-identically; armed on a repo
-    # WITHOUT ws-containers is inert (KS: openstatus). Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
+    # uf_home_filtered telemetry on ws-container repos only. Default ON
+    # since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; keyed proof twenty
+    # green — 'Sign in and authenticate' mints 14 members on the live
+    # channel, filter 24,226→2,081, dropped exactly {blocklist by-design,
+    # SSO}, members 561→801 (+240 rescue), husks 0, degradations 0;
+    # ledger §B74 SEG C). ``=0``/false/off keeps the strict filter
+    # byte-identical — explicit off stays a valid kill-switch forever
+    # (unset ≡ explicit "1"); armed on a repo WITHOUT ws-containers is
+    # inert (KS: openstatus).
     "FAULTLINE_HOME_PURE_CONTAINER_INHERIT",
     # B74 Seg A (2026-07-20) — SPA route-table extraction: exported enum /
     # flat-const route tables (twenty AppPath/SettingsPath, novu ROUTES)
@@ -915,9 +960,14 @@ ENV_OUTPUT_FLAGS = (
     # (method=PAGE, kind=spa-page) + owner-page anchor evidence, so
     # capability journeys mint on SPA repos whose routes live in tables.
     # Reshapes routes_index + spa-page candidates on armed worlds only.
-    # Default OFF; unset/=0 keeps the arm un-entered, byte-identical.
-    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
-    # flip commit (flip-protocol).
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; keyed
+    # proof twenty + novu green — twenty routes_index +114 PAGE
+    # (AppPath/SettingsPath consumption-primary canon), novu +86 incl.
+    # /auth/sign-in; 0/2,042 false candidates; container-PF guard holds
+    # — 'twenty-shared' 13.8K phantom dead; ledger §B74 SEG A).
+    # ``=0``/false/off keeps the arm un-entered, byte-identical —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_SPA_ROUTE_TABLE",
     # B74 Seg B (2026-07-20, F3′ re-entry probe SHIP/high) — post-grain
     # flow re-derivation at Stage 6.865: stage-8-born / re-membered dev
@@ -934,9 +984,15 @@ ENV_OUTPUT_FLAGS = (
     # transitively, the minted user_flows[] layer on repos with
     # post-stage-3 grain changes; armed no-fire boards are
     # byte-identical (telemetry key only on fire — Seg C inertness
-    # law). Default OFF; =0/unset keeps the stage un-entered,
-    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump
-    # rides the separate default-flip commit (flip-protocol).
+    # law). Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    # keyed proof twenty green — 894 live calls, +3,712 flows
+    # (1400→3673), UF 120→169, members 561→1211; golden targets taken:
+    # tasks 34m, workflows 44m (was 2-loc), AI-assistant 13m,
+    # calendar/data-model/marketplace/auth-tokens; husks 0,
+    # degradations 0; ledger §B74 SEG B; the UF-giant blocker resolved
+    # by B75 cases-split — same pack). ``=0``/false/off keeps the stage
+    # un-entered, byte-identical — explicit off stays a valid
+    # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_FLOW_REDERIVE_POSTGRAIN",
     # S5b Seg H (2026-07-21, probe-canon tune-first) — digest stratification:
     # the 6.7d Call-1 digest stops starving the page surface under the caps.
@@ -947,10 +1003,14 @@ ENV_OUTPUT_FLAGS = (
     # (storybook/dev-artifact paths + filename-echo pseudo-routes demoted
     # out of the quota only). Digest/prompt/cache-key change on pressured
     # repos → user_flows[] + product_features[] reshape via Call-1. No-
-    # pressure repos are byte-identical (inertness law). Default OFF;
-    # unset/=0 keeps both cuts byte-identical. Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate flip commit
-    # (flip-protocol).
+    # pressure repos are byte-identical (inertness law). Default ON since
+    # the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; keyed proof novu green —
+    # 'Sign in to existing account' mints (3m; 0/12 draws for 8 days
+    # before), 'View analytics and activity charts' 1→5m, UF 88→92,
+    # members 472→565, degradations 0; telemetry 46 page-anchored/35
+    # appended/73 page-routes; ledger §S5b-H). ``=0``/false/off keeps
+    # both cuts byte-identical — explicit off stays a valid kill-switch
+    # forever (unset ≡ explicit "1").
     "FAULTLINE_DIGEST_STRATIFICATION",
     # B76 (2026-07-21) — metrics recompute-on-emission: re-runs the Stage-6
     # commit-metric sweep over the FINAL membership after the last
@@ -962,10 +1022,14 @@ ENV_OUTPUT_FLAGS = (
     # instead of deep-copying identity. Reshapes total_commits/bug_fixes/
     # bug_fix_ratio/authors/last_modified/health_score/health_confidence
     # on developer_features[] + product_features[] (metric channel only —
-    # membership and hotspot_files untouched). Default OFF; unset/=0 keeps
-    # the pass un-entered and the factory inheritance byte-identical.
-    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
-    # flip commit (flip-protocol).
+    # membership and hotspot_files untouched). Default ON since the
+    # 2026-07-21 pack-3 flip (KEY_SCHEMA 34; census ×3 repos on the
+    # 7-flag battery, same-world — "impossible" tc=0∧authors>0 rows
+    # 60+17/162+42/84+9 → 0+0 on ALL, hotspots byte-ident (full join 0
+    # diffs), dedup law dev-sum ≤ repo commits; both mechanism halves
+    # load-bearing; ledger §B76). ``=0``/false/off keeps the pass
+    # un-entered and the factory inheritance byte-identical — explicit
+    # off stays a valid kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_METRICS_RECOMPUTE",
     # B77 (2026-07-21, forensics-canon §ФОРЕНЗИКА 502M) — residual
     # citability: the 6.7c mega-split RESIDUAL bucket is marked
@@ -979,9 +1043,14 @@ ENV_OUTPUT_FLAGS = (
     # conservation resettle target. Reshapes user_flows[] membership on
     # armed composite worlds (the class lives ONLY on the FLOW_REDERIVE ×
     # CONTAINER_INHERIT interaction: twenty 502m/278m/216m mass-transfer
-    # giants). Default OFF; unset/=0 keeps 6.7c/6.7d/conservation
-    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump rides
-    # the separate default-flip commit (flip-protocol).
+    # giants). Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA
+    # 34; replay census on the twenty capture — 502-class 542→7 (target),
+    # AI-agents 216→7, marketplace 278→25; buckets keep members as honest
+    # residual rows — 0/2211 losses (the OFF world LOST 957); anti-cases
+    # 23/26/6 intact; KS byte-ident both worlds; ledger §B77).
+    # ``=0``/false/off keeps 6.7c/6.7d/conservation byte-identical —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_RESIDUAL_CITABILITY",
     # B75 (2026-07-21, probe-canon supports/tune-first) — UF-giant
     # cases-split: giant catch-all journeys (mc >= the census band edge
@@ -991,9 +1060,15 @@ ENV_OUTPUT_FLAGS = (
     # children BEFORE extraction (tracecat tiptap/ai exhibit). Reshapes
     # the emitted user_flows[] layer + flow backpointers on boards that
     # carry giants; 0-giant boards are byte-identical (inertness law).
-    # Default OFF; unset/=0 keeps the seam un-entered, byte-identical.
-    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
-    # default-flip commit (flip-protocol).
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    # sim-canon on the composite keyed twenty world — 209m 'Browse object
+    # record' → 10 children / 131m → 11 (settings names), 86m golden
+    # 'Create and edit records' = 4 recognizable cases + residual
+    # lineage, 502m/220m honestly KEPT (B77's class — division of labor
+    # proven by simulation); keyless inertness ×3 topologies byte-ident;
+    # suite² failset-diff empty; ledger §B75). ``=0``/false/off keeps
+    # the seam un-entered, byte-identical — explicit off stays a valid
+    # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_UF_CASES_SPLIT",
 )
 
@@ -1109,7 +1184,48 @@ ENV_OUTPUT_FLAGS = (
 #: stays 32 — unset semantics changed twice within one unreleased schema
 #: generation; the naming layer returns via R5 corpus hardening in its own
 #: cycle with its own flip.
-KEY_SCHEMA_VERSION = 32
+#: v33 (flip-pack №2, 2026-07-21 — plan docs/anchor-arc/flip-pack-2-20260719.md,
+#: operator-ratified 2026-07-21): the pack flips 4 previously-default-OFF flags
+#: to default ON, each in its own commit (per flip-protocol), the ONE bump
+#: riding the pack's FIRST commit: FAULTLINE_PF_DISPLAY_EVIDENCE_GATE
+#: (display-cross; keyed proof cal + novu — sim==engine 7/21 exact, cal 5→0
+#: false displays, novu footprint 1 row), _WORKSPACE_UNION (onyx union-gate;
+#: keyed A/B onyx fallback 57.1→36.5%, web-residual 2114→0; anti-cases
+#: langfuse/typebot byte-ident even armed), _NAMING_WAVE_R5 (phase2 merged;
+#: keyed A/B twenty+papermark — paren-high 17→0, dup 3→0, brand-echo ×5,
+#: measured demote 101→92 high), _ORGANIC_MOVE (B73-it2; keyed Soc0 moved=0,
+#: UF-051 prior-hold, conservation 399→399; typebot evidence-trio byte-inert).
+#: Default flips change what "unset" means, so cached entries keyed under
+#: unset must not be served across them (v16/v21/v25/v27/v28/v29/v30/v31/v32
+#: precedent). Every flag keeps its X=0 kill-switch (explicit "0"/"false"/
+#: "off" still disables — inverted-kill-switch unit per flag: unset ≡
+#: explicit "1" byte-identical). scan_meta.key_schema=33 emitted so
+#: downstream rulers gate new-world logic.
+#: v34 (flip-pack №3, 2026-07-21 — ledger «ПАК №3 ПОВНІСТЮ ЗІБРАНИЙ» /
+#: «ПАК №3 КОМПЛЕКТНИЙ», operator-ratified 2026-07-21): the pack flips 9
+#: previously-default-OFF flags to default ON, each in its own commit (per
+#: flip-protocol), the ONE bump riding the pack's FIRST commit:
+#: FAULTLINE_HOME_PURE_CONTAINER_INHERIT (B74-C; keyed twenty — 'Sign in
+#: and authenticate' 14m, filter 24,226→2,081, +240 rescue),
+#: _SPA_ROUTE_TABLE (B74-A; twenty +114 PAGE / novu +86, 0/2,042 false),
+#: _FLOW_REDERIVE_POSTGRAIN (B74-B; keyed twenty 894 live calls, +3,712
+#: flows, golden tasks/workflows/AI taken), _DIGEST_STRATIFICATION
+#: (S5b-H; keyed novu 'Sign in to existing account' mints, UF 88→92),
+#: _UF_CASES_SPLIT (B75; sim-canon 209→10/131→11 children, composite
+#: keyed twenty target), _RESIDUAL_CITABILITY (B77; replay census 502-class
+#: 542→7, no-orphan 0/2211), _METRICS_RECOMPUTE (B76; impossible metric
+#: rows →0 ×3 repos, hotspots byte-ident), and the S2-A return pair
+#: _UF_DET_AGGREGATION + _SPRAY_GENERALIZED (the 04cf47f un-flip REVERSED:
+#: the naming collapse is cured by R5 + spray-generalization — ledger
+#: §S2-A-V3: twenty spray 17→0, settings-PF 36→22, conservation 328==328,
+#: 0 false, I14 dangling 0). Default flips change what "unset" means, so
+#: cached entries keyed under unset must not be served across them
+#: (v16/v21/v25/v27/v28/v29/v30/v31/v32/v33 precedent). Every flag keeps
+#: its X=0 kill-switch (explicit "0"/"false"/"off" still disables —
+#: inverted-kill-switch unit per flag: unset ≡ explicit "1"
+#: byte-identical). scan_meta.key_schema=34 emitted so downstream rulers
+#: gate new-world logic.
+KEY_SCHEMA_VERSION = 34
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

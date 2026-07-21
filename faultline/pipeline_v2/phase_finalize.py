@@ -785,8 +785,9 @@ def run_finalize_phase(
     # snapshot excludes spliced untouched features; cold-scan rule);
     # keyless scans run the deterministic cohort selection + candidate
     # enumeration and report them in scan_meta (honest no-client
-    # degrade). Default OFF (FAULTLINE_FLOW_REDERIVE_POSTGRAIN);
-    # unset/=0 keeps the stage un-entered, byte-identical. Telemetry
+    # degrade). Default ON since the 2026-07-21 pack-3 flip
+    # (FAULTLINE_FLOW_REDERIVE_POSTGRAIN, KEY_SCHEMA 34);
+    # explicit =0 keeps the stage un-entered, byte-identical. Telemetry
     # key + artifact only when the causal gate fires (Seg C openstatus
     # inertness law).
     from faultline.pipeline_v2.flow_rederive import (
@@ -3036,7 +3037,8 @@ def run_finalize_phase(
                     feature=None,
                 )
 
-    # ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED, OFF) ──
+    # ── S2-A-v3 spray-generalization (FAULTLINE_SPRAY_GENERALIZED,
+    # default ON since the 2026-07-21 pack-3 flip) ──────────────────────
     # Structural absorption of the generalized R5-2 tech-dir-suffix spray
     # ('Manage setting AI components/constants/…' — the det-aggregation
     # regrain class) over the FINAL display names the naming contract just
@@ -3060,7 +3062,8 @@ def run_finalize_phase(
             f"spray-generalization failed ({exc}); rows unabsorbed"
         )
 
-    # ── B75 — UF-giant cases-split (FAULTLINE_UF_CASES_SPLIT, OFF) ──────
+    # ── B75 — UF-giant cases-split (FAULTLINE_UF_CASES_SPLIT, default
+    # ON since the 2026-07-21 pack-3 flip) ──────────────────────────────
     # Dir-tree case re-grain of giant catch-all journeys (mc >= census
     # band edge 30): >= K qualified surface cases extract as children;
     # the parent row survives as the residual (survivor-id law). Seam
@@ -3324,7 +3327,8 @@ def run_finalize_phase(
     # write. PF metrics come from each PF's OWN path-set with
     # per-commit dedup — never sum-over-contributors. Metric fields
     # only: membership and hotspot_files are never touched.
-    # Kill-switch FAULTLINE_METRICS_RECOMPUTE (default OFF) — unset/=0
+    # Kill-switch FAULTLINE_METRICS_RECOMPUTE (default ON since the
+    # 2026-07-21 pack-3 flip) — explicit =0
     # never enters the pass ⇒ no scan_meta key ⇒ byte-identical.
     from faultline.pipeline_v2.metrics_recompute import (
         metrics_recompute_enabled,

@@ -303,7 +303,11 @@ def test_anticase_organic_rows_telemetry_only():
     # telemetry-only law holds in the UNARMED world — under the flipped
     # FAULTLINE_MEGA_DECOMP_ARM default the organic candidates become
     # S5a Seg C ledger moves by design; pin the kill-switch.
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): the
+    # B73 organic-move strict rule is default ON too now — same unarmed-
+    # world premise, so its kill-switch is pinned alongside.
     os.environ["FAULTLINE_MEGA_DECOMP_ARM"] = "0"
+    os.environ["FAULTLINE_ORGANIC_MOVE"] = "0"
     try:
         registry, pfs, devs, sick, real_faqs, keeper = _papermark_scene()
         organic_sick = UF("Reset forgotten password", "faqs",
@@ -312,6 +316,7 @@ def test_anticase_organic_rows_telemetry_only():
         tele = run_post_uf_rehome(ufs, devs, pfs, registry)
     finally:
         os.environ.pop("FAULTLINE_MEGA_DECOMP_ARM", None)
+        os.environ.pop("FAULTLINE_ORGANIC_MOVE", None)
     assert organic_sick.product_feature_id == "faqs"  # untouched
     assert tele["rehomed"] == 0 and tele["folded"] == 0
     assert tele["organic_candidates"] == 1

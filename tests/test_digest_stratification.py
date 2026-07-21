@@ -93,9 +93,11 @@ def _digest_bytes(d: dict[str, Any]) -> bytes:
 
 # ── Flag gate ───────────────────────────────────────────────────────────────
 
-def test_gate_default_off(monkeypatch: Any) -> None:
+def test_gate_default_on(monkeypatch: Any) -> None:
+    # SEMANTIC flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): unset
+    # now arms both digest cuts (unset ≡ explicit-1).
     monkeypatch.delenv("FAULTLINE_DIGEST_STRATIFICATION", raising=False)
-    assert digest_stratification_enabled() is False
+    assert digest_stratification_enabled() is True
     monkeypatch.setenv("FAULTLINE_DIGEST_STRATIFICATION", "0")
     assert digest_stratification_enabled() is False
     monkeypatch.setenv("FAULTLINE_DIGEST_STRATIFICATION", "1")
@@ -249,15 +251,19 @@ def test_inertness_no_pressure_byte_identical() -> None:
     assert _digest_bytes(on) == _digest_bytes(off)
 
 
-def test_killswitch_unset_equals_zero(monkeypatch: Any) -> None:
-    """unset == "0" == "false": all three read as OFF (the 4-way A/B/C/D
-    law at the flag-helper level)."""
-    for val in (None, "0", "false", "off", ""):
+def test_killswitch_unset_equals_one(monkeypatch: Any) -> None:
+    """SEMANTIC flip migration (2026-07-21 pack №3, KEY_SCHEMA 34):
+    unset == "1" == "true" read as ON (the inverted kill-switch law);
+    explicit "0"/"false"/"off"/"" stay OFF forever."""
+    for val in (None, "1", "true"):
         if val is None:
             monkeypatch.delenv("FAULTLINE_DIGEST_STRATIFICATION",
                                raising=False)
         else:
             monkeypatch.setenv("FAULTLINE_DIGEST_STRATIFICATION", val)
+        assert digest_stratification_enabled() is True
+    for val in ("0", "false", "off", ""):
+        monkeypatch.setenv("FAULTLINE_DIGEST_STRATIFICATION", val)
         assert digest_stratification_enabled() is False
 
 
