@@ -952,6 +952,18 @@ ENV_OUTPUT_FLAGS = (
     # KEY_SCHEMA bump — the bump rides the separate flip commit
     # (flip-protocol).
     "FAULTLINE_DIGEST_STRATIFICATION",
+    # B75 (2026-07-21, probe-canon supports/tune-first) — UF-giant
+    # cases-split: giant catch-all journeys (mc >= the census band edge
+    # 30) re-grain into >= K dir-tree surface cases + a residual that
+    # keeps the parent row (survivor-id law); vendored-dir guard (S3
+    # no-product-surface ∧ S1 dependency-family echo) rejects technical
+    # children BEFORE extraction (tracecat tiptap/ai exhibit). Reshapes
+    # the emitted user_flows[] layer + flow backpointers on boards that
+    # carry giants; 0-giant boards are byte-identical (inertness law).
+    # Default OFF; unset/=0 keeps the seam un-entered, byte-identical.
+    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
+    # default-flip commit (flip-protocol).
+    "FAULTLINE_UF_CASES_SPLIT",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
