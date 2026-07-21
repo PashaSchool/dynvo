@@ -825,3 +825,329 @@ def test_instrument_kill_switch_restores_the_mint(
     pfs, tele = mint(devs, routes=routes, ctx=ctx)
     assert "ormkit" in {p.name for p in pfs}
     assert "technology_instruments" not in tele
+
+
+# ── B78 Seg A — walk-evidence gate (FAULTLINE_FOLD_EVIDENCE_WEIGHT) ──────
+#
+# Fixtures distill the Soc0 probe canon (2026-07-21): a page dev hosts the
+# walk-plurality vacuum; api-* router devs walk-fold into it with ZERO
+# behavioral claim (the target anchor never touches their entry files).
+# Armed, the void folds re-dispose by the dev's own entry evidence
+# (rulings R1-R3); OFF stays byte-identical.
+
+
+def _evw(monkeypatch):
+    monkeypatch.setenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", "1")
+
+
+def _cases_vacuum_repo():
+    """The Soc0 shape: a 'cases' page capability + api routers whose walk
+    folds are evidence-void (their entries live in backend routers the
+    cases anchor never claims)."""
+    routes = [
+        {"pattern": "/cases", "method": "PAGE",
+         "file": "frontend/src/pages/cases.tsx"},
+        {"pattern": "/trial", "method": "GET",
+         "file": "backend/routers/trial.py"},
+        {"pattern": "/context-items", "method": "GET",
+         "file": "backend/routers/context_items.py"},
+        {"pattern": "/users/by-email", "method": "GET",
+         "file": "backend/routers/users.py"},
+    ]
+    cases = dev("cases", ["frontend/src/pages/cases.tsx",
+                          "frontend/src/pages/case-detail.tsx"],
+                flows=[flow("browse-cases-flow",
+                            "frontend/src/pages/cases.tsx")])
+    trial = dev("api-trial-status", ["backend/routers/trial.py"],
+                flows=[flow("check-trial-flow", "backend/routers/trial.py")])
+    items = dev("api-context-items", ["backend/routers/context_items.py"],
+                flows=[flow("browse-items-flow",
+                            "backend/routers/context_items.py"),
+                       flow("edit-items-flow",
+                            "backend/routers/context_items.py")])
+    users = dev("api-users-by-email", ["backend/routers/users.py",
+                                       "backend/models/users_lookup.py"],
+                flows=[flow("find-user-flow", "backend/routers/users.py"),
+                       flow("sync-user-flow",
+                            "backend/models/users_lookup.py")])
+    return [cases, trial, items, users], routes
+
+
+def test_evw_flag_default_off(monkeypatch):
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        fold_evidence_weight_enabled,
+    )
+    monkeypatch.delenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", raising=False)
+    assert not fold_evidence_weight_enabled()
+    monkeypatch.setenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", "0")
+    assert not fold_evidence_weight_enabled()
+    monkeypatch.setenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", "1")
+    assert fold_evidence_weight_enabled()
+
+
+def test_evw_off_keeps_the_void_walk_fold_byte_identical(monkeypatch):
+    """Kill-switch law: unset == explicit 0 == the pre-B78 vacuum fold
+    (api devs land in 'cases' — the disease, kept verbatim OFF)."""
+    for env in (None, "0"):
+        if env is None:
+            monkeypatch.delenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT",
+                               raising=False)
+        else:
+            monkeypatch.setenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", env)
+        devs, routes = _cases_vacuum_repo()
+        pfs, tele = mint(devs, routes)
+        assert {p.name for p in pfs} == {"cases"}
+        for d in devs[1:]:
+            assert d.product_feature_id == "cases"
+            assert (d.anchor_id or "").startswith(("fold:span", "fold:walk"))
+        assert "walk_evidence_void" not in tele
+
+
+def test_evw_vacuum_devs_escape_cases_named(monkeypatch):
+    """Probe canon: api-trial-status / api-context-items /
+    api-users-by-email are NOT in 'cases' when armed."""
+    _evw(monkeypatch)
+    devs, routes = _cases_vacuum_repo()
+    _cases, trial, items, users = devs
+    pfs, tele = mint(devs, routes)
+    assert _cases.product_feature_id == "cases"
+    for d in (trial, items, users):
+        assert d.product_feature_id != "cases", d.name
+        assert d.shared_reason is None, d.name  # R3: never laned
+    assert tele["walk_evidence_void"] == 3
+    assert tele["walk_evidence_redisposed"] == 3
+
+
+def test_evw_r2_all_three_dispositions(monkeypatch):
+    """R2 branches on the same fixture: >=2 distinct entry files =>
+    standalone mint (users); >=2 flows on one entry => standalone mint
+    (context-items); 1 flow => fold into the nearest evidence-claiming
+    PF — none exists for trial.py, so the single-flow fallback mints
+    (the probe's 'trial' standalone, tele-tracked)."""
+    _evw(monkeypatch)
+    devs, routes = _cases_vacuum_repo()
+    _cases, trial, items, users = devs
+    pfs, tele = mint(devs, routes)
+    by_name = {p.name: p for p in pfs}
+    # (i) >=2 distinct entry files — standalone mint.
+    assert users.product_feature_id == "users"
+    assert (users.anchor_id or "").startswith("mint:entry-evidence")
+    # (ii) >=2 flows, single entry — standalone mint.
+    assert items.product_feature_id == "context-items"
+    assert (items.anchor_id or "").startswith("mint:entry-evidence")
+    # (iii) 1 flow — no evidence-claiming PF exists => fallback mint,
+    # counted under the single-flow tele (the R2 brake's honest residue).
+    assert trial.product_feature_id == "trial"
+    assert tele.get("walk_evidence_single_flow_mint") == 1
+    assert {"users", "context-items", "trial"} <= set(by_name)
+
+
+def test_evw_r2_single_flow_folds_into_claiming_pf(monkeypatch):
+    """R2 branch (iii) proper — the Soc0 chat→conversations shape: an
+    earlier evidence-void dev mints 'conversations' on demand; the LATER
+    single-flow dev whose only journey enters the same router file FOLDS
+    into that fresh evidence-claiming PF instead of minting its own."""
+    _evw(monkeypatch)
+    routes = [
+        {"pattern": "/cases", "method": "PAGE",
+         "file": "frontend/src/pages/cases.tsx"},
+        {"pattern": "/conversations", "method": "GET",
+         "file": "backend/routers/convo.py"},
+        {"pattern": "/conversations/archive", "method": "GET",
+         "file": "backend/routers/convo.py"},
+    ]
+    cases = dev("cases", ["frontend/src/pages/cases.tsx",
+                          "frontend/src/pages/case-detail.tsx"],
+                flows=[flow("browse-cases-flow",
+                            "frontend/src/pages/cases.tsx")])
+    convo = dev("api-conversations", ["backend/routers/convo.py"],
+                flows=[flow("chat-flow", "backend/routers/convo.py"),
+                       flow("archive-chat-flow", "backend/routers/convo.py")])
+    tail_flow = flow("archive-old-chats-flow", "backend/routers/convo.py")
+    # span mass mostly unresolvable => the span-vote coherence floor
+    # fails and the dev reaches the walk rung (the Soc0 chat shape).
+    tail_flow.paths = ["backend/routers/convo.py", "tools/convo_archiver.py",
+                       "tools/retention_policy.py", "tools/cron_glue.py"]
+    tail = dev("chat-tail", ["tools/convo_archiver.py"],
+               flows=[tail_flow])
+    pfs, tele = mint([cases, convo, tail], routes)
+    assert convo.product_feature_id == "conversations"
+    assert (convo.anchor_id or "").startswith("mint:entry-evidence")
+    assert tail.product_feature_id == "conversations"
+    assert (tail.anchor_id or "").startswith("fold:entry-evidence")
+    assert not any(p.name in {"chat-tail", "convo-archiver"} for p in pfs)
+
+
+def test_evw_r1_tiebreak_prefers_the_files_own_slug_family(monkeypatch):
+    """R1 (a): backend/routers/admin.py carries several route families
+    (admins + webhook-dispatcher); the exact-file tie resolves to the
+    admins family — the file's OWN slug — never 'webhook-dispatcher'
+    (the api-admin probe misfire)."""
+    _evw(monkeypatch)
+    routes = [
+        {"pattern": "/cases", "method": "PAGE",
+         "file": "frontend/src/pages/cases.tsx"},
+        {"pattern": "/admins", "method": "GET",
+         "file": "backend/routers/admin.py"},
+        {"pattern": "/admins/roles", "method": "GET",
+         "file": "backend/routers/admin.py"},
+        {"pattern": "/webhook-dispatcher", "method": "POST",
+         "file": "backend/routers/admin.py"},
+    ]
+    cases = dev("cases", ["frontend/src/pages/cases.tsx",
+                          "frontend/src/pages/case-detail.tsx"],
+                flows=[flow("browse-cases-flow",
+                            "frontend/src/pages/cases.tsx")])
+    admin = dev("api-admin", ["backend/routers/admin.py"],
+                flows=[flow("manage-admins-flow", "backend/routers/admin.py"),
+                       flow("dispatch-hook-flow",
+                            "backend/routers/admin.py")])
+    pfs, tele = mint([cases, admin], routes)
+    assert admin.product_feature_id == "admins"
+    assert not any(p.name == "webhook-dispatcher" for p in pfs)
+    assert tele.get("walk_evidence_r1_stem", 0) >= 1
+
+
+def test_evw_r1_tiebreak_falls_to_route_share(monkeypatch):
+    """R1 (b): when no anchor is named by the file's own stem, the
+    exact-file tie resolves to the anchor holding the larger share of
+    the file's routes."""
+    _evw(monkeypatch)
+    routes = [
+        {"pattern": "/cases", "method": "PAGE",
+         "file": "frontend/src/pages/cases.tsx"},
+        {"pattern": "/invoices", "method": "GET",
+         "file": "backend/routers/handlers.py"},
+        {"pattern": "/invoices/export", "method": "GET",
+         "file": "backend/routers/handlers.py"},
+        {"pattern": "/invoices/archive", "method": "POST",
+         "file": "backend/routers/handlers.py"},
+        {"pattern": "/webhook-dispatcher", "method": "POST",
+         "file": "backend/routers/handlers.py"},
+    ]
+    cases = dev("cases", ["frontend/src/pages/cases.tsx",
+                          "frontend/src/pages/case-detail.tsx"],
+                flows=[flow("browse-cases-flow",
+                            "frontend/src/pages/cases.tsx")])
+    api = dev("api-billing", ["backend/routers/handlers.py"],
+              flows=[flow("send-invoice-flow", "backend/routers/handlers.py"),
+                     flow("archive-invoice-flow",
+                          "backend/routers/handlers.py")])
+    pfs, tele = mint([cases, api], routes)
+    assert api.product_feature_id == "invoices"
+    assert not any(p.name == "webhook-dispatcher" for p in pfs)
+    assert tele.get("walk_evidence_r1_route_share", 0) >= 1
+
+
+def test_evw_r3_dev_standalone_mint_never_lane(monkeypatch):
+    """R3: a flowful dev whose entry files NO anchor claims (unextracted
+    router — the Soc0 'api'/'network-mock' shape) stands alone as its
+    own PF; it is never laned and never left in the vacuum."""
+    _evw(monkeypatch)
+    routes = [
+        {"pattern": "/cases", "method": "PAGE",
+         "file": "frontend/src/pages/cases.tsx"},
+    ]
+    cases = dev("cases", ["frontend/src/pages/cases.tsx",
+                          "frontend/src/pages/case-detail.tsx"],
+                flows=[flow("browse-cases-flow",
+                            "frontend/src/pages/cases.tsx")])
+    mock = dev("network-mock", ["backend/routers/network_mock.py"],
+               flows=[flow("serve-mock-flow",
+                           "backend/routers/network_mock.py"),
+                      flow("reset-mock-flow",
+                           "backend/routers/network_mock.py")])
+    pfs, tele = mint([cases, mock], routes)
+    assert mock.product_feature_id == "network-mock"
+    assert (mock.anchor_id or "").startswith("mint:dev-standalone")
+    assert mock.shared_reason is None
+    assert tele.get("walk_evidence_dev_mint") == 1
+    assert build_platform_infrastructure_lane([cases, mock]) == []
+    # flag OFF: same dev stays the vacuum fold (proves the gate did it)
+    monkeypatch.setenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", "0")
+    devs2 = [dev("cases", ["frontend/src/pages/cases.tsx",
+                           "frontend/src/pages/case-detail.tsx"],
+                 flows=[flow("browse-cases-flow",
+                             "frontend/src/pages/cases.tsx")]),
+             dev("network-mock", ["backend/routers/network_mock.py"],
+                 flows=[flow("serve-mock-flow",
+                             "backend/routers/network_mock.py")])]
+    mint(devs2, routes)
+    assert devs2[1].product_feature_id == "cases"
+
+
+def test_evw_fold_entry_anti_case_untouched(monkeypatch):
+    """Anti-case (probe: 25 Soc0 fold:entry survivors): a dev resolved
+    by the ENTRY rung — its journeys enter a minted capability's own
+    surface — keeps the identical disposition with the flag armed."""
+    devs_off, routes_off = None, None
+    results = {}
+    for env in ("0", "1"):
+        monkeypatch.setenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", env)
+        routes = [
+            {"pattern": "/reports", "method": "PAGE",
+             "file": "frontend/src/pages/reports/index.tsx"},
+        ]
+        reports = dev(
+            "reports",
+            ["frontend/src/pages/reports/index.tsx",
+             "frontend/src/pages/reports/detail.tsx"],
+            flows=[flow("browse-reports-flow",
+                        "frontend/src/pages/reports/index.tsx")])
+        helper = dev(
+            "report-widgets",
+            ["frontend/src/widgets/report_grid.tsx"],
+            flows=[flow("render-grid-flow",
+                        "frontend/src/pages/reports/detail.tsx")])
+        pfs, tele = mint([reports, helper], routes)
+        results[env] = (helper.product_feature_id, helper.anchor_id,
+                        sorted(p.name for p in pfs))
+    assert results["0"] == results["1"]
+    assert results["1"][1].startswith("fold:entry->")
+
+
+def test_evw_lineage_world_is_inert(monkeypatch):
+    """Unit-pin (twenty): a lineage-shaped world — every dev wins its
+    own minting anchor, no walk folds — is byte-inert under the armed
+    flag (the probe's twenty 0-movement expectation)."""
+    _evw(monkeypatch)
+    routes = [
+        {"pattern": "/people", "method": "PAGE",
+         "file": "packages/front/src/pages/people/index.tsx"},
+        {"pattern": "/companies", "method": "PAGE",
+         "file": "packages/front/src/pages/companies/index.tsx"},
+    ]
+    people = dev("people", ["packages/front/src/pages/people/index.tsx"],
+                 flows=[flow("browse-people-flow",
+                             "packages/front/src/pages/people/index.tsx")])
+    companies = dev(
+        "companies", ["packages/front/src/pages/companies/index.tsx"],
+        flows=[flow("browse-companies-flow",
+                    "packages/front/src/pages/companies/index.tsx")])
+    pfs, tele = mint([people, companies], routes)
+    assert {p.name for p in pfs} == {"people", "companies"}
+    assert people.anchor_id.startswith("route:")
+    assert companies.anchor_id.startswith("route:")
+    assert not any(k.startswith("walk_evidence") for k in tele)
+
+
+def test_evw_conservation_of_files(monkeypatch):
+    """Conservation: the gate re-homes devs — it never drops or invents
+    files/devs. OFF vs ON: same dev set assigned, same file universe."""
+    def _world(env):
+        monkeypatch.setenv("FAULTLINE_FOLD_EVIDENCE_WEIGHT", env)
+        devs, routes = _cases_vacuum_repo()
+        pfs, _tele = mint(devs, routes)
+        dev_files = {d.name: sorted(d.paths) for d in devs}
+        assigned = {d.name for d in devs if d.product_feature_id}
+        pf_members = set()
+        for p in pfs:
+            for mf in (getattr(p, "member_files", None) or []):
+                pf_members.add(mf.path if hasattr(mf, "path")
+                               else mf.get("path"))
+        return dev_files, assigned, pf_members
+    files_off, assigned_off, members_off = _world("0")
+    files_on, assigned_on, members_on = _world("1")
+    assert files_off == files_on
+    assert assigned_off == assigned_on
+    assert members_off == members_on

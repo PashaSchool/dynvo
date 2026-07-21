@@ -1070,6 +1070,23 @@ ENV_OUTPUT_FLAGS = (
     # the seam un-entered, byte-identical — explicit off stays a valid
     # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_UF_CASES_SPLIT",
+    # B78 Seg A (2026-07-21, probe-canon supports/tune-first) —
+    # walk-evidence gate on the Stage 6.86 terminal ancestor-walk fold: a
+    # ``fold:walk`` whose target anchor holds NO behavioral claim on the
+    # folded dev's flow ENTRY files (Soc0: 0/35 walk-folds had one — the
+    # ``cases``/``network-security`` vacuum-PF disease) re-disposes by
+    # the dev's own entry evidence instead: best evidence-claiming anchor
+    # (R1 exact-file tiebreak: file-stem route convention, then the
+    # file's route-share), standalone mint-on-demand at >=2 distinct
+    # entry files OR >=2 flows, single-flow devs fold into the nearest
+    # evidence-claiming minted PF (R2), and a flowful dev is never laned
+    # by the gate (R3). Reshapes developer_features[].product_feature_id
+    # + product_features[] (entry-evidence mints) + downstream journey
+    # homes on walk-fold-bearing boards; lineage / fold:entry /
+    # api-parent channels untouched. Default OFF; =0/unset
+    # byte-identical. No KEY_SCHEMA bump (flip is a separate later
+    # commit per flip-protocol).
+    "FAULTLINE_FOLD_EVIDENCE_WEIGHT",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
