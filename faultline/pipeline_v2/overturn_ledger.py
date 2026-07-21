@@ -123,6 +123,9 @@ POST_FREEZE_RUNGS: frozenset[str] = frozenset({
     "transport", "devgrain", "lane_rehome", "6.88-unify",
     "emission-I12", "terminal-home", "conservation", "taxonomy",
     "phase_finalize", "i16", "6.99b", "mega", "dispatch",
+    # B78 homing pack — the affinity gate is a post-freeze re-home writer
+    # (conflict census only; telemetry stripped by normalize_scan).
+    "affinity-rehome",
 })
 
 

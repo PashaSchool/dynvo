@@ -2004,6 +2004,44 @@ def run_finalize_phase(
                     feature=None,
                 )
 
+    # ── Stage 6.9855 — B78 Seg B home-affinity gate (default OFF) ───────
+    # Re-home ``tok0`` journeys (name shares zero content tokens with their
+    # home) that carry a deterministic BETTER-HOME onto it, via an S3
+    # arbiter proposal (rung ``affinity-rehome``). Runs on the settled board
+    # (after transport, before mega/6.99b) so the vacuum PFs are fully
+    # formed and the downstream re-home stages see the corrected homes.
+    # Non-dev channel (journey NAME tokens + PF path breadth) — the
+    # annexation being cured cannot poison it. Flag-gated: unset ⇒ this
+    # block never runs ⇒ byte-identical to main (KS 4-way).
+    from faultline.pipeline_v2.conservation import (
+        apply_home_affinity_gate,
+        home_affinity_gate_enabled,
+    )
+    if home_affinity_gate_enabled():
+        with StageLogger(run_dir, 6, "home_affinity_gate") as log_hag:
+            try:
+                _hag_tele = apply_home_affinity_gate(
+                    user_flows, features, product_features,
+                )
+                scan_meta["home_affinity_gate"] = _hag_tele
+                log_hag.info(
+                    "home_affinity_gate: tok0=%d proposed=%d orphan_guarded=%d"
+                    % (
+                        _hag_tele.get("tok0", 0),
+                        _hag_tele.get("proposed", 0),
+                        _hag_tele.get("orphan_guarded", 0),
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"home-affinity-gate failed ({exc}); UF homes left as-is"
+                )
+                log_hag.info(
+                    f"home_affinity_gate: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── Stage 6.986 — mega-PF nav-area journey re-home + mint (B24) ──
     # A board-dominating umbrella PF (>=25% of homed journeys) whose
     # journeys strict-majority-cluster into >=3 distinct nav-area route

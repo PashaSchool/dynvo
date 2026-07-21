@@ -57,6 +57,7 @@ Kill-switch: ``FAULTLINE_SPINE_CONSERVATION=0`` (default ON).
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
@@ -65,18 +66,29 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 __all__ = [
     "SPINE_CONSERVATION_ENV",
     "SPINE_DEV_REHOME_ENV",
+    "HOME_AFFINITY_GATE_ENV",
     "conservation_enabled",
     "dev_rehome_enabled",
+    "home_affinity_gate_enabled",
     "build_file_pf_owner",
     "dev_views_for",
     "member_votes",
     "conserved_pfid",
     "apply_uf_conservation",
+    "apply_home_affinity_gate",
     "rehome_shared_flowful_devs",
 ]
 
 SPINE_CONSERVATION_ENV = "FAULTLINE_SPINE_CONSERVATION"
 SPINE_DEV_REHOME_ENV = "FAULTLINE_SPINE_DEV_REHOME"
+#: B78 homing pack (Seg B/C/D — one system) kill-switch. Default OFF; when
+#: armed it enables (Seg B) the conservation home-affinity gate here, (Seg C)
+#: the organic-move v3 guards in stage 6.99b, and (Seg D) the mega vacuum
+#: census + re-home proposals. Registered in
+#: ``scan_result_cache.ENV_OUTPUT_FLAGS`` (append-only, no KEY_SCHEMA bump —
+#: the bump rides the separate flip commit). Unset / ``"0"`` / false ⇒ every
+#: segment is inert and the scan is byte-identical to main (KS 4-way gate).
+HOME_AFFINITY_GATE_ENV = "FAULTLINE_HOME_AFFINITY_GATE"
 
 _SHARED_PF_KEYS = frozenset(("shared-platform", "platform"))
 
@@ -94,6 +106,16 @@ def dev_rehome_enabled() -> bool:
     dev-grain application when bisecting a regression."""
     return os.environ.get(SPINE_DEV_REHOME_ENV, "1").strip().lower() not in {
         "0", "false",
+    }
+
+
+def home_affinity_gate_enabled() -> bool:
+    """B78 homing pack (Seg B/C/D) — default **OFF**. Unset / ``"0"`` /
+    false ⇒ the affinity gate here, the 6.99b organic-move v3 guards, and
+    the mega vacuum census are all inert and the scan is byte-identical to
+    main (the KS 4-way kill-switch)."""
+    return os.environ.get(HOME_AFFINITY_GATE_ENV, "").strip().lower() in {
+        "1", "true",
     }
 
 
@@ -544,4 +566,225 @@ def rehome_shared_flowful_devs(
         tele["rehomed"] += 1
         if len(tele["sample"]) < 20:
             tele["sample"].append({"dev": dev.name, "pf": best})
+    return tele
+
+
+# ── B78 Seg B — home-affinity gate (non-dev channel) ────────────────────
+#
+# THE DISEASE (B78 forensics-canon, §B78 ledger): conservation rung-1 votes
+# file→dev.product_feature_id, so when a mint-time vacuum PF ANNEXED a
+# journey's member files the vote inherits the poison and the ladder
+# silently settles the journey onto the thief — 59.2% of the corpus is
+# ``tok0`` (the journey NAME shares zero content tokens with its home) and
+# 503 UF carry a deterministic BETTER-HOME. This gate re-reads the home on a
+# channel the annexation cannot poison — the journey's own NAME tokens and
+# the candidate PFs' STRUCTURAL path breadth (NEVER the dev→PF owner map) —
+# and, instead of accepting the poisoned vote silently, emits an ARBITER
+# proposal (S3 ledger, rung ``affinity-rehome``) to the better home.
+#
+# Non-circular by construction (probe-canon circular-ruler trap): a vacuum
+# can steal FILES (poisoning file→PF and thus a home's path share) but it
+# cannot make a wrong-named PF share the journey's NAME tokens, and the path
+# rail demands a rival with >= 2x the home's own entry share — a genuine
+# structural owner, not the first-claimant thief. Both rails ARE the
+# operator's census lines (tok0 / better-home) verbatim, so the cured class
+# equals the measured class.
+
+#: Universal English function words (scale-invariant — not per-repo tuning);
+#: stripped from a journey's content tokens alongside the vocab verb classes.
+_AFFINITY_FUNCTION_WORDS = frozenset({
+    "and", "or", "the", "a", "an", "of", "for", "with", "in", "on", "to",
+    "by", "from", "at", "as", "is", "its", "new", "existing", "all", "your",
+    "this", "that", "into", "via", "per", "no",
+})
+
+
+def _aff_sing(t: str) -> str:
+    """Census ``sing()`` — the plural fold the operator's tok0/better-home
+    lines use (kept identical so the cured class == the measured class)."""
+    return t[:-1] if t.endswith("s") and len(t) > 3 else t
+
+
+def _aff_tokens(*texts: str) -> set[str]:
+    """All singular-folded word tokens (len>=2) — the PF-side vocabulary
+    (census ``toks``: no verb strip, so a PF named 'Cases' keeps 'case')."""
+    out: set[str] = set()
+    for t in texts:
+        for w in re.split(r"[^a-z0-9]+", str(t or "").lower()):
+            if len(w) >= 2:
+                out.add(_aff_sing(w))
+    return out
+
+
+def _aff_content_tokens(text: str, verb_toks: frozenset[str]) -> set[str]:
+    """UF-side content tokens — ``_aff_tokens`` minus the vocab verb classes
+    and the function words (census ``content_toks``). The verb set is derived
+    from the naming vocab (mechanism over curated YAML, never a hardcoded
+    list — rule-no-magic-tuning)."""
+    return {
+        t for t in _aff_tokens(text)
+        if t not in verb_toks and t not in _AFFINITY_FUNCTION_WORDS
+    }
+
+
+def _better_home(
+    uf_content: set[str],
+    home_key: str,
+    entries: list[str],
+    pf_tokens: dict[str, set[str]],
+    pf_paths: dict[str, set[str]],
+) -> str | None:
+    """The deterministic better-home for a ``tok0`` journey (census v2):
+
+      * bh_tok — a DIFFERENT PF whose NAME tokens cover >= 50% of the
+        journey's content tokens (name affinity the vacuum cannot fake);
+      * bh_path — a DIFFERENT PF whose path-set holds a strictly-dominant
+        share of the member entry files (>= 0.5 AND >= 2x the home's share).
+
+    Name affinity wins (least poisonable channel); the path rail is the
+    fallback. ``None`` when neither names a wider owner. Deterministic
+    (sorted scan; first max wins)."""
+    best_tok: tuple[float, str | None] = (0.0, None)
+    if uf_content:
+        for k in sorted(pf_tokens):
+            if k == home_key:
+                continue
+            cov = len(uf_content & pf_tokens[k]) / len(uf_content)
+            if cov > best_tok[0]:
+                best_tok = (cov, k)
+    if best_tok[1] is not None and best_tok[0] >= 0.5:
+        return best_tok[1]
+    if entries:
+        n = len(entries)
+        home_share = (
+            sum(1 for e in entries if e in pf_paths.get(home_key, set())) / n
+        )
+        best_path: tuple[float, str | None] = (0.0, None)
+        for k in sorted(pf_paths):
+            if k == home_key:
+                continue
+            sh = sum(1 for e in entries if e in pf_paths[k]) / n
+            if sh > best_path[0]:
+                best_path = (sh, k)
+        if (best_path[1] is not None and best_path[0] >= 0.5
+                and best_path[0] >= 2 * home_share):
+            return best_path[1]
+    return None
+
+
+def apply_home_affinity_gate(
+    user_flows: list["UserFlow"],
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+) -> dict[str, Any]:
+    """B78 Seg B — re-home ``tok0`` journeys that carry a deterministic
+    better home, via an S3 arbiter proposal (rung ``affinity-rehome``).
+    Mutates ``product_feature_id`` in place (through the ledger); returns
+    telemetry. OFF (flag unset) ⇒ never called ⇒ byte-identical to main.
+
+    Anti-cases (unit-pinned): a journey whose home shares >= 1 content token
+    is NOT ``tok0`` and is never touched ('Browse, filter, and manage cases'
+    keeps 'cases'); a shared / container / facet home or such a target is
+    refused; the source PF's LAST journey is never stripped (no-orphan, the
+    B77 law); a synthesized backstop journey is skipped (conservation-clean
+    by construction)."""
+    tele: dict[str, Any] = {
+        "enabled": home_affinity_gate_enabled(), "checked": 0,
+        "proposed": 0, "tok0": 0, "orphan_guarded": 0, "moves": [],
+    }
+    if not home_affinity_gate_enabled() or not user_flows:
+        return tele
+
+    from faultline.pipeline_v2.naming_contract import (
+        _verb_class_tokens,
+        load_naming_vocab,
+    )
+    verb_toks = frozenset(_verb_class_tokens(load_naming_vocab()))
+
+    # Container PFs (packaging, never a journey home — the same ``ws:`` marker
+    # conservation's rung-3 guard uses) are excluded as better-home targets.
+    container_keys: frozenset[str] = frozenset()
+    from faultline.pipeline_v2.stage_6_7c_uf_splitter import (
+        residual_citability_enabled,
+    )
+    if residual_citability_enabled():
+        from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
+            _container_pf_keys,
+        )
+        container_keys = _container_pf_keys(product_features) or frozenset()
+
+    def _pf_key(pf: Any) -> str:
+        return str(getattr(pf, "id", None) or getattr(pf, "name", "") or "")
+
+    # Candidate homes/targets: real product PFs only (no shared/container).
+    pf_tokens: dict[str, set[str]] = {}
+    pf_paths: dict[str, set[str]] = {}
+    for pf in product_features:
+        key = _pf_key(pf)
+        if not key or key.strip().lower() in _SHARED_PF_KEYS:
+            continue
+        if key in container_keys:
+            continue
+        pf_tokens[key] = _aff_tokens(
+            getattr(pf, "name", "") or "",
+            getattr(pf, "display_name", "") or "",
+        )
+        pf_paths[key] = {
+            _norm(str(p)) for p in (getattr(pf, "paths", None) or [])
+        }
+
+    flow_by_id: dict[str, Any] = {}
+    for d in developer_features:
+        for fl in getattr(d, "flows", None) or []:
+            for k in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
+                if k and k not in flow_by_id:
+                    flow_by_id[k] = fl
+
+    uf_count: dict[str, int] = {}
+    for uf in user_flows:
+        h = str(getattr(uf, "product_feature_id", None) or "")
+        if h:
+            uf_count[h] = uf_count.get(h, 0) + 1
+
+    from faultline.pipeline_v2.overturn_ledger import propose_pf_now
+
+    for uf in user_flows:
+        if getattr(uf, "synthesized", False):
+            continue
+        home = str(getattr(uf, "product_feature_id", None) or "")
+        if not home or home not in pf_tokens:
+            continue  # shared / container / lane / unknown home — not ours
+        uf_ct = _aff_content_tokens(getattr(uf, "name", "") or "", verb_toks)
+        if not uf_ct:
+            continue  # verb-only / empty name — no content signal
+        if uf_ct & pf_tokens[home]:
+            continue  # NOT tok0 — home is name-tied, never touched
+        tele["tok0"] += 1
+        tele["checked"] += 1
+        entries: list[str] = []
+        seen: set[str] = set()
+        for mid in (getattr(uf, "member_flow_ids", None) or []):
+            fl = flow_by_id.get(mid)
+            ep = _entry_file_of(fl) if fl is not None else None
+            if ep:
+                e = _norm(str(ep))
+                if e not in seen:
+                    seen.add(e)
+                    entries.append(e)
+        target = _better_home(uf_ct, home, entries, pf_tokens, pf_paths)
+        if target is None or target == home:
+            continue
+        if uf_count.get(home, 0) <= 1:
+            tele["orphan_guarded"] += 1
+            continue  # no-orphan (B77) — never strip a PF's last journey
+        propose_pf_now(uf, target, rung="affinity-rehome")
+        uf_count[home] -= 1
+        uf_count[target] = uf_count.get(target, 0) + 1
+        tele["proposed"] += 1
+        if len(tele["moves"]) < 40:
+            tele["moves"].append({
+                "uf": str(getattr(uf, "id", "") or ""),
+                "name": str(getattr(uf, "name", "") or ""),
+                "from": home, "to": target,
+            })
     return tele
