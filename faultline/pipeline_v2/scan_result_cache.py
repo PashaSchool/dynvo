@@ -919,6 +919,25 @@ ENV_OUTPUT_FLAGS = (
     # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
     # flip commit (flip-protocol).
     "FAULTLINE_SPA_ROUTE_TABLE",
+    # B74 Seg B (2026-07-20, F3′ re-entry probe SHIP/high) — post-grain
+    # flow re-derivation at Stage 6.865: stage-8-born / re-membered dev
+    # features (non-test path-set ≠ the stage-3 unit; removal-only
+    # deltas excluded) re-run the EXISTING Stage-3 flow machinery
+    # between the 6.86 mint window and the Stage 6.7 UF family — the
+    # single existing mint sees the new flows naturally (no new mint
+    # channel). Healthy flow-density is a secondary EXCLUDE-only filter
+    # (< repo flowful median / _OVERSIZED_MEDIAN_MULT); chunk
+    # eligibility is ratio-triggered (exports/paths prompt caps)
+    # independent of the global oversized cut; locale-births die on the
+    # existing MIN_EXPORTS gate. Reshapes flows[] /
+    # developer_features[].flows[] / feature_flow_edges[] and,
+    # transitively, the minted user_flows[] layer on repos with
+    # post-stage-3 grain changes; armed no-fire boards are
+    # byte-identical (telemetry key only on fire — Seg C inertness
+    # law). Default OFF; =0/unset keeps the stage un-entered,
+    # byte-identical. Appended WITHOUT a KEY_SCHEMA bump — the bump
+    # rides the separate default-flip commit (flip-protocol).
+    "FAULTLINE_FLOW_REDERIVE_POSTGRAIN",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

@@ -2531,6 +2531,53 @@ def _product_strings_for(
     return collect_product_strings(repo_path, ps_candidates)
 
 
+def _run_flow_rederive(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
+    """B74 Seg B — Stage 6.865 post-grain flow re-derivation
+    (phase_finalize, between the 6.86 mint window and the 6.7 UF
+    family). The capture is flag-gated (FAULTLINE_FLOW_REDERIVE_
+    POSTGRAIN) → the StageSpec is ``optional``. Mutates features /
+    bipartite flows / edges in place, exactly like the live site."""
+    from faultline.pipeline_v2.flow_rederive import run_flow_rederive
+
+    ctx = prepare_ctx(state["ctx"], env)
+    features = state["features"]
+    flows = state["bipartite_flows"]
+    edges = state.get("bipartite_edges") or []
+    scan_meta = state["scan_meta"]
+    with StageLogger(env.run_dir, 6, "flow_rederive") as log_frd:
+        try:
+            frd_tele = run_flow_rederive(
+                features, flows, edges, ctx,
+                stage3_unit_snapshot=state.get("stage3_unit_snapshot"),
+                model=state.get("model_id") or "",
+                routes_index=state.get("routes_index"),
+                tracker=env.tracker,
+                llm_health=env.llm_health,
+                log=log_frd,
+            )
+            if frd_tele is not None:
+                scan_meta["flow_rederive"] = frd_tele
+                write_stage_artifact(
+                    ctx.repo_path, stage_index=6,
+                    stage_name="flow_rederive",
+                    payload=frd_tele, run_dir=env.run_dir,
+                )
+        except Exception as exc:  # noqa: BLE001 — never break a scan
+            scan_meta.setdefault("warnings", []).append(
+                f"flow-rederive failed ({exc}); pre-rederive flow store kept"
+            )
+            log_frd.info(
+                f"flow_rederive: FAILED ({exc}) — flow store kept",
+                feature=None,
+            )
+    return {
+        "features": features,
+        "bipartite_flows": flows,
+        "bipartite_edges": edges,
+        "scan_meta": scan_meta,
+    }
+
+
 def _run_user_flows(env: ReplayEnv, state: dict[str, Any]) -> dict[str, Any]:
     from faultline.pipeline_v2.stage_6_7_user_flows import run_user_flow_rollup
 
@@ -3209,50 +3256,53 @@ STAGES: list[StageSpec] = [
     # G5 — Stage 6.86 + same-unit W4.3/W4 tails; capture is flag-gated
     # (FAULTLINE_SPINE_ANCHORED_MINT) → optional.
     StageSpec("anchored_mint", 6, 40, _run_anchored_mint, optional=True),
-    StageSpec("user_flows", 6, 41, _run_user_flows),
-    StageSpec("uf_splitter", 6, 42, _run_uf_splitter, llm_cache_dir="uf-split"),
-    StageSpec("uf_refiner", 6, 43, _run_uf_refiner, llm_cache_dir="uf-refine"),
+    # B74 Seg B — Stage 6.865 post-grain flow re-derivation; capture is
+    # flag-gated (FAULTLINE_FLOW_REDERIVE_POSTGRAIN) -> optional.
+    StageSpec("flow_rederive", 6, 41, _run_flow_rederive, optional=True),
+    StageSpec("user_flows", 6, 42, _run_user_flows),
+    StageSpec("uf_splitter", 6, 43, _run_uf_splitter, llm_cache_dir="uf-split"),
+    StageSpec("uf_refiner", 6, 44, _run_uf_refiner, llm_cache_dir="uf-refine"),
     StageSpec(
-        "journey_abstraction", 6, 44, _run_journey_abstraction,
+        "journey_abstraction", 6, 45, _run_journey_abstraction,
         optional=True, llm_cache_dir="abstraction",
     ),
     # G5 — Stage 6.88 + the post-lattice window (e2e / transport / mega /
     # devgrain emissions); capture is flag-gated → optional.
-    StageSpec("journey_lattice", 6, 45, _run_journey_lattice, optional=True),
+    StageSpec("journey_lattice", 6, 46, _run_journey_lattice, optional=True),
     # G5 — artifact-only rows of the journey_lattice replay unit.
-    StageSpec("e2e_truth", 6, 46, _artifact_only_stage, artifact_only=True),
-    StageSpec("transport_handoff", 6, 47, _artifact_only_stage,
+    StageSpec("e2e_truth", 6, 47, _artifact_only_stage, artifact_only=True),
+    StageSpec("transport_handoff", 6, 48, _artifact_only_stage,
               artifact_only=True),
-    StageSpec("mega_pf_nav_rehome", 6, 48, _artifact_only_stage,
+    StageSpec("mega_pf_nav_rehome", 6, 49, _artifact_only_stage,
               artifact_only=True),
-    StageSpec("dual_evidence", 6, 49, _run_dual_evidence,
+    StageSpec("dual_evidence", 6, 50, _run_dual_evidence,
               optional=True, connector=True),
-    StageSpec("history", 6, 50, _run_history),
-    StageSpec("impact", 6, 51, _run_impact),
-    StageSpec("monorepo_assembly", 6, 52, _run_monorepo_assembly),
+    StageSpec("history", 6, 51, _run_history),
+    StageSpec("impact", 6, 52, _run_impact),
+    StageSpec("monorepo_assembly", 6, 53, _run_monorepo_assembly),
     # G5 — artifact-only: emitted by _run_monorepo_assembly (between the
     # monorepo_assembly and feature_loc captures).
-    StageSpec("file_lane", 6, 53, _artifact_only_stage, artifact_only=True),
+    StageSpec("file_lane", 6, 54, _artifact_only_stage, artifact_only=True),
     # optional: recorded runs that predate Stage 6.97 have no input
     # artifact — replay chains over them must skip it silently.
-    StageSpec("feature_loc", 6, 54, _run_feature_loc, optional=True),
+    StageSpec("feature_loc", 6, 55, _run_feature_loc, optional=True),
     # G5 — artifact-only rows of the feature_loc replay unit.
-    StageSpec("surface_taxonomy", 6, 55, _artifact_only_stage,
+    StageSpec("surface_taxonomy", 6, 56, _artifact_only_stage,
               artifact_only=True),
-    StageSpec("emission_integrity", 7, 56, _artifact_only_stage,
+    StageSpec("emission_integrity", 7, 57, _artifact_only_stage,
               artifact_only=True),
     # G5 — Stage 6.87 + the post-naming window (uf_loc / flow_loc /
     # flow_name_v2 / terminal_classification emissions); capture is
     # flag-gated (FAULTLINE_NAMING_CONTRACT) → optional.
-    StageSpec("naming_contract", 7, 57, _run_naming_contract, optional=True),
+    StageSpec("naming_contract", 7, 58, _run_naming_contract, optional=True),
     # G5 — artifact-only rows of the naming_contract replay unit.
-    StageSpec("uf_loc", 7, 58, _artifact_only_stage, artifact_only=True),
-    StageSpec("flow_loc", 7, 59, _artifact_only_stage, artifact_only=True),
-    StageSpec("flow_name_v2", 7, 60, _artifact_only_stage,
+    StageSpec("uf_loc", 7, 59, _artifact_only_stage, artifact_only=True),
+    StageSpec("flow_loc", 7, 60, _artifact_only_stage, artifact_only=True),
+    StageSpec("flow_name_v2", 7, 61, _artifact_only_stage,
               artifact_only=True),
-    StageSpec("terminal_classification", 7, 61, _artifact_only_stage,
+    StageSpec("terminal_classification", 7, 62, _artifact_only_stage,
               artifact_only=True),
-    StageSpec("output", 7, 62, _run_output),
+    StageSpec("output", 7, 63, _run_output),
 ]
 
 _BY_KEY = {s.key: s for s in STAGES}

@@ -660,6 +660,17 @@ def run_pipeline_v2(
             run_dir=run_dir,
         )
 
+    # B74 Seg B — Stage-3 unit snapshot (name → sorted owned paths at
+    # flow-derivation time). Pure in-memory bookkeeping consumed by the
+    # finalize-phase Stage 6.865 post-grain flow re-derivation cohort
+    # selector (causal gate: births + re-membered = path-set ≠ the
+    # stage-3 unit). $0, no output effect; inert unless
+    # FAULTLINE_FLOW_REDERIVE_POSTGRAIN arms the finalize stage.
+    stage3_unit_snapshot: dict[str, list[str]] = {
+        fwf.feature.name: sorted(fwf.feature.paths)
+        for fwf in stage3.features_with_flows
+    }
+
     # ── B34 — lazy-import edges + dispatch-registry seeds ($0) ─────
     # Tier 1 (FAULTLINE_LAZY_IMPORT_EDGES): collect function-level /
     # dynamic import edges (kind="lazy") — side-channel artifact only,
@@ -1071,6 +1082,7 @@ def run_pipeline_v2(
         llm_health=llm_health,
         repo_class_result=repo_class_result,
         prev_scan_json=prev_scan_json,
+        stage3_unit_snapshot=stage3_unit_snapshot,
     )
 
     # ── S3 overturn ledger — deactivate the observer for this scan ─────
