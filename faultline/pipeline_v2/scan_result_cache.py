@@ -1070,6 +1070,20 @@ ENV_OUTPUT_FLAGS = (
     # the seam un-entered, byte-identical — explicit off stays a valid
     # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_UF_CASES_SPLIT",
+    # B78 Seg G (2026-07-21) — nav-parent display grouping. A deterministic
+    # nav-tree extractor reads the repo's STATIC exported nav registries
+    # (module-registry / sidebar nav-config / settings-navigation hooks) and
+    # attaches a nullable ``product_features[].nav_parent`` = {parent_label,
+    # parent_id, source_file, line, via} to a PF whose anchor route (or
+    # enum-referenced nav slug) matches a nav SUB-item, plus the
+    # ``scan_meta.nav_tree`` telemetry (categories / sub-items / matched /
+    # unrepresented / duplicates). DISPLAY ONLY — PFs are never merged,
+    # moved, or minted; live nav categories with no PF are reported in
+    # nav_tree.unrepresented, never minted. Default OFF; =0/unset ⇒ no field
+    # and no scan_meta key ⇒ serialized output byte-identical. Appended to
+    # ENV_OUTPUT_FLAGS WITHOUT a KEY_SCHEMA bump — the bump rides the separate
+    # flip commit per flip-protocol.
+    "FAULTLINE_NAV_PARENT",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

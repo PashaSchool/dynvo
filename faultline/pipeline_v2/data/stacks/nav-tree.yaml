@@ -1,0 +1,80 @@
+# nav-tree — grammar vocabulary for the deterministic nav-tree extractor
+# (B78 Seg G, FAULTLINE_NAV_PARENT). Mechanisms, not per-repo dictionaries:
+# every value here is a FIELD-NAME class or a structural marker, never a
+# capability name. Authoring mirror: eval/stacks/nav-tree.yaml (byte-ident).
+#
+# The extractor reads STATIC exported nav registries (module-registry /
+# sidebar nav-config / settings-navigation hooks) as author intent — the
+# same class of JSX/TS source product_strings already treats as the
+# vendor's product framing. It NEVER reads i18n VALUES (external, like a
+# README) — only i18n KEYS, which are code identifiers.
+
+# Literal display-label fields on a nav item / category (value used verbatim,
+# incl. lingui/i18next tagged-template macros ``t`X` `` / ``msg`X` ``).
+label_keys: [label, title, name, text, heading]
+
+# i18n-KEY label fields: the value is a dotted code identifier
+# (``modules.detectionsStudio.name``); the display label is the humanized
+# meaningful segment (the i18n VALUE is never read).
+i18n_label_keys: [labelKey, titleKey, nameKey, headingKey, labelI18nKey, nameI18nKey]
+
+# Destination fields on a nav item.
+href_keys: [path, route, href, to, url]
+
+# Stable-id fields (parent_id source when present).
+id_keys: [id, key, slug]
+
+# Nesting keys: an array (or single object) value under one of these turns
+# the enclosing object into a nav CATEGORY and its members into SUB-ITEMS.
+nest_keys: [pages, children, items, subItems, subitems, sub, links, routes, tabs, entries, sections]
+
+# Icon fields — a strong "rendered by navigation" signal at item grain.
+icon_keys: [icon, Icon, iconName, iconKey]
+
+# Const-name suffixes stripped when deriving a category label from an
+# exported const name (SETTINGS_SIDEBAR_ITEMS -> "Settings").
+const_name_suffixes:
+  - _SIDEBAR_ITEMS
+  - _NAV_ITEMS
+  - _MENU_ITEMS
+  - _NAV_CONFIG
+  - _NAVIGATION
+  - _SECTIONS
+  - _ITEMS
+  - _SIDEBAR
+  - _NAVBAR
+  - _MENU
+  - _NAV
+  - _CONFIG
+  - _REGISTRY
+  - _MODULES
+  - _MODULE
+  - _SECTION
+  - _LINKS
+  - _ROUTES
+  - _PAGES
+  - _TABS
+  - _GROUP
+  - _GROUPS
+
+# Trailing generic segments stripped from an i18n key before humanizing
+# the meaningful leaf (modules.detectionsStudio.name -> "Detections Studio").
+i18n_trailing_generic: [name, label, title, key, text, heading, group]
+
+# Consumption prior (file-level): a file is a nav registry when its basename
+# carries a marker OR its content carries a nav-render marker. Config arrays
+# NOT consumed by navigation live in non-nav files and are never read.
+nav_basename_markers: [nav, sidebar, menu, navigation, registry, routes-config]
+nav_content_markers:
+  - NavLink
+  - NavItem
+  - Sidebar
+  - SidebarItem
+  - MenuItem
+  - NavigationDrawer
+  - navigationItems
+  - sidebarItems
+  - ModuleDefinition
+
+# Confidence stamped on the emitted nav tree (telemetry only).
+confidence: 0.85

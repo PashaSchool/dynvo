@@ -3644,6 +3644,31 @@ def run_finalize_phase(
                 f"overturn-arbiter failed ({exc}); census skipped"
             )
 
+    # ── B78 Seg G — nav-parent display grouping (FAULTLINE_NAV_PARENT,
+    # default OFF) ──────────────────────────────────────────────────────
+    # Reads the repo's static exported nav registries and stamps a
+    # display-only ``product_features[].nav_parent`` on PFs whose anchor
+    # route (or enum-referenced nav slug) matches a nav SUB-item, plus the
+    # ``scan_meta.nav_tree`` telemetry. Seam rationale: the LAST finalize
+    # pass — AFTER the naming contract (parent labels judge against FINAL
+    # display names) and every structural writer (homing / rehome / splits),
+    # so the settled PF list + routes_index are read once, purely for
+    # display. NO structure writes: PFs are never merged, moved, or minted
+    # (engineering grain untouched); a live nav category with no PF is
+    # reported in nav_tree.unrepresented, never minted. Flag OFF/unset OR a
+    # nav-less repo ⇒ run_nav_parent returns None before any mutation ⇒ no
+    # nav_parent field, no scan_meta key ⇒ byte-identical (KS 4-way gate).
+    try:
+        from faultline.pipeline_v2.nav_parent import run_nav_parent
+        _nav_tele = run_nav_parent(
+            product_features, lineage_result.routes_index, ctx, user_flows)
+        if _nav_tele is not None:
+            scan_meta["nav_tree"] = _nav_tele
+    except Exception as exc:  # noqa: BLE001 — display grouping never breaks a scan
+        scan_meta.setdefault("warnings", []).append(
+            f"nav-parent failed ({exc}); nav_parent unset"
+        )
+
     # ── Stage 7 — output ───────────────────────────────────────────
     from faultline import __version__ as _engine_version  # late import
     write_stage_input(run_dir, 7, "output", {
