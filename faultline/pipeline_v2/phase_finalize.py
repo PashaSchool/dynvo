@@ -3077,6 +3077,9 @@ def run_finalize_phase(
     # emission-integrity pass already ran above this seam.
     # Flag OFF/unset ⇒ run_uf_cases_split returns None before any
     # mutation ⇒ no scan_meta key ⇒ byte-identical (KS 4-way gate).
+    # Armed 0-giant boards write no scan_meta key either (giants_seen ==
+    # 0 ⇒ nothing was read or written — the Seg C inertness law; the
+    # openstatus byte-ident gate).
     try:
         from faultline.pipeline_v2.uf_cases_split import (
             run_uf_cases_split,
@@ -3086,7 +3089,7 @@ def run_finalize_phase(
             routes_index=lineage_result.routes_index,
             repo_root=ctx.repo_path,
         )
-        if _cs_tele is not None:
+        if _cs_tele is not None and _cs_tele.get("giants_seen"):
             scan_meta["uf_cases_split"] = _cs_tele
     except Exception as exc:  # noqa: BLE001 — split must never break a scan
         scan_meta.setdefault("warnings", []).append(
