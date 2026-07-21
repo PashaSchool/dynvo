@@ -457,7 +457,9 @@ def test_compose_identity_on_healthy(healthy: str) -> None:
 
 def test_mint_compose_site_flag_gated(monkeypatch: pytest.MonkeyPatch) -> None:
     # stage_6_86 site 3/3 — OFF passthrough, ON canonical.
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     assert _r5_canonical_compose("Edit (Monitors)") == "Edit (Monitors)"
     monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
     assert _r5_canonical_compose("Edit (Monitors)") == "Monitors — Edit"
@@ -513,7 +515,9 @@ def test_run_contract_on_applies_split_and_confdrop(
 def test_run_contract_off_byte_identical(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     pfs, ufs, flows = _split_world()
     tele = _run(pfs, ufs, flows)
     assert ufs[0].name == "Manage pagelayouts"

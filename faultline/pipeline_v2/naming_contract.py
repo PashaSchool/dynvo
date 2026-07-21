@@ -135,8 +135,9 @@ NAMING_PACK_ENV = "FAULTLINE_NAMING_PACK"
 #: the B57 nav-cluster rung read the ungated votes and are untouched.
 PF_DISPLAY_EVIDENCE_GATE_ENV = "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE"
 
-#: R5 corpus naming-wave master flag (default OFF). One flag gates the five
-#: R5 segments' NEW display-channel behaviors as one wave:
+#: R5 corpus naming-wave master flag (default ON since the 2026-07-21
+#: pack-2 flip, KEY_SCHEMA 33; explicit =0 stays the kill-switch). One flag
+#: gates the five R5 segments' NEW display-channel behaviors as one wave:
 #:   * R5-1 identity-parity — a PF display that folds to ANOTHER live PF's
 #:     canonical slug (or shares a folded display) is reject/qualified at the
 #:     existing display-collision gate (the ``general`` -> 'Settings' remnant
@@ -387,12 +388,16 @@ def pf_display_evidence_gate_enabled() -> bool:
 
 
 def naming_wave_r5_enabled() -> bool:
-    """R5 corpus naming-wave master (default OFF). ``FAULTLINE_NAMING_WAVE_R5``
-    ``=1``/``true`` arms every R5 segment; unset/``0``/``false``/``off`` keeps
-    each segment inert ⇒ display + telemetry byte-identical to pre-R5 (the
-    inverted kill-switch survives the later default flip)."""
+    """R5 corpus naming-wave master. Default **ON** since the 2026-07-21
+    pack-2 flip (KEY_SCHEMA 33; keyed A/B twenty + papermark green —
+    phase-1 cures hold: paren-high 17→0, dups 3→0; brand-echo stamps ×5,
+    measured demote high 101→92, no over-demotion on the keyed PF layer).
+    Unset ≡ explicit ``1`` — every R5 segment armed; explicit ``0``/
+    ``false``/``off`` keeps each segment inert ⇒ display + telemetry
+    byte-identical to pre-R5 (explicit off stays a valid kill-switch
+    forever)."""
     return os.environ.get(
-        NAMING_WAVE_R5_ENV, "0"
+        NAMING_WAVE_R5_ENV, "1"
     ).strip().lower() in {"1", "true"}
 
 
@@ -2806,7 +2811,7 @@ def _apply_uf_name_laws(
 
     idx = _action_family_index(vocab)
 
-    # ── R5 phase-2 (FAULTLINE_NAMING_WAVE_R5, default OFF) — member-evidence
+    # ── R5 phase-2 (FAULTLINE_NAMING_WAVE_R5, default ON since 2026-07-21) — member-evidence
     # pool + vocab sets for the rename/plural/conf-drop/brand-echo lanes.
     # ``r5_evidence`` is threaded by run_naming_contract (built once); the
     # 6.7e rescore seam rebuilds it here so BOTH passes apply the SAME laws
@@ -3755,7 +3760,7 @@ def run_naming_contract(
     # ── Pass 1: product features (pin > candidates; laws gate both) ──
     taken: dict[str, str] = {}  # case-folded display -> pf slug
     pf_by_slug: dict[str, Any] = {}
-    # R5-1 identity-parity (FAULTLINE_NAMING_WAVE_R5, default OFF) — the
+    # R5-1 identity-parity (FAULTLINE_NAMING_WAVE_R5, default ON since 2026-07-21) — the
     # identity-fold of EVERY live PF slug, computed once so the guard is
     # order-independent (a display grabbing a not-yet-processed PF's identity
     # is caught). Empty work when the wave is off ⇒ byte-identical.
@@ -4452,7 +4457,7 @@ def run_naming_contract(
             tele["r5_pf_dirtoken_capped"] = (
                 tele.get("r5_pf_dirtoken_capped", 0) + 1)
 
-    # ── R5-1: identity-parity law (FAULTLINE_NAMING_WAVE_R5, default OFF) ──
+    # ── R5-1: identity-parity law (FAULTLINE_NAMING_WAVE_R5, default ON) ──
     # THE authoritative last word on PF displays. The B71 provenance ladder
     # (above) re-derives each display independently from the RAW nav channel
     # with no cross-PF check, so it re-introduces the identity-parity remnant
@@ -4502,7 +4507,8 @@ def _apply_r5_confidence_caps(
     repo_root: Any = None,
 ) -> None:
     """R5-5 negative confidence rungs (``FAULTLINE_NAMING_WAVE_R5``, default
-    OFF). A FINAL sweep over EVERY user flow — placed inside
+    ON since the 2026-07-21 pack-2 flip). A FINAL sweep over EVERY user
+    flow — placed inside
     :func:`_apply_uf_name_laws` so BOTH the naming-contract pass AND the
     6.7e adjudicator's ``rescore_uf_confidence`` re-run it (else the
     adjudicator re-grades a capped row back to 'high'). The Law C rubric

@@ -29,7 +29,9 @@ from __future__ import annotations
 import pytest
 
 from faultline.pipeline_v2.naming_contract import (
+    NAMING_WAVE_R5_ENV,
     PF_DISPLAY_EVIDENCE_GATE_ENV,
+    naming_wave_r5_enabled,
     pf_display_evidence_gate_enabled,
 )
 from faultline.pipeline_v2.stage_1_per_workspace import (
@@ -41,10 +43,11 @@ from faultline.pipeline_v2.stage_1_per_workspace import (
 _FLIPPED = [
     (PF_DISPLAY_EVIDENCE_GATE_ENV, pf_display_evidence_gate_enabled),
     (WORKSPACE_UNION_ENV, workspace_union_enabled),
+    (NAMING_WAVE_R5_ENV, naming_wave_r5_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 2
+assert len(_FLIPPED) == 3
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

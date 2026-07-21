@@ -898,9 +898,13 @@ ENV_OUTPUT_FLAGS = (
     # (census-shape name_confidence caps + name_evidence stamps). Reshapes
     # product_features[].display_name + user_flows[].name/name_confidence/
     # name_evidence + scan_meta.naming_contract telemetry only — canonical
-    # identity untouched. Default OFF; =0/unset restores the pre-R5 emission
-    # byte-identically (KS 4-way). Appended WITHOUT a KEY_SCHEMA bump — the
-    # bump rides the separate default-flip commit (flip-protocol).
+    # identity untouched. Default ON since the 2026-07-21 pack-2 flip
+    # (KEY_SCHEMA 33; keyed A/B twenty + papermark green — phase-1 cures
+    # hold paren-high 17→0 / dups 3→0, brand-echo stamps ×5, measured
+    # demote high 101→92, keyed PF layer only 2 medium = no over-demotion;
+    # ledger §R5-PHASE2). ``=0``/false/off restores the pre-R5 emission
+    # byte-identically — explicit off stays a valid kill-switch forever
+    # (unset ≡ explicit "1").
     "FAULTLINE_NAMING_WAVE_R5",
     # S2-A-v3 (2026-07-19) — spray-generalization: the generalized R5-2 spray
     # predicate over the UNPARENTHESIZED tech-dir-suffix form the

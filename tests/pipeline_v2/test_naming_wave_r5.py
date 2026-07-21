@@ -74,12 +74,14 @@ def _disp(pfs: list[Feature]) -> dict[str, str]:
     return {str(p.name): str(p.display_name) for p in pfs}
 
 
-# ── flag: default OFF + inverted kill-switch + cache keying ──────────────
+# ── flag: default ON (pack-2 flip) + inverted kill-switch + cache keying ──
 
 
-def test_wave_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wave_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-21 pack №2, KEY_SCHEMA 33): unset
+    # now arms every R5 segment (unset ≡ explicit-1).
     monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
-    assert naming_wave_r5_enabled() is False
+    assert naming_wave_r5_enabled() is True
     for off in ("0", "false", "off", ""):
         monkeypatch.setenv(NAMING_WAVE_R5_ENV, off)
         assert naming_wave_r5_enabled() is False
@@ -142,7 +144,9 @@ def test_general_settings_parity_repaired_on(
 def test_general_settings_parity_untouched_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     pfs = _openstatus_settings_fixture()
     tele = _run(pfs)
     disp = _disp(pfs)
@@ -341,7 +345,9 @@ def test_anticase_own_identity_resource_not_templated() -> None:
 
 
 def test_r5_2_off_byte_identical(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     pfs, ufs = _twenty_server_hub()
     tele = _run(pfs, ufs)
     # OFF: no own-resource telemetry key, echo template preserved.
@@ -389,7 +395,9 @@ def _uf_high(uid: str, name: str, pfid: str, members: list[str]) -> UserFlow:
 
 def test_r5_5_off_byte_identical(monkeypatch: pytest.MonkeyPatch) -> None:
     # OFF: no shape cap, no telemetry key, confidence untouched.
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     pfs = [_pf("widget", "Widget", "route:app/widget")]
     ufs = [_uf_high("u1", "Manage widget (Legacy)", "widget", [])]
     tele = _run(pfs, ufs)
@@ -447,7 +455,9 @@ def test_r5_5_only_caps_high_not_medium(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_r5_5_cap_noop_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     uf = _uf_conf("Manage x (y)", "high")
     tele: dict = {}
     _apply_r5_confidence_caps([uf], tele, rungs_on=True)
@@ -529,7 +539,9 @@ def test_spray_rows_no_own_resource_adoption_off(
     # OFF is the pre-R5 path: synthesized rows may churn through the
     # PF-display template + uniqueness (that churn IS the disease), but
     # the own-resource adoption never happens — the PF echo remains.
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     pfs, ufs = _sprayed_hub()
     _run(pfs, ufs)
     names = [str(u.name) for u in ufs]
@@ -588,7 +600,9 @@ def test_verifier_reject_rederive_off_unchanged(
 ) -> None:
     # OFF: the reject re-derive is the pre-R5 path — the PF-display echo
     # + uniqueness spray reproduce (the recorded keyed OFF behavior).
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     pf = _pf("twenty-server", "Twenty Server", "package:packages/twenty-server")
     ufs = [
         _uf_full("u1", "Browse & manage billing", "twenty-server", "billing",
@@ -661,7 +675,9 @@ def test_anticase_aggregate_8_member_untouched_by_r5(
         _uf_full("u2", "Manage twenty server (dpa)", "twenty-server",
                  "dpa", members=["m11"]),
     ]
-    monkeypatch.delenv(NAMING_WAVE_R5_ENV, raising=False)
+    # MECHANICAL flip migration (2026-07-21 pack №2, KEY_SCHEMA 33):
+    # the OFF baseline is pinned with an explicit =0, not left unset.
+    monkeypatch.setenv(NAMING_WAVE_R5_ENV, "0")
     ufs_off = mk()
     _run([pf_off], ufs_off)
     monkeypatch.setenv(NAMING_WAVE_R5_ENV, "1")
