@@ -1236,6 +1236,17 @@ class UserFlow(BaseModel):
     # ``attach_marker_surface_coords``; NEVER serialized (field-level
     # ``exclude=True`` plus a defensive pop in the serializer).
     surface_candidate_files: list[str] | None = Field(default=None, exclude=True)
+    # B77 (2026-07-21) — residual-bucket marker. ``True`` for the RESIDUAL
+    # sub-UF the Stage 6.7c mega-split appends for members the partition
+    # model did not place (``_split_one``'s recall-safe leftover bucket —
+    # 6.7c structurally KNOWS this row is a remainder, not a journey).
+    # Stamped ONLY under ``FAULTLINE_RESIDUAL_CITABILITY``; Stage 6.7d
+    # Pass-1 reads it to refuse WHOLESALE ``from_flows`` inheritance from a
+    # bucket (the residual-citability mass-transfer class: 502m
+    # 'Create and run logic functions' inherited 778 ids by citing two
+    # residual buckets in one from_flows). OMITTED from dumps when False
+    # (default) so kill-switch-off / old JSON stay byte-identical.
+    residual: bool = False
     # B31 — mint-side authored journey label (Track-C e2e orphan mints: the
     # maintainer's own playwright label, e.g. "Bulk Actions"). Carried so the
     # Stage-6.98 recall-row naming pass
@@ -1301,6 +1312,11 @@ class UserFlow(BaseModel):
             # B31 — the authored-label carrier is pipeline plumbing and must
             # NEVER serialize (exclude=True; this pop is belt-and-braces).
             data.pop("authored_label", None)
+            # B77 — the residual-bucket marker is stamped only under
+            # FAULTLINE_RESIDUAL_CITABILITY; a default-False dump is
+            # byte-identical to pre-B77 output.
+            if data.get("residual") is False:
+                data.pop("residual", None)
         return data
 
 

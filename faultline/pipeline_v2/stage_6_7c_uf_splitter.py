@@ -119,6 +119,37 @@ def _cache_enabled() -> bool:
     }
 
 
+# ── B77 — residual citability (default OFF) ────────────────────────────────
+# Class: RESIDUAL-CITABILITY MASS-TRANSFER (forensics 2026-07-21, ledger
+# §ФОРЕНЗИКА 502M). The 6.7c mega-split's recall-safe RESIDUAL sub-UF keeps
+# the parent's (often journey-like) name, so downstream Call-1 cites it via
+# ``from_flows`` and Pass-1 inherits the WHOLE bucket without any content
+# gate — 'Create and run logic functions' inherited 778 ids from two cited
+# buckets (UF-128-9 510/557 = 91.6% residual mass + UF-131-9 268/332), the
+# same class ×3 in one run (502m/278m/216m). Under the flag:
+#   Seg 1 — 6.7c stamps ``UserFlow.residual=True`` on the leftover bucket
+#           (it structurally KNOWS the row is a remainder — :func:`_split_one`);
+#           6.7d Pass-1 refuses wholesale inheritance from a residual row
+#           (members stay in their bucket / remain available to the
+#           token-gated grounding channels + backstop — no-orphan).
+#   Seg 2 — 6.7d Pass-1 container-inherit passes a member ONLY on the same
+#           ``& utok`` content-token overlap Pass-2a already requires.
+#   Seg 3 — mint-side domain carve: a built UF whose members majority-vote
+#           for >1 real PF home with no common majority is carved per home
+#           (existing :func:`conservation.member_votes` mechanism).
+#   Seg 4 — a ws-container PF is not a valid conservation resettle target.
+# Default OFF; unset/=0 keeps every path byte-identical (kill-switch law).
+RESIDUAL_CITABILITY_ENV = "FAULTLINE_RESIDUAL_CITABILITY"
+
+
+def residual_citability_enabled() -> bool:
+    """Default **OFF**. Unset / falsy keeps 6.7c/6.7d/conservation
+    byte-identical to the flag-less engine (kill-switch law)."""
+    return os.environ.get(RESIDUAL_CITABILITY_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _split_cache_key(model: str, user: str) -> str:
     """Content-hash key for one mega-UF partition call.
 
@@ -329,10 +360,18 @@ def _split_one(
 
     residual = [m for m in uf.member_flow_ids if m not in placed]
     if residual:
-        subs.append(_make_sub(
+        sub = _make_sub(
             uf, f"{uf.id}-{len(subs) + 1}", uf.name, residual,
             name_confidence=uf.name_confidence,
-        ))
+        )
+        if residual_citability_enabled():
+            # B77 Seg 1 — the leftover bucket is a REMAINDER, not a journey:
+            # mark it structurally so 6.7d Pass-1 refuses wholesale
+            # ``from_flows`` inheritance (the residual-citability
+            # mass-transfer class). Flag-gated: unset keeps the row (and its
+            # dump) byte-identical.
+            sub.residual = True
+        subs.append(sub)
     return subs
 
 
@@ -510,6 +549,13 @@ def split_mega_user_flows(
             split_results[uf.id] = subs
             telemetry["mega_split"] += 1
             telemetry["sub_ufs_created"] += len(subs)
+            # B77 Seg 1 — residual-bucket telemetry. The key exists only in
+            # an ARMED world (the marker itself is flag-gated), so unset
+            # scan_meta stays byte-identical.
+            n_res = sum(1 for s in subs if getattr(s, "residual", False))
+            if n_res:
+                telemetry["residual_marked"] = (
+                    telemetry.get("residual_marked", 0) + n_res)
             for sub in subs:
                 telemetry["members_moved"] += sub.member_count
                 for mid in sub.member_flow_ids:
@@ -535,4 +581,9 @@ def split_mega_user_flows(
     return out, telemetry
 
 
-__all__ = ["STAGE_6_7C_CACHE_VERSION", "split_mega_user_flows"]
+__all__ = [
+    "RESIDUAL_CITABILITY_ENV",
+    "STAGE_6_7C_CACHE_VERSION",
+    "residual_citability_enabled",
+    "split_mega_user_flows",
+]
