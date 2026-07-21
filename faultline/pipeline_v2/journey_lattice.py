@@ -71,7 +71,11 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+from faultline.pipeline_v2.dominant_evidence import (
+    dominant_evidence_naming_enabled as _dominant_naming_on,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -530,10 +534,18 @@ def _deterministic_name(
     phrase: str,
     pf_display: str,
     naming_vocab: Mapping[str, Any],
+    member_evidence: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[str, list[str]]:
     """``(name, candidates)`` — verb-led "<Verb> <object>" templates in
     W3-law-clean form (first clean candidate wins; the list feeds the
-    PM Labeler)."""
+    PM Labeler).
+
+    ``member_evidence`` (B78 Seg H, ``FAULTLINE_DOMINANT_EVIDENCE_NAMING``)
+    — ``(flow-name, entry-file)`` pairs of the child's members. When the
+    flag is armed the object phrase drops content tokens with member
+    support < 0.34 (drop-only; an emptied phrase keeps the original —
+    reject ⇒ the unchanged deterministic channel). ``None`` / flag OFF ⇒
+    byte-identical."""
     from faultline.pipeline_v2.naming_contract import (
         _resource_phrase,
         display_law_violations,
@@ -541,6 +553,19 @@ def _deterministic_name(
     )
 
     obj = _resource_phrase(phrase, naming_vocab)
+    if member_evidence is not None:
+        from faultline.pipeline_v2.dominant_evidence import (
+            dominant_evidence_naming_enabled,
+            strip_display_tokens,
+            unsupported_display_tokens,
+        )
+        if dominant_evidence_naming_enabled() and obj:
+            _drop = unsupported_display_tokens(
+                obj, member_evidence, resource="", vocab=naming_vocab)
+            if _drop:
+                _stripped = strip_display_tokens(obj, _drop, naming_vocab)
+                if _stripped:
+                    obj = _stripped
     primary = _VERB_WORD.get(verdict, "Manage")
     raw: list[str] = [f"{primary} {obj}"]
     for alt in ("Manage", "View", "Configure"):
@@ -1141,8 +1166,19 @@ def run_journey_lattice(
                 continue
             verdict = _dominant_verb(
                 [_verb_of(m) for m in mids])
+            # B78 Seg H — member evidence for the ratio gate (built only
+            # when the flag is armed; None ⇒ byte-identical).
+            _seg_h_ev: list[tuple[str, str]] | None = None
+            if _dominant_naming_on():
+                _seg_h_ev = [
+                    (str(getattr(flow_by_mid[m], "display_name", None)
+                         or getattr(flow_by_mid[m], "name", "") or ""),
+                     str(_entry_file_of(flow_by_mid[m]) or ""))
+                    for m in mids if m in flow_by_mid
+                ]
             name, candidates = _deterministic_name(
-                verdict, cl.phrase, pf_display, naming_vocab)
+                verdict, cl.phrase, pf_display, naming_vocab,
+                member_evidence=_seg_h_ev)
             children.append({
                 "id": _child_id(pf_key, key),
                 "key": key,

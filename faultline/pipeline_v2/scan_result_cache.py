@@ -1070,6 +1070,15 @@ ENV_OUTPUT_FLAGS = (
     # the seam un-entered, byte-identical — explicit off stays a valid
     # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_UF_CASES_SPLIT",
+    # B78 Seg H (2026-07-21) — dominant-evidence naming: presence → RATIO
+    # at the three UF-display compose sites (refiner accept-gate, lattice
+    # _deterministic_name, own-resource/generic template). A content token
+    # enters a composed journey display only with member support >= 0.34
+    # (the validator's I15 attach floor, reused); side-effect flow
+    # families (audit-write/telemetry/cache/log — vocab corroboration)
+    # never gift words. Reshapes user_flows[].name. Default OFF. Appended
+    # WITHOUT a KEY_SCHEMA bump — reconciled at merge.
+    "FAULTLINE_DOMINANT_EVIDENCE_NAMING",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served
