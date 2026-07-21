@@ -854,10 +854,12 @@ ENV_OUTPUT_FLAGS = (
     # ``organization`` -> 'directory_sync') is reverted to the honest basename,
     # equal-vote ties prefer the PF's own anchor-page self-link, and the
     # survivor is title-cased. Reshapes product_features[].display_name +
-    # scan_meta.naming_contract.pf_display_provenance only. Default OFF; the
-    # cached bundle serves OFF and ON alike (read at emit time) — unset/=0
-    # restores the shipped display byte-identically. Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
+    # scan_meta.naming_contract.pf_display_provenance only. Default ON since
+    # the 2026-07-21 pack-2 flip (KEY_SCHEMA 33; keyed proof cal + novu green
+    # — sim==engine 7/21 exact, cal 5→0 false displays, novu footprint exactly
+    # 1 row; ledger display-cross pack 2026-07-19). ``=0``/false/off restores
+    # the shipped display byte-identically — explicit off stays a valid
+    # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE",
     # B73 organic-move (2026-07-19, fork-A ruling) — the ratified
     # strict+gated organic UF re-home rule at the 6.99b rail: armed, it
@@ -1109,7 +1111,24 @@ ENV_OUTPUT_FLAGS = (
 #: stays 32 — unset semantics changed twice within one unreleased schema
 #: generation; the naming layer returns via R5 corpus hardening in its own
 #: cycle with its own flip.
-KEY_SCHEMA_VERSION = 32
+#: v33 (flip-pack №2, 2026-07-21 — plan docs/anchor-arc/flip-pack-2-20260719.md,
+#: operator-ratified 2026-07-21): the pack flips 4 previously-default-OFF flags
+#: to default ON, each in its own commit (per flip-protocol), the ONE bump
+#: riding the pack's FIRST commit: FAULTLINE_PF_DISPLAY_EVIDENCE_GATE
+#: (display-cross; keyed proof cal + novu — sim==engine 7/21 exact, cal 5→0
+#: false displays, novu footprint 1 row), _WORKSPACE_UNION (onyx union-gate;
+#: keyed A/B onyx fallback 57.1→36.5%, web-residual 2114→0; anti-cases
+#: langfuse/typebot byte-ident even armed), _NAMING_WAVE_R5 (phase2 merged;
+#: keyed A/B twenty+papermark — paren-high 17→0, dup 3→0, brand-echo ×5,
+#: measured demote 101→92 high), _ORGANIC_MOVE (B73-it2; keyed Soc0 moved=0,
+#: UF-051 prior-hold, conservation 399→399; typebot evidence-trio byte-inert).
+#: Default flips change what "unset" means, so cached entries keyed under
+#: unset must not be served across them (v16/v21/v25/v27/v28/v29/v30/v31/v32
+#: precedent). Every flag keeps its X=0 kill-switch (explicit "0"/"false"/
+#: "off" still disables — inverted-kill-switch unit per flag: unset ≡
+#: explicit "1" byte-identical). scan_meta.key_schema=33 emitted so
+#: downstream rulers gate new-world logic.
+KEY_SCHEMA_VERSION = 33
 
 #: Directory / file-size guards for the non-git tree-hash fallback. Kept
 #: scale-invariant (not tuned to any one repo) — they only bound work.

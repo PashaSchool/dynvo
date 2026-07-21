@@ -371,16 +371,18 @@ def naming_pack_enabled() -> bool:
 
 def pf_display_evidence_gate_enabled() -> bool:
     """Display-cross evidence gate over the PF provenance ladder's nav
-    channel (B71 consumer). Default **OFF** (new behavior): armed, an
+    channel (B71 consumer). Default **ON** since the 2026-07-21 pack-2
+    flip (KEY_SCHEMA 33; keyed proof cal + novu green — sim==engine 7/21
+    exact, cal 5→0 false displays, novu footprint exactly 1 row): an
     authored nav label only becomes a PF display when its tokens intersect
     the PF's name/anchor-terminal identity OR its member-dominant path
     tokens; equal-vote ties prefer the label whose href lands on the PF's
     own anchor page before alpha; the surviving label is title-cased.
-    ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE=1``/``true`` arms; unset/``0`` keeps
+    Unset ≡ explicit ``1``; explicit ``=0``/``false`` keeps
     ``ProvenanceSources.nav`` — and therefore the emitted display — byte
-    identical (the kill-switch law)."""
+    identical (explicit off stays a valid kill-switch forever)."""
     return os.environ.get(
-        PF_DISPLAY_EVIDENCE_GATE_ENV, "0"
+        PF_DISPLAY_EVIDENCE_GATE_ENV, "1"
     ).strip().lower() in {"1", "true"}
 
 
@@ -1706,8 +1708,10 @@ def nav_label_sets_for_pfs(
 #
 # A NEW consumer of the SAME ungated ``_nav_label_votes`` machinery — the
 # B40 nav-pinning rung (:func:`nav_labels_for_pfs`) and the B57 nav-cluster
-# rung (:func:`nav_label_sets_for_pfs`) are untouched. Only armed behind
-# ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE`` (default OFF): the raw top-voted
+# rung (:func:`nav_label_sets_for_pfs`) are untouched. Gated behind
+# ``FAULTLINE_PF_DISPLAY_EVIDENCE_GATE`` (default ON since the 2026-07-21
+# pack-2 flip, KEY_SCHEMA 33; explicit =0 stays the kill-switch): the raw
+# top-voted
 # label can be a FOREIGN capability (a nav link whose href first-come-owns a
 # borrowed route file — cal ``insights`` display 'Bookings'), which the
 # provenance ladder then installs as the PF display. The gate keeps a label
