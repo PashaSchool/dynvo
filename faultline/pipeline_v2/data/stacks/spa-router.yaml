@@ -108,3 +108,85 @@ react_router:
   # ("HomePage" → "home" when the route path has no static segment).
   component_suffix_strip:
     - Page
+
+# ── Seg D (B74 Seg A) — SPA route-table extraction ───────────────────────
+# Exported enum / flat const-object whose string values are route-like
+# (probe canon 2026-07-20: >=3 values, >=0.8 route-like ratio; a leading
+# '/' is a PRIOR, never a gate — twenty SettingsPath slash_ratio 0.0 is
+# consumption-primary and MUST be taken). EMISSION gate is load-bearing:
+# >=1 member consumed in path-position (``path=`` / ``path:``) inside a
+# file carrying a router marker below. Owner map resolves the consuming
+# route's element/component to its page file (wrapper/fallback filtered,
+# lazy-import bridged); table values without a direct Route are emitted
+# as pattern anchors WITHOUT an owner, attributed to the table's first
+# consuming router file (nav-alias law + IT2 container guard: the
+# declaring ws-pkg is evidence, never a capability). Flag
+# FAULTLINE_SPA_ROUTE_TABLE, default OFF.
+route_table:
+  extensions:
+    - .ts
+    - .tsx
+    - .js
+    - .jsx
+    - .vue
+    - .mts
+    - .cts
+    - .mjs
+    - .cjs
+  # Artifact-class skips BEYOND the shared skip_path_segments list
+  # (probe canon dirs the shared list does not carry). Exact segment
+  # match, never substring — consumed ONLY by the route-table arm.
+  extra_skip_segments:
+    - __generated__
+  # Dotted filename markers beyond the shared list (``.d.ts``
+  # declaration files are type surface, never a route table).
+  extra_skip_filename_markers:
+    - d
+  # Router-marker corroboration — the consumption gate's file predicate.
+  # A ``from '<pkg>'`` import of one of these packages OR any marker
+  # substring qualifies a file as a router file.
+  router_import_packages:
+    - react-router
+    - react-router-dom
+    - vue-router
+    - "@tanstack/react-router"
+    - "@solidjs/router"
+    - wouter
+    - svelte-routing
+    - preact-router
+  router_markers:
+    - "<Route"
+    - createRoutesFromElements
+    - "useRoutes("
+    - createBrowserRouter
+    - createHashRouter
+    - createMemoryRouter
+    - RouteRecordRaw
+    - RouterProvider
+  # Elements that are wrappers / plumbing, never the page owner (probe
+  # patches: ``fallback={...}`` props are stripped; a bare ``Route`` is
+  # excluded). A route owned only by these emits its pattern WITHOUT an
+  # owner file.
+  wrapper_components:
+    - LazyRoute
+    - Navigate
+    - Suspense
+    - Outlet
+    - Fragment
+    - Redirect
+    - React
+    - ErrorBoundary
+    - Route
+    - Routes
+  # Lazy-binding callees whose import() target IS the page entry
+  # (B37 lazy-dispatch bridge; twenty uses lazyWithPreload).
+  lazy_callees:
+    - lazy
+    - lazyWithPreload
+  # Same alias-resolution convention as Seg B (unique suffix-match).
+  local_alias_prefixes:
+    - "@/"
+    - "~/"
+  # Component-name slug fallback for patterns with no static segment.
+  component_suffix_strip:
+    - Page

@@ -438,6 +438,25 @@ def stage_1_extractors(
                 assert candidates is not None  # narrowed by ``error is None``
                 results[source] = candidates
 
+    # B74 Seg A — repo-wide route-table pass, folded into the spa-page
+    # source AFTER the per-extractor loop. Lives OUTSIDE extract() so
+    # both dispatch paths run it exactly once with the FULL context
+    # (route tables are cross-workspace: shared package declares, app
+    # package consumes). Flag-gated inside (family kill-switch
+    # dominates); [] on unset keeps the result byte-identical and never
+    # adds a source key (B67 registry law).
+    try:
+        from faultline.pipeline_v2.extractors.spa_router import (
+            SPA_PAGE_SOURCE,
+            route_table_candidates,
+        )
+
+        table_cands = route_table_candidates(ctx)
+        if table_cands:
+            results.setdefault(SPA_PAGE_SOURCE, []).extend(table_cands)
+    except ImportError:  # pragma: no cover — missing extractor is non-fatal
+        pass
+
     if errors:
         # ``_errors`` is a sentinel key — never collides with a real
         # extractor name (extractor names are kebab-case, never start

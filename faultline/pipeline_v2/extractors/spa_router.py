@@ -26,6 +26,13 @@ Segments (each a separate commit, ONE flag):
     bridge). Corroboration: react-router(-dom) dep. Next / Remix /
     react-router-framework repos disqualify (their pages are covered by
     filesystem extractors — SACRED no-dup law).
+  * Seg D — B74 Seg A route tables (SEPARATE flag
+    ``FAULTLINE_SPA_ROUTE_TABLE``, default OFF): exported enum /
+    flat-const route tables (twenty ``AppPath``/``SettingsPath``, novu
+    ``ROUTES``) whose members Seg B honestly SKIPS (``path={Table.X}``
+    is not a literal). Candidacy is shape-only; emission requires
+    path-position consumption in a router-marker file. Same source slug
+    (``spa-page``), so every downstream fence covers the new rows.
 
 Every route is emitted with ``method="PAGE"`` (the GET-equivalent client
 surface, the same token the Next Pages extractor stamps), so downstream PAGE
@@ -77,6 +84,15 @@ if TYPE_CHECKING:
 
 SPA_ROUTER_ENTRIES_ENV = "FAULTLINE_SPA_ROUTER_ENTRIES"
 
+#: B74 Seg A — SPA route-table extraction (default OFF). Sub-arm of the
+#: spa-router family: arming it adds route-table candidates to the SAME
+#: ``spa-page`` source (no new ``extractor_hits`` key), so every B65-v4
+#: downstream fence (6.86 spa-page mint priority/floor/mass fence) covers
+#: the new rows with zero new wiring. The family kill-switch
+#: (``FAULTLINE_SPA_ROUTER_ENTRIES=0``) dominates: it unregisters the
+#: whole extractor, table arm included.
+SPA_ROUTE_TABLE_ENV = "FAULTLINE_SPA_ROUTE_TABLE"
+
 #: The single source slug on every emitted candidate (both segments share it,
 #: so ``extractor_hits`` grows by exactly one key when the flag is ON).
 SPA_PAGE_SOURCE = "spa-page"
@@ -104,6 +120,18 @@ def spa_router_entries_enabled() -> bool:
     kill-switch forever; unset ≡ explicit ``1``."""
     return os.environ.get(SPA_ROUTER_ENTRIES_ENV, "1").strip().lower() not in {
         "", "0", "false", "no", "off",
+    }
+
+
+def spa_route_table_enabled() -> bool:
+    """B74 Seg A — default **OFF**. ``FAULTLINE_SPA_ROUTE_TABLE=1`` arms
+    the route-table arm (:func:`_collect_route_tables`); unset / falsy
+    keeps it inert so the emitted candidate set — and therefore the scan
+    — is byte-identical to the flag-less engine. Registered in
+    ``scan_result_cache.ENV_OUTPUT_FLAGS`` (append-only, no KEY_SCHEMA
+    bump)."""
+    return os.environ.get(SPA_ROUTE_TABLE_ENV, "").strip().lower() in {
+        "1", "true", "yes", "on",
     }
 
 
@@ -983,6 +1011,384 @@ def _collect_react_router(ctx: "ScanContext") -> list[_Entry]:
     return entries
 
 
+# ── Seg D (B74 Seg A) — SPA route-table extraction ───────────────────────────
+#
+# Exported enum / flat const-object route tables (twenty ``AppPath`` /
+# ``SettingsPath``, novu dashboard ``ROUTES``) whose members are consumed
+# by a router in path-position. Probe canon 2026-07-20 (SHIP/HIGH, ledger
+# §ПРОБА B74 SEG A): candidacy = SHAPE (>=3 non-empty string values,
+# >=0.8 route-like ratio; a leading ``/`` is a PRIOR, never a gate —
+# twenty SettingsPath slash_ratio 0.0 is the consumption-primary case);
+# the EMISSION gate is load-bearing: >=1 member consumed as ``path=`` /
+# ``path:`` inside a router-marker file (corpus probe: 1,895 candidate
+# tables -> exactly 3 emit, 0 false; DOCUMENTATION_PATHS / BACKGROUND
+# asset packs / AppBasePath / redirect maps all die here). Values with a
+# resolvable Route element take the page component's file as their entry
+# (lazy / lazyWithPreload bridge through the consuming file's imports,
+# wrapper + ``fallback={...}`` filtered); values without a direct Route
+# (twenty tasks/opportunities nav-aliases) emit as pattern anchors
+# WITHOUT an owner, attributed to the table's first consuming router
+# file (the app side — IT2 container guard: the declaring ws-pkg is
+# evidence, never a capability).
+
+#: Candidacy floor + route-like shape ratio (probe canon; scale-invariant
+#: ratios, no per-repo tuning).
+_RT_MIN_ENTRIES = 3
+_RT_ROUTELIKE_RATIO = 0.8
+_RT_MAX_VALUE_LEN = 120
+#: Owner-walk window bounds (probe canon).
+_RT_USE_WINDOW = 2500
+_RT_ELEMENT_WINDOW = 400
+
+_RT_ENUM_RE = re.compile(
+    r"export\s+(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)\s*\{([^}]*)\}",
+    re.DOTALL,
+)
+_RT_ENUM_MEMBER_RE = re.compile(
+    r"([A-Za-z_$][\w$]*)\s*=\s*(['\"`])((?:(?!\2).)*)\2",
+)
+_RT_CONST_OBJ_RE = re.compile(
+    r"export\s+const\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=]{0,120}?)?=\s*"
+    r"(?:Object\.freeze\s*\(\s*)?\{",
+)
+#: IT2 (coordinator ruling 1): the ``^`` branch carries ``\s*`` so the
+#: FIRST object member after ``{\n`` is parsed — the probe-canon regex
+#: lost it (real novu ``SIGN_IN: '/auth/sign-in'`` — the S5b-H sign-in
+#: material). Canon shift documented: novu ROUTES 85/79 -> 86/79
+#: (corpus re-probe 2026-07-20: 2,042 candidates -> the same exactly-3
+#: tables emit, 0 false).
+_RT_OBJ_MEMBER_RE = re.compile(
+    r"(?:^\s*|[,{]\s*)['\"]?([A-Za-z_$][\w$]*)['\"]?\s*:\s*"
+    r"(['\"`])((?:(?!\2).)*)\2",
+    re.DOTALL,
+)
+#: Route-like value: URL path characters only — no spaces, no scheme.
+_RT_ROUTE_VAL_RE = re.compile(r"^[/A-Za-z0-9_\-:.*()\[\]#/]*$")
+#: ``fallback={...}`` props are loaders, never owners (probe patch).
+_RT_FALLBACK_PROP_RE = re.compile(r"fallback\s*=\s*\{[^}]*\}")
+_RT_ELEMENT_RE = re.compile(r"element\s*[:=]\s*\{?")
+_RT_COMPONENT_RE = re.compile(
+    r"[Cc]omponent\s*[:=]\s*\{?\s*(?:<\s*)?([A-Za-z_$][\w$]*)",
+)
+_RT_JSX_IDENT_RE = re.compile(r"<\s*([A-Z][\w$]*)")
+
+
+@dataclass(frozen=True)
+class _RouteTableGrammar:
+    extensions: tuple[str, ...]
+    extra_skip_segments: frozenset[str]
+    extra_skip_filename_markers: frozenset[str]
+    router_import_re: "re.Pattern[str] | None"
+    router_markers: tuple[str, ...]
+    wrapper_components: frozenset[str]
+    lazy_binding_re: "re.Pattern[str] | None"
+    #: Thin :class:`_ReactRouterGrammar` carrying ONLY the fields the
+    #: shared resolution helpers (:func:`_resolve_spec`,
+    #: :func:`_hop_reexport_barrel`, :func:`_rr_component_slug`) read —
+    #: alias prefixes + suffix strip. Reuse over reimplementation.
+    resolve_gr: _ReactRouterGrammar
+
+
+@lru_cache(maxsize=1)
+def _rt_grammar() -> _RouteTableGrammar | None:
+    block = _cfg().get("route_table")
+    if not isinstance(block, dict):
+        return None
+
+    def _tup(key: str) -> tuple[str, ...]:
+        return tuple(str(s) for s in (block.get(key) or ()))
+
+    pkgs = _tup("router_import_packages")
+    import_re = (
+        re.compile(
+            r"from\s+['\"]("
+            + "|".join(re.escape(p) for p in pkgs)
+            + r")['\"]",
+        )
+        if pkgs else None
+    )
+    callees = _tup("lazy_callees")
+    lazy_re = (
+        re.compile(
+            r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*"
+            r"(?:React\s*\.\s*)?(?:"
+            + "|".join(re.escape(c) for c in callees)
+            + r")\s*\(\s*\(\s*\)\s*=>\s*import\s*\(\s*"
+            r"['\"`]([^'\"`]+)['\"`]",
+        )
+        if callees else None
+    )
+    return _RouteTableGrammar(
+        extensions=_tup("extensions"),
+        extra_skip_segments=frozenset(
+            s.lower() for s in _tup("extra_skip_segments")
+        ),
+        extra_skip_filename_markers=frozenset(
+            s.lower() for s in _tup("extra_skip_filename_markers")
+        ),
+        router_import_re=import_re,
+        router_markers=_tup("router_markers"),
+        wrapper_components=frozenset(_tup("wrapper_components")),
+        lazy_binding_re=lazy_re,
+        resolve_gr=_ReactRouterGrammar(
+            dep_markers=(),
+            disqualify_deps_exact=(),
+            disqualify_dep_prefixes=(),
+            disqualify_config_files=(),
+            file_markers=(),
+            extensions=(),
+            local_alias_prefixes=_tup("local_alias_prefixes"),
+            redirect_components=frozenset(),
+            component_suffix_strip=_tup("component_suffix_strip"),
+        ),
+    )
+
+
+@dataclass
+class _RouteTable:
+    """One candidate table: exported name + ``{member key: raw value}``."""
+
+    name: str
+    file: str
+    entries: dict[str, str]
+
+
+def _rt_route_like(value: str) -> bool:
+    return bool(value) and len(value) <= _RT_MAX_VALUE_LEN and bool(
+        _RT_ROUTE_VAL_RE.match(value)
+    )
+
+
+def _rt_should_skip(path: str, gr: _RouteTableGrammar) -> bool:
+    """Shared artifact-class predicate + the route-table-ONLY extras
+    (``__generated__`` dirs, ``.d.ts`` declaration files). The extras
+    live in their own YAML keys so Seg A/B behaviour never shifts."""
+    if _should_skip_path(path):
+        return True
+    p = posix(path).lower()
+    segs = p.split("/")
+    if any(seg in gr.extra_skip_segments for seg in segs[:-1]):
+        return True
+    dotparts = (segs[-1] if segs else "").split(".")
+    return len(dotparts) >= 2 and any(
+        comp in gr.extra_skip_filename_markers for comp in dotparts[1:-1]
+    )
+
+
+def _rt_find_tables(path: str, text: str) -> list[_RouteTable]:
+    """Candidate tables in one file (shape gate only — no consumption)."""
+    raw: list[tuple[str, dict[str, str]]] = []
+    for em in _RT_ENUM_RE.finditer(text):
+        raw.append((
+            em.group(1),
+            {
+                mm.group(1): mm.group(3)
+                for mm in _RT_ENUM_MEMBER_RE.finditer(em.group(2))
+            },
+        ))
+    for cm in _RT_CONST_OBJ_RE.finditer(text):
+        body = _balanced_brace_body(text, cm.end() - 1)
+        if "{" in body:
+            continue  # nested object — flat tables only (probe canon)
+        raw.append((
+            cm.group(1),
+            {
+                mm.group(1): mm.group(3)
+                for mm in _RT_OBJ_MEMBER_RE.finditer(body)
+            },
+        ))
+    out: list[_RouteTable] = []
+    for name, entries in raw:
+        vals = [v for v in entries.values() if v]
+        if len(vals) < _RT_MIN_ENTRIES:
+            continue
+        routelike = [v for v in vals if _rt_route_like(v)]
+        if len(routelike) / len(vals) < _RT_ROUTELIKE_RATIO:
+            continue
+        out.append(_RouteTable(name, path, entries))
+    return out
+
+
+def _rt_is_router_file(text: str, gr: _RouteTableGrammar) -> bool:
+    """The consumption gate's file predicate: a router-package import OR
+    any router-marker substring."""
+    if gr.router_import_re is not None and gr.router_import_re.search(text):
+        return True
+    return any(mk in text for mk in gr.router_markers)
+
+
+def _rt_use_re(name: str) -> "re.Pattern[str]":
+    """``path= / path:`` member consumption — one regex serves both the
+    emission gate (any match) and the owner walk (member capture)."""
+    return re.compile(
+        r"path\s*[:=]\s*\{?\s*" + re.escape(name) + r"\.([A-Za-z_$][\w$]*)",
+    )
+
+
+def _rt_scoped_tracked(
+    consumer: str, tracked: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Tracked files under the consumer's OWN package subtree.
+
+    Alias prefixes (``@/`` / ``~/``) are per-app tsconfig conventions —
+    resolving them against the WHOLE monorepo can suffix-match a
+    foreign app's file (novu census exhibit: ``@/pages`` from
+    ``apps/dashboard`` hit ``playground/nextjs/src/pages/index.tsx``).
+    The package boundary = the longest ancestor dir of the consumer
+    carrying a tracked ``package.json`` (pure mechanism — no path
+    dictionary). Falls back to the full tracked set when the consumer
+    sits outside any package dir (single-app repo root)."""
+    tracked_set = frozenset(tracked)
+    segs = consumer.split("/")[:-1]
+    for i in range(len(segs), 0, -1):
+        prefix = "/".join(segs[:i])
+        if prefix + "/package.json" in tracked_set:
+            return tuple(f for f in tracked if f.startswith(prefix + "/"))
+    return tracked
+
+
+def _rt_owner_map(
+    text: str,
+    consumer: str,
+    table: _RouteTable,
+    gr: _RouteTableGrammar,
+    repo_root: Path,
+    tracked: tuple[str, ...],
+) -> dict[str, tuple[str, str]]:
+    """``value -> (component, entry file)`` for ONE consuming router file.
+
+    Probe-canon window walk: each ``path={Table.Member}`` match owns the
+    window up to the next match (bounded); the owner is the first
+    non-wrapper capitalized element after ``element=`` (``fallback={...}``
+    loader props stripped first), else the ``component:`` ident. The
+    entry file resolves through the consuming file's own imports (lazy /
+    lazyWithPreload bridge first, then the barrel hop); an unresolvable
+    spec or a same-file component honestly falls back to the consumer."""
+    binding: dict[str, str] = dict(_import_map(text))
+    if gr.lazy_binding_re is not None:
+        for lm in gr.lazy_binding_re.finditer(text):
+            binding[lm.group(1)] = lm.group(2)
+    scoped = _rt_scoped_tracked(consumer, tracked)
+    owners: dict[str, tuple[str, str]] = {}
+    matches = list(_rt_use_re(table.name).finditer(text))
+    for i, m in enumerate(matches):
+        value = table.entries.get(m.group(1))
+        if not value or value in owners:
+            continue
+        end = (
+            matches[i + 1].start() if i + 1 < len(matches)
+            else min(len(text), m.end() + _RT_USE_WINDOW)
+        )
+        window = text[m.end():end]
+        comp: str | None = None
+        em = _RT_ELEMENT_RE.search(window)
+        if em:
+            sub = _RT_FALLBACK_PROP_RE.sub(
+                "", window[em.end():em.end() + _RT_ELEMENT_WINDOW],
+            )
+            for cand in _RT_JSX_IDENT_RE.findall(sub):
+                if cand not in gr.wrapper_components:
+                    comp = cand
+                    break
+        if comp is None:
+            cm = _RT_COMPONENT_RE.search(window)
+            if cm and cm.group(1) not in gr.wrapper_components:
+                comp = cm.group(1)
+        if comp is None:
+            continue
+        entry_file = consumer
+        spec = binding.get(comp)
+        if spec:
+            # Package-scoped first (alias = per-app convention), full
+            # tracked set as the fallback (Seg-B parity for consumers
+            # outside any package dir).
+            resolved = _resolve_spec(spec, consumer, scoped, gr.resolve_gr)
+            if resolved is None and scoped is not tracked:
+                resolved = _resolve_spec(
+                    spec, consumer, tracked, gr.resolve_gr,
+                )
+            if resolved is not None:
+                entry_file = _hop_reexport_barrel(
+                    resolved, repo_root, scoped, gr.resolve_gr,
+                )
+        owners[value] = (comp, entry_file)
+    return owners
+
+
+def _collect_route_tables(ctx: "ScanContext") -> list[_Entry]:
+    gr = _rt_grammar()
+    if gr is None or not gr.extensions:
+        return []
+    repo_root = Path(ctx.repo_path)
+    tracked = tuple(sorted(posix(f) for f in ctx.tracked_files))
+    tables: list[_RouteTable] = []
+    router_texts: dict[str, str] = {}
+    for path in tracked:
+        if not path.endswith(gr.extensions):
+            continue
+        if _rt_should_skip(path, gr):
+            continue
+        text = read_text(repo_root / path)
+        if not text or len(text) > _MAX_BYTES:
+            continue
+        tables.extend(_rt_find_tables(path, text))
+        if _rt_is_router_file(text, gr):
+            router_texts[path] = text
+    if not tables or not router_texts:
+        return []
+
+    entries: list[_Entry] = []
+    for table in tables:
+        first_consumer: str | None = None
+        owners: dict[str, tuple[str, str]] = {}
+        use_re = _rt_use_re(table.name)
+        for consumer in sorted(router_texts):
+            text = router_texts[consumer]
+            if table.name not in text or not use_re.search(text):
+                continue
+            if first_consumer is None:
+                first_consumer = consumer
+            for value, owner in _rt_owner_map(
+                text, consumer, table, gr, repo_root, tracked,
+            ).items():
+                owners.setdefault(value, owner)
+        if first_consumer is None:
+            continue  # the load-bearing emission gate (probe canon)
+        for value in sorted(
+            {v for v in table.entries.values() if _rt_route_like(v)}
+        ):
+            own = owners.get(value)
+            comp = own[0] if own else None
+            # IT2 container guard (coordinator ruling 2): an ownerless
+            # value attributes to the table's FIRST consuming router
+            # file — the app side — NEVER to the declaring table file.
+            # The declaration package is evidence, not a capability: a
+            # ws-pkg that only DECLARES the table must not receive
+            # PAGE-surface rows, or the 6.86 mint licenses the container
+            # as a PF (twenty census exhibit: 'twenty-shared' PF,
+            # 13,851 loc, minted purely off table-file rows).
+            entry_file = own[1] if own else first_consumer
+            slug = _first_static_segment(value)
+            if not slug and comp:
+                slug = _rr_component_slug(comp, gr.resolve_gr)
+            if not slug:
+                # Ownerless root ("/" nav-alias, twenty AppPath.Index):
+                # the table NAME is the author's own namespace
+                # declaration — its slug carries the pattern anchor
+                # (noise-checked; the Seg-A enclosing-slug precedent).
+                tslug = slugify(table.name)
+                if tslug and not is_noise(tslug):
+                    slug = tslug
+            if not slug:
+                continue  # all-dynamic pattern + no component — honest skip
+            entries.append(
+                _Entry(
+                    slug, entry_file, "route-table", [_Route(value, "PAGE")],
+                ),
+            )
+    return entries
+
+
 # ── extractor ────────────────────────────────────────────────────────────────
 
 
@@ -998,6 +1404,27 @@ class SpaRouterExtractor:
         entries.extend(_collect_vue_pages(ctx))
         entries.extend(_collect_react_router(ctx))
         return _emit(entries)
+
+
+def route_table_candidates(ctx: "ScanContext") -> list[AnchorCandidate]:
+    """B74 Seg A — the route-table arm as a REPO-WIDE Stage-1 post-pass.
+
+    NOT part of :meth:`SpaRouterExtractor.extract` on purpose: route
+    tables are a CROSS-WORKSPACE surface — the table is declared in a
+    shared package (twenty-shared ``AppPath``) while its router
+    consumers live in an app package (twenty-front) — so the
+    per-workspace dispatch's scoped contexts can never join the two
+    (the twenty KS forensics exhibit: armed scan, 0 rows). Both Stage-1
+    paths (:func:`stage_1_extractors.stage_1_extractors` global,
+    :func:`stage_1_per_workspace.run_stage_1_per_workspace`) fold this
+    pass ONCE with the FULL repo context into the ``spa-page`` source.
+
+    Returns ``[]`` unless BOTH the family flag (kill-switch dominates —
+    ``FAULTLINE_SPA_ROUTER_ENTRIES=0`` restores the pre-B65-v3 world
+    entirely) and ``FAULTLINE_SPA_ROUTE_TABLE`` are on."""
+    if not (spa_router_entries_enabled() and spa_route_table_enabled()):
+        return []
+    return _emit(_collect_route_tables(ctx))
 
 
 def _emit(entries: list[_Entry]) -> list[AnchorCandidate]:
@@ -1043,6 +1470,9 @@ __all__ = [
     "SPA_PAGE_KIND",
     "SPA_PAGE_SOURCE",
     "SPA_ROUTER_ENTRIES_ENV",
+    "SPA_ROUTE_TABLE_ENV",
     "SpaRouterExtractor",
+    "route_table_candidates",
+    "spa_route_table_enabled",
     "spa_router_entries_enabled",
 ]

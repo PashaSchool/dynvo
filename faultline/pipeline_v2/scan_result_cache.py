@@ -909,6 +909,16 @@ ENV_OUTPUT_FLAGS = (
     # WITHOUT ws-containers is inert (KS: openstatus). Appended WITHOUT a
     # KEY_SCHEMA bump — the bump rides the separate default-flip commit.
     "FAULTLINE_HOME_PURE_CONTAINER_INHERIT",
+    # B74 Seg A (2026-07-20) — SPA route-table extraction: exported enum /
+    # flat-const route tables (twenty AppPath/SettingsPath, novu ROUTES)
+    # consumed in path-position by a router file emit their URL patterns
+    # (method=PAGE, kind=spa-page) + owner-page anchor evidence, so
+    # capability journeys mint on SPA repos whose routes live in tables.
+    # Reshapes routes_index + spa-page candidates on armed worlds only.
+    # Default OFF; unset/=0 keeps the arm un-entered, byte-identical.
+    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
+    # flip commit (flip-protocol).
+    "FAULTLINE_SPA_ROUTE_TABLE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

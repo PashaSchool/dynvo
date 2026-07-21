@@ -804,6 +804,26 @@ def run_stage_1_per_workspace(
 
     merged = _merge_anchors_across_workspaces(per_ws_results)
 
+    # B74 Seg A — repo-wide route-table pass (mirrors the global-path
+    # fold in ``stage_1_extractors``). MUST run on the FULL context:
+    # route tables are a cross-workspace surface — the table lives in a
+    # shared package (twenty-shared AppPath) while its router consumers
+    # live in an app package (twenty-front), so the scoped per-workspace
+    # passes above can never join them (the twenty KS forensics exhibit:
+    # armed scan, 0 rows). Flag-gated inside; [] on unset keeps the
+    # merged dict byte-identical and never adds a source key.
+    try:
+        from faultline.pipeline_v2.extractors.spa_router import (
+            SPA_PAGE_SOURCE,
+            route_table_candidates,
+        )
+
+        table_cands = route_table_candidates(ctx)
+        if table_cands:
+            merged.setdefault(SPA_PAGE_SOURCE, []).extend(table_cands)
+    except ImportError:  # pragma: no cover — missing extractor is non-fatal
+        pass
+
     return PerWorkspaceResult(
         stage1_out=merged,
         workspaces_processed=reports,
