@@ -71,6 +71,9 @@ from faultline.llm.cost import CostTracker, deterministic_params, estimate_call_
 from faultline.llm.model_gateway import resolve_model as gateway_model
 from faultline.pipeline_v2.llm_health import LlmHealth
 from faultline.pipeline_v2.nav_taxonomy import aggregate_product_feature
+from faultline.pipeline_v2.stage_6_7c_uf_splitter import (
+    residual_citability_enabled as _residual_citability_enabled,
+)
 
 if TYPE_CHECKING:
     from faultline.cache.backend import CacheBackend
@@ -1418,7 +1421,8 @@ def _build_user_flows(
                         reserved_mids.add(mid)
 
     def _home_ok(mid: str, pf_key: str | None, *,
-                 container_inherit: bool = False) -> bool:
+                 container_inherit: bool = False,
+                 affinity: bool | None = None) -> bool:
         if not home_by_mid or not pf_key:
             return True
         h = home_by_mid.get(mid)
@@ -1431,6 +1435,18 @@ def _build_user_flows(
             # UNCOUNTED everywhere else (reservation, not foreignness).
             if (container_inherit and pf_key not in container_keys
                     and mid not in reserved_mids):
+                # B77 Seg 2 (FAULTLINE_RESIDUAL_CITABILITY) — Pass-1
+                # container-inherit passes a member ONLY on the same
+                # content-token overlap Pass-2a already requires
+                # (``& utok`` symmetry). ``affinity`` is ``None`` outside
+                # the armed Pass-1 (byte-identical); ``False`` = a
+                # container-homed member with NO content overlap with the
+                # journey — a packaging reservation, blocked and counted
+                # in its own armed-only key.
+                if affinity is False:
+                    tele["uf_container_affinity_blocked"] = (
+                        tele.get("uf_container_affinity_blocked", 0) + 1)
+                    return False
                 tele["uf_home_container_inherited"] = (
                     tele.get("uf_home_container_inherited", 0) + 1)
                 return True
@@ -1504,6 +1520,14 @@ def _build_user_flows(
         return out
 
     # ── Pass 1 — from_flows inheritance (home-pure under anchored W4) ──
+    # B77 (FAULTLINE_RESIDUAL_CITABILITY): Seg 1 — a from_flows citation of
+    # a 6.7c RESIDUAL bucket is NOT a wholesale-inherit licence (the
+    # mass-transfer class: 778 ids inherited from two cited buckets). The
+    # bucket's members stay unclaimed for the token-gated grounding
+    # channels / backstop, and the bucket row itself survives below
+    # (no-orphan). Seg 2 — the container-inherit branch passes a member
+    # only on Pass-2a's own ``& utok`` content-token overlap.
+    _res_cit = _residual_citability_enabled()
     built: list[tuple[dict[str, Any], "UserFlow"]] = []
     for spec in uf_specs:
         name = spec.get("name")
@@ -1513,13 +1537,27 @@ def _build_user_flows(
         members: list[str] = []
         routes: list[str] = []
         seen_m: set[str] = set()
+        utok_p1: set[str] | None = (
+            _content_tokens(name, str(spec.get("resource") or "").lower())
+            if _res_cit else None
+        )
         for ref in spec.get("from_flows") or []:
             src = old_by_id.get(ref)
             if not src:
                 continue
+            if _res_cit and getattr(src, "residual", False):
+                # Seg 1 — refuse the wholesale inherit (members AND routes:
+                # a bucket's routes are the un-split parent's whole union).
+                tele["uf_residual_cited_refused"] = (
+                    tele.get("uf_residual_cited_refused", 0) + 1)
+                continue
             for mid in src.member_flow_ids:
                 if mid not in seen_m and _home_ok(
-                        mid, spec_pf_key, container_inherit=True):
+                        mid, spec_pf_key, container_inherit=True,
+                        affinity=(
+                            None if utok_p1 is None
+                            else bool((flow_tokens.get(mid) or set())
+                                      & utok_p1))):
                     seen_m.add(mid)
                     members.append(mid)
             routes.extend(src.routes or [])
@@ -1651,7 +1689,140 @@ def _build_user_flows(
                 tele["uf_dropped_names"].append(uf.name)
             continue
         out.append(uf)
+
+    # ── B77 Seg 1 — no-orphan bucket conservation (armed only) ──────────
+    # A residual bucket refused above (or never cited) must not silently
+    # vaporise its members: the bucket ROW survives with every member the
+    # grounding passes did not legitimately claim (6.7c's own recall-safe
+    # law — "no flow is ever dropped"). Members another journey token-
+    # matched stay with their claimant (exactly-one-home). Downstream
+    # conservation re-settles the bucket's PF binding by its members' own
+    # votes (Seg 4 keeps containers out of the targets).
+    if _res_cit:
+        kept_buckets = 0
+        for old in old_ufs:
+            if not getattr(old, "residual", False):
+                continue
+            remaining = [m for m in old.member_flow_ids if m not in claimed]
+            if not remaining:
+                continue
+            out.append(old.model_copy(update={
+                "member_flow_ids": remaining,
+                "member_count": len(remaining),
+            }))
+            claimed.update(remaining)
+            kept_buckets += 1
+        if kept_buckets:
+            tele["uf_residual_buckets_kept"] = kept_buckets
     return out, tele
+
+
+def _carve_multi_domain_ufs(
+    new_ufs: list["UserFlow"],
+    developer_features: list["Feature"],
+    new_pfs: list["Feature"],
+    dev_to_product: dict[str, tuple[str, ...]],
+    container_keys: frozenset[str],
+    tele: dict[str, Any],
+) -> None:
+    """B77 Seg 3 — mint-side domain carve (armed only; general invariant).
+
+    A freshly built UF whose members majority-vote for MORE THAN ONE real
+    PF home with NO common strict majority is a mass-transfer composite,
+    not a journey — carve its membership per home via the EXISTING
+    :func:`conservation.member_votes` mechanism. ws-CONTAINER homes are
+    packaging, not domains (B74 Seg C law): they never count as a carve
+    domain, so a legitimate client+server journey spanning containers
+    ('Sign in and authenticate' = twenty-front + twenty-server members)
+    is never split. Members with no non-container vote stay with the
+    dominant part (no-orphan). Each carved part holds a clean per-home
+    majority by construction, so the conservation ladder that runs next
+    binds it to its own home (Seg 4 keeps containers out of the targets).
+    Residual buckets (Seg 1) and synthesized backstop rows are exempt.
+    Deterministic, $0; mutates ``new_ufs`` in place; scale-invariant
+    (majority ratios only).
+    """
+    from faultline.pipeline_v2.conservation import (
+        build_file_pf_owner,
+        dev_views_for,
+        member_votes,
+    )
+
+    pf_keys = frozenset(
+        str(getattr(pf, "name", "") or "") for pf in new_pfs
+    ) - {""}
+    file_pf_owner = build_file_pf_owner(
+        dev_views_for(developer_features, dev_to_product),
+        real_pf_keys=pf_keys,
+    )
+    flow_by_id: dict[str, Any] = {}
+    for d in developer_features:
+        for fl in getattr(d, "flows", None) or []:
+            for key in (getattr(fl, "uuid", None), getattr(fl, "name", None)):
+                if key and key not in flow_by_id:
+                    flow_by_id[key] = fl
+
+    carved = 0
+    children = 0
+    for uf in list(new_ufs):
+        if getattr(uf, "synthesized", False) or getattr(uf, "residual", False):
+            continue
+        member_ids = list(uf.member_flow_ids or [])
+        members = [flow_by_id[m] for m in member_ids if m in flow_by_id]
+        if len(members) < 2:
+            continue
+        span_votes, entry_votes = member_votes(members, file_pf_owner)
+        for ck in container_keys:
+            span_votes.pop(ck, None)
+            entry_votes.pop(ck, None)
+        if len(span_votes) < 2:
+            continue
+        total_span = sum(span_votes.values())
+        if total_span and max(span_votes.values()) * 2 > total_span:
+            continue  # a common strict-majority home exists — not this class
+        # Per-member home (span argmax, entries then key break ties —
+        # the conserved_pfid rung-3 ruler at member grain).
+        groups: dict[str, list[str]] = {}
+        orphan_ids: list[str] = []
+        for mid in member_ids:
+            m = flow_by_id.get(mid)
+            if m is None:
+                orphan_ids.append(mid)
+                continue
+            sv, ev = member_votes([m], file_pf_owner)
+            for ck in container_keys:
+                sv.pop(ck, None)
+                ev.pop(ck, None)
+            pool = set(sv) | set(ev)
+            if not pool:
+                orphan_ids.append(mid)
+                continue
+            home = sorted(
+                pool, key=lambda k: (-sv.get(k, 0), -ev.get(k, 0), k),
+            )[0]
+            groups.setdefault(home, []).append(mid)
+        if len(groups) < 2:
+            continue
+        doms = sorted(
+            groups,
+            key=lambda k: (-span_votes.get(k, 0), -entry_votes.get(k, 0), k),
+        )
+        keep = set(groups[doms[0]]) | set(orphan_ids)
+        kept_ids = [m for m in member_ids if m in keep]
+        uf.member_flow_ids = kept_ids
+        uf.member_count = len(kept_ids)
+        for dom in doms[1:]:
+            part = [m for m in member_ids if m in set(groups[dom])]
+            new_ufs.append(uf.model_copy(update={
+                "member_flow_ids": part,
+                "member_count": len(part),
+                "product_feature_id": dom,
+            }))
+            children += 1
+        carved += 1
+    if carved:
+        tele["uf_domain_carved"] = carved
+        tele["uf_domain_carve_children"] = children
 
 
 def _fallback_capability(
@@ -3664,6 +3835,21 @@ def run_journey_abstraction(
             flow_owner_override = merged_over
             pf_tele["entry_owner_overrides"] = len(entry_over)
             tele.update({"entry_owner_overrides": len(entry_over)})
+        # B77 Seg 3 (FAULTLINE_RESIDUAL_CITABILITY) — mint-side domain
+        # carve BEFORE conservation: a built UF whose members majority-
+        # vote for >1 real (non-container) PF home with no common strict
+        # majority is carved per home, so the ladder below binds each
+        # part to its own domain instead of majority-shipping the whole
+        # composite to one of them. Unset → un-entered, byte-identical.
+        if _residual_citability_enabled() and new_ufs:
+            # (carve keys land in scan_meta via the ``**uf_tele`` spread
+            # of the success-telemetry update below.)
+            _carve_multi_domain_ufs(
+                new_ufs, developer_features, new_pfs, dev_to_product,
+                (_container_pf_keys(product_features)
+                 if anchored else frozenset()),
+                uf_tele,
+            )
         # Product-Spine §4.5 — conservation law, applied to the freshly
         # reconstructed bindings BEFORE the backstop/reshare ladders: the
         # backstop then re-covers any PF a resettle emptied, and the
