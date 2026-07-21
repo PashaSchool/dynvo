@@ -32,14 +32,19 @@ from faultline.pipeline_v2.naming_contract import (
     PF_DISPLAY_EVIDENCE_GATE_ENV,
     pf_display_evidence_gate_enabled,
 )
+from faultline.pipeline_v2.stage_1_per_workspace import (
+    WORKSPACE_UNION_ENV,
+    workspace_union_enabled,
+)
 
 # (env-var name, helper) for every pack-№2/№3 flag flipped default OFF -> ON.
 _FLIPPED = [
     (PF_DISPLAY_EVIDENCE_GATE_ENV, pf_display_evidence_gate_enabled),
+    (WORKSPACE_UNION_ENV, workspace_union_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 1
+assert len(_FLIPPED) == 2
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 

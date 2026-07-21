@@ -861,6 +861,24 @@ ENV_OUTPUT_FLAGS = (
     # the shipped display byte-identically — explicit off stays a valid
     # kill-switch forever (unset ≡ explicit "1").
     "FAULTLINE_PF_DISPLAY_EVIDENCE_GATE",
+    # workspace UNION gate (2026-07-19, onyx shape) — when the declared
+    # workspaces span a strict MINORITY of tracked files (scale-invariant
+    # covered*2 < total), they are unioned with the non-overlapping
+    # synthesise_workspaces results so the undeclared product bulk (onyx
+    # web/ Next app + cli/ Python) scopes to its own stack instead of
+    # dissolving into the js-generic leftover pass. Reshapes the Stage-1
+    # workspace partition and therefore every downstream layer on
+    # minority-declared repos; high-coverage declared monorepos
+    # (langfuse/supabase/typebot) are ratio-gate inert. Default ON since
+    # the 2026-07-21 pack-2 flip (KEY_SCHEMA 33; keyed A/B onyx green —
+    # fallback 57.1→36.5%, web-residual 2114→0; anti-cases langfuse/
+    # typebot byte-ident even armed; ledger onyx union-gate cycle).
+    # ``=0``/false/off restores the pre-gate Stage 1 byte-identically —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1"). NOTE: registered at flip time — the add-cycle omitted the
+    # ENV_OUTPUT_FLAGS registration (cache-keying gap found at the flip
+    # audit; the v33 bump invalidates every entry cached under the gap).
+    "FAULTLINE_WORKSPACE_UNION",
     # B73 organic-move (2026-07-19, fork-A ruling) — the ratified
     # strict+gated organic UF re-home rule at the 6.99b rail: armed, it
     # REPLACES the S5a mega-organic handling of the rail's candidates with
