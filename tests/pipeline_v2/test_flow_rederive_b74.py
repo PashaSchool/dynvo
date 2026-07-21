@@ -196,8 +196,12 @@ def _twenty_board(tmp_path: Path) -> tuple[list[Feature], dict[str, list[str]], 
     ]
 
     snapshot = {
-        # the pre-decomposition blob unit (its path-set is gone from the board)
-        "twenty-front": sorted(orec + acts + wflw + locale),
+        # the pre-decomposition BLOB unit (oversized by the stage-3
+        # contract; its path-set is gone from the board). billing's
+        # gained file also lived here, so billing stays causal with a
+        # θ=0.5 blob-origin share and exercises the DENSITY exclusion.
+        "twenty-front": sorted(orec + acts + wflw + locale
+                               + [healthy_moved[1]]),
         "auth": sorted(healthy_a),
         "settings": sorted(healthy_b),
         "billing": [healthy_moved[0]],
@@ -326,6 +330,9 @@ def test_re_membered_at_cap_excluded_or_chunked(tmp_path: Path) -> None:
         "help": sorted(ruler_b),
         "side-panel": [small[0]],          # re-membered: gained S2.tsx
         "page-layout-2": [big_paths[0]],   # re-membered: gained 23 files
+        # the oversized stage-3 blob the gained files came from
+        # (blob-origin condition: both rows stay causal).
+        "legacy-blob": sorted(["pkg/side/S2.tsx"] + big_paths[1:]),
     }
     board = [
         _dev("docs", ruler_a, flows=[
@@ -366,11 +373,21 @@ def test_papermark_datarooms2_qualifies_health_scoped(tmp_path: Path) -> None:
         ]),
         _dev("datarooms-2", dr_paths),  # birth: 0 flows, big loc
     ]
-    snapshot = {"docs": sorted(healthy),
-                "datarooms": sorted(dr_paths + ["app/datarooms/index.tsx"])}
+    snapshot = {
+        "docs": sorted(healthy),
+        "health": ["app/health/H.tsx"],
+        "misc": ["app/misc/M.tsx"],
+        # the oversized parent unit datarooms-2 was decomposed from —
+        # a stage-8 birth's parent is oversized by construction.
+        "datarooms": sorted(
+            dr_paths + ["app/datarooms/index.tsx"]
+            + [f"app/datarooms/lib/L{i}.tsx" for i in range(12)]
+        ),
+    }
     sel = select_rederive_cohort(features, snapshot, _ctx(tmp_path))
     assert [c.feature.name for c in sel.candidates] == ["datarooms-2"]
     assert sel.flowful_median_density > 0
+    assert sel.blob_units == ["datarooms"]
 
 
 # ── anti-case: no grain change ⇒ inert armed board ─────────────────────
@@ -413,6 +430,44 @@ def test_anticase_no_grain_change_zero_qualifiers_byte_ident(
     assert [f.model_dump() for f in features] == before
     assert [fl.model_dump() for fl in flows_store] == before_flows
     assert edges_store == []
+
+
+def test_anticase_unit_boundary_drift_openstatus_apikey_shape(
+    tmp_path: Path,
+) -> None:
+    """openstatus ``api-key`` shape: a feature ASSEMBLED from many
+    fine-grained stage-3 units (each derived at full visibility) is
+    causal by path-set but fails the blob-origin majority — an
+    already-answered surface is never re-asked."""
+    parts = [
+        _ts(tmp_path, f"server/api-key/K{i}.tsx",
+            [f"ApiKeyA{i}", f"ApiKeyB{i}", f"ApiKeyC{i}"])
+        for i in range(4)
+    ]
+    merged = _dev("api-key", parts)  # 0 flows, low density — but healthy origin
+    ruler = [_ts(tmp_path, "web/status/S.tsx",
+                 ["StA", "StB", "StC"], pad_lines=20)]
+    board = [
+        _dev("status", ruler, flows=[
+            _flow("view-status-flow", ruler[0], 1),
+            _flow("subscribe-flow", ruler[0], 2),
+        ]),
+        merged,
+    ]
+    snapshot = {
+        "status": sorted(ruler),
+        # four fine units — none oversized; the merge is boundary drift
+        "api-key-routes": [parts[0]],
+        "api-key-verify": [parts[1]],
+        "api-key-create": [parts[2]],
+        "api-key-revoke": [parts[3]],
+    }
+    sel = select_rederive_cohort(board, snapshot, _ctx(tmp_path))
+    assert [c.feature.name for c in sel.candidates] == []
+    assert sel.excluded_nonblob_origin == 1
+    assert sel.blob_units == []
+    # causal class fired (telemetry key law) but with an honest exclusion
+    assert sel.causal_total == 1
 
 
 def test_no_snapshot_is_inert(tmp_path: Path) -> None:
@@ -466,8 +521,15 @@ def _single_call_board(tmp_path: Path) -> tuple[list[Feature], dict[str, list[st
         _dev("activities", acts),
         _dev("shared-owner", [acts[0]] + other),  # path-overlap secondary
     ]
-    snapshot = {"twenty-front": sorted(acts + other),
-                "shared-owner": sorted([acts[0]] + other)}
+    snapshot = {
+        # oversized stage-3 blob (filler paths only size the unit)
+        "twenty-front": sorted(
+            acts + other + [f"front/misc/F{i}.tsx" for i in range(8)]
+        ),
+        "shared-owner": sorted([acts[0]] + other),
+        "u1": ["front/u1/U1.tsx"],
+        "u2": ["front/u2/U2.tsx"],
+    }
     return features, snapshot, _ctx(tmp_path)
 
 
@@ -638,7 +700,15 @@ def test_causal_all_excluded_still_reports(tmp_path: Path) -> None:
         ]),
         capped,
     ]
-    snapshot = {"docs": sorted(ruler), "side-panel": [small[0]]}
+    snapshot = {
+        "docs": sorted(ruler),
+        "side-panel": [small[0]],
+        # oversized blob the gained file came from (keeps the row causal
+        # so the AT-CAP exclusion is what fires).
+        "legacy-blob": sorted(
+            [extra] + [f"pkg/legacy/L{i}.tsx" for i in range(12)]
+        ),
+    }
     tele = run_flow_rederive(
         board, [], [], _ctx(tmp_path),
         stage3_unit_snapshot=snapshot,

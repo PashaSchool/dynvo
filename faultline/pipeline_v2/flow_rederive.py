@@ -26,6 +26,14 @@ Cohort selector (probe-canon pt.1 — CAUSAL, not density-first):
   - name known, removal-only delta     → NOT causal (test/generated
     strips, donor sheds — the surviving flows were derived on a
     superset of the unit; grain did not change under them).
+* **blob-origin majority**: a causal candidate must draw ≥ θ=0.5 of
+  its surface from an OVERSIZED stage-3 unit (the same Stage-8.9
+  contract Stage 3's chunking imports). The disease is starvation ON
+  BLOB GRAIN — fine-grained units later merged into a bigger feature
+  (openstatus ``api-key`` shape) were derived at full visibility;
+  re-asking an already-answered surface is over-fire (armed-keyless
+  census: openstatus 57 → 21 cohort rows under this condition, every
+  named twenty target kept at share 0.99-1.0).
 * product-layer twin rows are filtered out (``layer == "developer"``).
 * flow-density (flows/KLOC < repo flowful median /
   ``_OVERSIZED_MEDIAN_MULT``) is a SECONDARY filter only: it EXCLUDES
@@ -117,6 +125,7 @@ from faultline.pipeline_v2.stage_5_postprocess import _flow_spec_to_flow
 from faultline.pipeline_v2.stage_6_97_feature_loc import count_file_loc
 from faultline.pipeline_v2.stage_8_9_anchor_subdecompose import (
     _OVERSIZED_MEDIAN_MULT,
+    _OVERSIZED_SHARE,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,11 +174,13 @@ class CohortSelection:
     candidates: list[RederiveCandidate] = field(default_factory=list)
     births: int = 0
     re_membered: int = 0
+    excluded_nonblob_origin: int = 0
     excluded_healthy_density: int = 0
     excluded_flow_gate: int = 0
     excluded_at_cap: int = 0
     excluded_flow_gate_names: list[str] = field(default_factory=list)
     flowful_median_density: float = 0.0
+    blob_units: list[str] = field(default_factory=list)
 
     @property
     def causal_total(self) -> int:
@@ -178,6 +189,46 @@ class CohortSelection:
 
 def _non_test_pathset(paths: Any) -> frozenset[str]:
     return frozenset(p for p in (paths or []) if p and not is_test_file(p))
+
+
+#: Majority bar for the blob-origin condition — the Stage-6.86 mint's
+#: documented θ=0.5 majority constant, reused (not a new tunable).
+_BLOB_ORIGIN_MAJORITY = 0.5
+
+
+def _blob_unit_paths(
+    stage3_unit_snapshot: dict[str, list[str]],
+) -> tuple[frozenset[str], list[str]]:
+    """Union of paths owned by OVERSIZED stage-3 units + their names.
+
+    The Seg B disease is «flow-starvation на blob-грейні»: derivation
+    starved where the stage-3 UNIT was a blob (twenty-front 8.6K paths
+    → 12-flow call windows), never where fine-grained units were
+    derived at full visibility and later merged (openstatus api-key —
+    unit-boundary drift, an honest already-answered surface). A unit
+    is oversized by the SAME Stage-8.9 contract Stage 3's chunking
+    imports (``_OVERSIZED_MEDIAN_MULT`` / ``_OVERSIZED_SHARE`` over
+    the snapshot's own sizes — constants imported, never duplicated).
+    """
+    sizes = [len(p) for p in stage3_unit_snapshot.values() if p]
+    if not sizes:
+        return frozenset(), []
+    median = max(2, int(statistics.median(sizes)))
+    total_owned = len({
+        p for paths in stage3_unit_snapshot.values() for p in paths
+    })
+    cut = max(
+        _OVERSIZED_MEDIAN_MULT * median,
+        math.ceil(_OVERSIZED_SHARE * total_owned),
+    )
+    blob_units = sorted(
+        name for name, paths in stage3_unit_snapshot.items()
+        if len(paths) > cut
+    )
+    union: set[str] = set()
+    for name in blob_units:
+        union.update(stage3_unit_snapshot[name])
+    return frozenset(union), blob_units
 
 
 def _feature_kloc(
@@ -243,6 +294,8 @@ def select_rederive_cohort(
         ps = _non_test_pathset(paths)
         snapshot_sets[name] = ps
         all_unit_sets.add(ps)
+    blob_paths, sel_blob_units = _blob_unit_paths(stage3_unit_snapshot)
+    sel.blob_units = sel_blob_units
 
     dev_features = [
         f for f in features
@@ -283,6 +336,19 @@ def select_rederive_cohort(
         else:
             kind = "birth"
             sel.births += 1
+
+        # Blob-origin majority (the disease is BLOB-grain starvation):
+        # at least θ=0.5 of the candidate's surface must come from an
+        # OVERSIZED stage-3 unit. Fine-grained units merged later
+        # (unit-boundary drift) were derived at full visibility — an
+        # honest already-answered surface, never re-asked.
+        if not blob_paths:
+            sel.excluded_nonblob_origin += 1
+            continue
+        origin_share = len(current & blob_paths) / len(current)
+        if origin_share < _BLOB_ORIGIN_MAJORITY:
+            sel.excluded_nonblob_origin += 1
+            continue
 
         flows_n = len(getattr(f, "flows", None) or [])
 
@@ -654,6 +720,8 @@ def run_flow_rederive(
         "births": sel.births,
         "re_membered": sel.re_membered,
         "candidates_causal": sel.causal_total,
+        "blob_units": list(sel.blob_units),
+        "excluded_nonblob_origin": sel.excluded_nonblob_origin,
         "excluded_healthy_density": sel.excluded_healthy_density,
         "excluded_flow_gate": sel.excluded_flow_gate,
         "excluded_flow_gate_sample": list(sel.excluded_flow_gate_names),
