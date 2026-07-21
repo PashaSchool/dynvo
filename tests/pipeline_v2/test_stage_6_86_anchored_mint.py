@@ -885,6 +885,11 @@ def test_evw_flag_default_off(monkeypatch):
     assert fold_evidence_weight_enabled()
 
 
+def test_evw_flag_registered_in_env_output_flags():
+    from faultline.pipeline_v2.scan_result_cache import ENV_OUTPUT_FLAGS
+    assert "FAULTLINE_FOLD_EVIDENCE_WEIGHT" in ENV_OUTPUT_FLAGS
+
+
 def test_evw_off_keeps_the_void_walk_fold_byte_identical(monkeypatch):
     """Kill-switch law: unset == explicit 0 == the pre-B78 vacuum fold
     (api devs land in 'cases' — the disease, kept verbatim OFF)."""
