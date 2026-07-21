@@ -992,10 +992,14 @@ ENV_OUTPUT_FLAGS = (
     # (storybook/dev-artifact paths + filename-echo pseudo-routes demoted
     # out of the quota only). Digest/prompt/cache-key change on pressured
     # repos → user_flows[] + product_features[] reshape via Call-1. No-
-    # pressure repos are byte-identical (inertness law). Default OFF;
-    # unset/=0 keeps both cuts byte-identical. Appended WITHOUT a
-    # KEY_SCHEMA bump — the bump rides the separate flip commit
-    # (flip-protocol).
+    # pressure repos are byte-identical (inertness law). Default ON since
+    # the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; keyed proof novu green —
+    # 'Sign in to existing account' mints (3m; 0/12 draws for 8 days
+    # before), 'View analytics and activity charts' 1→5m, UF 88→92,
+    # members 472→565, degradations 0; telemetry 46 page-anchored/35
+    # appended/73 page-routes; ledger §S5b-H). ``=0``/false/off keeps
+    # both cuts byte-identical — explicit off stays a valid kill-switch
+    # forever (unset ≡ explicit "1").
     "FAULTLINE_DIGEST_STRATIFICATION",
     # B76 (2026-07-21) — metrics recompute-on-emission: re-runs the Stage-6
     # commit-metric sweep over the FINAL membership after the last

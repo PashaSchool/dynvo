@@ -121,7 +121,8 @@ def align_enabled() -> bool:
     return os.environ.get(ALIGN_ENV, "0").strip() not in {"0", "false", "False", ""}
 
 
-# ── S5b Seg H — digest stratification (default OFF) ─────────────────────────
+# ── S5b Seg H — digest stratification (default ON since the 2026-07-21
+# pack-3 flip, KEY_SCHEMA 34) ────────────────────────────────────────────────
 # Class: digest-shadow starvation — the Call-1 digest carries MASS, not
 # surface identity. On any repo above the caps the ranked cuts starve the
 # whole page surface out of ALL channels at once (novu: 'sign-in'=0 tokens
@@ -145,9 +146,14 @@ DIGEST_STRATIFICATION_ENV = "FAULTLINE_DIGEST_STRATIFICATION"
 
 
 def digest_stratification_enabled() -> bool:
-    """Default **OFF**. Unset / falsy keeps both digest cuts byte-identical
-    to the flag-less engine (kill-switch law)."""
-    return os.environ.get(DIGEST_STRATIFICATION_ENV, "").strip().lower() in {
+    """Default **ON** since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34;
+    keyed proof novu green — 'Sign in to existing account' mints (3m,
+    the journey that died 0/12 draws for 8 days), 'View analytics and
+    activity charts' 1→5m, UF 88→92, members 472→565, degradations 0).
+    Unset ≡ explicit ``1``; explicit falsy (``0``/``false``/``off``)
+    keeps both digest cuts byte-identical to the flag-less engine
+    (explicit off stays a valid kill-switch forever)."""
+    return os.environ.get(DIGEST_STRATIFICATION_ENV, "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
 

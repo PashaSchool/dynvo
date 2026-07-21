@@ -44,7 +44,9 @@ from faultline.pipeline_v2.stage_6_99b_post_uf_rehome import (
 )
 from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
     _CONTAINER_INHERIT_ENV,
+    DIGEST_STRATIFICATION_ENV,
     _container_inherit_enabled,
+    digest_stratification_enabled,
 )
 from faultline.pipeline_v2.extractors.spa_router import (
     SPA_ROUTE_TABLE_ENV,
@@ -65,10 +67,11 @@ _FLIPPED = [
     (_CONTAINER_INHERIT_ENV, _container_inherit_enabled),
     (SPA_ROUTE_TABLE_ENV, spa_route_table_enabled),
     (FLOW_REDERIVE_ENV, flow_rederive_enabled),
+    (DIGEST_STRATIFICATION_ENV, digest_stratification_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 7
+assert len(_FLIPPED) == 8
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
