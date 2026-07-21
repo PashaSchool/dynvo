@@ -181,9 +181,11 @@ def _twenty_fixture(tmp_path: Path) -> list[str]:
 # ── flag / kill-switch ───────────────────────────────────────────────────────
 
 
-def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEMANTIC flip migration (2026-07-21 pack №3, KEY_SCHEMA 34): unset
+    # now arms the route-table arm (unset ≡ explicit-1).
     monkeypatch.delenv(SPA_ROUTE_TABLE_ENV, raising=False)
-    assert spa_route_table_enabled() is False
+    assert spa_route_table_enabled() is True
     for falsy in ("", "0", "false", "no", "off"):
         monkeypatch.setenv(SPA_ROUTE_TABLE_ENV, falsy)
         assert spa_route_table_enabled() is False, falsy
@@ -192,24 +194,27 @@ def test_flag_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
         assert spa_route_table_enabled() is True, truthy
 
 
-def test_unset_equals_zero_and_stays_inert(
+def test_unset_equals_one_and_zero_stays_inert(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Kill-switch law: unset == explicit '0' byte-identical; the armed
-    world is the ONLY one carrying route-table candidates."""
+    """Inverted kill-switch law (SEMANTIC flip migration, 2026-07-21
+    pack №3, KEY_SCHEMA 34): unset == explicit '1' byte-identical; the
+    explicit '0' world is the ONLY one with the table arm un-entered."""
     files = _twenty_fixture(tmp_path)
 
-    monkeypatch.delenv(SPA_ROUTE_TABLE_ENV, raising=False)
-    unset = _extract(tmp_path, files)
     monkeypatch.setenv(SPA_ROUTE_TABLE_ENV, "0")
     zero = _extract(tmp_path, files)
-    assert unset == zero == []  # no manifest -> Seg A/B inert too
+    assert zero == []  # no manifest -> Seg A/B inert too
     # The repo-wide pass itself is inert too (both dispatch paths).
     assert route_table_candidates(_ctx(tmp_path, files)) == []
 
     monkeypatch.setenv(SPA_ROUTE_TABLE_ENV, "1")
     armed = _extract(tmp_path, files)
     assert armed, "armed world must emit route-table candidates"
+    monkeypatch.delenv(SPA_ROUTE_TABLE_ENV, raising=False)
+    unset = _extract(tmp_path, files)
+    assert unset == armed  # unset ≡ explicit-1 (the flip contract)
+    monkeypatch.setenv(SPA_ROUTE_TABLE_ENV, "1")
 
     # Family kill-switch DOMINATES: SPA_ROUTER_ENTRIES=0 silences the
     # table arm even when armed (pre-B65-v3 world restoration).

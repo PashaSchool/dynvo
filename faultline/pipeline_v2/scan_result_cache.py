@@ -949,9 +949,14 @@ ENV_OUTPUT_FLAGS = (
     # (method=PAGE, kind=spa-page) + owner-page anchor evidence, so
     # capability journeys mint on SPA repos whose routes live in tables.
     # Reshapes routes_index + spa-page candidates on armed worlds only.
-    # Default OFF; unset/=0 keeps the arm un-entered, byte-identical.
-    # Appended WITHOUT a KEY_SCHEMA bump — the bump rides the separate
-    # flip commit (flip-protocol).
+    # Default ON since the 2026-07-21 pack-3 flip (KEY_SCHEMA 34; keyed
+    # proof twenty + novu green — twenty routes_index +114 PAGE
+    # (AppPath/SettingsPath consumption-primary canon), novu +86 incl.
+    # /auth/sign-in; 0/2,042 false candidates; container-PF guard holds
+    # — 'twenty-shared' 13.8K phantom dead; ledger §B74 SEG A).
+    # ``=0``/false/off keeps the arm un-entered, byte-identical —
+    # explicit off stays a valid kill-switch forever (unset ≡ explicit
+    # "1").
     "FAULTLINE_SPA_ROUTE_TABLE",
     # B74 Seg B (2026-07-20, F3′ re-entry probe SHIP/high) — post-grain
     # flow re-derivation at Stage 6.865: stage-8-born / re-membered dev

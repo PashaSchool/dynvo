@@ -46,6 +46,10 @@ from faultline.pipeline_v2.stage_6_7d_llm_journey_abstraction import (
     _CONTAINER_INHERIT_ENV,
     _container_inherit_enabled,
 )
+from faultline.pipeline_v2.extractors.spa_router import (
+    SPA_ROUTE_TABLE_ENV,
+    spa_route_table_enabled,
+)
 
 # (env-var name, helper) for every pack-№2/№3 flag flipped default OFF -> ON.
 _FLIPPED = [
@@ -55,10 +59,11 @@ _FLIPPED = [
     (ORGANIC_MOVE_ENV, organic_move_enabled),
     # ── pack №3 (KEY_SCHEMA 34) ──
     (_CONTAINER_INHERIT_ENV, _container_inherit_enabled),
+    (SPA_ROUTE_TABLE_ENV, spa_route_table_enabled),
 ]
 
 # Sanity: grows to 13 with the pack commits; no duplicate envs.
-assert len(_FLIPPED) == 5
+assert len(_FLIPPED) == 6
 assert len({env for env, _ in _FLIPPED}) == len(_FLIPPED)
 
 
