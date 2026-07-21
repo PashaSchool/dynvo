@@ -1067,6 +1067,11 @@ def _make_subfeature(
     aggregate git metrics (thin by design)."""
     from faultline.models.types import MemberFile  # local: avoid import cycle
 
+    from faultline.pipeline_v2.metrics_recompute import (  # local: avoid import cycle
+        metrics_recompute_enabled,
+        mint_null_state,
+    )
+
     fileset = set(files)
     surfaces = _split_surfaces(source, fileset)
     owned_members = [
@@ -1076,7 +1081,7 @@ def _make_subfeature(
         )
         for p in sorted(files)
     ]
-    sub = source.model_copy(deep=True, update={
+    _update: dict = {
         "name": name,
         "display_name": name,
         "paths": sorted(files),
@@ -1104,7 +1109,13 @@ def _make_subfeature(
         "hotspot_files": [],
         "participants": [],
         "history": None,
-    })
+    }
+    if metrics_recompute_enabled():
+        # B76 — honest null-state: no inherited authors/health/
+        # last_modified identity from the source's deep copy (mint-time
+        # metric zeroing class). Emission recompute stamps real values.
+        _update.update(mint_null_state())
+    sub = source.model_copy(deep=True, update=_update)
     for attr, kept in surfaces.items():
         setattr(sub, attr, kept)
     return sub
