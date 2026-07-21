@@ -3060,6 +3060,42 @@ def run_finalize_phase(
             f"spray-generalization failed ({exc}); rows unabsorbed"
         )
 
+    # ── B75 — UF-giant cases-split (FAULTLINE_UF_CASES_SPLIT, OFF) ──────
+    # Dir-tree case re-grain of giant catch-all journeys (mc >= census
+    # band edge 30): >= K qualified surface cases extract as children;
+    # the parent row survives as the residual (survivor-id law). Seam
+    # rationale: AFTER the naming contract so the giant predicate + the
+    # minted child names judge/mint against FINAL display names (the
+    # spray precedent — the probe canon boards carried post-contract
+    # names); AFTER spray-generalization so a spray-built union parent
+    # is visible to the split (same structural-writer family, single
+    # writer at a time); BEFORE 6.7e/dispatch-homing/I16-rehome/
+    # synth_quality/6.97b-LOC/6.995 so children are ordinary rows to
+    # every downstream hygiene pass (adjudication, homing, honest loc>0
+    # from member spans, terminal classification). The stage repoints
+    # extracted members' flow backpointers itself (I14) — the global
+    # emission-integrity pass already ran above this seam.
+    # Flag OFF/unset ⇒ run_uf_cases_split returns None before any
+    # mutation ⇒ no scan_meta key ⇒ byte-identical (KS 4-way gate).
+    # Armed 0-giant boards write no scan_meta key either (giants_seen ==
+    # 0 ⇒ nothing was read or written — the Seg C inertness law; the
+    # openstatus byte-ident gate).
+    try:
+        from faultline.pipeline_v2.uf_cases_split import (
+            run_uf_cases_split,
+        )
+        _cs_tele = run_uf_cases_split(
+            user_flows, list(bipartite.flows),
+            routes_index=lineage_result.routes_index,
+            repo_root=ctx.repo_path,
+        )
+        if _cs_tele is not None and _cs_tele.get("giants_seen"):
+            scan_meta["uf_cases_split"] = _cs_tele
+    except Exception as exc:  # noqa: BLE001 — split must never break a scan
+        scan_meta.setdefault("warnings", []).append(
+            f"uf-cases-split failed ({exc}); giants kept"
+        )
+
     # ── Stage 6.7e — B57 Seg2 journey-evidence adjudicator (keyed-only) ─
     # Runs immediately AFTER the naming contract (selection needs Law C v1
     # name_confidence) and BEFORE synth_quality/emit_coverage_gaps so an

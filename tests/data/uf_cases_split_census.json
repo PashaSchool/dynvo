@@ -1,0 +1,3797 @@
+{
+ "novu_80_backend": {
+  "domain": "",
+  "id": "UF-050",
+  "member_count": 80,
+  "members": [
+   {
+    "entry": "apps/api/src/app/environments-v1/usecases/create-api-key/create-api-key.usecase.ts",
+    "flow_name": "create-api-key-flow",
+    "id": "a5f67e936814704eae0c70d328343d52"
+   },
+   {
+    "entry": "apps/api/src/app/environments-v1/usecases/create-environment/create-environment.command.ts",
+    "flow_name": "create-environment-create-environment-flow",
+    "id": "da96b6f0e51326441ccd01778fad428e"
+   },
+   {
+    "entry": "apps/api/src/app/environment-variables/usecases/create-environment-variable/create-environment-variable.command.ts",
+    "flow_name": "create-environment-variable-create-environment-variable-flow",
+    "id": "91b48530257420ae4225c758a8718f53"
+   },
+   {
+    "entry": "apps/api/src/app/organization/dtos/create-organization.dto.ts",
+    "flow_name": "create-organization-dtos-flow",
+    "id": "3d9c8c4e6008a4830dfc8ec1d62cb782"
+   },
+   {
+    "entry": "apps/api/src/app/subscriptions/usecases/create-subscriptions/create-subscriptions.command.ts",
+    "flow_name": "create-subscription-subscriptions-flow",
+    "id": "3106bf7ed88b49472b248727bb925481"
+   },
+   {
+    "entry": "apps/api/src/app/support/dtos/create-thread.dto.ts",
+    "flow_name": "create-support-thread-flow",
+    "id": "80317c451d0faa1d892b630fb7760337"
+   },
+   {
+    "entry": "apps/api/src/app/tenant/dtos/create-tenant-request.dto.ts",
+    "flow_name": "create-tenant-dtos-flow",
+    "id": "ca632b002e2580a9ada0d767f12389fe"
+   },
+   {
+    "entry": "apps/api/src/app/topics-v1/dtos/create-topic.dto.ts",
+    "flow_name": "create-topic-dtos-2-flow",
+    "id": "bfae80cb942bad4f6aad32a9d49dd286"
+   },
+   {
+    "entry": "apps/api/src/app/outbound-webhooks/usecases/create-webhook-portal-token/create-webhook-portal.command.ts",
+    "flow_name": "create-webhook-portal-token-flow",
+    "id": "4f126f68fcf378c930b4ba8ca9c827ba"
+   },
+   {
+    "entry": "apps/api/src/app/well-known/well-known.module.ts",
+    "flow_name": "initialize-well-known-module-flow",
+    "id": "d83783c5a78145ef528ed4d1a4efae76"
+   },
+   {
+    "entry": "apps/api/src/app/layouts-v1/usecases/create-default-layout/create-default-layout.command.ts",
+    "flow_name": "set-default-layout-flow",
+    "id": "5f569880581be527bdccfffe24327853"
+   },
+   {
+    "entry": "apps/api/src/app/topics-v2/dtos/create-topic-subscriptions.dto.ts",
+    "flow_name": "subscribe-to-topic-dtos-flow",
+    "id": "8456020289b8537e3c79aaaec63c6ba2"
+   },
+   {
+    "entry": "apps/api/src/app/environments-v1/dtos/update-environment-request.dto.ts",
+    "flow_name": "update-environment-dtos-flow",
+    "id": "04e32fd33bc6b74e19e75224fcd0c304"
+   },
+   {
+    "entry": "apps/api/src/app/environment-variables/usecases/update-environment-variable/update-environment-variable.command.ts",
+    "flow_name": "update-environment-variable-update-environment-variable-flow",
+    "id": "5d2b1d685768011568e7554fc25813e6"
+   },
+   {
+    "entry": "apps/api/src/app/organization/dtos/update-branding-details.dto.ts",
+    "flow_name": "update-organization-branding-flow",
+    "id": "817dad64d43541c0ae071d5f726a1823"
+   },
+   {
+    "entry": "apps/api/src/app/organization/dtos/update-organization-settings.dto.ts",
+    "flow_name": "update-organization-settings-flow",
+    "id": "81ab017962e5768311e32fee8858b36f"
+   },
+   {
+    "entry": "apps/api/src/app/subscriptions/usecases/update-subscription/update-subscription.command.ts",
+    "flow_name": "update-subscription-update-subscription-flow",
+    "id": "0c47ba349eaa64166152f3fc71456388"
+   },
+   {
+    "entry": "apps/api/src/app/tenant/dtos/update-tenant-request.dto.ts",
+    "flow_name": "update-tenant-flow",
+    "id": "4794cf4c3abf94997823b0e88cb88163"
+   },
+   {
+    "entry": "apps/api/src/app/topics-v2/dtos/update-topic-subscription.dto.ts",
+    "flow_name": "update-topic-subscription-dtos-flow",
+    "id": "3cb6a03e29903c7034f283571928d6d8"
+   },
+   {
+    "entry": "libs/application-generic/src/agent-runtimes/anthropic/anthropic-runtime.helpers.ts",
+    "flow_name": "apply-agent-permissions-flow",
+    "id": "3ac4ba6d2cefc6274e9c9208bee1a0f8"
+   },
+   {
+    "entry": "libs/application-generic/src/agent-runtimes/anthropic/anthropic-agent-runtime.provider.ts",
+    "flow_name": "configure-anthropic-runtime-flow",
+    "id": "0ecbe3805623977cd0b49f515b771b8d"
+   },
+   {
+    "entry": "libs/application-generic/src/agent-runtimes/anthropic/anthropic-runtime.helpers.ts",
+    "flow_name": "configure-mcp-oauth-flow",
+    "id": "3c3095d444a9296d53ea59940241d035"
+   },
+   {
+    "entry": "libs/application-generic/src/agent-runtimes/anthropic/anthropic-cloud-client.ts",
+    "flow_name": "initialize-anthropic-client-flow",
+    "id": "d9f3ccffdfb9c508fdd97862b4923ea7"
+   },
+   {
+    "entry": "apps/api/src/app/subscribers-v2/dtos/mark-subscriber-notifications-as-seen.dto.ts",
+    "flow_name": "mark-notifications-seen-dtos-2-flow",
+    "id": "6db37d36825f1450c9db83d78917270d"
+   },
+   {
+    "entry": "apps/api/src/app/keyless/keyless-abuse-guard.service.ts",
+    "flow_name": "prevent-keyless-abuse-flow",
+    "id": "918b870407d328797f50a0c4f9aaaa56"
+   },
+   {
+    "entry": "apps/api/src/app/organization/dtos/rename-organization.dto.ts",
+    "flow_name": "rename-organization-flow",
+    "id": "59c53a72fc9b677a7de2300622b074b8"
+   },
+   {
+    "entry": "apps/api/src/app/topics-v1/dtos/rename-topic.dto.ts",
+    "flow_name": "rename-topic-flow",
+    "id": "7a0407a35cf7b1931501408f1576f3b1"
+   },
+   {
+    "entry": "apps/api/src/app/invites/dtos/resend-invite.dto.ts",
+    "flow_name": "resend-invite-flow",
+    "id": "3c083b1ee4a9345f37179777030fbdfc"
+   },
+   {
+    "entry": "apps/api/src/app/subscribers-v2/dtos/snooze-subscriber-notification.dto.ts",
+    "flow_name": "snooze-notification-dtos-2-flow",
+    "id": "5021800211ce02e99edcc8a28187d816"
+   },
+   {
+    "entry": "apps/api/src/app/workflows-v2/dtos/test-http-endpoint.dto.ts",
+    "flow_name": "test-http-endpoint-flow",
+    "id": "4cefdd85887c85c378360c3206acc118"
+   },
+   {
+    "entry": "apps/api/src/app/topics-v2/usecases/delete-topic-subscriptions/delete-topic-subscriptions.command.ts",
+    "flow_name": "unsubscribe-from-topic-flow",
+    "id": "e9281b0255421c8e19392853ab18a484"
+   },
+   {
+    "entry": "libs/application-generic/src/agent-runtimes/anthropic/anthropic-runtime.helpers.ts",
+    "flow_name": "build-agent-toolset-flow",
+    "id": "d93b3b901dd611b78271623b75de3733"
+   },
+   {
+    "entry": "libs/application-generic/src/agent-runtimes/anthropic/anthropic-runtime.helpers.ts",
+    "flow_name": "map-skills-to-tools-flow",
+    "id": "e4ba9ea8adfc92dfb57c651c3f2523c4"
+   },
+   {
+    "entry": "libs/internal-sdk/src/sdk/integrations.ts",
+    "flow_name": "query-integrations-flow",
+    "id": "668dde6435e1d32a9e7a0c72792fcbba"
+   },
+   {
+    "entry": "packages/shared/src/utils/ssrf-url-validation.ts",
+    "flow_name": "normalize-http-url-flow",
+    "id": "edd17cba0116c894a78c0ee09c6fd8e9"
+   },
+   {
+    "entry": "apps/api/src/app/bridge/bridge.controller.ts",
+    "flow_name": "create-bridge-flow",
+    "id": "4ec8121029bf4dcafa75b8157f60a1af"
+   },
+   {
+    "entry": "apps/api/src/app/bridge/usecases/get-bridge-status/get-bridge-status.command.ts",
+    "flow_name": "get-bridge-status-flow",
+    "id": "41acb055d525e6bc92b7e95cd2004312"
+   },
+   {
+    "entry": "apps/api/src/app/agents/channels/integrations/add-agent-integration/add-agent-integration.command.ts",
+    "flow_name": "add-agent-integration-flow",
+    "id": "6f0d1bd60a497f5c3d929f86c7ad8b67"
+   },
+   {
+    "entry": "apps/api/src/app/agents/channels/integrations/update-agent-integration/update-agent-integration.command.ts",
+    "flow_name": "update-agent-integration-flow",
+    "id": "aaee4215ad851d2de78df10d231a2051"
+   },
+   {
+    "entry": "apps/api/src/app/agents/channels/slack-linking/get-slack-setup-link-status/get-slack-setup-link-status.command.ts",
+    "flow_name": "check-slack-setup-status-flow",
+    "id": "010d01ce003cadadf8fc76af2c301efa"
+   },
+   {
+    "entry": "packages/shared/src/utils/connect-subscriber-id.ts",
+    "flow_name": "build-agent-connection-identifier-flow",
+    "id": "d61438412c0a8334aeccbbcba9497e3c"
+   },
+   {
+    "entry": "packages/shared/src/utils/connect-subscriber-id.ts",
+    "flow_name": "build-connect-subscriber-id-flow",
+    "id": "24700efa00d9274920f16bbaec86552b"
+   },
+   {
+    "entry": "packages/shared/src/consts/providers/channels/chat.ts",
+    "flow_name": "configure-chat-channel-flow",
+    "id": "fb1a154243011e7a58b3f6a59afef39b"
+   },
+   {
+    "entry": "packages/shared/src/consts/providers/channels/email.ts",
+    "flow_name": "configure-email-channel-flow",
+    "id": "9df48f54990968ad41f90185e54281d0"
+   },
+   {
+    "entry": "packages/shared/src/consts/providers/channels/http-request.ts",
+    "flow_name": "configure-http-request-flow",
+    "id": "d17571fa557e07e405da5b2f15b1b27e"
+   },
+   {
+    "entry": "packages/shared/src/consts/notification-item-buttons/notificationItemButton.ts",
+    "flow_name": "apply-dark-button-style-flow",
+    "id": "24fd3fb58c6e61a7c6d04b3395707ecc"
+   },
+   {
+    "entry": "packages/shared/src/consts/notification-item-buttons/notificationItemButton.ts",
+    "flow_name": "apply-light-button-style-flow",
+    "id": "f22aa64396132ba21deb1cd678186bb1"
+   },
+   {
+    "entry": "packages/shared/src/consts/notification-item-buttons/notificationItemButton.ts",
+    "flow_name": "configure-notification-buttons-flow",
+    "id": "3578c2be13f51670e2dc38a09cb13973"
+   },
+   {
+    "entry": "packages/shared/src/consts/feature-tiers-constants.ts",
+    "flow_name": "calculate-date-range-duration-flow",
+    "id": "a8213d84e04f5c2a8f65c8c100c821c5"
+   },
+   {
+    "entry": "packages/shared/src/consts/handlebar-helpers/getTemplateVariables.ts",
+    "flow_name": "extract-template-variables-flow",
+    "id": "4f6e4ffd2a90948cd8d32ead93ee7a3d"
+   },
+   {
+    "entry": "apps/api/src/app/shared/dtos/base-subscriber-fields.dto.ts",
+    "flow_name": "set-subscriber-preferences-flow",
+    "id": "fc0041ce5c3e40e7cbd5d5cc3c64db37"
+   },
+   {
+    "entry": "apps/api/src/app/internal/dtos/subscriber-online-state.dto.ts",
+    "flow_name": "update-subscriber-online-state-flow",
+    "id": "ac3b4ffd78cebdf15f134b8f836c9ac8"
+   },
+   {
+    "entry": "packages/shared/src/dto/agent/managed-runtime.dto.ts",
+    "flow_name": "configure-mcp-authentication-flow",
+    "id": "342a1cc6d46934c4f7ab225409cd2987"
+   },
+   {
+    "entry": "apps/api/src/app/shared/dtos/base-responses.ts",
+    "flow_name": "paginate-results-flow",
+    "id": "97f812758d4f4f4b18a4dd79e341539a"
+   },
+   {
+    "entry": "apps/api/src/app/shared/dtos/data-wrapper-dto.ts",
+    "flow_name": "wrap-response-data-flow",
+    "id": "890975ca95c7dbb9fc0f1931b533cba2"
+   },
+   {
+    "entry": "packages/shared/src/dto/workflows/get-list-query-params.ts",
+    "flow_name": "query-paginated-data-flow",
+    "id": "c52657bc0969fbbfdf0072fd46f0caed"
+   },
+   {
+    "entry": "apps/api/src/app/events/dtos/trigger-event-request.dto.ts",
+    "flow_name": "override-event-delivery-flow",
+    "id": "2b86ae438a7d5e3a45b6fce270f3c6ff"
+   },
+   {
+    "entry": "apps/api/src/app/events/usecases/parse-event-request/parse-event-request.command.ts",
+    "flow_name": "parse-event-request-flow",
+    "id": "15fab0b2e681873b52f2b61464dedf78"
+   },
+   {
+    "entry": "apps/api/src/app/execution-details/execution-details.module.ts",
+    "flow_name": "initialize-execution-details-module-flow",
+    "id": "b00bf74244f5668a48ea6403b807fee8"
+   },
+   {
+    "entry": "apps/api/src/app/execution-details/dtos/execution-details-request.dto.ts",
+    "flow_name": "request-execution-details-flow",
+    "id": "782e97c651873bc2e4e81b058c5988fd"
+   },
+   {
+    "entry": "packages/shared/src/services/feature-flags/feature-flags.util.ts",
+    "flow_name": "prepare-boolean-feature-flag-flow",
+    "id": "574b471b8eb32a7103b2b6681cfc55c9"
+   },
+   {
+    "entry": "packages/shared/src/services/feature-flags/feature-flags.util.ts",
+    "flow_name": "prepare-numeric-feature-flag-flow",
+    "id": "f4e56b1525db736896e3951cf5e44318"
+   },
+   {
+    "entry": "packages/shared/src/utils/locales/locale-registry.ts",
+    "flow_name": "discover-common-locales-flow",
+    "id": "283b8718aade093c2e5f7425a87567a8"
+   },
+   {
+    "entry": "packages/shared/src/utils/locales/locale-registry.ts",
+    "flow_name": "normalize-locale-string-flow",
+    "id": "9bcb91d650217e978fb880f89c6bc919"
+   },
+   {
+    "entry": "apps/api/migrations/in-app-integration/in-app-integration.migration.ts",
+    "flow_name": "setup-integrations-flow",
+    "id": "021f0460a9d37353acbe492bb9eed129"
+   },
+   {
+    "entry": "apps/api/migrations/seen-read-support/seen-read-support.migration.ts",
+    "flow_name": "update-notification-status-flow",
+    "id": "2dc6e9de8feda81e4dee98d1832aa099"
+   },
+   {
+    "entry": "apps/api/migrations/normalize-message-template-cta-action/normalize-message-cta-action-migration.ts",
+    "flow_name": "normalize-message-actions-flow",
+    "id": "cc1bcc2ed35031ef7d24f40d623afcf6"
+   },
+   {
+    "entry": "apps/api/migrations/001-add-default-identifier-to-topic-subscribers/add-default-identifier-to-topic-subscribers-migration.ts",
+    "flow_name": "start-api-server-flow",
+    "id": "3bb6c8883acb4882c8660473ad2a59da"
+   },
+   {
+    "entry": "apps/api/src/app/storage/storage.module.ts",
+    "flow_name": "initialize-storage-service-flow",
+    "id": "eb13e74660fcf856aa66b556a9c525ce"
+   },
+   {
+    "entry": "apps/api/src/app/storage/dtos/upload-url-response.dto.ts",
+    "flow_name": "upload-file-flow",
+    "id": "c5d36b82898cdcd5d20f37ecbcadf52d"
+   },
+   {
+    "entry": "apps/api/src/app/telegram-linking/get-telegram-mobile-link-status/get-telegram-mobile-link-status.command.ts",
+    "flow_name": "check-telegram-mobile-link-status-flow",
+    "id": "cee26321897e62299e59b4de3d7bb9a7"
+   },
+   {
+    "entry": "apps/api/src/app/telegram-linking/issue-telegram-mobile-link/issue-telegram-mobile-link.command.ts",
+    "flow_name": "issue-telegram-mobile-link-flow",
+    "id": "3f4b33102e6e35370c230f8686dec704"
+   },
+   {
+    "entry": "apps/api/src/app/telegram-linking/issue-telegram-subscriber-link/issue-telegram-subscriber-link.command.ts",
+    "flow_name": "issue-telegram-subscriber-link-flow",
+    "id": "297d15c456681b45dc594e053353f75c"
+   },
+   {
+    "entry": "apps/api/src/app/user/usecases/create-user/create-user.command.ts",
+    "flow_name": "create-user-account-flow",
+    "id": "8f7058524d52f24f780cd22d14f19ea5"
+   },
+   {
+    "entry": "apps/api/src/app/user/usecases/update-name-and-profile-picture/update-name-and-profile-picture.command.ts",
+    "flow_name": "update-user-profile-flow",
+    "id": "983b81ece89ddc32bd7e53592a3585d3"
+   },
+   {
+    "entry": "apps/api/src/app/widgets/dtos/session-initialize-request.dto.ts",
+    "flow_name": "initialize-session-flow",
+    "id": "3879bbafcf90ccad2ec89224b87d140a"
+   },
+   {
+    "entry": "apps/api/src/app/widgets/dtos/update-subscriber-preference-request.dto.ts",
+    "flow_name": "update-subscriber-preferences-dtos-flow",
+    "id": "3b93e14c2f4d908eb35b7ee249490ff9"
+   },
+   {
+    "entry": "apps/api/src/app/widgets/dtos/log-usage-request.dto.ts",
+    "flow_name": "log-widget-usage-flow",
+    "id": "b8f8f4f3ed294d1684881a9e72ee0491"
+   },
+   {
+    "entry": "apps/api/src/app/widgets/dtos/mark-message-as-request.dto.ts",
+    "flow_name": "mark-notification-as-seen-dtos-flow",
+    "id": "eb72acbc6558b5c630a7f077747e6961"
+   },
+   {
+    "entry": "apps/api/src/app/workflows-v1/usecases/get-active-integrations-status/get-active-integrations-status.command.ts",
+    "flow_name": "check-integration-status-flow",
+    "id": "a47e6a0955c02e089d866ff08cbcfdc9"
+   }
+  ],
+  "name": "Manage agent integrations",
+  "patterns_by_file": {
+   "apps/api/src/app/bridge/bridge.controller.ts": [
+    "/bridge/controls/:workflowId/:stepId",
+    "/bridge/diff",
+    "/bridge/preview/:workflowId/:stepId",
+    "/bridge/stateless/discover",
+    "/bridge/stateless/preview/:workflowId/:stepId",
+    "/bridge/stateless/status",
+    "/bridge/status",
+    "/bridge/sync",
+    "/bridge/validate"
+   ]
+  },
+  "resource": "agent-integration"
+ },
+ "onyx_63_cohesive": {
+  "domain": "lattice:dir:onyx",
+  "id": "UF-L-3800ffa26e",
+  "member_count": 63,
+  "members": [
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "view-cc-pair-indexing-flow",
+    "id": "e7851f0d3f02c01dc9e16a30a4d61c2e"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "browse-manage-admin-index-attempt-stage-metrics-flow",
+    "id": "5a78c27a63c9e40e9b54ca6ee9450649"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "view-cc-pair-sync-status-flow",
+    "id": "e7460260e54a611fe70931f2e335e72e"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "browse-manage-admin-cc-pair-external-group-sync-attempts-flow",
+    "id": "6cb8b3425f2a9186f251d1eb436c9418"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "manage-cc-pair-flow",
+    "id": "8272be10dd75b842cc20fbe27e38b1ed"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "update-manage-admin-cc-pair-status-flow",
+    "id": "af59a53fe65877fc6b279e7459cfd386"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "update-manage-admin-cc-pair-name-flow",
+    "id": "d68799dc0d611f2b4b394dc5b37255ab"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "update-manage-admin-cc-pair-property-flow",
+    "id": "cd92f3b5c5a17a9a8a07dbda619c1df4"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "prune-documents-flow",
+    "id": "a8507ca3872b27b8cf44e97d5406c1bf"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "create-manage-admin-cc-pair-prune-flow",
+    "id": "865bded789f617cac4c42b5b3bf17b24"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "monitor-sync-errors-flow",
+    "id": "0512456bc67ae6bbc46864fce3465085"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "browse-manage-admin-cc-pair-errors-flow",
+    "id": "e1ba0de68e5d9f0a4f3209743a578d6e"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "link-credential-to-connector-flow",
+    "id": "3119e0501ceb97b12d3d16c47759e417"
+   },
+   {
+    "entry": "backend/onyx/server/documents/cc_pair.py",
+    "flow_name": "delete-manage-connector-credential-by-credential-id-flow",
+    "id": "ccb9a5de84f484827f35da1f7fb91e84"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "manage-gmail-app-credentials-flow",
+    "id": "706ae675d1a4111cd24c881eb1de6d0a"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "07dda0303316d0c68bb6ace94379ef23"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "fa701c06d5acec3a4679dcd9a990306d"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "manage-google-drive-app-credentials-flow",
+    "id": "c20fc362f6392c5c5205e3e4cb1d27ae"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "501300b1c3682a6a5796cce16bf3da9c"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "8299ac0b6555a1995f78af1498b8e523"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "manage-gmail-service-account-flow",
+    "id": "e7cad08583abf1c58188c5767011a8cf"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "update-manage-admin-connector-gmail-service-account-key-flow",
+    "id": "729d54062eeb94e20b2c6d5f1cc29f8d"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "8dc07b8b520e6cf78ec46fa575afe241"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "manage-google-service-account-flow",
+    "id": "90fbdfbba626eb921ed4c145d0eccf9d"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "fdb2537b56f2f86787ff4f776c1f2ebb"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "b2b80cd7cfc63eaffb8e1387b20b592b"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "configure-service-account-credentials-flow",
+    "id": "09be7eb396344d1d69005058d18d6e07"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "update-manage-admin-connector-gmail-service-account-credential-flow",
+    "id": "c2d212e51e5a1c5bc136b102a746d206"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-admin-connector-google-drive-check-auth-by-credential-id-flow",
+    "id": "d5bf2957ac3efec3d43967ef2a757101"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "create-manage-admin-connector-file-upload-flow",
+    "id": "4ba1f2a378a1c00dc099635953d863bc"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "browse-manage-admin-connector-files-flow",
+    "id": "a8353eab311195a720ceb34663adf2f2"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "create-manage-admin-connector-files-update-flow",
+    "id": "23e0a52b398958c51f82cb2d3fbd8aa6"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-admin-connector-flow",
+    "id": "b071b88610b7bc6a294bff7d2fffa3a1"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-admin-connector-failed-indexing-status-flow",
+    "id": "486206ff7f90785b923cb06f7d7ac222"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-admin-connector-status-flow",
+    "id": "e1b9760571fbaa20290851249e6cc64f"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "create-manage-admin-connector-indexing-status-flow",
+    "id": "affc5f853285916d601dff97c4a261dc"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "create-manage-admin-connector-flow",
+    "id": "0b3ef2824807a56e8981eab9d2d5e994"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "create-manage-admin-connector-with-mock-credential-flow",
+    "id": "ef2e7259f065f6fe018c6ce1303fa163"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "update-manage-admin-connector-by-connector-id-flow",
+    "id": "4f6311d4d7deff7372605ba68d54dd26"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "delete-manage-admin-connector-by-connector-id-flow",
+    "id": "530ac6cc5b2c17a70dae96e7f99df953"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "create-manage-admin-connector-run-once-flow",
+    "id": "dee726984f740cb7a611d645708f6832"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-connector-gmail-authorize-by-credential-id-flow",
+    "id": "98005d0a1133bdaee31faaeac1d38f69"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-connector-google-drive-authorize-by-credential-id-flow",
+    "id": "c2a6946a2d326054e6b0531c3502b4e7"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-connector-gmail-callback-flow",
+    "id": "d361cf9f18bae138c5e760ec9adcc3fd"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-connector-google-drive-callback-flow",
+    "id": "9f0159152d8155a7cbe0e5e9cabc0f0e"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-connector-flow",
+    "id": "b4580014f00cb31d65763ef0fde6740c"
+   },
+   {
+    "entry": "",
+    "flow_name": "",
+    "id": "f4c45eec6fb16fcc88a952cec14b9ef4"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-connector-by-connector-id-flow",
+    "id": "7998d695681c2d77155d7bd7d165fcba"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "create-manage-connector-request-flow",
+    "id": "e027173b849eed8e9e64fc27d19b8bd3"
+   },
+   {
+    "entry": "backend/onyx/server/documents/connector.py",
+    "flow_name": "view-manage-connector-status-flow",
+    "id": "12f834c55b8e41a7ad5eb9e8e013419d"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "view-manage-admin-credential-flow",
+    "id": "81a530bd288e16b55e644dcbf46a5599"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "view-manage-admin-similar-credential-by-source-type-flow",
+    "id": "a5d37741c3d8ad6209a799e1f1335a8a"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "delete-manage-admin-credential-by-credential-id-flow",
+    "id": "f468734fe95e36d6ddf2dfce8ecbcc34"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "update-manage-admin-credential-swap-flow",
+    "id": "62d610070f2cc69cbafed2d40e2f9c88"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "create-manage-credential-flow",
+    "id": "b8080ef61bf8148ba3761d8552d41525"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "create-manage-credential-private-key-flow",
+    "id": "803b795aecd8bb53b7fc46be55966b5b"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "view-manage-credential-flow",
+    "id": "7de8db59612e676f5e45fe0572ed9ffb"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "view-manage-credential-by-credential-id-flow",
+    "id": "df6f5e2e40dac1516ca5de0d47af1129"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "update-manage-admin-credential-by-credential-id-flow",
+    "id": "5f66ac4bcdde7c7fe7235c7a9e85f2f2"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "update-manage-admin-credential-private-key-by-credential-id-flow",
+    "id": "e8c5b234a586f5f5eebc21f91a94d5ae"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "update-manage-credential-by-credential-id-flow",
+    "id": "095a1ebeb314ad8dfc160204d064c3c5"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "delete-manage-credential-by-credential-id-flow",
+    "id": "72f865bdc45acb3208f6388a54e2edd8"
+   },
+   {
+    "entry": "backend/onyx/server/documents/credential.py",
+    "flow_name": "delete-manage-credential-force-by-credential-id-flow",
+    "id": "729f704917662f5d36b177e067d1a62b"
+   }
+  ],
+  "name": "Manage onyx",
+  "patterns_by_file": {},
+  "resource": "onyx"
+ },
+ "tracecat_76_vendored": {
+  "domain": "",
+  "id": "UF-021",
+  "member_count": 76,
+  "members": [
+   {
+    "entry": "frontend/src/components/ai-elements/actions.tsx",
+    "flow_name": "execute-message-actions-flow",
+    "id": "d8e6eaea262855acdac149cd19dc7258"
+   },
+   {
+    "entry": "frontend/src/components/ai-elements/artifact.tsx",
+    "flow_name": "view-artifact-flow",
+    "id": "21604dc13905791af80b6115682b786b"
+   },
+   {
+    "entry": "frontend/src/components/ai-elements/artifact.tsx",
+    "flow_name": "manage-artifact-actions-flow",
+    "id": "bac8964e8c2c4280455442f7aa727409"
+   },
+   {
+    "entry": "frontend/src/components/ai-elements/branch.tsx",
+    "flow_name": "navigate-conversation-branches-flow",
+    "id": "b2ba2ddfd7547c01634ffe0cc14f9e53"
+   },
+   {
+    "entry": "frontend/src/components/ai-elements/chain-of-thought.tsx",
+    "flow_name": "view-chain-of-thought-flow",
+    "id": "2d6e10d64712b434e1ee3062c2fdb560"
+   },
+   {
+    "entry": "frontend/src/components/ai-elements/code-block.tsx",
+    "flow_name": "view-code-block-flow",
+    "id": "d99bd077ab8d798bb68d14490c2a60a3"
+   },
+   {
+    "entry": "frontend/src/components/analytics/PostHogPageView.tsx",
+    "flow_name": "track-page-view-flow",
+    "id": "f919520c5ce22bc3e8d0f0937412bc16"
+   },
+   {
+    "entry": "frontend/src/components/auth/sign-in.tsx",
+    "flow_name": "sign-in-flow",
+    "id": "9d7db73a561fc886e3fb07af9833d9db"
+   },
+   {
+    "entry": "frontend/src/components/auth/sign-up.tsx",
+    "flow_name": "sign-up-flow",
+    "id": "c90c447febe4203b48d36ffa7733c0f0"
+   },
+   {
+    "entry": "frontend/src/components/catalog/catalog-header.tsx",
+    "flow_name": "browse-catalog-flow",
+    "id": "04b4ab7766a818d5619d9f0951b11ec3"
+   },
+   {
+    "entry": "frontend/src/components/data-table/column-header.tsx",
+    "flow_name": "sort-table-columns-flow",
+    "id": "6d2a59c8228971587a9e7e8cdac34f09"
+   },
+   {
+    "entry": "frontend/src/components/data-table/faceted-filter.tsx",
+    "flow_name": "filter-table-data-flow",
+    "id": "6f7381302ef5c14cd3f2516513315f45"
+   },
+   {
+    "entry": "frontend/src/components/data-type/sql-type-display.tsx",
+    "flow_name": "display-sql-type-flow",
+    "id": "bc78af66821e3fce818a98cb8571fe2a"
+   },
+   {
+    "entry": "frontend/src/components/data-type/sql-type-display.tsx",
+    "flow_name": "show-sql-type-badge-flow",
+    "id": "599707c1e6e9330b038c1fddb784718b"
+   },
+   {
+    "entry": "frontend/src/components/filters/filter-multi-select.tsx",
+    "flow_name": "filter-by-multiple-options-flow",
+    "id": "8569f6d59c36a2bc17936361f3fff9b6"
+   },
+   {
+    "entry": "frontend/src/components/form/for-each-field.tsx",
+    "flow_name": "iterate-form-fields-flow",
+    "id": "d00354cdc615390ea47613efdc07dff6"
+   },
+   {
+    "entry": "frontend/src/components/form/icon-picker.tsx",
+    "flow_name": "select-icon-flow",
+    "id": "de510a59bd0c99144bbcf806142cef04"
+   },
+   {
+    "entry": "frontend/src/components/members/members-view-toggle.tsx",
+    "flow_name": "toggle-members-view-flow",
+    "id": "53468c483db5f0ff5aa4daebdb18051e"
+   },
+   {
+    "entry": "frontend/src/components/nav/builder-nav.tsx",
+    "flow_name": "navigate-builder-flow",
+    "id": "dc208779e3cbc3a63e179ed7b36615d9"
+   },
+   {
+    "entry": "frontend/src/components/nav/controls-header.tsx",
+    "flow_name": "access-workflow-controls-flow",
+    "id": "ee9126526d4fae8a9b9cf254916b4c49"
+   },
+   {
+    "entry": "frontend/src/components/nav/dynamic-nav.tsx",
+    "flow_name": "navigate-dynamic-menu-flow",
+    "id": "e002358b2b80b3c9bd5eeccca62f0988"
+   },
+   {
+    "entry": "frontend/src/components/secrets/create-secret-tooltip.tsx",
+    "flow_name": "create-secret-secrets-flow",
+    "id": "24150e105e458c23f1c8bac1bdaf94ba"
+   },
+   {
+    "entry": "frontend/src/components/sidebar/admin-sidebar.tsx",
+    "flow_name": "navigate-admin-panel-flow",
+    "id": "88b38083dff4d5532b91dc01b54be00a"
+   },
+   {
+    "entry": "frontend/src/components/sidebar/app-menu.tsx",
+    "flow_name": "access-app-menu-flow",
+    "id": "ffa857a8a24cebc1d5f14d193faf7d4f"
+   },
+   {
+    "entry": "frontend/src/components/sidebar/app-sidebar.tsx",
+    "flow_name": "navigate-app-flow",
+    "id": "e0808ecb353487fc081fd15fd0fedc33"
+   },
+   {
+    "entry": "frontend/src/components/sidebar/organization-sidebar.tsx",
+    "flow_name": "navigate-organization-flow",
+    "id": "3f3ada882a011b6cfc756d04233f145b"
+   },
+   {
+    "entry": "frontend/src/components/sidebar/sidebar-user-nav.tsx",
+    "flow_name": "manage-user-account-flow",
+    "id": "6cde7ebcc7491ed9347a050c9e9c4d31"
+   },
+   {
+    "entry": "frontend/src/components/sidebar/watchtower-sidebar.tsx",
+    "flow_name": "monitor-system-flow",
+    "id": "b42991f5cdffcecb1ed0193d33c32f02"
+   },
+   {
+    "entry": "frontend/src/components/tables/ag-grid-bulk-actions.tsx",
+    "flow_name": "perform-bulk-actions-flow",
+    "id": "7c5034320b53f960a1041fe58b21cddb"
+   },
+   {
+    "entry": "frontend/src/components/tables/ag-grid-cell-editor.tsx",
+    "flow_name": "edit-table-cells-flow",
+    "id": "0d4074865a7e315af463ae07bb9a2042"
+   },
+   {
+    "entry": "frontend/src/components/tables/ag-grid-context-menu.tsx",
+    "flow_name": "access-table-context-menu-flow",
+    "id": "28b72d0d16c900b2913280a3360c7d5e"
+   },
+   {
+    "entry": "frontend/src/components/tables/ag-grid-pagination.tsx",
+    "flow_name": "navigate-table-data-flow",
+    "id": "eea0112635adc76d7bf51863939e3e30"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-create-dialog.tsx",
+    "flow_name": "create-table-flow",
+    "id": "3c427e179ad9d754a7789401386e48a1"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-delete-dialog.tsx",
+    "flow_name": "delete-table-tables-flow",
+    "id": "f0ac645bbe7bc3052ee81fc0eff840f7"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-import-csv-dialog.tsx",
+    "flow_name": "import-csv-tables-2-flow",
+    "id": "db7a03bcc96f7c447116c09bb20ee408"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-import-table-dialog.tsx",
+    "flow_name": "import-table-flow",
+    "id": "f4c6f822a6a7ecca6050597a4907822d"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-insert-column-dialog.tsx",
+    "flow_name": "manage-table-columns-tables-2-flow",
+    "id": "1f1a3a54a66bf1292e8fb08dc266d6de"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-insert-row-dialog.tsx",
+    "flow_name": "manage-table-rows-tables-flow",
+    "id": "eb06a185bc1605cbc499f2f75a9229a9"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-link-rows-to-case-command.tsx",
+    "flow_name": "link-rows-to-case-flow",
+    "id": "d502d23e0f26ed685df98a56cc364aad"
+   },
+   {
+    "entry": "frontend/src/components/tables/table-panel-context.tsx",
+    "flow_name": "view-table-panel-flow",
+    "id": "5ed8e84a53ac43c61877c54ca4d99d6e"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/align-left-icon.tsx",
+    "flow_name": "align-content-flow",
+    "id": "8b35fa17eb0ee6527e4c02c758e64d69"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/arrow-left-icon.tsx",
+    "flow_name": "navigate-editor-flow",
+    "id": "8b6381df107c6d71c72d4226e4adf226"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/blockquote-icon.tsx",
+    "flow_name": "add-quotes-flow",
+    "id": "81204288496196e2fa372ed1a0ba0a32"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/bold-icon.tsx",
+    "flow_name": "format-text-flow",
+    "id": "63ff14926d4b24be46f9db5c197b4d49"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/close-icon.tsx",
+    "flow_name": "close-editor-flow",
+    "id": "af3cf9e6e0c75766cdd55fa6b3a0734f"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/code-block-icon.tsx",
+    "flow_name": "insert-code-blocks-flow",
+    "id": "8dd0990d434774fc3ffd825451162a75"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/heading-icon.tsx",
+    "flow_name": "structure-headings-flow",
+    "id": "b08243191101006abdba3e1f72e5c4d2"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/highlighter-icon.tsx",
+    "flow_name": "highlight-content-flow",
+    "id": "7c46aaab2f297828b246291b7f2e1d53"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/image-plus-icon.tsx",
+    "flow_name": "insert-media-flow",
+    "id": "1e9122e11ff67b741fae7236dbd6d974"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/link-icon.tsx",
+    "flow_name": "manage-links-flow",
+    "id": "8be43391cfa7a5840a81584ed489fc3c"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/list-icon.tsx",
+    "flow_name": "create-lists-flow",
+    "id": "fc3613c45c98d0c45c0f2d80d81e03a0"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-icons/redo2-icon.tsx",
+    "flow_name": "undo-redo-flow",
+    "id": "016270e47caa91d78a0dae49dc8a2f89"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-node/horizontal-rule-node/horizontal-rule-node-extension.ts",
+    "flow_name": "insert-horizontal-rule-flow",
+    "id": "c31767796a98afa3ee057777c88fd9b8"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-node/image-node/attachment-image-node.tsx",
+    "flow_name": "attach-image-flow",
+    "id": "9c6dc198c39947f0dc798cba5dd3e397"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-node/image-upload-node/image-upload-node-extension.ts",
+    "flow_name": "upload-image-flow",
+    "id": "69b52e83e8c095a4637f03e563509400"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-node/mermaid-code-block-node/mermaid-code-block-node.tsx",
+    "flow_name": "render-mermaid-diagram-flow",
+    "id": "6a15943478ed5d7467a7700ce91d1a63"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-templates/plain/plain-text-editor.tsx",
+    "flow_name": "edit-plain-text-flow",
+    "id": "0b842405ac7357c0be4cdf171278e362"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-templates/simple/simple-editor.tsx",
+    "flow_name": "edit-simple-content-flow",
+    "id": "e51dda75c488cf8dcd366989bb5ebcf7"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-templates/simple/theme-toggle.tsx",
+    "flow_name": "toggle-theme-flow",
+    "id": "978c74a34206f38a1b2ffe2b3dbc4a3f"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/badge/badge.tsx",
+    "flow_name": "display-badge-flow",
+    "id": "2a26a88eea1b85baf4e6ff1dedeb3749"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/button/button.tsx",
+    "flow_name": "trigger-button-action-flow",
+    "id": "81c01432210dd4e96ffe26e6a527fa67"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/card/card.tsx",
+    "flow_name": "organize-card-content-flow",
+    "id": "dc61e1aece920b3e867959bd143cd2e6"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/dropdown-menu/dropdown-menu.tsx",
+    "flow_name": "open-dropdown-menu-flow",
+    "id": "4fa56f74687434b04244b17295cfcfc6"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/input/input.tsx",
+    "flow_name": "enter-text-input-flow",
+    "id": "23007d30e2708cfe43f0d90fb26a1665"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/popover/popover.tsx",
+    "flow_name": "show-popover-content-flow",
+    "id": "d7ae0445189a193618f4c89cc17b0ec2"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/separator/separator.tsx",
+    "flow_name": "structure-layout-spacing-flow",
+    "id": "bbdca0bc19a62f19398c9c63eca59cd9"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui-primitive/toolbar/toolbar.tsx",
+    "flow_name": "arrange-toolbar-controls-flow",
+    "id": "29b62331adc88d86d4e7eb42ebc676d0"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui/blockquote-button/blockquote-button.tsx",
+    "flow_name": "toggle-blockquote-flow",
+    "id": "272c564b69a356a3090112a808fd33a4"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui/blockquote-button/use-blockquote.ts",
+    "flow_name": "format-text-with-shortcuts-flow",
+    "id": "3757e34ae757a6874d8258f262768c5e"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui/code-block-button/code-block-button.tsx",
+    "flow_name": "toggle-code-block-flow",
+    "id": "918d49cbc8eabfc5f1276a13ecadd27d"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui/color-highlight-button/color-highlight-button.tsx",
+    "flow_name": "apply-color-highlight-flow",
+    "id": "943534527a50088b0453be5f68724400"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui/color-highlight-button/use-color-highlight.ts",
+    "flow_name": "remove-highlight-flow",
+    "id": "d3100ca70461d6d34efd57e65b820ad3"
+   },
+   {
+    "entry": "frontend/src/components/tiptap-ui/heading-button/heading-button.tsx",
+    "flow_name": "apply-heading-flow",
+    "id": "363362d4f70b39f2fed536ec662a1562"
+   },
+   {
+    "entry": "frontend/src/components/ui/calendar.tsx",
+    "flow_name": "select-date-flow",
+    "id": "be1e5c5fe40d70739d2c0f3137711f26"
+   },
+   {
+    "entry": "frontend/src/components/ui/carousel.tsx",
+    "flow_name": "view-carousel-flow",
+    "id": "d236beafe8c42a7e60fee38920c1ef55"
+   },
+   {
+    "entry": "frontend/src/components/ui/collapsible.tsx",
+    "flow_name": "toggle-collapsible-flow",
+    "id": "2f4c777a78b843fd060bfcc596f4b4e7"
+   }
+  ],
+  "name": "Connect Google integration provider",
+  "patterns_by_file": {},
+  "resource": "integration"
+ },
+ "tracecat_dep_names": [
+  "@ai-sdk/react",
+  "@tiptap/extension-code-block",
+  "@tiptap/extension-highlight",
+  "@tiptap/extension-horizontal-rule",
+  "@tiptap/extension-image",
+  "@tiptap/extension-list",
+  "@tiptap/extension-subscript",
+  "@tiptap/extension-superscript",
+  "@tiptap/extension-table",
+  "@tiptap/extension-table-cell",
+  "@tiptap/extension-table-header",
+  "@tiptap/extension-table-row",
+  "@tiptap/extension-text-align",
+  "@tiptap/extension-typography",
+  "@tiptap/extensions",
+  "@tiptap/markdown",
+  "@tiptap/pm",
+  "@tiptap/react",
+  "@tiptap/starter-kit",
+  "ai",
+  "react",
+  "next"
+ ],
+ "twenty_131_settings": {
+  "domain": "",
+  "id": "UF-019",
+  "member_count": 131,
+  "members": [
+   {
+    "entry": "packages/twenty-front/src/pages/settings/__stories__/SettingsExperience.stories.tsx",
+    "flow_name": "manage-datetime-settings-flow",
+    "id": "5bb401ff6376b510e8c4c9037e4fabd6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/developers/graphql/mutations/assignRoleToApiKey.ts",
+    "flow_name": "assign-api-key-role-flow",
+    "id": "d062f8f3b5901d0c2455e89a855f331d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/updateWorkspaceMemberRoleMutation.ts",
+    "flow_name": "assign-role-to-member-flow",
+    "id": "f2ad01eff37225c417c460b53721a2a5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/deleteRoleMutation.ts",
+    "flow_name": "delete-role-flow",
+    "id": "da94b10b4860128b69bbd9ba04539df4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/upsertFieldPermissionsMutation.ts",
+    "flow_name": "manage-field-permissions-flow",
+    "id": "e1051c31e0b36ff229f952ff2beeeb82"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/members/components/MemberPermissionsTab.tsx",
+    "flow_name": "manage-member-permissions-flow",
+    "id": "495513349c8e54f5ce30a60ad665aab0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/upsertObjectPermissionsMutation.ts",
+    "flow_name": "manage-object-permissions-flow",
+    "id": "588e4ba51127e1f3f3364e8a197ece23"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/upsertPermissionFlagsMutation.ts",
+    "flow_name": "manage-permission-flags-flow",
+    "id": "f2f6de650ecbb963513f52ac06a8dd7c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/upsertRowLevelPermissionPredicatesMutation.ts",
+    "flow_name": "manage-row-level-permissions-flow",
+    "id": "9b34b09c748f169e0f2b5f545b45edac"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/profile/components/DeleteAccount.tsx",
+    "flow_name": "delete-account-flow",
+    "id": "4c47fd62ecb7cf77d5e7bb8761d07d34"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/accounts/components/SettingsAccountsPasswordController.tsx",
+    "flow_name": "manage-account-security-flow",
+    "id": "679b0a7580db051237db05d9722578af"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/accounts/components/SettingsAccountsRowDropdownMenu.tsx",
+    "flow_name": "manage-connected-accounts-flow",
+    "id": "03ec46760386ffcaafd43dced68c534e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/security/components/SSO/SettingsSSOIdentityProviderRowRightContainer.tsx",
+    "flow_name": "manage-sso-provider-flow",
+    "id": "ea823cc89bfa3c6390f77d0ead2f2b9f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/two-factor-authentication/components/DeleteTwoFactorAuthenticationMethod.tsx",
+    "flow_name": "remove-two-factor-authentication-flow",
+    "id": "4b15a5f08c563ee0764e01cc1b123ea8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/application-registrations/graphql/mutations/rotateApplicationRegistrationClientSecret.ts",
+    "flow_name": "rotate-client-secret-flow",
+    "id": "b7cd17b615f9a059189ec1456640a4e4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/workspace/components/ToggleImpersonate.tsx",
+    "flow_name": "toggle-user-impersonation-flow",
+    "id": "cfb37c5866c2cd55dd6ce54f2806f5cf"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/developers/graphql/queries/getApiKeys.ts",
+    "flow_name": "manage-api-keys-flow",
+    "id": "87cbdd65a192a5c5c29e9fe8c14e772f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/developers/graphql/queries/getWebhooks.ts",
+    "flow_name": "manage-webhooks-flow",
+    "id": "93293a619289beeac187cf2176c76637"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/application-registrations/graphql/mutations/deleteApplicationRegistration.ts",
+    "flow_name": "delete-application-registration-flow",
+    "id": "ffb91bd96a67c0b6b65310592ef5f3e5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/application-registrations/graphql/queries/findApplicationRegistrationVariables.ts",
+    "flow_name": "manage-registration-variables-flow",
+    "id": "3c44132d50ae1edb55c0c38ed89c45b7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/profile/components/DeleteWorkspace.tsx",
+    "flow_name": "delete-workspace-flow",
+    "id": "275c639221cb94e0bae1445fdcb9616e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/components/SettingsWorkspaceDomainCard.tsx",
+    "flow_name": "manage-workspace-domain-flow",
+    "id": "c0390e0b9cf22cd46388c8b2e12d4af1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/security/components/approvedAccessDomains/SettingsApprovedAccessDomainsListCard.tsx",
+    "flow_name": "manage-approved-access-domains-flow",
+    "id": "f64b0106cf69458a04b57db99afe17ec"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/graphql/mutations/deletePublicDomain.ts",
+    "flow_name": "delete-public-domain-flow",
+    "id": "8e0ce7c2975865424fd296bc9aed8737"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/lab/components/SettingsLabContent.tsx",
+    "flow_name": "toggle-lab-feature-flow",
+    "id": "63b511b3f8274ff504fb3078cb14c172"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/usage/components/UsageDailyChartSection.tsx",
+    "flow_name": "track-daily-usage-flow",
+    "id": "701d834c92e674cbcc72ce24242e4d10"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/billing/components/SettingsBillingPlansContent.tsx",
+    "flow_name": "manage-subscription-plans-flow",
+    "id": "7a02d11d57022e7a9c5e7abf502f3b9f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/emailing-domains/graphql/mutations/deleteEmailingDomain.ts",
+    "flow_name": "delete-emailing-domain-flow",
+    "id": "518f1fe7ad0999b19df5f8091a73fadb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/unsubscribe-topics/graphql/mutations/deleteUnsubscribeTopic.ts",
+    "flow_name": "delete-unsubscribe-topic-flow",
+    "id": "520b9e9ffc2f6788d807d7d75044e902"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/accounts/components/SettingsAccountsBlocklistInput.tsx",
+    "flow_name": "manage-blocklist-flow",
+    "id": "1608363a68cca2c858adf22505ba4be7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/workspace/components/SettingsWorkspaceEmailGroupSourceCell.tsx",
+    "flow_name": "manage-email-group-sources-flow",
+    "id": "409a6d833727f97666b537941b5ab997"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/accounts/components/SettingsAccountsMessageFolderCard.tsx",
+    "flow_name": "manage-message-folders-flow",
+    "id": "8221aa8fd8a4e836cab52aa6a10ca36b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/security/components/SettingsSecurityEditableProfileFields.tsx",
+    "flow_name": "manage-profile-fields-flow",
+    "id": "a916478385aaff1f115c82c7c75634c2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/experience/components/FormatPreferencesSettings.tsx",
+    "flow_name": "manage-format-preferences-flow",
+    "id": "fa8c29baf1620ab815dff56fa3da6bb0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/triggers/SettingsLogicFunctionTriggerPayloadFormat.tsx",
+    "flow_name": "manage-trigger-payload-format-flow",
+    "id": "8f9c91277f64f18bf02643ffbcc75f12"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/event-logs/components/EventLogFilters.tsx",
+    "flow_name": "filter-event-logs-flow",
+    "id": "387d3be230c7a77969f396ddd9b39ead"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/event-logs/components/SettingsLogs.tsx",
+    "flow_name": "view-event-logs-flow",
+    "id": "fc6f25f256d60dae603cec7b148153d6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/event-logs/components/EventLogDatePickerInput.tsx",
+    "flow_name": "filter-event-logs-by-date-flow",
+    "id": "3e80f3b84ee38969347b89e3f5106a22"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/event-logs/components/EventLogJsonCell.tsx",
+    "flow_name": "inspect-event-details-flow",
+    "id": "64f70d9c08662e21705e7e78a0396a77"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/emailing-domains/components/SettingsEmailingDomainVerifyButton.tsx",
+    "flow_name": "verify-emailing-domain-flow",
+    "id": "8dd98b0f0484b6c4c8bc9155dcc1f07c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/emailing-domains/graphql/queries/getAllEmailingDomains.ts",
+    "flow_name": "view-emailing-domains-flow",
+    "id": "e3e0578daf49ac9807f283c911bff66d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/components/CheckCustomDomainValidRecordsEffect.tsx",
+    "flow_name": "validate-custom-domain-records-flow",
+    "id": "9f9492a9a54546acf7b543304949a23e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/graphql/mutations/checkPublicDomainValidRecords.ts",
+    "flow_name": "validate-public-domain-records-flow",
+    "id": "953c29e868ad7526261d9e0ece592349"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/graphql/queries/findManyPublicDomains.ts",
+    "flow_name": "view-public-domains-flow",
+    "id": "c64e94d3eb1261b3607ac7189321a28f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/unsubscribe-topics/graphql/queries/getUnsubscribePagePreviewUrl.ts",
+    "flow_name": "preview-unsubscribe-page-flow",
+    "id": "8bed99257ff959e867fa8b1e1642d15d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/ai/components/SettingsAiModelsTable.tsx",
+    "flow_name": "browse-ai-models-flow",
+    "id": "b80fef30e586b034221dff0f05ed9115"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/components/SettingsDataModelPreviewFormCard.tsx",
+    "flow_name": "preview-data-model-flow",
+    "id": "0970bc04ee651e92291d96dae078a0e3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/ai/components/SettingsAiModelHoverCard.tsx",
+    "flow_name": "view-ai-model-details-flow",
+    "id": "4ab721186fea4caa27c59274ff573699"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/admin-panel/ai/components/SettingsAdminAI.tsx",
+    "flow_name": "view-ai-settings-flow",
+    "id": "99f00ca9f521dacdf2bc4ccbebd48ac2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/enterprise/graphql/queries/enterpriseSubscriptionStatus.ts",
+    "flow_name": "check-subscription-status-flow",
+    "id": "e350c981c9c8eb515763d9aba78c7eaf"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/billing/components/SettingsBillingContent.tsx",
+    "flow_name": "view-billing-overview-flow",
+    "id": "17cb9dc151645880f97dc6e13f53b597"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/enterprise/components/EnterprisePlanModal.tsx",
+    "flow_name": "view-enterprise-plan-flow",
+    "id": "a0dfe70ab6046bcc0ba5274e1b23ab82"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/billing/components/internal/SettingsBillingSubscriptionInfoCard.tsx",
+    "flow_name": "view-subscription-details-flow",
+    "id": "17b9be5832f58a6e7dfc17bea338c0a8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/usage/components/SettingsUsageAnalyticsSection.tsx",
+    "flow_name": "view-usage-analytics-flow",
+    "id": "cf4d54260fcaa82d60584ec85ae8dd09"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/applications/components/SettingsApplicationAboutSidebar.tsx",
+    "flow_name": "view-application-details-flow",
+    "id": "c8e05320458d79d3395838cc26c9810c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/application-registrations/graphql/queries/findOneApplicationRegistration.ts",
+    "flow_name": "view-application-registration-details-flow",
+    "id": "5d5b47d0ee131acbdb393c0775907ccc"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/application-registrations/graphql/queries/findManyApplicationRegistrations.ts",
+    "flow_name": "view-application-registrations-flow",
+    "id": "660d255ff1f4fd0d9abf9b4088904fe0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/application-registrations/graphql/queries/findApplicationRegistrationStats.ts",
+    "flow_name": "view-registration-statistics-flow",
+    "id": "ce28b7f5ffaa56cd2a7230c01f1ad60d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/mcp-and-apis/states/openAPIReference.ts",
+    "flow_name": "view-api-reference-flow",
+    "id": "0a3ef13d19e315402ff814c01b536085"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/config-variables/components/ConfigVariableTable.tsx",
+    "flow_name": "view-config-variables-flow",
+    "id": "54720fe45006ab5334c35857992970c9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/enterprise/graphql/queries/enterprisePortalSession.ts",
+    "flow_name": "access-enterprise-portal-flow",
+    "id": "3b660fdc3b4b229e7c797c2bf53bf60c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/components/SettingsRolesList.tsx",
+    "flow_name": "view-roles-list-flow",
+    "id": "e6f2c6e074e540c1f6f6b8586e4d2455"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/members/components/MemberInfosTab.tsx",
+    "flow_name": "view-member-info-flow",
+    "id": "6e854cc03d28048f99780c69da1ca5a7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/legal/components/SettingsDpaAgreementsTable.tsx",
+    "flow_name": "view-dpa-agreements-flow",
+    "id": "1d92c148d131ad1fa945790147c2a4a1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/legal/components/DpaDocumentPreview.tsx",
+    "flow_name": "preview-dpa-document-flow",
+    "id": "c351f7680262585e48bd5589405870c9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/createRoleMutation.ts",
+    "flow_name": "create-role-flow",
+    "id": "8242c00b946fe9907021489286e2cda5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/graphql/mutations/updateRoleMutation.ts",
+    "flow_name": "update-role-flow",
+    "id": "9f24936fe8484743b2fad0a9ca8d9d42"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/security/components/SettingsSecurityAuthBypassOptionsList.tsx",
+    "flow_name": "configure-authentication-bypass-flow",
+    "id": "c98b8d711ae7a8d236f9efe7a5a3b133"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/security/components/SettingsSecurityAuthProvidersOptionsList.tsx",
+    "flow_name": "configure-authentication-providers-flow",
+    "id": "e729174d2c6a4e8c37889cf05b3d38a4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/security/components/SSO/SettingsSSOIdentitiesProvidersListCard.tsx",
+    "flow_name": "configure-sso-identity-providers-flow",
+    "id": "87500f511fcf1c874015d70a10c5d8c4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/enterprise/graphql/mutations/setEnterpriseKey.ts",
+    "flow_name": "configure-enterprise-key-flow",
+    "id": "20b08f47f26a1547a2a8bdf54489001f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/developers/graphql/mutations/createApiKey.ts",
+    "flow_name": "create-api-key-flow",
+    "id": "2bcfdc72bca513d6dcee74067df75c07"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/graphql/mutations/createPublicDomain.ts",
+    "flow_name": "create-public-domain-flow",
+    "id": "14ffe7e32fa49e96ce026c67611506ce"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/states/selectedPublicDomainState.ts",
+    "flow_name": "select-public-domain-flow",
+    "id": "a1f77da097f69cdef2018826dbf67134"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/components/SettingsDnsRecordsTable.tsx",
+    "flow_name": "configure-dns-records-flow",
+    "id": "703e79f9f5bac897e951e63db7f565f1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/domains/components/SettingsDomainRecords.tsx",
+    "flow_name": "configure-domain-records-flow",
+    "id": "39d98712d6c18b8ab8ac36550d1fc47b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/triggers/SettingsLogicFunctionCronTriggerSection.tsx",
+    "flow_name": "configure-cron-trigger-flow",
+    "id": "5a1688c929e4e16271f9f62cf6169856"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/triggers/SettingsLogicFunctionDatabaseEventTriggerSection.tsx",
+    "flow_name": "configure-database-event-trigger-flow",
+    "id": "86044b139fa8256cd9c441c94c75302f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/components/SettingsDatabaseEventsForm.tsx",
+    "flow_name": "configure-database-events-flow",
+    "id": "9bf19cb3fb69c1d686b06fc7b6f19d80"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/triggers/SettingsLogicFunctionHttpTriggerSection.tsx",
+    "flow_name": "configure-http-trigger-flow",
+    "id": "5be048981779b5bd3650d364614ded6d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/triggers/SettingsLogicFunctionToolTriggerSection.tsx",
+    "flow_name": "configure-tool-trigger-flow",
+    "id": "a907de94b30dee0cf51241c566c97226"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/triggers/SettingsLogicFunctionWorkflowActionTriggerSection.tsx",
+    "flow_name": "configure-workflow-action-trigger-flow",
+    "id": "5a8abcceff47a57536a9a52460248f2f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/SettingsLogicFunctionNewForm.tsx",
+    "flow_name": "create-logic-function-flow",
+    "id": "0cc418059894173c9069ed9eeacb1127"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/tabs/SettingsLogicFunctionSettingsTab.tsx",
+    "flow_name": "configure-logic-function-settings-flow",
+    "id": "8e2f184a8c238a0cd47a7a64b92201ba"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/developers/graphql/mutations/createWebhook.ts",
+    "flow_name": "create-webhook-flow",
+    "id": "1a6714c78557d9273c52bbc306ee6994"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/fields/forms/address/components/SettingsDataModelFieldAddressForm.tsx",
+    "flow_name": "configure-address-field-flow",
+    "id": "bcc0dd4316964797ece325968342a602"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/fields/forms/boolean/components/SettingsDataModelFieldBooleanForm.tsx",
+    "flow_name": "configure-boolean-field-flow",
+    "id": "55e1e2e35eb9059a62d73f2c0e23d717"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/fields/forms/components/text/SettingsDataModelFieldTextForm.tsx",
+    "flow_name": "configure-text-field-flow",
+    "id": "f7943b6372826d59126c0d5c0c3cbec6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/fields/forms/components/SettingsDataModelFieldOnClickActionForm.tsx",
+    "flow_name": "configure-field-actions-flow",
+    "id": "11542be0c7c000146fe0944788f45935"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/fields/forms/components/SettingsObjectNewFieldSelector.tsx",
+    "flow_name": "create-new-field-flow",
+    "id": "d08d14abb46454e7232ac3b9f0e4c9fb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/experience/components/DateTimeSettingsDateFormatSelect.tsx",
+    "flow_name": "configure-date-format-flow",
+    "id": "de803db6ab2c42e9073f5972d4a73afb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/experience/components/NumberFormatSelect.tsx",
+    "flow_name": "configure-number-format-flow",
+    "id": "34657604e0f803f228428153f531045d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/experience/components/DateTimeSettingsTimeFormatSelect.tsx",
+    "flow_name": "configure-time-format-flow",
+    "id": "b8e3d80d7469d519eefaef11bb59620a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/experience/components/DateTimeSettingsTimeZoneSelect.tsx",
+    "flow_name": "configure-timezone-flow",
+    "id": "31f6bd589b9ac9616e8272cfa08e4384"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/components/SettingsCustomizeVideoModal.tsx",
+    "flow_name": "customize-video-settings-flow",
+    "id": "e2204523ccd49f13ea41db7dbcd5a8f6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/workspace/components/SettingsWorkspaceEmailChannelDomainStatusCell.tsx",
+    "flow_name": "configure-email-channel-flow",
+    "id": "9f229685ad88205e21b6c9d7d35b7ba9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/accounts/components/SettingsAccountsMessageChannelDetails.tsx",
+    "flow_name": "configure-message-channels-flow",
+    "id": "5762ed274a013a396c594b1c997ddfc8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/unsubscribe-topics/graphql/mutations/createUnsubscribeTopic.ts",
+    "flow_name": "create-unsubscribe-topic-flow",
+    "id": "0ed3df2903268f6698629b98c2dd4120"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/unsubscribe-topics/graphql/mutations/updateUnsubscribeTopic.ts",
+    "flow_name": "update-unsubscribe-topic-flow",
+    "id": "dd91b9a0b9f24edad7bffccca8f6c03a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/fields/forms/components/SettingsDataModelFieldIconLabelForm.tsx",
+    "flow_name": "edit-field-metadata-flow",
+    "id": "65c395144ae74b0d7603657c00e1c9c5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/logic-functions/components/SettingsLogicFunctionCodeEditor.tsx",
+    "flow_name": "edit-logic-function-code-flow",
+    "id": "edb137fba6b3eb37a6ebaead8249bc08"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/members/components/MemberEmailField.tsx",
+    "flow_name": "edit-member-email-flow",
+    "id": "7921e1a2b4e0db096903eaf14e4c4c43"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/members/components/MemberNameFields.tsx",
+    "flow_name": "edit-member-name-flow",
+    "id": "4f7fc77d91aca52dd349d45d2aa270ca"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/components/SettingsEditableTitle.tsx",
+    "flow_name": "edit-settings-title-flow",
+    "id": "46f78f977ee31997b2d0135000e088da"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/workspace/components/NameField.tsx",
+    "flow_name": "edit-workspace-name-flow",
+    "id": "9a50504c0fe72531bf3c73b1a1db4f45"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/components/SettingsDatePickerInput.tsx",
+    "flow_name": "select-date-in-settings-flow",
+    "id": "31a6d1e4b64433b861be8ed04164f2c1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/event-logs/components/EventLogTableSelector.tsx",
+    "flow_name": "select-event-log-table-flow",
+    "id": "5f27d4dddd5e89a01ce2486e24116273"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/admin-panel/ai/graphql/mutations/setAdminAiModelRecommended.ts",
+    "flow_name": "set-ai-model-recommendations-flow",
+    "id": "8c8ba817264682325668b26b8dc8dd2c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/roles/components/SettingsRolesDefaultRole.tsx",
+    "flow_name": "set-default-role-flow",
+    "id": "74f00ba2e7f086445c16a9fbd6a7044c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/data-model/fields/forms/components/SettingsDataModelFieldIsUniqueForm.tsx",
+    "flow_name": "set-field-constraints-flow",
+    "id": "643036e53e5721ef99c053510190e421"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/profile/components/SetOrChangePassword.tsx",
+    "flow_name": "set-or-change-password-flow",
+    "id": "10c0ddf31291c471d8c16c59d13151cb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/mcp-and-apis/components/SettingsMcpSetup.tsx",
+    "flow_name": "setup-mcp-flow",
+    "id": "a0143676cb4ba7ce77f3337bb4ae1797"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/two-factor-authentication/components/TwoFactorAuthenticationSetupForSettingsEffect.tsx",
+    "flow_name": "setup-two-factor-authentication-flow",
+    "id": "d9b8eaa0db234c84c81c2776be21ede7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/application-registrations/graphql/mutations/updateApplicationRegistration.ts",
+    "flow_name": "update-application-registration-flow",
+    "id": "dd4584afe78844ac567e6d7f6414594f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/profile/components/EmailField.tsx",
+    "flow_name": "update-profile-email-flow",
+    "id": "27f3c4eca473671c275f7bab56fe2d6c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/profile/components/NameFields.tsx",
+    "flow_name": "update-profile-name-flow",
+    "id": "70eb84a89b560f500872c8cc09b27f17"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/members/graphql/mutations/uploadWorkspaceMemberProfilePicture.ts",
+    "flow_name": "upload-member-profile-picture-flow",
+    "id": "be15d80cc7fb313d4551cdb57325ea27"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/workspace/components/WorkspaceLogoUploader.tsx",
+    "flow_name": "upload-workspace-logo-flow",
+    "id": "f90391b0dfed2feaf5c56b6377712050"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/workspace-member/components/WorkspaceMemberPictureUploader.tsx",
+    "flow_name": "upload-workspace-member-picture-flow",
+    "id": "7254e2a23c3446a9775a8a0c030e3e67"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/security/components/SSO/SettingsSSOSAMLForm.tsx",
+    "flow_name": "configure-saml-sso-flow",
+    "id": "a331090e330f76f3848d219114384e7c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-trigger/components/WorkflowEditTriggerWebhookForm.tsx",
+    "flow_name": "edit-webhook-trigger-flow",
+    "id": "79c7513dac0c6133f5bc64c36c398cfc"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/admin-panel/ai/graphql/queries/getModelsDevProviders.ts",
+    "flow_name": "discover-ai-providers-flow",
+    "id": "9856bbe3f0f344e5400e5891201ab701"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/applications/graphql/mutations/uninstallApplication.ts",
+    "flow_name": "uninstall-application-flow",
+    "id": "18375cbe3f05e97294795a64d4e86c4b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/usage/components/UsageBreakdownPieSection.tsx",
+    "flow_name": "analyze-usage-breakdown-flow",
+    "id": "471c95cbe701f3660ccb5039971688ee"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/enterprise/graphql/queries/enterpriseCheckoutSession.ts",
+    "flow_name": "checkout-enterprise-subscription-flow",
+    "id": "c0004414ac0975ac800238af60467968"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/billing/components/SettingsBillingTabBar.tsx",
+    "flow_name": "navigate-billing-sections-flow",
+    "id": "48ba8a3318e3d8a27ccab6c5089048a1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/billing/components/internal/ResourceCreditPackagePickerModal.tsx",
+    "flow_name": "purchase-resource-credits-flow",
+    "id": "f78d25cf8e3e0685051ab511541e0cb6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/billing/components/StartSubscriptionConfirmationModal.tsx",
+    "flow_name": "start-subscription-flow",
+    "id": "6319501759190cc5aa31d026a2755b10"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/usage/components/UsageByUserTableSection.tsx",
+    "flow_name": "review-user-usage-flow",
+    "id": "5fac612fbb8e2c3c341abf094cd7fa69"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/enterprise/graphql/mutations/releaseEnterpriseServerBinding.ts",
+    "flow_name": "release-server-binding-flow",
+    "id": "2f608eead8078110da701abf61e2ac55"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/settings/legal/components/DpaNotice.tsx",
+    "flow_name": "review-dpa-notice-flow",
+    "id": "c326b1b1644334491007cdea2b4de0d2"
+   }
+  ],
+  "name": "Configure workspace, accounts, billing, and security settings",
+  "patterns_by_file": {
+   "packages/twenty-front/src/pages/settings/__stories__/SettingsExperience.stories.tsx": [
+    "/settings/__stories__/SettingsExperience.stories"
+   ]
+  },
+  "resource": "setting"
+ },
+ "twenty_209_browse_object_record": {
+  "domain": "lattice:action:object-record-browse",
+  "id": "UF-L-f0964abc5a",
+  "member_count": 209,
+  "members": [
+   {
+    "entry": "packages/twenty-front/src/pages/object-record/RecordIndexPage.tsx",
+    "flow_name": "browse-records-flow",
+    "id": "d7ad571b096f3d27fa1f3842f318c956"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/multiple-record-picker/components/MultipleRecordPickerSearchInput.tsx",
+    "flow_name": "search-records-flow",
+    "id": "b65704a5130f7ea565f5b3f092c67728"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/components/RecordIndexFiltersToContextStoreEffect.tsx",
+    "flow_name": "filter-records-flow",
+    "id": "ccd513ef1c477881982be7d07ad8962e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useFindManyRecords.ts",
+    "flow_name": "fetch-records-flow",
+    "id": "64fef9bc8c9a5f4a2a3766f1c34e3754"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/select/utils/getObjectFilterFields.ts",
+    "flow_name": "filter-object-records-flow",
+    "id": "e47af5644379cf4496b506eef3d716c3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/multiple-objects/hooks/useCombinedFindManyRecords.ts",
+    "flow_name": "fetch-multiple-object-records-flow",
+    "id": "a20c26afc01c5b6154876d44c65b6bf6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/hooks/useGetDateFilterDisplayValue.ts",
+    "flow_name": "display-filter-value-flow",
+    "id": "84808fd366a263be7a3c4c8c93486fb6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter/hooks/useGetRecordFilterDisplayValue.ts",
+    "flow_name": "display-filter-values-flow",
+    "id": "8de6f0d953118dbd84ed35601b421d91"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/record-detail-section/components/RecordDetailSectionContainer.tsx",
+    "flow_name": "view-record-details-flow",
+    "id": "9266189d1708c60f61c86b8cf0616c67"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-show/components/PageLayoutRecordPageRenderer.tsx",
+    "flow_name": "view-record-details-flow",
+    "id": "9b51ebbf675efa761ee0b81e4dee56ce"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-show/components/ObjectRecordShowPageBreadcrumb.tsx",
+    "flow_name": "display-record-show-page-flow",
+    "id": "48cf63ed1f4a405a0cadac271ecfedce"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-show/components/SummaryCard.tsx",
+    "flow_name": "display-record-summary-flow",
+    "id": "77c811d1ebbbffa26a3959aca4c40b12"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-card/components/RecordCard.tsx",
+    "flow_name": "display-record-card-flow",
+    "id": "e635089483ba9cc978bb1ac15253d4d5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/components/RecordChip.tsx",
+    "flow_name": "display-record-chip-flow",
+    "id": "a7217cdf938e55e46fee8da4f0369c56"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-title-cell/components/RecordTitleCell.tsx",
+    "flow_name": "display-record-title-flow",
+    "id": "cbd9c515c4cb0ed0e50670428e31dbab"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-title-cell/components/RecordTitleFullNameFieldDisplay.tsx",
+    "flow_name": "display-full-name-title-field-flow",
+    "id": "f28be42457ece615a4b3d04de2f3ade5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-title-cell/components/RecordTitleCellTextFieldDisplay.tsx",
+    "flow_name": "display-text-title-field-flow",
+    "id": "e4728864a98956cda1ce556072d8c919"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-inline-cell/property-box/components/PropertyBox.tsx",
+    "flow_name": "display-property-box-flow",
+    "id": "6cf4d5175edc9e61d989106418f94bbb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/multiple-record-picker/components/MultipleRecordPickerItemsDisplay.tsx",
+    "flow_name": "display-record-items-flow",
+    "id": "b77ae5634169ce95bc1d9783beaf83e9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/components/RecordFieldList.tsx",
+    "flow_name": "view-record-fields-flow",
+    "id": "7b0266f0f00d737357afc4e49411ae62"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-store/states/selectors/recordStoreFieldValueSelector.ts",
+    "flow_name": "access-record-field-value-flow",
+    "id": "a3a9ec7dadafc45e2e2f5cdc16db75e6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-store/hooks/useRecordFieldValue.ts",
+    "flow_name": "retrieve-record-field-value-flow",
+    "id": "80757b1be1c90677b7124f5872edd281"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field/ui/components/FieldDisplay.tsx",
+    "flow_name": "display-record-field-flow",
+    "id": "19e57bec75d88b1339750c4d3b34b8ac"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/components/RecordIndexContainer.tsx",
+    "flow_name": "display-record-index-flow",
+    "id": "c6d1268638a6588bc8cb4409cd0c9de3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/components/RecordIndexContainerGater.tsx",
+    "flow_name": "view-record-index-flow",
+    "id": "46089011da1cbb1aadf28a0339307747"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-table-widget/components/RecordTableWidget.tsx",
+    "flow_name": "display-record-table-flow",
+    "id": "7857f133db6de60c283bd91213c663f5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-table/components/RecordTableEmpty.tsx",
+    "flow_name": "display-empty-record-table-flow",
+    "id": "54e7167960340b9175ca1b917b69b48b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/states/recordIndexCalendarLayoutState.ts",
+    "flow_name": "display-calendar-layout-flow",
+    "id": "1923687771be0f14599f6451cc0a0923"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/multiple-record-picker/hooks/useMultipleRecordPickerOpen.ts",
+    "flow_name": "open-multiple-record-picker-flow",
+    "id": "319c29a124893aa1984900bf2334e605"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/multiple-record-picker/hooks/useMultipleRecordPickerPerformSearch.ts",
+    "flow_name": "search-multiple-record-picker-flow",
+    "id": "b4903f910939c4596004eaa7c85cd5a3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/single-record-picker/hooks/useSingleRecordPickerOpen.ts",
+    "flow_name": "open-single-record-picker-flow",
+    "id": "83d1eb7db12634bca3388a3c15944df9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/single-record-picker/hooks/useSingleRecordPickerPerformSearch.ts",
+    "flow_name": "search-single-record-picker-flow",
+    "id": "56ebd99483163fc5b4adf1e04ecab49b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/hooks/useFieldListFieldMetadataItems.ts",
+    "flow_name": "retrieve-field-metadata-flow",
+    "id": "28462136e8ce5ae176b2970f83f66282"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-title-cell/components/RecordTitleCellUuidFieldDisplay.tsx",
+    "flow_name": "display-uuid-title-field-flow",
+    "id": "b804ef485b0b71aba7046f9a513d7672"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/states/isFetchingMoreRecordsFamilyState.ts",
+    "flow_name": "fetch-more-records-flow",
+    "id": "fb0e2e542253cd0e879e360e2f018091"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/states/selectors/availableRecordGroupIdsComponentSelector.ts",
+    "flow_name": "filter-available-record-groups-flow",
+    "id": "7881b1c36ed79ec50259d1c7f51ef32a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownActorSelect.tsx",
+    "flow_name": "filter-by-actor-flow",
+    "id": "3e1412b10c9bd379b257b59c227100b2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownBooleanSelect.tsx",
+    "flow_name": "filter-by-boolean-flow",
+    "id": "abf5ff6b57fcbd29308f6c476d850945"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownCountrySelect.tsx",
+    "flow_name": "filter-by-country-flow",
+    "id": "8fdd0ff7efbd82e38a1ebd821f1353db"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownCurrencySelect.tsx",
+    "flow_name": "filter-by-currency-flow",
+    "id": "4d55f70c3660d5ef39fc2b1e6a5b1e19"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownDateInput.tsx",
+    "flow_name": "filter-by-date-flow",
+    "id": "f441f7b369dfbf97367929ec44af81fd"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownDateTimeInput.tsx",
+    "flow_name": "filter-by-datetime-flow",
+    "id": "a72e6414f5bc50012220c63a083baa65"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownNumberInput.tsx",
+    "flow_name": "filter-by-number-flow",
+    "id": "dc3c8f2e4fc440ef82e3483328a0ccfd"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownOptionSelect.tsx",
+    "flow_name": "filter-by-option-flow",
+    "id": "570c0a91ee0213d7f0d81c2ae40dd5c8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownRatingInput.tsx",
+    "flow_name": "filter-by-rating-flow",
+    "id": "661965cbb21fb70458a42cf5bf1ecbb4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownRecordSelect.tsx",
+    "flow_name": "filter-by-record-flow",
+    "id": "b04eae5bd8958707c736abd5d5d5399d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownTextInput.tsx",
+    "flow_name": "filter-by-text-flow",
+    "id": "acd8f35a9b2d17eb312d0f72a6fbc453"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter/states/anyFieldFilterValueComponentState.ts",
+    "flow_name": "filter-records-by-field-flow",
+    "id": "8deaeaadac133c5800ca12c5a8c961d9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/advanced-filter/side-panel/components/AdvancedFilterSidePanelContainer.tsx",
+    "flow_name": "open-filter-panel-flow",
+    "id": "7d0e786c00c9c245ef1eb78c292884bd"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/components/MergePreviewTab.tsx",
+    "flow_name": "preview-merge-result-flow",
+    "id": "df3855d9e1fc8d285ceb0540f50923bd"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-inline-cell/components/RecordInlineCellContainer.tsx",
+    "flow_name": "render-inline-cell-container-flow",
+    "id": "8adad133166b83bd3e9a978b7ae01e3a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-card/components/RecordCardBodyContainer.tsx",
+    "flow_name": "render-record-card-body-flow",
+    "id": "9f4683e8afe72f5f00ad464c99c97463"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-card/components/RecordCardHeaderContainer.tsx",
+    "flow_name": "render-record-card-header-flow",
+    "id": "dfe43f1385ff6ce2f19402c15ab2bb45"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-table/components/RecordTableRecordGroupRows.tsx",
+    "flow_name": "render-record-table-rows-flow",
+    "id": "16d10d16ce26c7776c54235e691fa083"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-title-cell/components/RecordTitleCellContainer.tsx",
+    "flow_name": "render-record-title-container-flow",
+    "id": "7d74a29e5638a2fce509051c516ee7b7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-filter-dropdown/components/ObjectFilterDropdownAnyFieldSearchInput.tsx",
+    "flow_name": "search-any-field-flow",
+    "id": "715adda1d7e653515b7c24797bcf3e83"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-sort-dropdown/states/objectSortDropdownSearchInputComponentState.ts",
+    "flow_name": "search-sort-field-flow",
+    "id": "b003677056a763980409874e59d74200"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/components/RecordCalendar.tsx",
+    "flow_name": "view-calendar-flow",
+    "id": "fd36d85d2418cf8303ec209737fc1a18"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/record-detail-section/duplicate/components/RecordDetailDuplicatesSection.tsx",
+    "flow_name": "view-duplicate-records-flow",
+    "id": "4bc393ebec49b940f8da01ce5c055b45"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/components/RecordBoard.tsx",
+    "flow_name": "view-record-board-flow",
+    "id": "dfbf8cc9c46ed496a5c6af7199467314"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/components/RecordGroupChip.tsx",
+    "flow_name": "view-record-group-details-flow",
+    "id": "b7b54788a875237b22802b40b14e61f7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-aggregate/utils/transformAggregateRawValueIntoAggregateDisplayValue.ts",
+    "flow_name": "display-aggregate-values-flow",
+    "id": "22f9fa13187d6bbd1cb0553fb2647fe7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-update-multiple/utils/shouldDisplayFormMultiEditField.ts",
+    "flow_name": "display-bulk-edit-fields-flow",
+    "id": "5ba82984f5b03afd3884bb27ea4e3a3d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-table/empty-state/utils/getEmptyStateTitle.ts",
+    "flow_name": "display-empty-state-flow",
+    "id": "76abae4af847fa07dc563e3303111e05"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/hooks/useNavigationMenuItemsData.ts",
+    "flow_name": "display-navigation-menu-flow",
+    "id": "57f6176a857b3808830d9d329a86ac30"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useFindOneRecord.ts",
+    "flow_name": "fetch-single-record-flow",
+    "id": "452566ceecfc1cb21c2bd328de70f83d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/month/hooks/useRecordCalendarQueryDateRangeFilter.tsx",
+    "flow_name": "filter-calendar-by-date-range-flow",
+    "id": "6b60fd58e3387cfe9930073079062421"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/hooks/useRecordGroupFilter.ts",
+    "flow_name": "filter-record-groups-flow",
+    "id": "065ea376f4e226646ddec8f12a9362c8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter/hooks/useFilterableFieldMetadataItems.ts",
+    "flow_name": "filter-records-by-criteria-flow",
+    "id": "261a840a2a92778c2fdb74ff89be670c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/graphql/utils/computeCursorArgFilter.ts",
+    "flow_name": "filter-records-by-cursor-flow",
+    "id": "f3cd1606dbbcc3183596a298a3cef5d5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/hooks/useSearchRecordGroupField.ts",
+    "flow_name": "filter-records-by-group-field-flow",
+    "id": "0310bcda235f104c010bb2a1529e887f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter-group/states/context/RecordFilterGroupsComponentInstanceContext.ts",
+    "flow_name": "filter-records-context-flow",
+    "id": "72078e74ee1bbb32f762c116ead74d6b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/hooks/useHandleToggleTrashColumnFilter.ts",
+    "flow_name": "filter-trash-records-flow",
+    "id": "7a59d7a061d8199cc23611b657fe57df"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-title-cell/hooks/useOpenNewRecordTitleCell.ts",
+    "flow_name": "open-new-record-title-cell-flow",
+    "id": "12381a5e35a2722a9bf171c99b8dc2e2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/hooks/useHandleIndexIdentifierClick.ts",
+    "flow_name": "open-record-from-index-flow",
+    "id": "ccdcbeda706aed8c0116eabf996f86df"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/hooks/usePerformMergePreview.ts",
+    "flow_name": "preview-merge-flow",
+    "id": "c2215e95eed0ae834dc260befe81a1ab"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/cache/hooks/useReadFindManyRecordsQueryInCache.ts",
+    "flow_name": "read-find-many-records-query-flow",
+    "id": "7f0285745cf5b077ead27f7ff0bd980d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/ui/layout/page/components/PageContainer.tsx",
+    "flow_name": "render-page-layout-flow",
+    "id": "6e843c7c4dda995119af7c376d77a8df"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter/utils/getRecordFilterFieldMetadataItem.ts",
+    "flow_name": "retrieve-filter-metadata-flow",
+    "id": "cbbbe965f439ddf0cac82c7fe59b61b1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/cache/hooks/useGetRecordFromCache.ts",
+    "flow_name": "retrieve-record-from-cache-flow",
+    "id": "16fdd8808cd08dc4eb9572d0b9a5ea0e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/states/contexts/RecordCalendarComponentInstanceContext.ts",
+    "flow_name": "view-calendar-records-flow",
+    "id": "d4b98d5c11092accd003a407bd16404a"
+   },
+   {
+    "entry": "packages/twenty-front/src/pages/object-record/RecordShowPage.tsx",
+    "flow_name": "view-record-details-object-flow",
+    "id": "a8b666c874ef50170f43d7677341beec"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/timeline-activities/contexts/TimelineActivityContext.ts",
+    "flow_name": "view-record-timeline-flow",
+    "id": "dbc47592ca7e2331970923a76f7b3243"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-inline-cell/components/RecordInlineCellSkeletonLoader.tsx",
+    "flow_name": "load-inline-cell-skeleton-flow",
+    "id": "bcf465a89feb8c0f37b56e3487a61c08"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-store/states/recordLoadingFamilyState.ts",
+    "flow_name": "load-record-flow",
+    "id": "457dceb369604facc121077dabce69fe"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-sort-dropdown/components/ObjectSortDropdownButton.tsx",
+    "flow_name": "sort-records-flow",
+    "id": "5743db171e96beba8a1be75b82e0e175"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/graphql/utils/extractOrderByFieldNames.ts",
+    "flow_name": "sort-records-flow",
+    "id": "1af828ffa4f8560b0e976049470da306"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useAggregateRecords.ts",
+    "flow_name": "aggregate-records-flow",
+    "id": "e5426ca14968dfdb2a04be28c2b92fc8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/components/RecordIndexGroupAggregateQueryEffect.tsx",
+    "flow_name": "group-records-by-field-flow",
+    "id": "620458a89662d8cf5ab9bda414490bc6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/hooks/useHandleRecordGroupField.ts",
+    "flow_name": "group-records-by-field-flow",
+    "id": "e32552a99f399edaf2af1af05d71d91f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useGroupByRecordsQuery.ts",
+    "flow_name": "group-records-flow",
+    "id": "44200184ccff00ea23431f0579798a8d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/components/ObjectOptionsDropdownRecordGroupSortContent.tsx",
+    "flow_name": "sort-record-groups-flow",
+    "id": "cb72cdd1564ac64a9be052f4107448d8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/states/isRecordBoardColumnLoadingFamilyState.ts",
+    "flow_name": "load-board-column-flow",
+    "id": "f95d4785d9765c6f367face67f258f9e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/components/RecordIndexCalendarDataLoaderEffect.tsx",
+    "flow_name": "load-calendar-records-flow",
+    "id": "577d19e7d6d55489059fb8bb6e370528"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/components/RecordBoardFetchMoreInViewTriggerComponent.tsx",
+    "flow_name": "load-more-records-flow",
+    "id": "36404d96a559c5db409899afcd482f70"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-show/graphql/operations/factories/findOneRecordForShowPageOperationSignatureFactory.ts",
+    "flow_name": "load-record-data-flow",
+    "id": "b06cfb927e05289817e9a9a2f8dceb3d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/components/RecordIndexLoadBaseOnContextStoreEffect.tsx",
+    "flow_name": "load-record-index-data-flow",
+    "id": "0cac57ab21857ba46280a6ea85264ca2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-table-widget/components/RecordTableWidgetViewLoadEffect.tsx",
+    "flow_name": "load-record-table-view-flow",
+    "id": "21e5d0583fb26e35cedc4fda92e0bf8e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-store/states/selectors/recordStoreRecordsSelector.ts",
+    "flow_name": "query-stored-records-flow",
+    "id": "876a02de9d137d4dda9a46f25a1cfc3e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-aggregate/utils/generateGroupByAggregateQuery.ts",
+    "flow_name": "aggregate-records-by-group-flow",
+    "id": "1da45d3a10c605e6e3fdeadf9731cf9f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useFindDuplicateRecords.ts",
+    "flow_name": "find-duplicate-records-flow",
+    "id": "5ae13f03da48dfc98cf011e95f350769"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/hooks/useTriggerRecordBoardInitialQuery.ts",
+    "flow_name": "load-board-data-flow",
+    "id": "e8f3f89a15376db04a302c60dabd1e93"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-table-widget/utils/computeRecordTableWidgetViewLoadContentSignature.ts",
+    "flow_name": "load-record-table-widget-view-flow",
+    "id": "b0bb18b4029b215f99bc4af9eb2631d9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/record-detail-section/relation/components/hooks/useGetMorphRelationRelatedRecordsWithObjectNameSingular.ts",
+    "flow_name": "load-relation-records-flow",
+    "id": "347ae9b3d848dc3b56916dab6a25c60a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-store/states/recordStoreFamilyState.ts",
+    "flow_name": "query-record-store-family-flow",
+    "id": "16f7d3d084916fed5db85c32d434705f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/hooks/useHandleToggleColumnSort.ts",
+    "flow_name": "sort-record-index-flow",
+    "id": "5342716c6cfc8472854768ad9277ae9f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-sort-dropdown/constants/ViewSortDropdownId.ts",
+    "flow_name": "sort-view-records-flow",
+    "id": "da5e62c0e8f5096c2dc6faa74dfb011a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/components/RecordBoardSelectRecordsEffect.tsx",
+    "flow_name": "select-records-flow",
+    "id": "eef17595625ef4757742fb0d6944a95a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/select/hooks/useRecordsForSelect.ts",
+    "flow_name": "select-records-flow",
+    "id": "22c745b049f586a891edf59d8c2436a2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/single-record-picker/components/SingleRecordPicker.tsx",
+    "flow_name": "select-single-record-flow",
+    "id": "d8a73675b860213d8e4237c1fb78b556"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/single-record-picker/hooks/useSingleRecordPickerRecords.ts",
+    "flow_name": "select-single-record-flow",
+    "id": "3229287520a40d6cfa20ebe6a223f47b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/multiple-record-picker/components/MultipleRecordPicker.tsx",
+    "flow_name": "select-multiple-records-flow",
+    "id": "8b40db1270007ebe3a559e69384f0665"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/components/MergeRecordTab.tsx",
+    "flow_name": "select-merge-records-flow",
+    "id": "fa339f98918089489465fbc0d25772e3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/hooks/useMergeRecordsSelectedRecords.ts",
+    "flow_name": "select-merge-records-flow",
+    "id": "5e78f966f493d0a54ee32615b62d8913"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/multiple-objects/hooks/useCombinedGetTotalCount.ts",
+    "flow_name": "count-multiple-object-records-flow",
+    "id": "e1dec36a7115394eb19b9f9d11b4c8ce"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter/states/hasAnySoftDeleteFilterOnView.ts",
+    "flow_name": "detect-soft-delete-filters-flow",
+    "id": "180e69d52364dec2aeb2aa5cb08b180d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/read-only/hooks/useIsRecordFieldReadOnly.ts",
+    "flow_name": "check-field-read-only-flow",
+    "id": "975a5e5fd8b3593893611887e5f5a1b2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/read-only/hooks/useIsRecordReadOnly.ts",
+    "flow_name": "check-record-read-only-flow",
+    "id": "777d979e90a6f35eeba0ca4b5d2d30b5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/anchored-portal/components/RecordFieldListCellHoveredPortal.tsx",
+    "flow_name": "hover-record-field-flow",
+    "id": "b3ce34c828ad51a05911f256051e6d5c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field/ui/hooks/useFieldFocus.ts",
+    "flow_name": "focus-record-field-flow",
+    "id": "249f55a1791f2f41d148df1745087706"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field/hooks/useUpsertRecordField.ts",
+    "flow_name": "upsert-record-field-flow",
+    "id": "9bc8b70ebcbaf05c3f7c5cb555435538"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/states/cursorFamilyState.ts",
+    "flow_name": "paginate-records-flow",
+    "id": "dacebb4591b006441756767d3c2141ca"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/components/ObjectOptionsDropdownLayoutOpenInContent.tsx",
+    "flow_name": "switch-view-layout-flow",
+    "id": "3e35f3e511595305b519ce81eebcc7d4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/hooks/useSetViewTypeFromLayoutOptionsMenu.ts",
+    "flow_name": "switch-view-layout-flow",
+    "id": "7ae6f07727fef5a2096418299d17769d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/states/draggedRecordIdsComponentState.ts",
+    "flow_name": "drag-multiple-records-flow",
+    "id": "348965e7931ca687554048e5de0c30af"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/states/primaryDraggedRecordIdComponentState.ts",
+    "flow_name": "drag-single-record-flow",
+    "id": "6917ca5b8884d0e1be998ca46d782cd0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/hooks/useStartRecordDrag.ts",
+    "flow_name": "drag-record-flow",
+    "id": "e84c6eed226fbc3ac2db02c6939c52f9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/components/RecordBoardDragDropContext.tsx",
+    "flow_name": "drag-drop-records-flow",
+    "id": "197e1ec1f43a69427b2d32b357d3f48e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useDestroyManyRecords.ts",
+    "flow_name": "destroy-multiple-records-flow",
+    "id": "8f49697064b1f1a231af0c180980033c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useDestroyOneRecord.ts",
+    "flow_name": "destroy-single-record-flow",
+    "id": "b9442a747177b4128f75b08a715d742e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/components/MergeRecordsContainer.tsx",
+    "flow_name": "merge-records-flow",
+    "id": "cf506ef08895a6872ff19b6f8a3b2b4e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/hooks/useMergeRecordsActions.ts",
+    "flow_name": "merge-records-flow",
+    "id": "d83c47e69a4ed8070d7929b960f8ad1e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/components/ObjectOptionsDropdownRecordGroupsContent.tsx",
+    "flow_name": "organize-record-groups-flow",
+    "id": "d574a58c450b80d98a505edbfa2ddd88"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/hooks/useCurrentRecordGroupId.ts",
+    "flow_name": "navigate-record-groups-flow",
+    "id": "bdf21eda83a86e4d9a9c7b471e69001c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-table/components/RecordTableColumnWidthEffect.tsx",
+    "flow_name": "adjust-record-table-column-width-flow",
+    "id": "29c9027da2ea3c178a5028c3838a6f0e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/record-calendar-card/components/RecordCalendarCardDraggableContainer.tsx",
+    "flow_name": "drag-calendar-card-flow",
+    "id": "17831458ca4673169f8c144976b554ba"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/record-calendar-card/components/RecordCalendarCard.tsx",
+    "flow_name": "interact-calendar-card-flow",
+    "id": "0a5e66cb094ffb0010fc83bfeac0602e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/components/RecordBoardScrollToFocusedCardEffect.tsx",
+    "flow_name": "focus-card-flow",
+    "id": "bf51ccf127fbf818ca989c2b055e9ad7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/record-board-card/anchored-portal/components/RecordBoardCardCellHoveredPortal.tsx",
+    "flow_name": "hover-card-cell-flow",
+    "id": "22ffa385d32dcb0a6754cc1f5c92ebd4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/spreadsheet-import/utils/spreadSheetGetRelationConnectSubFieldKey.ts",
+    "flow_name": "map-relation-fields-flow",
+    "id": "17364db1996fec286fcd485fa8afc2d2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/utils/categorizeRelationFields.ts",
+    "flow_name": "organize-relation-fields-flow",
+    "id": "7c75e77b66d8b00948ed50a77918e868"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/components/RecordBoardHotkeyEffect.tsx",
+    "flow_name": "navigate-board-with-keyboard-flow",
+    "id": "8167b9d3034dfbf1c1956903b421e1e9"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/components/RecordCalendarTopBar.tsx",
+    "flow_name": "navigate-calendar-topbar-flow",
+    "id": "d945a1e38cf61071addc9c725c87f7a5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/components/RecordColumnResizeHandle.tsx",
+    "flow_name": "resize-record-column-flow",
+    "id": "4cea25962450a4800928acb0f4998a07"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/graphql/record-gql-fields/utils/buildIdentifierGqlFields.ts",
+    "flow_name": "build-identifier-fields-flow",
+    "id": "045c4af514d829b737063ffb270b83d6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/cache/utils/getRecordConnectionFromRecords.ts",
+    "flow_name": "build-record-connection-flow",
+    "id": "531d5c03955383b030dc671b041453a0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/utils/getDragOperationType.ts",
+    "flow_name": "determine-drag-operation-flow",
+    "id": "af7acfe5fd6947255205dfd8f94266fe"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-metadata/utils/getLabelIdentifierFieldValue.ts",
+    "flow_name": "extract-record-identifier-flow",
+    "id": "50c6ccdae5a3202eb380d7a0e1196322"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/utils/extractRecordPositions.ts",
+    "flow_name": "extract-record-positions-flow",
+    "id": "878114b1dea5976574999d3700dc97c6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/utils/categorizeRelationFields.ts",
+    "flow_name": "identify-activity-target-flow",
+    "id": "8417c3d6661bd390b1777c04655a3b74"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useIncrementalUpdateManyRecords.ts",
+    "flow_name": "incremental-update-records-flow",
+    "id": "a920cd2ab3d709858a54bdb03eee805e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-calendar/record-calendar-card/hooks/useRecordCalendarCardMetadataFromPosition.ts",
+    "flow_name": "interact-with-calendar-card-flow",
+    "id": "1237d262f7b3efcde98197596b0856de"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/spreadsheet-import/utils/spreadsheetImportGetCompositeSubFieldKey.ts",
+    "flow_name": "map-composite-fields-flow",
+    "id": "4588d84f9ec58b15d72d4b37d52d3c9d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/hooks/useRecordBoardArrowKeysEffect.ts",
+    "flow_name": "navigate-board-cards-flow",
+    "id": "a536d7fa53a4c867eaacd50f08305ece"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-show/hooks/useRecordShowPagePagination.ts",
+    "flow_name": "navigate-record-pagination-flow",
+    "id": "0281bd72cb846888a20a0cdbabd39f10"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/side-panel/states/sidePanelPageState.ts",
+    "flow_name": "navigate-side-panel-flow",
+    "id": "ba775687db4cffa9ebdc7f2b518872ef"
+   },
+   {
+    "entry": "packages/twenty-front/src/pages/object-record/RecordShowPageHeader.tsx",
+    "flow_name": "view-object-record-show-page-header-flow",
+    "id": "18a9092c7bdc43260cfd72d740dfab50"
+   },
+   {
+    "entry": "packages/twenty-front/src/pages/object-record/RecordShowPageTitle.tsx",
+    "flow_name": "view-object-record-show-page-title-flow",
+    "id": "5a9e5b16b6c695cea4299fdcf9629945"
+   },
+   {
+    "entry": "packages/twenty-front/src/pages/object-record/__stories__/RecordIndexPage.stories.tsx",
+    "flow_name": "view-object-record-stories-record-index-page-stories-flow",
+    "id": "8147ff91ff1aaf2c096e067789169bd2"
+   },
+   {
+    "entry": "packages/twenty-front/src/pages/object-record/__stories__/RecordShowPage.stories.tsx",
+    "flow_name": "view-object-record-stories-record-show-page-stories-flow",
+    "id": "a14e70f0e610c07a1d26f58bf1faff66"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/multiple-objects/utils/getLimitPerMetadataItem.ts",
+    "flow_name": "optimize-query-pagination-flow",
+    "id": "33b93caba9bbd8fd2b13be0d85ae510a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/hooks/useRecordGroupActions.ts",
+    "flow_name": "perform-record-group-actions-flow",
+    "id": "d8ffe3d2dc76656337e0f09abb18fedc"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/hooks/useRepositionRecordsOnBoard.ts",
+    "flow_name": "reposition-board-records-flow",
+    "id": "0d99629fb56a8e02fd39cb7b8fe09cee"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/cache/utils/createCacheEdgeWithRecordRef.ts",
+    "flow_name": "transform-record-to-cache-edge-flow",
+    "id": "1160f8586d48c8e5af7e3c76fe35368b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/cache/hooks/useUpsertFindManyRecordsQueryInCache.ts",
+    "flow_name": "upsert-find-many-records-query-flow",
+    "id": "604f17890252aa4add236e6df132403d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/cache/hooks/useUpsertFindOneRecordQueryInCache.ts",
+    "flow_name": "upsert-find-one-record-query-flow",
+    "id": "423d0183b651b4f2bf633c6d29384e6b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter-group/hooks/useUpsertRecordFilterGroup.ts",
+    "flow_name": "upsert-record-filter-group-flow",
+    "id": "4d8efff3bae714a80e17db8226c9d5ef"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-store/hooks/useUpsertRecordsInStore.ts",
+    "flow_name": "upsert-records-in-store-flow",
+    "id": "7686c998fff7a05de15e71e015611676"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-inline-cell/components/RecordInlineCellCloseOnSidePanelOpeningEffect.tsx",
+    "flow_name": "close-inline-cell-on-side-panel-flow",
+    "id": "e75994ec872280054d21eec0a1bd9e47"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/multiple-record-picker/components/MultipleRecordPickerOnClickOutsideEffect.tsx",
+    "flow_name": "close-picker-on-outside-click-flow",
+    "id": "f4a31ecc23bddb956bbb4a41d413b639"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-sort-dropdown/hooks/useCloseSortDropdown.ts",
+    "flow_name": "close-sort-dropdown-flow",
+    "id": "49c560779a40716d1996b7a950801790"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/utils/computeOptimisticCreateRecordBaseRecordInput.ts",
+    "flow_name": "create-record-flow",
+    "id": "0b2e12866ff98baa0f1acbac4943ed31"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useCreateOneRecord.ts",
+    "flow_name": "create-single-record-flow",
+    "id": "ba15e854f5053c359b1328538411a6a7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/hooks/useCreateManyRecords.ts",
+    "flow_name": "create-multiple-records-flow",
+    "id": "e84238cb0e246d901e359eec62d4143f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/components/AddRecordGroupButton.tsx",
+    "flow_name": "create-record-group-flow",
+    "id": "e41d32ef8d1ce969aac1b9a0be2e4c92"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/hooks/useAddRecordGroup.ts",
+    "flow_name": "create-record-group-flow",
+    "id": "320ebe29f95d8177b28bef88514baa4f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-board/components/RecordBoardAddGroupColumn.tsx",
+    "flow_name": "add-group-column-flow",
+    "id": "68a9161f76c8a4f60a7744c02b04fc88"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field-list/anchored-portal/components/RecordFieldListCellEditModePortal.tsx",
+    "flow_name": "edit-record-field-flow",
+    "id": "e753976de515f7595fed413226651b0f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field/hooks/useUpdateRecordField.ts",
+    "flow_name": "update-record-field-flow",
+    "id": "ac06c79205a95bd71ed812f5e0ffab8d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-update-multiple/components/UpdateMultipleRecordsContainer.tsx",
+    "flow_name": "update-multiple-records-flow",
+    "id": "a55b7806a0634601246d95fd01d24ca0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-update-multiple/hooks/useUpdateMultipleRecordsActions.ts",
+    "flow_name": "update-multiple-records-flow",
+    "id": "bb29e318a62e5fe23438888ca76afc5d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/components/MergeSettingsTab.tsx",
+    "flow_name": "configure-merge-settings-flow",
+    "id": "191f9c74abce6953cdd1afef3cac58de"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/hooks/useMergeRecordsSettings.ts",
+    "flow_name": "configure-merge-settings-flow",
+    "id": "8bb2b9f4c8d6c9f5b5d92c88d36fdf4b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/hooks/useSetRecordGroups.ts",
+    "flow_name": "configure-record-groups-flow",
+    "id": "429820bc0fc41cb1cb0a05b280975900"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/components/ObjectOptionsDropdownRecordGroupFieldsContent.tsx",
+    "flow_name": "configure-record-group-fields-flow",
+    "id": "77024bffcbbd610d1bc60cfe1c9fb40a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field/hooks/useMoveRecordField.ts",
+    "flow_name": "move-record-field-flow",
+    "id": "84f44242a6931d74d9f5482ace959b7d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field/hooks/useReorderVisibleRecordFields.ts",
+    "flow_name": "reorder-record-fields-flow",
+    "id": "b440a5db8a89653e5db6e3bb9a234c9c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/utils/computeNewPositionOfDraggedRecord.ts",
+    "flow_name": "reorder-records-flow",
+    "id": "f5168f64212442f629c1f701f435fd6c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/components/RecordGroupMenuItemDraggable.tsx",
+    "flow_name": "reorder-record-groups-flow",
+    "id": "094f6f9bba7e7f4c3b88cfc953b83495"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-group/hooks/useReorderRecordGroups.ts",
+    "flow_name": "reorder-record-groups-flow",
+    "id": "6030230e3b795b5747a56b9c3b60bfc2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/hooks/useProcessOptionDropdownDragEnd.ts",
+    "flow_name": "reorder-board-columns-flow",
+    "id": "03d7d85d14b02b07859c6904920f0925"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-field/ui/hooks/useClearField.ts",
+    "flow_name": "clear-record-field-flow",
+    "id": "00e5acdfc0168025e793825701f8af4f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-sort-dropdown/hooks/useResetRecordSortDropdownSearchInput.ts",
+    "flow_name": "clear-sort-search-input-flow",
+    "id": "c0918cc8af6b6aa73afcaef85219466c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/hooks/useProcessBoardCardDrop.ts",
+    "flow_name": "drop-record-on-board-flow",
+    "id": "f9019462df843c7db4a7e13ea2093bcb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/hooks/useProcessCalendarCardDrop.ts",
+    "flow_name": "drop-record-on-calendar-flow",
+    "id": "325e2bd919e40e2f085a16180693f3a8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/hooks/useProcessTableWithGroupRecordDrop.ts",
+    "flow_name": "drop-record-on-grouped-table-flow",
+    "id": "376caf218d531771ab83ed36ce6e5eb1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-drag/hooks/useProcessTableWithoutGroupRecordDrop.ts",
+    "flow_name": "drop-record-on-ungrouped-table-flow",
+    "id": "c599089ce3187cfbc796109e9cfa2648"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/graphql/utils/isRecordGraphlFieldsNode.ts",
+    "flow_name": "validate-gql-fields-flow",
+    "id": "009d538d8acb980de21157dc95b8bd69"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/spreadsheet-import/utils/getSpreadSheetFieldValidationDefinitions.ts",
+    "flow_name": "validate-import-data-flow",
+    "id": "cb1e114258bf77ea7fa4744d2feaeeca"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/hooks/useHasCurrentViewNonReadableFields.ts",
+    "flow_name": "validate-record-index-permissions-flow",
+    "id": "7ae0b2fa65d47adb9d2b334121e8aef1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-update-multiple/utils/isUpdateRecordValueEmpty.ts",
+    "flow_name": "validate-record-update-flow",
+    "id": "904207fad4c743764573348125e0f3c7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/read-only/utils/isOneToManyRelationFieldReadOnlyDueToTargetUpdatePermission.ts",
+    "flow_name": "validate-relation-field-permissions-flow",
+    "id": "8a7570480b0c17543f5f279cb944ce38"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-show/hooks/useExportSingleRecord.ts",
+    "flow_name": "export-record-flow",
+    "id": "01d96c7069d9ed7ca59cd6055009fa76"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/export/hooks/useRecordIndexExportRecords.ts",
+    "flow_name": "export-records-flow",
+    "id": "f734098605a0ef207dd30e27ca44bd83"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/object-options-dropdown/hooks/useExportProcessRecordsForCSV.ts",
+    "flow_name": "export-records-to-csv-flow",
+    "id": "186865783e7a38ea82b28b4b17f9d6cf"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-store/states/selectors/recordStoreMorphOneToManyValueWithObjectNameFamilySelector.ts",
+    "flow_name": "resolve-relationship-values-flow",
+    "id": "9a5ebaffcc286e980d3868fc7a84374a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-filter/hooks/useFilterValueDependencies.ts",
+    "flow_name": "resolve-filter-dependencies-flow",
+    "id": "f590e930e3dec40c0c5810bf38dbfdd7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-merge/utils/mergeManyToOneRelationship.ts",
+    "flow_name": "resolve-merge-relationships-flow",
+    "id": "241ee208cb6cf08711e208cb94dc18c4"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-picker/hooks/useRecordPickerGetSearchRecordAndObjectMetadataItemFromRecordId.ts",
+    "flow_name": "resolve-record-metadata-flow",
+    "id": "2d492c2fb14bee963035751222b74c30"
+   }
+  ],
+  "name": "Browse object record",
+  "patterns_by_file": {
+   "packages/twenty-front/src/pages/object-record/RecordIndexPage.tsx": [
+    "/object-record/RecordIndexPage"
+   ],
+   "packages/twenty-front/src/pages/object-record/RecordShowPage.tsx": [
+    "/object-record/RecordShowPage"
+   ],
+   "packages/twenty-front/src/pages/object-record/RecordShowPageHeader.tsx": [
+    "/object-record/RecordShowPageHeader"
+   ],
+   "packages/twenty-front/src/pages/object-record/RecordShowPageTitle.tsx": [
+    "/object-record/RecordShowPageTitle"
+   ],
+   "packages/twenty-front/src/pages/object-record/__stories__/RecordIndexPage.stories.tsx": [
+    "/object-record/__stories__/RecordIndexPage.stories"
+   ],
+   "packages/twenty-front/src/pages/object-record/__stories__/RecordShowPage.stories.tsx": [
+    "/object-record/__stories__/RecordShowPage.stories"
+   ]
+  },
+  "resource": "record"
+ },
+ "twenty_32_navigation": {
+  "domain": "lattice:action:navigation-menu-item-browse",
+  "id": "UF-L-16b761e05b",
+  "member_count": 32,
+  "members": [
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/components/NavigationMenuItemDisplay.tsx",
+    "flow_name": "display-navigation-menu-item-flow",
+    "id": "a178e7deacd10aa990a45b4399532587"
+   },
+   {
+    "entry": "packages/twenty-server/src/engine/metadata-modules/flat-navigation-menu-item/utils/from-flat-navigation-menu-item-to-navigation-menu-item-dto.util.ts",
+    "flow_name": "retrieve-navigation-menu-item-flow",
+    "id": "5a6f8bf2265a6b78eaa42fda44eb387a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/folder/components/NavigationMenuItemFolder.tsx",
+    "flow_name": "display-folder-navigation-flow",
+    "id": "19879c2a6cc8cfc978abc5d5709ea401"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/link/components/NavigationMenuItemLinkDisplay.tsx",
+    "flow_name": "display-link-menu-item-flow",
+    "id": "1e87d950216fa15d12d195fd8426e10d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/sections/components/NavigationDrawerOpenedSection.tsx",
+    "flow_name": "display-navigation-drawer-flow",
+    "id": "d75efb56c8d9ec0c3cb21adcdd84dc23"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/object/components/NavigationMenuItemObjectDisplay.tsx",
+    "flow_name": "display-object-menu-item-flow",
+    "id": "7b7a7fe464f94c35c61c72c7f8ab2fff"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/page-layout/components/NavigationMenuItemPageLayoutDisplay.tsx",
+    "flow_name": "display-page-layout-menu-item-flow",
+    "id": "1bc8ea7ad41c41bb3a38a20d8c48c85e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/view/components/ObjectIconWithViewOverlay.tsx",
+    "flow_name": "display-view-menu-item-flow",
+    "id": "32580705797d6e9f56ba7ebcfa485f39"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/folder/components/NavigationMenuItemFolderNavigationDrawerItemDropdown.tsx",
+    "flow_name": "open-folder-dropdown-menu-flow",
+    "id": "5288645227f3a8512417f001a9b9ba79"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/sections/components/NavigationMenuItemSection.tsx",
+    "flow_name": "render-menu-item-section-flow",
+    "id": "989dd2caeebf608cea7649d629743a7e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/sections/workspace/components/WorkspaceSectionListReadOnly.tsx",
+    "flow_name": "view-workspace-items-flow",
+    "id": "5fde383736ad6ae8a0fb237f32af0600"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/dnd/preloadNavigationMenuItemDndKit.ts",
+    "flow_name": "initialize-dnd-kit-flow",
+    "id": "e84a250ce96e0537c4dcfd35ec46cdf0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/edit/side-panel/components/SidePanelNewSidebarItemViewPickerSubPage.tsx",
+    "flow_name": "select-sidebar-item-view-flow",
+    "id": "b0796d4a354b67a160facc121445d790"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/sections/favorites/components/FavoritesSection.tsx",
+    "flow_name": "manage-favorites-section-flow",
+    "id": "c85c82d2f44ff5d6b7a566a3d80f7e60"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/edit/components/NavigationMenuItemFolderContentDispatcher.tsx",
+    "flow_name": "manage-folder-content-flow",
+    "id": "18b0a71e38d3652153836d2e0e5c1614"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/folder/components/NavigationMenuItemFolderSubItem.tsx",
+    "flow_name": "manage-folder-submenu-flow",
+    "id": "9472a1ce5402c1548b1383005ef7d744"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/sections/workspace/components/WorkspaceSection.tsx",
+    "flow_name": "manage-workspace-section-flow",
+    "id": "0bc65a4927843eb7b16bbc32ade8d5b3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/dnd/components/NavigationMenuItemSortableItem.tsx",
+    "flow_name": "drag-navigation-menu-item-flow",
+    "id": "9468bd0f5330fa4b81de84f2254413ab"
+   },
+   {
+    "entry": "packages/twenty-server/src/engine/metadata-modules/navigation-menu-item/dtos/record-identifier.dto.ts",
+    "flow_name": "identify-navigation-menu-item-record-flow",
+    "id": "3450d2927ba3f8f0fba1a76e9e7a515a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/edit/components/WorkspaceSectionAddMenuItemButton.tsx",
+    "flow_name": "add-menu-item-flow",
+    "id": "7d9e5797fdd64fda68c832e31ca5846b"
+   },
+   {
+    "entry": "packages/twenty-server/src/engine/metadata-modules/flat-navigation-menu-item/utils/from-create-navigation-menu-item-input-to-flat-navigation-menu-item-to-create.util.ts",
+    "flow_name": "create-navigation-menu-item-flow",
+    "id": "2a4856ac55c5d9b608f9143a03693a88"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/common/graphql/mutations/createManyNavigationMenuItems.ts",
+    "flow_name": "create-navigation-menu-items-flow",
+    "id": "bff922b63d601d82e639d6a8199f1476"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/edit/side-panel/components/SidePanelNewSidebarItemPage.tsx",
+    "flow_name": "create-sidebar-item-flow",
+    "id": "957eeee5dca5491204f2cfb774a155b6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/common/constants/AddToNavSourceDroppableId.ts",
+    "flow_name": "add-to-navigation-flow",
+    "id": "5b976d74bae444d7a70228734416cd7b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/edit/side-panel/components/SidePanelNavigationMenuItemEditPage.tsx",
+    "flow_name": "edit-menu-item-flow",
+    "id": "4ea59832e2c47cd7cef23b99c5d8addd"
+   },
+   {
+    "entry": "packages/twenty-server/src/engine/metadata-modules/flat-navigation-menu-item/utils/from-update-navigation-menu-item-input-to-flat-navigation-menu-item-to-update-or-throw.util.ts",
+    "flow_name": "update-navigation-menu-item-flow",
+    "id": "1db4bbc62728342a5ab4e6f494b1d90a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/common/graphql/mutations/updateManyNavigationMenuItems.ts",
+    "flow_name": "update-navigation-menu-items-flow",
+    "id": "843c75d183e53638fc2f12f2c53d68bb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/edit/side-panel/components/SidePanelEditLinkItemView.tsx",
+    "flow_name": "edit-link-item-flow",
+    "id": "77b231a6db9454e1eab17d0e3e41244d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/edit/side-panel/components/SidePanelEditObjectViewBase.tsx",
+    "flow_name": "edit-object-item-flow",
+    "id": "c8fadf5cb46898b0f9322ad3e72ebfe9"
+   },
+   {
+    "entry": "packages/twenty-server/src/engine/metadata-modules/navigation-menu-item/enums/navigation-menu-item-type.enum.ts",
+    "flow_name": "configure-navigation-menu-item-type-flow",
+    "id": "9f5d8c1209ae411305ab8794a8a09d32"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/folder/components/NavigationMenuItemFolderDnd.tsx",
+    "flow_name": "reorder-folder-items-flow",
+    "id": "14e5078a2eef1f8a5d063abb0cb80366"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/display/sections/workspace/components/WorkspaceSectionListDndKit.tsx",
+    "flow_name": "reorder-workspace-items-flow",
+    "id": "f7282e902279b22b61a73ce3861af54a"
+   }
+  ],
+  "name": "Browse navigation menu item",
+  "patterns_by_file": {},
+  "resource": "navigation-menu-item"
+ },
+ "twenty_34_activities": {
+  "domain": "",
+  "id": "UF-025",
+  "member_count": 34,
+  "members": [
+   {
+    "entry": "packages/twenty-front/src/modules/activities/states/canCreateActivityState.ts",
+    "flow_name": "validate-activity-creation-flow",
+    "id": "7b5cec35af34219d18ca066ff243d8fb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/hooks/useActivityTargetObjectRecords.ts",
+    "flow_name": "link-activity-targets-flow",
+    "id": "90dd633c4dcff5759d61ca92485c703c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/states/activityTargetableEntityArrayState.ts",
+    "flow_name": "manage-activity-targets-flow",
+    "id": "cafc1dc93975efb9874fb58f652abc99"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/utils/getActivityAttachmentIdsAndNameToUpdate.ts",
+    "flow_name": "manage-activity-attachments-flow",
+    "id": "e6da44e1fd03afdd210ea5d6930fed70"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/components/ParticipantChip.tsx",
+    "flow_name": "manage-activity-participants-flow",
+    "id": "e435f982e999816b8a17ac377bb30b58"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/components/ActivityRow.tsx",
+    "flow_name": "manage-activity-row-flow",
+    "id": "69aa040c24c527f836da280800b95cb8"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/inline-cell/hooks/useActivityTargetsComponentInstanceId.ts",
+    "flow_name": "manage-activity-target-cell-state-flow",
+    "id": "2798d203bb73606f5f9d292d25e0b052"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/files/hooks/useAttachments.tsx",
+    "flow_name": "manage-attachments-flow",
+    "id": "e5261647cac2157182187bb5567f3215"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/calendar/contexts/CalendarContext.ts",
+    "flow_name": "manage-calendar-context-flow",
+    "id": "7db910ca2a4d337b1d5b6da5f1e22a58"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/emails/graphql/metadata-queries/unsubscribeTopics.ts",
+    "flow_name": "manage-campaign-unsubscribe-flow",
+    "id": "97bbb7a342418cbef39f9afac9e13e94"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/emails/components/EmailThreadNotShared.tsx",
+    "flow_name": "manage-email-sharing-flow",
+    "id": "3bbfc9e70ff59788e38f36dbbecf85b6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/notes/components/NotesCard.tsx",
+    "flow_name": "manage-notes-card-flow",
+    "id": "d8ab1320242f542f4de07da7e0428f92"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/tasks/components/TaskRow.tsx",
+    "flow_name": "manage-task-row-flow",
+    "id": "d93e567fff83adf1c75008c21b504b55"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/utils/getActivityTargetsFilter.ts",
+    "flow_name": "filter-activity-targets-flow",
+    "id": "1a89a8557bb889604b4b58fe6671a921"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/graphql/operation-signatures/factories/findActivityTargetsOperationSignatureFactory.ts",
+    "flow_name": "retrieve-activity-targets-flow",
+    "id": "337cbd1a93151bcba31ba4b91500efd5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/graphql/operation-signatures/factories/findActivitiesOperationSignatureFactory.ts",
+    "flow_name": "retrieve-activities-flow",
+    "id": "f63fa6dcd2a5ec0677a66024e2ea123f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/hooks/useActivities.ts",
+    "flow_name": "view-activities-flow",
+    "id": "4db33deef12c3205687bcabf5da6eefc"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/timeline-activities/components/EventList.tsx",
+    "flow_name": "view-timeline-activities-flow",
+    "id": "f0c82870965c3aa54bf24f970c8feecb"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/timeline-activities/rows/activity/components/EventRowActivity.tsx",
+    "flow_name": "show-activity-details-flow",
+    "id": "2c79ac1ae51b5776bedda414a3370392"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/timeline-activities/components/EventRow.tsx",
+    "flow_name": "display-activity-event-flow",
+    "id": "317116a2956ffe14a2318d6fdd186b1d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/utils/getActivityPreview.ts",
+    "flow_name": "display-activity-information-flow",
+    "id": "2410e7f9b6368ecde9bbd1c6f33b0a67"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/timeline-activities/rows/main-object/components/EventFieldDiff.tsx",
+    "flow_name": "display-field-changes-flow",
+    "id": "878b54e64ab8112d792ba085f1297088"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/notes/components/NoteTile.tsx",
+    "flow_name": "display-note-tile-flow",
+    "id": "f79495f6320feda6fdd1d05d56cbff04"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/notes/components/NoteList.tsx",
+    "flow_name": "view-notes-flow",
+    "id": "5b6bc834a4571569dc612286a688fb13"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/tasks/components/TaskList.tsx",
+    "flow_name": "view-task-list-flow",
+    "id": "3948f2dc36d19ef28fcf5e90d6ec8222"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/tasks/components/TasksCard.tsx",
+    "flow_name": "view-tasks-card-flow",
+    "id": "e16b16cfaa6d61b757c54dc60e6e4669"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/components/ActivityRichTextEditor.tsx",
+    "flow_name": "create-activity-flow",
+    "id": "de003d6ff4088a6bafc4486fe575216f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/emails/components/ComposeEmailButton.tsx",
+    "flow_name": "compose-email-flow",
+    "id": "43d91f76ef3455adbd8ab56188adaaa5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/emails/components/CampaignComposerFields.tsx",
+    "flow_name": "create-campaign-flow",
+    "id": "e786ddae9b6f5a45e97084f9093faf7b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/tasks/components/AddTaskButton.tsx",
+    "flow_name": "create-task-flow",
+    "id": "4f37fc0996690de7823439058425c329"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/files/hooks/useUploadAttachmentFile.tsx",
+    "flow_name": "upload-attachment-flow",
+    "id": "851b99ebc3eb16e9d0c09b97c3d55466"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/hooks/useUpsertActivity.ts",
+    "flow_name": "update-activity-flow",
+    "id": "8993200697aee6d457ac3552046e617e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/inline-cell/components/ActivityTargetsInlineCell.tsx",
+    "flow_name": "edit-activity-targets-flow",
+    "id": "fa7fa9c3c329f7f29dfcceb1f6031215"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/activities/components/ActivityTargetChips.tsx",
+    "flow_name": "assign-activity-targets-flow",
+    "id": "2954bf7a747b35ce71d61e1cfaa93279"
+   }
+  ],
+  "name": "Create, browse, and manage activities, notes, and tasks",
+  "patterns_by_file": {},
+  "resource": "activity"
+ },
+ "twenty_44_workflows": {
+  "domain": "",
+  "id": "UF-014",
+  "member_count": 44,
+  "members": [
+   {
+    "entry": "packages/twenty-shared/src/workflow/constants/IfElseBranchPositionOffsets.ts",
+    "flow_name": "handle-conditional-workflow-flow",
+    "id": "b5a88eebc2d831c403fcd9df67823d5e"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/iterator/utils/should-fail-safely-iterator-step.util.ts",
+    "flow_name": "handle-iterator-failure-flow",
+    "id": "f535feadd4f82030cadabadb00e4540e"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/filter/utils/find-default-null-equivalent-value.util.ts",
+    "flow_name": "process-filter-values-flow",
+    "id": "1bb9f810d206d13d83cb4324aaf2bb30"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/http-request-action/components/BodyInput.tsx",
+    "flow_name": "input-request-body-flow",
+    "id": "808d68bf88a62bed165608a0ac2b835d"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/record-crud/pick-record.workflow-action.ts",
+    "flow_name": "select-record-flow",
+    "id": "2723956611e701fe01ee91b690be065e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/find-records-action/components/WorkflowObjectDropdownContent.tsx",
+    "flow_name": "select-object-type-flow",
+    "id": "b52fa7ea9364c84ff31f035a3900e97d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowAiAgentPermissionsTab.tsx",
+    "flow_name": "manage-ai-agent-permissions-flow",
+    "id": "e0be3814eef007193a22e76cb109974a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/http-request-action/components/KeyValuePairInput.tsx",
+    "flow_name": "manage-request-headers-flow",
+    "id": "066536badbcaecbd4973a85fc31c84aa"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/graphql/mutations/retryWorkflowRun.ts",
+    "flow_name": "manage-workflow-execution-flow",
+    "id": "140a8456c12170ea6564b835cb65cb6e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowAiAgentPermissionsObjectRow.tsx",
+    "flow_name": "view-ai-agent-object-permissions-flow",
+    "id": "ab7c20a6363e863514d358b9fef5ebe3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/code-action/components/WorkflowReadonlyActionCode.tsx",
+    "flow_name": "view-workflow-code-action-flow",
+    "id": "a2c363719416461cc0643cee1726e7db"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/filter/filter.workflow-action.ts",
+    "flow_name": "filter-workflow-actions-flow",
+    "id": "bb7030be9bfe770fd80bde20902b6720"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/record-crud/find-records.workflow-action.ts",
+    "flow_name": "read-records-flow",
+    "id": "5cf6a55fedffacbb85e953ec9d2f2bc3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/components/WorkflowEditActionCreateCalendarEvent.tsx",
+    "flow_name": "create-calendar-event-flow",
+    "id": "f7cd6f9e0e1ac0844c9b118b293bc2e2"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/create-calendar-event/create-calendar-event-action.module.ts",
+    "flow_name": "create-calendar-event-flow",
+    "id": "0dea09a1c2c6e5e139a91c348aa1147d"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/create-calendar-event/utils/build-create-calendar-event-step-log.util.ts",
+    "flow_name": "create-calendar-event-flow",
+    "id": "e7ee9d8b6ea69697690e415b71db8f1d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/components/WorkflowEditActionCreateRecord.tsx",
+    "flow_name": "create-record-flow",
+    "id": "9b1fdce742d9c70938b86fc99487a605"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/record-crud/create-record.workflow-action.ts",
+    "flow_name": "create-record-flow",
+    "id": "2f153a42ee64d1c173148cd0860f37b1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowEditActionAiAgent.tsx",
+    "flow_name": "configure-ai-agent-action-flow",
+    "id": "a52ffb9570ea7ea3cc6dad7809f880a7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/components/WorkflowFormFieldInput.tsx",
+    "flow_name": "configure-workflow-action-flow",
+    "id": "19494550eb290ec971a3494753557af0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/http-request-action/components/WorkflowEditActionHttpRequest.tsx",
+    "flow_name": "configure-http-request-action-flow",
+    "id": "47ba93d2a3f723f51765b19a1dd6b652"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/filter-action/components/WorkflowEditActionFilter.tsx",
+    "flow_name": "edit-workflow-action-filter-flow",
+    "id": "914689d36fdd2bfa89a7d85d9c8ce8b6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/code-action/components/WorkflowEditActionCode.tsx",
+    "flow_name": "edit-workflow-code-action-flow",
+    "id": "13215c191a3db3f5253db6aebd46214e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/delay-actions/components/WorkflowEditActionDelay.tsx",
+    "flow_name": "edit-workflow-delay-action-flow",
+    "id": "5872eef644711bd51d039a699526a2da"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/logic-function-action/components/WorkflowEditActionLogicFunction.tsx",
+    "flow_name": "edit-workflow-logic-function-action-flow",
+    "id": "e4d9da6ca6fe73986a96d3032a7bf03c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/components/WorkflowEditActionUpdateRecord.tsx",
+    "flow_name": "update-record-flow",
+    "id": "1f16b1c3350f2e7eae06eaf6e4be4423"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/record-crud/update-record.workflow-action.ts",
+    "flow_name": "update-record-flow",
+    "id": "f010a1feb8e25533eb9069d793d0417e"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/components/WorkflowEditActionDeleteRecord.tsx",
+    "flow_name": "delete-record-flow",
+    "id": "929b0aaf918e3e899052e7b61bc64531"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/record-crud/delete-record.workflow-action.ts",
+    "flow_name": "delete-record-flow",
+    "id": "b0cbfe9898730440b359af8f6d219891"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/guards/is-workflow-ai-agent-action.guard.ts",
+    "flow_name": "validate-ai-agent-action-flow",
+    "id": "19ae026d040f8c6748051ef638c76bcf"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/code/guards/is-workflow-code-action.guard.ts",
+    "flow_name": "validate-code-action-flow",
+    "id": "381c300cfdc093b22846b6f987050952"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/delay/guards/is-workflow-delay-action.guard.ts",
+    "flow_name": "validate-delay-action-flow",
+    "id": "efe347917f01511986c049b5b9112b38"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-builder/workflow-validation/workflow-validation.workspace-service.ts",
+    "flow_name": "validate-workflow-flow",
+    "id": "52e904129f0094e743d1fd316fee7099"
+   },
+   {
+    "entry": "packages/twenty-shared/src/workflow/constants/ObjectsBlockedFromAutomation.ts",
+    "flow_name": "validate-workflow-automation-flow",
+    "id": "4c5ebfda44d8376d5c0b05e675573a73"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/graphql/mutations/runWorkflowVersion.ts",
+    "flow_name": "run-workflow-flow",
+    "id": "75138495ba47af4be1220a5f6f0027ca"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/hooks/useRunWorkflowVersion.tsx",
+    "flow_name": "run-workflow-flow",
+    "id": "63ac421051c35a00a90500be8f556caf"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/components/WorkflowEditActionEmailBase.tsx",
+    "flow_name": "send-email-flow",
+    "id": "edd2d261c361397c9b05425d437ec157"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/mail-sender/send-email.workflow-action.ts",
+    "flow_name": "send-email-flow",
+    "id": "de6fb443aadf1a434b0573d911b84d67"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/mail-sender/utils/build-email-step-log.util.ts",
+    "flow_name": "send-email-flow",
+    "id": "429d159c0f9728d899d6989b898f7d44"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts",
+    "flow_name": "execute-ai-agent-action-flow",
+    "id": "dd41356067f33f4b028d9a1ae3b392f9"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/code/code.workflow-action.ts",
+    "flow_name": "execute-code-action-flow",
+    "id": "ec74fa97ce4200657fb11aaf378ffef5"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/factories/workflow-action.factory.ts",
+    "flow_name": "execute-workflow-action-flow",
+    "id": "d3840964ca0615574dde33a7f1b9e138"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/http-request/utils/build-http-request-step-log.util.ts",
+    "flow_name": "execute-http-request-flow",
+    "id": "7e987cefb623c557493e2fd28ee6a0d4"
+   },
+   {
+    "entry": "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/iterator/utils/should-execute-iterator-step.util.ts",
+    "flow_name": "execute-iterator-step-flow",
+    "id": "4af80bb076efd68645cfce42d1d4f7b1"
+   }
+  ],
+  "name": "Build, trigger, and run automated workflows",
+  "patterns_by_file": {},
+  "resource": "workflow"
+ },
+ "twenty_47_page_layout": {
+  "domain": "",
+  "id": "UF-027",
+  "member_count": 47,
+  "members": [
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/fields/components/FieldsConfigurationEditor.tsx",
+    "flow_name": "configure-fields-flow",
+    "id": "d544312042da70c641f735225732d054"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field/components/FieldWidget.tsx",
+    "flow_name": "edit-field-flow",
+    "id": "f8433c855ee8e9ccafc17c2f0f9f0011"
+   },
+   {
+    "entry": "packages/twenty-front/src/generated-metadata/graphql.ts",
+    "flow_name": "configure-page-layout-flow",
+    "id": "70f12eefbdea12131091f30c2da2dba3"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/components/PageLayoutInitializationQueryEffect.tsx",
+    "flow_name": "initialize-page-layout-flow",
+    "id": "8b904e8f6276e4d6ead1eb479de4c69a"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/components/RecordPageAddWidgetSection.tsx",
+    "flow_name": "add-widget-to-record-page-flow",
+    "id": "3d480ba24b94ed3eb7cded2662fb8a3f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/email-thread/components/EmailThreadComposer.tsx",
+    "flow_name": "compose-email-flow",
+    "id": "4cd8f5a82733d83dbf21fa45c662e50c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/components/PageLayoutVerticalListEditor.tsx",
+    "flow_name": "customize-vertical-list-flow",
+    "id": "406decaf0375e6a2283e46b59bd05286"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/widget-card/components/WidgetCardHeader.tsx",
+    "flow_name": "customize-widget-header-flow",
+    "id": "fbd655a3904eac2625ff3e9270933798"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/fields/components/FieldsWidgetCellEditModePortal.tsx",
+    "flow_name": "edit-field-cell-flow",
+    "id": "50566e71a2bf2a8516ae774c780717d2"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field-rich-text/components/FieldRichTextWidget.tsx",
+    "flow_name": "edit-rich-text-field-flow",
+    "id": "2175ee700ee36729cf24d2329a63bc31"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/standalone-rich-text/components/StandaloneRichTextWidget.tsx",
+    "flow_name": "edit-rich-text-flow",
+    "id": "277dfd1ba23351211469260f7d02f4d1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field/components/__stories__/FieldWidget.stories.tsx",
+    "flow_name": "edit-structured-field-flow",
+    "id": "00357b37122674707aa9fb291460609f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/components/WidgetActionFieldEdit.tsx",
+    "flow_name": "edit-widget-field-flow",
+    "id": "e21eeee912df7eebb49ca9293789580b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/fields/components/FieldsWidgetGroupsDraftInitializationEffect.tsx",
+    "flow_name": "initialize-field-groups-flow",
+    "id": "e9e8f28cf46cb1b68aba79137e5d330b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/record-table/components/RecordTableWidgetViewDraftInitEffect.tsx",
+    "flow_name": "initialize-record-table-view-draft-flow",
+    "id": "51dcdb62802e21a1d904ecde9bd1a980"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/standalone-rich-text/components/DashboardColorSelectionMenu.tsx",
+    "flow_name": "select-text-color-flow",
+    "id": "fc995f0453da3aa4555a1ec80e6859b5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/side-panel/constants/SidePanelTopBarHeight.ts",
+    "flow_name": "configure-side-panel-layout-flow",
+    "id": "562e77cc8b3a93f9cbf16e9e2c9fbb6b"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/common/states/selectedNavigationMenuItemIdInEditModeState.ts",
+    "flow_name": "edit-page-layout-states-flow",
+    "id": "332a0899033cfe223ee93bb2937735e1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/fields/components/FieldsConfigurationGroupEditor.tsx",
+    "flow_name": "organize-field-groups-flow",
+    "id": "248186f8c992e7deff8b70c4b83ca7db"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/fields/components/FieldsConfigurationGroupDraggableHeader.tsx",
+    "flow_name": "reorder-field-groups-flow",
+    "id": "bbbb71e334f6fe52a3dc37d291748705"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/widget-card/components/WidgetGrip.tsx",
+    "flow_name": "drag-widget-flow",
+    "id": "a78b266ccd043b6c13c1271d3c2d6ddf"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field/components/FieldWidgetShowMoreButton.tsx",
+    "flow_name": "expand-field-content-flow",
+    "id": "912c2d958760e88e00a78d76a1a3d21c"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/fields/components/FieldsWidgetCellHoveredPortal.tsx",
+    "flow_name": "hover-field-cell-flow",
+    "id": "bca7bcc2ec10afe1a44f69459ec83ab0"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field/components/FieldWidgetInlineCell.tsx",
+    "flow_name": "interact-inline-cell-flow",
+    "id": "d6c8cc6ed3f0928998d22a594ef99e48"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/PageLayoutMainContent.tsx",
+    "flow_name": "navigate-layout-panels-flow",
+    "id": "9639a8ce6e37d92f8b314c8cafebba08"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/components/PageLayoutGridResizeHandle.tsx",
+    "flow_name": "resize-layout-grid-flow",
+    "id": "278a039ce07b012c753f3ad49f6ef519"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/ui/navigation/bread-crumb/components/Breadcrumb.tsx",
+    "flow_name": "navigate-breadcrumbs-flow",
+    "id": "01bea0432c8d661969a4aa8e373127c5"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/ui/navigation/states/navigationDrawerActiveTabState.ts",
+    "flow_name": "navigate-drawer-tabs-flow",
+    "id": "639bf245bddf75f9098166a4aada34f7"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/navigation-menu-item/common/states/navigationMenuItemsSelector.ts",
+    "flow_name": "navigate-menu-items-flow",
+    "id": "ced68cad63593d5a8f7729718bb9a5ad"
+   },
+   {
+    "entry": "packages/twenty-front/src/pages/page-layout/StandalonePageHeader.tsx",
+    "flow_name": "view-page-layout-standalone-page-header-flow",
+    "id": "a2aefda29b335163c4aec4a6e3399c2f"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/standalone-rich-text/components/DashboardFormattingToolbar.tsx",
+    "flow_name": "format-text-flow",
+    "id": "4006d36dc64a6bceaa1cc1d29b3d3339"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/states/contexts/WidgetComponentInstanceContext.ts",
+    "flow_name": "manage-widget-component-instance-flow",
+    "id": "2590e7d43142e68aca16b60677b88bcc"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/widget-card/components/WidgetCardContent.tsx",
+    "flow_name": "manage-widget-content-flow",
+    "id": "39defc1e4203e24854e81434b386c539"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/states/widgetCardHoveredComponentFamilyState.ts",
+    "flow_name": "track-widget-hover-state-flow",
+    "id": "206971adb1dbf0ac02759d48a5f78877"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/components/PageLayoutTabList.tsx",
+    "flow_name": "manage-page-tabs-flow",
+    "id": "2dadc1e8e7bc2da21982251d5930c124"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/ui/utilities/focus/hooks/useRemoveFocusItemFromFocusStackById.ts",
+    "flow_name": "manage-focus-stack-flow",
+    "id": "e124f9db8465372b1dc7b05ed09fc7c6"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/object-record/record-index/hooks/useResetRecordIndexSelection.ts",
+    "flow_name": "reset-record-selection-flow",
+    "id": "7176fa9c79ee444e4bf701a74fd40023"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field/components/FieldWidgetJunctionRelationField.tsx",
+    "flow_name": "manage-junction-relation-flow",
+    "id": "8d449c0612a637c62ad379cf6d41aef1"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field/components/FieldWidgetMorphRelationField.tsx",
+    "flow_name": "manage-morph-relation-flow",
+    "id": "f05c34e49d5c366a5a3cf7aaced4700d"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/page-layout/widgets/field/components/FieldWidgetRelationField.tsx",
+    "flow_name": "manage-relation-field-flow",
+    "id": "496f637406ee9a80cac9592feed343b7"
+   },
+   {
+    "entry": "packages/twenty-front/src/generated-metadata/graphql.ts",
+    "flow_name": "manage-navigation-menu-flow",
+    "id": "487c9d2fb4ac6ee389c2e2ea2e4223e7"
+   },
+   {
+    "entry": "packages/twenty-front/src/generated-metadata/graphql.ts",
+    "flow_name": "manage-command-menu-flow",
+    "id": "20ca77246c9791e064f802d1e6b05f98"
+   },
+   {
+    "entry": "packages/twenty-front/src/modules/ui/navigation/navigation-drawer/components/NavigationDrawerCollapseButton.tsx",
+    "flow_name": "toggle-navigation-drawer-flow",
+    "id": "4546728b03fb943552f9880caef5a377"
+   },
+   {
+    "entry": "packages/twenty-front/src/generated-metadata/graphql.ts",
+    "flow_name": "manage-api-keys-flow",
+    "id": "a4376fba20ca8a2951617c4f6105b204"
+   },
+   {
+    "entry": "packages/twenty-front/src/generated-metadata/graphql.ts",
+    "flow_name": "manage-applications-flow",
+    "id": "2068375eff554f82ba3a52069be37479"
+   },
+   {
+    "entry": "packages/twenty-front/src/generated-metadata/graphql.ts",
+    "flow_name": "manage-webhooks-flow",
+    "id": "dc60672ede0ccc8cb4eca8fefe8fa733"
+   },
+   {
+    "entry": "packages/twenty-front/src/generated-metadata/graphql.ts",
+    "flow_name": "manage-permissions-flow",
+    "id": "f0e7a88a6ff3490c8a64c3b6b0b924f9"
+   }
+  ],
+  "name": "Customize record page layout, tabs, and widgets",
+  "patterns_by_file": {
+   "packages/twenty-front/src/pages/page-layout/StandalonePageHeader.tsx": [
+    "/page-layout/StandalonePageHeader"
+   ]
+  },
+  "resource": "page-layout"
+ },
+ "twenty_8_connect_server": {
+  "domain": "",
+  "id": "UF-071",
+  "member_count": 8,
+  "members": [
+   {
+    "entry": "packages/twenty-server/src/engine/metadata-modules/logic-function/logic-function.resolver.ts",
+    "flow_name": "manage-logic-functions-flow",
+    "id": "f6508d4e663358b518d2fb986cb57ae5"
+   },
+   {
+    "entry": "packages/twenty-shared/src/utils/filter/compute-record-gql-operation-filter/for-composite-field/computeGqlOperationFilterForLinks.ts",
+    "flow_name": "filter-links-flow",
+    "id": "c90a3335023a44b1faf35ef0a6fcb05b"
+   },
+   {
+    "entry": "packages/twenty-shared/src/utils/filter/compute-record-gql-operation-filter/for-composite-field/computeGqlOperationFilterForEmails.ts",
+    "flow_name": "filter-emails-flow",
+    "id": "c92783ab73acc6634354f0e9d0f693fc"
+   },
+   {
+    "entry": "packages/twenty-shared/src/utils/filter/computeEmptyGqlOperationFilterForLinks.ts",
+    "flow_name": "initialize-empty-link-filter-flow",
+    "id": "c88605217ae467f6482ca2d8a0bd6d40"
+   },
+   {
+    "entry": "packages/twenty-shared/src/utils/filter/computeEmptyGqlOperationFilterForEmails.ts",
+    "flow_name": "initialize-empty-email-filter-flow",
+    "id": "4ba9bff398acbc5265d263c9e558e41b"
+   },
+   {
+    "entry": "packages/twenty-shared/src/logic-function/build-tool-input-json-schema.ts",
+    "flow_name": "build-tool-input-configuration-flow",
+    "id": "2622ff2f90e5bfdd0a5ce7a57f97cee7"
+   },
+   {
+    "entry": "packages/twenty-shared/src/utils/filter/dates/utils/getPeriodStart.ts",
+    "flow_name": "run-get-period-start-flow",
+    "id": "23dfb43f9cb7131eab25091551e8687d"
+   },
+   {
+    "entry": "packages/twenty-shared/src/constants/CompositeFieldTypeSubFieldsNames.ts",
+    "flow_name": "configure-field-types-flow",
+    "id": "21aa3c75d0c1edc266e64a961f6aa8eb"
+   }
+  ],
+  "name": "Connect twenty server",
+  "patterns_by_file": {
+   "packages/twenty-server/src/engine/metadata-modules/logic-function/logic-function.resolver.ts": [
+    "createOneLogicFunction",
+    "deleteOneLogicFunction",
+    "executeOneLogicFunction",
+    "findManyLogicFunctions",
+    "findOneLogicFunction",
+    "getAvailablePackages",
+    "getLogicFunctionSourceCode",
+    "logicFunctionLogs",
+    "updateOneLogicFunction"
+   ]
+  },
+  "resource": "twenty-shared"
+ }
+}
