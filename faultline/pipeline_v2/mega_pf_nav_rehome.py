@@ -813,10 +813,12 @@ def run_mega_pf_nav_rehome(
     # 0.25), rank ITS journeys by the operator's non-circular wrong-home
     # lines — tok0 (name shares zero content tokens with the vacuum) and
     # better-home (the same deterministic detector Seg B re-homes on). This
-    # is the RESIDUAL after the Seg B affinity gate ran upstream (before
-    # mega): the count the lead needs to rule on whether an in-mega re-home
-    # sweep is wanted on top of Seg B's global cure. Read-only forensic —
-    # no mutation — so it cannot perturb byte-identity beyond the flag gate.
+    # measures the PRE-GATE class (Seg B runs later, at 6.995 — the
+    # ledger-proven last-writer slot); the post-gate residual is the emitted
+    # board's census — together they give the lead the before/after pair to
+    # rule on whether an in-mega re-home sweep is wanted on top of Seg B's
+    # cure. Read-only forensic — no mutation — so it cannot perturb
+    # byte-identity beyond the flag gate.
     if home_affinity_gate_enabled():
         top_key, top_ct = ranked_homes[0]
         if top_ct / total_homed >= _TRIGGER_SHARE:
