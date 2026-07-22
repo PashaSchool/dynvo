@@ -305,6 +305,11 @@ class _DomainResult:
     names_invalid: int = 0
     names_recovered: int = 0
     names_fallback: int = 0
+    # B78 Seg H (FAULTLINE_DOMINANT_EVIDENCE_NAMING) — accepted LLM
+    # composites stripped of under-supported tokens / rejected to the
+    # deterministic name. Both stay 0 when the flag is off.
+    names_dominant_stripped: int = 0
+    names_dominant_rejected: int = 0
     # Warm-cache telemetry: calls served from the content-hash cache
     # (CacheKind.LLM_UF_REFINE) vs live Haiku calls issued. Cache hits are
     # NOT counted in llm_calls and cost $0 — mirrors Stage 3 / Stage 4.
@@ -905,6 +910,51 @@ def _compute_domain(
             1 for uf_id in failing_ids if not name_ok.get(uf_id, True)
         )
 
+    # ── B78 Seg H — dominant-evidence ratio gate (accept-gate rider) ──
+    # The presence validator above admits a token ONE member grounds; the
+    # ratio gate demands family-level support (>= 0.34 of members, side-
+    # effect families never gifting). An under-supported token is STRIPPED
+    # grammar-preservingly ('Create, manage, and audit labels' -> 'Create
+    # and manage labels'); an unstrippable composite is REJECTED to the
+    # deterministic Stage-6.7 name via the existing ``name_ok=False``
+    # channel. Pure + deterministic given parsed rows and members, so a
+    # cached call-1 replay is gated identically. Flag OFF ⇒ byte-identical.
+    from faultline.pipeline_v2.dominant_evidence import (
+        dominant_evidence_naming_enabled,
+        strip_display_tokens,
+        unsupported_display_tokens,
+    )
+    if dominant_evidence_naming_enabled():
+        from faultline.pipeline_v2.naming_contract import load_naming_vocab
+
+        _vocab = load_naming_vocab()
+        for uf in ufs:
+            row = parsed.get(uf.id)
+            nm = row.get("name") if row else None
+            if not (isinstance(nm, str) and nm.strip()):
+                continue
+            if not name_ok.get(uf.id, True):
+                continue  # already falling back deterministically
+            pairs = [
+                (str(getattr(m, "display_name", None) or m.name or ""),
+                 str(getattr(m, "entry_point_file", None) or ""))
+                for m in members_by_uf[uf.id]
+            ]
+            drop = unsupported_display_tokens(
+                nm.strip(), pairs,
+                resource=str(getattr(uf, "resource", "") or ""),
+                vocab=_vocab,
+            )
+            if not drop:
+                continue
+            stripped = strip_display_tokens(nm.strip(), drop, _vocab)
+            if stripped and stripped != nm.strip():
+                parsed[uf.id] = {**(row or {}), "name": stripped}
+                result.names_dominant_stripped += 1
+            elif stripped is None:
+                name_ok[uf.id] = False
+                result.names_dominant_rejected += 1
+
     result.parsed = parsed
     result.name_ok = name_ok
     return result
@@ -1139,6 +1189,17 @@ def refine_user_flows(
                     )
                 telemetry["uf_names_recovered_on_retry"] += res.names_recovered
             telemetry["uf_names_fallback"] += res.names_fallback
+
+        # B78 Seg H — dominant-evidence gate deltas (keys exist only when
+        # the flag armed a strip/reject: OFF scans stay byte-identical).
+        if res.names_dominant_stripped:
+            telemetry["uf_names_dominant_stripped"] = (
+                telemetry.get("uf_names_dominant_stripped", 0)
+                + res.names_dominant_stripped)
+        if res.names_dominant_rejected:
+            telemetry["uf_names_dominant_rejected"] = (
+                telemetry.get("uf_names_dominant_rejected", 0)
+                + res.names_dominant_rejected)
 
         parsed = res.parsed
         name_ok = res.name_ok

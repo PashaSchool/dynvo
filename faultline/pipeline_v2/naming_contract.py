@@ -50,7 +50,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from faultline.pipeline_v2.data import load_yaml
 from faultline.pipeline_v2.fullname_expand import (
@@ -2226,6 +2226,7 @@ def build_uf_candidates(
     member_flow_names: Iterable[str] = (),
     authored: Iterable[str] = (),
     own_resource: bool = False,
+    member_evidence: Sequence[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Ranked display candidates for one user flow. Journey templates
     (verb-led, actor+intent+outcome shape) lead when the current name is
@@ -2246,7 +2247,12 @@ def build_uf_candidates(
     UFs of one PF would otherwise mint the identical "<verb> <PF-display>"
     row (twenty ``twenty-server`` -> 'Manage twenty server' ×24). The
     caller sets it only for those hub members; False (the default) ⇒
-    byte-identical to the pre-R5-2 template."""
+    byte-identical to the pre-R5-2 template.
+
+    ``member_evidence`` (B78 Seg H, ``FAULTLINE_DOMINANT_EVIDENCE_NAMING``)
+    — ``(flow-name, entry-file)`` pairs of the UF's members for the
+    dominant-evidence ratio gate on the generic template's ``{r}`` join.
+    ``None`` (the default) or flag OFF ⇒ byte-identical."""
     current = str(getattr(uf, "name", "") or "")
     pf_display = (
         str(getattr(pf, "display_name", None) or getattr(pf, "name", "") or "")
@@ -2297,7 +2303,32 @@ def build_uf_candidates(
             _own = re.sub(r"[-_]+", " ", str(uf.resource)).strip()
             if _own:
                 _r_src = _own
-        template_name = tmpl.replace("{r}", _resource_phrase(_r_src, vocab))
+        _join_phrase = _resource_phrase(_r_src, vocab)
+        # B78 Seg H (FAULTLINE_DOMINANT_EVIDENCE_NAMING) — a multi-resource
+        # {r} join (a PF display like 'Knowledges, Orgs & Files') gifts
+        # EVERY one of its resources to a journey about one of them. Ratio
+        # gate over member evidence: drop under-supported content tokens
+        # (own-resource tokens are exempt — identity, not a gift); an
+        # emptied phrase keeps the original (reject ⇒ unchanged channel).
+        # ``member_evidence is None`` / flag OFF ⇒ byte-identical.
+        if member_evidence is not None and _join_phrase:
+            from faultline.pipeline_v2.dominant_evidence import (
+                dominant_evidence_naming_enabled,
+                strip_display_tokens,
+                unsupported_display_tokens,
+            )
+            if dominant_evidence_naming_enabled():
+                _drop = unsupported_display_tokens(
+                    _join_phrase, member_evidence,
+                    resource=str(getattr(uf, "resource", "") or ""),
+                    vocab=vocab,
+                )
+                if _drop:
+                    _stripped = strip_display_tokens(
+                        _join_phrase, _drop, vocab)
+                    if _stripped:
+                        _join_phrase = _stripped
+        template_name = tmpl.replace("{r}", _join_phrase)
 
     # B50 Seg1 — a template whose verb duplicates the leading resource token
     # ('Ingest ingest', 'View views', 'Send send test email') collapses at
@@ -3730,6 +3761,24 @@ def run_naming_contract(
     # map so ``member_flow_ids`` resolve identically.
     flow_name_by_id, flow_origin_by_id, flow_by_id = _uf_flow_maps(flows)
 
+    # B78 Seg H — member evidence for the dominant-evidence ratio gate on
+    # the generic {r} template join (built per UF only when the flag is
+    # armed; ``None`` ⇒ every build_uf_candidates call is byte-identical).
+    from faultline.pipeline_v2.dominant_evidence import (
+        dominant_evidence_naming_enabled as _dom_naming_on_fn,
+        member_evidence_pairs as _dom_member_pairs,
+    )
+    _dom_naming_on = _dom_naming_on_fn()
+
+    def _seg_h_evidence(uf: Any) -> list[tuple[str, str]] | None:
+        if not _dom_naming_on:
+            return None
+        return _dom_member_pairs([
+            flow_by_id[str(m)]
+            for m in (getattr(uf, "member_flow_ids", None) or [])
+            if str(m) in flow_by_id
+        ])
+
     # B57 Seg1 — materialize once (three consumers may iterate) and build
     # the ALL-voted-labels view only when the rung flag is armed (OFF ⇒
     # zero extra work, byte-identical emission).
@@ -3994,7 +4043,7 @@ def run_naming_contract(
         _own_res = _uid in _echo_own_res_ids
         candidates = build_uf_candidates(
             uf, pf, vocab, member_names, authored=_authored_for(uf),
-            own_resource=_own_res)
+            own_resource=_own_res, member_evidence=_seg_h_evidence(uf))
         violations = display_law_violations(
             polish_display_casing(current, vocab), vocab,
             pf_display=pf_display or None)
@@ -4222,7 +4271,8 @@ def run_naming_contract(
             _t_own = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
             for cand in build_uf_candidates(
                     uf, live_pf, vocab, member_names,
-                    authored=_authored_for(uf), own_resource=_t_own):
+                    authored=_authored_for(uf), own_resource=_t_own,
+                    member_evidence=_seg_h_evidence(uf)):
                 if display_law_violations(
                     cand, vocab, pf_display=live_disp,
                 ):
@@ -4294,7 +4344,8 @@ def run_naming_contract(
                 # byte-identical.
                 _v_own = str(getattr(uf, "id", "") or "") in _echo_own_res_ids
                 for cand in build_uf_candidates(
-                        uf, pf, vocab, member_names, own_resource=_v_own):
+                        uf, pf, vocab, member_names, own_resource=_v_own,
+                        member_evidence=_seg_h_evidence(uf)):
                     if display_law_violations(
                         cand, vocab, pf_display=pf_display or None,
                     ):

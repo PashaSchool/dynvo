@@ -43,6 +43,11 @@ import os
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
+from faultline.pipeline_v2.dominant_evidence import (
+    MEMBER_SUPPORT_FLOOR,
+    dominant_evidence_naming_enabled,
+)
+
 if TYPE_CHECKING:
     from faultline.models.types import UserFlow
 
@@ -672,9 +677,21 @@ def rename_raw_resource_rows(
         # Families echoing a token already in the object display are noise
         # ('Manage org knowledges, … & knowledges').
         _shown = {_sing(t) for t in root_disp.split()}
+        # B78 Seg H (FAULTLINE_DOMINANT_EVIDENCE_NAMING) — a qualifier
+        # family joins the display ONLY with member support >= the 0.34
+        # family floor (dominant_evidence.MEMBER_SUPPORT_FLOOR — the same
+        # presence→ratio law as the refiner/template sites: top-2 BY COUNT
+        # still admitted 2-of-16 tails, Soc0 keyless 'Manage org
+        # knowledges, entries & froms'). The root and the depth-promoted
+        # dominant family are majority by construction and unaffected.
+        # Flag OFF ⇒ byte-identical.
+        _seg_h_floor = 0.0
+        if dominant_evidence_naming_enabled():
+            _seg_h_floor = MEMBER_SUPPORT_FLOOR
         top = [
-            f for f, _ in sorted(fams.items(), key=lambda kv: (-kv[1], kv[0]))
+            f for f, n in sorted(fams.items(), key=lambda kv: (-kv[1], kv[0]))
             if _sing(f) not in _shown
+            and n / len(members) >= _seg_h_floor
         ][:2]
         base = f"{_title(_family_verb(vlist))} {root_disp}"
         if len(top) == 2:

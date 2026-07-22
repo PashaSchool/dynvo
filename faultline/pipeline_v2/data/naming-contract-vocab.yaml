@@ -394,3 +394,39 @@ scaffold_lead_words:
   - list
   - new
   - view
+
+# B78 Seg H (2026-07-21) — side-effect flow families for the
+# FAULTLINE_DOMINANT_EVIDENCE_NAMING ratio gate (dominant_evidence.py).
+# A member flow whose LEADING name token names a cross-cutting
+# side-effect action (audit-write / telemetry / cache / log) rides along
+# most journeys as plumbing; its evidence never GIFTS words to the
+# journey's display (Soc0 'Create, manage, and audit labels' — 'audit'
+# backed by 1/11 members, an audit-write rider). CORROBORATION ONLY:
+# the mechanism is the ratio gate — this closed set merely marks which
+# members are excluded from support numerators (they stay in the
+# denominator). Closed set, exact leading-token match only
+# (journey_step_leaf_tokens discipline — no fuzzy/substring matching).
+# ANTI-CASES (must survive; unit-pinned):
+#   * a journey ABOUT auditing ('View audit logs', resource='audit-log')
+#     keeps its words — resource-grounded tokens are exempt from the
+#     gate entirely, so this exclusion can never erase a journey's own
+#     identity;
+#   * 'track' stays OUT — issue/shipment tracking is a product action
+#     (twenty / plane class);
+#   * 'record' stays OUT — products record meetings/videos (cal class);
+#   * 'monitor' stays OUT — uptime monitoring IS a product;
+#   * 'trace' stays OUT — traces are a first-class resource in LLM
+#     observability products (langfuse class).
+# Known cost accepted: a 'log-out-*' flow (leading token 'log') is
+# misread as a log-write rider; it merely stops gifting words — 'sign' /
+# 'out' evidence still arrives from the sibling auth members.
+side_effect_flow_families:
+  audit-write:
+    - audit
+  telemetry:
+    - instrument
+    - telemetry
+  cache:
+    - cache
+  log:
+    - log
