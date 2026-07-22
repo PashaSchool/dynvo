@@ -1119,6 +1119,17 @@ ENV_OUTPUT_FLAGS = (
     # byte-identical. No KEY_SCHEMA bump (flip is a separate later
     # commit per flip-protocol).
     "FAULTLINE_FOLD_EVIDENCE_WEIGHT",
+    # B78 Seg F (2026-07-22) — plumbing-UF reclassification (Stage 6.996): a
+    # UF whose NAME reads as a data-access/infra helper (plumbing verb +
+    # tech-object, closed YAML vocab), whose profile is micro (member_count
+    # <=2), and which carries no product surface (routeless + no member PAGE)
+    # reclassifies to category="system" (+ surface_scope="system"). Reshapes
+    # the emitted user_flows[] category/scope layer; membership untouched.
+    # Default OFF; =0/unset ⇒ no field change and no scan_meta key ⇒
+    # serialized output byte-identical. Appended to ENV_OUTPUT_FLAGS WITHOUT
+    # a KEY_SCHEMA bump — the bump rides the separate flip commit per
+    # flip-protocol.
+    "FAULTLINE_PLUMBING_UF_RECLASS",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

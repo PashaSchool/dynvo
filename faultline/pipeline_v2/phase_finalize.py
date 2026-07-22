@@ -3623,6 +3623,60 @@ def run_finalize_phase(
                 f"coverage_gaps left as-is"
             )
 
+    # ── Stage 6.996 — B78 Seg F plumbing-UF reclassification ───────────
+    # A UF whose NAME reads as a data-access/infra helper (plumbing verb +
+    # tech-object, closed YAML vocab), whose profile is micro (member_count
+    # <=2), and which carries NO product surface (routeless + no member
+    # PAGE) is DEV-GRAIN plumbing, not a user journey: it reclassifies to
+    # category="system" (+ surface_scope="system"). No rung upstream reads
+    # the shape of a UF (6.987 is PF-grain, 6.8b reads route triggers, B40
+    # is a confidence stamp). Runs AFTER Stage 7 naming_contract / flow-name
+    # (names frozen — no rename triggered) and after B68 terminal
+    # classification, the sibling "demote must reclassify" channel. Membership
+    # is READ-ONLY (only category+scope flip; conservation by construction).
+    # Deterministic, $0 LLM. Kill-switch FAULTLINE_PLUMBING_UF_RECLASS
+    # (default OFF) — unset/=0 never runs (byte-identity with main).
+    from faultline.pipeline_v2.plumbing_uf_reclass import (
+        plumbing_uf_reclass_enabled,
+        run_plumbing_uf_reclass,
+    )
+    if plumbing_uf_reclass_enabled():
+        with StageLogger(run_dir, 6, "plumbing_uf_reclass") as log_pur:
+            try:
+                _flows_by_id: dict[str, Any] = {}
+                for _fl in bipartite.flows:
+                    for _k in (getattr(_fl, "uuid", None),
+                               getattr(_fl, "name", None)):
+                        if _k:
+                            _flows_by_id.setdefault(str(_k), _fl)
+                _page_ri = {
+                    str(e.get("file") or "")
+                    for e in (lineage_result.routes_index or [])
+                    if isinstance(e, dict)
+                    and str(e.get("method") or "").upper() == "PAGE"
+                    and e.get("file")
+                }
+                pur_tele = run_plumbing_uf_reclass(
+                    user_flows, _flows_by_id, _page_ri)
+                scan_meta["plumbing_uf_reclass"] = pur_tele
+                log_pur.info(
+                    "plumbing_uf_reclass: candidates=%d reclassified=%d "
+                    "abstained=%d" % (
+                        pur_tele.get("candidates", 0),
+                        len(pur_tele.get("reclassified", [])),
+                        len(pur_tele.get("abstained", [])),
+                    ),
+                    feature=None,
+                )
+            except Exception as exc:  # noqa: BLE001 — never break a scan
+                scan_meta.setdefault("warnings", []).append(
+                    f"plumbing-uf reclass failed ({exc}); UFs left untouched"
+                )
+                log_pur.info(
+                    f"plumbing_uf_reclass: FAILED ({exc}) — continuing",
+                    feature=None,
+                )
+
     # ── S3 arbiter — single application point (before Stage 7 output) ──
     # Every product_feature_id proposal for this scan has now been recorded
     # by the observer. Run the arbiter ONCE: its rung-priority replay ==
