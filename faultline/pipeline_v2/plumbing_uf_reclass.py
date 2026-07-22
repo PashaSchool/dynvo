@@ -35,9 +35,17 @@ iff ALL hold:
       user-reachable veto (a post-UF demote must never eat user-facing —
       ``reclassify_service_internals`` it6 precedent).
 
+Synthesized 6.7d PF-UF backstop journeys (``uncovered_product_feature_
+backstop`` / ``promoted_capability_backstop``) with real members ARE in
+scope — the cal.com 'Run <Vendor> jobs' x25 are exactly these thin plumbing
+backstops. Only member-LESS coverage markers/recall seeds, e2e-recall rows
+(the B68 fate-1 "not-a-feature" channel) and transport-laned rows are left
+to their own channels.
+
 CONSERVATION (B77 no-orphan): only ``category`` + ``surface_scope`` flip;
 membership (``member_flow_ids`` / ``product_feature_id`` / member spans) is
-READ-ONLY. Every fate is recorded BY ID in
+READ-ONLY — so the PF's I8 journey obligation stays met (a UF is counted by
+its ``product_feature_id``, not its category). Every fate is recorded BY ID in
 ``scan_meta["plumbing_uf_reclass"]`` (mirrors ``reclassify_service_internals``
 "members untouched, fate recorded by id"). The name is NOT touched (naming
 is frozen — this runs AFTER Stage 7 naming_contract).
@@ -199,17 +207,28 @@ def run_plumbing_uf_reclass(
     by_verb: dict[str, int] = {}
 
     for uf in user_flows:
-        # System-only demote of INTERACTIVE product journeys. A UF that is
-        # already system (Stage 6.8b / reclassify_service_internals), a
-        # coverage marker, a synthesized/backstop row, or a transport-laned
-        # row is a different channel — never re-touched here.
+        # System-only demote of INTERACTIVE journeys. Skip the OTHER channels:
+        #   * already system (Stage 6.8b / reclassify_service_internals);
+        #   * a member-LESS coverage marker / recall seed (B13 is_coverage_marker
+        #     — a gap-band row, not a journey) or ANY member-less row;
+        #   * an e2e-recall row (B68 fate-1 "not-a-feature", owned by
+        #     terminal_classification — never re-typed here);
+        #   * a transport-laned row (B52 lane_ref channel).
+        # A SYNTHESIZED backstop journey WITH members
+        # (``uncovered_product_feature_backstop`` / ``promoted_capability_
+        # backstop`` — the cal.com 'Run <Vendor> jobs' x25 are exactly these)
+        # IS in scope: it is a thin plumbing journey, and I8 (validate_scan
+        # 1710) counts a UF by its ``product_feature_id`` regardless of
+        # category, so flipping category keeps the PF's journey obligation met.
         if str(getattr(uf, "category", "") or "") != "interactive":
             continue
         if (getattr(uf, "is_coverage_marker", False)
-                or getattr(uf, "synthesized", False)
-                or getattr(uf, "synthesis_reason", None)
-                or getattr(uf, "lane_ref", None)):
+                or getattr(uf, "lane_ref", None)
+                or str(getattr(uf, "synthesis_reason", "") or "")
+                == "e2e_journey_recall"):
             continue
+        if not (getattr(uf, "member_flow_ids", None) or []):
+            continue  # member-less marker / recall seed — not a journey
 
         verdict = plumbing_name_verdict(getattr(uf, "name", "") or "", vocab)
         if verdict is None:

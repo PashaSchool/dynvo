@@ -249,14 +249,32 @@ def test_anti_routed_uf_survives(monkeypatch) -> None:
     assert ab and ab[0]["reason"] == "routed"
 
 
-def test_anti_synthesized_and_marker_rows_skipped(monkeypatch) -> None:
-    """Coverage markers / backstop / lane rows are a different channel."""
+def test_backstop_journey_with_members_reclassifies(monkeypatch) -> None:
+    """The cal.com 'Run <Vendor> jobs' x25 are SYNTHESIZED 6.7d backstop
+    journeys (synthesis_reason='uncovered_product_feature_backstop') WITH
+    members — they ARE the primary Seg F target and MUST reclassify. I8
+    stays met (the PF's UF is counted by product_feature_id, not category)."""
+    _arm(monkeypatch)
+    uf = _uf("UF-115", "Run Alby jobs", members=["f1"], synthesized=True,
+             synthesis_reason="uncovered_product_feature_backstop")
+    flows = {"f1": _FlowStub("f1", "packages/app-store/alby/api/index.ts")}
+    tele = _run([uf], flows)
+    assert uf.category == "system"
+    assert uf.product_feature_id == "pf-x"      # binding untouched -> I8 met
+    assert tele["count"] == 1
+
+
+def test_anti_marker_lane_e2e_memberless_rows_skipped(monkeypatch) -> None:
+    """Coverage markers / lane rows / e2e-recall / member-LESS seeds are
+    OTHER channels (never re-typed here). Synthesized backstops WITH members
+    are NOT in this skip set (see the reclassify test above)."""
     _arm(monkeypatch)
     ufs = [
         _uf("UF-060", "Fetch specs", members=["f"], is_coverage_marker=True),
-        _uf("UF-061", "Fetch specs", members=["f"], synthesized=True,
-            synthesis_reason="uncovered_product_feature_backstop"),
         _uf("UF-062", "Fetch specs", members=["f"], lane_ref="lane-1"),
+        _uf("UF-063", "Fetch specs", members=["f"], synthesized=True,
+            synthesis_reason="e2e_journey_recall"),
+        _uf("UF-064", "Fetch specs", members=[], mc=0),   # member-less seed
     ]
     tele = _run(ufs, {"f": _FlowStub("f", "lib/s.ts")})
     assert all(u.category == "interactive" for u in ufs)
