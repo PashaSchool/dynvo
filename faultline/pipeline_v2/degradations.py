@@ -49,6 +49,10 @@ TYPE_HIGH_LLM_FALLBACK = "high_llm_fallback"
 # severity=="failed" to reject such a board rather than score it.
 TYPE_LLM_BATCH_DEGRADED = "llm_batch_degraded"
 TYPE_JOURNEY_ABSTRACTION_FAILED = "journey_abstraction_failed"
+# B79 Seg A — a 6.7d abstraction that APPLIED via truncated-response salvage
+# (severity="partial", not "failed"): the journey layer landed but only a
+# recovered prefix of a token-ceiling-truncated draw.
+TYPE_JOURNEY_ABSTRACTION_PARTIAL = "journey_abstraction_partial"
 
 # ── severity ladder ─────────────────────────────────────────────────────────
 SEVERITY_PARTIAL = "partial"
@@ -232,6 +236,32 @@ def journey_abstraction_failed(*, reason: str, cost_usd: float) -> Degradation:
     )
 
 
+def journey_abstraction_partial(
+    *, uf_salvaged: int, pf_salvaged: int, dropped_tail: bool, cost_usd: float,
+) -> Degradation:
+    """Stage 6.7d applied a PARTIAL journey abstraction (B79 Seg A): the Call-1
+    response was truncated at the token ceiling and the robust-parse salvage
+    recovered a COMPLETE prefix (``uf_salvaged`` journeys + ``pf_salvaged``
+    capabilities) while dropping the incomplete tail. Better than losing the
+    whole journey layer, but NOT a clean full abstraction — surfaced as
+    severity="partial" so the board is still scored yet visibly flagged, never
+    silently trusted as complete."""
+    return make(
+        TYPE_JOURNEY_ABSTRACTION_PARTIAL,
+        stage="stage_6_7d_journey_abstraction",
+        severity=SEVERITY_PARTIAL,
+        detail=(
+            f"6.7d journey abstraction truncated at the token ceiling; salvaged "
+            f"{uf_salvaged} journey(s) + {pf_salvaged} capability(ies) from the "
+            f"valid prefix (incomplete tail dropped) — partial journey layer"
+        ),
+        uf_salvaged=uf_salvaged,
+        pf_salvaged=pf_salvaged,
+        dropped_tail=bool(dropped_tail),
+        cost_usd=round(cost_usd, 6),
+    )
+
+
 def classify_refiner_degradation(refiner: dict[str, Any]) -> Degradation | None:
     """Detect a fail-open uf_refiner batch from its scan_meta telemetry block.
 
@@ -286,6 +316,35 @@ def classify_journey_abstraction_degradation(
         return None
     return journey_abstraction_failed(
         reason=reason, cost_usd=float(s67d.get("cost_usd") or 0.0),
+    )
+
+
+def classify_journey_abstraction_partial(
+    s67d: dict[str, Any],
+) -> Degradation | None:
+    """Detect a SALVAGED (partial) 6.7d abstraction from its telemetry block
+    (B79 Seg A).
+
+    Returns a ``severity="partial"`` degradation when 6.7d APPLIED
+    (``applied=True``) via the robust-parse salvage (``abstraction_salvaged``);
+    ``None`` otherwise. Complements
+    :func:`classify_journey_abstraction_degradation` (the FATAL applied=False
+    case) — a salvaged run is applied=True, so the FATAL classifier is silent
+    and this one fires instead. Pure. Reads ONLY the flag-gated salvage
+    telemetry, so a flag-off / non-truncating scan (no ``abstraction_salvaged``
+    key) returns ``None`` and ``degradations[]`` stays byte-identical.
+    """
+    if not s67d or not s67d.get("enabled"):
+        return None
+    if not s67d.get("applied"):
+        return None
+    if not s67d.get("abstraction_salvaged"):
+        return None
+    return journey_abstraction_partial(
+        uf_salvaged=int(s67d.get("salvaged_uf_n") or 0),
+        pf_salvaged=int(s67d.get("salvaged_pf_n") or 0),
+        dropped_tail=bool(s67d.get("salvaged_dropped_tail")),
+        cost_usd=float(s67d.get("cost_usd") or 0.0),
     )
 
 
@@ -346,6 +405,11 @@ def detect_finalize_degradations(
     rec = classify_journey_abstraction_degradation(journey_abstraction or {})
     if rec is not None:
         out.append(rec)
+    # B79 Seg A: a salvaged (partial, applied=True) 6.7d run — the FATAL
+    # classifier above is silent (applied=True), so stamp the partial here.
+    rec = classify_journey_abstraction_partial(journey_abstraction or {})
+    if rec is not None:
+        out.append(rec)
     for stage_name in sorted(llm_stages or {}):
         rec = classify_llm_stage_zero_cost(
             stage_name, (llm_stages or {}).get(stage_name) or {})
@@ -362,6 +426,7 @@ __all__ = [
     "TYPE_HIGH_LLM_FALLBACK",
     "TYPE_LLM_BATCH_DEGRADED",
     "TYPE_JOURNEY_ABSTRACTION_FAILED",
+    "TYPE_JOURNEY_ABSTRACTION_PARTIAL",
     "SEVERITY_PARTIAL",
     "SEVERITY_DEGRADED",
     "SEVERITY_FAILED",
@@ -373,8 +438,10 @@ __all__ = [
     "high_llm_fallback",
     "refiner_batch_degraded",
     "journey_abstraction_failed",
+    "journey_abstraction_partial",
     "classify_refiner_degradation",
     "classify_journey_abstraction_degradation",
+    "classify_journey_abstraction_partial",
     "classify_llm_stage_zero_cost",
     "detect_finalize_degradations",
     "degradation_stamp_enabled",

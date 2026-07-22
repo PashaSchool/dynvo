@@ -1084,6 +1084,15 @@ ENV_OUTPUT_FLAGS = (
     # ENV_OUTPUT_FLAGS WITHOUT a KEY_SCHEMA bump — the bump rides the separate
     # flip commit per flip-protocol.
     "FAULTLINE_NAV_PARENT",
+    # B79 Seg A — robust truncated-response salvage for Stage 6.7d Call-1. On a
+    # giant repo (cal-com) the abstraction response truncates at the token
+    # ceiling (output_tokens==16000) → whole journey layer degrades. When ON,
+    # salvage the complete prefix of the two arrays (product_features + a
+    # user_flows prefix) and apply a PARTIAL abstraction (severity="partial"
+    # stamp; salvaged results never cached). Default OFF; unset/false ⇒ _draw is
+    # byte-identical to the flagless engine (salvage branch + telemetry never
+    # run). Appended WITHOUT a KEY_SCHEMA bump per flip-protocol.
+    "FAULTLINE_67D_ROBUST_PARSE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

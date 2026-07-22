@@ -1149,6 +1149,133 @@ def _parse_json(text: str) -> dict[str, Any] | None:
         return None
 
 
+# ── B79 Seg A — robust truncated-response salvage (default OFF) ──────────────
+# Class: on a giant repo (cal-com) the Call-1 abstraction response is truncated
+# at the ABSTRACTION_MAX_TOKENS ceiling (decision log: output_tokens == 16000
+# EXACTLY, in=32330, deterministic + byte-cost-identical across two fresh runs
+# 2026-07-22 — 033020Z & 041241Z). The truncated JSON never closes its
+# top-level object → _parse_json returns None → the WHOLE journey layer degrades
+# (applied=False; uf/pf frozen at the raw pre-abstraction rollup 365/194) and,
+# because cost_usd*2 ($0.674) > COST_CAP_USD ($0.60), even the retry rung is
+# skipped (llm_calls=1). The required output order is product_features FIRST,
+# user_flows SECOND, so a truncation lands inside the larger, later user_flows
+# array: EVERY product_feature and a COMPLETE PREFIX of user_flows survive whole
+# (and every salvaged journey's product_feature citation resolves, since the PF
+# layer is complete). The salvage recovers that prefix — stream-parsing
+# brace-balanced array objects, dropping the incomplete tail object — so the
+# stage APPLIES a partial abstraction rather than losing it whole. Degradation
+# honesty is preserved end-to-end: a salvaged draw stamps severity="partial"
+# (degradations.classify_journey_abstraction_partial), NOT silent success, and
+# a salvaged (partial) result is NEVER cached — so an explicit-off / flagless
+# re-scan can never be served a partial from a warm cache (the kill-switch stays
+# byte-exact; the cache key does not carry the flag). Registered in
+# scan_result_cache.ENV_OUTPUT_FLAGS (append-only, no KEY_SCHEMA bump). Default
+# OFF: unset/false ⇒ _draw is byte-identical to the flagless engine (the salvage
+# branch and its telemetry never execute).
+ROBUST_PARSE_ENV = "FAULTLINE_67D_ROBUST_PARSE"
+
+
+def robust_parse_enabled() -> bool:
+    return os.environ.get(ROBUST_PARSE_ENV, "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _scan_object(text: str, start: int) -> tuple[str | None, int]:
+    """Scan ONE brace-balanced ``{...}`` object beginning at ``text[start]``
+    (which must be ``{``), honouring string literals + escapes. Returns
+    ``(object_str, end_index)`` where ``end_index`` is just past the closing
+    ``}``. Returns ``(None, len(text))`` when the object is truncated (the
+    stream ends before the brace balances) — the tail-drop signal. Mirrors the
+    string/escape handling of :func:`_extract_balanced`."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1], i + 1
+    return None, len(text)
+
+
+def _salvage_array(text: str, key: str) -> tuple[list[dict[str, Any]], bool]:
+    """Recover the COMPLETE leading ``{...}`` objects of the JSON array valued at
+    ``"<key>": [`` in a (possibly truncated) response. Returns ``(objects,
+    dropped_tail)``: ``dropped_tail`` is True when the array did NOT close
+    cleanly (an incomplete final object was discarded, or a member failed to
+    parse, or the stream ran out). Pure string processing — never raises."""
+    pat = re.compile(r'"' + re.escape(key) + r'"\s*:\s*\[')
+    m = pat.search(text)
+    if m is None:
+        return [], False
+    i = m.end()
+    n = len(text)
+    objs: list[dict[str, Any]] = []
+    while i < n:
+        while i < n and text[i] in " \t\r\n,":
+            i += 1
+        if i >= n:
+            return objs, True   # ran off the end after the last complete object
+        c = text[i]
+        if c == "]":
+            return objs, False  # array closed cleanly — nothing dropped
+        if c != "{":
+            return objs, True   # unexpected token → stop; treat the rest as lost
+        obj_str, end = _scan_object(text, i)
+        if obj_str is None:
+            return objs, True   # truncated mid-object → drop the incomplete tail
+        try:
+            obj = json.loads(obj_str)
+        except (json.JSONDecodeError, ValueError):
+            return objs, True   # malformed member → stop salvaging here
+        if isinstance(obj, dict):
+            objs.append(obj)
+        i = end
+    return objs, True
+
+
+def _salvage_truncated_json(
+    text: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Salvage ``{"user_flows": [...], "product_features": [...]}`` from a
+    TRUNCATED Call-1 response. Returns ``(parsed_or_None, meta)``.
+
+    Guard — only a genuinely TRUNCATED response is salvaged: one whose
+    top-level object never closes (``_extract_balanced`` is None). A
+    COMPLETE-but-malformed response (balanced outer braces, bad syntax
+    somewhere inside) is NOT a truncation and returns ``(None, {})`` so the
+    stage fails honestly, exactly as the flagless engine does (the "malformed
+    in the middle" anti-case). Returns ``(None, meta)`` when nothing usable
+    survives (both arrays empty)."""
+    meta: dict[str, Any] = {}
+    if not text:
+        return None, meta
+    if _extract_balanced(text) is not None:
+        return None, meta  # not truncated → do not salvage (honest fail)
+    ufs, uf_tail = _salvage_array(text, "user_flows")
+    pfs, pf_tail = _salvage_array(text, "product_features")
+    meta = {
+        "uf_salvaged": len(ufs), "pf_salvaged": len(pfs),
+        "uf_dropped_tail": uf_tail, "pf_dropped_tail": pf_tail,
+    }
+    if not ufs and not pfs:
+        return None, meta
+    return {"user_flows": ufs, "product_features": pfs}, meta
+
+
 # ── Reconstruction ──────────────────────────────────────────────────────────
 
 def _slug(name: str) -> str:
@@ -4026,6 +4153,27 @@ def run_journey_abstraction(
             6,
         )
         parsed = _parse_json(text)
+        if robust_parse_enabled():
+            # B79 Seg A: a truncated (token-ceiling) draw loses the WHOLE
+            # journey layer under the flagless engine. When ON, salvage the
+            # complete prefix of the two arrays from an unterminated response;
+            # a COMPLETE-but-malformed response is NOT salvaged (honest fail).
+            if not parsed:
+                salvaged, _meta = _salvage_truncated_json(text)
+                if salvaged is not None:
+                    parsed = salvaged
+                    tele["abstraction_salvaged"] = True
+                    tele["salvaged_uf_n"] = int(_meta.get("uf_salvaged", 0))
+                    tele["salvaged_pf_n"] = int(_meta.get("pf_salvaged", 0))
+                    tele["salvaged_dropped_tail"] = bool(
+                        _meta.get("uf_dropped_tail") or _meta.get("pf_dropped_tail"))
+            else:
+                # A later FULL parse supersedes an earlier salvaged draw's
+                # markers (the kept specs decide the partial stamp). Pops are
+                # no-ops when absent, so a non-truncating run adds no key.
+                for _k in ("abstraction_salvaged", "salvaged_uf_n",
+                           "salvaged_pf_n", "salvaged_dropped_tail"):
+                    tele.pop(_k, None)
         if not parsed:
             return [], [], "abstraction_parse_failed"
         ufs = [s for s in (parsed.get("user_flows") or []) if _valid_spec(s)]
@@ -4260,7 +4408,11 @@ def run_journey_abstraction(
         # no LLM call, no Shared Platform sink. Lane residents are absent
         # from the map by construction.
         dev_map = dict(anchored_dev_map)
-        if cache is not None:
+        # B79 Seg A: never cache a SALVAGED (partial) draw — the cache key does
+        # not carry the robust-parse flag, so a warm partial entry would poison
+        # an explicit-off / flagless re-scan (kill-switch break). A non-salvaged
+        # draw caches exactly as before (``abstraction_salvaged`` absent).
+        if cache is not None and not tele.get("abstraction_salvaged"):
             try:
                 cache_payload = {
                     "v": ABSTRACTION_CACHE_VERSION,
@@ -4328,7 +4480,9 @@ def run_journey_abstraction(
         return _degrade("reattrib_failed")
 
     # ── Persist the two structured outputs for byte-identical replay ──
-    if cache is not None:
+    # B79 Seg A: never cache a SALVAGED (partial) draw (see the anchored path
+    # above) — a warm partial must not be served to a flagless re-scan.
+    if cache is not None and not tele.get("abstraction_salvaged"):
         try:
             cache_payload: dict[str, Any] = {
                 "v": ABSTRACTION_CACHE_VERSION,
