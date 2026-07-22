@@ -124,15 +124,13 @@ def test_flip_contract_falsy_aliases_kill(env, helper, val, monkeypatch):
 
 
 def test_det_aggregation_reflip_contract(monkeypatch):
-    """SEMANTIC re-flip migration (2026-07-21 pack №3, KEY_SCHEMA 34):
-    the it2 un-flip (corpus audit 4x WORSE — bare 'Manage <plural>'
-    bins) is REVERSED — the naming collapse is cured by R5 +
-    spray-generalization (ledger §S2-A-V3), and the S2-A pair
-    (_UF_DET_AGGREGATION + _SPRAY_GENERALIZED) flips together in
-    pack №3. unset ⇒ ON; =1 still arms; =0 still kills (forever).
-    The full inverted-KS battery lives in test_flip33_34_pack_defaults."""
+    """SEMANTIC un-flip №2 (2026-07-22, KEY_SCHEMA 35): the pack-3
+    re-flip is REVERSED — det-agg ON skips the 6.7d rewrite on the
+    keyed channel (phase_finalize S2-Seg-A probe), neutralizing the
+    6.7d-family pack-3 defaults; default OFF until the det×6.7d
+    composition cycle. =1 still arms; =0 still kills (forever)."""
     monkeypatch.delenv(DET_AGGREGATION_ENV, raising=False)
-    assert det_aggregation_enabled() is True
+    assert det_aggregation_enabled() is False
     monkeypatch.setenv(DET_AGGREGATION_ENV, "1")
     assert det_aggregation_enabled() is True
     monkeypatch.setenv(DET_AGGREGATION_ENV, "0")
