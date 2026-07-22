@@ -3331,21 +3331,32 @@ def run_finalize_phase(
     # byte-identical to main (KS 4-way).
     from faultline.pipeline_v2.conservation import (
         apply_home_affinity_gate,
+        build_orphan_flow_gaps,
         home_affinity_gate_enabled,
     )
+    # B78-it2 Goal 1 — orphan-flow gap rows computed at THIS checkpoint
+    # (operator ruling 2026-07-22); appended to the B45 channel below,
+    # AFTER the B68 terminal ladder. Empty unless the Seg B flag is armed.
+    _orphan_gap_rows: list[Any] = []
     if home_affinity_gate_enabled():
         with StageLogger(run_dir, 6, "home_affinity_gate") as log_hag:
             try:
                 _hag_tele = apply_home_affinity_gate(
                     user_flows, features, product_features,
                 )
+                _orphan_gap_rows, _og_tele = build_orphan_flow_gaps(
+                    user_flows, features, product_features,
+                )
+                _hag_tele["orphan_gaps"] = _og_tele
                 scan_meta["home_affinity_gate"] = _hag_tele
                 log_hag.info(
                     "home_affinity_gate: tok0=%d proposed=%d orphan_guarded=%d"
+                    " orphan_gap_cohorts=%d"
                     % (
                         _hag_tele.get("tok0", 0),
                         _hag_tele.get("proposed", 0),
                         _hag_tele.get("orphan_guarded", 0),
+                        _og_tele.get("cohorts", 0),
                     ),
                     feature=None,
                 )
@@ -3667,6 +3678,22 @@ def run_finalize_phase(
                 f"terminal-classification stage failed ({exc}); "
                 f"coverage_gaps left as-is"
             )
+
+    # ── B78-it2 Goal 1 (Seg B rider) — orphan-flow gap rows join the
+    # typed channel HERE, after the B68 ladder: they are Seg-B-typed
+    # journey-debt claims over LIVE flow-owned files — the ladder's
+    # ``live_flow_owner`` rehome rung would classify-and-dissolve them,
+    # which is exactly the silence the stamp exists to break. Channel-
+    # presence law respected: appended ONLY when the B45 channel is
+    # active (``coverage_gaps is not None``); the union re-sorts with the
+    # channel's own ``(pf, id)`` key — deterministic. Flag OFF ⇒ the rows
+    # list is empty ⇒ this block is inert (byte-identity with main).
+    if _orphan_gap_rows and coverage_gaps is not None:
+        coverage_gaps = list(coverage_gaps) + list(_orphan_gap_rows)
+        coverage_gaps.sort(key=lambda g: (
+            str(getattr(g, "product_feature_id", "") or ""),
+            str(getattr(g, "id", "") or ""),
+        ))
 
     # ── Stage 6.996 — B78 Seg F plumbing-UF reclassification ───────────
     # A UF whose NAME reads as a data-access/infra helper (plumbing verb +

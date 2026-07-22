@@ -5,9 +5,15 @@ Named exhibits + anti-cases (fixb78 §Seg G + forensics-canon):
      overview`` receives ``nav_parent`` {parent_label='Detector Studio',
      parent_id='detector-studio', source_file, line} via the ROUTE channel.
   2. twenty-fixture — the SettingsPath-referenced nav (billing / members /
-     objects) homes under 'Workspace' via the SLUG channel; ``objects`` +
-     ``data-model`` are TWO PFs on ONE nav position — a duplicate VISIBLE
-     in ``nav_tree.duplicates``.
+     objects) homes under 'Workspace' via the route-LESS TOKEN channel
+     (honest via: ``label`` for a display-label match, ``path`` for an
+     enum path-member match — B78-it2 Goal 3); ``objects`` + ``data-model``
+     are TWO PFs on ONE nav position — a duplicate VISIBLE in
+     ``nav_tree.duplicates``.
+  2b. B78-it2 Goal 3 exhibit — a ROUTE-BEARING sub-item never takes a
+     token guess: Soc0 ``api`` (backend routers, serves no ``/tenants/api``)
+     stays nav_parent-less under the Tenants/Mssp category; the sibling
+     ``mssp`` PF that SERVES ``/tenants`` still matches via route.
   3. Anti-case openstatus — a repo with no nav registry: ``run_nav_parent``
      returns None, every PF's ``nav_parent`` stays None (byte-ident).
   4. Anti-case config-not-consumed — a ``{path, size}`` array (no label /
@@ -214,7 +220,7 @@ def test_unrepresented_category(tmp_path: Path, nav_on) -> None:
 # ── 2. twenty-fixture: SLUG channel + objects/data-model duplicate ───────────
 
 
-def test_twenty_slug_and_duplicate(tmp_path: Path, nav_on) -> None:
+def test_twenty_token_channels_and_duplicate(tmp_path: Path, nav_on) -> None:
     ctx = _twenty_repo(tmp_path)
     pfs = [
         PF("billing"),
@@ -225,15 +231,77 @@ def test_twenty_slug_and_duplicate(tmp_path: Path, nav_on) -> None:
     tele = run_nav_parent(pfs, [], ctx)
     assert tele is not None
     by_name = {p.name: p for p in pfs}
-    for name in ("billing", "members", "objects", "data-model"):
+    # Honest via per channel (B78-it2 Goal 3): billing/members/data-model
+    # match the sub-item's display LABEL; objects matches the enum path
+    # member (SettingsPath.Objects). All four subs are route-LESS, so the
+    # token channel is legal for every one of them.
+    expected_via = {
+        "billing": "label", "members": "label",
+        "data-model": "label", "objects": "path",
+    }
+    for name, via in expected_via.items():
         assert by_name[name].nav_parent is not None, name
         assert by_name[name].nav_parent["parent_label"] == "Workspace", name
-        assert by_name[name].nav_parent["via"] == "slug", name
+        assert by_name[name].nav_parent["via"] == via, name
+    assert tele["matched_via"]["label"] == 3
+    assert tele["matched_via"]["path"] == 1
     # objects + data-model land on the SAME nav position ("Data model").
     dups = tele["duplicates"]
     assert dups, "expected a visible duplicate nav position"
     dup_pf_sets = [set(d["pfs"]) for d in dups]
     assert {"objects", "data-model"} in dup_pf_sets
+
+
+# ── 2b. B78-it2 Goal 3 exhibit: route-bearing sub never takes a token guess ──
+
+_TENANTS_REGISTRY = """\
+import { Building2, KeyRound, BookOpen, SlidersHorizontal } from 'icons';
+
+interface ModulePage { key: string; labelKey: string; path: string; icon: unknown; }
+interface ModuleDefinition {
+  id: string; nameKey: string; icon: unknown; pages: ModulePage[];
+}
+
+const TENANTS: ModuleDefinition = {
+  id: 'mssp',
+  nameKey: 'modules.mssp.name',
+  icon: Building2,
+  pages: [
+    { key: 'mssp-tenants', labelKey: 'modules.mssp.pages.tenants', path: '/tenants', icon: Building2 },
+    { key: 'mssp-api', labelKey: 'modules.mssp.pages.api', path: '/tenants/api', icon: KeyRound },
+    { key: 'mssp-api-docs', labelKey: 'modules.mssp.pages.apiDocs', path: '/tenants/api-docs', icon: BookOpen },
+    { key: 'mssp-settings', labelKey: 'modules.mssp.pages.settings', path: '/tenants/settings', icon: SlidersHorizontal },
+  ],
+};
+
+export const MODULES: readonly ModuleDefinition[] = [TENANTS] as const;
+"""
+
+
+def test_soc0_api_route_bearing_sub_never_token_matched(
+    tmp_path: Path, nav_on,
+) -> None:
+    """The it2 exhibit: PF ``api`` (backend routers only — serves NO
+    ``/tenants/api`` route) token-equals the humanized i18n label of the
+    ROUTE-BEARING 'Api' sub-item. The token channel must refuse: the PF
+    stays nav_parent-less (honest absence beats a slug guess). The sibling
+    ``mssp`` PF that genuinely serves ``/tenants`` keeps its ROUTE match —
+    the route channel is untouched."""
+    rel = _write(tmp_path, "frontend/src/lib/module-registry.ts",
+                 _TENANTS_REGISTRY)
+    ctx = Ctx(tmp_path, [rel, "package.json"])
+    api = PF("api", anchors=["backend/routers/network_mock.py",
+                             "backend/routers/labels.py"])
+    mssp = PF("mssp", anchors=["frontend/src/pages/mssp/TenantsPage.tsx"])
+    ri = [{"file": "frontend/src/pages/mssp/TenantsPage.tsx",
+           "pattern": "/tenants"}]
+    tele = run_nav_parent([api, mssp], ri, ctx)
+    assert tele is not None
+    assert api.nav_parent is None          # the slug-guess class is dead
+    assert mssp.nav_parent is not None     # route channel unaffected
+    assert mssp.nav_parent["via"] == "route"
+    assert mssp.nav_parent["parent_label"] == "Mssp"
+    assert tele["matched_via"] == {"route": 1, "label": 0, "path": 0}
 
 
 # ── 3. anti-case openstatus: no nav registry ⇒ byte-ident inert ──────────────
@@ -308,10 +376,11 @@ def test_display_only_no_structure_change(tmp_path: Path, nav_on) -> None:
 # ── route beats slug; UF-route enrichment ────────────────────────────────────
 
 
-def test_route_beats_slug(tmp_path: Path, nav_on) -> None:
+def test_route_beats_token(tmp_path: Path, nav_on) -> None:
     ctx = _soc_repo(tmp_path)
-    # PF named 'cases' (would slug-match the 'Cases' sub-item) AND anchored
-    # at /findings — the route wins over the slug.
+    # PF named 'cases' (token-equals the 'Cases' sub-item label — which is
+    # ROUTE-BEARING, so the token channel refuses it outright) AND anchored
+    # at /findings — the route match is the only and winning channel.
     pf = PF("cases", anchors=["frontend/src/pages/findings.tsx"])
     ri = [{"file": "frontend/src/pages/findings.tsx", "pattern": "/findings"}]
     run_nav_parent([pf], ri, ctx)

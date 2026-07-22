@@ -3374,6 +3374,21 @@ def _apply_uf_name_laws(
             return "view" if (idx["id_markers"] & set(toks_l)) else "browse"
         return fam
 
+    # ── B78-it2 Goal 2b (rider on FAULTLINE_FOLD_EVIDENCE_WEIGHT) ──
+    # A SYNTHESIZED backstop row is a coverage instrument, not an observed
+    # journey: its resource/verb rungs ground the TEMPLATE the backstop
+    # itself composed (name == PF display == resource — the Soc0 UF-005
+    # 'API' exhibit rode that circle to ``high``). Armed, the promotion
+    # chain below SKIPS synthesized rows: confidence caps at ``low`` and
+    # ``name_evidence`` carries the honest ``synthesized`` stamp. Gated by
+    # the Seg A flag WITH REASON — the uncovered-PF backstop row only
+    # exists because the Seg A walk-evidence gate minted its PF. Lazy
+    # import (house style — no module-level cross-import).
+    from faultline.pipeline_v2.stage_6_86_anchored_mint import (
+        fold_evidence_weight_enabled as _synth_cap_enabled,
+    )
+    _synth_conf_cap = _synth_cap_enabled()
+
     for uf in ordered:
         uid = str(getattr(uf, "id", "") or "")
         names = _members(uf)
@@ -3595,7 +3610,14 @@ def _apply_uf_name_laws(
             r.extend(f"adjudicated:{a}" for a in adj_res_rungs)
             return r
 
-        if res_grounded and verb_grounded and uid not in qualified:
+        if _synth_conf_cap and getattr(uf, "synthesized", False):
+            # B78-it2 Goal 2b — a synthesized backstop never wears high
+            # (or medium) confidence: the row is a coverage claim, not an
+            # observed journey, and its rungs echo its own template.
+            uf.name_confidence = "low"
+            if rungs_on:
+                uf.name_evidence = ["synthesized"]
+        elif res_grounded and verb_grounded and uid not in qualified:
             uf.name_confidence = "high"
             if rungs_on:
                 fired: list[str] = []

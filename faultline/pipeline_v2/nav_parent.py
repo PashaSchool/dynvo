@@ -15,8 +15,13 @@ the STATIC exported nav registries (the same legal JSX/TS author-intent
 class ``product_strings`` already trusts — NOT a dictionary of file
 names, NEVER an i18n VALUE) and attaches a nullable ``nav_parent`` =
 ``{parent_label, parent_id, source_file, line, via}`` to a PF whose
-anchor route (or, for enum-referenced nav paths, whose slug) matches a
-nav SUB-item. Product features are NEVER merged or moved — the
+anchor route matches a nav SUB-item (``via="route"``) — or, for a
+route-LESS sub-item only (enum/const-referenced destinations), whose
+tokens exactly equal the sub's label (``via="label"``) / enum path
+member (``via="path"``). A route-bearing sub-item is judged by the
+route channel alone — a bare token guess against it never attaches
+(B78-it2 Goal 3, the Soc0 ``api`` → 'Mssp' slug-guess class).
+Product features are NEVER merged or moved — the
 engineering grain is untouched; only the display field + the
 ``scan_meta.nav_tree`` telemetry (categories, sub-items, matched /
 unmatched / unrepresented / duplicates) are added. Live nav categories
@@ -811,14 +816,26 @@ def _route_match(pf_routes: set[str], sub: NavSubItem) -> int:
     return 0
 
 
-def _slug_match(pf_tokens: frozenset[str], sub: NavSubItem) -> bool:
-    if not pf_tokens:
-        return False
+def _token_match(pf_tokens: frozenset[str], sub: NavSubItem) -> str | None:
+    """B78-it2 (Goal 3) — the token-identity channel, legal ONLY for a
+    route-LESS nav sub-item. An enum/const-referenced destination (the
+    twenty ``SettingsPath.Objects`` class) has no literal href to
+    route-match, so exact token identity against its label / enum member
+    is the honest remaining evidence. A sub-item that DECLARES a literal
+    route is judged by the route channel alone: a PF that does not serve
+    that route may not token-guess its way under the area (the Soc0
+    ``api`` → 'Mssp' exhibit — the PF's ``{api}`` token equalled the
+    humanized i18n label of ``/tenants/api``, a route the PF never
+    serves). Returns the honest via channel (``"label"`` when the match
+    is the sub-item's display label, ``"path"`` when it is the enum path
+    member) or ``None``."""
+    if not pf_tokens or sub.route is not None:
+        return None
     if sub.label_tokens and pf_tokens == sub.label_tokens:
-        return True
+        return "label"
     if sub.path_tokens and pf_tokens == sub.path_tokens:
-        return True
-    return False
+        return "path"
+    return None
 
 
 def _routes_by_file(routes_index: list[dict[str, Any]] | None) -> dict[str, set[str]]:
@@ -882,8 +899,11 @@ def run_nav_parent(
             ident = ctoks | sub.label_tokens | sub.path_tokens | leaf_toks
             positions.append((c, sub, si, ident))
 
-    matched_by_route = 0
-    matched_by_slug = 0
+    # Honest per-channel counters (B78-it2 Goal 3): ``route`` (literal /
+    # nested href), ``label`` (route-less sub display label), ``path``
+    # (route-less enum path member). The old ``slug`` guess — a token hit
+    # against a ROUTE-BEARING sub-item — no longer matches at all.
+    matched_by_via: dict[str, int] = {"route": 0, "label": 0, "path": 0}
 
     def _catkey(c: NavCategory) -> tuple[str, int, str]:
         return (c.source_file, c.line, c.id)
@@ -909,18 +929,21 @@ def run_nav_parent(
         best: tuple[tuple[int, int, int], NavCategory, NavSubItem, int, str] | None = None
         for pos_idx, (c, sub, si, ident) in enumerate(positions):
             via = ""
-            # exact route (10) > nested-under route (5) > slug (1). Exact
-            # beats nested so a multi-route PF homes on its OWN position,
-            # not the longest ancestor leaf.
+            # exact route (10) > nested-under route (5) > route-less token
+            # identity (1). Exact beats nested so a multi-route PF homes on
+            # its OWN position, not the longest ancestor leaf. The token
+            # channel never fires against a route-bearing sub-item (B78-it2
+            # Goal 3 — the ``api`` → 'Mssp' slug-guess class).
             rm = _route_match(proutes, sub)
             if rm == 2:
                 via, score = "route", 10
             elif rm == 1:
                 via, score = "route", 5
-            elif _slug_match(ptoks, sub):
-                via, score = "slug", 1
             else:
-                continue
+                tv = _token_match(ptoks, sub)
+                if tv is None:
+                    continue
+                via, score = tv, 1
             # tie-break: how much the PF RESEMBLES this position (identity
             # token overlap), then earliest nav order — so a bundled PF's
             # route hit on a foreign area loses to the area it names.
@@ -938,10 +961,7 @@ def run_nav_parent(
             "line": c.line,
             "via": via,
         }
-        if via == "route":
-            matched_by_route += 1
-        else:
-            matched_by_slug += 1
+        matched_by_via[via] += 1
         ck = _catkey(c)
         pos_to_pfs.setdefault((ck, si), []).append(
             str(getattr(pf, "name", "")))
@@ -979,8 +999,8 @@ def run_nav_parent(
              "matched_pfs": cat_matched[(c.source_file, c.line, c.id)]}
             for c in categories
         ],
-        "matched": matched_by_route + matched_by_slug,
-        "matched_via": {"route": matched_by_route, "slug": matched_by_slug},
+        "matched": sum(matched_by_via.values()),
+        "matched_via": dict(matched_by_via),
         "matched_positions": len(matched_positions),
         "unmatched_sub_items": sub_total - len(matched_positions),
         "unrepresented": unrepresented,
