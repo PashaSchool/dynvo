@@ -1373,10 +1373,14 @@ class CoverageGap(BaseModel):
     #: ``adjudicated_noise`` (B57 Seg2) is minted ONLY by the Stage 6.7e
     #: adjudicator's verified demote verdicts (a journey row honestly
     #: re-typed as a gap claim — never a silent drop; the row's label /
-    #: routes / surface evidence ride along).
+    #: routes / surface evidence ride along). ``orphan_flow`` (B78-it2
+    #: Goal 1, Seg B rider) is minted ONLY by the Stage 6.995
+    #: ``build_orphan_flow_gaps`` stamp — a UI-entry flow cohort with own-
+    #: resource evidence that NO journey claims (the org-members
+    #: dissolution class): labeled journey-debt, never silence.
     kind: Literal[
         "system_route", "e2e_orphan", "loc_worthy", "owned_cover",
-        "adjudicated_noise",
+        "adjudicated_noise", "orphan_flow",
     ]
     #: The gap's human label — the row's FINAL display name (board-unique by
     #: the B31 recall-row naming pass): ``Uncovered: <PF display> routes`` for

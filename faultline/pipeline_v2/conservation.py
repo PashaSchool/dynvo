@@ -76,6 +76,7 @@ __all__ = [
     "conserved_pfid",
     "apply_uf_conservation",
     "apply_home_affinity_gate",
+    "build_orphan_flow_gaps",
     "rehome_shared_flowful_devs",
 ]
 
@@ -788,3 +789,178 @@ def apply_home_affinity_gate(
                 "from": home, "to": target,
             })
     return tele
+
+
+# ── B78-it2 Goal 1 — orphan-flow gap stamp (Seg B rider, Stage 6.995) ───
+#
+# THE CLASS (B78-it2 forensics, Soc0 org-members): the LLM journey layer
+# can dissolve a real journey ('Manage organization members', mc=4) and
+# leave its member flows SILENTLY orphaned — ``user_flow_id=None``, homed
+# only by an app-shell container dev — while the board reports nothing.
+# The deterministic minimum (operator ruling, 2026-07-22): at the 6.995
+# conservation checkpoint, a cohort of UF-less flows that carries
+# page/product evidence becomes a labeled ``coverage_gaps[]`` claim
+# (kind="orphan_flow") — journey-debt made visible, never silence. The
+# regression VERDICT itself stays with the operator's confound-free keyed
+# A/B; this stamp only breaks the silence.
+
+#: UI-component entry extensions — the structural "page/product surface"
+#: proxy (an interaction component authored for a view layer), the same
+#: cross-stack class ``nav_parent._CODE_EXTS`` hardcodes. Not per-repo.
+_ORPHAN_UI_EXTS = (".tsx", ".jsx", ".vue", ".svelte")
+
+#: Framework-conventional feature-grouping dirs (the ``features/<name>/``
+#: layout class) — structural convention, not a per-repo path.
+_ORPHAN_GROUP_DIRS = frozenset({"features", "modules"})
+
+
+def _entry_feature_dir(path: str) -> str | None:
+    """The feature-DIR segment right after a grouping dir, when it is a
+    directory (never the file itself): ``frontend/src/features/
+    organization-members/MembersTab.tsx`` → ``organization-members``."""
+    parts = str(path or "").replace("\\", "/").split("/")
+    for i in range(len(parts) - 2):
+        if parts[i] in _ORPHAN_GROUP_DIRS:
+            return parts[i + 1]
+    return None
+
+
+def build_orphan_flow_gaps(
+    user_flows: list["UserFlow"],
+    developer_features: list["Feature"],
+    product_features: list["Feature"],
+) -> tuple[list[Any], dict[str, Any]]:
+    """B78-it2 Goal 1 — one ``CoverageGap(kind="orphan_flow")`` per
+    qualifying orphan-flow cohort. Pure read (no flow / UF / PF mutation);
+    the caller appends the rows to the active B45 channel. OFF (flag
+    unset) ⇒ ``([], tele)`` — byte-identical to main.
+
+    A cohort = the UF-less flows (claimed by NO journey's
+    ``member_flow_ids`` and carrying no ``user_flow_id``) whose UI-component
+    entry files share one feature-dir. It qualifies when:
+
+      * >= 2 distinct entry files (the R2 capability floor — one stray
+        component is not journey material), AND
+      * >= 1 member flow's name shares a content token with the dir (the
+        mandate's OWN-resource evidence — 'manage-organization-members-flow'
+        under ``features/organization-members/``).
+
+    Anti-cases (unit-pinned): a flow any journey claims never stamps; a
+    backend/plumbing orphan (non-UI entry) never stamps; a single-entry
+    cohort never stamps; a cohort with no span evidence is skipped and
+    counted (B45 law — a gap without spans is never emitted)."""
+    tele: dict[str, Any] = {
+        "enabled": home_affinity_gate_enabled(),
+        "cohorts": 0, "flows": 0, "rows": [], "skipped_no_spans": 0,
+    }
+    rows: list[Any] = []
+    if not home_affinity_gate_enabled():
+        return rows, tele
+
+    import hashlib
+
+    from faultline.models.types import CoverageGap, FlowLineRange
+    from faultline.pipeline_v2.naming_contract import (
+        _verb_class_tokens,
+        load_naming_vocab,
+    )
+    from faultline.pipeline_v2.stage_6_97b_uf_loc import union_span_len
+
+    verb_toks = frozenset(_verb_class_tokens(load_naming_vocab()))
+
+    claimed: set[str] = set()
+    for uf in user_flows or []:
+        for mid in getattr(uf, "member_flow_ids", None) or []:
+            if mid:
+                claimed.add(str(mid))
+
+    cohorts: dict[str, list[Any]] = {}
+    for dev in developer_features or []:
+        for fl in getattr(dev, "flows", None) or []:
+            if getattr(fl, "user_flow_id", None):
+                continue
+            keys = {
+                str(k) for k in (
+                    getattr(fl, "uuid", None), getattr(fl, "name", None),
+                ) if k
+            }
+            if keys & claimed:
+                continue
+            ep = str(getattr(fl, "entry_point_file", "") or "")
+            if not ep.endswith(_ORPHAN_UI_EXTS):
+                continue
+            fdir = _entry_feature_dir(ep)
+            if not fdir:
+                continue
+            cohorts.setdefault(fdir, []).append(fl)
+
+    pf_keys: set[str] = set()
+    for pf in product_features or []:
+        k = str(getattr(pf, "id", None) or getattr(pf, "name", "") or "")
+        if k:
+            pf_keys.add(k)
+
+    for fdir in sorted(cohorts):
+        flows = sorted(
+            cohorts[fdir], key=lambda f: str(getattr(f, "name", "") or ""))
+        entries = sorted({
+            str(getattr(f, "entry_point_file", "") or "") for f in flows
+        })
+        if len(entries) < 2:
+            continue  # R2 floor — one component is not journey material
+        dir_toks = _aff_tokens(fdir)
+        own_resource = any(
+            _aff_content_tokens(
+                str(getattr(f, "name", "") or ""), verb_toks) & dir_toks
+            for f in flows
+        )
+        if not own_resource:
+            continue
+        # Entry-file spans from the flows' own line_ranges (per-file union).
+        span_ranges: dict[str, list[tuple[int, int]]] = {}
+        for f in flows:
+            ep = str(getattr(f, "entry_point_file", "") or "")
+            for rec in getattr(f, "line_ranges", None) or []:
+                p = str(getattr(rec, "path", "") or "")
+                if p != ep:
+                    continue
+                s = int(getattr(rec, "start_line", 0) or 0)
+                e = int(getattr(rec, "end_line", 0) or 0)
+                if s and e >= s:
+                    span_ranges.setdefault(p, []).append((s, e))
+        if not span_ranges:
+            tele["skipped_no_spans"] += 1
+            continue  # B45 law — a gap without spans is never emitted
+        spans = [
+            FlowLineRange(
+                path=p,
+                start_line=min(s for s, _ in span_ranges[p]),
+                end_line=max(e for _, e in span_ranges[p]),
+            )
+            for p in sorted(span_ranges)
+        ]
+        loc = sum(union_span_len(span_ranges[p]) for p in sorted(span_ranges))
+        pf_ref = fdir if fdir in pf_keys else None
+        label = f"Orphaned journey material: {fdir}"
+        gid = "GAP-" + hashlib.sha1(
+            f"{pf_ref or ''}|orphan_flow|{label}".encode("utf-8"),
+        ).hexdigest()[:10]
+        rows.append(CoverageGap(
+            id=gid,
+            product_feature_id=pf_ref,
+            kind="orphan_flow",
+            label=label,
+            routes=[],
+            surface_files=spans,
+            loc=loc,
+            synthesis_reason="orphan_flow_gap",
+        ))
+        tele["cohorts"] += 1
+        tele["flows"] += len(flows)
+        tele["rows"].append({
+            "dir": fdir,
+            "flows": [str(getattr(f, "name", "") or "") for f in flows][:8],
+            "gap_id": gid,
+            "loc": loc,
+        })
+    return rows, tele
