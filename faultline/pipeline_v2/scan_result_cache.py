@@ -1130,6 +1130,19 @@ ENV_OUTPUT_FLAGS = (
     # a KEY_SCHEMA bump — the bump rides the separate flip commit per
     # flip-protocol.
     "FAULTLINE_PLUMBING_UF_RECLASS",
+    # B78 (2026-07-21) — home-fidelity homing pack (Seg B/C/D, ONE system):
+    # (B) conservation home-affinity gate re-homes ``tok0`` journeys with a
+    # deterministic better-home via an S3 ``affinity-rehome`` proposal;
+    # (C) 6.99b organic-move v3 — prior-hold narrowed to same-target +
+    # rival name-affinity sanity (the 'Manage admins'→chat refutation);
+    # (D) mega vacuum census — a top1/share>=0.25 home ranks its wrong-home
+    # journeys (tok0 + better-home) into re-home proposals. Reshapes
+    # user_flows[].product_feature_id on boards that carry the class;
+    # class-free boards are byte-identical (inertness). Default OFF —
+    # appended WITHOUT a KEY_SCHEMA bump (the bump rides the flip commit).
+    # unset / ``=0`` / false ⇒ all three segments inert, byte-identical to
+    # main (KS 4-way kill-switch).
+    "FAULTLINE_HOME_AFFINITY_GATE",
 )
 
 #: Bump when the KEY composition changes so old entries can't be served

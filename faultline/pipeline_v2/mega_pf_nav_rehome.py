@@ -91,6 +91,7 @@ key, no output change (the 6.985 inertness convention).
 """
 
 from __future__ import annotations
+from faultline.pipeline_v2.conservation import home_affinity_gate_enabled
 from faultline.pipeline_v2.overturn_ledger import propose_pf_now
 
 import os
@@ -319,6 +320,80 @@ def mega_pf_nav_rehome_enabled() -> bool:
     journeys). ``=0`` restores the pre-B24 board byte-identically."""
     return os.environ.get(MEGA_PF_NAV_REHOME_ENV, "1").strip().lower() in {
         "1", "true",
+    }
+
+
+def _b78_vacuum_census(
+    vacuum_key: str,
+    user_flows: list[Any],
+    product_features: list[Any],
+    pf_by_key: Mapping[str, Any],
+    flow_by_uuid: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """B78 Seg D — rank a dominant vacuum home's journeys by the operator's
+    non-circular wrong-home lines (tok0 + better-home), reusing the SAME
+    detector Seg B re-homes on. Read-only forensic; ``None`` when the vacuum
+    has no members. The count is the RESIDUAL after Seg B ran upstream — the
+    signal the lead uses to rule on an in-mega re-home sweep."""
+    from faultline.pipeline_v2.conservation import (
+        _aff_content_tokens,
+        _aff_tokens,
+        _better_home,
+        _norm,
+    )
+    from faultline.pipeline_v2.naming_contract import (
+        _verb_class_tokens,
+        load_naming_vocab,
+    )
+
+    verb_toks = frozenset(_verb_class_tokens(load_naming_vocab()))
+    pf_tokens: dict[str, set[str]] = {}
+    pf_paths: dict[str, set[str]] = {}
+    for pf in product_features:
+        key = str(_attr(pf, "id") or _attr(pf, "name") or "")
+        if not key:
+            continue
+        pf_tokens[key] = _aff_tokens(
+            str(_attr(pf, "name") or ""), str(_attr(pf, "display_name") or ""))
+        pf_paths[key] = {_norm(str(p)) for p in (_attr(pf, "paths") or [])}
+    if vacuum_key not in pf_tokens:
+        return None
+
+    home_toks = pf_tokens[vacuum_key]
+    rows: list[dict[str, Any]] = []
+    tok0_n = bh_n = 0
+    for uf in user_flows:
+        if str(_attr(uf, "product_feature_id") or "") != vacuum_key:
+            continue
+        if _attr(uf, "synthesized"):
+            continue
+        uf_ct = _aff_content_tokens(str(_attr(uf, "name") or ""), verb_toks)
+        if not uf_ct or (uf_ct & home_toks):
+            continue  # not tok0 — name-tied to the vacuum, not wrong-home
+        tok0_n += 1
+        entries: list[str] = []
+        seen: set[str] = set()
+        for mid in (_attr(uf, "member_flow_ids") or []):
+            fl = flow_by_uuid.get(str(mid))
+            ep = str(_attr(fl, "entry_point_file") or "") if fl is not None else ""
+            if ep and _norm(ep) not in seen:
+                seen.add(_norm(ep))
+                entries.append(_norm(ep))
+        target = _better_home(uf_ct, vacuum_key, entries, pf_tokens, pf_paths)
+        if target is not None and target != vacuum_key:
+            bh_n += 1
+            if len(rows) < 25:
+                rows.append({
+                    "uf": str(_attr(uf, "id") or ""),
+                    "name": str(_attr(uf, "name") or ""),
+                    "members": len(_attr(uf, "member_flow_ids") or []),
+                    "to": target,
+                })
+    # rank by wrong-home mass (member count desc, then id)
+    rows.sort(key=lambda r: (-r["members"], r["uf"]))
+    return {
+        "vacuum": vacuum_key, "tok0": tok0_n, "better_home_residual": bh_n,
+        "exhibits": rows,
     }
 
 
@@ -732,6 +807,27 @@ def run_mega_pf_nav_rehome(
         {"pf": k, "ufs": c, "share": round(c / total_homed, 3)}
         for k, c in ranked_homes[:5]
     ]
+
+    # ── B78 Seg D — vacuum-bar census expansion (default OFF) ───────────
+    # When the top home is a dominant vacuum (share >= the mega trigger
+    # 0.25), rank ITS journeys by the operator's non-circular wrong-home
+    # lines — tok0 (name shares zero content tokens with the vacuum) and
+    # better-home (the same deterministic detector Seg B re-homes on). This
+    # measures the PRE-GATE class (Seg B runs later, at 6.995 — the
+    # ledger-proven last-writer slot); the post-gate residual is the emitted
+    # board's census — together they give the lead the before/after pair to
+    # rule on whether an in-mega re-home sweep is wanted on top of Seg B's
+    # cure. Read-only forensic — no mutation — so it cannot perturb
+    # byte-identity beyond the flag gate.
+    if home_affinity_gate_enabled():
+        top_key, top_ct = ranked_homes[0]
+        if top_ct / total_homed >= _TRIGGER_SHARE:
+            _vc = _b78_vacuum_census(
+                top_key, user_flows, product_features, pf_by_key,
+                flow_by_uuid)
+            if _vc is not None:
+                tele["vacuum_census"] = _vc
+
     armed = mega_decomp_armed()
 
     # ── THE grain oracle (shared class, tenant-descent rung ON) ─────
