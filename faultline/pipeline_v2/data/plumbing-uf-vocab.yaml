@@ -1,0 +1,88 @@
+# plumbing-uf-vocab.yaml — Seg F (B78) UF-shape plumbing reclassification.
+#
+# Closed-set vocabulary (journey_step precedent, B30/B33 discipline: every
+# lookup is a MEMBERSHIP test — the matcher iterates nothing, so the recorded
+# set-iteration nondeterminism class stays out of this rail). Data, NOT code.
+#
+# A UF is a "plumbing journey" when its NAME reads as a data-access / infra
+# helper rather than a user-facing journey. The name gate is corroboration
+# only — it is NEVER sufficient alone: the structural gates (member_count <= 2,
+# routeless, no member page-surface, interactive-only) decide the demote (see
+# plumbing_uf_reclass.run_plumbing_uf_reclass). This mirrors devgrain_demote's
+# "token set never kills alone" law.
+plumbing_uf:
+
+  # Verbs that mark a plumbing helper on their OWN (leading name token):
+  # inherently technical data-access. A product journey says "search" /
+  # "browse" / "view" / "find" a resource — never "fetch" / "lookup" /
+  # "query" it.
+  #   EXHIBITS (Soc0, reclassify): 'Fetch OpenAPI specifications' (fetch),
+  #   'Lookup user by email' (lookup).
+  verbs_strong:
+    - fetch
+    - lookup
+    - query
+
+  # Verbs that are AMBIGUOUS alone ('Run focus analysis on insights' and
+  # 'Post a comment' are product journeys) — they mark plumbing ONLY when
+  # paired with an `objects` token below.
+  #   EXHIBITS (reclassify): 'Run <Vendor> jobs' x25 (run + jobs),
+  #   'Check trial status' / 'Check account status' (check + status).
+  verbs_object:
+    - run
+    - post
+    - get
+    - check
+
+  # Tech / infrastructure objects. Paired with a `verbs_object` token they
+  # complete the plumbing shape.
+  #   ANTI-CASE 'Run MCP operations' (mc=5): object 'operations' IS here, so
+  #   the NAME gate fires — but the row SURVIVES on the member_count<=2 gate
+  #   (the object match is necessary, never sufficient). This is the honest
+  #   5-member boundary the spec flags.
+  #   ANTI-CASE 'Run conditional workflows' (novu, product): object 'workflows'
+  #   is DELIBERATELY ABSENT (a product automation object, not infra) -> the
+  #   name gate never fires -> KEEP.
+  #   ANTI-CASE 'Run alls' / 'Run forms' / 'Run guest nos' (cal.com): objects
+  #   'alls' / 'forms' / 'guest'/'nos' ABSENT -> KEEP (also route-bearing).
+  #   Product objects (workflow(s) / board(s) / endpoint(s) / server(s) /
+  #   integration(s) / dashboard(s) / report(s)) are deliberately NOT listed.
+  objects:
+    - job
+    - jobs
+    - operation
+    - operations
+    - spec
+    - specs
+    - specification
+    - specifications
+    - status
+    - schema
+    - webhook
+    - webhooks
+    - cron
+    - queue
+
+  # Product verbs are NEVER classifiers — listed here ONLY as an executable
+  # anti-case ledger (the matcher does not read this key; a unit test asserts
+  # none of these ever leads a plumbing name). Real corpus KEEPs:
+  #   'Validate OpenAPI specifications' (unkey), 'Generate OpenAPI schema'
+  #   (fastapi), 'Browse and manage OpenAPI actions' (onyx),
+  #   'Import CSV and OpenAPI data' (teable), 'Create and manage MCP servers'
+  #   (infisical), 'View billing plans and trial status' (onyx).
+  _anti_case_product_verbs:
+    - create
+    - manage
+    - browse
+    - view
+    - configure
+    - generate
+    - validate
+    - import
+    - convert
+    - authorize
+    - establish
+    - connect
+    - authenticate
+    - interact
+    - call
