@@ -256,15 +256,19 @@ def _soc0_devs() -> list[Feature]:
              "frontend/src/modules/network-security/services/query0/getTableData.ts"],
             flows=[flow("run-query-flow",
                         "frontend/src/modules/network-security/services/query0/client.ts")]),
-        dev("audit", ["backend/routers/audit.py"],
+        # REAL Soc0 dev names carry the api- prefix + suffixes — the
+        # census lesson: D's domain identity must be the WOULD-BE PF
+        # name (slug of the elected anchor display), never the dev name
+        # ("apicontextitems" matches no consumed symbol).
+        dev("api-audit", ["backend/routers/audit.py"],
             flows=[flow("view-audit-flow", "backend/routers/audit.py"),
                    flow("filter-audit-flow", "backend/routers/audit.py")]),
-        dev("audit-events", ["backend/routers/audit_events.py"],
+        dev("api-audit-events", ["backend/routers/audit_events.py"],
             flows=[flow("view-audit-events-flow",
                         "backend/routers/audit_events.py"),
                    flow("filter-audit-events-flow",
                         "backend/routers/audit_events.py")]),
-        dev("context-items", ["backend/routers/context_items.py"],
+        dev("api-context-items", ["backend/routers/context_items.py"],
             flows=[flow("browse-items-flow",
                         "backend/routers/context_items.py"),
                    flow("edit-items-flow",
@@ -273,12 +277,12 @@ def _soc0_devs() -> list[Feature]:
             flows=[flow("serve-mock-flow", "backend/routers/network_mock.py"),
                    flow("reset-mock-flow",
                         "backend/routers/network_mock.py")]),
-        dev("suggestions", ["backend/routers/suggestions.py"],
+        dev("api-suggestions", ["backend/routers/suggestions.py"],
             flows=[flow("browse-suggestions-flow",
                         "backend/routers/suggestions.py"),
                    flow("accept-suggestion-flow",
                         "backend/routers/suggestions.py")]),
-        dev("trial", ["backend/routers/trial.py"],
+        dev("api-trial-status", ["backend/routers/trial.py"],
             flows=[flow("check-trial-flow", "backend/routers/trial.py")]),
     ]
 
@@ -297,12 +301,12 @@ def test_exhibit_context_items_mints_via_c1(monkeypatch, soc0_repo):
     _evw(monkeypatch)
     devs = _soc0_devs()
     pfs, tele = _mint(devs, soc0_repo)
-    items = next(d for d in devs if d.name == "context-items")
+    items = next(d for d in devs if d.name == "api-context-items")
     assert items.product_feature_id == "context-items"
     assert any(p.name == "context-items" for p in pfs)
     rows = {r["dev"]: r for r in tele.get("walk_evidence_d_rows", [])}
-    assert rows["context-items"]["verdict"] == "mint"
-    assert rows["context-items"]["via"] == "c1:contextItemsApi"
+    assert rows["api-context-items"]["verdict"] == "mint"
+    assert rows["api-context-items"]["via"] == "c1:contextItemsApi"
 
 
 def test_exhibit_suggestions_mints_via_c1_wrapper_hop(monkeypatch, soc0_repo):
@@ -311,11 +315,11 @@ def test_exhibit_suggestions_mints_via_c1_wrapper_hop(monkeypatch, soc0_repo):
     _evw(monkeypatch)
     devs = _soc0_devs()
     pfs, tele = _mint(devs, soc0_repo)
-    sugg = next(d for d in devs if d.name == "suggestions")
+    sugg = next(d for d in devs if d.name == "api-suggestions")
     assert sugg.product_feature_id == "suggestions"
     rows = {r["dev"]: r for r in tele.get("walk_evidence_d_rows", [])}
-    assert rows["suggestions"]["verdict"] == "mint"
-    assert rows["suggestions"]["via"] == "c1:getSuggestions"
+    assert rows["api-suggestions"]["verdict"] == "mint"
+    assert rows["api-suggestions"]["via"] == "c1:getSuggestions"
 
 
 def test_exhibit_trial_mints_via_c2_stem_ui(monkeypatch, soc0_repo):
@@ -324,11 +328,11 @@ def test_exhibit_trial_mints_via_c2_stem_ui(monkeypatch, soc0_repo):
     _evw(monkeypatch)
     devs = _soc0_devs()
     pfs, tele = _mint(devs, soc0_repo)
-    trial = next(d for d in devs if d.name == "trial")
+    trial = next(d for d in devs if d.name == "api-trial-status")
     assert trial.product_feature_id == "trial"
     rows = {r["dev"]: r for r in tele.get("walk_evidence_d_rows", [])}
-    assert rows["trial"]["verdict"] == "mint"
-    assert rows["trial"]["via"] == "c2:frontend/src/components/shared/TrialBanner.tsx"
+    assert rows["api-trial-status"]["verdict"] == "mint"
+    assert rows["api-trial-status"]["via"] == "c2:frontend/src/components/shared/TrialBanner.tsx"
     assert tele.get("walk_evidence_d_mint_c2") == 1
 
 
@@ -339,13 +343,13 @@ def test_exhibit_audit_folds_into_activity_owner(monkeypatch, soc0_repo):
     _evw(monkeypatch)
     devs = _soc0_devs()
     pfs, tele = _mint(devs, soc0_repo)
-    audit = next(d for d in devs if d.name == "audit")
+    audit = next(d for d in devs if d.name == "api-audit")
     assert audit.product_feature_id == "activity"
     assert (audit.anchor_id or "").startswith("fold:consumer-evidence")
     assert not any(p.name == "audit" for p in pfs)
     rows = {r["dev"]: r for r in tele.get("walk_evidence_d_rows", [])}
-    assert rows["audit"]["verdict"] == "fold"
-    assert rows["audit"].get("target")  # dir-attributed owner recorded
+    assert rows["api-audit"]["verdict"] == "fold"
+    assert rows["api-audit"].get("target")  # dir-attributed owner recorded
     # the fold landed on the SAME PF the activity dev mints under:
     act = next(d for d in devs if d.name == "activity")
     assert audit.product_feature_id == act.product_feature_id
@@ -376,11 +380,11 @@ def test_exhibit_audit_events_demotes(monkeypatch, soc0_repo):
     _evw(monkeypatch)
     devs = _soc0_devs()
     pfs, tele = _mint(devs, soc0_repo)
-    ae = next(d for d in devs if d.name == "audit-events")
+    ae = next(d for d in devs if d.name == "api-audit-events")
     assert not any(p.name == "audit-events" for p in pfs)
     assert ae.product_feature_id != "audit-events"
     rows = {r["dev"]: r for r in tele.get("walk_evidence_d_rows", [])}
-    assert rows["audit-events"]["verdict"] == "demote"
+    assert rows["api-audit-events"]["verdict"] == "demote"
     assert tele.get("walk_evidence_d_demote") == 1
 
 

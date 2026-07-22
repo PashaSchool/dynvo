@@ -2006,15 +2006,27 @@ def run_anchored_mint(
                 _d_text_cache[rel] = None
         return _d_text_cache[rel]
 
-    def _d_override(f: "Feature") -> tuple[str, str] | None:
+    def _d_override(
+        f: "Feature", best_cid: str | None = None,
+    ) -> tuple[str, str] | None:
         """``None`` — keep the caller's mint (out-of-scope or C1/C2
         confirmed); ``_D_DEMOTE`` (identity) — suppress it; anything
-        else — ``(target_cid, "fold:consumer-evidence")``."""
+        else — ``(target_cid, "fold:consumer-evidence")``.
+
+        The DOMAIN identity D matches against is the WOULD-BE PF's name:
+        ``slug(anchor.display)`` when the mint channel elected an
+        evidence anchor (the PF is named by the anchor — the census
+        lesson: real dev names carry ``api-`` prefixes and suffixes
+        (``api-context-items``, ``api-trial-status``) that no consumed
+        symbol or UI basename ever matches), else the dev's own name
+        (the standalone channel names the PF from it)."""
         if f.name in _d_cache:
             return _d_cache[f.name]
         from faultline.pipeline_v2.dev_mint_discriminator import (
             discriminate_dev_mint,
         )
+        domain = (_slug(anchor_by_id[best_cid].display)
+                  if best_cid is not None else f.name)
         owned = sorted(owned_by_dev.get(f.name) or ())
         owned_set = frozenset(owned)
         patterns = [
@@ -2023,9 +2035,10 @@ def run_anchored_mint(
         ]
         tracked = [str(p) for p in (getattr(ctx, "tracked_files", None) or [])]
         v = discriminate_dev_mint(
-            f.name, owned, patterns, tracked, _d_read, code_exts)
+            domain, owned, patterns, tracked, _d_read, code_exts)
         result: tuple[str, str] | None
-        row: dict[str, Any] = {"dev": f.name, "verdict": v.kind, "via": v.via}
+        row: dict[str, Any] = {"dev": f.name, "domain": domain,
+                               "verdict": v.kind, "via": v.via}
         if v.kind == "out-of-scope":
             result = None
         elif v.kind == "mint":
@@ -2155,7 +2168,7 @@ def run_anchored_mint(
         if r2_mint:
             # R2/R3 — standalone mint on demand: >=2 distinct entry
             # files or >=2 flows is capability-grade behavioral proof.
-            _dd = _d_override(f)
+            _dd = _d_override(f, best)
             if _dd is _D_DEMOTE:
                 return None
             if _dd is not None:
@@ -2174,7 +2187,7 @@ def run_anchored_mint(
             tele["walk_evidence_single_flow_fold"] = (
                 tele.get("walk_evidence_single_flow_fold", 0) + 1)
             return near, "fold:entry-evidence"
-        _dd = _d_override(f)
+        _dd = _d_override(f, best)
         if _dd is _D_DEMOTE:
             return None
         if _dd is not None:
