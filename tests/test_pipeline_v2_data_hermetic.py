@@ -37,6 +37,7 @@ _STACK_NAMES = [
     "go-http-router",
     "js-library",
     "mvc-controllers",
+    "nav-tree",
     "python-library",
     "rails-app",
     "rust-workspace",

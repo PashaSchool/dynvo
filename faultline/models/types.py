@@ -1030,6 +1030,20 @@ class Feature(BaseModel):
     # predate the field, on FAULTLINE_SPINE_ANCHORED_MINT=0 scans, and
     # on shared-bucket residents (their explanation is ``shared_reason``).
     anchor_id: str | None = None
+    # B78 Seg G (2026-07-21) — nav-parent display grouping
+    # (FAULTLINE_NAV_PARENT). When the repo declares a nav hierarchy
+    # (module-registry / sidebar nav-config / settings-navigation hooks —
+    # static exported arrays of ``{path/route/href} + {label/title/name
+    # (+*Key)}`` with optional ``children/items/sub/pages`` nesting), a
+    # product feature whose anchor route (or enum-referenced nav slug)
+    # matches a nav SUB-item receives the parent category's display info:
+    # ``{parent_label, parent_id, source_file, line, via}``. DISPLAY ONLY —
+    # product features are never merged, moved, or minted (engineering grain
+    # untouched); ``scan_meta.nav_tree`` carries the tree telemetry. ``None``
+    # (omitted from dumps) on scans that predate the field and on
+    # FAULTLINE_NAV_PARENT unset/0 — so the default output is byte-identical
+    # to the pre-Seg-G engine.
+    nav_parent: dict[str, Any] | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_spine_fields(self, handler: Any) -> Any:
@@ -1048,7 +1062,10 @@ class Feature(BaseModel):
                         # R5 phase-2 — stamped only under
                         # FAULTLINE_NAME_EVIDENCE_RUNGS; a None dump is
                         # byte-identical to pre-R5 output.
-                        "name_evidence"):
+                        "name_evidence",
+                        # B78 Seg G — stamped only under FAULTLINE_NAV_PARENT;
+                        # a None dump is byte-identical to pre-Seg-G output.
+                        "nav_parent"):
                 if data.get(key) is None:
                     data.pop(key, None)
         return data
