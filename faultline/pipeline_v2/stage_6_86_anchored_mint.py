@@ -94,10 +94,12 @@ __all__ = [
     "FOLD_CROSSAPP_GUARD_ENV",
     "ANNEXATION_GUARD_ENV",
     "SAMEUNIT_DOMAIN_CAP_ENV",
+    "FOLD_EVIDENCE_WEIGHT_ENV",
     "mint_domain_fold_enabled",
     "fold_crossapp_guard_enabled",
     "annexation_guard_enabled",
     "sameunit_domain_cap_enabled",
+    "fold_evidence_weight_enabled",
     "anchored_mint_enabled",
     "run_anchored_mint",
     "build_platform_infrastructure_lane",
@@ -220,6 +222,38 @@ SAMEUNIT_DOMAIN_CAP_ENV = "FAULTLINE_SAMEUNIT_DOMAIN_CAP"
 #: coupling in route_group_recall; the v2 cure is post-UF). Default OFF;
 #: OFF ⇒ the tele key is never attached ⇒ byte-identical.
 HOMING_HYGIENE_ENV = "FAULTLINE_HOMING_HYGIENE"
+
+#: B78 Seg A (2026-07-21) — walk-evidence gate. The terminal ancestor-walk
+#: rung folds by PLURALITY OF FILES at the first populated ancestor level —
+#: a ruler with zero behavioral content: on Soc0, 0/35 ``fold:walk`` targets
+#: held ANY claim on the folded dev's flow ENTRY files (api-admin: 43 flows
+#: enter ``backend/routers/admin.py``, yet the frontend file majority folded
+#: the dev into ``network-security``; the ``cases``/``network-security``
+#: vacuum PFs are this rung's product). LAW under the flag: an ancestor-walk
+#: fold is VALID only when the walk target has a behavioral claim on the
+#: dev's entry files; an evidence-VOID fold re-disposes by the dev's own
+#: entry evidence instead (probe canon 2026-07-21 + Fable rulings R1-R3):
+#:
+#: * The dev's entry files elect the best evidence-claiming anchor —
+#:   most-specific match (exact file > longest prefix), R1 tiebreak on
+#:   exact-file ties: the route-convention anchor named by the entry
+#:   file's OWN stem, else the anchor holding the larger share of the
+#:   file's routes (without R1, api-admin mints as 'webhook-dispatcher').
+#: * R2 mint-vs-fold: >=2 distinct entry files OR >=2 flows => standalone
+#:   mint of that anchor (on-demand; entry evidence IS the behavioral
+#:   proof, so an api_only_surface bar yields — structural bars and
+#:   shells never mint); exactly 1 flow => fold into the nearest
+#:   evidence-claiming MINTED PF (most-specific minted claimant of the
+#:   entry file), minting only when no such PF exists.
+#: * R3: a flowful dev is NEVER laned by this gate (lane stays flow-less
+#:   only); a dev with no evidence-claiming anchor at all keeps its void
+#:   walk fold honestly (tele ``walk_evidence_void_kept``).
+#:
+#: The entry/span/import/api-parent rungs, lineage binds and the B22a
+#: guard-isolated lane are UNTOUCHED (the api-parent lateral channel was
+#: probed and REFUTED — already ancestry-guarded, 0 firings). Default OFF;
+#: ``FAULTLINE_FOLD_EVIDENCE_WEIGHT=1`` arms; OFF is byte-identical.
+FOLD_EVIDENCE_WEIGHT_ENV = "FAULTLINE_FOLD_EVIDENCE_WEIGHT"
 
 #: θ — the majority threshold (calibration §F: U-cap is monotonically
 #: decreasing in θ; 0.5 is the conservation-law dual of §4.5).
@@ -395,6 +429,17 @@ def homing_hygiene_enabled() -> bool:
     — the mint stays import-light, banked-branch precedent; both read the
     same env so their defaults flip in lock-step.)"""
     return os.environ.get(HOMING_HYGIENE_ENV, "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def fold_evidence_weight_enabled() -> bool:
+    """B78 Seg A — default OFF; ``FAULTLINE_FOLD_EVIDENCE_WEIGHT=1`` arms
+    the walk-evidence gate (an ancestor-walk fold is valid only when the
+    target holds a behavioral claim on the dev's flow entry files; void
+    folds re-dispose by entry evidence per rulings R1-R3). OFF is
+    byte-identical to the ungated walk."""
+    return os.environ.get(FOLD_EVIDENCE_WEIGHT_ENV, "0").strip().lower() in {
         "1", "true", "yes", "on",
     }
 
@@ -1812,6 +1857,211 @@ def run_anchored_mint(
         # a unit with no minted anchor; annexing it is the B22a disease.
         return None, _walk(skip_cids) is not None
 
+    # ── B78 Seg A — walk-evidence gate (FAULTLINE_FOLD_EVIDENCE_WEIGHT) ──
+    # The ancestor-walk votes by FILE plurality — zero behavioral content.
+    # Armed, a walk fold whose target holds NO claim on the dev's flow
+    # entry files re-disposes by the dev's own entry evidence (module
+    # docstring at FOLD_EVIDENCE_WEIGHT_ENV; rulings R1-R3). The claim is
+    # judged on the target ANCHOR's subtree only — the owner map is
+    # itself poisoned by the annexation being cured (the B69-v2 lesson).
+    _evw_on = fold_evidence_weight_enabled()
+
+    def _entry_files_of(f: "Feature") -> list[str]:
+        return [str(ep) for fl in (getattr(f, "flows", None) or [])
+                if (ep := getattr(fl, "entry_point_file", None))]
+
+    _file_route_keys_cache: dict[str, Counter[str]] = {}
+
+    def _file_route_keys(ep: str) -> Counter[str]:
+        """R1(b) ruler — how many of ONE file's route rows carry each
+        anchor key ('the anchor with the larger share of the file's
+        routes'). Derived from the same ``routes_index`` chain the
+        route-anchor builder consumes; scale-invariant (shares, not
+        counts, decide — and only WITHIN one file's exact-claim tie)."""
+        if ep not in _file_route_keys_cache:
+            from faultline.pipeline_v2.spine_anchors import (
+                _route_chain,
+                normalize_anchor_key,
+            )
+            version_re = re.compile(
+                vocab.get("version_segment_pattern") or r"^v\d+$")
+            votes: Counter[str] = Counter()
+            for entry in routes_index or []:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("file") or "") != ep:
+                    continue
+                keys = {
+                    normalize_anchor_key(seg)
+                    for seg, _pre, _dep in _route_chain(
+                        ep, str(entry.get("pattern") or ""), vocab,
+                        version_re)
+                }
+                for k in sorted(keys):
+                    if k:
+                        votes[k] += 1
+            _file_route_keys_cache[ep] = votes
+        return _file_route_keys_cache[ep]
+
+    def _evidence_anchor_for_entry(ep: str, dev_name: str) -> str | None:
+        """The best evidence-claiming anchor of ONE entry file:
+        exact-file claimants first (R1 tiebreak: the route-convention
+        anchor named by the file's own stem, else the larger share of
+        the file's routes, else source rank), then the longest-prefix
+        claimant. Shells, structurally-barred keys (version_dir /
+        single_letter / param_leaf) and spa-fenced targets never
+        qualify — an api_only_surface mint bar does NOT disqualify
+        (entry evidence is exactly the behavioral proof it lacked)."""
+        exact: list[SpineAnchor] = []
+        prefix_best: tuple[int, int, str] | None = None
+        for a in anchors:
+            if a.shell or a.barred is not None:
+                continue
+            if not a.matches(ep):
+                continue
+            cid = a.canonical_id
+            # Spa containment law at the evidence grain: a claim through
+            # the anchor's NON-spa evidence file (server route / api
+            # file — the law's own "server routes untouched" universe)
+            # is behavioral and stands; any other claim on a spa-paged
+            # anchor keeps the B65 fence (prefix claims are subtree
+            # claims — the annexation channel the fence exists for).
+            _non_spa_claim = ep in (
+                (a.files | a.api_route_files | a.page_route_files)
+                - spa_files)
+            if not _non_spa_claim and _spa_fence_veto(cid, dev_name):
+                continue
+            if ep in a.files:
+                exact.append(a)
+                continue
+            plen = max((len(p) for p in a.prefixes
+                        if ep.startswith(p + "/") or ep == p), default=-1)
+            if plen < 0:
+                continue
+            cand = (-plen, a.rank, cid)
+            if prefix_best is None or cand < prefix_best:
+                prefix_best = cand
+        if exact:
+            if len(exact) == 1:
+                return exact[0].canonical_id
+            # R1 (a) — the route-convention anchor named by the entry
+            # file's OWN stem (api-admin: backend/routers/admin.py names
+            # the admins family, not 'webhook-dispatcher').
+            from faultline.pipeline_v2.spine_anchors import (
+                normalize_anchor_key as _nk,
+            )
+            stem = ep.rsplit("/", 1)[-1]
+            stem = stem[: stem.rfind(".")] if "." in stem else stem
+            stem_key = _nk(stem)
+            named = sorted(
+                (a for a in exact
+                 if a.key == stem_key
+                 and "route" in (a.sources or {a.source})),
+                key=lambda a: a.canonical_id)
+            if named:
+                tele["walk_evidence_r1_stem"] = (
+                    tele.get("walk_evidence_r1_stem", 0) + 1)
+                return named[0].canonical_id
+            # R1 (b) — the anchor holding the larger share of the file's
+            # own routes; residual ties by source rank then stable id.
+            shares = _file_route_keys(ep)
+            ranked = sorted(
+                exact,
+                key=lambda a: (-shares.get(a.key, 0), a.rank,
+                               a.canonical_id))
+            if shares.get(ranked[0].key, 0):
+                tele["walk_evidence_r1_route_share"] = (
+                    tele.get("walk_evidence_r1_route_share", 0) + 1)
+            return ranked[0].canonical_id
+        return prefix_best[2] if prefix_best is not None else None
+
+    def _dev_standalone_mint(f: "Feature") -> tuple[str, str]:
+        """R2/R3 last rung — the dev STANDS ALONE as its own PF when no
+        evidence-claiming anchor can take it (no claimant at all, or the
+        elected one sits across a workspace unit): >=2 distinct entry
+        files / >=2 flows is capability-grade behavioral proof and R3
+        forbids laning it, so the honest disposition is a visible
+        standalone PF over the dev's own files (unit-local — no
+        annexation by construction), never a silent vacuum fold."""
+        cid = f"dev:{f.name}"
+        if cid not in anchor_by_id:
+            display = (getattr(f, "display_name", None) or "").strip()
+            if not display:
+                display = " ".join(
+                    w.capitalize()
+                    for w in re.split(r"[-_\s]+", f.name) if w) or f.name
+            anchor_by_id[cid] = SpineAnchor(
+                canonical_id=cid,
+                key=normalize_anchor_key(f.name),
+                source="dev-standalone",
+                display=display,
+                files=frozenset(owned_by_dev.get(f.name) or ()),
+                sources=frozenset({"dev-standalone"}),
+            )
+        mintable.add(cid)
+        bar_by_anchor[cid] = None
+        tele["walk_evidence_dev_mint"] = (
+            tele.get("walk_evidence_dev_mint", 0) + 1)
+        return cid, "mint:dev-standalone"
+
+    def _walk_evidence_dispose(
+        f: "Feature", entries: list[str],
+    ) -> tuple[str, str] | None:
+        """R2/R3 disposition of an evidence-VOID walk fold — returns
+        ``(target_cid, prov_family)`` or ``None`` (caller keeps the void
+        fold honestly; a flowful dev is NEVER laned by this gate)."""
+        n_flows = len(getattr(f, "flows", None) or [])
+        r2_mint = len(set(entries)) >= 2 or n_flows >= 2
+        votes: Counter[str] = Counter()
+        for ep in entries:
+            cid = _evidence_anchor_for_entry(ep, f.name)
+            if cid is not None:
+                votes[cid] += 1
+        if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+            tele.setdefault("fold_debug", []).append({
+                "dev": f.name, "rung": "walk-evidence",
+                "entries": entries[:8],
+                "votes": dict(votes.most_common(8)),
+            })
+        if not votes:
+            # No evidence-claiming anchor exists anywhere (unextracted
+            # routers — the Soc0 'api'/'network-mock' shape).
+            return _dev_standalone_mint(f) if r2_mint else None
+        (_best, n), = votes.most_common(1)
+        tied = sorted(c for c, v in votes.items() if v == n)
+        best = tied[0]
+        # B58 law — a unit-coherent dev never evidence-binds across a
+        # workspace unit (same fence as the entry/L1 rungs).
+        if _annex_foreign(f, best):
+            tele["walk_evidence_annex_blocked"] = (
+                tele.get("walk_evidence_annex_blocked", 0) + 1)
+            return _dev_standalone_mint(f) if r2_mint else None
+        if best in mintable:
+            # The dev's evidence points at a LIVE capability — fold in.
+            return best, "fold:entry-evidence"
+        if r2_mint:
+            # R2/R3 — standalone mint on demand: >=2 distinct entry
+            # files or >=2 flows is capability-grade behavioral proof.
+            mintable.add(best)
+            bar_by_anchor[best] = None
+            tele["walk_evidence_mint_on_demand"] = (
+                tele.get("walk_evidence_mint_on_demand", 0) + 1)
+            return best, "mint:entry-evidence"
+        # R2 single-flow brake — prefer the nearest MINTED claimant of
+        # the entry file over a fresh standalone PF; mint only when no
+        # evidence-claiming PF exists at all.
+        near = _anchor_of_target(entries[0])
+        if (near is not None and not _spa_fence_veto(near, f.name)
+                and not _annex_foreign(f, near)):
+            tele["walk_evidence_single_flow_fold"] = (
+                tele.get("walk_evidence_single_flow_fold", 0) + 1)
+            return near, "fold:entry-evidence"
+        mintable.add(best)
+        bar_by_anchor[best] = None
+        tele["walk_evidence_single_flow_mint"] = (
+            tele.get("walk_evidence_single_flow_mint", 0) + 1)
+        return best, "mint:entry-evidence"
+
     fold_pending: list[tuple["Feature", SpineAnchor | None, str]] = []
     for f in sorted(in_scope, key=lambda x: x.name):
         w = winner_by_dev[f.name]
@@ -2116,6 +2366,30 @@ def run_anchored_mint(
             if target is not None and _spa_fence_veto(target, f.name):
                 target = None
             if target is not None:
+                # B78 Seg A — walk-evidence gate: the fold is valid only
+                # when the target anchor claims >=1 of the dev's flow
+                # entry files; a VOID fold re-disposes by the dev's own
+                # entry evidence (R1-R3). Flag OFF ⇒ byte-identical.
+                if _evw_on:
+                    _entries = _entry_files_of(f)
+                    if _entries and not any(
+                            anchor_by_id[target].matches(ep)
+                            for ep in _entries):
+                        tele["walk_evidence_void"] = (
+                            tele.get("walk_evidence_void", 0) + 1)
+                        _disp = _walk_evidence_dispose(f, _entries)
+                        if _disp is not None:
+                            _ev_cid, _ev_prov = _disp
+                            assignment[f.name] = (
+                                _ev_cid, f"{_ev_prov}->{src}")
+                            tele["walk_evidence_redisposed"] = (
+                                tele.get("walk_evidence_redisposed", 0) + 1)
+                            continue
+                        # R3 — never lane a flowful dev here: with no
+                        # evidence-claiming anchor anywhere, the void
+                        # fold stays (visible, counted).
+                        tele["walk_evidence_void_kept"] = (
+                            tele.get("walk_evidence_void_kept", 0) + 1)
                 assignment[f.name] = (target, f"fold:walk->{src}")
                 tele["fold_ancestor_walk"] = (
                     tele.get("fold_ancestor_walk", 0) + 1)
