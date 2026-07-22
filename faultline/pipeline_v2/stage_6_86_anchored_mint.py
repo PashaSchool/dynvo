@@ -1975,6 +1975,118 @@ def run_anchored_mint(
             return ranked[0].canonical_id
         return prefix_best[2] if prefix_best is not None else None
 
+    # ── B78-it2 Goal 2a — dead-router discriminator D (probe canon) ──────
+    # The R2/R3 mint rungs below also mint DEAD-ROUTER shapes: a backend
+    # router in a shared dir whose frontend client is bootstrap-wired but
+    # consumed by nobody (Soc0 audit-events), or consumed only by a
+    # FOREIGN domain's surface (audit → ActivityLogPage, network-mock →
+    # query0). D = scope-guard + (C1 stem-consumption ∨ C2 stem-UI) +
+    # fold-else re-judges exactly that shape before a mint lands:
+    # confirmed mints keep their channel; consumed-by-foreign FOLDS into
+    # the anchor owning the consumer (dir-attribution — probe risk 2
+    # forbids board membership as the owner ruler); zero consumers
+    # DEMOTES (the caller keeps the pre-gate disposition). Out-of-scope
+    # devs (dedicated domain dir / own UI / >3 members / unverifiable
+    # shared-dir) are untouched — the twenty/langfuse zero-UI PFs and
+    # the R3 standalone law live outside D by construction.
+    _d_cache: dict[str, tuple[str, str] | None] = {}
+    _d_text_cache: dict[str, str | None] = {}
+    _D_DEMOTE: tuple[str, str] = ("", "d-demote")  # identity sentinel
+
+    def _d_read(rel: str) -> str | None:
+        if rel not in _d_text_cache:
+            try:
+                p = Path(getattr(ctx, "repo_path", ".")) / rel
+                if p.stat().st_size > 1_500_000:  # nav_parent's read cap
+                    _d_text_cache[rel] = None
+                else:
+                    _d_text_cache[rel] = p.read_text(
+                        encoding="utf-8", errors="ignore")
+            except OSError:
+                _d_text_cache[rel] = None
+        return _d_text_cache[rel]
+
+    def _d_override(
+        f: "Feature", best_cid: str | None = None,
+    ) -> tuple[str, str] | None:
+        """``None`` — keep the caller's mint (out-of-scope or C1/C2
+        confirmed); ``_D_DEMOTE`` (identity) — suppress it; anything
+        else — ``(target_cid, "fold:consumer-evidence")``.
+
+        The DOMAIN identity D matches against is the WOULD-BE PF's name:
+        ``slug(anchor.display)`` when the mint channel elected an
+        evidence anchor (the PF is named by the anchor — the census
+        lesson: real dev names carry ``api-`` prefixes and suffixes
+        (``api-context-items``, ``api-trial-status``) that no consumed
+        symbol or UI basename ever matches), else the dev's own name
+        (the standalone channel names the PF from it)."""
+        if f.name in _d_cache:
+            return _d_cache[f.name]
+        from faultline.pipeline_v2.dev_mint_discriminator import (
+            discriminate_dev_mint,
+        )
+        domain = (_slug(anchor_by_id[best_cid].display)
+                  if best_cid is not None else f.name)
+        owned = sorted(owned_by_dev.get(f.name) or ())
+        owned_set = frozenset(owned)
+        patterns = [
+            str(r.get("pattern") or "") for r in (routes_index or [])
+            if isinstance(r, dict) and str(r.get("file") or "") in owned_set
+        ]
+        tracked = [str(p) for p in (getattr(ctx, "tracked_files", None) or [])]
+        v = discriminate_dev_mint(
+            domain, owned, patterns, tracked, _d_read, code_exts)
+        result: tuple[str, str] | None
+        row: dict[str, Any] = {"dev": f.name, "domain": domain,
+                               "verdict": v.kind, "via": v.via}
+        if v.kind == "out-of-scope":
+            result = None
+        elif v.kind == "mint":
+            key = ("walk_evidence_d_mint_c1"
+                   if (v.via or "").startswith("c1:")
+                   else "walk_evidence_d_mint_c2")
+            tele[key] = tele.get(key, 0) + 1
+            result = None
+        elif v.kind == "fold":
+            votes: Counter[str] = Counter()
+            for cf in v.consumer_files:
+                cid = _anchor_of_target(cf)
+                if cid is not None:
+                    votes[cid] += 1
+            result = _D_DEMOTE
+            if votes:
+                (_best, n), = votes.most_common(1)
+                best = sorted(c for c, vn in votes.items() if vn == n)[0]
+                if not _annex_foreign(f, best):
+                    tele["walk_evidence_d_fold"] = (
+                        tele.get("walk_evidence_d_fold", 0) + 1)
+                    row["target"] = best
+                    result = (best, "fold:consumer-evidence")
+            if result is _D_DEMOTE:
+                # Consumers exist but no minted anchor claims any of
+                # them (or the elected owner is unit-foreign) — the
+                # honest residue is demotion, tracked apart.
+                tele["walk_evidence_d_fold_unresolved"] = (
+                    tele.get("walk_evidence_d_fold_unresolved", 0) + 1)
+                row["verdict"] = "demote"
+        else:  # demote
+            tele["walk_evidence_d_demote"] = (
+                tele.get("walk_evidence_d_demote", 0) + 1)
+            result = _D_DEMOTE
+        if v.kind != "out-of-scope":
+            tele["walk_evidence_d_candidates"] = (
+                tele.get("walk_evidence_d_candidates", 0) + 1)
+            tele.setdefault("walk_evidence_d_rows", []).append(row)
+        if os.environ.get("FAULTLINE_MINT_DEBUG") == "1":
+            tele.setdefault("fold_debug", []).append({
+                "dev": f.name, "rung": "d-discriminator",
+                "verdict": row.get("verdict", v.kind), "via": v.via,
+                "consumers": list(v.consumer_files)[:8],
+                "target": row.get("target"),
+            })
+        _d_cache[f.name] = result
+        return result
+
     def _dev_standalone_mint(f: "Feature") -> tuple[str, str]:
         """R2/R3 last rung — the dev STANDS ALONE as its own PF when no
         evidence-claiming anchor can take it (no claimant at all, or the
@@ -2026,7 +2138,14 @@ def run_anchored_mint(
         if not votes:
             # No evidence-claiming anchor exists anywhere (unextracted
             # routers — the Soc0 'api'/'network-mock' shape).
-            return _dev_standalone_mint(f) if r2_mint else None
+            if not r2_mint:
+                return None
+            _dd = _d_override(f)
+            if _dd is _D_DEMOTE:
+                return None
+            if _dd is not None:
+                return _dd
+            return _dev_standalone_mint(f)
         (_best, n), = votes.most_common(1)
         tied = sorted(c for c, v in votes.items() if v == n)
         best = tied[0]
@@ -2035,13 +2154,25 @@ def run_anchored_mint(
         if _annex_foreign(f, best):
             tele["walk_evidence_annex_blocked"] = (
                 tele.get("walk_evidence_annex_blocked", 0) + 1)
-            return _dev_standalone_mint(f) if r2_mint else None
+            if not r2_mint:
+                return None
+            _dd = _d_override(f)
+            if _dd is _D_DEMOTE:
+                return None
+            if _dd is not None:
+                return _dd
+            return _dev_standalone_mint(f)
         if best in mintable:
             # The dev's evidence points at a LIVE capability — fold in.
             return best, "fold:entry-evidence"
         if r2_mint:
             # R2/R3 — standalone mint on demand: >=2 distinct entry
             # files or >=2 flows is capability-grade behavioral proof.
+            _dd = _d_override(f, best)
+            if _dd is _D_DEMOTE:
+                return None
+            if _dd is not None:
+                return _dd
             mintable.add(best)
             bar_by_anchor[best] = None
             tele["walk_evidence_mint_on_demand"] = (
@@ -2056,6 +2187,11 @@ def run_anchored_mint(
             tele["walk_evidence_single_flow_fold"] = (
                 tele.get("walk_evidence_single_flow_fold", 0) + 1)
             return near, "fold:entry-evidence"
+        _dd = _d_override(f, best)
+        if _dd is _D_DEMOTE:
+            return None
+        if _dd is not None:
+            return _dd
         mintable.add(best)
         bar_by_anchor[best] = None
         tele["walk_evidence_single_flow_mint"] = (
